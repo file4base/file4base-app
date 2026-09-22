@@ -1,0 +1,60 @@
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editor artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.env
+
+# Backend: Go
+server/bin/
+server/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Frontend: Flutter & Dart
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/.packages
+client/build/
+client/.pub/
+client/.pub-cache/
+client/ephemeral/
+
+# Flutter Desktop specific builds
+client/macOS/Pods/
+client/macOS/.symlinks/
+client/macOS/Flutter/GeneratedPluginRegistrant.swift
+client/windows/flutter/ephemeral/
+client/linux/flutter/ephemeral/
+
+# Database / Local storage mounts
+postgres_data/
+mariadb_data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log

@@ -1,0 +1,50 @@
+<svg viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Fondo degrade profesional oscuro -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#182436" />
+      <stop offset="100%" stop-color="#0e1522" />
+    </linearGradient>
+
+    <!-- Color de las lineas en azul cian de alto contraste -->
+    <linearGradient id="cyanStroke" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0ea5e9" />
+    </linearGradient>
+
+    <!-- Sombra suave para la base squircle del boton -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="16" flood-color="#050a14" flood-opacity="0.55" />
+    </filter>
+  </defs>
+
+  <!-- Base Squircle del Icono -->
+  <rect x="32" y="32" width="448" height="448" rx="104" ry="104" fill="url(#bgGrad)" filter="url(#shadow)" />
+  <rect x="33" y="33" width="446" height="446" rx="103" ry="103" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="2" />
+
+  <!-- Trazo general: grosor uniforme 16px y extremos redondeados -->
+  <g fill="none" stroke="url(#cyanStroke)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    
+    <!-- 1. Silueta de la Carpeta (exterior) -->
+    <path d="M 195 375 H 145 A 22 22 0 0 1 123 353 V 165 A 22 22 0 0 1 145 143 H 195 L 225 170 H 325 A 22 22 0 0 1 347 192 V 208" />
+
+    <!-- 2. EL NÚMERO 4 COMPLETO -->
+    <!-- Diagonal y travesaño -->
+    <path d="M 235 210 L 165 310 H 280" />
+    <!-- Asta vertical explícita que cruza de arriba a abajo -->
+    <path d="M 245 195 L 245 375" />
+
+    <!-- 3. Base de Datos / Discos cilíndricos a la derecha -->
+    <!-- Disco 1: Tapa elíptica superior -->
+    <path d="M 275 210 C 275 194 365 194 365 210 C 365 226 275 226 275 210 Z" />
+    <!-- Disco 2 -->
+    <path d="M 275 262 C 275 278 365 278 365 262" />
+    <!-- Disco 3 -->
+    <path d="M 275 314 C 275 330 365 330 365 314" />
+    <!-- Disco 4: Base inferior -->
+    <path d="M 275 366 C 275 382 365 382 365 366" />
+    <!-- Columna vertical derecha -->
+    <path d="M 365 210 V 366" />
+
+  </g>
+</svg>

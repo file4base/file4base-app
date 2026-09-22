@@ -1,0 +1,29 @@
+<svg viewBox="0 0 512 512" width="512" height="512">
+  <!-- 1. Botón Squircle con fondo oscuro sólido y esquinas redondeadas -->
+  <rect x="36" y="36" width="440" height="440" rx="100" ry="100" fill="#131d2e" stroke="#22334d" stroke-width="4" />
+
+  <!-- 2. Isotipo File4Base (Cian nítido sin difuminados) -->
+  <g fill="none" stroke="#38bdf8" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    
+    <!-- Carpeta exterior -->
+    <path d="M 205 375 H 150 A 25 25 0 0 1 125 350 V 165 A 25 25 0 0 1 150 140 H 200 L 230 170 H 325 A 25 25 0 0 1 355 195 V 210" />
+
+    <!-- EL 4: Diagonal y barra horizontal -->
+    <path d="M 235 210 L 165 310 H 280" />
+    <!-- EL 4: Palo vertical que cruza de arriba a abajo -->
+    <path d="M 242 190 V 375" />
+
+    <!-- Base de datos / Discos a la derecha -->
+    <!-- Tapa elíptica superior -->
+    <path d="M 275 212 C 275 196 365 196 365 212 C 365 228 275 228 275 212 Z" />
+    <!-- Disco 2 -->
+    <path d="M 275 262 C 275 278 365 278 365 262" />
+    <!-- Disco 3 -->
+    <path d="M 275 312 C 275 328 365 328 365 312" />
+    <!-- Disco 4 base -->
+    <path d="M 275 362 C 275 378 365 378 365 362" />
+    <!-- Columna derecha -->
+    <path d="M 365 212 V 362" />
+
+  </g>
+</svg>

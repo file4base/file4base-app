@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # Primary Database Engine: PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: file4base-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: file4base_dev
+      POSTGRES_USER: file4base
+      POSTGRES_PASSWORD: dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - file4base-net
+
+  # Alternative Engine Profile: MariaDB (start with: docker compose --profile mariadb up)
+  mariadb:
+    image: mariadb:11-jammy
+    container_name: file4base-mariadb
+    restart: unless-stopped
+    profiles: ["mariadb"]
+    environment:
+      MARIADB_DATABASE: file4base_dev
+      MARIADB_USER: file4base
+      MARIADB_PASSWORD: dev_password
+      MARIADB_ROOT_PASSWORD: root_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - file4base-net
+
+  # Go Backend Service
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: file4base-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DB_ENGINE: "postgres"
+      DATABASE_URL: "postgres://file4base:dev_password@postgres:5432/file4base_dev?sslmode=disable"
+      SERVER_PORT: ":8080"
+    depends_on:
+      - postgres
+    networks:
+      - file4base-net
+
+volumes:
+  postgres_data:
+  mariadb_data:
+
+networks:
+  file4base-net:
+    driver: bridge
