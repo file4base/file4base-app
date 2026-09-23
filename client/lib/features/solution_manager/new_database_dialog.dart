@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/solution_models.dart';
@@ -7,11 +8,13 @@ class NewDatabaseDialogResult {
   final String fileName;
   final String databaseName;
   final SolutionPackage package;
+  final StorageDirectoryRef? directoryRef;
 
   const NewDatabaseDialogResult({
     required this.fileName,
     required this.databaseName,
     required this.package,
+    this.directoryRef,
   });
 }
 
@@ -41,6 +44,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   final _portController = TextEditingController(text: '5432');
   final _userController = TextEditingController(text: 'file4base');
   final _passwordController = TextEditingController(text: 'dev_password');
+  StorageDirectoryRef? _selectedDirectory;
   bool _autoCreateDb = true;
   bool _isCreating = false;
   String? _errorMessage;
@@ -62,6 +66,15 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
     if (sanitized.isNotEmpty) {
       _fileNameController.text = '$sanitized.f4b';
       _dbNameController.text = '${sanitized}_db';
+    }
+  }
+
+  Future<void> _handlePickDirectory() async {
+    final picked = await SolutionStorageService.pickDirectory();
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDirectory = picked;
+      });
     }
   }
 
@@ -89,7 +102,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
         await widget.apiClient.switchDatabase(dbName);
       }
 
-      // 2. Build connection configuration
+      // 2. Build connection configuration (credentials encoded when serialized)
       final dbConfig = DatabaseConnectionConfig(
         engine: 'postgres',
         host: host,
@@ -108,19 +121,32 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
         layouts: const [],
       );
 
-      final bytes = pkg.toMsgPack();
+      final f4bBytes = pkg.toMsgPack();
 
-      // 4. Save/download the MessagePack .f4b file
-      await SolutionStorageService.saveFile(
-        filename: fileName.endsWith('.f4b') ? fileName : '$fileName.f4b',
-        bytes: bytes,
+      // 4. Export initial active database data (.f4data)
+      Uint8List f4dataBytes;
+      try {
+        f4dataBytes = await widget.apiClient.exportDatabaseData();
+      } catch (_) {
+        f4dataBytes = Uint8List(0);
+      }
+
+      final baseName = fileName.replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
+
+      // 5. Save BOTH .f4b and .f4data to user's selected hard drive folder
+      await SolutionStorageService.saveDualSolutionFiles(
+        baseName: baseName,
+        f4bBytes: f4bBytes,
+        f4dataBytes: f4dataBytes,
+        directoryRef: _selectedDirectory,
       );
 
       if (mounted) {
         Navigator.of(context).pop(NewDatabaseDialogResult(
-          fileName: fileName,
+          fileName: '$baseName.f4b',
           databaseName: dbName,
           package: pkg,
+          directoryRef: _selectedDirectory,
         ));
       }
     } catch (e) {
@@ -183,7 +209,58 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                     ),
                   ),
 
-                // Section 1: Solution File
+                // Section 1: Destination Folder on Hard Drive
+                Text('SAVE LOCATION ON HARD DRIVE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.5)),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: _selectedDirectory != null ? const Color(0xFF1E88E5) : Colors.grey.shade700),
+                    borderRadius: BorderRadius.circular(6),
+                    color: _selectedDirectory != null ? const Color(0xFF1E88E5).withValues(alpha: 0.08) : Colors.black12,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _selectedDirectory != null ? Icons.folder : Icons.folder_open,
+                        color: _selectedDirectory != null ? const Color(0xFF1E88E5) : Colors.grey,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _selectedDirectory != null ? _selectedDirectory!.displayName : 'No destination folder selected',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: _selectedDirectory != null ? FontWeight.bold : FontWeight.normal,
+                                color: _selectedDirectory != null ? Colors.white : Colors.grey,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              _selectedDirectory != null
+                                  ? 'Saves both .f4b (config/layouts) & .f4data (records) in this folder'
+                                  : 'Click to select where on your hard drive to record your solution',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _handlePickDirectory,
+                        icon: const Icon(Icons.drive_file_move_outlined, size: 16),
+                        label: Text(_selectedDirectory == null ? 'Choose Folder...' : 'Change...'),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+                // Section 2: Solution File
                 Text('SOLUTION DEFINITION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.5)),
                 const SizedBox(height: 8),
                 TextFormField(
@@ -201,22 +278,24 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                 TextFormField(
                   controller: _fileNameController,
                   decoration: const InputDecoration(
-                    labelText: 'Save File Name (MessagePack .f4b)',
+                    labelText: 'Base File Name (.f4b & .f4data)',
                     hintText: 'e.g. invoices.f4b',
+                    helperText: 'Creates <name>.f4b (layouts & encoded credentials) and <name>.f4data (active database rows)',
                     border: OutlineInputBorder(),
                     isDense: true,
                     prefixIcon: Icon(Icons.file_present_outlined, size: 20),
                   ),
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) return 'Required';
-                    if (!v.endsWith('.f4b')) return 'File extension must be .f4b';
                     return null;
                   },
                 ),
 
                 const SizedBox(height: 20),
-                // Section 2: PostgreSQL Database
+                // Section 3: PostgreSQL Database
                 Text('POSTGRESQL DATABASE CONNECTION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.5)),
+                const SizedBox(height: 4),
+                const Text('Credentials will be encoded and stored securely inside the .f4b MessagePack file', style: TextStyle(fontSize: 11, color: Colors.grey)),
                 const SizedBox(height: 8),
                 TextFormField(
                   controller: _dbNameController,

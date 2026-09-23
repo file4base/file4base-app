@@ -4,6 +4,7 @@ import '../../core/api/api_client.dart';
 import '../../core/services/solution_storage.dart';
 
 enum SaveCopyType {
+  bothFiles, // .f4b + .f4data (Recommended)
   solutionOnly, // .f4b
   databaseData, // .f4data
 }
@@ -45,8 +46,9 @@ class SaveCopyDialog extends StatefulWidget {
 }
 
 class _SaveCopyDialogState extends State<SaveCopyDialog> {
-  SaveCopyType _selectedType = SaveCopyType.solutionOnly;
+  SaveCopyType _selectedType = SaveCopyType.bothFiles;
   late final TextEditingController _fileNameController;
+  StorageDirectoryRef? _selectedDirectory;
   bool _isSaving = false;
   String? _errorMessage;
 
@@ -54,7 +56,7 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
   void initState() {
     super.initState();
     _fileNameController = TextEditingController(
-      text: '${widget.activeSolutionName}_copy.f4b',
+      text: '${widget.activeSolutionName}_copy',
     );
   }
 
@@ -68,12 +70,24 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
     if (type == null) return;
     setState(() {
       _selectedType = type;
-      if (type == SaveCopyType.solutionOnly) {
-        _fileNameController.text = '${widget.activeSolutionName}_copy.f4b';
+      final base = widget.activeSolutionName;
+      if (type == SaveCopyType.bothFiles) {
+        _fileNameController.text = '${base}_copy';
+      } else if (type == SaveCopyType.solutionOnly) {
+        _fileNameController.text = '${base}_copy.f4b';
       } else {
         _fileNameController.text = '${widget.activeDatabaseName}_data.f4data';
       }
     });
+  }
+
+  Future<void> _handlePickDirectory() async {
+    final picked = await SolutionStorageService.pickDirectory();
+    if (picked != null && mounted) {
+      setState(() {
+        _selectedDirectory = picked;
+      });
+    }
   }
 
   Future<void> _handleSave() async {
@@ -83,25 +97,39 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
     });
 
     try {
-      final fileName = _fileNameController.text.trim();
-      Uint8List bytes;
+      final name = _fileNameController.text.trim();
 
-      if (_selectedType == SaveCopyType.solutionOnly) {
-        bytes = await widget.onExportSolution();
+      if (_selectedType == SaveCopyType.bothFiles) {
+        final f4bBytes = await widget.onExportSolution();
+        final f4dataBytes = await widget.apiClient.exportDatabaseData();
+
+        await SolutionStorageService.saveDualSolutionFiles(
+          baseName: name,
+          f4bBytes: f4bBytes,
+          f4dataBytes: f4dataBytes,
+          directoryRef: _selectedDirectory,
+        );
+      } else if (_selectedType == SaveCopyType.solutionOnly) {
+        final bytes = await widget.onExportSolution();
+        final filename = name.endsWith('.f4b') ? name : '$name.f4b';
+        await SolutionStorageService.saveFile(
+          filename: filename,
+          bytes: bytes,
+        );
       } else {
-        bytes = await widget.apiClient.exportDatabaseData();
+        final bytes = await widget.apiClient.exportDatabaseData();
+        final filename = name.endsWith('.f4data') ? name : '$name.f4data';
+        await SolutionStorageService.saveFile(
+          filename: filename,
+          bytes: bytes,
+        );
       }
-
-      await SolutionStorageService.saveFile(
-        filename: fileName,
-        bytes: bytes,
-      );
 
       if (mounted) {
         Navigator.of(context).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Saved copy as "$fileName" in MessagePack format.'),
+            content: Text('Successfully exported copy of "$name" in MessagePack format.'),
             backgroundColor: Colors.green.shade700,
           ),
         );
@@ -134,53 +162,191 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('Save a Copy As...', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Text('MessagePack Dual-File Export', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              Text('MessagePack Dual-File Export & Location', style: TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
         ],
       ),
       content: SizedBox(
-        width: 480,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (_errorMessage != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 12),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.red.shade900.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
+        width: 500,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (_errorMessage != null)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade900.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(_errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 13)),
                 ),
-                child: Text(_errorMessage!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+
+              // Destination Folder
+              Text('SAVE LOCATION ON HARD DRIVE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.5)),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  border: Border.all(color: _selectedDirectory != null ? const Color(0xFF1E88E5) : Colors.grey.shade700),
+                  borderRadius: BorderRadius.circular(6),
+                  color: _selectedDirectory != null ? const Color(0xFF1E88E5).withValues(alpha: 0.08) : Colors.black12,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      _selectedDirectory != null ? Icons.folder : Icons.folder_open,
+                      color: _selectedDirectory != null ? const Color(0xFF1E88E5) : Colors.grey,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _selectedDirectory != null ? _selectedDirectory!.displayName : 'No destination folder selected',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: _selectedDirectory != null ? FontWeight.bold : FontWeight.normal,
+                              color: _selectedDirectory != null ? Colors.white : Colors.grey,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            _selectedDirectory != null
+                                ? 'Files will be recorded directly into this folder'
+                                : 'Click to select destination directory on disk',
+                            style: const TextStyle(fontSize: 11, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      onPressed: _handlePickDirectory,
+                      icon: const Icon(Icons.drive_file_move_outlined, size: 16),
+                      label: Text(_selectedDirectory == null ? 'Choose Folder...' : 'Change...'),
+                    ),
+                  ],
+                ),
               ),
 
-            RadioListTile<SaveCopyType>(
-              value: SaveCopyType.solutionOnly,
-              groupValue: _selectedType,
-              onChanged: _onTypeChanged,
-              title: const Text('File4Base Solution (.f4b)', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Layouts, schemas, occurrences, UI definitions, and DB connection parameters in MessagePack.'),
-            ),
-            RadioListTile<SaveCopyType>(
-              value: SaveCopyType.databaseData,
-              groupValue: _selectedType,
-              onChanged: _onTypeChanged,
-              title: const Text('Database Data File (.f4data)', style: TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: const Text('Second file containing all records and table rows from PostgreSQL in MessagePack.'),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _fileNameController,
-              decoration: const InputDecoration(
-                labelText: 'Destination File Name',
-                border: OutlineInputBorder(),
-                isDense: true,
-                prefixIcon: Icon(Icons.save_as_outlined, size: 20),
+              const SizedBox(height: 16),
+              Text('EXPORT FORMAT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey.shade600, letterSpacing: 0.5)),
+              const SizedBox(height: 6),
+
+              InkWell(
+                onTap: () => _onTypeChanged(SaveCopyType.bothFiles),
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: _selectedType == SaveCopyType.bothFiles ? const Color(0xFF1E88E5) : Colors.grey.shade800),
+                    borderRadius: BorderRadius.circular(6),
+                    color: _selectedType == SaveCopyType.bothFiles ? const Color(0xFF1E88E5).withValues(alpha: 0.08) : Colors.transparent,
+                  ),
+                  child: Row(
+                    children: [
+                      Radio<SaveCopyType>(
+                        value: SaveCopyType.bothFiles,
+                        groupValue: _selectedType,
+                        onChanged: _onTypeChanged,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Both Files (.f4b + .f4data) - Recommended', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            Text('Exports both solution config (layouts, schemas, encoded credentials) and PostgreSQL database records.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () => _onTypeChanged(SaveCopyType.solutionOnly),
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: _selectedType == SaveCopyType.solutionOnly ? const Color(0xFF1E88E5) : Colors.grey.shade800),
+                    borderRadius: BorderRadius.circular(6),
+                    color: _selectedType == SaveCopyType.solutionOnly ? const Color(0xFF1E88E5).withValues(alpha: 0.08) : Colors.transparent,
+                  ),
+                  child: Row(
+                    children: [
+                      Radio<SaveCopyType>(
+                        value: SaveCopyType.solutionOnly,
+                        groupValue: _selectedType,
+                        onChanged: _onTypeChanged,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('File4Base Solution (.f4b) Only', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            Text('Layouts, schemas, occurrences, and encoded DB connection parameters.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () => _onTypeChanged(SaveCopyType.databaseData),
+                borderRadius: BorderRadius.circular(6),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: _selectedType == SaveCopyType.databaseData ? const Color(0xFF1E88E5) : Colors.grey.shade800),
+                    borderRadius: BorderRadius.circular(6),
+                    color: _selectedType == SaveCopyType.databaseData ? const Color(0xFF1E88E5).withValues(alpha: 0.08) : Colors.transparent,
+                  ),
+                  child: Row(
+                    children: [
+                      Radio<SaveCopyType>(
+                        value: SaveCopyType.databaseData,
+                        groupValue: _selectedType,
+                        onChanged: _onTypeChanged,
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Database Data File (.f4data) Only', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            Text('Physical records and table rows from active database.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _fileNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Base File Name',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  prefixIcon: Icon(Icons.save_as_outlined, size: 20),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [

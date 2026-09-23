@@ -45,4 +45,30 @@ void main() {
     expect(restored.layouts.length, 1);
     expect(restored.layouts.first['name'], 'Product Detail');
   });
+
+  test('DatabaseConnectionConfig encodes credentials and avoids plaintext', () {
+    const rawUser = 'my_admin_user';
+    const rawPass = 'super_secret_p@ssw0rd!#';
+
+    const config = DatabaseConnectionConfig(
+      database: 'secure_db',
+      host: 'db.example.com',
+      port: 5432,
+      user: rawUser,
+      password: rawPass,
+    );
+
+    // Serialization map has encoded credentials
+    final map = config.toMap(encodeCredentials: true);
+    expect(map['user'], isNot(rawUser));
+    expect(map['password'], isNot(rawPass));
+    expect(map['user'].toString().startsWith('enc:'), isTrue);
+    expect(map['password'].toString().startsWith('enc:'), isTrue);
+
+    // Deserialization restores plain text
+    final decoded = DatabaseConnectionConfig.fromMap(map);
+    expect(decoded.user, rawUser);
+    expect(decoded.password, rawPass);
+    expect(decoded.database, 'secure_db');
+  });
 }

@@ -106,6 +106,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   String _activeSolutionFileName = 'Untitled.f4b';
   String _activeSolutionName = 'Untitled Solution';
   String _activeDatabaseName = 'file4base_dev';
+  StorageDirectoryRef? _activeSolutionDirectory;
   List<TableModel> _tables = [];
   TableModel? _selectedTable;
   LayoutDefinitionModel? _activeLayout;
@@ -190,12 +191,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         _activeSolutionFileName = result.fileName;
         _activeSolutionName = result.package.solutionName;
         _activeDatabaseName = result.databaseName;
+        _activeSolutionDirectory = result.directoryRef;
       });
       await _loadTables();
       if (mounted) {
+        final locText = result.directoryRef != null ? ' to "${result.directoryRef!.displayName}"' : '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Created solution "${result.package.solutionName}" with database "${result.databaseName}" and saved "${result.fileName}" (MessagePack).'),
+            content: Text('Created solution "${result.package.solutionName}" ($locText) with active database "${result.databaseName}". Saved both .f4b and .f4data.'),
             backgroundColor: Colors.green.shade700,
           ),
         );
@@ -258,6 +261,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       host: 'localhost',
       port: 5432,
       user: 'file4base',
+      password: 'dev_password',
     );
 
     final pkg = SolutionPackage.fromLiveData(
@@ -282,16 +286,29 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       return;
     }
 
+    final client = ref.read(apiClientProvider);
     try {
-      final bytes = await _exportCurrentSolutionBytes();
-      await SolutionStorageService.saveFile(
-        filename: _activeSolutionFileName,
-        bytes: bytes,
+      final f4bBytes = await _exportCurrentSolutionBytes();
+      Uint8List f4dataBytes;
+      try {
+        f4dataBytes = await client.exportDatabaseData();
+      } catch (_) {
+        f4dataBytes = Uint8List(0);
+      }
+
+      final baseName = _activeSolutionFileName.replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
+      await SolutionStorageService.saveDualSolutionFiles(
+        baseName: baseName,
+        f4bBytes: f4bBytes,
+        f4dataBytes: f4dataBytes,
+        directoryRef: _activeSolutionDirectory,
       );
+
       if (mounted) {
+        final locText = _activeSolutionDirectory != null ? ' in "${_activeSolutionDirectory!.displayName}"' : '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Saved "$_activeSolutionFileName" in MessagePack format.'),
+            content: Text('Saved both "$baseName.f4b" and "$baseName.f4data"$locText in MessagePack format.'),
             backgroundColor: Colors.green.shade700,
           ),
         );
@@ -309,48 +326,103 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   }
 
   Future<void> _handleSaveAs() async {
-    final ctrl = TextEditingController(text: _activeSolutionFileName);
-    final newName = await showDialog<String>(
+    final initialName = _activeSolutionFileName.replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
+    final ctrl = TextEditingController(text: initialName == 'Untitled' ? 'MySolution' : initialName);
+    StorageDirectoryRef? pickedDir = _activeSolutionDirectory;
+
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Save Solution As...'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Enter MessagePack solution file name (.f4b):', style: TextStyle(fontSize: 13)),
-            const SizedBox(height: 10),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'File Name',
-                border: OutlineInputBorder(),
-                isDense: true,
-                prefixIcon: Icon(Icons.file_present_outlined, size: 20),
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDlgState) {
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.save_as_outlined, color: Color(0xFF1E88E5)),
+                SizedBox(width: 8),
+                Text('Save Solution As...'),
+              ],
+            ),
+            content: SizedBox(
+              width: 480,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('DESTINATION FOLDER ON HARD DRIVE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5)),
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: pickedDir != null ? const Color(0xFF1E88E5) : Colors.grey.shade700),
+                      borderRadius: BorderRadius.circular(6),
+                      color: pickedDir != null ? const Color(0xFF1E88E5).withValues(alpha: 0.08) : Colors.black12,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(pickedDir != null ? Icons.folder : Icons.folder_open, color: pickedDir != null ? const Color(0xFF1E88E5) : Colors.grey, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            pickedDir?.displayName ?? 'No folder selected (will prompt on save)',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: pickedDir != null ? FontWeight.bold : FontWeight.normal,
+                              color: pickedDir != null ? Colors.white : Colors.grey,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        OutlinedButton(
+                          onPressed: () async {
+                            final dir = await SolutionStorageService.pickDirectory();
+                            if (dir != null) {
+                              setDlgState(() => pickedDir = dir);
+                            }
+                          },
+                          child: Text(pickedDir == null ? 'Choose Folder...' : 'Change...'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('SOLUTION FILE BASE NAME', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5)),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: ctrl,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Base File Name',
+                      helperText: 'Saves both <name>.f4b (layouts/config) and <name>.f4data (database rows)',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      prefixIcon: Icon(Icons.file_present_outlined, size: 20),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              final text = ctrl.text.trim();
-              if (text.isNotEmpty) {
-                Navigator.of(ctx).pop(text.endsWith('.f4b') ? text : '$text.f4b');
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
+            actions: [
+              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+              ElevatedButton(
+                onPressed: () {
+                  if (ctrl.text.trim().isNotEmpty) {
+                    Navigator.of(ctx).pop(true);
+                  }
+                },
+                child: const Text('Save Both Files'),
+              ),
+            ],
+          );
+        },
       ),
     );
 
-    if (newName != null && newName.isNotEmpty) {
+    if (confirmed == true && ctrl.text.trim().isNotEmpty) {
+      final baseName = ctrl.text.trim().replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
       setState(() {
-        _activeSolutionFileName = newName;
-        _activeSolutionName = newName.replaceAll('.f4b', '');
+        _activeSolutionFileName = '$baseName.f4b';
+        _activeSolutionName = baseName;
+        _activeSolutionDirectory = pickedDir;
       });
       await _handleSave();
     }

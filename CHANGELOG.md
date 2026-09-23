@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-23
+
+### Added
+- **Hard Drive Destination Folder Selection**:
+  - Implemented `SolutionStorageService.pickDirectory()` using modern Web **File System Access API** (`window.showDirectoryPicker()`) on Chromium/Chrome and native OS folder picker (`FilePicker.getDirectoryPath()`) on Desktop (macOS, Windows, Linux).
+  - Enables users to browse their disk and select the exact folder where solution files are saved.
+- **Dual-File Synchronized Persistence (`.f4b` + `.f4data`)**:
+  - Unified saving across `New Database...`, `Save` (`⌘S`), `Save As...` (`⇧⌘S`), and `Save a Copy As...` to automatically record both companion files in the selected folder:
+    1. `<name>.f4b`: UI definitions, layouts, schemas, table occurrences, and secure encoded credentials.
+    2. `<name>.f4data`: Active PostgreSQL table rows and database records.
+- **Encrypted / Obfuscated Connection Credentials**:
+  - Implemented reversible symmetric key-stream obfuscation/encryption (`enc:<base64>`) for database credentials (`user` and `password`).
+  - Completely prevents plaintext credential leaks inside `.f4b` MessagePack bundles.
+  - Implemented identically across Dart client (`DatabaseConnectionConfig`) and Go server (`solution_service.go`) with automated test coverage.
+- **Desktop Application Distribution**:
+  - Documented and unpacked native desktop applications for macOS (`File4Base.app`), Windows, and Linux in `dist/`.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added

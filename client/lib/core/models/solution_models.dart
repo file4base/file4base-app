@@ -1,9 +1,13 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import '../api/api_client.dart';
 
-/// DatabaseConnectionConfig represents DB connection settings stored inside the MessagePack .f4b file
+/// DatabaseConnectionConfig represents DB connection settings stored inside the MessagePack .f4b file.
+/// Credentials (user, password) are encoded and never stored in cleartext.
 class DatabaseConnectionConfig {
+  static const String _secretKey = 'file4base_secure_credentials_key_v1';
+
   final String engine;
   final String host;
   final int port;
@@ -22,26 +26,58 @@ class DatabaseConnectionConfig {
     this.sslMode = 'disable',
   });
 
-  Map<String, dynamic> toMap() {
+  /// Encodes a plain credential string into an obfuscated token with prefix 'enc:'
+  static String encodeCredential(String plain) {
+    if (plain.isEmpty) return '';
+    final keyBytes = utf8.encode(_secretKey);
+    final dataBytes = utf8.encode(plain);
+    final out = Uint8List(dataBytes.length);
+    for (int i = 0; i < dataBytes.length; i++) {
+      out[i] = dataBytes[i] ^ keyBytes[i % keyBytes.length];
+    }
+    return 'enc:${base64.encode(out)}';
+  }
+
+  /// Decodes an obfuscated credential token back to plain text
+  static String decodeCredential(String encoded) {
+    if (encoded.isEmpty) return '';
+    if (!encoded.startsWith('enc:')) return encoded;
+    try {
+      final raw = base64.decode(encoded.substring(4));
+      final keyBytes = utf8.encode(_secretKey);
+      final out = Uint8List(raw.length);
+      for (int i = 0; i < raw.length; i++) {
+        out[i] = raw[i] ^ keyBytes[i % keyBytes.length];
+      }
+      return utf8.decode(out);
+    } catch (_) {
+      return encoded;
+    }
+  }
+
+  Map<String, dynamic> toMap({bool encodeCredentials = true}) {
     return {
       'engine': engine,
       'host': host,
       'port': port,
       'database': database,
-      'user': user,
-      'password': password,
+      'user': encodeCredentials ? encodeCredential(user) : user,
+      'password': encodeCredentials ? encodeCredential(password) : password,
       'ssl_mode': sslMode,
     };
   }
 
   factory DatabaseConnectionConfig.fromMap(Map<dynamic, dynamic> map) {
+    final rawUser = map['user']?.toString() ?? 'file4base';
+    final rawPassword = map['password']?.toString() ?? 'dev_password';
+
     return DatabaseConnectionConfig(
       engine: map['engine']?.toString() ?? 'postgres',
       host: map['host']?.toString() ?? 'localhost',
       port: (map['port'] is num) ? (map['port'] as num).toInt() : 5432,
       database: map['database']?.toString() ?? 'file4base_dev',
-      user: map['user']?.toString() ?? 'file4base',
-      password: map['password']?.toString() ?? 'dev_password',
+      user: decodeCredential(rawUser),
+      password: decodeCredential(rawPassword),
       sslMode: map['ssl_mode']?.toString() ?? 'disable',
     );
   }

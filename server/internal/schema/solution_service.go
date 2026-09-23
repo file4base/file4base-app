@@ -2,13 +2,51 @@ package schema
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/google/uuid"
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+const credentialSecretKey = "file4base_secure_credentials_key_v1"
+
+// EncodeCredential encodes sensitive credentials using reversible key-stream obfuscation
+func EncodeCredential(plain string) string {
+	if plain == "" {
+		return ""
+	}
+	key := []byte(credentialSecretKey)
+	data := []byte(plain)
+	out := make([]byte, len(data))
+	for i := range data {
+		out[i] = data[i] ^ key[i%len(key)]
+	}
+	return "enc:" + base64.StdEncoding.EncodeToString(out)
+}
+
+// DecodeCredential decodes sensitive credentials back to plain text
+func DecodeCredential(encoded string) string {
+	if encoded == "" {
+		return ""
+	}
+	if !strings.HasPrefix(encoded, "enc:") {
+		return encoded
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(encoded, "enc:"))
+	if err != nil {
+		return encoded
+	}
+	key := []byte(credentialSecretKey)
+	out := make([]byte, len(raw))
+	for i := range raw {
+		out[i] = raw[i] ^ key[i%len(key)]
+	}
+	return string(out)
+}
 
 // DatabaseConnectionConfig represents DB connection settings stored inside the MessagePack .f4b file
 type DatabaseConnectionConfig struct {
@@ -71,11 +109,15 @@ func (s *Service) ExportSolution(ctx context.Context, solutionName string, dbCon
 	}
 
 	now := time.Now().UTC()
+	encodedDBConfig := dbConfig
+	encodedDBConfig.User = EncodeCredential(dbConfig.User)
+	encodedDBConfig.Password = EncodeCredential(dbConfig.Password)
+
 	bundle := SolutionBundle{
 		Format:             "file4base_solution",
 		Version:            "1.0",
 		SolutionName:       solutionName,
-		DatabaseConnection: dbConfig,
+		DatabaseConnection: encodedDBConfig,
 		Tables:             tables,
 		TableOccurrences:   occurrences,
 		Relationships:      make([]RelationshipMetadata, 0),
@@ -101,6 +143,10 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*SolutionBun
 	if err := msgpack.Unmarshal(data, &bundle); err != nil {
 		return nil, fmt.Errorf("invalid MessagePack solution bundle: %w", err)
 	}
+
+	// Decode credentials
+	bundle.DatabaseConnection.User = DecodeCredential(bundle.DatabaseConnection.User)
+	bundle.DatabaseConnection.Password = DecodeCredential(bundle.DatabaseConnection.Password)
 
 	// 1. Ensure system tables exist
 	if err := s.EnsureSystemTables(ctx); err != nil {

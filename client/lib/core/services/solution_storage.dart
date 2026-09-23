@@ -10,7 +10,68 @@ class PickedSolutionFile {
   const PickedSolutionFile({required this.name, required this.bytes});
 }
 
+class StorageDirectoryRef {
+  final String displayName;
+  final dynamic handleOrPath;
+
+  const StorageDirectoryRef({
+    required this.displayName,
+    required this.handleOrPath,
+  });
+}
+
 class SolutionStorageService {
+  /// Prompts user to pick a destination directory on their hard drive.
+  /// On Desktop, opens native folder picker (Finder / Explorer).
+  /// On Chrome/Web, opens File System Access folder picker.
+  static Future<StorageDirectoryRef?> pickDirectory() async {
+    final res = await platformPickDirectory();
+    if (res == null) return null;
+    return StorageDirectoryRef(
+      displayName: res.displayName,
+      handleOrPath: res.handleOrPath,
+    );
+  }
+
+  /// Saves BOTH .f4b (solution definition & encoded credentials) and
+  /// .f4data (database records) into the given directory or prompts the user.
+  static Future<bool> saveDualSolutionFiles({
+    required String baseName,
+    required Uint8List f4bBytes,
+    required Uint8List f4dataBytes,
+    StorageDirectoryRef? directoryRef,
+  }) async {
+    final sanitized = baseName.replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
+    final f4bName = '$sanitized.f4b';
+    final f4dataName = '$sanitized.f4data';
+
+    final files = {
+      f4bName: f4bBytes,
+      f4dataName: f4dataBytes,
+    };
+
+    if (directoryRef != null) {
+      return await platformSaveFilesToDirectory(
+        directoryHandleOrPath: directoryRef.handleOrPath,
+        files: files,
+      );
+    }
+
+    // Prompt user to select destination folder
+    final pickedDir = await pickDirectory();
+    if (pickedDir != null) {
+      return await platformSaveFilesToDirectory(
+        directoryHandleOrPath: pickedDir.handleOrPath,
+        files: files,
+      );
+    }
+
+    // Fallback if directory picking cancelled or not supported: individual saves
+    await saveFile(filename: f4bName, bytes: f4bBytes);
+    await saveFile(filename: f4dataName, bytes: f4dataBytes);
+    return true;
+  }
+
   /// Saves a file with the given filename and bytes.
   /// On Web, triggers a browser file download.
   /// On Desktop, prompts save dialog and saves the bytes.
