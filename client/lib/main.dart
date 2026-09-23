@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -20,7 +21,15 @@ enum OperationalMode {
 
 class ServerUrlNotifier extends Notifier<String> {
   @override
-  String build() => 'http://localhost:8080';
+  String build() {
+    if (kIsWeb) {
+      final origin = Uri.base.origin;
+      if (origin.isNotEmpty && !origin.startsWith('null') && !origin.startsWith('file')) {
+        return origin;
+      }
+    }
+    return 'http://localhost:8080';
+  }
 
   void setUrl(String url) => state = url;
 }
