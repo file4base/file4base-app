@@ -11,15 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.1] - 2026-09-23
 
+### Added
+- **Unified Open Solution / Database Dialog (`OpenSolutionDialog`)**:
+  - Implemented comprehensive `File -> Open...` (`⌘O`) modal supporting dual opening pathways:
+    1. **Server Databases (API)**: Queries `GET /api/v1/databases`, lists all databases created on the server API, displays the active database badge, and prompts for username and password to authenticate.
+    2. **Local Solution File (.f4b)**: Allows selecting a `.f4b` file from the computer, inspects package metadata (solution name, target database), and prompts for database username and password before restoring and opening.
+
 ### Fixed
-- **Initial Owner Account Credentials Match Database Name**:
-  - Replaced hardcoded `owner`/`owner` credentials with dynamic account provisioning matching the database name and its password:
-    - Default initial database `file4base_dev` provisions username `file4base_dev` and password `file4base_dev` with role `owner`.
-    - Any newly created database (e.g. `mi_empresa_db`) automatically provisions its initial owner account with username `mi_empresa_db` and password matching the database password.
-  - Updated `DatabaseLoginDialog` to automatically populate and synchronize username and password fields whenever the selected database changes.
-  - Updated `NewDatabaseDialog` to default initial owner user and password to match the database name in real time, and pass them during database creation.
-  - Automatically authenticates into the newly created database session as its owner upon creation in `_handleNewDatabase`.
-  - Extended `/api/v1/databases` endpoint and `ApiClient.createDatabase` to accept an optional initial `user` and `password`.
+- **Decoupled Database Name vs User Credentials**:
+  - Resolved conflation between PostgreSQL physical database names and application user accounts:
+    - Database Name (`file4base_dev`, `my_solution_db`, etc.) defines the database catalog.
+    - Username (`admin`, `file4base`, or custom) defines the user identity in `sys_users`.
+  - In `NewDatabaseDialog`, database name changes no longer overwrite username or password fields.
+  - In `DatabaseLoginDialog`, selecting a database from the dropdown preserves user credentials.
+  - In backend Go server, default administrative accounts (`admin`, `file4base`, `file4base_dev`) are provisioned with role `owner` upon catalog initialization.
 
 ## [0.4.0] - 2026-09-23
 

@@ -19,6 +19,7 @@ import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
 import 'features/security/manage_security_dialog.dart';
 import 'features/solution_manager/new_database_dialog.dart';
+import 'features/solution_manager/open_solution_dialog.dart';
 import 'features/solution_manager/save_copy_dialog.dart';
 
 enum OperationalMode {
@@ -336,41 +337,34 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
-  Future<void> _handleOpenSolution() async {
+  Future<void> _handleOpenSolution({int initialTab = 0}) async {
     final client = ref.read(apiClientProvider);
-    final file = await SolutionStorageService.pickFile(allowedExtensions: ['f4b']);
-    if (file == null) return;
+    final result = await OpenSolutionDialog.show(context, client, initialTab: initialTab);
+    if (result == null || !mounted) return;
 
-    try {
-      final pkg = SolutionPackage.fromMsgPack(file.bytes);
-      await client.importSolution(file.bytes);
-      await client.switchDatabase(pkg.databaseConnection.database);
+    setState(() {
+      _activeDatabaseName = result.databaseName;
+      _currentUser = result.user;
+      if (result.fileName != null) {
+        _activeSolutionFileName = result.fileName!;
+      }
+      if (result.solutionName != null) {
+        _activeSolutionName = result.solutionName!;
+      }
+      _serverStatus = 'Online (PostgreSQL - ${result.user.username})';
+    });
 
-      if (mounted) {
-        setState(() {
-          _activeSolutionFileName = file.name;
-          _activeSolutionName = pkg.solutionName;
-          _activeDatabaseName = pkg.databaseConnection.database;
-        });
-        await _loadTables();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Opened solution "${pkg.solutionName}" from "${file.name}" (MessagePack).'),
-              backgroundColor: Colors.green.shade700,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to open solution: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+    await _loadUserPermissions();
+    await _loadTables();
+
+    if (mounted) {
+      final originDesc = result.type == OpenSolutionType.serverDatabase ? 'server database' : 'local file "${result.fileName}"';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Opened $originDesc: "${result.databaseName}" as user "${result.user.username}".'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
     }
   }
 

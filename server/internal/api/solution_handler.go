@@ -90,12 +90,12 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Initialize system catalog on new DB with owner account matching database name and password
-	ownerUser := dbName
+	// Initialize system catalog on new DB with administrative owner account
+	ownerUser := "admin"
 	if req.User != "" {
 		ownerUser = strings.ToLower(strings.TrimSpace(req.User))
 	}
-	ownerPass := dbName
+	ownerPass := "admin"
 	if req.Password != "" {
 		ownerPass = req.Password
 	}

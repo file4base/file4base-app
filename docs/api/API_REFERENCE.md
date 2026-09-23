@@ -329,8 +329,8 @@ Authenticates a user with username and password, optionally switching active dat
 #### Request Body
 ```json
 {
-  "username": "file4base_dev",
-  "password": "file4base_dev",
+  "username": "admin",
+  "password": "admin",
   "database": "file4base_dev"
 }
 ```
@@ -341,7 +341,7 @@ Authenticates a user with username and password, optionally switching active dat
   "status": "authenticated",
   "user": {
     "id": "u-0001",
-    "username": "file4base_dev",
+    "username": "admin",
     "role": "owner"
   },
   "database": "file4base_dev"

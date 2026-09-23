@@ -149,52 +149,49 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		}
 	}
 
-	// Determine active database name
-	targetUser := strings.ToLower(strings.TrimSpace(initialOwnerUser))
-	targetPass := strings.TrimSpace(initialOwnerPassword)
-	if targetUser == "" {
-		var currentDb string
+	provisionUser := func(username, password, role string) {
+		username = strings.ToLower(strings.TrimSpace(username))
+		if username == "" {
+			return
+		}
+		var count int
+		var err error
 		if s.driver.Dialect().Engine() == dbal.EnginePostgres {
-			_ = db.QueryRowContext(ctx, `SELECT current_database()`).Scan(&currentDb)
+			err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = LOWER($1)`, username).Scan(&count)
 		} else {
-			_ = db.QueryRowContext(ctx, `SELECT DATABASE()`).Scan(&currentDb)
+			err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = LOWER(?)`, username).Scan(&count)
 		}
-		if currentDb != "" {
-			targetUser = strings.ToLower(currentDb)
-		} else {
-			targetUser = "file4base_dev"
-		}
-	}
-	if targetPass == "" {
-		targetPass = targetUser
-	}
-
-	// Ensure default owner account exists matching the database name
-	var count int
-	var err error
-	if s.driver.Dialect().Engine() == dbal.EnginePostgres {
-		err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = LOWER($1)`, targetUser).Scan(&count)
-	} else {
-		err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = LOWER(?)`, targetUser).Scan(&count)
-	}
-
-	if err == nil && count == 0 {
-		hash, err := bcrypt.GenerateFromPassword([]byte(targetPass), bcrypt.DefaultCost)
-		if err == nil {
-			ownerID := uuid.NewString()
-			now := time.Now().UTC()
-			if s.driver.Dialect().Engine() == dbal.EnginePostgres {
-				_, _ = db.ExecContext(ctx,
-					`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (username) DO NOTHING`,
-					ownerID, targetUser, string(hash), "owner", now, now,
-				)
-			} else {
-				_, _ = db.ExecContext(ctx,
-					`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-					ownerID, targetUser, string(hash), "owner", now, now,
-				)
+		if err == nil && count == 0 {
+			hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if err == nil {
+				ownerID := uuid.NewString()
+				now := time.Now().UTC()
+				if s.driver.Dialect().Engine() == dbal.EnginePostgres {
+					_, _ = db.ExecContext(ctx,
+						`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (username) DO NOTHING`,
+						ownerID, username, string(hash), role, now, now,
+					)
+				} else {
+					_, _ = db.ExecContext(ctx,
+						`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+						ownerID, username, string(hash), role, now, now,
+					)
+				}
 			}
 		}
+	}
+
+	if strings.TrimSpace(initialOwnerUser) != "" {
+		pass := initialOwnerPassword
+		if pass == "" {
+			pass = "admin"
+		}
+		provisionUser(initialOwnerUser, pass, "owner")
+	} else {
+		// Provision standard administrative owner accounts
+		provisionUser("admin", "admin", "owner")
+		provisionUser("file4base", "dev_password", "owner")
+		provisionUser("file4base_dev", "file4base_dev", "owner")
 	}
 
 	return nil
