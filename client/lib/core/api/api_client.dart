@@ -119,6 +119,97 @@ class LayoutModel {
   }
 }
 
+class UserLayoutPermissionModel {
+  final String id;
+  final String userId;
+  final String layoutId;
+  final String layoutName;
+  final String accessLevel; // 'read_write', 'read_only', 'none'
+
+  const UserLayoutPermissionModel({
+    required this.id,
+    required this.userId,
+    required this.layoutId,
+    this.layoutName = '',
+    this.accessLevel = 'read_write',
+  });
+
+  factory UserLayoutPermissionModel.fromJson(Map<String, dynamic> json) {
+    return UserLayoutPermissionModel(
+      id: json['id'] as String? ?? '',
+      userId: json['user_id'] as String? ?? '',
+      layoutId: json['layout_id'] as String? ?? '',
+      layoutName: json['layout_name'] as String? ?? '',
+      accessLevel: json['access_level'] as String? ?? 'read_write',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'user_id': userId,
+        'layout_id': layoutId,
+        'access_level': accessLevel,
+      };
+}
+
+class UserModel {
+  final String id;
+  final String username;
+  final String role; // 'owner', 'admin', 'user'
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final List<UserLayoutPermissionModel> permissions;
+
+  const UserModel({
+    required this.id,
+    required this.username,
+    required this.role,
+    this.createdAt,
+    this.updatedAt,
+    this.permissions = const [],
+  });
+
+  bool get isOwner => role == 'owner';
+  bool get isAdmin => role == 'admin' || role == 'owner';
+
+  factory UserModel.fromJson(Map<String, dynamic> json) {
+    var rawPerms = json['permissions'];
+    List<UserLayoutPermissionModel> perms = [];
+    if (rawPerms is List) {
+      perms = rawPerms.map((p) => UserLayoutPermissionModel.fromJson(p as Map<String, dynamic>)).toList();
+    }
+
+    return UserModel(
+      id: json['id'] as String? ?? '',
+      username: json['username'] as String? ?? '',
+      role: json['role'] as String? ?? 'user',
+      createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
+      updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
+      permissions: perms,
+    );
+  }
+}
+
+class AuthResult {
+  final String status;
+  final String database;
+  final UserModel user;
+
+  const AuthResult({
+    required this.status,
+    required this.database,
+    required this.user,
+  });
+
+  factory AuthResult.fromJson(Map<String, dynamic> json) {
+    return AuthResult(
+      status: json['status'] as String? ?? 'ok',
+      database: json['database'] as String? ?? '',
+      user: UserModel.fromJson(json['user'] as Map<String, dynamic>),
+    );
+  }
+}
+
 class ApiClient {
   final String baseUrl;
   final http.Client _httpClient;
@@ -435,6 +526,114 @@ class ApiClient {
       return jsonDecode(response.body) as Map<String, dynamic>;
     } else {
       throw Exception('Failed to import database data: ${response.body}');
+    }
+  }
+
+  // ─── Security & Authentication ─────────────────────────────────────────────
+
+  Future<AuthResult> login({
+    required String username,
+    required String password,
+    String? database,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/auth/login'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': username,
+        'password': password,
+        'database': database ?? '',
+      }),
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return AuthResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    } else {
+      throw Exception('Authentication failed: ${response.body}');
+    }
+  }
+
+  Future<List<UserModel>> listUsers() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/security/users'),
+      headers: {'Accept': 'application/json'},
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final list = jsonDecode(response.body) as List<dynamic>;
+      return list.map((item) => UserModel.fromJson(item as Map<String, dynamic>)).toList();
+    } else {
+      throw Exception('Failed to list users: ${response.body}');
+    }
+  }
+
+  Future<UserModel> createUser({
+    required String username,
+    required String password,
+    required String role,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/security/users'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'username': username,
+        'password': password,
+        'role': role,
+      }),
+    );
+    if (response.statusCode == 201) {
+      return UserModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    } else {
+      throw Exception('Failed to create user: ${response.body}');
+    }
+  }
+
+  Future<void> updateUser(
+    String id, {
+    String? password,
+    required String role,
+  }) async {
+    final Map<String, dynamic> body = {'role': role};
+    if (password != null && password.isNotEmpty) {
+      body['password'] = password;
+    }
+
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/security/users/$id'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to update user: ${response.body}');
+    }
+  }
+
+  Future<void> deleteUser(String id) async {
+    final response = await _httpClient.delete(Uri.parse('$baseUrl/api/v1/security/users/$id'));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to delete user: ${response.body}');
+    }
+  }
+
+  Future<List<UserLayoutPermissionModel>> getUserPermissions(String userId) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions'),
+      headers: {'Accept': 'application/json'},
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      final list = jsonDecode(response.body) as List<dynamic>;
+      return list.map((item) => UserLayoutPermissionModel.fromJson(item as Map<String, dynamic>)).toList();
+    } else {
+      throw Exception('Failed to fetch permissions: ${response.body}');
+    }
+  }
+
+  Future<void> setUserPermissions(String userId, List<Map<String, String>> permissions) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'permissions': permissions}),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('Failed to set permissions: ${response.body}');
     }
   }
 

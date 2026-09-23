@@ -22,7 +22,7 @@ import (
 
 )
 
-const AppVersion = "0.3.1"
+const AppVersion = "0.4.0"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
@@ -111,6 +111,9 @@ func main() {
 
 	solutionHandler := api.NewSolutionHandler(dbMgr, schemaSvc)
 	solutionHandler.RegisterRoutes(r)
+
+	securityHandler := api.NewSecurityHandler(dbMgr, schemaSvc)
+	securityHandler.RegisterRoutes(r)
 
 	// Health check endpoint
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

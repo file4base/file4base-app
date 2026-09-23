@@ -29,6 +29,15 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		r.Put("/layouts/{id}", h.UpdateLayout)
 		r.Delete("/layouts/{id}", h.DeleteLayout)
 	})
+
+	// Also support top-level /api/v1/layouts
+	r.Route("/api/v1/layouts", func(r chi.Router) {
+		r.Get("/", h.ListLayouts)
+		r.Post("/", h.CreateLayout)
+		r.Get("/{id}", h.GetLayout)
+		r.Put("/{id}", h.UpdateLayout)
+		r.Delete("/{id}", h.DeleteLayout)
+	})
 }
 
 func (h *SchemaHandler) ListTables(w http.ResponseWriter, r *http.Request) {

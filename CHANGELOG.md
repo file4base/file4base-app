@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-23
+
+### Added
+- **Centralized Layout Persistence in Intermediate Server**:
+  - Centralized layout definitions directly in PostgreSQL `sys_layouts` table via backend Go service and REST API (`/api/v1/layouts`).
+  - Enables multiple connected web client instances (`file4base-web`) to share, synchronize, and edit layouts collaboratively without local desynchronization.
+- **Default Administrative `owner` User**:
+  - Auto-provisioned default administrative account `owner` (password `owner`, role `owner`) upon database catalog initialization in `EnsureSystemTables`.
+  - Passwords securely hashed with `bcrypt` (DefaultCost).
+- **Manage -> Security (`Manage -> Security...`)**:
+  - Full administrative dialog under `File -> Manage -> Security...` allowing owners and admins to manage user accounts and assign roles (`owner`, `admin`, `user`).
+  - Granular per-layout permission matrix (`read_write`, `read_only`, `none`) stored in `sys_user_permissions`.
+  - Automatic restriction of layout designer mode (`OperationalMode.layout`) for users with `read_only` or `none` layout access.
+- **Startup Database Selection & Authentication Flow**:
+  - Initial cold start dialog (`DatabaseLoginDialog`) that queries `/api/v1/databases`, allows selecting or creating PostgreSQL databases, and authenticates the user before entering the workspace.
+  - Added user account and role chip to bottom status bar with one-click database/user switching.
+  - Added `File -> Switch Database / Login...` shortcut in canonical menu bar.
+
 ## [0.3.1] - 2026-09-23
 
 ### Added

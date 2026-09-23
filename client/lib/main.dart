@@ -5,9 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
 import 'core/models/solution_models.dart';
 import 'core/services/solution_storage.dart';
+import 'core/system/environment_checker.dart';
 import 'core/widgets/file4base_menu_bar.dart';
 import 'core/widgets/file4base_status_sidebar.dart' show File4BaseStatusSidebar, LayoutTool;
 import 'features/about/about_dialog.dart';
+import 'features/auth/database_login_dialog.dart';
 import 'features/connection/server_connection_dialog.dart';
 import 'features/data_browser/data_browser_widget.dart';
 import 'features/layout_engine/layout_designer_widget.dart';
@@ -15,6 +17,7 @@ import 'features/layout_engine/layout_preview_widget.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
+import 'features/security/manage_security_dialog.dart';
 import 'features/solution_manager/new_database_dialog.dart';
 import 'features/solution_manager/save_copy_dialog.dart';
 
@@ -118,15 +121,65 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   int _totalRecords = 0;
   bool _isFindOmit = false;
   LayoutTool _activeLayoutTool = LayoutTool.pointer;
+  UserModel? _currentUser;
+  List<LayoutModel> _serverLayouts = [];
+  Map<String, String> _userPermissions = {};
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       PreflightDialog.showIfNeeded(context, onProceed: () {
-        _checkServer();
+        _startAuthSequence();
       });
     });
+  }
+
+  Future<void> _startAuthSequence() async {
+    if (EnvironmentChecker.isTestMode) {
+      if (mounted) {
+        setState(() {
+          _currentUser = UserModel(id: 'test-owner', username: 'owner', role: 'owner');
+          _activeDatabaseName = 'file4base_dev';
+          _serverStatus = 'Online (Test)';
+        });
+      }
+      return;
+    }
+
+    final client = ref.read(apiClientProvider);
+    try {
+      final health = await client.checkHealth();
+      if (mounted) {
+        setState(() {
+          _serverStatus = 'Online (${health['engine']})';
+          if (health['active_database'] != null) {
+            _activeDatabaseName = health['active_database'].toString();
+          }
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _serverStatus = 'Offline';
+        });
+      }
+    }
+
+    if (!mounted) return;
+
+    final auth = await DatabaseLoginDialog.show(context, client);
+    if (auth != null && mounted) {
+      setState(() {
+        _currentUser = auth.user;
+        _activeDatabaseName = auth.database;
+        _serverStatus = 'Online (PostgreSQL - ${auth.user.username})';
+      });
+      await _loadUserPermissions();
+      await _loadTables();
+    } else {
+      await _checkServer();
+    }
   }
 
   Future<void> _checkServer() async {
@@ -151,20 +204,43 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  Future<void> _loadUserPermissions() async {
+    if (_currentUser == null) return;
+    if (_currentUser!.role == 'owner' || _currentUser!.role == 'admin') {
+      if (mounted) setState(() => _userPermissions = {});
+      return;
+    }
+    final client = ref.read(apiClientProvider);
+    try {
+      final perms = await client.getUserPermissions(_currentUser!.id);
+      if (mounted) {
+        setState(() {
+          _userPermissions = {for (final p in perms) p.layoutId: p.accessLevel};
+        });
+      }
+    } catch (_) {}
+  }
+
   Future<void> _loadTables() async {
     final client = ref.read(apiClientProvider);
     setState(() => _isLoadingTables = true);
     try {
       final tables = await client.listTables();
+      List<LayoutModel> layouts = [];
+      try {
+        layouts = await client.listLayouts();
+      } catch (_) {}
+
       if (mounted) {
         setState(() {
           _tables = tables;
+          _serverLayouts = layouts;
           _isLoadingTables = false;
           if (tables.isNotEmpty) {
             if (_selectedTable == null || !tables.any((t) => t.id == _selectedTable!.id)) {
               _selectedTable = tables.first;
-              _initDefaultLayout(tables.first);
             }
+            _resolveActiveLayoutForTable(_selectedTable!);
           } else {
             _selectedTable = null;
             _activeLayout = null;
@@ -176,11 +252,43 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
-  void _initDefaultLayout(TableModel table) {
+  void _resolveActiveLayoutForTable(TableModel table) {
+    final match = _serverLayouts.where((l) => l.tableOccurrenceId == table.id || l.name.toLowerCase() == table.displayName.toLowerCase()).firstOrNull;
+    if (match != null && match.definition.isNotEmpty) {
+      try {
+        _activeLayout = LayoutDefinitionModel.fromJson(match.definition).copyWith(
+          id: match.id,
+          name: match.name,
+        );
+        return;
+      } catch (_) {}
+    }
     _activeLayout = LayoutDefinitionModel.defaultForTable(
       table.displayName,
       table.columns.map((c) => c.name).toList(),
     );
+  }
+
+  List<LayoutModel> get _activeTableLayouts {
+    if (_selectedTable == null) return [];
+    return _serverLayouts.where((l) => l.tableOccurrenceId == _selectedTable!.id || l.name.toLowerCase() == _selectedTable!.displayName.toLowerCase()).toList();
+  }
+
+  void _changeMode(OperationalMode newMode) {
+    if (newMode == OperationalMode.layout && _currentUser != null && _currentUser!.role == 'user') {
+      final activeId = _activeLayout?.id ?? '';
+      final perm = _userPermissions[activeId] ?? 'read_write';
+      if (perm == 'read_only' || perm == 'none') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Access Restricted: User "${_currentUser!.username}" has $perm access to this layout. Layout editing is disabled.'),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+        return;
+      }
+    }
+    ref.read(operationalModeProvider.notifier).setMode(newMode);
   }
 
   Future<void> _handleNewDatabase() async {
@@ -445,18 +553,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
     return CallbackShortcuts(
       bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyB, meta: true): () {
-          ref.read(operationalModeProvider.notifier).setMode(OperationalMode.browse);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () {
-          ref.read(operationalModeProvider.notifier).setMode(OperationalMode.find);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyL, meta: true): () {
-          ref.read(operationalModeProvider.notifier).setMode(OperationalMode.layout);
-        },
-        const SingleActivator(LogicalKeyboardKey.keyU, meta: true): () {
-          ref.read(operationalModeProvider.notifier).setMode(OperationalMode.preview);
-        },
+        const SingleActivator(LogicalKeyboardKey.keyB, meta: true): () => _changeMode(OperationalMode.browse),
+        const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () => _changeMode(OperationalMode.find),
+        const SingleActivator(LogicalKeyboardKey.keyL, meta: true): () => _changeMode(OperationalMode.layout),
+        const SingleActivator(LogicalKeyboardKey.keyU, meta: true): () => _changeMode(OperationalMode.preview),
         const SingleActivator(LogicalKeyboardKey.keyS, meta: true): () => _handleSave(),
         const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): () => _handleSaveAs(),
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true): () => _handleOpenSolution(),
@@ -471,11 +571,31 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               children: [
                 File4BaseMenuBar(
                   activeMode: mode,
-                  onModeChanged: (newMode) => ref.read(operationalModeProvider.notifier).setMode(newMode),
+                  onModeChanged: _changeMode,
                   onManageDatabase: () async {
                     await ManageDatabaseDialog.show(context);
                     _loadTables();
                   },
+                  onManageSecurity: () async {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
+                    if (_currentUser!.role == 'user') {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Access Denied: Only Owner or Admin accounts can manage security and user accounts.'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                      return;
+                    }
+                    final client = ref.read(apiClientProvider);
+                    await ManageSecurityDialog.show(context, client, _currentUser!);
+                    await _loadUserPermissions();
+                    await _loadTables();
+                  },
+                  onSwitchDatabaseOrLogin: _startAuthSequence,
                   onOpenRemote: () {
                     final currentUrl = ref.read(serverUrlProvider);
                     ServerConnectionDialog.show(
@@ -515,7 +635,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                             if (newTable != null) {
                               setState(() {
                                 _selectedTable = newTable;
-                                _initDefaultLayout(newTable);
+                                _resolveActiveLayoutForTable(newTable);
                               });
                             }
                           },
@@ -539,9 +659,26 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           onShowAllRecords: () => _dataBrowserKey.currentState?.fetchRecords(),
                           onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                           onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
-                          layoutCount: 1,
-                          currentLayoutIndex: 0,
-                          onLayoutChanged: (_) {},
+                          layoutCount: _activeTableLayouts.isEmpty ? 1 : _activeTableLayouts.length,
+                          currentLayoutIndex: () {
+                            final list = _activeTableLayouts;
+                            if (list.isEmpty || _activeLayout == null) return 0;
+                            final idx = list.indexWhere((l) => l.id == _activeLayout!.id);
+                            return idx >= 0 ? idx : 0;
+                          }(),
+                          onLayoutChanged: (idx) {
+                            final list = _activeTableLayouts;
+                            if (idx >= 0 && idx < list.length) {
+                              setState(() {
+                                try {
+                                  _activeLayout = LayoutDefinitionModel.fromJson(list[idx].definition).copyWith(
+                                    id: list[idx].id,
+                                    name: list[idx].name,
+                                  );
+                                } catch (_) {}
+                              });
+                            }
+                          },
                         ),
                       Expanded(
                         child: _buildBody(context, mode),
@@ -645,6 +782,67 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   ),
                 ),
               ],
+            ),
+          ),
+
+          const SizedBox(width: 8),
+          const VerticalDivider(width: 1, indent: 4, endIndent: 4),
+          const SizedBox(width: 8),
+
+          // User info chip & switch user trigger
+          InkWell(
+            onTap: _startAuthSequence,
+            borderRadius: BorderRadius.circular(4),
+            child: Tooltip(
+              message: _currentUser != null
+                  ? 'Authenticated as ${_currentUser!.username} (${_currentUser!.role}). Click to switch user or database.'
+                  : 'Not authenticated. Click to login.',
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: _currentUser != null
+                      ? (_currentUser!.role == 'owner'
+                          ? Colors.purple.withValues(alpha: 0.15)
+                          : (_currentUser!.role == 'admin'
+                              ? Colors.blue.withValues(alpha: 0.15)
+                              : Colors.teal.withValues(alpha: 0.15)))
+                      : Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _currentUser?.role == 'owner'
+                          ? Icons.workspace_premium
+                          : (_currentUser?.role == 'admin'
+                              ? Icons.admin_panel_settings
+                              : (_currentUser != null ? Icons.person : Icons.login)),
+                      size: 11,
+                      color: _currentUser != null
+                          ? (_currentUser!.role == 'owner'
+                              ? Colors.purple
+                              : (_currentUser!.role == 'admin' ? Colors.blue : Colors.teal))
+                          : Colors.orange,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      _currentUser != null
+                          ? '${_currentUser!.username} (${_currentUser!.role})'
+                          : 'Login',
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                        color: _currentUser != null
+                            ? (_currentUser!.role == 'owner'
+                                ? Colors.purple
+                                : (_currentUser!.role == 'admin' ? Colors.blue : Colors.teal))
+                            : Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
 

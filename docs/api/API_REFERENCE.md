@@ -318,3 +318,134 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
   "records_count": 142
 }
 ```
+
+---
+
+## 7. Authentication & Security Management
+
+### `POST /api/v1/auth/login`
+Authenticates a user with username and password, optionally switching active database context.
+
+#### Request Body
+```json
+{
+  "username": "owner",
+  "password": "owner",
+  "database": "file4base_dev"
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "status": "authenticated",
+  "user": {
+    "id": "u-0001",
+    "username": "owner",
+    "role": "owner"
+  },
+  "database": "file4base_dev"
+}
+```
+
+---
+
+### `GET /api/v1/security/users`
+Lists all user accounts in the active database.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "id": "u-0001",
+    "username": "owner",
+    "role": "owner",
+    "created_at": "2026-09-23T10:00:00Z",
+    "updated_at": "2026-09-23T10:00:00Z"
+  }
+]
+```
+
+---
+
+### `POST /api/v1/security/users`
+Creates a new user account with hashed password (`bcrypt`).
+
+#### Request Body
+```json
+{
+  "username": "editor1",
+  "password": "secretpassword",
+  "role": "user"
+}
+```
+
+#### Response `201 Created`
+```json
+{
+  "id": "u-0002",
+  "username": "editor1",
+  "role": "user",
+  "created_at": "2026-09-23T10:05:00Z",
+  "updated_at": "2026-09-23T10:05:00Z"
+}
+```
+
+---
+
+### `PUT /api/v1/security/users/{id}`
+Updates password and/or role of an existing user account.
+
+#### Request Body
+```json
+{
+  "password": "newpassword",
+  "role": "admin"
+}
+```
+
+---
+
+### `DELETE /api/v1/security/users/{id}`
+Deletes a user account. Cannot delete the default `owner` account.
+
+---
+
+### `GET /api/v1/security/users/{id}/permissions`
+Retrieves granular per-layout permissions for a user.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "layout_id": "layout_1",
+    "access_level": "read_write"
+  },
+  {
+    "layout_id": "layout_2",
+    "access_level": "read_only"
+  }
+]
+```
+
+---
+
+### `PUT /api/v1/security/users/{id}/permissions`
+Saves per-layout permissions for a user.
+
+#### Request Body
+```json
+{
+  "permissions": [
+    {
+      "layout_id": "layout_1",
+      "access_level": "read_write"
+    },
+    {
+      "layout_id": "layout_2",
+      "access_level": "read_only"
+    }
+  ]
+}
+```
+

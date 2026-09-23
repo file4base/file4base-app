@@ -10,6 +10,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var validIdentifier = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
@@ -118,6 +119,22 @@ func (s *Service) EnsureSystemTables(ctx context.Context) error {
 			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 		);`,
+		`CREATE TABLE IF NOT EXISTS sys_users (
+			id VARCHAR(36) PRIMARY KEY,
+			username VARCHAR(64) NOT NULL UNIQUE,
+			password_hash VARCHAR(256) NOT NULL,
+			role VARCHAR(32) NOT NULL DEFAULT 'user',
+			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS sys_user_permissions (
+			id VARCHAR(36) PRIMARY KEY,
+			user_id VARCHAR(36) NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
+			layout_id VARCHAR(36) NOT NULL REFERENCES sys_layouts(id) ON DELETE CASCADE,
+			access_level VARCHAR(16) NOT NULL DEFAULT 'read_write',
+			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
+		);`,
 	}
 
 	db := s.driver.DB()
@@ -126,6 +143,29 @@ func (s *Service) EnsureSystemTables(ctx context.Context) error {
 			return fmt.Errorf("failed creating system tables: %w", err)
 		}
 	}
+
+	// Ensure default owner account exists
+	var count int
+	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = 'owner'`).Scan(&count)
+	if err == nil && count == 0 {
+		hash, err := bcrypt.GenerateFromPassword([]byte("owner"), bcrypt.DefaultCost)
+		if err == nil {
+			ownerID := uuid.NewString()
+			now := time.Now().UTC()
+			if s.driver.Dialect().Engine() == dbal.EnginePostgres {
+				_, _ = db.ExecContext(ctx,
+					`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (username) DO NOTHING`,
+					ownerID, "owner", string(hash), "owner", now, now,
+				)
+			} else {
+				_, _ = db.ExecContext(ctx,
+					`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+					ownerID, "owner", string(hash), "owner", now, now,
+				)
+			}
+		}
+	}
+
 	return nil
 }
 
