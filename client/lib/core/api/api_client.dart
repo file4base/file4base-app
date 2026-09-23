@@ -451,12 +451,13 @@ class ApiClient {
     }
   }
 
-  Future<Map<String, dynamic>> createDatabase(String name, {String? password}) async {
+  Future<Map<String, dynamic>> createDatabase(String name, {String? user, String? password}) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/databases'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'database': name,
+        if (user != null && user.isNotEmpty) 'user': user,
         if (password != null && password.isNotEmpty) 'password': password,
       }),
     );

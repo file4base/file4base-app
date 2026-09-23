@@ -44,8 +44,8 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   final _dbNameController = TextEditingController(text: 'my_solution_db');
   final _hostController = TextEditingController(text: 'localhost');
   final _portController = TextEditingController(text: '5432');
-  final _userController = TextEditingController(text: 'file4base');
-  final _passwordController = TextEditingController(text: 'dev_password');
+  final _userController = TextEditingController(text: 'my_solution_db');
+  final _passwordController = TextEditingController(text: 'my_solution_db');
   StorageDirectoryRef? _selectedDirectory;
   bool _autoCreateDb = true;
   bool _isCreating = false;
@@ -66,8 +66,19 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   void _onSolutionNameChanged(String val) {
     final sanitized = val.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9_]'), '_');
     if (sanitized.isNotEmpty) {
+      final db = '${sanitized}_db';
       _fileNameController.text = '$sanitized.f4b';
-      _dbNameController.text = '${sanitized}_db';
+      _dbNameController.text = db;
+      _userController.text = db;
+      _passwordController.text = db;
+    }
+  }
+
+  void _onDbNameChanged(String val) {
+    final db = val.toLowerCase().trim();
+    if (db.isNotEmpty) {
+      _userController.text = db;
+      _passwordController.text = db;
     }
   }
 
@@ -94,14 +105,12 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
       final dbName = _dbNameController.text.trim().toLowerCase();
       final host = _hostController.text.trim();
       final port = int.tryParse(_portController.text.trim()) ?? 5432;
-      final user = _userController.text.trim();
-      final password = _passwordController.text.trim();
-
-      final dbPassword = password.isNotEmpty ? password : dbName;
+      final user = _userController.text.trim().isNotEmpty ? _userController.text.trim() : dbName;
+      final password = _passwordController.text.trim().isNotEmpty ? _passwordController.text.trim() : dbName;
 
       // 1. Create database in PostgreSQL if requested
       if (_autoCreateDb) {
-        await widget.apiClient.createDatabase(dbName, password: dbPassword);
+        await widget.apiClient.createDatabase(dbName, user: user, password: password);
       } else {
         await widget.apiClient.switchDatabase(dbName);
       }
@@ -149,7 +158,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
         Navigator.of(context).pop(NewDatabaseDialogResult(
           fileName: '$baseName.f4b',
           databaseName: dbName,
-          databasePassword: dbPassword,
+          databasePassword: password,
           package: pkg,
           directoryRef: _selectedDirectory,
         ));
@@ -311,6 +320,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                     isDense: true,
                     prefixIcon: Icon(Icons.storage_outlined, size: 20),
                   ),
+                  onChanged: _onDbNameChanged,
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) return 'Required';
                     if (!RegExp(r'^[a-z][a-z0-9_]*$').hasMatch(v.trim())) {
@@ -356,7 +366,8 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                       child: TextFormField(
                         controller: _userController,
                         decoration: const InputDecoration(
-                          labelText: 'User',
+                          labelText: 'Owner User',
+                          helperText: 'Matches database name by default',
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
@@ -367,7 +378,8 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                       child: TextFormField(
                         controller: _passwordController,
                         decoration: const InputDecoration(
-                          labelText: 'Password',
+                          labelText: 'Owner Password',
+                          helperText: 'Matches database name by default',
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),

@@ -59,6 +59,7 @@ func (h *SolutionHandler) ListDatabases(w http.ResponseWriter, r *http.Request) 
 
 type CreateDatabaseRequest struct {
 	Database string `json:"database"`
+	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
 }
 
@@ -90,12 +91,16 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Initialize system catalog on new DB with owner account matching database name and password
+	ownerUser := dbName
+	if req.User != "" {
+		ownerUser = strings.ToLower(strings.TrimSpace(req.User))
+	}
 	ownerPass := dbName
 	if req.Password != "" {
 		ownerPass = req.Password
 	}
 	tempSvc := schema.NewService(driver)
-	if err := tempSvc.EnsureSystemTablesWithCredentials(r.Context(), dbName, ownerPass); err != nil {
+	if err := tempSvc.EnsureSystemTablesWithCredentials(r.Context(), ownerUser, ownerPass); err != nil {
 		http.Error(w, fmt.Sprintf("Failed initializing system catalog on new database: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -106,7 +111,7 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		"database":   dbName,
 		"status":     "created",
 		"active":     h.dbMgr.ActiveDatabase(),
-		"owner_user": dbName,
+		"owner_user": ownerUser,
 	})
 }
 

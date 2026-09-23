@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Default initial database `file4base_dev` provisions username `file4base_dev` and password `file4base_dev` with role `owner`.
     - Any newly created database (e.g. `mi_empresa_db`) automatically provisions its initial owner account with username `mi_empresa_db` and password matching the database password.
   - Updated `DatabaseLoginDialog` to automatically populate and synchronize username and password fields whenever the selected database changes.
-  - Extended `/api/v1/databases` endpoint and `ApiClient.createDatabase` to accept an optional initial password.
+  - Updated `NewDatabaseDialog` to default initial owner user and password to match the database name in real time, and pass them during database creation.
+  - Automatically authenticates into the newly created database session as its owner upon creation in `_handleNewDatabase`.
+  - Extended `/api/v1/databases` endpoint and `ApiClient.createDatabase` to accept an optional initial `user` and `password`.
 
 ## [0.4.0] - 2026-09-23
 

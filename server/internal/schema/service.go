@@ -65,8 +65,13 @@ func NewService(driver dbal.DatabaseDriver) *Service {
 	return &Service{driver: driver}
 }
 
-// EnsureSystemTables creates sys_* catalog if not present
+// EnsureSystemTables creates sys_* catalog if not present with default credentials
 func (s *Service) EnsureSystemTables(ctx context.Context) error {
+	return s.EnsureSystemTablesWithCredentials(ctx, "", "")
+}
+
+// EnsureSystemTablesWithCredentials provisions the system tables and the initial owner user matching the database name and password
+func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initialOwnerUser, initialOwnerPassword string) error {
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS sys_tables (
 			id VARCHAR(36) PRIMARY KEY,
@@ -143,13 +148,6 @@ func (s *Service) EnsureSystemTables(ctx context.Context) error {
 			return fmt.Errorf("failed creating system tables: %w", err)
 		}
 	}
-
-	return s.EnsureSystemTablesWithCredentials(ctx, "", "")
-}
-
-// EnsureSystemTablesWithCredentials provisions the system tables and the initial owner user matching the database name and password
-func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initialOwnerUser, initialOwnerPassword string) error {
-	db := s.driver.DB()
 
 	// Determine active database name
 	targetUser := strings.ToLower(strings.TrimSpace(initialOwnerUser))

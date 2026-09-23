@@ -295,18 +295,40 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     final client = ref.read(apiClientProvider);
     final result = await NewDatabaseDialog.show(context, client);
     if (result != null && mounted) {
-      setState(() {
-        _activeSolutionFileName = result.fileName;
-        _activeSolutionName = result.package.solutionName;
-        _activeDatabaseName = result.databaseName;
-        _activeSolutionDirectory = result.directoryRef;
-      });
+      try {
+        final auth = await client.login(
+          username: result.databaseName,
+          password: result.databasePassword,
+          database: result.databaseName,
+        );
+        if (mounted) {
+          setState(() {
+            _currentUser = auth.user;
+            _activeDatabaseName = auth.database;
+            _activeSolutionFileName = result.fileName;
+            _activeSolutionName = result.package.solutionName;
+            _activeSolutionDirectory = result.directoryRef;
+            _serverStatus = 'Online (PostgreSQL - ${auth.user.username})';
+          });
+          await _loadUserPermissions();
+        }
+      } catch (_) {
+        if (mounted) {
+          setState(() {
+            _currentUser = UserModel(id: 'owner', username: result.databaseName, role: 'owner');
+            _activeSolutionFileName = result.fileName;
+            _activeSolutionName = result.package.solutionName;
+            _activeDatabaseName = result.databaseName;
+            _activeSolutionDirectory = result.directoryRef;
+          });
+        }
+      }
       await _loadTables();
       if (mounted) {
         final locText = result.directoryRef != null ? ' to "${result.directoryRef!.displayName}"' : '';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Created solution "${result.package.solutionName}" ($locText) with active database "${result.databaseName}". Saved both .f4b and .f4data.'),
+            content: Text('Created solution "${result.package.solutionName}" ($locText) with active database "${result.databaseName}". Initial owner: "${result.databaseName}".'),
             backgroundColor: Colors.green.shade700,
           ),
         );
