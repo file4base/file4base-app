@@ -59,6 +59,7 @@ func (h *SolutionHandler) ListDatabases(w http.ResponseWriter, r *http.Request) 
 
 type CreateDatabaseRequest struct {
 	Database string `json:"database"`
+	Password string `json:"password,omitempty"`
 }
 
 // CreateDatabase creates a new database on PostgreSQL and initializes system tables
@@ -88,9 +89,13 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Initialize system catalog on new DB
+	// Initialize system catalog on new DB with owner account matching database name and password
+	ownerPass := dbName
+	if req.Password != "" {
+		ownerPass = req.Password
+	}
 	tempSvc := schema.NewService(driver)
-	if err := tempSvc.EnsureSystemTables(r.Context()); err != nil {
+	if err := tempSvc.EnsureSystemTablesWithCredentials(r.Context(), dbName, ownerPass); err != nil {
 		http.Error(w, fmt.Sprintf("Failed initializing system catalog on new database: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -98,9 +103,10 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusCreated)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"database": dbName,
-		"status":   "created",
-		"active":   h.dbMgr.ActiveDatabase(),
+		"database":   dbName,
+		"status":     "created",
+		"active":     h.dbMgr.ActiveDatabase(),
+		"owner_user": dbName,
 	})
 }
 

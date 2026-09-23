@@ -139,7 +139,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (EnvironmentChecker.isTestMode) {
       if (mounted) {
         setState(() {
-          _currentUser = UserModel(id: 'test-owner', username: 'owner', role: 'owner');
+          _currentUser = UserModel(id: 'test-owner', username: 'file4base_dev', role: 'owner');
           _activeDatabaseName = 'file4base_dev';
           _serverStatus = 'Online (Test)';
         });

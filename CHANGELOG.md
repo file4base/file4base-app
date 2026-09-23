@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-23
+
+### Fixed
+- **Initial Owner Account Credentials Match Database Name**:
+  - Replaced hardcoded `owner`/`owner` credentials with dynamic account provisioning matching the database name and its password:
+    - Default initial database `file4base_dev` provisions username `file4base_dev` and password `file4base_dev` with role `owner`.
+    - Any newly created database (e.g. `mi_empresa_db`) automatically provisions its initial owner account with username `mi_empresa_db` and password matching the database password.
+  - Updated `DatabaseLoginDialog` to automatically populate and synchronize username and password fields whenever the selected database changes.
+  - Extended `/api/v1/databases` endpoint and `ApiClient.createDatabase` to accept an optional initial password.
+
 ## [0.4.0] - 2026-09-23
 
 ### Added

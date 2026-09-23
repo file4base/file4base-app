@@ -21,8 +21,8 @@ class DatabaseLoginDialog extends StatefulWidget {
 
 class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController(text: 'owner');
-  final _passwordController = TextEditingController(text: 'owner');
+  final _usernameController = TextEditingController();
+  final _passwordController = TextEditingController();
   List<String> _databases = [];
   String? _selectedDatabase;
   bool _isLoadingDatabases = true;
@@ -68,6 +68,10 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           } else {
             _selectedDatabase = 'file4base_dev';
           }
+          if (_selectedDatabase != null) {
+            _usernameController.text = _selectedDatabase!;
+            _passwordController.text = _selectedDatabase!;
+          }
           _isLoadingDatabases = false;
         });
       }
@@ -76,6 +80,8 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
         setState(() {
           _databases = ['file4base_dev'];
           _selectedDatabase = 'file4base_dev';
+          _usernameController.text = 'file4base_dev';
+          _passwordController.text = 'file4base_dev';
           _isLoadingDatabases = false;
         });
       }
@@ -88,6 +94,8 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       await _loadDatabases();
       setState(() {
         _selectedDatabase = result.databaseName;
+        _usernameController.text = result.databaseName;
+        _passwordController.text = result.databasePassword;
       });
     }
   }
@@ -238,7 +246,13 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                                     );
                                   }).toList(),
                                   onChanged: (val) {
-                                    if (val != null) setState(() => _selectedDatabase = val);
+                                    if (val != null) {
+                                      setState(() {
+                                        _selectedDatabase = val;
+                                        _usernameController.text = val;
+                                        _passwordController.text = val;
+                                      });
+                                    }
                                   },
                                 ),
                         ),
@@ -261,6 +275,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                       controller: _usernameController,
                       decoration: const InputDecoration(
                         labelText: 'Username',
+                        helperText: 'Initial owner username matches database name',
                         border: OutlineInputBorder(),
                         isDense: true,
                         prefixIcon: Icon(Icons.person_outline, size: 20),
@@ -272,6 +287,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                       controller: _passwordController,
                       decoration: const InputDecoration(
                         labelText: 'Password',
+                        helperText: 'Initial owner password matches database name',
                         border: OutlineInputBorder(),
                         isDense: true,
                         prefixIcon: Icon(Icons.lock_outline, size: 20),
@@ -294,7 +310,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Default initial administrator is "owner" with password "owner".',
+                              'Default initial owner credentials match the database name and its password.',
                               style: TextStyle(fontSize: 11, color: Colors.grey),
                             ),
                           ),

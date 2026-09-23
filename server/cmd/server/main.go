@@ -22,7 +22,7 @@ import (
 
 )
 
-const AppVersion = "0.4.0"
+const AppVersion = "0.4.1"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
@@ -83,17 +83,21 @@ func main() {
 	schemaSvc := schema.NewService(dbMgr)
 	dataSvc := data.NewService(dbMgr)
 
-	ctxInit, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := dbMgr.Ping(ctxInit); err != nil {
-		log.Printf("Warning: Database server could not connect at startup: %v", err)
-	} else {
-		if err := schemaSvc.EnsureSystemTables(ctxInit); err != nil {
-			log.Printf("Warning: Failed to ensure system tables on default database: %v", err)
-		} else {
-			log.Printf("System catalog (sys_*) tables initialized on active database: %s", dbMgr.ActiveDatabase())
+	// Connect and ensure system tables with retry loop for clean container startup
+	go func() {
+		for i := 0; i < 15; i++ {
+			ctxInit, cancelInit := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := dbMgr.Ping(ctxInit); err == nil {
+				if err := schemaSvc.EnsureSystemTables(ctxInit); err == nil {
+					log.Printf("System catalog (sys_*) tables initialized on active database: %s", dbMgr.ActiveDatabase())
+					cancelInit()
+					return
+				}
+			}
+			cancelInit()
+			time.Sleep(1 * time.Second)
 		}
-	}
-	cancelInit()
+	}()
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)

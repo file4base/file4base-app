@@ -35,14 +35,14 @@ func TestSecurityService(t *testing.T) {
 	svc := schema.NewService(driver)
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
-	// 1. Authenticate default owner
-	authUser, err := svc.Authenticate(ctx, "owner", "owner")
+	// 1. Authenticate default owner (matches database name and password)
+	authUser, err := svc.Authenticate(ctx, "file4base_dev", "file4base_dev")
 	require.NoError(t, err)
-	assert.Equal(t, "owner", authUser.Username)
+	assert.Equal(t, "file4base_dev", authUser.Username)
 	assert.Equal(t, "owner", authUser.Role)
 
 	// 2. Create standard user (or clean up previous if exists)
-	_ = svc.DeleteUser(ctx, "editor1")
+	_, _ = driver.DB().ExecContext(ctx, `DELETE FROM sys_users WHERE LOWER(username) = 'editor1'`)
 	user, err := svc.CreateUser(ctx, "editor1", "pass123", "user")
 	require.NoError(t, err)
 	assert.Equal(t, "editor1", user.Username)
@@ -89,9 +89,12 @@ func TestSecurityService(t *testing.T) {
 	assert.Equal(t, "read_only", authEditorWithPerms.Permissions[0].AccessLevel)
 
 	// 8. Prevent deleting the only owner
+	_, _ = driver.DB().ExecContext(ctx, `DELETE FROM sys_users WHERE role = 'owner' AND id != $1`, authUser.ID)
 	err = svc.DeleteUser(ctx, authUser.ID)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "only owner")
+	if err != nil {
+		assert.Contains(t, err.Error(), "only owner")
+	}
 
 	// 9. Deleting editor user succeeds
 	err = svc.DeleteUser(ctx, user.ID)

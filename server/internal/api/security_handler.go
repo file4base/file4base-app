@@ -79,6 +79,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	_ = h.schemaSvc.EnsureSystemTables(r.Context())
 	users, err := h.schemaSvc.ListUsers(r.Context())
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed listing users: %v", err), http.StatusInternalServerError)

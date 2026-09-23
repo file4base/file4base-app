@@ -7,12 +7,14 @@ import '../../core/services/solution_storage.dart';
 class NewDatabaseDialogResult {
   final String fileName;
   final String databaseName;
+  final String databasePassword;
   final SolutionPackage package;
   final StorageDirectoryRef? directoryRef;
 
   const NewDatabaseDialogResult({
     required this.fileName,
     required this.databaseName,
+    required this.databasePassword,
     required this.package,
     this.directoryRef,
   });
@@ -95,9 +97,11 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
       final user = _userController.text.trim();
       final password = _passwordController.text.trim();
 
+      final dbPassword = password.isNotEmpty ? password : dbName;
+
       // 1. Create database in PostgreSQL if requested
       if (_autoCreateDb) {
-        await widget.apiClient.createDatabase(dbName);
+        await widget.apiClient.createDatabase(dbName, password: dbPassword);
       } else {
         await widget.apiClient.switchDatabase(dbName);
       }
@@ -145,6 +149,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
         Navigator.of(context).pop(NewDatabaseDialogResult(
           fileName: '$baseName.f4b',
           databaseName: dbName,
+          databasePassword: dbPassword,
           package: pkg,
           directoryRef: _selectedDirectory,
         ));

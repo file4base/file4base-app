@@ -144,23 +144,56 @@ func (s *Service) EnsureSystemTables(ctx context.Context) error {
 		}
 	}
 
-	// Ensure default owner account exists
+	return s.EnsureSystemTablesWithCredentials(ctx, "", "")
+}
+
+// EnsureSystemTablesWithCredentials provisions the system tables and the initial owner user matching the database name and password
+func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initialOwnerUser, initialOwnerPassword string) error {
+	db := s.driver.DB()
+
+	// Determine active database name
+	targetUser := strings.ToLower(strings.TrimSpace(initialOwnerUser))
+	targetPass := strings.TrimSpace(initialOwnerPassword)
+	if targetUser == "" {
+		var currentDb string
+		if s.driver.Dialect().Engine() == dbal.EnginePostgres {
+			_ = db.QueryRowContext(ctx, `SELECT current_database()`).Scan(&currentDb)
+		} else {
+			_ = db.QueryRowContext(ctx, `SELECT DATABASE()`).Scan(&currentDb)
+		}
+		if currentDb != "" {
+			targetUser = strings.ToLower(currentDb)
+		} else {
+			targetUser = "file4base_dev"
+		}
+	}
+	if targetPass == "" {
+		targetPass = targetUser
+	}
+
+	// Ensure default owner account exists matching the database name
 	var count int
-	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = 'owner'`).Scan(&count)
+	var err error
+	if s.driver.Dialect().Engine() == dbal.EnginePostgres {
+		err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = LOWER($1)`, targetUser).Scan(&count)
+	} else {
+		err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE LOWER(username) = LOWER(?)`, targetUser).Scan(&count)
+	}
+
 	if err == nil && count == 0 {
-		hash, err := bcrypt.GenerateFromPassword([]byte("owner"), bcrypt.DefaultCost)
+		hash, err := bcrypt.GenerateFromPassword([]byte(targetPass), bcrypt.DefaultCost)
 		if err == nil {
 			ownerID := uuid.NewString()
 			now := time.Now().UTC()
 			if s.driver.Dialect().Engine() == dbal.EnginePostgres {
 				_, _ = db.ExecContext(ctx,
 					`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (username) DO NOTHING`,
-					ownerID, "owner", string(hash), "owner", now, now,
+					ownerID, targetUser, string(hash), "owner", now, now,
 				)
 			} else {
 				_, _ = db.ExecContext(ctx,
 					`INSERT INTO sys_users (id, username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-					ownerID, "owner", string(hash), "owner", now, now,
+					ownerID, targetUser, string(hash), "owner", now, now,
 				)
 			}
 		}
