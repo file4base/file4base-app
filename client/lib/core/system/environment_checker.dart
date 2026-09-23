@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:io' show Platform, Process;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 enum RequirementStatus {
   checking,
@@ -45,21 +46,19 @@ class SystemRequirement {
 }
 
 class EnvironmentChecker {
-  // Can be mocked or bypassed during automated widget testing
   static bool isTestMode = false;
 
   static Future<SystemRequirement> checkDocker() async {
-    if (isTestMode) {
+    if (isTestMode || kIsWeb) {
       return const SystemRequirement(
         title: 'Docker Engine & CLI',
-        description: 'Test mode active',
+        description: 'Docker check bypassed (Web/Test Mode)',
         status: RequirementStatus.satisfied,
-        detail: 'Bypassed for widget test',
+        detail: 'Connecting to remote/local server',
       );
     }
 
     try {
-      // 1. Check if docker CLI binary is in PATH
       final whichCmd = Platform.isWindows ? 'where' : 'which';
       final whichResult = await Process.run(whichCmd, ['docker']);
 
@@ -74,7 +73,6 @@ class EnvironmentChecker {
         );
       }
 
-      // 2. Check if Docker daemon is running
       final pingResult = await Process.run('docker', ['info']);
       if (pingResult.exitCode != 0) {
         return SystemRequirement(
@@ -87,7 +85,6 @@ class EnvironmentChecker {
         );
       }
 
-      // Extract Docker version
       final versionResult = await Process.run('docker', ['--version']);
       final versionText = versionResult.stdout.toString().trim();
 
@@ -119,6 +116,15 @@ class EnvironmentChecker {
       );
     }
 
+    if (kIsWeb) {
+      return const SystemRequirement(
+        title: 'Target Architecture',
+        description: 'Web Browser Client',
+        status: RequirementStatus.satisfied,
+        detail: 'Connected via HTTP/WebSocket',
+      );
+    }
+
     final os = Platform.operatingSystem;
     final arch = _getMacAppleSiliconOrArchitecture();
 
@@ -131,6 +137,7 @@ class EnvironmentChecker {
   }
 
   static String _getMacAppleSiliconOrArchitecture() {
+    if (kIsWeb) return 'Web';
     if (Platform.isMacOS) {
       try {
         final result = Process.runSync('sysctl', ['-n', 'machdep.cpu.brand_string']);
@@ -147,6 +154,7 @@ class EnvironmentChecker {
   }
 
   static String _getDockerDownloadUrl() {
+    if (kIsWeb) return 'https://www.docker.com/products/docker-desktop/';
     if (Platform.isMacOS) {
       final isAppleSilicon = _getMacAppleSiliconOrArchitecture().contains('Apple');
       return isAppleSilicon
@@ -160,6 +168,7 @@ class EnvironmentChecker {
   }
 
   static Future<bool> startDockerDesktop() async {
+    if (kIsWeb) return false;
     try {
       if (Platform.isMacOS) {
         await Process.run('open', ['-a', 'Docker']);
@@ -176,6 +185,7 @@ class EnvironmentChecker {
   }
 
   static Future<bool> startProjectContainers(String projectDir) async {
+    if (kIsWeb) return false;
     try {
       final result = await Process.run(
         'docker',
