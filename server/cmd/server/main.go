@@ -10,11 +10,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/api"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
+	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
 )
 
 func init() {
@@ -54,10 +57,19 @@ func main() {
 		EngineType: engineType,
 		DSN:        dsn,
 	})
+	var schemaSvc *schema.Service
 	if err != nil {
 		log.Printf("Warning: Database driver could not connect at startup: %v", err)
 	} else {
 		defer driver.Close()
+		schemaSvc = schema.NewService(driver)
+		ctxInit, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := schemaSvc.EnsureSystemTables(ctxInit); err != nil {
+			log.Printf("Warning: Failed to ensure system tables: %v", err)
+		} else {
+			log.Println("System catalog (sys_*) tables initialized successfully.")
+		}
+		cancelInit()
 	}
 
 	r := chi.NewRouter()
@@ -66,6 +78,12 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
+
+	if schemaSvc != nil {
+		schemaHandler := api.NewSchemaHandler(schemaSvc)
+		schemaHandler.RegisterRoutes(r)
+	}
+
 
 	// Health check endpoint
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
 import 'features/preflight/preflight_dialog.dart';
+import 'features/schema_manager/manage_database_dialog.dart';
+
 
 enum OperationalMode {
   browse,
@@ -124,22 +126,24 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         child: Scaffold(
           appBar: AppBar(
             title: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6.0),
                   child: Image.asset(
                     'assets/branding/file4base-icon.jpg',
-                    width: 26,
-                    height: 26,
+                    width: 24,
+                    height: 24,
                     fit: BoxFit.cover,
                     errorBuilder: (context, error, stackTrace) =>
-                        const Icon(Icons.table_chart, size: 22),
+                        const Icon(Icons.table_chart, size: 20),
                   ),
                 ),
-                const SizedBox(width: 10),
-                const Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                const SizedBox(width: 8),
+                const Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
               ],
             ),
+
 
             actions: [
               Padding(
@@ -157,9 +161,15 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   },
                 ),
               ),
+              FilledButton.tonalIcon(
+                icon: const Icon(Icons.storage, size: 16),
+                label: const Text('Manage Database...'),
+                onPressed: () => ManageDatabaseDialog.show(context),
+              ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16.0),
                 child: Row(
+
                   children: [
                     Icon(
                       _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,

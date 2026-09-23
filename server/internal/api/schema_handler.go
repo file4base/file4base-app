@@ -1,0 +1,111 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/go-chi/chi/v5"
+)
+
+type SchemaHandler struct {
+	svc *schema.Service
+}
+
+func NewSchemaHandler(svc *schema.Service) *SchemaHandler {
+	return &SchemaHandler{svc: svc}
+}
+
+func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
+	r.Route("/api/v1/schemas", func(r chi.Router) {
+		r.Get("/tables", h.ListTables)
+		r.Post("/tables", h.CreateTable)
+		r.Post("/tables/{id}/columns", h.AddColumn)
+	})
+}
+
+func (h *SchemaHandler) ListTables(w http.ResponseWriter, r *http.Request) {
+	tables, err := h.svc.ListTables(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(tables)
+}
+
+type CreateTableRequest struct {
+	DisplayName string `json:"display_name"`
+	CustomName  string `json:"custom_name,omitempty"`
+}
+
+func (h *SchemaHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
+	var req CreateTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.DisplayName == "" {
+		http.Error(w, "display_name is required", http.StatusBadRequest)
+		return
+	}
+
+	tbl, err := h.svc.CreateTable(r.Context(), req.DisplayName, req.CustomName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(tbl)
+}
+
+type AddColumnRequest struct {
+	Name               string                 `json:"name"`
+	DisplayName        string                 `json:"display_name"`
+	FieldType          dbal.AgnosticFieldType `json:"field_type"`
+	IsNullable         bool                   `json:"is_nullable"`
+	DefaultValue       *string                `json:"default_value,omitempty"`
+	CalculationFormula *string                `json:"calculation_formula,omitempty"`
+	ValidationRules    *string                `json:"validation_rules,omitempty"`
+}
+
+func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
+	tableID := chi.URLParam(r, "id")
+	if tableID == "" {
+		http.Error(w, "table id required", http.StatusBadRequest)
+		return
+	}
+
+	var req AddColumnRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.DisplayName == "" || req.FieldType == "" {
+		http.Error(w, "name, display_name and field_type are required", http.StatusBadRequest)
+		return
+	}
+
+	col, err := h.svc.AddColumn(r.Context(), tableID, schema.ColumnMetadata{
+		Name:               req.Name,
+		DisplayName:        req.DisplayName,
+		FieldType:          req.FieldType,
+		IsNullable:         req.IsNullable,
+		DefaultValue:       req.DefaultValue,
+		CalculationFormula: req.CalculationFormula,
+		ValidationRules:    req.ValidationRules,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(col)
+}

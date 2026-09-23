@@ -14,9 +14,10 @@ void main() {
   });
 
   testWidgets('App renders mode selector and switches mode', (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
+
 
     await tester.pumpWidget(
       const ProviderScope(

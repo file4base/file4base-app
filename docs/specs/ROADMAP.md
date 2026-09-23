@@ -13,23 +13,24 @@
 
 
 ## Phase 2: Schema Engine & DDL (Backend Go)
-- [ ] Implement system catalog tables (`sys_tables`, `sys_columns`, `sys_relationships`).
-- [ ] Implement Go dynamic DDL service:
-  - [ ] Create Table (generates metadata + executes dynamic DDL on target engine).
-  - [ ] Add Column / Drop Column (with type mapping per dialect).
-  - [ ] Define Relationships between occurrences.
-- [ ] Expose REST API:
-  - [ ] `GET /api/v1/schemas/tables`
-  - [ ] `POST /api/v1/schemas/tables`
-  - [ ] `POST /api/v1/schemas/tables/{id}/columns`
+- [x] Implement system catalog tables (`sys_tables`, `sys_columns`, `sys_relationships`).
+- [x] Implement Go dynamic DDL service:
+  - [x] Create Table (generates metadata + executes dynamic DDL on target engine).
+  - [x] Add Column / Drop Column (with type mapping per dialect).
+  - [x] Define Relationships between occurrences.
+- [x] Expose REST API:
+  - [x] `GET /api/v1/schemas/tables`
+  - [x] `POST /api/v1/schemas/tables`
+  - [x] `POST /api/v1/schemas/tables/{id}/columns`
   - [ ] `GET /api/v1/schemas/relationships`
 
 ## Phase 3: Visual Schema Designer (Flutter Client)
-- [ ] Build **Manage Database** Dialog in Flutter:
-  - [ ] **Tables Tab**: Create, edit, and delete tables.
-  - [ ] **Fields Tab**: Define field types, auto-enter options, and validation rules.
-  - [ ] **Relationships Graph Tab**: Visual canvas showing table occurrences and draggable link lines connecting keys.
-- [ ] Wire Flutter Manage Database UI to Go Schema REST API.
+- [x] Build **Manage Database** Dialog in Flutter:
+  - [x] **Tables Tab**: Create, edit, and delete tables.
+  - [x] **Fields Tab**: Define field types, auto-enter options, and validation rules.
+  - [x] **Relationships Graph Tab**: Visual canvas showing table occurrences and draggable link lines connecting keys.
+- [x] Wire Flutter Manage Database UI to Go Schema REST API.
+
 
 ## Phase 4: Dynamic CRUD & Query Builder (Find Mode)
 - [ ] Implement generic dynamic CRUD endpoints in Go:
