@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
+import 'features/about/about_dialog.dart';
+import 'features/data_browser/data_browser_widget.dart';
+import 'features/layout_engine/layout_designer_widget.dart';
+import 'features/layout_engine/layout_preview_widget.dart';
+import 'features/layout_engine/models/layout_definition.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
-
 
 enum OperationalMode {
   browse,
@@ -72,6 +76,10 @@ class WorkspaceShell extends ConsumerStatefulWidget {
 
 class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   String _serverStatus = 'Checking...';
+  List<TableModel> _tables = [];
+  TableModel? _selectedTable;
+  LayoutDefinitionModel? _activeLayout;
+  bool _isLoadingTables = false;
 
   @override
   void initState() {
@@ -83,7 +91,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     });
   }
 
-
   Future<void> _checkServer() async {
     final client = ref.read(apiClientProvider);
     try {
@@ -92,6 +99,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         setState(() {
           _serverStatus = 'Online (${health['engine']})';
         });
+        _loadTables();
       }
     } catch (_) {
       if (mounted) {
@@ -102,9 +110,45 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  Future<void> _loadTables() async {
+    final client = ref.read(apiClientProvider);
+    setState(() => _isLoadingTables = true);
+    try {
+      final tables = await client.listTables();
+      if (mounted) {
+        setState(() {
+          _tables = tables;
+          _isLoadingTables = false;
+          if (tables.isNotEmpty) {
+            if (_selectedTable == null || !tables.any((t) => t.id == _selectedTable!.id)) {
+              _selectedTable = tables.first;
+              _initDefaultLayout(tables.first);
+            }
+          } else {
+            _selectedTable = null;
+            _activeLayout = null;
+          }
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isLoadingTables = false);
+    }
+  }
+
+  void _initDefaultLayout(TableModel table) {
+    _activeLayout = LayoutDefinitionModel.defaultForTable(
+      table.displayName,
+      table.columns.map((c) => c.name).toList(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final brandLogo = isDark
+        ? 'assets/branding/file4base-dark.png'
+        : 'assets/branding/file4base-light.png';
 
     return CallbackShortcuts(
       bindings: {
@@ -131,20 +175,55 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6.0),
                   child: Image.asset(
-                    'assets/branding/file4base-icon.jpg',
-                    width: 24,
-                    height: 24,
+                    brandLogo,
+                    width: 26,
+                    height: 26,
                     fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) =>
-                        const Icon(Icons.table_chart, size: 20),
+                    errorBuilder: (context, error, stackTrace) => Image.asset(
+                      'assets/branding/file4base-icon-64.png',
+                      width: 26,
+                      height: 26,
+                      errorBuilder: (_, __, ___) => const Icon(Icons.table_chart, size: 22),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 const Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                if (_tables.isNotEmpty && _selectedTable != null) ...[
+                  const SizedBox(width: 16),
+                  Container(
+                    height: 32,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: _selectedTable!.id,
+                        isDense: true,
+                        icon: const Icon(Icons.arrow_drop_down, size: 18),
+                        items: _tables.map((t) {
+                          return DropdownMenuItem(
+                            value: t.id,
+                            child: Text(t.displayName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                          );
+                        }).toList(),
+                        onChanged: (newId) {
+                          if (newId != null) {
+                            final match = _tables.firstWhere((t) => t.id == newId);
+                            setState(() {
+                              _selectedTable = match;
+                              _initDefaultLayout(match);
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
-
-
             actions: [
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -164,12 +243,20 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.storage, size: 16),
                 label: const Text('Manage Database...'),
-                onPressed: () => ManageDatabaseDialog.show(context),
+                onPressed: () async {
+                  await ManageDatabaseDialog.show(context);
+                  _loadTables();
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.info_outline, size: 20),
+                tooltip: 'About File4Base',
+                onPressed: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
               ),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                padding: const EdgeInsets.only(left: 4.0, right: 16.0),
                 child: Row(
-
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,
@@ -183,36 +270,129 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               ),
             ],
           ),
-          body: Container(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
-            child: Center(
-              child: Card(
-                elevation: 2,
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _getModeIcon(mode),
-                        size: 48,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _getModeTitle(mode),
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _getModeDescription(mode),
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                      ),
-                    ],
+          body: _buildBody(context, mode),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody(BuildContext context, OperationalMode mode) {
+    if (_isLoadingTables) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_tables.isEmpty || _selectedTable == null) {
+      return _buildWelcomeScreen(context, mode);
+    }
+
+    final client = ref.read(apiClientProvider);
+
+    switch (mode) {
+      case OperationalMode.browse:
+      case OperationalMode.find:
+        return DataBrowserWidget(
+          key: ValueKey('${_selectedTable!.id}_$mode'),
+          table: _selectedTable!,
+          apiClient: client,
+          mode: mode,
+        );
+      case OperationalMode.layout:
+        return LayoutDesignerWidget(
+          key: ValueKey('layout_${_selectedTable!.id}'),
+          table: _selectedTable!,
+          apiClient: client,
+          initialLayout: _activeLayout ??
+              LayoutDefinitionModel.defaultForTable(
+                _selectedTable!.displayName,
+                _selectedTable!.columns.map((c) => c.name).toList(),
+              ),
+          onSaved: () {
+            _loadTables();
+          },
+        );
+      case OperationalMode.preview:
+        return LayoutPreviewWidget(
+          key: ValueKey('preview_${_selectedTable!.id}'),
+          table: _selectedTable!,
+          apiClient: client,
+          layout: _activeLayout ??
+              LayoutDefinitionModel.defaultForTable(
+                _selectedTable!.displayName,
+                _selectedTable!.columns.map((c) => c.name).toList(),
+              ),
+        );
+    }
+  }
+
+  Widget _buildWelcomeScreen(BuildContext context, OperationalMode mode) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final brandLogo = isDark
+        ? 'assets/branding/file4base-dark.png'
+        : 'assets/branding/file4base-light.png';
+
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+      child: Center(
+        child: Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Container(
+            width: 520,
+            padding: const EdgeInsets.all(32.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Image.asset(
+                    brandLogo,
+                    width: 72,
+                    height: 72,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => Image.asset(
+                      'assets/branding/file4base-icon-128.png',
+                      width: 72,
+                      height: 72,
+                      errorBuilder: (_, __, ___) => const Icon(Icons.table_chart, size: 64, color: Colors.blue),
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Welcome to File4Base',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Open-source FileMaker Pro alternative with dynamic schema, relational occurrences, visual layouts, and 4 operational modes.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13, height: 1.4),
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  icon: const Icon(Icons.add_circle_outline, size: 18),
+                  label: const Text('Create First Database Table'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  ),
+                  onPressed: () async {
+                    await ManageDatabaseDialog.show(context);
+                    _loadTables();
+                  },
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    _buildShortcutBadge('⌘B', 'Browse'),
+                    _buildShortcutBadge('⌘F', 'Find'),
+                    _buildShortcutBadge('⌘L', 'Layout'),
+                    _buildShortcutBadge('⌘U', 'Preview'),
+                  ],
+                ),
+              ],
             ),
           ),
         ),
@@ -220,42 +400,21 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
   }
 
-  IconData _getModeIcon(OperationalMode mode) {
-    switch (mode) {
-      case OperationalMode.browse:
-        return Icons.visibility;
-      case OperationalMode.find:
-        return Icons.search;
-      case OperationalMode.layout:
-        return Icons.design_services;
-      case OperationalMode.preview:
-        return Icons.print;
-    }
-  }
-
-  String _getModeTitle(OperationalMode mode) {
-    switch (mode) {
-      case OperationalMode.browse:
-        return 'Browse Mode Active';
-      case OperationalMode.find:
-        return 'Find Mode Active';
-      case OperationalMode.layout:
-        return 'Layout Designer Active';
-      case OperationalMode.preview:
-        return 'Preview / Print Mode Active';
-    }
-  }
-
-  String _getModeDescription(OperationalMode mode) {
-    switch (mode) {
-      case OperationalMode.browse:
-        return 'Record viewing and inline data entry.\nSwitch views: Form, List, or Table.';
-      case OperationalMode.find:
-        return 'Enter search criteria into fields using operators (=, !, >, <, *, ...).';
-      case OperationalMode.layout:
-        return 'WYSIWYG layout designer with snap-to-grid, parts, and property inspector.';
-      case OperationalMode.preview:
-        return 'Print preview calculating exact page breaks and summary totals.';
-    }
+  Widget _buildShortcutBadge(String shortcut, String label) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.grey.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.grey.withOpacity(0.3)),
+          ),
+          child: Text(shortcut, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+      ],
+    );
   }
 }

@@ -22,6 +22,12 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/tables", h.ListTables)
 		r.Post("/tables", h.CreateTable)
 		r.Post("/tables/{id}/columns", h.AddColumn)
+		r.Get("/occurrences", h.ListOccurrences)
+		r.Get("/layouts", h.ListLayouts)
+		r.Post("/layouts", h.CreateLayout)
+		r.Get("/layouts/{id}", h.GetLayout)
+		r.Put("/layouts/{id}", h.UpdateLayout)
+		r.Delete("/layouts/{id}", h.DeleteLayout)
 	})
 }
 
@@ -109,3 +115,93 @@ func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(col)
 }
+
+func (h *SchemaHandler) ListOccurrences(w http.ResponseWriter, r *http.Request) {
+	occurrences, err := h.svc.ListTableOccurrences(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(occurrences)
+}
+
+func (h *SchemaHandler) ListLayouts(w http.ResponseWriter, r *http.Request) {
+	layouts, err := h.svc.ListLayouts(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(layouts)
+}
+
+type CreateLayoutRequest struct {
+	Name              string          `json:"name"`
+	TableOccurrenceID string          `json:"table_occurrence_id"`
+	Definition        json.RawMessage `json:"definition"`
+}
+
+func (h *SchemaHandler) CreateLayout(w http.ResponseWriter, r *http.Request) {
+	var req CreateLayoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	layout, err := h.svc.CreateLayout(r.Context(), req.Name, req.TableOccurrenceID, req.Definition)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(layout)
+}
+
+func (h *SchemaHandler) GetLayout(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	layout, err := h.svc.GetLayout(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(layout)
+}
+
+type UpdateLayoutRequest struct {
+	Name       string          `json:"name"`
+	Definition json.RawMessage `json:"definition"`
+}
+
+func (h *SchemaHandler) UpdateLayout(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req UpdateLayoutRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	layout, err := h.svc.UpdateLayout(r.Context(), id, req.Name, req.Definition)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(layout)
+}
+
+func (h *SchemaHandler) DeleteLayout(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.DeleteLayout(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+

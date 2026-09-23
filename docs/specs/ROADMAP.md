@@ -33,26 +33,28 @@
 
 
 ## Phase 4: Dynamic CRUD & Query Builder (Find Mode)
-- [ ] Implement generic dynamic CRUD endpoints in Go:
-  - [ ] `GET /api/v1/data/{table}` (with AST query filters, sorting, pagination).
-  - [ ] `POST /api/v1/data/{table}` (insert row with validation check).
-  - [ ] `PUT /api/v1/data/{table}/{id}` (update row).
-  - [ ] `DELETE /api/v1/data/{table}/{id}` (delete row with cascade check).
-- [ ] Implement Find Mode query translator in Go:
-  - [ ] Translate file4base find operators (`*`, `...`, `=`, `!`, `>`, `<`) into agnostic SQL AST.
-- [ ] Connect Flutter Grid / List view to generic CRUD endpoints.
+- [x] Implement generic dynamic CRUD endpoints in Go:
+  - [x] `GET /api/v1/data/{table}` (with AST query filters, sorting, pagination).
+  - [x] `POST /api/v1/data/{table}` (insert row with validation check).
+  - [x] `PUT /api/v1/data/{table}/{id}` (update row).
+  - [x] `DELETE /api/v1/data/{table}/{id}` (delete row with cascade check).
+- [x] Implement Find Mode query translator in Go:
+  - [x] Translate file4base find operators (`*`, `...`, `=`, `!`, `>`, `<`) into agnostic SQL AST.
+- [x] Connect Flutter Grid / List view to generic CRUD endpoints (`DataBrowserWidget`).
 
 ## Phase 5: Dynamic Layout Engine & 4 Execution Modes
-- [ ] Define JSON layout schema specification (`docs/specs/layout_schema.json`).
-- [ ] Implement Flutter Mode State Machine:
-  - [ ] **Browse Mode** (`Cmd+B` / `Ctrl+B`): Form & Grid data viewing and inline editing.
-  - [ ] **Find Mode** (`Cmd+F` / `Ctrl+F`): Find requests, omit criteria, multi-request OR logic.
-  - [ ] **Layout Mode** (`Cmd+L` / `Ctrl+L`): Visual drag-and-drop WYSIWYG designer for forms and portals.
-  - [ ] **Preview Mode** (`Cmd+U` / `Ctrl+U`): Print and pagination preview.
-- [ ] Build Flutter Layout Renderer:
-  - [ ] Field inputs (Text, Number, Date, Dropdown/Value Lists, Checkbox).
-  - [ ] Portals (sub-table for 1:N related records).
-  - [ ] Parts (Top Navigation, Header, Body, Footer).
+- [x] Define JSON layout schema specification (`docs/specs/layout_schema.json`).
+- [x] Implement Flutter Mode State Machine:
+  - [x] **Browse Mode** (`Cmd+B` / `Ctrl+B`): Form & Grid data viewing and inline editing.
+  - [x] **Find Mode** (`Cmd+F` / `Ctrl+F`): Find requests, omit criteria, multi-request OR logic.
+  - [x] **Layout Mode** (`Cmd+L` / `Ctrl+L`): Visual drag-and-drop WYSIWYG designer for forms and portals.
+  - [x] **Preview Mode** (`Cmd+U` / `Ctrl+U`): Print and pagination preview.
+- [x] Build Flutter Layout Renderer & Designer:
+  - [x] Field inputs (Text, Number, Date, Dropdown/Value Lists, Checkbox).
+  - [x] Portals (sub-table for 1:N related records).
+  - [x] Parts (Top Navigation, Header, Body, Footer).
+  - [x] Layout backend REST persistence (`/api/v1/schemas/layouts`).
+  - [x] Official branding integration across macOS, Windows, Linux, and WebDirect.
 
 ## Phase 6: Real-Time Sync & Multi-User Collaboration
 - [ ] Set up WebSocket hub in Go server.

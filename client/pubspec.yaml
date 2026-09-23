@@ -62,9 +62,8 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/branding/file4base-icon.jpg
-    - assets/branding/file4base-dark.svg
-    - assets/branding/file4base-light.svg
+    - assets/branding/
+
 
 
   # An image asset can refer to one or more resolution-specific "variants", see

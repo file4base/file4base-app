@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/api"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+
 
 )
 
@@ -58,11 +60,14 @@ func main() {
 		DSN:        dsn,
 	})
 	var schemaSvc *schema.Service
+	var dataSvc *data.Service
 	if err != nil {
+
 		log.Printf("Warning: Database driver could not connect at startup: %v", err)
 	} else {
 		defer driver.Close()
 		schemaSvc = schema.NewService(driver)
+		dataSvc = data.NewService(driver)
 		ctxInit, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := schemaSvc.EnsureSystemTables(ctxInit); err != nil {
 			log.Printf("Warning: Failed to ensure system tables: %v", err)
@@ -83,6 +88,11 @@ func main() {
 		schemaHandler := api.NewSchemaHandler(schemaSvc)
 		schemaHandler.RegisterRoutes(r)
 	}
+	if dataSvc != nil {
+		dataHandler := api.NewDataHandler(dataSvc)
+		dataHandler.RegisterRoutes(r)
+	}
+
 
 
 	// Health check endpoint

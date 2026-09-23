@@ -2,6 +2,7 @@ package schema_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func TestSchemaService_LivePostgres(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. Create dynamic table
-	tableName := "invoices_test"
+	tableName := fmt.Sprintf("invoices_test_%d", time.Now().UnixNano()%1000000)
 	tbl, err := svc.CreateTable(ctx, "Customer Invoices", tableName)
 	require.NoError(t, err)
 	assert.NotEmpty(t, tbl.ID)

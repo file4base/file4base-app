@@ -1,6 +1,6 @@
 module github.com/file4base/file4base-app/server
 
-go 1.26.3
+go 1.25.0
 
 require (
 	github.com/go-chi/chi/v5 v5.2.1
