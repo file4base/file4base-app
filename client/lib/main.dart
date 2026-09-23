@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
+import 'features/preflight/preflight_dialog.dart';
 
 enum OperationalMode {
   browse,
@@ -73,8 +74,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   @override
   void initState() {
     super.initState();
-    _checkServer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PreflightDialog.showIfNeeded(context, onProceed: () {
+        _checkServer();
+      });
+    });
   }
+
 
   Future<void> _checkServer() async {
     final client = ref.read(apiClientProvider);

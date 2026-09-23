@@ -4,8 +4,10 @@ File4Base is an open-source, modern alternative to database and layout editors, 
 
 ## Architecture Highlights
 - **Backend (Go 1.22+)**: REST & WebSockets, Clean Architecture, `pgx/v5`, PostgreSQL 16.
-- **Frontend (Flutter Desktop)**: Dynamic layout rendering engine using deterministic JSON schemas.
-- **Data Persistence**: Relational storage in PostgreSQL with dynamic schema metadata tables.
+- **Frontend (Flutter Desktop)**: Native desktop application targeting macOS (Apple Silicon M-series & Intel), Windows, and Linux.
+- **Environment & Preflight Engine**: Automated startup check verifying Docker presence, daemon state, and host architecture, with direct download and auto-launch prompts.
+- **Data Persistence**: Relational storage in PostgreSQL/MariaDB running locally in Docker with dynamic schema metadata tables.
+
 
 ## Repository Documentation
 - [Architecture Specification](docs/specs/ARCHITECTURE.md)

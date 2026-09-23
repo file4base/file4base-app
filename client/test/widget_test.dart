@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:file4base_client/core/system/environment_checker.dart';
 import 'package:file4base_client/main.dart';
 
 void main() {
+  setUp(() {
+    EnvironmentChecker.isTestMode = true;
+  });
+
+  tearDown(() {
+    EnvironmentChecker.isTestMode = false;
+  });
+
   testWidgets('App renders mode selector and switches mode', (WidgetTester tester) async {
-    // Set a wide desktop test resolution
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -15,6 +23,7 @@ void main() {
         child: File4BaseApp(),
       ),
     );
+    await tester.pump();
 
     // Initial state: Browse Mode
     expect(find.text('File4Base'), findsOneWidget);
