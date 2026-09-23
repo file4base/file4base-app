@@ -1,15 +1,16 @@
 # File4Base Implementation Roadmap
 
 ## Phase 1: Environment, DBAL Scaffolding & Foundation
-- [ ] Create root `docker-compose.yml` supporting both PostgreSQL 16 and optional MariaDB profiles.
-- [ ] Initialize Go server module (`server/go.mod`) with clean package structure.
-- [ ] Implement DBAL interface (`internal/dbal`):
-  - [ ] Agnostic types (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, `BOOLEAN`, `CONTAINER`, `CALCULATION`).
-  - [ ] Dialect interface for DDL and DML generation.
-  - [ ] PostgreSQL dialect implementation (`internal/dbal/postgres`).
-  - [ ] MariaDB dialect implementation (`internal/dbal/mariadb`).
-  - [ ] Driver factory switching via `DB_ENGINE` configuration.
-- [ ] Initialize Flutter desktop project skeleton in `client/` (macOS/Linux/Windows).
+- [x] Create root `docker-compose.yml` supporting both PostgreSQL 16 and optional MariaDB profiles.
+- [x] Initialize Go server module (`server/go.mod`) with clean package structure.
+- [x] Implement DBAL interface (`internal/dbal`):
+  - [x] Agnostic types (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, `BOOLEAN`, `CONTAINER`, `CALCULATION`).
+  - [x] Dialect interface for DDL and DML generation.
+  - [x] PostgreSQL dialect implementation (`internal/dbal/postgres`).
+  - [x] MariaDB dialect implementation (`internal/dbal/mariadb`).
+  - [x] Driver factory switching via `DB_ENGINE` configuration.
+- [x] Initialize Flutter desktop project skeleton in `client/` (macOS/Linux/Windows).
+
 
 ## Phase 2: Schema Engine & DDL (Backend Go)
 - [ ] Implement system catalog tables (`sys_tables`, `sys_columns`, `sys_relationships`).
