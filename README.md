@@ -38,12 +38,21 @@ open http://localhost:3000
 ```
 
 ### 2. Standalone Desktop Client (macOS / Windows / Linux)
-The native desktop client runs locally on developer workstations (including Apple Silicon M-series Macs):
-- Automatically performs preflight system checks on launch.
-- Verifies Docker installation and engine daemon status.
-- Prompts for automatic launch or download if missing.
+The native desktop client runs locally on developer workstations (including Apple Silicon M-series Macs, Windows, and Linux):
+- Connects through configurable port (default: `http://localhost:8080`), with interactive Host & Port Settings dialog (accessible by clicking the server status pill in the AppBar).
+- Performs generic preflight checks (connectivity, Docker daemon, database engine status).
+- Official adaptive light/dark branding icons integrated into macOS `.appiconset`, Windows `app_icon.ico`, and Linux headers.
 
 ```bash
+# Run locally in development
 cd client
 flutter run -d macos    # or windows, linux
+
+# Build native release bundles with packaging script
+./scripts/build_desktop.sh macos     # outputs dist/File4Base-macOS-universal.zip
+./scripts/build_desktop.sh windows   # outputs dist/File4Base-Windows-x64.zip
+./scripts/build_desktop.sh linux     # outputs dist/File4Base-Linux-x64.tar.gz
 ```
+
+### 3. Automated CI/CD Workflows
+A GitHub Actions workflow (`.github/workflows/desktop_release.yml`) automatically compiles and packages native release builds for macOS, Windows, and Linux on every release tag or workflow dispatch.

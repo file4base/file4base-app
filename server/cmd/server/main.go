@@ -22,6 +22,8 @@ import (
 
 )
 
+const AppVersion = "0.2.0"
+
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
 	dbal.RegisterDialect(dbal.EngineMariaDB, func() dbal.Dialect { return mariadb.New() })
@@ -113,6 +115,7 @@ func main() {
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":      status,
 			"app":         "File4Base Server",
+			"version":     AppVersion,
 			"engine":      engineType,
 			"database":    dbStatus,
 			"timestamp":   time.Now().UTC().Format(time.RFC3339),

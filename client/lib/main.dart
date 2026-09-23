@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
 import 'features/about/about_dialog.dart';
+import 'features/connection/server_connection_dialog.dart';
 import 'features/data_browser/data_browser_widget.dart';
 import 'features/layout_engine/layout_designer_widget.dart';
 import 'features/layout_engine/layout_preview_widget.dart';
@@ -17,8 +18,19 @@ enum OperationalMode {
   preview,
 }
 
+class ServerUrlNotifier extends Notifier<String> {
+  @override
+  String build() => 'http://localhost:8080';
+
+  void setUrl(String url) => state = url;
+}
+
+final serverUrlProvider =
+    NotifierProvider<ServerUrlNotifier, String>(ServerUrlNotifier.new);
+
 final apiClientProvider = Provider<ApiClient>((ref) {
-  final client = ApiClient();
+  final baseUrl = ref.watch(serverUrlProvider);
+  final client = ApiClient(baseUrl: baseUrl);
   ref.onDispose(() => client.close());
   return client;
 });
@@ -255,17 +267,50 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               ),
               Padding(
                 padding: const EdgeInsets.only(left: 4.0, right: 16.0),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,
-                      size: 16,
-                      color: _serverStatus.startsWith('Online') ? Colors.green : Colors.orange,
+                child: Tooltip(
+                  message: 'Click to configure Server Host & Port',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () {
+                      final currentUrl = ref.read(serverUrlProvider);
+                      ServerConnectionDialog.show(
+                        context,
+                        currentUrl: currentUrl,
+                        onConnect: (newUrl) {
+                          ref.read(serverUrlProvider.notifier).setUrl(newUrl);
+                          _checkServer();
+                        },
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: _serverStatus.startsWith('Online')
+                            ? Colors.green.withOpacity(0.12)
+                            : Colors.orange.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: _serverStatus.startsWith('Online')
+                              ? Colors.green.withOpacity(0.3)
+                              : Colors.orange.withOpacity(0.3),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,
+                            size: 16,
+                            color: _serverStatus.startsWith('Online') ? Colors.green : Colors.orange,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(_serverStatus, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.settings, size: 12, color: Colors.grey),
+                        ],
+                      ),
                     ),
-                    const SizedBox(width: 6),
-                    Text(_serverStatus, style: const TextStyle(fontSize: 12)),
-                  ],
+                  ),
                 ),
               ),
             ],

@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.file4base" "\0"
-            VALUE "FileDescription", "file4base_client" "\0"
+            VALUE "CompanyName", "File4Base Project" "\0"
+            VALUE "FileDescription", "File4Base Desktop Client" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "file4base_client" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.file4base. All rights reserved." "\0"
-            VALUE "OriginalFilename", "file4base_client.exe" "\0"
-            VALUE "ProductName", "file4base_client" "\0"
+            VALUE "InternalName", "File4Base" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 File4Base Project (GPLv3). All rights reserved." "\0"
+            VALUE "OriginalFilename", "File4Base.exe" "\0"
+            VALUE "ProductName", "File4Base" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

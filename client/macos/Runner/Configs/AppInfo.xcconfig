@@ -5,10 +5,10 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = file4base_client
+PRODUCT_NAME = File4Base
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.file4base.file4baseClient
+PRODUCT_BUNDLE_IDENTIFIER = com.file4base.app
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.file4base. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 File4Base Project (GPLv3). All rights reserved.
