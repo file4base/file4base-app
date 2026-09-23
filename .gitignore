@@ -58,3 +58,6 @@ mariadb_data/
 
 # Logs
 *.log
+
+# Distribution artifacts
+dist/

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
+import 'core/widgets/file4base_menu_bar.dart';
 import 'features/about/about_dialog.dart';
 import 'features/connection/server_connection_dialog.dart';
 import 'features/data_browser/data_browser_widget.dart';
@@ -101,6 +102,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   TableModel? _selectedTable;
   LayoutDefinitionModel? _activeLayout;
   bool _isLoadingTables = false;
+  bool _isToolbarVisible = true;
+  final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
 
   @override
   void initState() {
@@ -189,143 +192,194 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       child: Focus(
         autofocus: true,
         child: Scaffold(
-          appBar: AppBar(
-            title: Row(
-              mainAxisSize: MainAxisSize.min,
+          body: SafeArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(6.0),
-                  child: Image.asset(
-                    brandLogo,
-                    width: 26,
-                    height: 26,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => Image.asset(
-                      'assets/branding/file4base-icon-64.png',
-                      width: 26,
-                      height: 26,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.table_chart, size: 22),
-                    ),
-                  ),
+                File4BaseMenuBar(
+                  activeMode: mode,
+                  onModeChanged: (newMode) => ref.read(operationalModeProvider.notifier).setMode(newMode),
+                  onManageDatabase: () async {
+                    await ManageDatabaseDialog.show(context);
+                    _loadTables();
+                  },
+                  onOpenRemote: () {
+                    final currentUrl = ref.read(serverUrlProvider);
+                    ServerConnectionDialog.show(
+                      context,
+                      currentUrl: currentUrl,
+                      onConnect: (newUrl) {
+                        ref.read(serverUrlProvider.notifier).setUrl(newUrl);
+                        _checkServer();
+                      },
+                    );
+                  },
+                  onAbout: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
+                  onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
+                  onDuplicateRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
+                  onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                  onShowAllRecords: () => _dataBrowserKey.currentState?.fetchRecords(),
+                  onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
+                  isToolbarVisible: _isToolbarVisible,
+                  onToggleToolbar: (visible) => setState(() => _isToolbarVisible = visible),
                 ),
-                const SizedBox(width: 8),
-                const Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-                if (_tables.isNotEmpty && _selectedTable != null) ...[
-                  const SizedBox(width: 16),
-                  Container(
-                    height: 32,
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _selectedTable!.id,
-                        isDense: true,
-                        icon: const Icon(Icons.arrow_drop_down, size: 18),
-                        items: _tables.map((t) {
-                          return DropdownMenuItem(
-                            value: t.id,
-                            child: Text(t.displayName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                          );
-                        }).toList(),
-                        onChanged: (newId) {
-                          if (newId != null) {
-                            final match = _tables.firstWhere((t) => t.id == newId);
-                            setState(() {
-                              _selectedTable = match;
-                              _initDefaultLayout(match);
-                            });
-                          }
-                        },
-                      ),
-                    ),
-                  ),
-                ],
+                if (_isToolbarVisible)
+                  _buildStatusToolbar(context, mode, isDark, brandLogo),
+                Expanded(
+                  child: _buildBody(context, mode),
+                ),
               ],
             ),
-            actions: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8.0),
-                child: SegmentedButton<OperationalMode>(
-                  segments: const [
-                    ButtonSegment(value: OperationalMode.browse, label: Text('Browse')),
-                    ButtonSegment(value: OperationalMode.find, label: Text('Find')),
-                    ButtonSegment(value: OperationalMode.layout, label: Text('Layout')),
-                    ButtonSegment(value: OperationalMode.preview, label: Text('Preview')),
-                  ],
-                  selected: {mode},
-                  onSelectionChanged: (newSelection) {
-                    ref.read(operationalModeProvider.notifier).setMode(newSelection.first);
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusToolbar(BuildContext context, OperationalMode mode, bool isDark, String brandLogo) {
+    final theme = Theme.of(context);
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: theme.dividerColor.withOpacity(0.15),
+            width: 1.0,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6.0),
+            child: Image.asset(
+              brandLogo,
+              width: 24,
+              height: 24,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) => Image.asset(
+                'assets/branding/file4base-icon-64.png',
+                width: 24,
+                height: 24,
+                errorBuilder: (_, __, ___) => const Icon(Icons.table_chart, size: 20),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          if (_tables.isNotEmpty && _selectedTable != null) ...[
+            const SizedBox(width: 14),
+            Container(
+              height: 30,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _selectedTable!.id,
+                  isDense: true,
+                  icon: const Icon(Icons.arrow_drop_down, size: 18),
+                  items: _tables.map((t) {
+                    return DropdownMenuItem(
+                      value: t.id,
+                      child: Text(t.displayName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                    );
+                  }).toList(),
+                  onChanged: (newId) {
+                    if (newId != null) {
+                      final match = _tables.firstWhere((t) => t.id == newId);
+                      setState(() {
+                        _selectedTable = match;
+                        _initDefaultLayout(match);
+                      });
+                    }
                   },
                 ),
               ),
-              FilledButton.tonalIcon(
-                icon: const Icon(Icons.storage, size: 16),
-                label: const Text('Manage Database...'),
-                onPressed: () async {
-                  await ManageDatabaseDialog.show(context);
-                  _loadTables();
-                },
-              ),
-              IconButton(
-                icon: const Icon(Icons.info_outline, size: 20),
-                tooltip: 'About File4Base',
-                onPressed: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 4.0, right: 16.0),
-                child: Tooltip(
-                  message: 'Click to configure Server Host & Port',
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    onTap: () {
-                      final currentUrl = ref.read(serverUrlProvider);
-                      ServerConnectionDialog.show(
-                        context,
-                        currentUrl: currentUrl,
-                        onConnect: (newUrl) {
-                          ref.read(serverUrlProvider.notifier).setUrl(newUrl);
-                          _checkServer();
-                        },
-                      );
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: _serverStatus.startsWith('Online')
-                            ? Colors.green.withOpacity(0.12)
-                            : Colors.orange.withOpacity(0.12),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: _serverStatus.startsWith('Online')
-                              ? Colors.green.withOpacity(0.3)
-                              : Colors.orange.withOpacity(0.3),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,
-                            size: 16,
-                            color: _serverStatus.startsWith('Online') ? Colors.green : Colors.orange,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(_serverStatus, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.settings, size: 12, color: Colors.grey),
-                        ],
-                      ),
-                    ),
+            ),
+          ],
+          const Spacer(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6.0),
+            child: SegmentedButton<OperationalMode>(
+              segments: const [
+                ButtonSegment(value: OperationalMode.browse, label: Text('Browse', style: TextStyle(fontSize: 12))),
+                ButtonSegment(value: OperationalMode.find, label: Text('Find', style: TextStyle(fontSize: 12))),
+                ButtonSegment(value: OperationalMode.layout, label: Text('Layout', style: TextStyle(fontSize: 12))),
+                ButtonSegment(value: OperationalMode.preview, label: Text('Preview', style: TextStyle(fontSize: 12))),
+              ],
+              selected: {mode},
+              onSelectionChanged: (newSelection) {
+                ref.read(operationalModeProvider.notifier).setMode(newSelection.first);
+              },
+            ),
+          ),
+          FilledButton.tonalIcon(
+            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
+            icon: const Icon(Icons.storage, size: 15),
+            label: const Text('Manage Database...', style: TextStyle(fontSize: 12)),
+            onPressed: () async {
+              await ManageDatabaseDialog.show(context);
+              _loadTables();
+            },
+          ),
+          const SizedBox(width: 6),
+          IconButton(
+            icon: const Icon(Icons.info_outline, size: 18),
+            tooltip: 'About File4Base',
+            onPressed: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
+          ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: 'Click to configure Server Host & Port',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: () {
+                final currentUrl = ref.read(serverUrlProvider);
+                ServerConnectionDialog.show(
+                  context,
+                  currentUrl: currentUrl,
+                  onConnect: (newUrl) {
+                    ref.read(serverUrlProvider.notifier).setUrl(newUrl);
+                    _checkServer();
+                  },
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _serverStatus.startsWith('Online')
+                      ? Colors.green.withOpacity(0.12)
+                      : Colors.orange.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: _serverStatus.startsWith('Online')
+                        ? Colors.green.withOpacity(0.3)
+                        : Colors.orange.withOpacity(0.3),
                   ),
                 ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,
+                      size: 14,
+                      color: _serverStatus.startsWith('Online') ? Colors.green : Colors.orange,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(_serverStatus, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 3),
+                    const Icon(Icons.settings, size: 11, color: Colors.grey),
+                  ],
+                ),
               ),
-            ],
+            ),
           ),
-          body: _buildBody(context, mode),
-        ),
+        ],
       ),
     );
   }
@@ -345,7 +399,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       case OperationalMode.browse:
       case OperationalMode.find:
         return DataBrowserWidget(
-          key: ValueKey('${_selectedTable!.id}_$mode'),
+          key: _dataBrowserKey,
           table: _selectedTable!,
           apiClient: client,
           mode: mode,

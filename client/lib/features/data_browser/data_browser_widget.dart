@@ -15,14 +15,19 @@ class DataBrowserWidget extends StatefulWidget {
   });
 
   @override
-  State<DataBrowserWidget> createState() => _DataBrowserWidgetState();
+  State<DataBrowserWidget> createState() => DataBrowserWidgetState();
 }
 
-class _DataBrowserWidgetState extends State<DataBrowserWidget> {
+class DataBrowserWidgetState extends State<DataBrowserWidget> {
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
   String? _error;
   int _currentIndex = 0;
+
+  void createNewRecord() => _createNewRecord();
+  void deleteCurrentRecord() => _deleteCurrentRecord();
+  void performFind() => _performFind();
+  void fetchRecords() => _fetchRecords();
 
   // Find Mode criteria per field
   final Map<String, TextEditingController> _findControllers = {};
