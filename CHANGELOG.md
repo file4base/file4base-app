@@ -9,7 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-09-23
+## [0.4.2] - 2026-09-23
+
+### Fixed
+- **GitHub Actions Node.js 20 Deprecation Warning**:
+  - Upgraded CI/CD workflow actions from `@v4` to `@v7`/`@v8` (`actions/checkout@v7`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`).
+  - All workflow actions now natively target `node24`, eliminating the runner deprecation warning.
+- **Desktop Single-Compression Distribution**:
+  - Resolved double-compression issue where downloading desktop artifacts from GitHub Actions resulted in nested archives (`.zip` containing `.tar.gz` or `.zip`).
+  - Enabled `archive: false` on `actions/upload-artifact@v7`, allowing pre-packaged archives to be uploaded as direct single files without GitHub Actions adding a redundant outer `.zip` container.
+  - Decompressing downloaded desktop artifacts now immediately extracts the application (`File4Base.app` on macOS, binary bundle on Linux, executable folder on Windows) in a single step.
+  - Added native Apple Disk Image (`File4Base-macOS.dmg`) generation via `hdiutil` for seamless macOS drag-and-drop installation.
+
+### Added
+- **Automated GitHub Releases Publishing**:
+  - Added `publish-release` workflow job triggered upon version tags (`v*`).
+  - Automatically compiles desktop bundles across macOS, Linux, and Windows and attaches release assets directly to GitHub Releases via `gh release create`.
 
 ### Added
 - **Unified Open Solution / Database Dialog (`OpenSolutionDialog`)**:

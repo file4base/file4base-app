@@ -14,7 +14,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -37,20 +37,27 @@ jobs:
       - name: Package macOS App
         run: |
           mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent client/build/macos/Build/Products/Release/File4Base.app dist/File4Base-macOS-universal.zip
+          ditto -c -k --sequesterRsrc --keepParent client/build/macos/Build/Products/Release/File4Base.app dist/File4Base-macOS.zip
+          hdiutil create -volname "File4Base" -srcfolder client/build/macos/Build/Products/Release/File4Base.app -ov -format UDZO dist/File4Base-macOS.dmg
 
-      - name: Upload macOS Artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload macOS Zip Artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: File4Base-macOS
-          path: dist/File4Base-macOS-universal.zip
+          path: dist/File4Base-macOS.zip
+          archive: false
+
+      - name: Upload macOS DMG Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/File4Base-macOS.dmg
+          archive: false
 
   build-linux:
     name: Build Linux Desktop (x64)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Linux build dependencies
         run: |
@@ -77,17 +84,17 @@ jobs:
           tar -czf dist/File4Base-Linux-x64.tar.gz -C client/build/linux/x64/release/bundle .
 
       - name: Upload Linux Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: File4Base-Linux
           path: dist/File4Base-Linux-x64.tar.gz
+          archive: false
 
   build-windows:
     name: Build Windows Desktop (x64)
     runs-on: windows-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -110,7 +117,33 @@ jobs:
           Compress-Archive -Path "client/build/windows/x64/runner/Release/*" -DestinationPath "dist/File4Base-Windows-x64.zip" -Force
 
       - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: File4Base-Windows
           path: dist/File4Base-Windows-x64.zip
+          archive: false
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-macos, build-linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Download all release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            release-assets/* \
+            --title "File4Base ${{ github.ref_name }}" \
+            --generate-notes
