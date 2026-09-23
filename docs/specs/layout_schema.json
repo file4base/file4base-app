@@ -1,0 +1,146 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "File4BaseLayoutSchema",
+  "description": "Deterministic JSON layout schema defining view structure, parts, and objects for File4Base Flutter renderer.",
+  "type": "object",
+  "required": ["id", "name", "table_occurrence", "width", "theme", "default_view", "parts", "objects"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier of the layout."
+    },
+    "name": {
+      "type": "string",
+      "description": "User-friendly name of the layout."
+    },
+    "table_occurrence": {
+      "type": "string",
+      "description": "The base Table Occurrence (TO) in the relationship graph context."
+    },
+    "width": {
+      "type": "number",
+      "description": "Fixed canvas design width in logical pixels."
+    },
+    "theme": {
+      "type": "string",
+      "enum": ["Enlightened", "Enlightened Touch", "Enlightened Print", "Minimalist"],
+      "default": "Enlightened"
+    },
+    "default_view": {
+      "type": "string",
+      "enum": ["form", "list", "table"],
+      "default": "form"
+    },
+    "parts": {
+      "type": "array",
+      "description": "List of structural layout parts dividing the canvas vertically.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "height"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": [
+              "top_navigation",
+              "title_header",
+              "header",
+              "body",
+              "subsummary",
+              "trailing_grand_summary",
+              "footer",
+              "bottom_navigation"
+            ]
+          },
+          "height": { "type": "number" },
+          "break_field": {
+            "type": "string",
+            "description": "Field identifier used for grouping if part is subsummary."
+          }
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "description": "UI elements placed on the layout canvas.",
+      "items": {
+        "$ref": "#/definitions/LayoutObject"
+      }
+    }
+  },
+  "definitions": {
+    "LayoutObject": {
+      "type": "object",
+      "required": ["id", "type", "x", "y", "width", "height"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": [
+            "field",
+            "label",
+            "button",
+            "button_bar",
+            "portal",
+            "tab_control",
+            "slide_control",
+            "popover_button",
+            "chart",
+            "web_viewer"
+          ]
+        },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "anchors": {
+          "type": "object",
+          "properties": {
+            "top": { "type": "boolean", "default": true },
+            "bottom": { "type": "boolean", "default": false },
+            "left": { "type": "boolean", "default": true },
+            "right": { "type": "boolean", "default": false }
+          }
+        },
+        "field_binding": {
+          "type": "object",
+          "properties": {
+            "table_occurrence": { "type": "string" },
+            "field_name": { "type": "string" },
+            "control_style": {
+              "type": "string",
+              "enum": ["edit_box", "drop_down_list", "pop_up_menu", "checkbox_set", "radio_button_set", "drop_down_calendar"]
+            },
+            "value_list_id": { "type": "string" },
+            "allow_browse_entry": { "type": "boolean", "default": true },
+            "allow_find_entry": { "type": "boolean", "default": true }
+          }
+        },
+        "portal_config": {
+          "type": "object",
+          "properties": {
+            "relationship_id": { "type": "string" },
+            "target_table_occurrence": { "type": "string" },
+            "row_height": { "type": "number" },
+            "allow_delete_row": { "type": "boolean" },
+            "initial_row_count": { "type": "integer" }
+          }
+        },
+        "style": {
+          "type": "object",
+          "properties": {
+            "fill_color": { "type": "string" },
+            "border_color": { "type": "string" },
+            "border_width": { "type": "number" },
+            "corner_radius": { "type": "number" },
+            "font_family": { "type": "string" },
+            "font_size": { "type": "number" },
+            "font_weight": { "type": "string" },
+            "text_color": { "type": "string" },
+            "text_align": { "type": "string", "enum": ["left", "center", "right", "justify"] }
+          }
+        }
+      }
+    }
+  }
+}

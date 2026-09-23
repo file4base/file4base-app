@@ -10,7 +10,11 @@ File4Base is an open-source, modern alternative to database and layout editors, 
 ## Repository Documentation
 - [Architecture Specification](docs/specs/ARCHITECTURE.md)
 - [Implementation Roadmap](docs/specs/ROADMAP.md)
+- [Database Abstraction Layer (DBAL) Spec](docs/specs/DBAL_SPECIFICATION.md)
+- [Functional Specification (Feature Mapping)](docs/specs/FUNCTIONAL_SPECIFICATION.md)
+- [Dynamic Layout JSON Schema](docs/specs/layout_schema.json)
 - [Menu Bar & Functional Command Reference](docs/specs/file4base_menu_reference_guide.md)
+
 
 ## Development Setup
 ```bash
