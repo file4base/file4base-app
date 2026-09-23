@@ -13,7 +13,8 @@ void main() {
     EnvironmentChecker.isTestMode = false;
   });
 
-  testWidgets('App renders branding, mode selector and switches mode', (WidgetTester tester) async {
+  testWidgets('App renders canonical menu, left status sidebar, and switches mode',
+      (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -26,37 +27,39 @@ void main() {
     await tester.pump();
 
     // Verify Title and Welcome Screen
-    expect(find.text('File4Base'), findsOneWidget);
+    expect(find.text('File'), findsOneWidget);
+    expect(find.text('View'), findsOneWidget);
     expect(find.text('Welcome to File4Base'), findsOneWidget);
-    expect(find.text('Manage Database...'), findsOneWidget);
+    expect(find.text('Manage\nDatabase...'), findsOneWidget);
 
-    // Verify 4 Mode buttons in SegmentedButton
-    final segmentedButton = find.byType(SegmentedButton<OperationalMode>);
-    expect(find.descendant(of: segmentedButton, matching: find.text('Browse')), findsOneWidget);
-    final findModeBtn = find.descendant(of: segmentedButton, matching: find.text('Find'));
-    final layoutModeBtn = find.descendant(of: segmentedButton, matching: find.text('Layout'));
-    final previewModeBtn = find.descendant(of: segmentedButton, matching: find.text('Preview'));
+    // Verify mode indicator (present in status bar and sidebar)
+    expect(find.text('Browse'), findsAtLeastNWidgets(1));
 
-    expect(findModeBtn, findsOneWidget);
-    expect(layoutModeBtn, findsOneWidget);
-    expect(previewModeBtn, findsOneWidget);
-
-    // Tap Find Mode button
-    await tester.tap(findModeBtn);
-    await tester.pump();
-
-    // Tap Layout Mode button
-    await tester.tap(layoutModeBtn);
-    await tester.pump();
-
-    // Tap About Dialog
-    await tester.tap(find.byIcon(Icons.info_outline));
+    // Tap View menu in MenuBar to switch to Layout Mode
+    await tester.tap(find.text('View'));
     await tester.pumpAndSettle();
 
-    expect(find.text('GNU General Public License v3.0 (GPL-3.0)'), findsOneWidget);
-    expect(find.text('Close'), findsOneWidget);
+    final layoutMenuItem = find.text('Layout Mode');
+    expect(layoutMenuItem, findsOneWidget);
+    await tester.tap(layoutMenuItem);
+    await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Close'));
+    // Verify status bar now reflects Layout mode
+    expect(find.text('Layout'), findsAtLeastNWidgets(1));
+
+    // Open About Dialog via Help menu
+    await tester.tap(find.text('Help'));
+    await tester.pumpAndSettle();
+
+    final aboutMenuItem = find.text('About File4Base');
+    expect(aboutMenuItem, findsOneWidget);
+    await tester.tap(aboutMenuItem);
+    await tester.pumpAndSettle();
+
+    expect(find.text('About File4Base'), findsAtLeastNWidgets(1));
+    expect(find.text('OK'), findsOneWidget);
+
+    await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
   });
 }

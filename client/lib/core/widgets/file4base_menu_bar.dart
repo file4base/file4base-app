@@ -8,6 +8,11 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback onManageDatabase;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
+  final VoidCallback? onNewDatabase;
+  final VoidCallback? onOpenSolution;
+  final VoidCallback? onSave;
+  final VoidCallback? onSaveAs;
+  final VoidCallback? onSaveCopyAs;
   final VoidCallback? onNewRecord;
   final VoidCallback? onDuplicateRecord;
   final VoidCallback? onDeleteRecord;
@@ -24,6 +29,11 @@ class File4BaseMenuBar extends StatelessWidget {
     required this.onManageDatabase,
     required this.onOpenRemote,
     required this.onAbout,
+    this.onNewDatabase,
+    this.onOpenSolution,
+    this.onSave,
+    this.onSaveAs,
+    this.onSaveCopyAs,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -153,12 +163,12 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'New Database', 'Create a new table in Manage > Database.'),
+          onPressed: onNewDatabase ?? () => _showNotice(context, 'New Database', 'Create a new table in Manage > Database.'),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
           child: const Text('New Database...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Open', 'Select a local SQLite or File4Base solution.'),
+          onPressed: onOpenSolution ?? () => _showNotice(context, 'Open', 'Select a local File4Base solution (.f4b).'),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true),
           child: const Text('Open...'),
         ),
@@ -167,6 +177,22 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true, shift: true),
           child: const Text('Open Remote...'),
         ),
+        const Divider(height: 1),
+        MenuItemButton(
+          onPressed: onSave ?? () => _showNotice(context, 'Save', 'Solution saved.'),
+          shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
+          child: const Text('Save'),
+        ),
+        MenuItemButton(
+          onPressed: onSaveAs ?? () => _showNotice(context, 'Save As', 'Save solution with a new name.'),
+          shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
+          child: const Text('Save As...'),
+        ),
+        MenuItemButton(
+          onPressed: onSaveCopyAs ?? () => _showNotice(context, 'Save a Copy As', 'Full copy or database data file.'),
+          child: const Text('Save a Copy As...'),
+        ),
+        const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
@@ -319,7 +345,7 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Send Mail...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Save a Copy As', 'Full copy, clone with no records, or compacted archive.'),
+          onPressed: onSaveCopyAs ?? () => _showNotice(context, 'Save a Copy As', 'Full copy, clone with no records, or compacted archive.'),
           child: const Text('Save a Copy As...'),
         ),
         MenuItemButton(

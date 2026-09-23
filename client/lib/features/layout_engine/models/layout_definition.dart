@@ -1,4 +1,3 @@
-import 'dart:convert';
 
 class LayoutPartModel {
   final String id;
@@ -299,4 +298,26 @@ class LayoutDefinitionModel {
         'parts': parts.map((p) => p.toJson()).toList(),
         'objects': objects.map((o) => o.toJson()).toList(),
       };
+
+  LayoutDefinitionModel copyWith({
+    String? id,
+    String? name,
+    String? tableOccurrence,
+    double? width,
+    String? theme,
+    String? defaultView,
+    List<LayoutPartModel>? parts,
+    List<LayoutObjectModel>? objects,
+  }) {
+    return LayoutDefinitionModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      tableOccurrence: tableOccurrence ?? this.tableOccurrence,
+      width: width ?? this.width,
+      theme: theme ?? this.theme,
+      defaultView: defaultView ?? this.defaultView,
+      parts: parts ?? this.parts,
+      objects: objects ?? this.objects,
+    );
+  }
 }

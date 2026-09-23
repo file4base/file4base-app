@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
+import 'core/models/solution_models.dart';
+import 'core/services/solution_storage.dart';
 import 'core/widgets/file4base_menu_bar.dart';
+import 'core/widgets/file4base_status_sidebar.dart' show File4BaseStatusSidebar, LayoutTool;
 import 'features/about/about_dialog.dart';
 import 'features/connection/server_connection_dialog.dart';
 import 'features/data_browser/data_browser_widget.dart';
@@ -12,6 +15,8 @@ import 'features/layout_engine/layout_preview_widget.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
+import 'features/solution_manager/new_database_dialog.dart';
+import 'features/solution_manager/save_copy_dialog.dart';
 
 enum OperationalMode {
   browse,
@@ -98,12 +103,20 @@ class WorkspaceShell extends ConsumerStatefulWidget {
 
 class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   String _serverStatus = 'Checking...';
+  String _activeSolutionFileName = 'Untitled.f4b';
+  String _activeSolutionName = 'Untitled Solution';
+  String _activeDatabaseName = 'file4base_dev';
   List<TableModel> _tables = [];
   TableModel? _selectedTable;
   LayoutDefinitionModel? _activeLayout;
   bool _isLoadingTables = false;
   bool _isToolbarVisible = true;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
+  final GlobalKey<LayoutDesignerWidgetState> _layoutDesignerKey = GlobalKey<LayoutDesignerWidgetState>();
+  int _currentRecordIndex = 0;
+  int _totalRecords = 0;
+  bool _isFindOmit = false;
+  LayoutTool _activeLayoutTool = LayoutTool.pointer;
 
   @override
   void initState() {
@@ -122,6 +135,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       if (mounted) {
         setState(() {
           _serverStatus = 'Online (${health['engine']})';
+          if (health['active_database'] != null) {
+            _activeDatabaseName = health['active_database'].toString();
+          }
         });
         _loadTables();
       }
@@ -166,13 +182,194 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
   }
 
+  Future<void> _handleNewDatabase() async {
+    final client = ref.read(apiClientProvider);
+    final result = await NewDatabaseDialog.show(context, client);
+    if (result != null && mounted) {
+      setState(() {
+        _activeSolutionFileName = result.fileName;
+        _activeSolutionName = result.package.solutionName;
+        _activeDatabaseName = result.databaseName;
+      });
+      await _loadTables();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Created solution "${result.package.solutionName}" with database "${result.databaseName}" and saved "${result.fileName}" (MessagePack).'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleOpenSolution() async {
+    final client = ref.read(apiClientProvider);
+    final file = await SolutionStorageService.pickFile(allowedExtensions: ['f4b']);
+    if (file == null) return;
+
+    try {
+      final pkg = SolutionPackage.fromMsgPack(file.bytes);
+      await client.importSolution(file.bytes);
+      await client.switchDatabase(pkg.databaseConnection.database);
+
+      if (mounted) {
+        setState(() {
+          _activeSolutionFileName = file.name;
+          _activeSolutionName = pkg.solutionName;
+          _activeDatabaseName = pkg.databaseConnection.database;
+        });
+        await _loadTables();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Opened solution "${pkg.solutionName}" from "${file.name}" (MessagePack).'),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to open solution: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<Uint8List> _exportCurrentSolutionBytes() async {
+    final client = ref.read(apiClientProvider);
+    List<TableOccurrenceModel> occurrences = [];
+    List<LayoutModel> layouts = [];
+    try {
+      occurrences = await client.listOccurrences();
+    } catch (_) {}
+    try {
+      layouts = await client.listLayouts();
+    } catch (_) {}
+
+    final dbConfig = DatabaseConnectionConfig(
+      database: _activeDatabaseName,
+      engine: 'postgres',
+      host: 'localhost',
+      port: 5432,
+      user: 'file4base',
+    );
+
+    final pkg = SolutionPackage.fromLiveData(
+      solutionName: _activeSolutionName,
+      dbConfig: dbConfig,
+      tables: _tables,
+      occurrences: occurrences,
+      layouts: layouts,
+    );
+
+    return pkg.toMsgPack();
+  }
+
+  Future<void> _handleSave() async {
+    final mode = ref.read(operationalModeProvider);
+    if (mode == OperationalMode.layout) {
+      await _layoutDesignerKey.currentState?.saveLayout();
+    }
+
+    if (_activeSolutionFileName == 'Untitled.f4b') {
+      await _handleSaveAs();
+      return;
+    }
+
+    try {
+      final bytes = await _exportCurrentSolutionBytes();
+      await SolutionStorageService.saveFile(
+        filename: _activeSolutionFileName,
+        bytes: bytes,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Saved "$_activeSolutionFileName" in MessagePack format.'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save solution: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _handleSaveAs() async {
+    final ctrl = TextEditingController(text: _activeSolutionFileName);
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save Solution As...'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter MessagePack solution file name (.f4b):', style: TextStyle(fontSize: 13)),
+            const SizedBox(height: 10),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'File Name',
+                border: OutlineInputBorder(),
+                isDense: true,
+                prefixIcon: Icon(Icons.file_present_outlined, size: 20),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () {
+              final text = ctrl.text.trim();
+              if (text.isNotEmpty) {
+                Navigator.of(ctx).pop(text.endsWith('.f4b') ? text : '$text.f4b');
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (newName != null && newName.isNotEmpty) {
+      setState(() {
+        _activeSolutionFileName = newName;
+        _activeSolutionName = newName.replaceAll('.f4b', '');
+      });
+      await _handleSave();
+    }
+  }
+
+  void _handleSaveCopyAs() {
+    final client = ref.read(apiClientProvider);
+    SaveCopyDialog.show(
+      context,
+      apiClient: client,
+      activeSolutionName: _activeSolutionName,
+      activeDatabaseName: _activeDatabaseName,
+      onExportSolution: _exportCurrentSolutionBytes,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final brandLogo = isDark
-        ? 'assets/branding/file4base-dark.png'
-        : 'assets/branding/file4base-light.png';
 
     return CallbackShortcuts(
       bindings: {
@@ -188,6 +385,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         const SingleActivator(LogicalKeyboardKey.keyU, meta: true): () {
           ref.read(operationalModeProvider.notifier).setMode(OperationalMode.preview);
         },
+        const SingleActivator(LogicalKeyboardKey.keyS, meta: true): () => _handleSave(),
+        const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): () => _handleSaveAs(),
+        const SingleActivator(LogicalKeyboardKey.keyO, meta: true): () => _handleOpenSolution(),
+        const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () => _handleNewDatabase(),
       },
       child: Focus(
         autofocus: true,
@@ -215,6 +416,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     );
                   },
                   onAbout: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
+                  onNewDatabase: _handleNewDatabase,
+                  onOpenSolution: _handleOpenSolution,
+                  onSave: _handleSave,
+                  onSaveAs: _handleSaveAs,
+                  onSaveCopyAs: _handleSaveCopyAs,
+                  onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDuplicateRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
@@ -223,11 +430,55 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   isToolbarVisible: _isToolbarVisible,
                   onToggleToolbar: (visible) => setState(() => _isToolbarVisible = visible),
                 ),
-                if (_isToolbarVisible)
-                  _buildStatusToolbar(context, mode, isDark, brandLogo),
+                // Main Workspace: Classic File4Base Left Status Sidebar + Content Area
                 Expanded(
-                  child: _buildBody(context, mode),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_isToolbarVisible)
+                        File4BaseStatusSidebar(
+                          tables: _tables,
+                          selectedTable: _selectedTable,
+                          onTableSelected: (newTable) {
+                            if (newTable != null) {
+                              setState(() {
+                                _selectedTable = newTable;
+                                _initDefaultLayout(newTable);
+                              });
+                            }
+                          },
+                          mode: mode,
+                          currentRecordIndex: _currentRecordIndex,
+                          totalRecords: _totalRecords,
+                          isUnsorted: true,
+                          onPreviousRecord: () => _dataBrowserKey.currentState?.previousRecord(),
+                          onNextRecord: () => _dataBrowserKey.currentState?.nextRecord(),
+                          onGoToRecord: (index) => _dataBrowserKey.currentState?.goToRecord(index),
+                          onManageDatabase: () async {
+                            await ManageDatabaseDialog.show(context);
+                            _loadTables();
+                          },
+                          isFindOmit: _isFindOmit,
+                          onToggleOmit: (val) {
+                            setState(() => _isFindOmit = val);
+                            _dataBrowserKey.currentState?.toggleOmit(val);
+                          },
+                          onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
+                          onShowAllRecords: () => _dataBrowserKey.currentState?.fetchRecords(),
+                          onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
+                          onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                          layoutCount: 1,
+                          currentLayoutIndex: 0,
+                          onLayoutChanged: (_) {},
+                        ),
+                      Expanded(
+                        child: _buildBody(context, mode),
+                      ),
+                    ],
+                  ),
                 ),
+                // Bottom Status Bar (Mode indicator, Zoom 100%, and Server status)
+                _buildBottomStatusBar(context, mode),
               ],
             ),
           ),
@@ -236,147 +487,124 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
   }
 
-  Widget _buildStatusToolbar(BuildContext context, OperationalMode mode, bool isDark, String brandLogo) {
-    final theme = Theme.of(context);
+  Widget _buildBottomStatusBar(BuildContext context, OperationalMode mode) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = isDark ? const Color(0xFF38404B) : const Color(0xFFD1CFCA);
+    final modeLabel = switch (mode) {
+      OperationalMode.browse => 'Browse',
+      OperationalMode.find => 'Find',
+      OperationalMode.layout => 'Layout',
+      OperationalMode.preview => 'Preview',
+    };
+
     return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.dividerColor.withOpacity(0.15),
-            width: 1.0,
-          ),
-        ),
+        color: isDark ? const Color(0xFF161B22) : const Color(0xFFEBE9E4),
+        border: Border(top: BorderSide(color: borderColor, width: 1.0)),
       ),
       child: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(6.0),
-            child: Image.asset(
-              brandLogo,
-              width: 24,
-              height: 24,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => Image.asset(
-                'assets/branding/file4base-icon-64.png',
-                width: 24,
-                height: 24,
-                errorBuilder: (_, __, ___) => const Icon(Icons.table_chart, size: 20),
-              ),
+          // Zoom indicator
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(2),
             ),
-          ),
-          const SizedBox(width: 8),
-          const Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          if (_tables.isNotEmpty && _selectedTable != null) ...[
-            const SizedBox(width: 14),
-            Container(
-              height: 30,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _selectedTable!.id,
-                  isDense: true,
-                  icon: const Icon(Icons.arrow_drop_down, size: 18),
-                  items: _tables.map((t) {
-                    return DropdownMenuItem(
-                      value: t.id,
-                      child: Text(t.displayName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                    );
-                  }).toList(),
-                  onChanged: (newId) {
-                    if (newId != null) {
-                      final match = _tables.firstWhere((t) => t.id == newId);
-                      setState(() {
-                        _selectedTable = match;
-                        _initDefaultLayout(match);
-                      });
-                    }
-                  },
-                ),
-              ),
-            ),
-          ],
-          const Spacer(),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6.0),
-            child: SegmentedButton<OperationalMode>(
-              segments: const [
-                ButtonSegment(value: OperationalMode.browse, label: Text('Browse', style: TextStyle(fontSize: 12))),
-                ButtonSegment(value: OperationalMode.find, label: Text('Find', style: TextStyle(fontSize: 12))),
-                ButtonSegment(value: OperationalMode.layout, label: Text('Layout', style: TextStyle(fontSize: 12))),
-                ButtonSegment(value: OperationalMode.preview, label: Text('Preview', style: TextStyle(fontSize: 12))),
-              ],
-              selected: {mode},
-              onSelectionChanged: (newSelection) {
-                ref.read(operationalModeProvider.notifier).setMode(newSelection.first);
-              },
-            ),
-          ),
-          FilledButton.tonalIcon(
-            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-            icon: const Icon(Icons.storage, size: 15),
-            label: const Text('Manage Database...', style: TextStyle(fontSize: 12)),
-            onPressed: () async {
-              await ManageDatabaseDialog.show(context);
-              _loadTables();
-            },
-          ),
-          const SizedBox(width: 6),
-          IconButton(
-            icon: const Icon(Icons.info_outline, size: 18),
-            tooltip: 'About File4Base',
-            onPressed: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
+            child: const Text('100', style: TextStyle(fontSize: 10, fontFamily: 'monospace')),
           ),
           const SizedBox(width: 4),
+          const Icon(Icons.zoom_out, size: 14, color: Colors.grey),
+          const SizedBox(width: 2),
+          const Icon(Icons.zoom_in, size: 14, color: Colors.grey),
+          const SizedBox(width: 8),
+          const VerticalDivider(width: 1, indent: 4, endIndent: 4),
+          const SizedBox(width: 8),
+
+          // Active Mode indicator
+          Text(
+            modeLabel,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: isDark ? const Color(0xFF90CAF9) : const Color(0xFF1E88E5),
+            ),
+          ),
+          const SizedBox(width: 12),
+          const Text(
+            'For Help, choose Help > File4Base Help',
+            style: TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+          const SizedBox(width: 8),
+          const VerticalDivider(width: 1, indent: 4, endIndent: 4),
+          const SizedBox(width: 8),
+
+          // Active MessagePack File & PostgreSQL Database info
           Tooltip(
-            message: 'Click to configure Server Host & Port',
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () {
-                final currentUrl = ref.read(serverUrlProvider);
-                ServerConnectionDialog.show(
-                  context,
-                  currentUrl: currentUrl,
-                  onConnect: (newUrl) {
-                    ref.read(serverUrlProvider.notifier).setUrl(newUrl);
-                    _checkServer();
-                  },
-                );
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: _serverStatus.startsWith('Online')
-                      ? Colors.green.withOpacity(0.12)
-                      : Colors.orange.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: _serverStatus.startsWith('Online')
-                        ? Colors.green.withOpacity(0.3)
-                        : Colors.orange.withOpacity(0.3),
+            message: 'Active Solution (.f4b MessagePack) & PostgreSQL Database',
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.file_present_outlined, size: 13, color: Color(0xFF1E88E5)),
+                const SizedBox(width: 4),
+                Text(
+                  _activeSolutionFileName,
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E88E5).withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.storage, size: 10, color: Color(0xFF1E88E5)),
+                      const SizedBox(width: 3),
+                      Text(
+                        _activeDatabaseName,
+                        style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5)),
+                      ),
+                    ],
                   ),
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,
-                      size: 14,
-                      color: _serverStatus.startsWith('Online') ? Colors.green : Colors.orange,
-                    ),
-                    const SizedBox(width: 5),
-                    Text(_serverStatus, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 3),
-                    const Icon(Icons.settings, size: 11, color: Colors.grey),
-                  ],
+              ],
+            ),
+          ),
+
+          const Spacer(),
+
+          // Server Connection Status
+          InkWell(
+            onTap: () {
+              final currentUrl = ref.read(serverUrlProvider);
+              ServerConnectionDialog.show(
+                context,
+                currentUrl: currentUrl,
+                onConnect: (newUrl) {
+                  ref.read(serverUrlProvider.notifier).setUrl(newUrl);
+                  _checkServer();
+                },
+              );
+            },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _serverStatus.startsWith('Online') ? Icons.cloud_done : Icons.cloud_off,
+                  size: 13,
+                  color: _serverStatus.startsWith('Online') ? Colors.green : Colors.orange,
                 ),
-              ),
+                const SizedBox(width: 4),
+                Text(
+                  _serverStatus,
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
+                ),
+              ],
             ),
           ),
         ],
@@ -403,10 +631,18 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           table: _selectedTable!,
           apiClient: client,
           mode: mode,
+          onRecordChanged: (idx, total) {
+            if (mounted) {
+              setState(() {
+                _currentRecordIndex = idx;
+                _totalRecords = total;
+              });
+            }
+          },
         );
       case OperationalMode.layout:
         return LayoutDesignerWidget(
-          key: ValueKey('layout_${_selectedTable!.id}'),
+          key: _layoutDesignerKey,
           table: _selectedTable!,
           apiClient: client,
           initialLayout: _activeLayout ??
@@ -414,9 +650,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 _selectedTable!.displayName,
                 _selectedTable!.columns.map((c) => c.name).toList(),
               ),
-          onSaved: () {
-            _loadTables();
-          },
+          onSaved: _loadTables,
+          activeTool: _activeLayoutTool,
         );
       case OperationalMode.preview:
         return LayoutPreviewWidget(
@@ -472,7 +707,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Open-source FileMaker Pro alternative with dynamic schema, relational occurrences, visual layouts, and 4 operational modes.',
+                  'Open-source relational database engine with dynamic schema, relational occurrences, visual layouts, and 4 operational modes.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13, height: 1.4),
                 ),

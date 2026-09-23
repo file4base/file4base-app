@@ -22,7 +22,7 @@ import (
 
 )
 
-const AppVersion = "0.2.0"
+const AppVersion = "0.3.0"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
@@ -73,28 +73,27 @@ func main() {
 
 	log.Printf("Starting File4Base Server [Engine: %s, Port: %s]", engineType, port)
 
-	// Attempt connection to database
-	driver, err := dbal.Connect(dbal.DriverConfig{
-		EngineType: engineType,
-		DSN:        dsn,
-	})
-	var schemaSvc *schema.Service
-	var dataSvc *data.Service
+	// Initialize MultiDatabaseManager
+	dbMgr, err := dbal.NewMultiDatabaseManager(engineType, dsn)
 	if err != nil {
-
-		log.Printf("Warning: Database driver could not connect at startup: %v", err)
-	} else {
-		defer driver.Close()
-		schemaSvc = schema.NewService(driver)
-		dataSvc = data.NewService(driver)
-		ctxInit, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := schemaSvc.EnsureSystemTables(ctxInit); err != nil {
-			log.Printf("Warning: Failed to ensure system tables: %v", err)
-		} else {
-			log.Println("System catalog (sys_*) tables initialized successfully.")
-		}
-		cancelInit()
+		log.Fatalf("Failed initializing multi-database manager: %v", err)
 	}
+	defer dbMgr.Close()
+
+	schemaSvc := schema.NewService(dbMgr)
+	dataSvc := data.NewService(dbMgr)
+
+	ctxInit, cancelInit := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := dbMgr.Ping(ctxInit); err != nil {
+		log.Printf("Warning: Database server could not connect at startup: %v", err)
+	} else {
+		if err := schemaSvc.EnsureSystemTables(ctxInit); err != nil {
+			log.Printf("Warning: Failed to ensure system tables on default database: %v", err)
+		} else {
+			log.Printf("System catalog (sys_*) tables initialized on active database: %s", dbMgr.ActiveDatabase())
+		}
+	}
+	cancelInit()
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
@@ -104,39 +103,36 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 
-	if schemaSvc != nil {
-		schemaHandler := api.NewSchemaHandler(schemaSvc)
-		schemaHandler.RegisterRoutes(r)
-	}
-	if dataSvc != nil {
-		dataHandler := api.NewDataHandler(dataSvc)
-		dataHandler.RegisterRoutes(r)
-	}
+	schemaHandler := api.NewSchemaHandler(schemaSvc)
+	schemaHandler.RegisterRoutes(r)
 
+	dataHandler := api.NewDataHandler(dataSvc)
+	dataHandler.RegisterRoutes(r)
 
+	solutionHandler := api.NewSolutionHandler(dbMgr, schemaSvc)
+	solutionHandler.RegisterRoutes(r)
 
 	// Health check endpoint
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		status := "ok"
 		dbStatus := "disconnected"
-		if driver != nil {
-			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-			defer cancel()
-			if err := driver.Ping(ctx); err == nil {
-				dbStatus = "connected"
-			} else {
-				dbStatus = "error: " + err.Error()
-			}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := dbMgr.Ping(ctx); err == nil {
+			dbStatus = "connected"
+		} else {
+			dbStatus = "error: " + err.Error()
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"status":      status,
-			"app":         "File4Base Server",
-			"version":     AppVersion,
-			"engine":      engineType,
-			"database":    dbStatus,
-			"timestamp":   time.Now().UTC().Format(time.RFC3339),
+			"status":          status,
+			"app":             "File4Base Server",
+			"version":         AppVersion,
+			"engine":          engineType,
+			"database":        dbStatus,
+			"active_database": dbMgr.ActiveDatabase(),
+			"timestamp":       time.Now().UTC().Format(time.RFC3339),
 		})
 	})
 

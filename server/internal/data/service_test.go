@@ -89,7 +89,7 @@ func TestDataService_CRUDAndFindMode(t *testing.T) {
 	assert.Equal(t, "36", fmtValue(updated["age"]))
 
 	// 4. Find Mode: range search (30...40)
-	critRange := data.ParseFileMakerFindCriteria("age", "30...40")
+	critRange := data.ParseFile4BaseFindCriteria("age", "30...40")
 	findRes, err := dataSvc.ExecuteFind(ctx, tblName, []data.FindRequest{
 		{Criteria: []data.FindCriterion{critRange}},
 	}, data.QueryOptions{})
@@ -97,7 +97,7 @@ func TestDataService_CRUDAndFindMode(t *testing.T) {
 	assert.Len(t, findRes, 2)
 
 	// 5. Find Mode: wildcard name search (Mar*)
-	critWildcard := data.ParseFileMakerFindCriteria("first_name", "Mar*")
+	critWildcard := data.ParseFile4BaseFindCriteria("first_name", "Mar*")
 	findWildcard, err := dataSvc.ExecuteFind(ctx, tblName, []data.FindRequest{
 		{Criteria: []data.FindCriterion{critWildcard}},
 	}, data.QueryOptions{})

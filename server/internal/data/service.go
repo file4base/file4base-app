@@ -206,8 +206,8 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 	return rowsToMaps(rows)
 }
 
-// ParseFileMakerFindCriteria translates FileMaker operators (*, ..., =, !, <, >) to SQL AST
-func ParseFileMakerFindCriteria(fieldName, rawCriteria string) FindCriterion {
+// ParseFile4BaseFindCriteria translates File4Base operators (*, ..., =, !, <, >) to SQL AST
+func ParseFile4BaseFindCriteria(fieldName, rawCriteria string) FindCriterion {
 	trimmed := strings.TrimSpace(rawCriteria)
 
 	if strings.Contains(trimmed, "...") {
@@ -239,7 +239,7 @@ func ParseFileMakerFindCriteria(fieldName, rawCriteria string) FindCriterion {
 		return FindCriterion{FieldName: fieldName, Operator: "=", Value: strings.TrimSpace(trimmed[1:])}
 	}
 
-	// Wildcard matching: FileMaker '*' -> SQL '%'
+	// Wildcard matching: File4Base '*' -> SQL '%'
 	if strings.Contains(trimmed, "*") {
 		sqlWildcard := strings.ReplaceAll(trimmed, "*", "%")
 		return FindCriterion{FieldName: fieldName, Operator: "LIKE", Value: sqlWildcard}
@@ -249,7 +249,7 @@ func ParseFileMakerFindCriteria(fieldName, rawCriteria string) FindCriterion {
 	return FindCriterion{FieldName: fieldName, Operator: "LIKE", Value: "%" + trimmed + "%"}
 }
 
-// ExecuteFind performs a FileMaker Find Mode multi-request query
+// ExecuteFind performs a File4Base Find Mode multi-request query
 func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []FindRequest, opts QueryOptions) ([]map[string]interface{}, error) {
 	if len(requests) == 0 {
 		return s.ListRows(ctx, tableName, opts)

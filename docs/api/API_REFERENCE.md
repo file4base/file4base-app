@@ -171,7 +171,7 @@ Deletes a record by primary key ID.
 ---
 
 ### `POST /api/v1/data/{table}/find`
-Executes FileMaker-style Find requests with operator translation.
+Executes File4Base-style Find requests with operator translation.
 
 #### Request Body
 ```json
@@ -195,3 +195,126 @@ Executes FileMaker-style Find requests with operator translation.
 }
 ```
 Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`.
+
+---
+
+## 5. Multi-Database Management
+
+### `GET /api/v1/databases`
+Lists all available user databases on the PostgreSQL server and indicates the current active database.
+
+#### Response `200 OK`
+```json
+{
+  "databases": [
+    "file4base_dev",
+    "invoices_db",
+    "contacts_db"
+  ],
+  "active": "file4base_dev"
+}
+```
+
+---
+
+### `POST /api/v1/databases`
+Creates a new physical database in PostgreSQL and initializes the system catalog tables (`sys_*`).
+
+#### Request Body
+```json
+{
+  "database": "invoices_db"
+}
+```
+
+#### Response `201 Created`
+```json
+{
+  "database": "invoices_db",
+  "status": "created",
+  "active": "invoices_db"
+}
+```
+
+---
+
+### `POST /api/v1/databases/switch`
+Switches the active database context for future schema and data operations.
+
+#### Request Body
+```json
+{
+  "database": "invoices_db"
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "active": "invoices_db",
+  "status": "connected"
+}
+```
+
+---
+
+## 6. MessagePack Solutions & Database Data Persistence
+
+### `GET /api/v1/solutions/export`
+Packages the active solution (layouts, schemas, table occurrences, relationships, users, and DB connection parameters) into a binary MessagePack solution file (`.f4b`).
+
+#### Query Parameters
+- `name` (string, optional, default: `file4base_solution`)
+- `host` (string, optional, default: `localhost`)
+- `port` (integer, optional, default: `5432`)
+- `user` (string, optional, default: `file4base`)
+- `password` (string, optional, default: `dev_password`)
+
+#### Response `200 OK`
+- `Content-Type: application/x-msgpack`
+- Binary MessagePack payload (.f4b)
+
+---
+
+### `POST /api/v1/solutions/import`
+Restores a complete solution from a MessagePack `.f4b` binary payload. Re-creates missing tables, adds columns, and persists layouts.
+
+#### Request Body
+Binary MessagePack payload (`Content-Type: application/x-msgpack`).
+
+#### Response `200 OK`
+```json
+{
+  "status": "imported",
+  "solution_name": "Invoices Pro",
+  "tables_count": 3,
+  "layouts_count": 2
+}
+```
+
+---
+
+### `GET /api/v1/solutions/export-data`
+Dumps all records and table rows from the active database into a binary MessagePack data file (`.f4data`).
+
+#### Response `200 OK`
+- `Content-Type: application/x-msgpack`
+- Binary MessagePack payload (.f4data)
+
+---
+
+### `POST /api/v1/solutions/import-data`
+Restores physical records into the active database from a MessagePack `.f4data` payload.
+
+#### Request Body
+Binary MessagePack payload (`Content-Type: application/x-msgpack`).
+
+#### Response `200 OK`
+```json
+{
+  "status": "restored",
+  "database": "invoices_db",
+  "tables_restored": 3,
+  "records_count": 142
+}
+```

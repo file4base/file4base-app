@@ -61,15 +61,56 @@ func (s *Service) CreateLayout(ctx context.Context, name string, toID string, de
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
-	// If toID is empty, fallback to the first available table occurrence
-	if toID == "" {
+	// Resolve table occurrence ID safely
+	var resolvedTOID string
+	if toID != "" {
+		// 1. Check if toID is already a valid table occurrence ID
+		var checkID string
+		qCheck := `SELECT id FROM sys_table_occurrences WHERE id = $1 LIMIT 1`
+		if dialect.Engine() == dbal.EngineMariaDB {
+			qCheck = `SELECT id FROM sys_table_occurrences WHERE id = ? LIMIT 1`
+		}
+		if err := db.QueryRowContext(ctx, qCheck, toID).Scan(&checkID); err == nil {
+			resolvedTOID = checkID
+		} else {
+			// 2. Check if toID matches a base_table_id in sys_table_occurrences
+			qBase := `SELECT id FROM sys_table_occurrences WHERE base_table_id = $1 LIMIT 1`
+			if dialect.Engine() == dbal.EngineMariaDB {
+				qBase = `SELECT id FROM sys_table_occurrences WHERE base_table_id = ? LIMIT 1`
+			}
+			if err := db.QueryRowContext(ctx, qBase, toID).Scan(&checkID); err == nil {
+				resolvedTOID = checkID
+			} else {
+				// 3. Check if toID matches a table in sys_tables, create occurrence
+				var tID, tName string
+				qTbl := `SELECT id, name FROM sys_tables WHERE id = $1 OR name = $1 LIMIT 1`
+				if dialect.Engine() == dbal.EngineMariaDB {
+					qTbl = `SELECT id, name FROM sys_tables WHERE id = ? OR name = ? LIMIT 1`
+				}
+				if err := db.QueryRowContext(ctx, qTbl, toID).Scan(&tID, &tName); err == nil {
+					occID := uuid.NewString()
+					qIns := `INSERT INTO sys_table_occurrences (id, base_table_id, name, created_at) VALUES ($1, $2, $3, $4)`
+					if dialect.Engine() == dbal.EngineMariaDB {
+						qIns = `INSERT INTO sys_table_occurrences (id, base_table_id, name, created_at) VALUES (?, ?, ?, ?)`
+					}
+					if _, err := db.ExecContext(ctx, qIns, occID, tID, tName, time.Now().UTC()); err == nil {
+						resolvedTOID = occID
+					}
+				}
+			}
+		}
+	}
+
+	if resolvedTOID == "" {
+		// Fallback to first available table occurrence
 		var firstTOID string
 		err := db.QueryRowContext(ctx, `SELECT id FROM sys_table_occurrences LIMIT 1`).Scan(&firstTOID)
 		if err != nil {
 			return nil, fmt.Errorf("no table occurrence found for layout: %w", err)
 		}
-		toID = firstTOID
+		resolvedTOID = firstTOID
 	}
+	toID = resolvedTOID
 
 	layoutID := uuid.NewString()
 	now := time.Now().UTC()

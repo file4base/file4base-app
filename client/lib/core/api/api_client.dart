@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 class TableModel {
@@ -344,6 +345,96 @@ class ApiClient {
       return;
     } else {
       throw Exception('Failed to delete layout: ${response.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>> listDatabases() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/databases'),
+      headers: {'Accept': 'application/json'},
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      throw Exception('Failed to list databases: ${response.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>> createDatabase(String name) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/databases'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'database': name}),
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      throw Exception('Failed to create database: ${response.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>> switchDatabase(String name) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/databases/switch'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'database': name}),
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      throw Exception('Failed to switch database: ${response.body}');
+    }
+  }
+
+  Future<Uint8List> exportSolution({String? name, String? host, int? port, String? user, String? password}) async {
+    final queryParams = <String, String>{};
+    if (name != null) queryParams['name'] = name;
+    if (host != null) queryParams['host'] = host;
+    if (port != null) queryParams['port'] = port.toString();
+    if (user != null) queryParams['user'] = user;
+    if (password != null) queryParams['password'] = password;
+
+    final uri = Uri.parse('$baseUrl/api/v1/solutions/export').replace(queryParameters: queryParams.isEmpty ? null : queryParams);
+    final response = await _httpClient.get(uri);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    } else {
+      throw Exception('Failed to export solution: ${response.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>> importSolution(Uint8List bytes) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/import'),
+      headers: {'Content-Type': 'application/x-msgpack'},
+      body: bytes,
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      throw Exception('Failed to import solution: ${response.body}');
+    }
+  }
+
+  Future<Uint8List> exportDatabaseData() async {
+    final response = await _httpClient.get(Uri.parse('$baseUrl/api/v1/solutions/export-data'));
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    } else {
+      throw Exception('Failed to export database data: ${response.body}');
+    }
+  }
+
+  Future<Map<String, dynamic>> importDatabaseData(Uint8List bytes) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/import-data'),
+      headers: {'Content-Type': 'application/x-msgpack'},
+      body: bytes,
+    );
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } else {
+      throw Exception('Failed to import database data: ${response.body}');
     }
   }
 

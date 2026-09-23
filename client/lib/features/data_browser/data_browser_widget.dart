@@ -6,12 +6,14 @@ class DataBrowserWidget extends StatefulWidget {
   final TableModel table;
   final ApiClient apiClient;
   final OperationalMode mode;
+  final void Function(int currentIndex, int totalRecords)? onRecordChanged;
 
   const DataBrowserWidget({
     super.key,
     required this.table,
     required this.apiClient,
     required this.mode,
+    this.onRecordChanged,
   });
 
   @override
@@ -24,10 +26,39 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   String? _error;
   int _currentIndex = 0;
 
+  int get currentIndex => _currentIndex;
+  int get totalRecords => _records.length;
+  bool get isOmit => _omit;
+
   void createNewRecord() => _createNewRecord();
   void deleteCurrentRecord() => _deleteCurrentRecord();
   void performFind() => _performFind();
   void fetchRecords() => _fetchRecords();
+
+  void previousRecord() {
+    if (_records.isNotEmpty && _currentIndex > 0) {
+      setState(() => _currentIndex--);
+      widget.onRecordChanged?.call(_currentIndex, _records.length);
+    }
+  }
+
+  void nextRecord() {
+    if (_records.isNotEmpty && _currentIndex < _records.length - 1) {
+      setState(() => _currentIndex++);
+      widget.onRecordChanged?.call(_currentIndex, _records.length);
+    }
+  }
+
+  void goToRecord(int index) {
+    if (_records.isNotEmpty && index >= 0 && index < _records.length) {
+      setState(() => _currentIndex = index);
+      widget.onRecordChanged?.call(_currentIndex, _records.length);
+    }
+  }
+
+  void toggleOmit(bool val) {
+    setState(() => _omit = val);
+  }
 
   // Find Mode criteria per field
   final Map<String, TextEditingController> _findControllers = {};
@@ -78,6 +109,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
           _currentIndex = rows.isNotEmpty ? 0 : 0;
           _isLoading = false;
         });
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
       }
     } catch (e) {
       if (mounted) {
@@ -108,6 +140,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
       await _fetchRecords();
       if (_records.isNotEmpty) {
         setState(() => _currentIndex = _records.length - 1);
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
       }
     } catch (e) {
       if (mounted) {
@@ -181,6 +214,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
           _currentIndex = 0;
           _isLoading = false;
         });
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
       }
     } catch (e) {
       if (mounted) {
