@@ -137,6 +137,7 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           path: release-assets
+          skip-decompress: true
           merge-multiple: true
 
       - name: Create GitHub Release
