@@ -46,8 +46,7 @@ build_macos() {
     echo "==> Packaging macOS application..."
     APP_PATH="${CLIENT_DIR}/build/macos/Build/Products/Release/File4Base.app"
     if [ -d "${APP_PATH}" ]; then
-        cd "${CLIENT_DIR}/build/macos/Build/Products/Release"
-        zip -r -q "${DIST_DIR}/File4Base-macOS-universal.zip" "File4Base.app"
+        ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${DIST_DIR}/File4Base-macOS-universal.zip"
         echo "Packaging complete: ${DIST_DIR}/File4Base-macOS-universal.zip"
     else
         echo "Error: File4Base.app not found at ${APP_PATH}"
@@ -77,8 +76,11 @@ build_windows() {
     echo "==> Packaging Windows application..."
     BUNDLE_DIR="${CLIENT_DIR}/build/windows/x64/runner/Release"
     if [ -d "${BUNDLE_DIR}" ]; then
-        cd "${BUNDLE_DIR}"
-        zip -r -q "${DIST_DIR}/File4Base-Windows-x64.zip" .
+        if command -v tar >/dev/null 2>&1; then
+            tar -a -c -f "${DIST_DIR}/File4Base-Windows-x64.zip" -C "${BUNDLE_DIR}" .
+        else
+            (cd "${BUNDLE_DIR}" && zip -r -q "${DIST_DIR}/File4Base-Windows-x64.zip" .)
+        fi
         echo "Packaging complete: ${DIST_DIR}/File4Base-Windows-x64.zip"
     else
         echo "Error: Windows release bundle not found at ${BUNDLE_DIR}"
