@@ -123,13 +123,24 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         autofocus: true,
         child: Scaffold(
           appBar: AppBar(
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.table_chart, size: 22),
-                SizedBox(width: 8),
-                Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6.0),
+                  child: Image.asset(
+                    'assets/branding/file4base-icon.jpg',
+                    width: 26,
+                    height: 26,
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) =>
+                        const Icon(Icons.table_chart, size: 22),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text('File4Base', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
               ],
             ),
+
             actions: [
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8.0),
