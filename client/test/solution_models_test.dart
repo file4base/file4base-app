@@ -44,6 +44,9 @@ void main() {
     expect(restored.tables.first['name'], 'products');
     expect(restored.layouts.length, 1);
     expect(restored.layouts.first['name'], 'Product Detail');
+    expect(restored.fileOptions.defaultUsername, 'admin');
+    expect(restored.pageSetup.paperSizeName, 'A4');
+    expect(restored.pageSetup.isLandscape, isFalse);
   });
 
   test('DatabaseConnectionConfig encodes credentials and avoids plaintext', () {

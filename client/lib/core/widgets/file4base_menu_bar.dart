@@ -16,6 +16,8 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onSaveAs;
   final VoidCallback? onSaveCopyAs;
   final VoidCallback? onExportData;
+  final VoidCallback? onFileOptions;
+  final VoidCallback? onPageSetup;
   final VoidCallback? onNewRecord;
   final VoidCallback? onDuplicateRecord;
   final VoidCallback? onDeleteRecord;
@@ -40,6 +42,8 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onSaveAs,
     this.onSaveCopyAs,
     this.onExportData,
+    this.onFileOptions,
+    this.onPageSetup,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -290,7 +294,7 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'File Options', 'Startup script, default credentials, and encryption.'),
+          onPressed: onFileOptions ?? () => _showNotice(context, 'File Options', 'Startup script, default credentials, and encryption.'),
           child: const Text('File Options...'),
         ),
         MenuItemButton(
@@ -299,7 +303,7 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => onModeChanged(OperationalMode.preview),
+          onPressed: onPageSetup ?? () => onModeChanged(OperationalMode.preview),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true),
           child: const Text('Page Setup...'),
         ),
@@ -350,14 +354,6 @@ class File4BaseMenuBar extends StatelessWidget {
             ),
           ],
           child: const Text('Save/Send Records As'),
-        ),
-        MenuItemButton(
-          onPressed: () => _showNotice(context, 'Send Mail', 'Email client integration via SMTP/system mail.'),
-          child: const Text('Send Mail...'),
-        ),
-        MenuItemButton(
-          onPressed: onSaveCopyAs ?? () => _showNotice(context, 'Save a Copy As', 'Full copy, clone with no records, or compacted archive.'),
-          child: const Text('Save a Copy As...'),
         ),
         MenuItemButton(
           onPressed: () => _showNotice(context, 'Recover', 'Check database consistency and index integrity.'),

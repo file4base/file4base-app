@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
+import '../../core/models/page_setup_model.dart';
 import 'models/layout_definition.dart';
 
 class LayoutPreviewWidget extends StatefulWidget {
   final TableModel table;
   final ApiClient apiClient;
   final LayoutDefinitionModel layout;
+  final PageSetupModel pageSetup;
+  final VoidCallback? onPageSetup;
 
   const LayoutPreviewWidget({
     super.key,
     required this.table,
     required this.apiClient,
     required this.layout,
+    this.pageSetup = const PageSetupModel(),
+    this.onPageSetup,
   });
 
   @override
@@ -76,13 +81,36 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                 label: Text('${_records.length} Records to Print', style: const TextStyle(fontSize: 11)),
                 padding: EdgeInsets.zero,
               ),
+              const SizedBox(width: 8),
+              Chip(
+                avatar: Icon(
+                  widget.pageSetup.isLandscape ? Icons.crop_landscape : Icons.crop_portrait,
+                  size: 14,
+                  color: const Color(0xFF1E88E5),
+                ),
+                label: Text(
+                  '${widget.pageSetup.paperSizeName} (${widget.pageSetup.isLandscape ? "Horizontal" : "Vertical"}) - ${widget.pageSetup.printableWidthMm.toStringAsFixed(0)}×${widget.pageSetup.printableHeightMm.toStringAsFixed(0)} mm útiles',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                padding: EdgeInsets.zero,
+              ),
               const Spacer(),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.settings_overscan, size: 16),
+                label: const Text('Page Setup...', style: TextStyle(fontSize: 12)),
+                onPressed: widget.onPageSetup,
+              ),
+              const SizedBox(width: 8),
               FilledButton.tonalIcon(
                 icon: const Icon(Icons.picture_as_pdf, size: 16),
                 label: const Text('Export PDF / Print', style: TextStyle(fontSize: 12)),
                 onPressed: () {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Print / PDF Export simulated successfully.')),
+                    SnackBar(
+                      content: Text(
+                        'Print / PDF Export simulated: ${widget.pageSetup.paperSizeName} (${widget.pageSetup.isLandscape ? "Landscape" : "Portrait"}) via ${widget.pageSetup.printer}.',
+                      ),
+                    ),
                   );
                 },
               ),
@@ -98,7 +126,10 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
               padding: const EdgeInsets.all(32),
               child: Center(
                 child: Container(
-                  width: 800,
+                  width: widget.pageSetup.totalWidthPt.clamp(500.0, 1200.0),
+                  constraints: BoxConstraints(
+                    minHeight: widget.pageSetup.totalHeightPt.clamp(600.0, 1600.0),
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     boxShadow: const [
@@ -106,7 +137,12 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                     ],
                     border: Border.all(color: Colors.grey.shade300),
                   ),
-                  padding: const EdgeInsets.symmetric(horizontal: 48, vertical: 40),
+                  padding: EdgeInsets.fromLTRB(
+                    widget.pageSetup.marginLeftPt.clamp(10.0, 100.0),
+                    widget.pageSetup.marginTopPt.clamp(10.0, 100.0),
+                    widget.pageSetup.marginRightPt.clamp(10.0, 100.0),
+                    widget.pageSetup.marginBottomPt.clamp(10.0, 100.0),
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [

@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
 import '../api/api_client.dart';
+import 'file_options_model.dart';
+import 'page_setup_model.dart';
 
 /// DatabaseConnectionConfig represents DB connection settings stored inside the MessagePack .f4b file.
 /// Credentials (user, password) are encoded and never stored in cleartext.
@@ -94,6 +96,8 @@ class SolutionPackage {
   final List<Map<String, dynamic>> tableOccurrences;
   final List<Map<String, dynamic>> layouts;
   final List<Map<String, dynamic>> users;
+  final FileOptionsModel fileOptions;
+  final PageSetupModel pageSetup;
   final String createdAt;
   final String updatedAt;
 
@@ -106,6 +110,8 @@ class SolutionPackage {
     this.tableOccurrences = const [],
     this.layouts = const [],
     this.users = const [],
+    this.fileOptions = const FileOptionsModel(),
+    this.pageSetup = const PageSetupModel(),
     String? createdAt,
     String? updatedAt,
   })  : createdAt = createdAt ?? DateTime.now().toUtc().toIso8601String(),
@@ -121,6 +127,8 @@ class SolutionPackage {
       'table_occurrences': tableOccurrences,
       'layouts': layouts,
       'users': users,
+      'file_options': fileOptions.toJson(),
+      'page_setup': pageSetup.toJson(),
       'created_at': createdAt,
       'updated_at': updatedAt,
     };
@@ -148,6 +156,12 @@ class SolutionPackage {
       tableOccurrences: parseList(map['table_occurrences']),
       layouts: parseList(map['layouts']),
       users: parseList(map['users']),
+      fileOptions: map['file_options'] is Map
+          ? FileOptionsModel.fromJson(Map<String, dynamic>.from(map['file_options']))
+          : const FileOptionsModel(),
+      pageSetup: map['page_setup'] is Map
+          ? PageSetupModel.fromJson(Map<String, dynamic>.from(map['page_setup']))
+          : const PageSetupModel(),
       createdAt: map['created_at']?.toString(),
       updatedAt: map['updated_at']?.toString(),
     );
@@ -175,6 +189,8 @@ class SolutionPackage {
     required List<TableOccurrenceModel> occurrences,
     required List<LayoutModel> layouts,
     List<Map<String, dynamic>> users = const [],
+    FileOptionsModel fileOptions = const FileOptionsModel(),
+    PageSetupModel pageSetup = const PageSetupModel(),
   }) {
     final tablesMap = tables.map((t) => {
       'id': t.id,
@@ -213,6 +229,8 @@ class SolutionPackage {
       tables: tablesMap,
       tableOccurrences: occMap,
       layouts: layMap,
+      fileOptions: fileOptions,
+      pageSetup: pageSetup,
       users: users.isNotEmpty
           ? users
           : [

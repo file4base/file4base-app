@@ -17,11 +17,15 @@ import 'features/layout_engine/layout_designer_widget.dart';
 import 'features/layout_engine/layout_preview_widget.dart';
 import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
+import 'core/models/file_options_model.dart';
+import 'core/models/page_setup_model.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
 import 'features/security/manage_security_dialog.dart';
+import 'features/solution_manager/file_options_dialog.dart';
 import 'features/solution_manager/new_database_dialog.dart';
 import 'features/solution_manager/open_solution_dialog.dart';
+import 'features/solution_manager/page_setup_dialog.dart';
 import 'features/solution_manager/save_copy_dialog.dart';
 
 enum OperationalMode {
@@ -127,6 +131,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   UserModel? _currentUser;
   List<LayoutModel> _serverLayouts = [];
   Map<String, String> _userPermissions = {};
+  FileOptionsModel _fileOptions = const FileOptionsModel();
+  PageSetupModel _pageSetup = const PageSetupModel();
 
   @override
   void initState() {
@@ -622,8 +628,20 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       _serverStatus = 'Online (PostgreSQL - ${result.user.username})';
     });
 
+    String? startupTargetLayoutId;
+    if (result.package != null) {
+      _fileOptions = result.package!.fileOptions;
+      _pageSetup = result.package!.pageSetup;
+      if (_fileOptions.hideAllToolbars) {
+        _isToolbarVisible = false;
+      }
+      if (_fileOptions.switchLayoutOnOpen && _fileOptions.startupLayoutId.isNotEmpty) {
+        startupTargetLayoutId = _fileOptions.startupLayoutId;
+      }
+    }
+
     await _loadUserPermissions();
-    await _loadTables();
+    await _loadTables(targetLayoutId: startupTargetLayoutId);
     AutoSaveService.instance.markDirty();
 
     if (mounted) {
@@ -685,6 +703,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       occurrences: occurrences,
       layouts: layouts,
       users: usersList,
+      fileOptions: _fileOptions,
+      pageSetup: _pageSetup,
     );
 
     return pkg.toMsgPack();
@@ -974,6 +994,51 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  Future<void> _handleFileOptions() async {
+    final client = ref.read(apiClientProvider);
+    final updated = await FileOptionsDialog.show(
+      context,
+      initialOptions: _fileOptions,
+      layouts: _serverLayouts,
+      currentUser: _currentUser,
+      apiClient: client,
+    );
+    if (updated != null && mounted) {
+      setState(() {
+        _fileOptions = updated;
+        if (updated.hideAllToolbars) {
+          _isToolbarVisible = false;
+        }
+      });
+      AutoSaveService.instance.markDirty();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('File options updated successfully.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
+  Future<void> _handlePageSetup() async {
+    final updated = await PageSetupDialog.show(
+      context,
+      initialPageSetup: _pageSetup,
+    );
+    if (updated != null && mounted) {
+      setState(() {
+        _pageSetup = updated;
+      });
+      AutoSaveService.instance.markDirty();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Page setup saved: ${updated.paperSizeName} (${updated.isLandscape ? "Landscape" : "Portrait"}) via ${updated.printer}.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
@@ -988,6 +1053,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): () => _handleSaveAs(),
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true): () => _handleOpenSolution(),
         const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () => _handleNewDatabase(),
+        const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): () => _handlePageSetup(),
       },
       child: Focus(
         autofocus: true,
@@ -1041,6 +1107,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onSaveAs: _handleSaveAs,
                   onSaveCopyAs: _handleSaveCopyAs,
                   onExportData: _handleExportData,
+                  onFileOptions: _handleFileOptions,
+                  onPageSetup: _handlePageSetup,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDuplicateRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
@@ -1412,6 +1480,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 _selectedTable!.displayName,
                 _selectedTable!.columns.map((c) => c.name).toList(),
               ),
+          pageSetup: _pageSetup,
+          onPageSetup: _handlePageSetup,
         );
     }
   }

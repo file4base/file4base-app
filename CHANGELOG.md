@@ -9,7 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.9] - 2026-09-24
+## [0.4.10] - 2026-09-24
+
+### Removed
+- **"Send Mail..." File Menu Item**:
+  - Removed "Send Mail..." from `File4BaseMenuBar` under the File menu.
+- **Duplicate "Save a Copy As..." Menu Item**:
+  - Removed the duplicate "Save a Copy As..." menu entry that was placed immediately above "Recover...".
+
+### Added
+- **File Options Dialog (`File > File Options...`)**:
+  - Implemented `FileOptionsDialog` (`client/lib/features/solution_manager/file_options_dialog.dart`) and `FileOptionsModel` (`client/lib/core/models/file_options_model.dart`) adhering to canonical Claris FileMaker Pro File Options:
+    - **Tab 1: «Abrir» (Open)**:
+      - *Iniciar sesión como*: Configure automatic login using a default account and password, or entering via the Guest account.
+      - *Cambiar contraseña*: Integrated password management modal to update account credentials.
+      - *Presentación de inicio*: Select the exact layout (`startup_layout`) to display upon opening the database solution.
+      - *Ocultar todas las barras de herramientas*: Full-screen or clean view hiding native toolbars and sidebars.
+    - **Tab 2: «Activadores de guión» (Script Triggers)**:
+      - Assign automatic script execution to file lifecycle events: `OnFirstWindowOpen`, `OnLastWindowClose`, `OnWindowOpen`, `OnWindowClose`, and `OnFileAVPlayerChange` with optional script parameters.
+- **Page Setup Dialog (`File > Page Setup...` / Configurar impresión / Ajustar página)**:
+  - Implemented `PageSetupDialog` (`client/lib/features/solution_manager/page_setup_dialog.dart`) and `PageSetupModel` (`client/lib/core/models/page_setup_model.dart`):
+    - *Selección de impresora*: Format for "Any Printer" / "Cualquier impresora" (recommended for multi-machine interoperability), system default printer, or PDF virtual writer.
+    - *Tamaño del papel*: Standard formats (A4, US Letter, US Legal, A3, A5, B5, Custom) with exact dimensions in millimeters and PostScript points (`pt`).
+    - *Orientación*: Interactive toggle for Vertical (Portrait) vs Horizontal (Landscape).
+    - *Cálculo de márgenes*: Configurable top, bottom, left, and right margins in mm.
+    - *Límites de página y ancho útil*: Live schematic diagram showing printable area and exact metric/point dimensions for report layout and printing.
+  - Added "Page Setup..." button and paper configuration badges in Preview Mode toolbar (`LayoutPreviewWidget`).
+  - Added shortcut `Shift+Cmd+P` / `Shift+Ctrl+P` for quick Page Setup access.
+- **Solution Persistence**:
+  - Integrated `fileOptions` and `pageSetup` serialization into `SolutionPackage` and `.f4p` binary packages, automatically preserving startup options and print configurations.
+
 
 ### Removed
 - **Redundant "Switch Database / Login..." Menu Item**:

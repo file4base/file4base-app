@@ -13,6 +13,7 @@ class OpenSolutionResult {
   final String? fileName;
   final String? solutionName;
   final StorageDirectoryRef? directoryRef;
+  final SolutionPackage? package;
 
   const OpenSolutionResult({
     required this.type,
@@ -22,6 +23,7 @@ class OpenSolutionResult {
     this.fileName,
     this.solutionName,
     this.directoryRef,
+    this.package,
   });
 }
 
@@ -245,6 +247,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
           solutionName: pkg.solutionName,
           user: auth.user,
           auth: auth,
+          package: pkg,
         ));
       }
     } catch (e) {

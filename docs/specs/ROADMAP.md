@@ -48,7 +48,8 @@
   - [x] **Browse Mode** (`Cmd+B` / `Ctrl+B`): Form & Grid data viewing and inline editing.
   - [x] **Find Mode** (`Cmd+F` / `Ctrl+F`): Find requests, omit criteria, multi-request OR logic.
   - [x] **Layout Mode** (`Cmd+L` / `Ctrl+L`): Visual drag-and-drop WYSIWYG designer for forms and portals.
-  - [x] **Preview Mode** (`Cmd+U` / `Ctrl+U`): Print and pagination preview.
+  - [x] **Preview Mode** (`Cmd+U` / `Ctrl+U`): Print and pagination preview, Page Setup dialog, paper formats, and printable boundaries calculation.
+  - [x] **File Options** (`File > File Options...`): Startup credentials, startup layout selection, full-screen/toolbar suppression, and lifecycle script triggers.
 - [x] Build Flutter Layout Renderer & Designer:
   - [x] Field inputs (Text, Number, Date, Dropdown/Value Lists, Checkbox).
   - [x] Portals (sub-table for 1:N related records).
