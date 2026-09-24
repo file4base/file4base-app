@@ -462,180 +462,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     );
   }
 
-  Future<void> _showAddFieldDialog() async {
-    final nameCtrl = TextEditingController();
-    final dispCtrl = TextEditingController();
-    String selectedType = 'TEXT';
-
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text('New Field for "${widget.table.displayName}"'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: dispCtrl,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Field Label (e.g. Phone Number)',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                onChanged: (val) {
-                  if (nameCtrl.text.isEmpty ||
-                      nameCtrl.text == val.toLowerCase().replaceAll(' ', '_')) {
-                    nameCtrl.text = val.toLowerCase().replaceAll(' ', '_');
-                  }
-                },
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Column Identifier (e.g. phone_number)',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                initialValue: selectedType,
-                decoration: const InputDecoration(
-                  labelText: 'Field Type',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'TEXT', child: Text('Text')),
-                  DropdownMenuItem(value: 'NUMBER', child: Text('Number')),
-                  DropdownMenuItem(value: 'DATE', child: Text('Date')),
-                  DropdownMenuItem(value: 'TIMESTAMP', child: Text('Timestamp')),
-                  DropdownMenuItem(value: 'BOOLEAN', child: Text('Boolean')),
-                ],
-                onChanged: (val) {
-                  if (val != null) {
-                    setDialogState(() => selectedType = val);
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final name = nameCtrl.text.trim();
-                final disp = dispCtrl.text.trim();
-                if (name.isEmpty || disp.isEmpty) return;
-                Navigator.pop(ctx);
-                try {
-                  await widget.apiClient.addColumn(
-                    widget.table.id,
-                    name: name,
-                    displayName: disp,
-                    fieldType: selectedType,
-                  );
-                  widget.onTableModified?.call();
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Error adding field: $e'), backgroundColor: Colors.red),
-                    );
-                  }
-                }
-              },
-              child: const Text('Add Field'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showEditFieldDialog(ColumnModel col) async {
-    final dispCtrl = TextEditingController(text: col.displayName);
-
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Edit Field "${col.displayName}"'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('SQL Identifier: ${col.name}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 12),
-            TextField(
-              controller: dispCtrl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Display Name / Label',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () async {
-              final newDisp = dispCtrl.text.trim();
-              if (newDisp.isEmpty) return;
-              Navigator.pop(ctx);
-              try {
-                await widget.apiClient.updateColumn(widget.table.id, col.id, displayName: newDisp);
-                widget.onTableModified?.call();
-              } catch (e) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error updating field: $e'), backgroundColor: Colors.red),
-                  );
-                }
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showDeleteFieldDialog(ColumnModel col) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Delete Field "${col.displayName}"?'),
-        content: Text('Are you sure you want to drop column "${col.name}"? All data stored in this field across all records will be permanently deleted.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete Field'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      try {
-        await widget.apiClient.deleteColumn(widget.table.id, col.id);
-        widget.onTableModified?.call();
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error deleting field: $e'), backgroundColor: Colors.red),
-          );
-        }
-      }
-    }
-  }
 
   Widget _buildBrowseModeContent() {
     final record = _records[_currentIndex];
@@ -711,7 +537,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 40),
                           ],
                         ),
                       );
@@ -771,55 +596,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
                               },
                             ),
                           ),
-                          PopupMenuButton<String>(
-                            icon: const Icon(Icons.more_vert, size: 18, color: Colors.grey),
-                            tooltip: 'Field Options',
-                            itemBuilder: (ctx) => [
-                              const PopupMenuItem(
-                                value: 'edit',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.edit_outlined, size: 16),
-                                    SizedBox(width: 8),
-                                    Text('Rename Field...'),
-                                  ],
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: 'delete',
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.delete_outline, size: 16, color: Colors.red),
-                                    SizedBox(width: 8),
-                                    Text('Delete Field...', style: TextStyle(color: Colors.red)),
-                                  ],
-                                ),
-                              ),
-                            ],
-                            onSelected: (action) {
-                              if (action == 'edit') {
-                                _showEditFieldDialog(col);
-                              } else if (action == 'delete') {
-                                _showDeleteFieldDialog(col);
-                              }
-                            },
-                          ),
                         ],
                       ),
                     );
                   }),
-                  const SizedBox(height: 8),
-                  const Divider(),
-                  const SizedBox(height: 12),
-                  // Add field button
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.add, size: 16),
-                      label: const Text('Add Field to Table...'),
-                      onPressed: _showAddFieldDialog,
-                    ),
-                  ),
                 ],
               ),
             ),

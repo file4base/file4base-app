@@ -2,6 +2,8 @@
 
 Base URL (Default): `http://localhost:8080`
 
+> For enterprise architecture guidelines, OpenTelemetry standards, health check probe rules, and RFC 9457 error formatting, see the [API Best Practices Specification](../specs/API_BEST_PRACTICES.md).
+
 ---
 
 ## 1. System & Health
@@ -13,11 +15,11 @@ Returns system status, active database engine, and connection state.
 ```json
 {
   "app": "File4Base Server",
-  "version": "0.2.0",
+  "version": "0.4.6",
   "status": "ok",
   "database": "connected",
   "engine": "postgres",
-  "timestamp": "2026-09-23T09:30:10Z"
+  "timestamp": "2026-09-24T10:45:00Z"
 }
 ```
 

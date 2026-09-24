@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-09-24
+
+### Added
+- **API Best Practices & Observability Specification**:
+  - Published comprehensive enterprise specification in [docs/specs/API_BEST_PRACTICES.md](docs/specs/API_BEST_PRACTICES.md).
+  - Defined standards for API Semantic Versioning (SemVer 2.0.0), non-breaking evolution, and RFC 8594 deprecation/sunset headers.
+  - Specified cloud-native three-probe health architecture (Liveness, Readiness, Startup) and IETF Draft `/healthz` diagnostics.
+  - Defined OpenTelemetry (OTel v1.26+) distributed tracing conventions, W3C TraceContext (`traceparent`), RED metrics, and JSON structured log correlation.
+  - Documented REST resource modeling, idempotency matrix, cursor/keyset pagination, and RFC 9457 (`application/problem+json`) error handling.
+
+### Changed
+- **Browse Mode Cleaner Record Form ("Ficha")**:
+  - Removed the out-of-place 3-dots popup menu ("Rename Field...", "Delete Field...") and the "+ Add Field to Table..." button from Browse mode records, keeping schema modifications strictly in **Manage Database** (`File -> Manage -> Database... -> Fields` tab).
+  - Browse mode is now focused entirely on data entry, validation, record navigation, and live auto-saving.
+- **About File4Base Dialog Redesign**:
+  - Completely redesigned `AboutFile4BaseDialog` in `client/lib/features/about/about_dialog.dart` from the retro 1990s beveled style to a modern Material 3 interface aligned with the application design system.
+  - Added modern header with app badge, title, subtitle, and close button.
+  - Added clean top `TabBar` with icons for *About*, *System Info*, and *Credits* tabs.
+  - Modernized bottom action bar with responsive `About`, `Info`, `Credits` tab switch buttons and a primary `OK` button (`FilledButton.icon`).
+  - Added structured key-value cards with icons for system runtime information and open-source technology badges.
+  - Fixed responsive wrapping to eliminate any `RenderFlex` overflow across compact viewports and automated test runners.
+
 ## [0.4.5] - 2026-09-24
 
 ### Fixed
