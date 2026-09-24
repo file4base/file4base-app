@@ -41,6 +41,16 @@ func TestSecurityService(t *testing.T) {
 	assert.Equal(t, "file4base_dev", authUser.Username)
 	assert.Equal(t, "owner", authUser.Role)
 
+	// 1b. Authenticate with empty username and owner password (database password access)
+	authByPassOnly, err := svc.Authenticate(ctx, "", "file4base_dev")
+	require.NoError(t, err)
+	assert.Equal(t, "owner", authByPassOnly.Role)
+
+	// 1c. Empty password must fail
+	_, errEmptyPass := svc.Authenticate(ctx, "file4base_dev", "")
+	assert.Error(t, errEmptyPass)
+	assert.Contains(t, errEmptyPass.Error(), "password is required")
+
 	// 2. Create standard user (or clean up previous if exists)
 	_, _ = driver.DB().ExecContext(ctx, `DELETE FROM sys_users WHERE LOWER(username) = 'editor1'`)
 	user, err := svc.CreateUser(ctx, "editor1", "pass123", "user")

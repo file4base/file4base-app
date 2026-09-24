@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
+import '../../core/models/solution_models.dart';
+import '../../core/services/solution_storage.dart';
 import '../solution_manager/new_database_dialog.dart';
 
 class DatabaseLoginDialog extends StatefulWidget {
@@ -10,7 +12,7 @@ class DatabaseLoginDialog extends StatefulWidget {
   static Future<AuthResult?> show(BuildContext context, ApiClient apiClient) {
     return showDialog<AuthResult>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (ctx) => DatabaseLoginDialog(apiClient: apiClient),
     );
   }
@@ -21,7 +23,7 @@ class DatabaseLoginDialog extends StatefulWidget {
 
 class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _usernameController = TextEditingController();
+  final _usernameController = TextEditingController(text: 'admin');
   final _passwordController = TextEditingController();
   List<String> _databases = [];
   String? _selectedDatabase;
@@ -70,8 +72,9 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           }
           if (_usernameController.text.trim().isEmpty) {
             _usernameController.text = 'admin';
-            _passwordController.text = 'admin';
           }
+          // Never prefill password — always require user entry
+          _passwordController.clear();
           _isLoadingDatabases = false;
         });
       }
@@ -82,8 +85,8 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           _selectedDatabase = 'file4base_dev';
           if (_usernameController.text.trim().isEmpty) {
             _usernameController.text = 'admin';
-            _passwordController.text = 'admin';
           }
+          _passwordController.clear();
           _isLoadingDatabases = false;
         });
       }
@@ -99,6 +102,92 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
         _usernameController.text = result.databaseName;
         _passwordController.text = result.databasePassword;
       });
+    }
+  }
+
+  Future<void> _handleLoadFromDisk() async {
+    try {
+      final picked = await SolutionStorageService.pickFile();
+      if (picked == null || !mounted) return;
+
+      setState(() {
+        _isLoggingIn = true;
+        _errorMessage = null;
+      });
+
+      final pkg = SolutionPackage.fromMsgPack(picked.bytes);
+      final targetDb = pkg.databaseConnection.database;
+
+      // Ensure database exists or create it
+      try {
+        await widget.apiClient.switchDatabase(targetDb);
+      } catch (_) {
+        try {
+          await widget.apiClient.createDatabase(
+            targetDb,
+            user: pkg.databaseConnection.user,
+            password: pkg.databaseConnection.password,
+          );
+        } catch (_) {}
+      }
+
+      // Synchronize solution users into the database if packaged
+      if (pkg.users.isNotEmpty) {
+        try {
+          final currentUsers = await widget.apiClient.listUsers();
+          for (final u in pkg.users) {
+            final uname = u['username']?.toString() ?? '';
+            if (uname.isNotEmpty && !currentUsers.any((cu) => cu.username.toLowerCase() == uname.toLowerCase())) {
+              final role = u['role']?.toString() ?? 'user';
+              try {
+                await widget.apiClient.createUser(
+                  username: uname,
+                  password: pkg.databaseConnection.password,
+                  role: role,
+                );
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Authenticate with solution package credentials
+      AuthResult? auth;
+      try {
+        auth = await widget.apiClient.login(
+          username: pkg.databaseConnection.user.isNotEmpty ? pkg.databaseConnection.user : 'admin',
+          password: pkg.databaseConnection.password,
+          database: targetDb,
+        );
+      } catch (_) {
+        // If password is required from user, prepare the form with targetDb preselected
+        setState(() {
+          _isLoggingIn = false;
+          if (!_databases.contains(targetDb)) {
+            _databases.add(targetDb);
+          }
+          _selectedDatabase = targetDb;
+          _usernameController.text = pkg.databaseConnection.user.isNotEmpty ? pkg.databaseConnection.user : 'admin';
+          _passwordController.clear();
+          _errorMessage = 'Solution "${pkg.solutionName}" loaded. Please enter the password for database "$targetDb".';
+        });
+        return;
+      }
+
+      if (mounted && auth != null) {
+        final authWithSolution = auth.copyWith(
+          fileName: picked.name,
+          solutionName: pkg.solutionName,
+        );
+        Navigator.of(context).pop(authWithSolution);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoggingIn = false;
+          _errorMessage = 'Error loading solution from disk: $e';
+        });
+      }
     }
   }
 
@@ -138,8 +227,9 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: Container(
-        width: 440,
+        width: 460,
         decoration: BoxDecoration(
           color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(16),
@@ -156,7 +246,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           children: [
             // Header
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               decoration: BoxDecoration(
                 color: const Color(0xFF1E88E5).withValues(alpha: 0.1),
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
@@ -164,28 +254,33 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
               child: Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
                       color: const Color(0xFF1E88E5).withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.storage, color: Color(0xFF1E88E5), size: 28),
+                    child: const Icon(Icons.storage, color: Color(0xFF1E88E5), size: 24),
                   ),
-                  const SizedBox(width: 16),
+                  const SizedBox(width: 14),
                   const Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'File4Base Login',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                          'File4Base Connect & Login',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          'Select Database & Authenticate',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                          'Select Database or Load Solution from Disk',
+                          style: TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                       ],
                     ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cancelar',
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: () => Navigator.of(context).pop(null),
                   ),
                 ],
               ),
@@ -193,7 +288,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
 
             // Form Body
             Padding(
-              padding: const EdgeInsets.all(24.0),
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
               child: Form(
                 key: _formKey,
                 child: Column(
@@ -251,6 +346,8 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                                     if (val != null) {
                                       setState(() {
                                         _selectedDatabase = val;
+                                        // Reset password on database change — always require entering password
+                                        _passwordController.clear();
                                       });
                                     }
                                   },
@@ -276,7 +373,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                       decoration: const InputDecoration(
                         labelText: 'Username',
                         hintText: 'admin',
-                        helperText: 'Account username (e.g. admin)',
+                        helperText: 'Account username (e.g. admin or database owner)',
                         border: OutlineInputBorder(),
                         isDense: true,
                         prefixIcon: Icon(Icons.person_outline, size: 20),
@@ -288,14 +385,14 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                       controller: _passwordController,
                       decoration: const InputDecoration(
                         labelText: 'Password',
-                        hintText: '••••••',
-                        helperText: 'Account password',
+                        hintText: 'Enter access password',
+                        helperText: 'Database password required for authentication',
                         border: OutlineInputBorder(),
                         isDense: true,
                         prefixIcon: Icon(Icons.lock_outline, size: 20),
                       ),
                       obscureText: true,
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Password required' : null,
+                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Password is required' : null,
                       onFieldSubmitted: (_) => _handleLogin(),
                     ),
 
@@ -312,7 +409,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Default initial owner credentials match the database name and its password.',
+                              'La contraseña de la base de datos es la contraseña de acceso si no hay otros usuarios. Debe introducirse siempre.',
                               style: TextStyle(fontSize: 11, color: Colors.grey),
                             ),
                           ),
@@ -320,10 +417,12 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                       ),
                     ),
 
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 20),
+
+                    // Primary Action: Connect & Log In
                     SizedBox(
                       width: double.infinity,
-                      height: 44,
+                      height: 42,
                       child: ElevatedButton.icon(
                         onPressed: _isLoggingIn ? null : _handleLogin,
                         style: ElevatedButton.styleFrom(
@@ -335,10 +434,40 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                             : const Icon(Icons.login, size: 20),
                         label: Text(
-                          _isLoggingIn ? 'Authenticating...' : 'Connect & Log In',
+                          _isLoggingIn ? 'Authenticating...' : 'Conectar y Entrar',
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                       ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // Secondary Actions: Cargar de disco duro + Cancelar
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _isLoggingIn ? null : _handleLoadFromDisk,
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            icon: const Icon(Icons.folder_open, size: 18),
+                            label: const Text(
+                              'Cargar de disco duro...',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(null),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          ),
+                          child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+                        ),
+                      ],
                     ),
                   ],
                 ),

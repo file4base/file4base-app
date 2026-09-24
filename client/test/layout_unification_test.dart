@@ -45,8 +45,6 @@ void main() {
     );
 
     LayoutModel? selectedLayout = mockLayout1;
-    bool manageLayoutsCalled = false;
-    bool newLayoutCalled = false;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -59,8 +57,6 @@ void main() {
                 onLayoutSelected: (layout) {
                   setState(() => selectedLayout = layout);
                 },
-                onManageLayouts: () => manageLayoutsCalled = true,
-                onNewLayout: () => newLayoutCalled = true,
                 tables: [mockTable],
                 selectedTable: mockTable,
                 onTableSelected: (_) {},

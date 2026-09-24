@@ -188,10 +188,27 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       setState(() {
         _currentUser = auth.user;
         _activeDatabaseName = auth.database;
+        if (auth.fileName != null) {
+          _activeSolutionFileName = auth.fileName!;
+        }
+        if (auth.solutionName != null) {
+          _activeSolutionName = auth.solutionName!;
+        }
+        if (auth.directoryRef != null && auth.directoryRef is StorageDirectoryRef) {
+          _activeSolutionDirectory = auth.directoryRef as StorageDirectoryRef;
+        }
         _serverStatus = 'Online (PostgreSQL - ${auth.user.username})';
       });
       await _loadUserPermissions();
       await _loadTables();
+      if (auth.fileName != null) {
+        AutoSaveService.instance.configure(
+          buildSolutionBytes: _exportCurrentSolutionBytes,
+          directory: _activeSolutionDirectory,
+          baseName: _activeSolutionFileName,
+        );
+      }
+      AutoSaveService.instance.markDirty();
     } else {
       await _checkServer();
     }
@@ -624,11 +641,32 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     final client = ref.read(apiClientProvider);
     List<TableOccurrenceModel> occurrences = [];
     List<LayoutModel> layouts = [];
+    List<Map<String, dynamic>> usersList = [];
+
     try {
       occurrences = await client.listOccurrences();
     } catch (_) {}
     try {
       layouts = await client.listLayouts();
+    } catch (_) {}
+    try {
+      final users = await client.listUsers();
+      for (final u in users) {
+        List<UserLayoutPermissionModel> perms = [];
+        try {
+          perms = await client.getUserPermissions(u.id);
+        } catch (_) {}
+        usersList.add({
+          'id': u.id,
+          'username': u.username,
+          'role': u.role,
+          'permissions': perms.map((p) => {
+            'layout_id': p.layoutId,
+            'layout_name': p.layoutName,
+            'access_level': p.accessLevel,
+          }).toList(),
+        });
+      }
     } catch (_) {}
 
     final dbConfig = DatabaseConnectionConfig(
@@ -636,8 +674,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       engine: 'postgres',
       host: 'localhost',
       port: 5432,
-      user: 'file4base',
-      password: 'dev_password',
+      user: _currentUser?.username ?? 'admin',
+      password: '',
     );
 
     final pkg = SolutionPackage.fromLiveData(
@@ -646,6 +684,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       tables: _tables,
       occurrences: occurrences,
       layouts: layouts,
+      users: usersList,
     );
 
     return pkg.toMsgPack();
@@ -984,7 +1023,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     await _loadUserPermissions();
                     await _loadTables();
                   },
-                  onSwitchDatabaseOrLogin: _startAuthSequence,
                   onOpenRemote: () {
                     final currentUrl = ref.read(serverUrlProvider);
                     ServerConnectionDialog.show(

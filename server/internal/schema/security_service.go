@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -36,21 +37,53 @@ type AuthUser struct {
 
 // Authenticate verifies user credentials and returns the user with layout permissions
 func (s *Service) Authenticate(ctx context.Context, username, password string) (*AuthUser, error) {
+	if strings.TrimSpace(password) == "" {
+		return nil, errors.New("password is required")
+	}
+
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
-
-	q := `SELECT id, username, password_hash, role FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
-	if dialect.Engine() != dbal.EnginePostgres {
-		q = `SELECT id, username, password_hash, role FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
-	}
+	cleanUser := strings.ToLower(strings.TrimSpace(username))
 
 	var id, uName, hash, role string
-	err := db.QueryRowContext(ctx, q, username).Scan(&id, &uName, &hash, &role)
-	if err != nil {
-		return nil, errors.New("invalid username or password")
+	var found bool
+
+	if cleanUser != "" {
+		q := `SELECT id, username, password_hash, role FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
+		if dialect.Engine() != dbal.EnginePostgres {
+			q = `SELECT id, username, password_hash, role FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
+		}
+		err := db.QueryRowContext(ctx, q, cleanUser).Scan(&id, &uName, &hash, &role)
+		if err == nil {
+			if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err == nil {
+				found = true
+			}
+		}
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
+	// Fallback: If username was not found or was empty, check if password matches any owner account (e.g. database password)
+	if !found {
+		qOwner := `SELECT id, username, password_hash, role FROM sys_users WHERE role = 'owner' ORDER BY created_at ASC`
+		rows, err := db.QueryContext(ctx, qOwner)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var oID, oName, oHash, oRole string
+				if err := rows.Scan(&oID, &oName, &oHash, &oRole); err == nil {
+					if bcrypt.CompareHashAndPassword([]byte(oHash), []byte(password)) == nil {
+						id = oID
+						uName = oName
+						hash = oHash
+						role = oRole
+						found = true
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if !found {
 		return nil, errors.New("invalid username or password")
 	}
 

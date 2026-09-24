@@ -65,7 +65,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
   bool _isConnectingServer = false;
   String? _serverError;
   final _serverUserCtrl = TextEditingController(text: 'admin');
-  final _serverPassCtrl = TextEditingController(text: 'admin');
+  final _serverPassCtrl = TextEditingController();
 
   // Local File State
   PickedSolutionFile? _pickedFile;
@@ -73,7 +73,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
   bool _isOpeningFile = false;
   String? _fileError;
   final _fileUserCtrl = TextEditingController(text: 'admin');
-  final _filePassCtrl = TextEditingController(text: 'admin');
+  final _filePassCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -140,6 +140,14 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
       final user = _serverUserCtrl.text.trim();
       final pass = _serverPassCtrl.text.trim();
       final targetDb = _selectedServerDb!;
+
+      if (pass.isEmpty) {
+        setState(() {
+          _isConnectingServer = false;
+          _serverError = 'Password is required to access database.';
+        });
+        return;
+      }
 
       final auth = await widget.apiClient.login(
         username: user,
@@ -432,7 +440,12 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
                             child: const Text('ACTIVE', style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold)),
                           )
                         : null,
-                    onTap: () => setState(() => _selectedServerDb = db),
+                    onTap: () {
+                      setState(() {
+                        _selectedServerDb = db;
+                        _serverPassCtrl.clear();
+                      });
+                    },
                   );
                 },
               ),

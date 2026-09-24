@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-09-24
+
+### Removed
+- **Redundant "Switch Database / Login..." Menu Item**:
+  - Removed `Switch Database / Login...` from `File4BaseMenuBar` under the File menu and deprecated the `onSwitchDatabaseOrLogin` callback.
+
+### Added
+- **Load from Disk and Cancel in Initial Connection Dialog (`DatabaseLoginDialog`)**:
+  - Added "Cargar de disco duro..." (`Icons.folder_open`) button to `DatabaseLoginDialog`, allowing immediate opening of a `.f4p` / `.f4b` solution directly from local disk upon connecting.
+  - Added "Cancelar" action button and window close button (`Icons.close`), making the dialog dismissible (`barrierDismissible: true`) without trapping the user.
+- **Strict Database Access Password Enforcement & Owner Password Fallback**:
+  - Removed insecure `'admin'` / `'admin'` default prefilling from `DatabaseLoginDialog` and `OpenSolutionDialog`.
+  - The password field is always blank and strictly required upon database selection.
+  - Enhanced backend `Authenticate` in `security_service.go` to support authenticating with the database password against database owner accounts when logging in to a database with no additional users.
+- **Solution-Level User & Permission Packaging**:
+  - Updated `_exportCurrentSolutionBytes` in `main.dart` and `SolutionPackage.fromLiveData` in `solution_models.dart` to export the database's users and layout permissions into the `.f4p` solution package.
+  - When loading a solution from disk, its packaged users are automatically restored into `sys_users`.
+  - `Manage > Security...` manages accounts and layout privileges specifically for the active database/solution independently from other databases.
+
 ## [0.4.8] - 2026-09-24
 
 ### Added

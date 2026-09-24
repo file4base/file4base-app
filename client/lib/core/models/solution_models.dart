@@ -174,6 +174,7 @@ class SolutionPackage {
     required List<TableModel> tables,
     required List<TableOccurrenceModel> occurrences,
     required List<LayoutModel> layouts,
+    List<Map<String, dynamic>> users = const [],
   }) {
     final tablesMap = tables.map((t) => {
       'id': t.id,
@@ -212,12 +213,14 @@ class SolutionPackage {
       tables: tablesMap,
       tableOccurrences: occMap,
       layouts: layMap,
-      users: [
-        {
-          'username': 'admin',
-          'role': 'Full Access',
-        }
-      ],
+      users: users.isNotEmpty
+          ? users
+          : [
+              {
+                'username': 'admin',
+                'role': 'owner',
+              }
+            ],
     );
   }
 }

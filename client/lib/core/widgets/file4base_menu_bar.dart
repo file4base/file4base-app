@@ -8,7 +8,6 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback onManageDatabase;
   final VoidCallback? onManageLayouts;
   final VoidCallback? onManageSecurity;
-  final VoidCallback? onSwitchDatabaseOrLogin;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
   final VoidCallback? onNewDatabase;
@@ -33,7 +32,6 @@ class File4BaseMenuBar extends StatelessWidget {
     required this.onManageDatabase,
     this.onManageLayouts,
     this.onManageSecurity,
-    this.onSwitchDatabaseOrLogin,
     required this.onOpenRemote,
     required this.onAbout,
     this.onNewDatabase,
@@ -185,11 +183,6 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true, shift: true),
           child: const Text('Open Remote...'),
         ),
-        if (onSwitchDatabaseOrLogin != null)
-          MenuItemButton(
-            onPressed: onSwitchDatabaseOrLogin,
-            child: const Text('Switch Database / Login...'),
-          ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onSave ?? () => _showNotice(context, 'Save', 'Solution saved.'),

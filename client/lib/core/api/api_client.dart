@@ -326,11 +326,17 @@ class AuthResult {
   final String status;
   final String database;
   final UserModel user;
+  final String? fileName;
+  final String? solutionName;
+  final dynamic directoryRef;
 
   const AuthResult({
     required this.status,
     required this.database,
     required this.user,
+    this.fileName,
+    this.solutionName,
+    this.directoryRef,
   });
 
   factory AuthResult.fromJson(Map<String, dynamic> json) {
@@ -338,6 +344,26 @@ class AuthResult {
       status: json['status'] as String? ?? 'ok',
       database: json['database'] as String? ?? '',
       user: UserModel.fromJson(json['user'] as Map<String, dynamic>),
+      fileName: json['file_name'] as String?,
+      solutionName: json['solution_name'] as String?,
+    );
+  }
+
+  AuthResult copyWith({
+    String? status,
+    String? database,
+    UserModel? user,
+    String? fileName,
+    String? solutionName,
+    dynamic directoryRef,
+  }) {
+    return AuthResult(
+      status: status ?? this.status,
+      database: database ?? this.database,
+      user: user ?? this.user,
+      fileName: fileName ?? this.fileName,
+      solutionName: solutionName ?? this.solutionName,
+      directoryRef: directoryRef ?? this.directoryRef,
     );
   }
 }
