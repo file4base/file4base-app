@@ -10,6 +10,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -46,7 +47,7 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 func (h *SolutionHandler) ListDatabases(w http.ResponseWriter, r *http.Request) {
 	databases, err := h.dbMgr.ListDatabases(r.Context())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed listing databases: %v", err), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, fmt.Errorf("failed listing databases: %w", err))
 		return
 	}
 
@@ -67,26 +68,26 @@ type CreateDatabaseRequest struct {
 func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
 	var req CreateDatabaseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	dbName := strings.ToLower(strings.TrimSpace(req.Database))
 	if dbName == "" {
-		http.Error(w, "Database name cannot be empty", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "Database name cannot be empty")
 		return
 	}
 
 	// 1. Create database in server
 	if err := h.dbMgr.CreateDatabase(r.Context(), dbName); err != nil {
-		http.Error(w, fmt.Sprintf("Failed creating database: %v", err), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Creation Error", err.Error())
 		return
 	}
 
 	// 2. Switch to it and ensure system tables
 	driver, err := h.dbMgr.SetActiveDatabase(r.Context(), dbName)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Database created but failed switching: %v", err), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, fmt.Errorf("database created but failed switching: %w", err))
 		return
 	}
 
@@ -101,7 +102,7 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 	}
 	tempSvc := schema.NewService(driver)
 	if err := tempSvc.EnsureSystemTablesWithCredentials(r.Context(), ownerUser, ownerPass); err != nil {
-		http.Error(w, fmt.Sprintf("Failed initializing system catalog on new database: %v", err), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, fmt.Errorf("failed initializing system catalog on new database: %w", err))
 		return
 	}
 
@@ -123,19 +124,19 @@ type SwitchDatabaseRequest struct {
 func (h *SolutionHandler) SwitchDatabase(w http.ResponseWriter, r *http.Request) {
 	var req SwitchDatabaseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	dbName := strings.ToLower(strings.TrimSpace(req.Database))
 	if dbName == "" {
-		http.Error(w, "Database name cannot be empty", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "Database name cannot be empty")
 		return
 	}
 
 	driver, err := h.dbMgr.SetActiveDatabase(r.Context(), dbName)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed switching database: %v", err), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Switch Error", err.Error())
 		return
 	}
 
@@ -188,7 +189,7 @@ func (h *SolutionHandler) ExportSolution(w http.ResponseWriter, r *http.Request)
 
 	bytes, err := h.schemaSvc.ExportSolution(r.Context(), solutionName, dbConfig)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed exporting solution: %v", err), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, fmt.Errorf("failed exporting solution: %w", err))
 		return
 	}
 
@@ -207,13 +208,13 @@ func (h *SolutionHandler) ExportSolution(w http.ResponseWriter, r *http.Request)
 func (h *SolutionHandler) ImportSolution(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed reading request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Read Error", "Failed reading request body")
 		return
 	}
 
 	bundle, err := h.schemaSvc.ImportSolution(r.Context(), body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed importing solution: %v", err), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Solution Import Error", err.Error())
 		return
 	}
 
@@ -231,7 +232,7 @@ func (h *SolutionHandler) ExportDatabaseData(w http.ResponseWriter, r *http.Requ
 	activeDB := h.dbMgr.ActiveDatabase()
 	bytes, err := h.schemaSvc.ExportDatabaseData(r.Context(), activeDB)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed exporting database data: %v", err), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, fmt.Errorf("failed exporting database data: %w", err))
 		return
 	}
 
@@ -246,13 +247,13 @@ func (h *SolutionHandler) ExportDatabaseData(w http.ResponseWriter, r *http.Requ
 func (h *SolutionHandler) ImportDatabaseData(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Failed reading request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Read Error", "Failed reading request body")
 		return
 	}
 
 	bundle, err := h.schemaSvc.ImportDatabaseData(r.Context(), body)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed importing database data: %v", err), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Data Import Error", err.Error())
 		return
 	}
 

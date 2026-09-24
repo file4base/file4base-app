@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/file4base/file4base-app/server/internal/data"
+	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -42,7 +43,7 @@ func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
 		SortAsc: sortAsc,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 
@@ -54,13 +55,13 @@ func (h *DataHandler) InsertRow(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 	var record map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
-		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	inserted, err := h.svc.InsertRow(r.Context(), table, record)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Data Insert Error", err.Error())
 		return
 	}
 
@@ -75,7 +76,7 @@ func (h *DataHandler) GetRow(w http.ResponseWriter, r *http.Request) {
 
 	row, err := h.svc.GetRow(r.Context(), table, id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Record Not Found", err.Error())
 		return
 	}
 
@@ -89,13 +90,13 @@ func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 
 	var updates map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
-		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	updated, err := h.svc.UpdateRow(r.Context(), table, id, updates)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Data Update Error", err.Error())
 		return
 	}
 
@@ -108,7 +109,7 @@ func (h *DataHandler) DeleteRow(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.svc.DeleteRow(r.Context(), table, id); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Data Delete Error", err.Error())
 		return
 	}
 
@@ -124,13 +125,13 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 	var body FindRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid JSON find payload", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	results, err := h.svc.ExecuteFind(r.Context(), table, body.Requests, body.Options)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Find Query Error", err.Error())
 		return
 	}
 

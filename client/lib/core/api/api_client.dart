@@ -1,6 +1,103 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+
+/// RFC 9457 Problem Details Exception
+class ApiException implements Exception {
+  final int statusCode;
+  final String title;
+  final String detail;
+  final String? type;
+  final String? instance;
+  final String? traceId;
+  final Map<String, dynamic> raw;
+
+  ApiException({
+    required this.statusCode,
+    required this.title,
+    required this.detail,
+    this.type,
+    this.instance,
+    this.traceId,
+    this.raw = const {},
+  });
+
+  factory ApiException.fromResponse(http.Response response) {
+    String title = 'HTTP ${response.statusCode} Error';
+    String detail = response.body;
+    String? type;
+    String? instance;
+    String? traceId = response.headers['x-trace-id'];
+    Map<String, dynamic> raw = {};
+
+    if (response.body.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          raw = decoded;
+          title = decoded['title'] as String? ?? title;
+          detail = decoded['detail'] as String? ?? detail;
+          type = decoded['type'] as String?;
+          instance = decoded['instance'] as String?;
+          traceId = decoded['trace_id'] as String? ?? traceId;
+        }
+      } catch (_) {}
+    }
+
+    return ApiException(
+      statusCode: response.statusCode,
+      title: title,
+      detail: detail,
+      type: type,
+      instance: instance,
+      traceId: traceId,
+      raw: raw,
+    );
+  }
+
+  @override
+  String toString() {
+    final tid = traceId != null ? ' [Trace ID: $traceId]' : '';
+    return 'ApiException ($statusCode): $title - $detail$tid';
+  }
+}
+
+/// W3C TraceContext implementation (W3C Recommendation / OpenTelemetry compliant)
+class TraceContext {
+  final String traceId;
+  final String spanId;
+
+  TraceContext({required this.traceId, required this.spanId});
+
+  static String _generateHex(int byteCount) {
+    math.Random rng;
+    try {
+      rng = math.Random.secure();
+    } catch (_) {
+      rng = math.Random();
+    }
+    final buffer = StringBuffer();
+    for (int i = 0; i < byteCount; i++) {
+      buffer.write(rng.nextInt(256).toRadixString(16).padLeft(2, '0'));
+    }
+    return buffer.toString();
+  }
+
+  factory TraceContext.create() {
+    return TraceContext(
+      traceId: _generateHex(16), // 16 bytes = 32 hex chars
+      spanId: _generateHex(8),   // 8 bytes = 16 hex chars
+    );
+  }
+
+  String get traceparent => '00-$traceId-$spanId-01';
+
+  Map<String, String> toHeaders() => {
+    'traceparent': traceparent,
+    'X-Trace-ID': traceId,
+  };
+}
 
 class TableModel {
   final String id;
@@ -219,48 +316,97 @@ class ApiClient {
     http.Client? httpClient,
   }) : _httpClient = httpClient ?? http.Client();
 
+  Map<String, String> _headers({Map<String, String>? extra, String? contentType}) {
+    final trace = TraceContext.create();
+    final headers = <String, String>{
+      'Accept': 'application/json',
+      ...trace.toHeaders(),
+    };
+    if (contentType != null) {
+      headers['Content-Type'] = contentType;
+    }
+    if (extra != null) {
+      headers.addAll(extra);
+    }
+    return headers;
+  }
+
+  void _checkResponse(http.Response response) {
+    if (response.statusCode >= 400) {
+      throw ApiException.fromResponse(response);
+    }
+  }
+
+  /// Diagnostic Health Check (/healthz - IETF draft format + backward-compatible fields)
   Future<Map<String, dynamic>> checkHealth() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/healthz'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
 
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } else {
-      throw Exception('Server health check failed with status: ${response.statusCode}');
+  /// Cloud-native Kubernetes Liveness probe (/healthz/liveness or /livez)
+  Future<bool> checkLiveness() async {
+    try {
+      final response = await _httpClient.get(
+        Uri.parse('$baseUrl/healthz/liveness'),
+        headers: _headers(),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Cloud-native Kubernetes Readiness probe (/healthz/readiness or /readyz)
+  Future<bool> checkReadiness() async {
+    try {
+      final response = await _httpClient.get(
+        Uri.parse('$baseUrl/healthz/readiness'),
+        headers: _headers(),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Cloud-native Kubernetes Startup probe (/healthz/startup or /startupz)
+  Future<bool> checkStartup() async {
+    try {
+      final response = await _httpClient.get(
+        Uri.parse('$baseUrl/healthz/startup'),
+        headers: _headers(),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
     }
   }
 
   Future<List<TableModel>> listTables() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/schemas/tables'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      return list.map((item) => TableModel.fromJson(item as Map<String, dynamic>)).toList();
-    } else {
-      throw Exception('Failed to list tables: ${response.statusCode}');
-    }
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => TableModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
   Future<TableModel> createTable(String displayName, {String? customName}) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/schemas/tables'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'display_name': displayName,
         if (customName != null && customName.isNotEmpty) 'custom_name': customName,
       }),
     );
-
-    if (response.statusCode == 201) {
-      return TableModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to create table: ${response.body}');
-    }
+    _checkResponse(response);
+    return TableModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<ColumnModel> addColumn(String tableId, {
@@ -271,7 +417,7 @@ class ApiClient {
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/columns'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'name': name,
         'display_name': displayName,
@@ -279,12 +425,8 @@ class ApiClient {
         'is_nullable': isNullable,
       }),
     );
-
-    if (response.statusCode == 201) {
-      return ColumnModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to add column: ${response.body}');
-    }
+    _checkResponse(response);
+    return ColumnModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<ColumnModel> updateColumn(String tableId, String columnId, {
@@ -292,27 +434,21 @@ class ApiClient {
   }) async {
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/columns/$columnId'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'display_name': displayName,
       }),
     );
-
-    if (response.statusCode == 200) {
-      return ColumnModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to update column: ${response.body}');
-    }
+    _checkResponse(response);
+    return ColumnModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<void> deleteColumn(String tableId, String columnId) async {
     final response = await _httpClient.delete(
       Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/columns/$columnId'),
+      headers: _headers(),
     );
-
-    if (response.statusCode != 204 && response.statusCode != 200) {
-      throw Exception('Failed to delete column: ${response.body}');
-    }
+    _checkResponse(response);
   }
 
   Future<List<Map<String, dynamic>>> listRows(String table, {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true}) async {
@@ -323,190 +459,149 @@ class ApiClient {
       'sort_asc': sortAsc.toString(),
     });
 
-    final response = await _httpClient.get(uri, headers: {'Accept': 'application/json'});
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
-    } else {
-      throw Exception('Failed to list records: ${response.body}');
-    }
+    final response = await _httpClient.get(uri, headers: _headers());
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
   Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode(record),
     );
-
-    if (response.statusCode == 201) {
-      return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-    } else {
-      throw Exception('Failed to insert record: ${response.body}');
-    }
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> updates) async {
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/api/v1/data/$table/$id'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode(updates),
     );
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
-    } else {
-      throw Exception('Failed to update record: ${response.body}');
-    }
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
   Future<void> deleteRow(String table, String id) async {
-    final response = await _httpClient.delete(Uri.parse('$baseUrl/api/v1/data/$table/$id'));
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return;
-    } else {
-      throw Exception('Failed to delete record: ${response.body}');
-    }
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/data/$table/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
   }
 
   Future<List<Map<String, dynamic>>> executeFind(String table, List<Map<String, dynamic>> requests) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/find'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'requests': requests,
         'options': {'limit': 500, 'offset': 0},
       }),
     );
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
-    } else {
-      throw Exception('Failed to execute find: ${response.body}');
-    }
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
   Future<List<TableOccurrenceModel>> listOccurrences() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/schemas/occurrences'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      return list.map((item) => TableOccurrenceModel.fromJson(item as Map<String, dynamic>)).toList();
-    } else {
-      throw Exception('Failed to list table occurrences: ${response.body}');
-    }
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => TableOccurrenceModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
   Future<List<LayoutModel>> listLayouts() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/schemas/layouts'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      return list.map((item) => LayoutModel.fromJson(item as Map<String, dynamic>)).toList();
-    } else {
-      throw Exception('Failed to list layouts: ${response.body}');
-    }
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => LayoutModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
   Future<LayoutModel> getLayout(String id) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/schemas/layouts/$id'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return LayoutModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to get layout: ${response.body}');
-    }
+    _checkResponse(response);
+    return LayoutModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<LayoutModel> createLayout(String name, {String? toId, Map<String, dynamic>? definition}) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/schemas/layouts'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'name': name,
         'table_occurrence_id': toId ?? '',
         'definition': definition ?? {},
       }),
     );
-    if (response.statusCode == 201) {
-      return LayoutModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to create layout: ${response.body}');
-    }
+    _checkResponse(response);
+    return LayoutModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<LayoutModel> updateLayout(String id, String name, Map<String, dynamic> definition) async {
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/api/v1/schemas/layouts/$id'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'name': name,
         'definition': definition,
       }),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return LayoutModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to update layout: ${response.body}');
-    }
+    _checkResponse(response);
+    return LayoutModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<void> deleteLayout(String id) async {
-    final response = await _httpClient.delete(Uri.parse('$baseUrl/api/v1/schemas/layouts/$id'));
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return;
-    } else {
-      throw Exception('Failed to delete layout: ${response.body}');
-    }
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/schemas/layouts/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
   }
 
   Future<Map<String, dynamic>> listDatabases() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/databases'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } else {
-      throw Exception('Failed to list databases: ${response.body}');
-    }
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> createDatabase(String name, {String? user, String? password}) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/databases'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'database': name,
         if (user != null && user.isNotEmpty) 'user': user,
         if (password != null && password.isNotEmpty) 'password': password,
       }),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } else {
-      throw Exception('Failed to create database: ${response.body}');
-    }
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> switchDatabase(String name) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/databases/switch'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({'database': name}),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } else {
-      throw Exception('Failed to switch database: ${response.body}');
-    }
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   Future<Uint8List> exportSolution({String? name, String? host, int? port, String? user, String? password}) async {
@@ -518,47 +613,38 @@ class ApiClient {
     if (password != null) queryParams['password'] = password;
 
     final uri = Uri.parse('$baseUrl/api/v1/solutions/export').replace(queryParameters: queryParams.isEmpty ? null : queryParams);
-    final response = await _httpClient.get(uri);
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return response.bodyBytes;
-    } else {
-      throw Exception('Failed to export solution: ${response.body}');
-    }
+    final response = await _httpClient.get(uri, headers: _headers());
+    _checkResponse(response);
+    return response.bodyBytes;
   }
 
   Future<Map<String, dynamic>> importSolution(Uint8List bytes) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/solutions/import'),
-      headers: {'Content-Type': 'application/x-msgpack'},
+      headers: _headers(contentType: 'application/x-msgpack'),
       body: bytes,
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } else {
-      throw Exception('Failed to import solution: ${response.body}');
-    }
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   Future<Uint8List> exportDatabaseData() async {
-    final response = await _httpClient.get(Uri.parse('$baseUrl/api/v1/solutions/export-data'));
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return response.bodyBytes;
-    } else {
-      throw Exception('Failed to export database data: ${response.body}');
-    }
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/solutions/export-data'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return response.bodyBytes;
   }
 
   Future<Map<String, dynamic>> importDatabaseData(Uint8List bytes) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/solutions/import-data'),
-      headers: {'Content-Type': 'application/x-msgpack'},
+      headers: _headers(contentType: 'application/x-msgpack'),
       body: bytes,
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    } else {
-      throw Exception('Failed to import database data: ${response.body}');
-    }
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
   // ─── Security & Authentication ─────────────────────────────────────────────
@@ -570,31 +656,25 @@ class ApiClient {
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/auth/login'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'username': username,
         'password': password,
         'database': database ?? '',
       }),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return AuthResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Authentication failed: ${response.body}');
-    }
+    _checkResponse(response);
+    return AuthResult.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<List<UserModel>> listUsers() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/security/users'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      return list.map((item) => UserModel.fromJson(item as Map<String, dynamic>)).toList();
-    } else {
-      throw Exception('Failed to list users: ${response.body}');
-    }
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => UserModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
   Future<UserModel> createUser({
@@ -604,18 +684,15 @@ class ApiClient {
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/security/users'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'username': username,
         'password': password,
         'role': role,
       }),
     );
-    if (response.statusCode == 201) {
-      return UserModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-    } else {
-      throw Exception('Failed to create user: ${response.body}');
-    }
+    _checkResponse(response);
+    return UserModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<void> updateUser(
@@ -630,43 +707,37 @@ class ApiClient {
 
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/api/v1/security/users/$id'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode(body),
     );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Failed to update user: ${response.body}');
-    }
+    _checkResponse(response);
   }
 
   Future<void> deleteUser(String id) async {
-    final response = await _httpClient.delete(Uri.parse('$baseUrl/api/v1/security/users/$id'));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Failed to delete user: ${response.body}');
-    }
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/security/users/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
   }
 
   Future<List<UserLayoutPermissionModel>> getUserPermissions(String userId) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions'),
-      headers: {'Accept': 'application/json'},
+      headers: _headers(),
     );
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      return list.map((item) => UserLayoutPermissionModel.fromJson(item as Map<String, dynamic>)).toList();
-    } else {
-      throw Exception('Failed to fetch permissions: ${response.body}');
-    }
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => UserLayoutPermissionModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
   Future<void> setUserPermissions(String userId, List<Map<String, String>> permissions) async {
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/api/v1/security/users/$userId/permissions'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(contentType: 'application/json'),
       body: jsonEncode({'permissions': permissions}),
     );
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Failed to set permissions: ${response.body}');
-    }
+    _checkResponse(response);
   }
 
   void close() {

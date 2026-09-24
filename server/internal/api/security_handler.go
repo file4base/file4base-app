@@ -7,6 +7,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -46,18 +47,18 @@ type LoginRequest struct {
 func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	// If database specified, switch to it and ensure system tables
 	if req.Database != "" && req.Database != h.dbMgr.ActiveDatabase() {
 		if _, err := h.dbMgr.SetActiveDatabase(r.Context(), req.Database); err != nil {
-			http.Error(w, fmt.Sprintf("database switch failed: %v", err), http.StatusBadRequest)
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Switch Error", fmt.Sprintf("database switch failed: %v", err))
 			return
 		}
 		if err := h.schemaSvc.EnsureSystemTables(r.Context()); err != nil {
-			http.Error(w, fmt.Sprintf("failed ensuring system tables: %v", err), http.StatusInternalServerError)
+			telemetry.WriteInternalError(w, r, fmt.Errorf("failed ensuring system tables: %w", err))
 			return
 		}
 	} else {
@@ -66,7 +67,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.schemaSvc.Authenticate(r.Context(), req.Username, req.Password)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		telemetry.WriteProblem(w, r, http.StatusUnauthorized, "Authentication Failed", err.Error())
 		return
 	}
 
@@ -82,7 +83,7 @@ func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	_ = h.schemaSvc.EnsureSystemTables(r.Context())
 	users, err := h.schemaSvc.ListUsers(r.Context())
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed listing users: %v", err), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 
@@ -99,13 +100,13 @@ type CreateUserRequest struct {
 func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req CreateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	user, err := h.schemaSvc.CreateUser(r.Context(), req.Username, req.Password, req.Role)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Creation Error", err.Error())
 		return
 	}
 
@@ -121,52 +122,39 @@ type UpdateUserRequest struct {
 
 func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if id == "" {
-		http.Error(w, "user id required", http.StatusBadRequest)
-		return
-	}
-
 	var req UpdateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	if err := h.schemaSvc.UpdateUser(r.Context(), id, req.Password, req.Role); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Update Error", err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"id":     id,
+		"status": "updated",
+	})
 }
 
 func (h *SecurityHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if id == "" {
-		http.Error(w, "user id required", http.StatusBadRequest)
-		return
-	}
-
 	if err := h.schemaSvc.DeleteUser(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Deletion Error", err.Error())
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SecurityHandler) GetUserPermissions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if id == "" {
-		http.Error(w, "user id required", http.StatusBadRequest)
-		return
-	}
-
 	perms, err := h.schemaSvc.GetUserPermissions(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Permissions Not Found", err.Error())
 		return
 	}
 
@@ -180,22 +168,17 @@ type SetPermissionsRequest struct {
 
 func (h *SecurityHandler) SetUserPermissions(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	if id == "" {
-		http.Error(w, "user id required", http.StatusBadRequest)
-		return
-	}
-
 	var req SetPermissionsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	if err := h.schemaSvc.SetUserPermissions(r.Context(), id, req.Permissions); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Permission Update Error", err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }

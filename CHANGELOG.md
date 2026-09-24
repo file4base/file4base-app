@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.6] - 2026-09-24
 
 ### Added
+- **API Best Practices Implementation in Go Backend (`server/`)**:
+  - Implemented cloud-native health probes: `/healthz/liveness` (`/livez`), `/healthz/readiness` (`/readyz`), `/healthz/startup` (`/startupz`), and comprehensive IETF-draft diagnostic `/healthz`.
+  - Implemented graceful shutdown lifecycle: failing readiness (HTTP 503) on SIGTERM/SIGINT, draining in-flight requests, and closing database pools cleanly.
+  - Implemented OpenTelemetry and W3C TraceContext middleware (`server/internal/telemetry/middleware.go` and `trace.go`): automatic generation and propagation of `traceparent`, `tracestate`, `X-Trace-ID`, and structured JSON request logs.
+  - Implemented RFC 9457 Problem Details (`application/problem+json`) error handling across all schema, data, security, and solution handlers (`server/internal/telemetry/problem.go`).
+  - Added security headers middleware: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `X-XSS-Protection: 1; mode=block`, `Strict-Transport-Security`.
+  - Added Docker container healthchecks in `server/Dockerfile` and `docker-compose.yml` (`depends_on: condition: service_healthy`).
+- **Web Client Observability & Error Handling (`client/`)**:
+  - Implemented W3C `TraceContext` in Flutter Web client (`client/lib/core/api/api_client.dart`), generating and injecting `traceparent` and `X-Trace-ID` headers into all outgoing requests.
+  - Implemented `ApiException` parsing RFC 9457 `application/problem+json` error responses (exposing `title`, `detail`, `status`, `type`, `instance`, and `traceId`).
+  - Added cloud-native probe methods to `ApiClient`: `checkLiveness()`, `checkReadiness()`, `checkStartup()`.
+  - Updated `client/nginx.conf` reverse proxy to forward W3C `traceparent` and `tracestate`, apply security headers, and proxy cloud-native probe endpoints.
 - **API Best Practices & Observability Specification**:
   - Published comprehensive enterprise specification in [docs/specs/API_BEST_PRACTICES.md](docs/specs/API_BEST_PRACTICES.md).
   - Defined standards for API Semantic Versioning (SemVer 2.0.0), non-breaking evolution, and RFC 8594 deprecation/sunset headers.

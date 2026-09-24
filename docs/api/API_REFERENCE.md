@@ -6,22 +6,109 @@ Base URL (Default): `http://localhost:8080`
 
 ---
 
-## 1. System & Health
+## Global Headers & Observability
+
+### Request Headers
+- `traceparent` *(optional)*: W3C standard trace context (`00-{trace_id}-{span_id}-01`). Injected automatically by the Web client and desktop clients.
+- `tracestate` *(optional)*: W3C vendor state for distributed tracing.
+- `X-Trace-ID` *(optional)*: Trace identifier alias.
+
+### Response Headers
+- `traceparent`: W3C trace context matching the active span.
+- `X-Trace-ID`: Active trace identifier for correlation in structured logs.
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: SAMEORIGIN`
+- `X-XSS-Protection: 1; mode=block`
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+
+### RFC 9457 Problem Details Error Envelope
+When an error occurs (HTTP 4xx or 5xx), the response body is encoded as `application/problem+json`:
+```json
+{
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.5",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "Table with id 'unknown-id' was not found",
+  "instance": "/api/v1/schemas/tables/unknown-id",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736"
+}
+```
+
+---
+
+## 1. System & Health Probes
 
 ### `GET /healthz`
-Returns system status, active database engine, and connection state.
+IETF draft & diagnostic health check. Returns comprehensive system status, version, uptime, and database connectivity.
 
 #### Response `200 OK`
 ```json
 {
-  "app": "File4Base Server",
+  "status": "pass",
   "version": "0.4.6",
-  "status": "ok",
-  "database": "connected",
+  "releaseId": "0.4.6",
+  "serviceId": "file4base-server",
+  "description": "File4Base Core Backend Service",
+  "uptime": "1h23m45s",
+  "checks": {
+    "database": [
+      {
+        "componentType": "datastore",
+        "observedValue": "connected",
+        "status": "pass",
+        "time": "2026-09-24T10:45:00Z"
+      }
+    ]
+  },
   "engine": "postgres",
-  "timestamp": "2026-09-24T10:45:00Z"
+  "database": "connected",
+  "active_database": "file4base_dev"
 }
 ```
+
+### `GET /healthz/liveness` (Alias: `GET /livez`)
+Kubernetes / Docker container liveness probe. Indicates if the process is alive. If this fails, the container orchestrator restarts the pod/container.
+
+#### Response `200 OK`
+```json
+{
+  "status": "pass",
+  "probe": "liveness"
+}
+```
+
+### `GET /healthz/readiness` (Alias: `GET /readyz`)
+Kubernetes / Docker container readiness probe. Indicates whether the service is ready to accept incoming user traffic. Returns `503 Service Unavailable` during startup, during database disconnections, or when a graceful shutdown signal (SIGTERM/SIGINT) is received.
+
+#### Response `200 OK` (Healthy)
+```json
+{
+  "status": "pass",
+  "probe": "readiness",
+  "database": "connected"
+}
+```
+
+#### Response `503 Service Unavailable` (Draining / Unhealthy)
+```json
+{
+  "status": "fail",
+  "probe": "readiness",
+  "database": "disconnected"
+}
+```
+
+### `GET /healthz/startup` (Alias: `GET /startupz`)
+Kubernetes startup probe. Used for slow-starting containers to protect liveness probes during DB migrations or initialization.
+
+#### Response `200 OK`
+```json
+{
+  "status": "pass",
+  "probe": "startup"
+}
+```
+
 
 ---
 

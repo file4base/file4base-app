@@ -12,6 +12,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U file4base -d file4base_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - file4base-net
 
@@ -30,6 +35,11 @@ services:
       - "3306:3306"
     volumes:
       - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       - file4base-net
 
@@ -47,7 +57,14 @@ services:
       DATABASE_URL: "postgres://file4base:dev_password@postgres:5432/file4base_dev?sslmode=disable"
       SERVER_PORT: ":8080"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/healthz/readiness || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     networks:
       - file4base-net
 
@@ -61,7 +78,8 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     networks:
       - file4base-net
 

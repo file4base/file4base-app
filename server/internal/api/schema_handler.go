@@ -6,6 +6,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -45,7 +46,7 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 func (h *SchemaHandler) ListTables(w http.ResponseWriter, r *http.Request) {
 	tables, err := h.svc.ListTables(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -60,18 +61,18 @@ type CreateTableRequest struct {
 func (h *SchemaHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 	var req CreateTableRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	if req.DisplayName == "" {
-		http.Error(w, "display_name is required", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "display_name is required")
 		return
 	}
 
 	tbl, err := h.svc.CreateTable(r.Context(), req.DisplayName, req.CustomName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
 
@@ -93,18 +94,18 @@ type AddColumnRequest struct {
 func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 	tableID := chi.URLParam(r, "id")
 	if tableID == "" {
-		http.Error(w, "table id required", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id parameter is required")
 		return
 	}
 
 	var req AddColumnRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	if req.Name == "" || req.DisplayName == "" || req.FieldType == "" {
-		http.Error(w, "name, display_name and field_type are required", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "name, display_name and field_type are required")
 		return
 	}
 
@@ -118,7 +119,7 @@ func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 		ValidationRules:    req.ValidationRules,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
 
@@ -135,19 +136,19 @@ func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
 	tableID := chi.URLParam(r, "id")
 	columnID := chi.URLParam(r, "columnId")
 	if tableID == "" || columnID == "" {
-		http.Error(w, "table id and column id required", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id and column id are required")
 		return
 	}
 
 	var req UpdateColumnRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	col, err := h.svc.UpdateColumn(r.Context(), tableID, columnID, req.DisplayName)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
 
@@ -159,12 +160,12 @@ func (h *SchemaHandler) DeleteColumn(w http.ResponseWriter, r *http.Request) {
 	tableID := chi.URLParam(r, "id")
 	columnID := chi.URLParam(r, "columnId")
 	if tableID == "" || columnID == "" {
-		http.Error(w, "table id and column id required", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id and column id are required")
 		return
 	}
 
 	if err := h.svc.DeleteColumn(r.Context(), tableID, columnID); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
 
@@ -174,7 +175,7 @@ func (h *SchemaHandler) DeleteColumn(w http.ResponseWriter, r *http.Request) {
 func (h *SchemaHandler) ListOccurrences(w http.ResponseWriter, r *http.Request) {
 	occurrences, err := h.svc.ListTableOccurrences(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -184,7 +185,7 @@ func (h *SchemaHandler) ListOccurrences(w http.ResponseWriter, r *http.Request) 
 func (h *SchemaHandler) ListLayouts(w http.ResponseWriter, r *http.Request) {
 	layouts, err := h.svc.ListLayouts(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -200,17 +201,17 @@ type CreateLayoutRequest struct {
 func (h *SchemaHandler) CreateLayout(w http.ResponseWriter, r *http.Request) {
 	var req CreateLayoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 	if req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "name is required")
 		return
 	}
 
 	layout, err := h.svc.CreateLayout(r.Context(), req.Name, req.TableOccurrenceID, req.Definition)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -222,7 +223,7 @@ func (h *SchemaHandler) GetLayout(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	layout, err := h.svc.GetLayout(r.Context(), id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Layout Not Found", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -238,13 +239,13 @@ func (h *SchemaHandler) UpdateLayout(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var req UpdateLayoutRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
 	layout, err := h.svc.UpdateLayout(r.Context(), id, req.Name, req.Definition)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -254,9 +255,8 @@ func (h *SchemaHandler) UpdateLayout(w http.ResponseWriter, r *http.Request) {
 func (h *SchemaHandler) DeleteLayout(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := h.svc.DeleteLayout(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
