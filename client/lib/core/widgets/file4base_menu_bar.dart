@@ -6,6 +6,7 @@ class File4BaseMenuBar extends StatelessWidget {
   final OperationalMode activeMode;
   final ValueChanged<OperationalMode> onModeChanged;
   final VoidCallback onManageDatabase;
+  final VoidCallback? onManageLayouts;
   final VoidCallback? onManageSecurity;
   final VoidCallback? onSwitchDatabaseOrLogin;
   final VoidCallback onOpenRemote;
@@ -30,6 +31,7 @@ class File4BaseMenuBar extends StatelessWidget {
     required this.activeMode,
     required this.onModeChanged,
     required this.onManageDatabase,
+    this.onManageLayouts,
     this.onManageSecurity,
     this.onSwitchDatabaseOrLogin,
     required this.onOpenRemote,
@@ -258,7 +260,7 @@ class File4BaseMenuBar extends StatelessWidget {
               child: const Text('External Data Sources...'),
             ),
             MenuItemButton(
-              onPressed: () => onModeChanged(OperationalMode.layout),
+              onPressed: onManageLayouts ?? () => onModeChanged(OperationalMode.layout),
               child: const Text('Layouts...'),
             ),
             MenuItemButton(

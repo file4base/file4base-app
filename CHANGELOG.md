@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-09-24
+
+### Added
+- **Unified Layout Selector Across Modes (Browse, Layout, Preview)**:
+  - Replaced the erroneous top table selector in the left status sidebar (`File4BaseStatusSidebar`) with a dedicated Layout Selector dropdown (`Icons.view_quilt`).
+  - Restored canonical FileMaker Pro architecture where records are always viewed, found, and printed through a Layout representation (Presentación).
+  - Supported switching between all layouts in the active solution with instant synchronization across Browse Mode, Find Mode, Layout Mode, and Preview Mode.
+  - Included quick actions in the layout dropdown: **New Layout...** and **Manage Layouts...**.
+- **Comprehensive Solution Layout Management (`ManageLayoutsDialog`)**:
+  - Implemented `ManageLayoutsDialog` in `client/lib/features/layout_engine/manage_layouts_dialog.dart`.
+  - Displays all layouts across the database solution with associated table occurrences, visual object counts, and internal IDs.
+  - Added full CRUD management for layouts: Create New Layout, Rename Layout, Duplicate Layout, Delete Layout, and Open / Switch to Layout.
+  - Added canonical `Manage > Layouts...` menu entry in `File4BaseMenuBar`.
+- **Layout Renaming & Layout Setup Dialog**:
+  - Added layout renaming capability in `LayoutDesignerWidget` via editable layout title badge, inline rename modal, and `Layout Setup...` dialog (`_showLayoutSetupDialog`).
+  - Resolved bug where renaming a layout reset it to default due to mismatched table occurrence IDs; layouts are now referenced deterministically by `id` with table occurrence linkage.
+  - Layout renames persist immediately to `PUT /api/v1/layouts/{id}` and trigger visual updates in the designer and sidebar.
+- **Visual Layout Canvas View in Browse Mode (`DataBrowserWidget`)**:
+  - Added visual Layout Canvas view rendering (`_buildLayoutCanvasView`) in `DataBrowserWidget` based on the active layout definition (`_activeLayout`).
+  - Renders custom fields, labels, buttons, and visual objects at their exact layout coordinates.
+  - Integrated field inputs directly into record editing with debounced auto-save, primary key badges, and validation error states.
+  - Connected layout buttons to File4Base record actions (New Record, Delete Record, Perform Find, Print/Preview, Record Navigation).
+  - Added a toggle between `Form` (custom layout canvas) and `Cards` (standard grid/card view) in the records toolbar.
+
+### Changed
+- Rebuilt Flutter WebDirect client bundle (`build/web`) and updated `file4base-web` Docker container.
+- Updated version metadata to `0.4.8` across `VERSION`, `server/cmd/server/main.go`, `client/pubspec.yaml`, and `client/lib/features/about/about_dialog.dart`.
+
 ## [0.4.7] - 2026-09-24
 
 ### Added

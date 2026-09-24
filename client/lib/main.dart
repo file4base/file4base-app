@@ -15,6 +15,7 @@ import 'features/connection/server_connection_dialog.dart';
 import 'features/data_browser/data_browser_widget.dart';
 import 'features/layout_engine/layout_designer_widget.dart';
 import 'features/layout_engine/layout_preview_widget.dart';
+import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
@@ -235,7 +236,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     } catch (_) {}
   }
 
-  Future<void> _loadTables() async {
+  Future<void> _loadTables({String? targetLayoutId}) async {
     final client = ref.read(apiClientProvider);
     setState(() => _isLoadingTables = true);
     try {
@@ -245,18 +246,58 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         layouts = await client.listLayouts();
       } catch (_) {}
 
+      // Ensure every table has at least one layout on server
+      if (tables.isNotEmpty) {
+        for (final table in tables) {
+          final hasLayout = layouts.any((l) {
+            final toName = l.definition['table_occurrence']?.toString().toLowerCase();
+            return toName == table.name.toLowerCase() ||
+                toName == table.displayName.toLowerCase() ||
+                l.tableOccurrenceId == table.id ||
+                l.name.toLowerCase() == '${table.displayName} form'.toLowerCase() ||
+                l.name.toLowerCase() == table.displayName.toLowerCase();
+          });
+
+          if (!hasLayout) {
+            final defaultDef = LayoutDefinitionModel.defaultForTable(
+              table.displayName,
+              table.columns.map((c) => c.name).toList(),
+            );
+            try {
+              final created = await client.createLayout(
+                '${table.displayName} Form',
+                toId: table.id,
+                definition: defaultDef.toJson(),
+              );
+              layouts.add(created);
+            } catch (_) {}
+          }
+        }
+      }
+
       if (mounted) {
         setState(() {
           _tables = tables;
           _serverLayouts = layouts;
           _isLoadingTables = false;
-          if (tables.isNotEmpty) {
-            if (_selectedTable != null && tables.any((t) => t.id == _selectedTable!.id)) {
-              _selectedTable = tables.firstWhere((t) => t.id == _selectedTable!.id);
-            } else {
-              _selectedTable = tables.first;
+
+          if (layouts.isNotEmpty) {
+            LayoutModel? selectedLayoutModel;
+            if (targetLayoutId != null) {
+              selectedLayoutModel = layouts.where((l) => l.id == targetLayoutId).firstOrNull;
             }
-            _resolveActiveLayoutForTable(_selectedTable!);
+            selectedLayoutModel ??= (_activeLayout != null
+                ? layouts.where((l) => l.id == _activeLayout!.id).firstOrNull
+                : null);
+            selectedLayoutModel ??= layouts.first;
+
+            _applyLayout(selectedLayoutModel, tables);
+          } else if (tables.isNotEmpty) {
+            _selectedTable = tables.first;
+            _activeLayout = LayoutDefinitionModel.defaultForTable(
+              _selectedTable!.displayName,
+              _selectedTable!.columns.map((c) => c.name).toList(),
+            );
           } else {
             _selectedTable = null;
             _activeLayout = null;
@@ -270,26 +311,213 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
-  void _resolveActiveLayoutForTable(TableModel table) {
-    final match = _serverLayouts.where((l) => l.tableOccurrenceId == table.id || l.name.toLowerCase() == table.displayName.toLowerCase()).firstOrNull;
-    if (match != null && match.definition.isNotEmpty) {
-      try {
-        _activeLayout = LayoutDefinitionModel.fromJson(match.definition).copyWith(
-          id: match.id,
-          name: match.name,
-        );
-        return;
-      } catch (_) {}
+  void _applyLayout(LayoutModel layoutModel, [List<TableModel>? tablesList]) {
+    final tables = tablesList ?? _tables;
+    final toName = layoutModel.definition['table_occurrence']?.toString().toLowerCase();
+    TableModel? matchTable;
+    if (toName != null) {
+      matchTable = tables.where((t) =>
+          t.displayName.toLowerCase() == toName ||
+          t.name.toLowerCase() == toName).firstOrNull;
     }
-    _activeLayout = LayoutDefinitionModel.defaultForTable(
-      table.displayName,
-      table.columns.map((c) => c.name).toList(),
+    matchTable ??= tables.where((t) => t.id == layoutModel.tableOccurrenceId).firstOrNull;
+    matchTable ??= tables.where((t) =>
+        layoutModel.name.toLowerCase().contains(t.displayName.toLowerCase()) ||
+        layoutModel.name.toLowerCase().contains(t.name.toLowerCase())).firstOrNull;
+    matchTable ??= (_selectedTable != null && tables.any((t) => t.id == _selectedTable!.id))
+        ? _selectedTable
+        : (tables.isNotEmpty ? tables.first : null);
+
+    _selectedTable = matchTable;
+
+    try {
+      _activeLayout = LayoutDefinitionModel.fromJson(layoutModel.definition).copyWith(
+        id: layoutModel.id,
+        name: layoutModel.name,
+      );
+    } catch (_) {
+      if (matchTable != null) {
+        _activeLayout = LayoutDefinitionModel.defaultForTable(
+          matchTable.displayName,
+          matchTable.columns.map((c) => c.name).toList(),
+        ).copyWith(id: layoutModel.id, name: layoutModel.name);
+      }
+    }
+  }
+
+  void _selectLayout(LayoutModel layout) {
+    setState(() {
+      _applyLayout(layout);
+    });
+  }
+
+  Future<void> _handleManageLayouts() async {
+    final currentModel = _serverLayouts.where((l) => l.id == _activeLayout?.id).firstOrNull ??
+        (_serverLayouts.isNotEmpty ? _serverLayouts.first : null);
+
+    await ManageLayoutsDialog.show(
+      context,
+      layouts: _serverLayouts,
+      tables: _tables,
+      activeLayout: currentModel,
+      onSelectLayout: (l) => _selectLayout(l),
+      onLayoutsChanged: () => _loadTables(targetLayoutId: _activeLayout?.id),
     );
   }
 
-  List<LayoutModel> get _activeTableLayouts {
-    if (_selectedTable == null) return [];
-    return _serverLayouts.where((l) => l.tableOccurrenceId == _selectedTable!.id || l.name.toLowerCase() == _selectedTable!.displayName.toLowerCase()).toList();
+  Future<void> _handleNewLayout() async {
+    if (_tables.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please create a table first before creating a layout.')),
+      );
+      return;
+    }
+
+    final nameCtrl = TextEditingController(text: '${_selectedTable?.displayName ?? "New"} Form');
+    TableModel? selectedTable = _selectedTable ?? _tables.first;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.add_to_photos, color: Color(0xFF1E88E5)),
+              SizedBox(width: 8),
+              Text('New Layout / Presentation'),
+            ],
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Layout Name:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                ),
+                const SizedBox(height: 16),
+                const Text('Show records from table:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 6),
+                DropdownButtonFormField<String>(
+                  value: selectedTable?.id,
+                  decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                  items: _tables.map((t) => DropdownMenuItem(value: t.id, child: Text(t.displayName))).toList(),
+                  onChanged: (id) {
+                    if (id != null) {
+                      setDlgState(() => selectedTable = _tables.firstWhere((t) => t.id == id));
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Create Layout')),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed == true && selectedTable != null) {
+      final name = nameCtrl.text.trim().isEmpty ? 'Untitled Layout' : nameCtrl.text.trim();
+      final client = ref.read(apiClientProvider);
+      final def = LayoutDefinitionModel.defaultForTable(
+        selectedTable!.displayName,
+        selectedTable!.columns.map((c) => c.name).toList(),
+      ).copyWith(name: name);
+
+      try {
+        final created = await client.createLayout(
+          name,
+          toId: selectedTable!.id,
+          definition: def.toJson(),
+        );
+        await _loadTables(targetLayoutId: created.id);
+        _changeMode(OperationalMode.layout);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Created layout "$name" in Layout Mode'),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to create layout: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _handleRenameActiveLayout() async {
+    if (_activeLayout == null) return;
+    final nameCtrl = TextEditingController(text: _activeLayout!.name);
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.edit, color: Color(0xFF1E88E5)),
+            SizedBox(width: 8),
+            Text('Rename Current Layout'),
+          ],
+        ),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Enter new layout name:', style: TextStyle(fontSize: 13)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: nameCtrl,
+                autofocus: true,
+                decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(ctx).pop(nameCtrl.text.trim()), child: const Text('Rename')),
+        ],
+      ),
+    );
+
+    if (newName != null && newName.isNotEmpty && newName != _activeLayout!.name) {
+      final client = ref.read(apiClientProvider);
+      try {
+        final updatedDef = _activeLayout!.copyWith(name: newName).toJson();
+        await client.updateLayout(_activeLayout!.id, newName, updatedDef);
+        await _loadTables(targetLayoutId: _activeLayout!.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Layout renamed to "$newName"'),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to rename layout: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
   }
 
   void _changeMode(OperationalMode newMode) {
@@ -736,6 +964,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     await ManageDatabaseDialog.show(context);
                     _loadTables();
                   },
+                  onManageLayouts: _handleManageLayouts,
                   onManageSecurity: () async {
                     if (_currentUser == null) {
                       _startAuthSequence();
@@ -793,13 +1022,33 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     children: [
                       if (_isToolbarVisible)
                         File4BaseStatusSidebar(
+                          layouts: _serverLayouts,
+                          selectedLayout: _serverLayouts.where((l) => l.id == _activeLayout?.id).firstOrNull ??
+                              (_serverLayouts.isNotEmpty ? _serverLayouts.first : null),
+                          onLayoutSelected: (layout) => _selectLayout(layout),
+                          onNewLayout: _handleNewLayout,
+                          onManageLayouts: _handleManageLayouts,
+                          onRenameLayout: _handleRenameActiveLayout,
                           tables: _tables,
                           selectedTable: _selectedTable,
                           onTableSelected: (newTable) {
                             if (newTable != null) {
                               setState(() {
                                 _selectedTable = newTable;
-                                _resolveActiveLayoutForTable(newTable);
+                                final matchLayout = _serverLayouts.where((l) {
+                                  final toName = l.definition['table_occurrence']?.toString().toLowerCase();
+                                  return toName == newTable.name.toLowerCase() ||
+                                      toName == newTable.displayName.toLowerCase() ||
+                                      l.tableOccurrenceId == newTable.id;
+                                }).firstOrNull;
+                                if (matchLayout != null) {
+                                  _applyLayout(matchLayout);
+                                } else {
+                                  _activeLayout = LayoutDefinitionModel.defaultForTable(
+                                    newTable.displayName,
+                                    newTable.columns.map((c) => c.name).toList(),
+                                  );
+                                }
                               });
                             }
                           },
@@ -826,26 +1075,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           },
                           onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                           onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
-                          layoutCount: _activeTableLayouts.isEmpty ? 1 : _activeTableLayouts.length,
-                          currentLayoutIndex: () {
-                            final list = _activeTableLayouts;
-                            if (list.isEmpty || _activeLayout == null) return 0;
-                            final idx = list.indexWhere((l) => l.id == _activeLayout!.id);
-                            return idx >= 0 ? idx : 0;
-                          }(),
-                          onLayoutChanged: (idx) {
-                            final list = _activeTableLayouts;
-                            if (idx >= 0 && idx < list.length) {
-                              setState(() {
-                                try {
-                                  _activeLayout = LayoutDefinitionModel.fromJson(list[idx].definition).copyWith(
-                                    id: list[idx].id,
-                                    name: list[idx].name,
-                                  );
-                                } catch (_) {}
-                              });
-                            }
-                          },
                         ),
                       Expanded(
                         child: _buildBody(context, mode),
@@ -1108,6 +1337,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           key: _dataBrowserKey,
           table: _selectedTable!,
           apiClient: client,
+          layout: _activeLayout,
           mode: mode,
           onModeChanged: _changeMode,
           onTableModified: _loadTables,
@@ -1130,13 +1360,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 _selectedTable!.displayName,
                 _selectedTable!.columns.map((c) => c.name).toList(),
               ),
-          onSaved: _loadTables,
+          onSaved: () => _loadTables(targetLayoutId: _activeLayout?.id),
           onAutoSaveDirty: AutoSaveService.instance.markDirty,
           activeTool: _activeLayoutTool,
         );
       case OperationalMode.preview:
         return LayoutPreviewWidget(
-          key: ValueKey('preview_${_selectedTable!.id}'),
+          key: ValueKey('preview_${_selectedTable!.id}_${_activeLayout?.id}'),
           table: _selectedTable!,
           apiClient: client,
           layout: _activeLayout ??

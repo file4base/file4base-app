@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
+import '../layout_engine/models/layout_definition.dart';
 
 class DataBrowserWidget extends StatefulWidget {
   final TableModel table;
   final ApiClient apiClient;
   final OperationalMode mode;
+  final LayoutDefinitionModel? layout;
   final ValueChanged<OperationalMode>? onModeChanged;
   final void Function(int currentIndex, int totalRecords)? onRecordChanged;
   final VoidCallback? onTableModified;
@@ -16,6 +19,7 @@ class DataBrowserWidget extends StatefulWidget {
     required this.table,
     required this.apiClient,
     required this.mode,
+    this.layout,
     this.onModeChanged,
     this.onRecordChanged,
     this.onTableModified,
@@ -32,6 +36,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   int _currentIndex = 0;
   bool _isFoundSet = false;
   String? _lastFocusedFindField;
+  String _viewMode = 'form'; // 'form' (visual layout) or 'card' (standard list)
 
   int get currentIndex => _currentIndex;
   int get totalRecords => _records.length;
@@ -189,10 +194,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     super.didUpdateWidget(oldWidget);
     final columnsChanged = oldWidget.table.columns.length != widget.table.columns.length ||
         !_sameColumns(oldWidget.table.columns, widget.table.columns);
-    if (oldWidget.table.id != widget.table.id || columnsChanged) {
+    final layoutChanged = oldWidget.layout?.id != widget.layout?.id ||
+        oldWidget.layout?.objects.length != widget.layout?.objects.length;
+    if (oldWidget.table.id != widget.table.id || columnsChanged || layoutChanged) {
       _initFindControllers();
       _rebuildFieldControllers();
-      _fetchRecords();
+      if (oldWidget.table.id != widget.table.id) {
+        _fetchRecords();
+      }
     }
   }
 
@@ -527,6 +536,51 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
                 ),
               ),
             ],
+            const Spacer(),
+            if (widget.layout != null) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E88E5).withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: const Color(0xFF1E88E5).withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.view_quilt, size: 14, color: Color(0xFF1E88E5)),
+                    const SizedBox(width: 4),
+                    Text(
+                      widget.layout!.name,
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                    value: 'form',
+                    icon: Icon(Icons.dashboard_outlined, size: 14),
+                    label: Text('Form', style: TextStyle(fontSize: 11)),
+                  ),
+                  ButtonSegment(
+                    value: 'card',
+                    icon: Icon(Icons.view_agenda_outlined, size: 14),
+                    label: Text('Cards', style: TextStyle(fontSize: 11)),
+                  ),
+                ],
+                selected: {_viewMode},
+                onSelectionChanged: (val) {
+                  setState(() => _viewMode = val.first);
+                },
+                style: SegmentedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                ),
+              ),
+            ],
           ] else if (widget.mode == OperationalMode.find) ...[
             FilledButton.icon(
               icon: const Icon(Icons.search, size: 18),
@@ -624,6 +678,461 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
 
 
   Widget _buildBrowseModeContent() {
+    if (_viewMode == 'form' && widget.layout != null && widget.layout!.objects.isNotEmpty) {
+      return _buildLayoutCanvasView(widget.layout!, isFindMode: false);
+    }
+    return _buildStandardCardContent();
+  }
+
+  Widget _buildLayoutCanvasView(LayoutDefinitionModel layout, {bool isFindMode = false}) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final record = _records.isNotEmpty && !isFindMode
+        ? _records[_currentIndex]
+        : <String, dynamic>{};
+
+    // Calculate canvas dimensions
+    double maxObjY = 300.0;
+    for (final obj in layout.objects) {
+      final bottom = obj.y + obj.height;
+      if (bottom > maxObjY) maxObjY = bottom;
+    }
+    final totalPartsHeight = layout.parts.fold<double>(0.0, (acc, p) => acc + p.height);
+    final canvasHeight = math.max(math.max(totalPartsHeight, maxObjY + 60.0), 520.0);
+    final canvasWidth = math.max(layout.width, 760.0);
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      padding: const EdgeInsets.all(20),
+      child: Center(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header banner above canvas
+              Container(
+                width: canvasWidth,
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1E232B) : Colors.white,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1CFCA),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      isFindMode ? Icons.manage_search : Icons.view_quilt,
+                      size: 16,
+                      color: const Color(0xFF1E88E5),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      isFindMode
+                          ? 'Find Mode on "${layout.name}" • Enter criteria in fields and press Perform Find'
+                          : '${widget.table.displayName} • ${layout.name} • Record ${_records.isNotEmpty ? _currentIndex + 1 : 0} of ${_records.length}',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    const Spacer(),
+                    if (!isFindMode)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.green.shade600, width: 0.8),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.sync, size: 12, color: Colors.green),
+                            SizedBox(width: 4),
+                            Text('Auto-saved to DB',
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.green)),
+                          ],
+                        ),
+                      )
+                    else
+                      FilledButton.tonalIcon(
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          minimumSize: const Size(0, 28),
+                        ),
+                        icon: const Icon(Icons.search, size: 14),
+                        label: const Text('Perform Find', style: TextStyle(fontSize: 11)),
+                        onPressed: _performFind,
+                      ),
+                  ],
+                ),
+              ),
+
+              // Layout Canvas Surface
+              Container(
+                width: canvasWidth,
+                height: canvasHeight,
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF161B22) : Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1CFCA),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Subtle part boundaries
+                    ..._buildPartDividers(layout, canvasWidth, isDark),
+
+                    // Render layout objects
+                    ...layout.objects.map((obj) {
+                      return Positioned(
+                        left: obj.x,
+                        top: obj.y,
+                        width: obj.width,
+                        height: obj.height,
+                        child: _buildLayoutObject(obj, record, isDark, isFindMode),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLayoutObject(
+      LayoutObjectModel obj, Map<String, dynamic> record, bool isDark, bool isFindMode) {
+    switch (obj.type) {
+      case 'label':
+        return Container(
+          alignment: _parseAlignment(obj.style.textAlign),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Text(
+            obj.text,
+            textAlign: _parseTextAlign(obj.style.textAlign),
+            style: TextStyle(
+              fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+              fontWeight: obj.style.fontWeight == 'bold'
+                  ? FontWeight.bold
+                  : FontWeight.normal,
+              color: obj.style.textColor != null
+                  ? _parseColor(obj.style.textColor!)
+                  : (isDark ? Colors.white : Colors.black87),
+            ),
+          ),
+        );
+
+      case 'field':
+        final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
+        final col = widget.table.columns
+            .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
+            .firstOrNull;
+
+        if (col == null) {
+          return Container(
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: Colors.amber.withValues(alpha: 0.1),
+              border: Border.all(color: Colors.amber),
+              borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+            ),
+            child: Text(
+              '<$fieldName>',
+              style: const TextStyle(fontSize: 11, color: Colors.amber),
+            ),
+          );
+        }
+
+        if (isFindMode) {
+          final findCtrl = _findControllers[col.name];
+          return TextField(
+            controller: findCtrl,
+            textAlign: _parseTextAlign(obj.style.textAlign),
+            style: TextStyle(
+              fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'Search ${col.displayName}...',
+              hintStyle: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+              ),
+              suffixIcon: const Icon(Icons.search, size: 14, color: Colors.grey),
+            ),
+            onTap: () => setState(() => _lastFocusedFindField = col.name),
+            onSubmitted: (_) => _performFind(),
+          );
+        }
+
+        if (col.isPrimaryKey) {
+          final pkVal = record[col.name]?.toString() ?? '';
+          return Container(
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF272D37) : Colors.grey.shade100,
+              border: Border.all(
+                  color: isDark ? const Color(0xFF38404B) : Colors.grey.shade300),
+              borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    pkVal,
+                    style: TextStyle(
+                      fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
+                      fontFamily: 'monospace',
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const Icon(Icons.key, size: 14, color: Colors.grey),
+              ],
+            ),
+          );
+        }
+
+        final ctrl = _fieldControllers[col.name];
+        final fn = _fieldFocusNodes[col.name];
+        final saving = _fieldSaving[col.name];
+
+        return TextField(
+          controller: ctrl,
+          focusNode: fn,
+          textAlign: _parseTextAlign(obj.style.textAlign),
+          style: TextStyle(
+            fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+            fontWeight: obj.style.fontWeight == 'bold'
+                ? FontWeight.bold
+                : FontWeight.normal,
+            color: obj.style.textColor != null
+                ? _parseColor(obj.style.textColor!)
+                : null,
+          ),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            fillColor: obj.style.fillColor != null
+                ? _parseColor(obj.style.fillColor!)
+                : null,
+            filled: obj.style.fillColor != null,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+              borderSide: BorderSide(
+                color: obj.style.borderColor != null
+                    ? _parseColor(obj.style.borderColor!)
+                    : Colors.grey,
+                width: obj.style.borderWidth,
+              ),
+            ),
+            suffixIcon: saving == true
+                ? const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                  )
+                : saving == false
+                    ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
+                    : null,
+          ),
+          onChanged: (v) => _onFieldChanged(col.name, v),
+          onEditingComplete: () {
+            _fieldDebounceTimers[col.name]?.cancel();
+            _saveField(col.name, ctrl?.text ?? '');
+            fn?.nextFocus();
+          },
+        );
+
+      case 'button':
+        final btnText = obj.text.isEmpty ? 'Button' : obj.text;
+        return ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+            ),
+          ),
+          onPressed: () => _handleLayoutButtonClick(btnText),
+          child: Text(
+            btnText,
+            style: TextStyle(
+              fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
+              fontWeight: obj.style.fontWeight == 'bold'
+                  ? FontWeight.bold
+                  : FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+
+      case 'portal':
+        return Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF272D37) : Colors.grey.shade50,
+            border: Border.all(
+                color: isDark ? const Color(0xFF38404B) : Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+          ),
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.table_rows, size: 14, color: Color(0xFF1E88E5)),
+                  const SizedBox(width: 4),
+                  Text(
+                    obj.text.isEmpty ? 'Portal / Related Records' : obj.text,
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              const Divider(height: 12),
+              const Expanded(
+                child: Center(
+                  child: Text('No related records',
+                      style: TextStyle(fontSize: 10, color: Colors.grey)),
+                ),
+              ),
+            ],
+          ),
+        );
+
+      default:
+        return Container(
+          decoration: BoxDecoration(
+            color: obj.style.fillColor != null
+                ? _parseColor(obj.style.fillColor!)
+                : Colors.transparent,
+            border: Border.all(
+              color: obj.style.borderColor != null
+                  ? _parseColor(obj.style.borderColor!)
+                  : Colors.grey.shade400,
+              width: obj.style.borderWidth,
+            ),
+            borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+          ),
+        );
+    }
+  }
+
+  void _handleLayoutButtonClick(String label) {
+    final lower = label.toLowerCase();
+    if (lower.contains('new') || lower.contains('nuevo')) {
+      createNewRecord();
+    } else if (lower.contains('delete') ||
+        lower.contains('borrar') ||
+        lower.contains('eliminar')) {
+      deleteCurrentRecord();
+    } else if (lower.contains('first') || lower.contains('primero')) {
+      goToRecord(0);
+    } else if (lower.contains('last') ||
+        lower.contains('ultimo') ||
+        lower.contains('último')) {
+      goToRecord(_records.length - 1);
+    } else if (lower.contains('next') || lower.contains('siguiente')) {
+      nextRecord();
+    } else if (lower.contains('prev') || lower.contains('anterior')) {
+      previousRecord();
+    } else if (lower.contains('find') || lower.contains('buscar')) {
+      widget.onModeChanged?.call(OperationalMode.find);
+    } else if (lower.contains('print') ||
+        lower.contains('imprimir') ||
+        lower.contains('preview')) {
+      widget.onModeChanged?.call(OperationalMode.preview);
+    } else if (lower.contains('save') || lower.contains('guardar')) {
+      _saveCurrentRecord();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Button clicked: "$label"'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
+  TextAlign _parseTextAlign(String align) {
+    switch (align) {
+      case 'center':
+        return TextAlign.center;
+      case 'right':
+        return TextAlign.right;
+      default:
+        return TextAlign.left;
+    }
+  }
+
+  Alignment _parseAlignment(String align) {
+    switch (align) {
+      case 'center':
+        return Alignment.center;
+      case 'right':
+        return Alignment.centerRight;
+      default:
+        return Alignment.centerLeft;
+    }
+  }
+
+  Color _parseColor(String colorStr, [Color fallback = Colors.black87]) {
+    try {
+      if (colorStr.startsWith('#')) {
+        final hex = colorStr.substring(1);
+        if (hex.length == 6) return Color(int.parse('0xFF$hex'));
+        if (hex.length == 8) return Color(int.parse('0x$hex'));
+      }
+    } catch (_) {}
+    return fallback;
+  }
+
+  List<Widget> _buildPartDividers(
+      LayoutDefinitionModel layout, double width, bool isDark) {
+    final widgets = <Widget>[];
+    double currentY = 0;
+    for (final part in layout.parts) {
+      currentY += part.height;
+      widgets.add(
+        Positioned(
+          top: currentY,
+          left: 0,
+          right: 0,
+          child: Container(
+            height: 1,
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.06),
+          ),
+        ),
+      );
+    }
+    return widgets;
+  }
+
+  Widget _buildStandardCardContent() {
     final record = _records[_currentIndex];
 
     return Padding(
@@ -770,6 +1279,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   }
 
   Widget _buildFindModeForm() {
+    if (_viewMode == 'form' && widget.layout != null && widget.layout!.objects.isNotEmpty) {
+      return _buildLayoutCanvasView(widget.layout!, isFindMode: true);
+    }
+    return _buildStandardFindModeForm();
+  }
+
+  Widget _buildStandardFindModeForm() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return SingleChildScrollView(

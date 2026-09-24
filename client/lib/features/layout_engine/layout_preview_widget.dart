@@ -28,6 +28,14 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     _fetchRecords();
   }
 
+  @override
+  void didUpdateWidget(covariant LayoutPreviewWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.table.id != widget.table.id) {
+      _fetchRecords();
+    }
+  }
+
   Future<void> _fetchRecords() async {
     try {
       final rows = await widget.apiClient.listRows(widget.table.name);

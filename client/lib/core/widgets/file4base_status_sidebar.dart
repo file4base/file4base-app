@@ -22,6 +22,12 @@ enum LayoutTool {
 // ─── Main Sidebar Widget (StatefulWidget for tool selection) ──────────────────
 
 class File4BaseStatusSidebar extends StatefulWidget {
+  final List<LayoutModel> layouts;
+  final LayoutModel? selectedLayout;
+  final ValueChanged<LayoutModel> onLayoutSelected;
+  final VoidCallback? onNewLayout;
+  final VoidCallback? onManageLayouts;
+  final VoidCallback? onRenameLayout;
   final List<TableModel> tables;
   final TableModel? selectedTable;
   final ValueChanged<TableModel?> onTableSelected;
@@ -45,6 +51,12 @@ class File4BaseStatusSidebar extends StatefulWidget {
 
   const File4BaseStatusSidebar({
     super.key,
+    this.layouts = const [],
+    this.selectedLayout,
+    required this.onLayoutSelected,
+    this.onNewLayout,
+    this.onManageLayouts,
+    this.onRenameLayout,
     required this.tables,
     required this.selectedTable,
     required this.onTableSelected,
@@ -91,7 +103,7 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildTableSelector(context, isDark, borderColor),
+          _buildLayoutSelector(context, isDark, borderColor),
           const SizedBox(height: 8),
           if (widget.mode == OperationalMode.browse)
             _buildBrowseNavigator(context, isDark)
@@ -108,16 +120,16 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
     );
   }
 
-  // ─── Table Selector ─────────────────────────────────────────────────────────
+  // ─── Top Layout Selector ───────────────────────────────────────────────────
 
-  Widget _buildTableSelector(
+  Widget _buildLayoutSelector(
       BuildContext context, bool isDark, Color borderColor) {
     return Container(
       margin: const EdgeInsets.fromLTRB(6, 6, 6, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF272D37) : Colors.white,
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: borderColor),
         boxShadow: [
           BoxShadow(
@@ -127,31 +139,135 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
           ),
         ],
       ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: widget.selectedTable?.id,
-          isDense: true,
-          isExpanded: true,
-          icon: const Icon(Icons.arrow_drop_down, size: 16),
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: isDark ? Colors.white : Colors.black87,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.view_quilt,
+                size: 13,
+                color: isDark ? const Color(0xFF90CAF9) : const Color(0xFF1E88E5),
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  'LAYOUT',
+                  style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                    color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+                  ),
+                ),
+              ),
+            ],
           ),
-          items: widget.tables.map((t) {
-            return DropdownMenuItem<String>(
-              value: t.id,
-              child: Text(t.displayName,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-            );
-          }).toList(),
-          onChanged: (newId) {
-            if (newId != null) {
-              final match = widget.tables.firstWhere((t) => t.id == newId);
-              widget.onTableSelected(match);
-            }
-          },
-        ),
+          const SizedBox(height: 2),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: widget.selectedLayout != null &&
+                      widget.layouts.any((l) => l.id == widget.selectedLayout!.id)
+                  ? widget.selectedLayout!.id
+                  : (widget.layouts.isNotEmpty ? widget.layouts.first.id : null),
+              isDense: true,
+              isExpanded: true,
+              icon: const Icon(Icons.arrow_drop_down, size: 16),
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white : Colors.black87,
+              ),
+              selectedItemBuilder: (context) {
+                final allItems = [
+                  ...widget.layouts.map((l) => Text(
+                        l.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white : Colors.black87,
+                        ),
+                      )),
+                  const SizedBox.shrink(),
+                  const SizedBox.shrink(),
+                ];
+                return allItems;
+              },
+              items: [
+                ...widget.layouts.map((l) {
+                  return DropdownMenuItem<String>(
+                    value: l.id,
+                    child: Text(
+                      l.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }),
+                DropdownMenuItem<String>(
+                  value: '__manage__',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.settings, size: 12, color: Color(0xFF1E88E5)),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'Manage Layouts...',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: const Color(0xFF1E88E5),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                DropdownMenuItem<String>(
+                  value: '__new__',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.add, size: 12, color: Colors.green),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'New Layout...',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.green,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              onChanged: (newId) {
+                if (newId == '__manage__') {
+                  widget.onManageLayouts?.call();
+                } else if (newId == '__new__') {
+                  widget.onNewLayout?.call();
+                } else if (newId != null) {
+                  final match =
+                      widget.layouts.where((l) => l.id == newId).firstOrNull;
+                  if (match != null) {
+                    widget.onLayoutSelected(match);
+                  }
+                }
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -361,26 +477,27 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Layout selector
-        _buildLayoutSelector(context, isDark, borderColor),
         const SizedBox(height: 4),
         // Thumbnail
         _buildLayoutThumbnail(isDark),
         const SizedBox(height: 4),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Text('Layouts:',
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: isDark ? Colors.white70 : Colors.black87)),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Layouts:',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white70 : Colors.black87)),
+              Text('${widget.layouts.length}',
+                  style: const TextStyle(
+                      fontSize: 11, fontWeight: FontWeight.w600)),
+            ],
+          ),
         ),
-        Padding(
-          padding: const EdgeInsets.only(left: 8, bottom: 6),
-          child: Text('${widget.layoutCount}',
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w600)),
-        ),
+        const SizedBox(height: 4),
         Divider(height: 1, color: borderColor),
         const SizedBox(height: 4),
         // ── Drawing tools (2-column grid) ─────────────────────────────────
@@ -467,50 +584,6 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
         const SizedBox(height: 6),
         _buildStrokeControl(isDark),
       ],
-    );
-  }
-
-  Widget _buildLayoutSelector(
-      BuildContext context, bool isDark, Color borderColor) {
-    final layoutNames =
-        List.generate(widget.layoutCount, (i) => 'Layout #${i + 1}');
-    final currentName = widget.layoutCount > 0
-        ? 'Layout #${widget.currentLayoutIndex + 1}'
-        : 'No Layout';
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(6, 4, 6, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF272D37) : Colors.white,
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: borderColor),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(
-          value: currentName,
-          isDense: true,
-          isExpanded: true,
-          icon: const Icon(Icons.arrow_drop_down, size: 16),
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: isDark ? Colors.white : Colors.black87,
-          ),
-          items: layoutNames.map((name) {
-            return DropdownMenuItem<String>(
-              value: name,
-              child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            );
-          }).toList(),
-          onChanged: (val) {
-            if (val != null) {
-              final idx = layoutNames.indexOf(val);
-              widget.onLayoutChanged?.call(idx);
-            }
-          },
-        ),
-      ),
     );
   }
 

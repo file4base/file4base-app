@@ -103,7 +103,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   @override
   void didUpdateWidget(covariant LayoutDesignerWidget old) {
     super.didUpdateWidget(old);
-    if (old.initialLayout.id != widget.initialLayout.id) {
+    if (old.initialLayout.id != widget.initialLayout.id ||
+        old.initialLayout.name != widget.initialLayout.name) {
       _layout = widget.initialLayout;
       _nameCtrl.text = _layout.name;
       _selectedObjectId = null;
@@ -330,6 +331,229 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     );
   }
 
+  Future<void> _commitLayoutRename(String newName) async {
+    final trimmed = newName.trim();
+    if (trimmed.isEmpty || trimmed == _layout.name) {
+      setState(() {
+        _nameCtrl.text = _layout.name;
+        _isEditingName = false;
+      });
+      return;
+    }
+    setState(() {
+      _layout = _layout.copyWith(name: trimmed);
+      _nameCtrl.text = trimmed;
+      _isEditingName = false;
+      _isSaving = true;
+    });
+
+    try {
+      if (_isPersisted) {
+        await widget.apiClient.updateLayout(
+          _layout.id,
+          trimmed,
+          _layout.toJson(),
+        );
+      } else {
+        final created = await widget.apiClient.createLayout(
+          trimmed,
+          toId: widget.table.id,
+          definition: _layout.toJson(),
+        );
+        _layout = _layout.copyWith(id: created.id);
+        _isPersisted = true;
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Layout renamed to "$trimmed" successfully!'),
+            backgroundColor: Colors.green.shade700,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        widget.onSaved();
+        widget.onAutoSaveDirty?.call();
+        setState(() => _autoSaveStatus = _LayoutSaveStatus.saved);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to rename layout: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _showRenameDialog(BuildContext context) async {
+    final ctrl = TextEditingController(text: _layout.name);
+    final confirmed = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.edit, color: Color(0xFF1E88E5)),
+            SizedBox(width: 8),
+            Text('Rename Layout'),
+          ],
+        ),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Enter new layout name:', style: TextStyle(fontSize: 13)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onSubmitted: (v) => Navigator.of(ctx).pop(v),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text),
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != null) {
+      await _commitLayoutRename(confirmed);
+    }
+  }
+
+  Future<void> _showLayoutSetupDialog(BuildContext context) async {
+    final nameCtrl = TextEditingController(text: _layout.name);
+    final widthCtrl = TextEditingController(text: _layout.width.toInt().toString());
+    String defaultView = _layout.defaultView;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlgState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.tune, color: Color(0xFF1E88E5)),
+              SizedBox(width: 8),
+              Text('Layout Setup'),
+            ],
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Layout Name:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                ),
+                const SizedBox(height: 16),
+                const Text('Table Occurrence:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.table_chart_outlined, size: 16, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Text('${widget.table.displayName} (${widget.table.name})', style: const TextStyle(fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Layout Width (px):', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          const SizedBox(height: 6),
+                          TextField(
+                            controller: widthCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Default View:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          const SizedBox(height: 6),
+                          DropdownButtonFormField<String>(
+                            value: defaultView,
+                            decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                            items: const [
+                              DropdownMenuItem(value: 'form', child: Text('Form View')),
+                              DropdownMenuItem(value: 'list', child: Text('List View')),
+                            ],
+                            onChanged: (v) {
+                              if (v != null) setDlgState(() => defaultView = v);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Save Setup'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed == true) {
+      final newWidth = double.tryParse(widthCtrl.text) ?? _layout.width;
+      setState(() {
+        _layout = _layout.copyWith(
+          width: newWidth,
+          defaultView: defaultView,
+        );
+      });
+      await _commitLayoutRename(nameCtrl.text);
+    }
+  }
+
   // ─── Toolbar ────────────────────────────────────────────────────────────────
 
   Widget _buildToolbar(BuildContext context) {
@@ -344,45 +568,77 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           const SizedBox(width: 8),
           // Editable layout name
           _isEditingName
-              ? SizedBox(
-                  width: 180,
-                  child: TextField(
-                    controller: _nameCtrl,
-                    autofocus: true,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                      border: OutlineInputBorder(),
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 180,
+                      child: TextField(
+                        controller: _nameCtrl,
+                        autofocus: true,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                          border: OutlineInputBorder(),
+                        ),
+                        onSubmitted: (v) => _commitLayoutRename(v),
+                      ),
                     ),
-                    onSubmitted: (_) => setState(() => _isEditingName = false),
-                    onEditingComplete: () =>
-                        setState(() => _isEditingName = false),
-                  ),
+                    IconButton(
+                      icon: const Icon(Icons.check, size: 16, color: Colors.green),
+                      tooltip: 'Save Name',
+                      onPressed: () => _commitLayoutRename(_nameCtrl.text),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 16, color: Colors.grey),
+                      tooltip: 'Cancel',
+                      onPressed: () => setState(() {
+                        _nameCtrl.text = _layout.name;
+                        _isEditingName = false;
+                      }),
+                    ),
+                  ],
                 )
-              : GestureDetector(
-                  onDoubleTap: () => setState(() => _isEditingName = true),
-                  child: Tooltip(
-                    message: 'Double-click to rename',
+              : InkWell(
+                  onTap: () => _showRenameDialog(context),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF272D37) : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: isDark ? const Color(0xFF38404B) : Colors.grey.shade300),
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          _nameCtrl.text,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 13),
+                          _layout.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                         ),
-                        const SizedBox(width: 4),
-                        Icon(Icons.edit,
-                            size: 12,
-                            color: isDark
-                                ? Colors.white38
-                                : Colors.black38),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.edit_outlined, size: 13, color: Color(0xFF1E88E5)),
                       ],
                     ),
                   ),
                 ),
+
+          const SizedBox(width: 6),
+          // Layout Setup Button
+          Tooltip(
+            message: 'Layout Setup (Name, Table Occurrence, Margins)',
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: const Size(0, 28),
+                textStyle: const TextStyle(fontSize: 11),
+              ),
+              icon: const Icon(Icons.tune, size: 13),
+              label: const Text('Layout Setup...'),
+              onPressed: () => _showLayoutSetupDialog(context),
+            ),
+          ),
 
           const SizedBox(width: 12),
           const VerticalDivider(width: 1, indent: 8, endIndent: 8),
