@@ -15,6 +15,7 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onSave;
   final VoidCallback? onSaveAs;
   final VoidCallback? onSaveCopyAs;
+  final VoidCallback? onExportData;
   final VoidCallback? onNewRecord;
   final VoidCallback? onDuplicateRecord;
   final VoidCallback? onDeleteRecord;
@@ -38,6 +39,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onSave,
     this.onSaveAs,
     this.onSaveCopyAs,
+    this.onExportData,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -172,7 +174,7 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('New Database...'),
         ),
         MenuItemButton(
-          onPressed: onOpenSolution ?? () => _showNotice(context, 'Open', 'Select a local File4Base solution (.f4b).'),
+          onPressed: onOpenSolution ?? () => _showNotice(context, 'Open', 'Select a local File4Base solution (.f4p).'),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true),
           child: const Text('Open...'),
         ),
@@ -200,6 +202,10 @@ class File4BaseMenuBar extends StatelessWidget {
         MenuItemButton(
           onPressed: onSaveCopyAs ?? () => _showNotice(context, 'Save a Copy As', 'Full copy or database data file.'),
           child: const Text('Save a Copy As...'),
+        ),
+        MenuItemButton(
+          onPressed: onExportData ?? () => _showNotice(context, 'Export Data', 'Saves a .f4data snapshot of all database rows. Structure is auto-saved separately.'),
+          child: const Text('Export Data...'),
         ),
         const Divider(height: 1),
         SubmenuButton(

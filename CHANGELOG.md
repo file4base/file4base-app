@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-24
+
+### Added
+- **Auto-Save Service (`AutoSaveService`)**:
+  - New `client/lib/core/services/auto_save_service.dart` singleton that debounces structural
+    solution saves every 3 seconds using a background timer.
+  - Saves only layout structure, schemas, tables, and workspace config — **never** row data.
+  - Exposes a `Stream<AutoSaveStatus>` (`idle`, `dirty`, `saving`, `saved`, `error`) consumed
+    by a live indicator in the bottom status bar.
+- **File Extension Migration `.f4b` → `.f4p`**:
+  - New solutions default to the `.f4p` extension (File4Base Project).
+  - All file pickers now accept both `.f4p` (new) and `.f4b` (legacy) for backward compatibility.
+  - `SolutionStorageService` gains a new `saveSolutionFile()` method for single-file structure
+    writes, separate from the dual-file export path.
+- **Export Data Command (`File → Export Data...`)**:
+  - New menu item that explicitly exports PostgreSQL row data to `.f4data` (MessagePack).
+  - Row data is **never** part of auto-save; this is the only path to persist database rows locally.
+- **Explicit Save Warning Dialog**:
+  - Pressing `Cmd+S` now flushes the auto-save immediately and shows a two-panel dialog:
+    - Green panel: confirms the `.f4p` file was written (layouts/schemas/config).
+    - Amber panel: warns that database row data was **not** saved and offers a shortcut to
+      `Export Data Now`.
+- **Auto-Save Status Indicator in Bottom Status Bar**:
+  - Real-time chip showing `Auto-save`, `Unsaved`, `Saving...`, `Saved`, or `Save Error`
+    with colour-coded icon and a tooltip showing the last save timestamp.
+- **`onAutoSaveDirty` callback in `LayoutDesignerWidget`**:
+  - Fires after each successful layout server-save, notifying `AutoSaveService` to mark the
+    solution dirty and schedule a debounced file write.
+
+### Changed
+- `NewDatabaseDialog` no longer auto-exports an empty `.f4data` on creation; only the `.f4p`
+  structural file is written. Users must use `File → Export Data...` to capture row data.
+- `_handleSaveAs()` in `main.dart` updated to produce `.f4p` files, update `AutoSaveService`
+  directory/base-name, and display the improved save dialog.
+- `SaveCopyDialog` labels updated from `.f4b` → `.f4p`.
+
 ## [0.4.2] - 2026-09-23
 
 ### Fixed

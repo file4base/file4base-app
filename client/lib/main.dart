@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
 import 'core/models/solution_models.dart';
+import 'core/services/auto_save_service.dart';
 import 'core/services/solution_storage.dart';
 import 'core/system/environment_checker.dart';
 import 'core/widgets/file4base_menu_bar.dart';
@@ -107,7 +108,7 @@ class WorkspaceShell extends ConsumerStatefulWidget {
 
 class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   String _serverStatus = 'Checking...';
-  String _activeSolutionFileName = 'Untitled.f4b';
+  String _activeSolutionFileName = 'Untitled.f4p';
   String _activeSolutionName = 'Untitled Solution';
   String _activeDatabaseName = 'file4base_dev';
   StorageDirectoryRef? _activeSolutionDirectory;
@@ -129,11 +130,23 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   @override
   void initState() {
     super.initState();
+    // Configure auto-save service with the solution bytes builder
+    AutoSaveService.instance.configure(
+      buildSolutionBytes: _exportCurrentSolutionBytes,
+      directory: null, // will be set when user picks a directory
+      baseName: 'Untitled',
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       PreflightDialog.showIfNeeded(context, onProceed: () {
         _startAuthSequence();
       });
     });
+  }
+
+  @override
+  void dispose() {
+    AutoSaveService.instance.dispose();
+    super.dispose();
   }
 
   Future<void> _startAuthSequence() async {
@@ -247,6 +260,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             _activeLayout = null;
           }
         });
+        // Structural state updated from server — mark dirty for auto-save
+        AutoSaveService.instance.markDirty();
       }
     } catch (_) {
       if (mounted) setState(() => _isLoadingTables = false);
@@ -325,6 +340,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         }
       }
       await _loadTables();
+      AutoSaveService.instance.configure(
+        buildSolutionBytes: _exportCurrentSolutionBytes,
+        directory: result.directoryRef,
+        baseName: result.fileName,
+      );
+      AutoSaveService.instance.markDirty();
       if (mounted) {
         final locText = result.directoryRef != null ? ' to "${result.directoryRef!.displayName}"' : '';
         ScaffoldMessenger.of(context).showSnackBar(
@@ -356,6 +377,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
     await _loadUserPermissions();
     await _loadTables();
+    AutoSaveService.instance.markDirty();
 
     if (mounted) {
       final originDesc = result.type == OpenSolutionType.serverDatabase ? 'server database' : 'local file "${result.fileName}"';
@@ -399,58 +421,136 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     return pkg.toMsgPack();
   }
 
+  /// Explicit Save (Cmd+S): flushes auto-save immediately and shows a
+  /// warning dialog explaining that database row data is NOT included.
   Future<void> _handleSave() async {
     final mode = ref.read(operationalModeProvider);
     if (mode == OperationalMode.layout) {
       await _layoutDesignerKey.currentState?.saveLayout();
     }
 
-    if (_activeSolutionFileName == 'Untitled.f4b') {
+    if (_activeSolutionFileName == 'Untitled.f4p') {
       await _handleSaveAs();
       return;
     }
 
-    final client = ref.read(apiClientProvider);
-    try {
-      final f4bBytes = await _exportCurrentSolutionBytes();
-      Uint8List f4dataBytes;
-      try {
-        f4dataBytes = await client.exportDatabaseData();
-      } catch (_) {
-        f4dataBytes = Uint8List(0);
-      }
+    // Flush the debounce timer — write to disk right now
+    final flushed = await AutoSaveService.instance.flushNow();
 
-      final baseName = _activeSolutionFileName.replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
-      await SolutionStorageService.saveDualSolutionFiles(
-        baseName: baseName,
-        f4bBytes: f4bBytes,
-        f4dataBytes: f4dataBytes,
-        directoryRef: _activeSolutionDirectory,
-      );
+    if (!mounted) return;
 
-      if (mounted) {
-        final locText = _activeSolutionDirectory != null ? ' in "${_activeSolutionDirectory!.displayName}"' : '';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Saved both "$baseName.f4b" and "$baseName.f4data"$locText in MessagePack format.'),
-            backgroundColor: Colors.green.shade700,
+    // Show informational dialog about what is/isn't saved
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.save_outlined, color: Color(0xFF1E88E5)),
+            SizedBox(width: 10),
+            Text('Solution Saved'),
+          ],
+        ),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Success row
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: flushed ? Colors.green.shade900.withValues(alpha: 0.25) : Colors.orange.shade900.withValues(alpha: 0.25),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: flushed ? Colors.green.shade600 : Colors.orange.shade600, width: 0.8),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(flushed ? Icons.check_circle_outline : Icons.warning_amber_outlined,
+                        color: flushed ? Colors.green : Colors.orange, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            flushed ? '"$_activeSolutionFileName" saved' : 'Could not write to disk',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            flushed
+                                ? 'Layouts, schemas, tables, and occurrences are saved.'
+                                : 'Check that the save folder is still accessible.',
+                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Warning row
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade900.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.amber.shade600, width: 0.8),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.table_rows_outlined, color: Colors.amber, size: 20),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Database rows NOT included',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.amber),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Record data (rows) is never auto-saved. To save a data snapshot, use File → Export Data...',
+                            style: TextStyle(fontSize: 12, color: Colors.grey),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save solution: $e'),
-            backgroundColor: Colors.red,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
           ),
-        );
-      }
-    }
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _handleExportData();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E88E5),
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.file_download_outlined, size: 16),
+            label: const Text('Export Data Now'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _handleSaveAs() async {
-    final initialName = _activeSolutionFileName.replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
+    final initialName = _activeSolutionFileName.replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
     final ctrl = TextEditingController(text: initialName == 'Untitled' ? 'MySolution' : initialName);
     StorageDirectoryRef? pickedDir = _activeSolutionDirectory;
 
@@ -516,7 +616,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     autofocus: true,
                     decoration: const InputDecoration(
                       labelText: 'Base File Name',
-                      helperText: 'Saves both <name>.f4b (layouts/config) and <name>.f4data (database rows)',
+                      helperText: 'Saves <name>.f4p (layouts/config). Use File → Export Data... to save database rows.',
                       border: OutlineInputBorder(),
                       isDense: true,
                       prefixIcon: Icon(Icons.file_present_outlined, size: 20),
@@ -533,7 +633,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     Navigator.of(ctx).pop(true);
                   }
                 },
-                child: const Text('Save Both Files'),
+                child: const Text('Save Solution File'),
               ),
             ],
           );
@@ -542,12 +642,18 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
 
     if (confirmed == true && ctrl.text.trim().isNotEmpty) {
-      final baseName = ctrl.text.trim().replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
+      final baseName = ctrl.text.trim().replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
       setState(() {
-        _activeSolutionFileName = '$baseName.f4b';
+        _activeSolutionFileName = '$baseName.f4p';
         _activeSolutionName = baseName;
         _activeSolutionDirectory = pickedDir;
       });
+      if (pickedDir != null) {
+        AutoSaveService.instance.updateLocation(
+          directory: pickedDir!,
+          baseName: baseName,
+        );
+      }
       await _handleSave();
     }
   }
@@ -561,6 +667,42 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       activeDatabaseName: _activeDatabaseName,
       onExportSolution: _exportCurrentSolutionBytes,
     );
+  }
+
+  /// Export database row data (.f4data) explicitly — never auto-saved.
+  Future<void> _handleExportData() async {
+    final client = ref.read(apiClientProvider);
+    try {
+      final bytes = await client.exportDatabaseData();
+      final baseName = _activeSolutionName.replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
+      final filename = '${baseName}_data.f4data';
+
+      // Try to save to the existing solution directory, or let user pick
+      if (_activeSolutionDirectory != null) {
+        await SolutionStorageService.saveFile(filename: filename, bytes: bytes);
+      } else {
+        await SolutionStorageService.saveFile(filename: filename, bytes: bytes);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Database data exported as "$filename" in MessagePack format.'),
+            backgroundColor: Colors.green.shade700,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Export failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
@@ -629,6 +771,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onSave: _handleSave,
                   onSaveAs: _handleSaveAs,
                   onSaveCopyAs: _handleSaveCopyAs,
+                  onExportData: _handleExportData,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDuplicateRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
@@ -768,7 +911,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
           // Active MessagePack File & PostgreSQL Database info
           Tooltip(
-            message: 'Active Solution (.f4b MessagePack) & PostgreSQL Database',
+            message: 'Active Solution (.f4p MessagePack) & PostgreSQL Database',
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -799,6 +942,47 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 ),
               ],
             ),
+          ),
+
+          const SizedBox(width: 8),
+          const VerticalDivider(width: 1, indent: 4, endIndent: 4),
+          const SizedBox(width: 8),
+
+          // Auto-save status indicator
+          StreamBuilder<AutoSaveStatus>(
+            stream: AutoSaveService.instance.statusStream,
+            initialData: AutoSaveService.instance.currentStatus,
+            builder: (context, snapshot) {
+              final status = snapshot.data ?? AutoSaveStatus.idle;
+              final (icon, label, color) = switch (status) {
+                AutoSaveStatus.saving => (Icons.sync, 'Saving...', Colors.blue),
+                AutoSaveStatus.saved  => (Icons.cloud_done_outlined, 'Saved', Colors.green),
+                AutoSaveStatus.dirty  => (Icons.edit_note_outlined, 'Unsaved', Colors.orange),
+                AutoSaveStatus.error  => (Icons.cloud_off_outlined, 'Save Error', Colors.red),
+                AutoSaveStatus.idle   => (Icons.cloud_done_outlined, 'Auto-save', Colors.grey),
+              };
+              return Tooltip(
+                message: status == AutoSaveStatus.error
+                    ? 'Auto-save error: ${AutoSaveService.instance.lastError ?? "unknown"}'
+                    : status == AutoSaveStatus.saved
+                        ? 'Last saved: ${AutoSaveService.instance.lastSavedAt?.toLocal().toString().substring(11, 19) ?? ""}'
+                        : 'Structure auto-saves every 3 seconds. Use File → Export Data... for row data.',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (status == AutoSaveStatus.saving)
+                      const SizedBox(
+                        width: 10, height: 10,
+                        child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.blue),
+                      )
+                    else
+                      Icon(icon, size: 11, color: color),
+                    const SizedBox(width: 3),
+                    Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color)),
+                  ],
+                ),
+              );
+            },
           ),
 
           const SizedBox(width: 8),
@@ -937,6 +1121,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 _selectedTable!.columns.map((c) => c.name).toList(),
               ),
           onSaved: _loadTables,
+          onAutoSaveDirty: AutoSaveService.instance.markDirty,
           activeTool: _activeLayoutTool,
         );
       case OperationalMode.preview:

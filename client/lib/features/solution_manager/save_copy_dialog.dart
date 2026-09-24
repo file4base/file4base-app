@@ -4,9 +4,9 @@ import '../../core/api/api_client.dart';
 import '../../core/services/solution_storage.dart';
 
 enum SaveCopyType {
-  bothFiles, // .f4b + .f4data (Recommended)
-  solutionOnly, // .f4b
-  databaseData, // .f4data
+  bothFiles,    // .f4p + .f4data (Recommended)
+  solutionOnly, // .f4p (structure/layout snapshot)
+  databaseData, // .f4data (rows only)
 }
 
 class SaveCopyDialog extends StatefulWidget {
@@ -74,7 +74,7 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
       if (type == SaveCopyType.bothFiles) {
         _fileNameController.text = '${base}_copy';
       } else if (type == SaveCopyType.solutionOnly) {
-        _fileNameController.text = '${base}_copy.f4b';
+        _fileNameController.text = '${base}_copy.f4p';
       } else {
         _fileNameController.text = '${widget.activeDatabaseName}_data.f4data';
       }
@@ -100,18 +100,18 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
       final name = _fileNameController.text.trim();
 
       if (_selectedType == SaveCopyType.bothFiles) {
-        final f4bBytes = await widget.onExportSolution();
+        final f4pBytes = await widget.onExportSolution();
         final f4dataBytes = await widget.apiClient.exportDatabaseData();
 
         await SolutionStorageService.saveDualSolutionFiles(
           baseName: name,
-          f4bBytes: f4bBytes,
+          f4bBytes: f4pBytes,
           f4dataBytes: f4dataBytes,
           directoryRef: _selectedDirectory,
         );
       } else if (_selectedType == SaveCopyType.solutionOnly) {
         final bytes = await widget.onExportSolution();
-        final filename = name.endsWith('.f4b') ? name : '$name.f4b';
+        final filename = name.endsWith('.f4p') ? name : '$name.f4p';
         await SolutionStorageService.saveFile(
           filename: filename,
           bytes: bytes,
@@ -261,8 +261,8 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('Both Files (.f4b + .f4data) - Recommended', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            Text('Exports both solution config (layouts, schemas, encoded credentials) and PostgreSQL database records.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                            Text('Both Files (.f4p + .f4data) - Recommended', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            Text('Exports both solution structure (layouts, schemas, encoded credentials) and PostgreSQL database records.', style: TextStyle(fontSize: 11, color: Colors.grey)),
                           ],
                         ),
                       ),
@@ -293,8 +293,8 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('File4Base Solution (.f4b) Only', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            Text('Layouts, schemas, occurrences, and encoded DB connection parameters.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                            Text('File4Base Solution (.f4p) Only', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            Text('Layouts, schemas, occurrences, and encoded DB connection parameters — NO row data.', style: TextStyle(fontSize: 11, color: Colors.grey)),
                           ],
                         ),
                       ),

@@ -11,6 +11,7 @@ class LayoutDesignerWidget extends StatefulWidget {
   final ApiClient apiClient;
   final LayoutDefinitionModel initialLayout;
   final VoidCallback onSaved;
+  final VoidCallback? onAutoSaveDirty;
   final LayoutTool activeTool;
 
   const LayoutDesignerWidget({
@@ -19,6 +20,7 @@ class LayoutDesignerWidget extends StatefulWidget {
     required this.apiClient,
     required this.initialLayout,
     required this.onSaved,
+    this.onAutoSaveDirty,
     this.activeTool = LayoutTool.pointer,
   });
 
@@ -226,6 +228,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ),
         );
         widget.onSaved();
+        // Notify parent to trigger auto-save of the .f4p solution file
+        widget.onAutoSaveDirty?.call();
       }
     } catch (e) {
       if (mounted) {

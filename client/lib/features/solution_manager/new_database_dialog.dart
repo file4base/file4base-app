@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/solution_models.dart';
@@ -39,7 +38,7 @@ class NewDatabaseDialog extends StatefulWidget {
 
 class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _fileNameController = TextEditingController(text: 'my_solution.f4b');
+  final _fileNameController = TextEditingController(text: 'my_solution.f4p');
   final _solutionNameController = TextEditingController(text: 'My Solution');
   final _dbNameController = TextEditingController(text: 'my_solution_db');
   final _hostController = TextEditingController(text: 'localhost');
@@ -66,7 +65,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   void _onSolutionNameChanged(String val) {
     final sanitized = val.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9_]'), '_');
     if (sanitized.isNotEmpty) {
-      _fileNameController.text = '$sanitized.f4b';
+      _fileNameController.text = '$sanitized.f4p';
       _dbNameController.text = '${sanitized}_db';
     }
   }
@@ -123,29 +122,28 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
         layouts: const [],
       );
 
-      final f4bBytes = pkg.toMsgPack();
+      final f4pBytes = pkg.toMsgPack();
 
-      // 4. Export initial active database data (.f4data)
-      Uint8List f4dataBytes;
-      try {
-        f4dataBytes = await widget.apiClient.exportDatabaseData();
-      } catch (_) {
-        f4dataBytes = Uint8List(0);
+      final baseName = fileName.replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
+
+      // 4. Save .f4p solution file to user's selected hard drive folder
+      //    NOTE: Database data (.f4data) is NOT saved here — use File > Export Data...
+      if (_selectedDirectory != null) {
+        await SolutionStorageService.saveSolutionFile(
+          filename: '$baseName.f4p',
+          bytes: f4pBytes,
+          directoryRef: _selectedDirectory!,
+        );
+      } else {
+        await SolutionStorageService.saveFile(
+          filename: '$baseName.f4p',
+          bytes: f4pBytes,
+        );
       }
-
-      final baseName = fileName.replaceAll(RegExp(r'\.(f4b|f4data)$'), '');
-
-      // 5. Save BOTH .f4b and .f4data to user's selected hard drive folder
-      await SolutionStorageService.saveDualSolutionFiles(
-        baseName: baseName,
-        f4bBytes: f4bBytes,
-        f4dataBytes: f4dataBytes,
-        directoryRef: _selectedDirectory,
-      );
 
       if (mounted) {
         Navigator.of(context).pop(NewDatabaseDialogResult(
-          fileName: '$baseName.f4b',
+          fileName: '$baseName.f4p',
           databaseName: dbName,
           databasePassword: password,
           package: pkg,
@@ -180,7 +178,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('New Database Solution', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Text('MessagePack (.f4b) & PostgreSQL Connection', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              Text('MessagePack (.f4p) & PostgreSQL Connection', style: TextStyle(fontSize: 12, color: Colors.grey)),
             ],
           ),
         ],

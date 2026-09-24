@@ -171,7 +171,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
     });
 
     try {
-      final file = await SolutionStorageService.pickFile(allowedExtensions: ['f4b']);
+      final file = await SolutionStorageService.pickFile(allowedExtensions: ['f4p', 'f4b']);
       if (file == null) return;
 
       final pkg = SolutionPackage.fromMsgPack(file.bytes);
@@ -192,7 +192,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
       });
     } catch (e) {
       setState(() {
-        _fileError = 'Invalid or corrupt .f4b solution file: $e';
+        _fileError = 'Invalid or corrupt solution file: $e';
       });
     }
   }
@@ -293,7 +293,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('Open Solution or Database', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                        Text('Select from server catalog or open a local .f4b file', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        Text('Select from server catalog or open a local .f4p file', style: TextStyle(fontSize: 12, color: Colors.grey)),
                       ],
                     ),
                   ),
@@ -319,7 +319,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
                 unselectedLabelColor: Colors.grey,
                 tabs: const [
                   Tab(icon: Icon(Icons.cloud_outlined, size: 18), text: 'Server Databases (API)'),
-                  Tab(icon: Icon(Icons.file_present_outlined, size: 18), text: 'Local File (.f4b)'),
+                  Tab(icon: Icon(Icons.file_present_outlined, size: 18), text: 'Local File (.f4p)'),
                 ],
               ),
             ),
@@ -523,7 +523,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
             ),
           ],
 
-          const Text('LOCAL SOLUTION FILE (.f4b)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5)),
+          const Text('LOCAL SOLUTION FILE (.f4p / .f4b)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5)),
           const SizedBox(height: 8),
 
           Container(
@@ -546,7 +546,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _pickedFile != null ? _pickedFile!.name : 'No .f4b file selected',
+                        _pickedFile != null ? _pickedFile!.name : 'No .f4p file selected',
                         style: TextStyle(fontWeight: _pickedFile != null ? FontWeight.bold : FontWeight.normal, fontSize: 13),
                         overflow: TextOverflow.ellipsis,
                       ),
