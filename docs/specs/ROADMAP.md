@@ -63,7 +63,12 @@
 - [ ] Connect Flutter client to WebSockets to refresh layouts and records in real-time.
 
 ## Phase 7: Calculation Engine & Script Workspace
-- [ ] Embed formula parser in Go (arithmetic, string concatenation, logical tests, date math).
-- [ ] Build **Script Workspace** in Flutter:
-  - [ ] Action block palette (Navigation, Records, Control flow, Dialogs).
-  - [ ] Script step runner executing actions deterministically.
+- [ ] Implement data model in Go and PostgreSQL for scripts (`sys_scripts`, `sys_script_steps`).
+- [ ] Build 3-panel layout in Flutter desktop according to `docs/specs/script_workspace_spec.md`:
+  - [ ] Left Panel: Scripts Explorer tree view with search and context menu (New, Duplicate, Delete).
+  - [ ] Center Panel: Sequential step editor with two-digit line numbers, category colors, and active toggle.
+  - [ ] Bottom Panel: Contextual parameter inspector with `[ fx Specify... ]` formula constructor.
+  - [ ] Right Panel: Categorized step catalog (Navigation, Records, Control & Logic, Integration & Data).
+- [ ] Implement drag-and-drop step reordering (`ReorderableListView`) and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
+- [ ] Embed formula calculation engine in Go (arithmetic, string concatenation, logical tests, date math via Google CEL).
+- [ ] Script step runner executing actions deterministically with step-by-step debugging.
