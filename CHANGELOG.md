@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Storage & Indexing Tab**: Global field storage (single value shared across all records for logos, VAT rates, session state), indexing options (None, Minimal, All full-text & fast search, auto-index), and container storage selection (internal database bytea blob vs external filesystem uploads).
   - **Calculation & Summary Tab**: Formula editor with quick-insert function buttons (`UPPER()`, `LOWER()`, `CONCAT()`, `SUM()`, `ROUND()`, `IF()`, `CURRENT_DATE`), calculation result type selector, and Summary aggregate operations (Sum, Average, Count, Minimum, Maximum, target column selector, and running total option).
   - Added "Options..." button with `Icons.tune` and row tap navigation in the Fields tab of `ManageDatabaseDialog` (`client/lib/features/schema_manager/manage_database_dialog.dart`).
+- **Embedded Swagger UI & OpenAPI Specification in API Container (`file4base-app-api`)**:
+  - Embedded Swagger UI and OpenAPI 3.0.3 specification directly inside the Go backend binary using `embed.FS` (`server/internal/api/swagger_handler.go`).
+  - Available at `/swagger/` (interactive documentation), `/swagger/openapi.json` and `/openapi.json` (raw specification), and redirected from `/swagger` and `/docs`.
+  - 100% self-contained and offline-ready with zero external CDN runtime dependencies.
+- **Docker Service & Container Renaming (`file4base-app-api`)**:
+  - Renamed backend container and image from `file4base-server` / `file4base-app-server` to `file4base-app-api` in `docker-compose.yml`.
+  - Service renamed to `api` with dual network aliases (`api`, `server`) preserving backwards compatibility for internal container networking.
+  - Updated `client/nginx.conf` reverse proxy to route `/api/`, `/swagger/`, `/docs`, and `/openapi.json` to `http://api:8080`.
 - **Enhanced Column Options Persistence in Backend (`server/`)**:
   - Enhanced `Service.UpdateColumn` and `SchemaHandler.UpdateColumn` to support updating `default_value`, `calculation_formula`, and `validation_rules` in `sys_columns` using dynamic SQL for PostgreSQL and MariaDB.
   - Updated `ApiClient.updateColumn` in Flutter client to serialize and transmit field options.

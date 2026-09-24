@@ -131,10 +131,10 @@ Adheres to the IETF Draft standard for HTTP API Health Checks:
 ```json
 {
   "status": "pass",
-  "version": "0.4.6",
-  "release_id": "file4base-server-v0.4.6",
-  "service_id": "file4base-core-backend",
-  "description": "File4Base Core Engine Health",
+  "version": "0.4.7",
+  "release_id": "file4base-api-v0.4.7",
+  "service_id": "file4base-api",
+  "description": "File4Base API Engine Health",
   "checks": {
     "database:postgres": [
       {
@@ -259,8 +259,8 @@ File4Base services must export metrics in OpenTelemetry format (OTLP/gRPC or Pro
   - `message`: Human-readable description.
   - `trace_id`: Correlated W3C trace ID (16-byte hex).
   - `span_id`: Correlated current span ID (8-byte hex).
-  - `service.name`: `"file4base-server"`.
-  - `service.version`: `"0.4.6"`.
+  - `service.name`: `"file4base-api"`.
+  - `service.version`: `"0.4.7"`.
 - **Sensitive Data Redaction**: Passwords, authorization bearer tokens, API keys, and connection strings containing credentials must be masked (`***REDACTED***`).
 
 #### Example Log Record:
@@ -271,8 +271,8 @@ File4Base services must export metrics in OpenTelemetry format (OTLP/gRPC or Pro
   "message": "Switched active database context successfully",
   "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
   "span_id": "00f067aa0ba902b7",
-  "service.name": "file4base-server",
-  "service.version": "0.4.6",
+  "service.name": "file4base-api",
+  "service.version": "0.4.7",
   "http.method": "POST",
   "http.path": "/api/v1/schemas/databases/actions/switch",
   "http.status_code": 200,

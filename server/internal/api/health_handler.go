@@ -160,14 +160,14 @@ func (h *HealthHandler) Diagnostic(w http.ResponseWriter, r *http.Request) {
 
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":          overallStatus,
-		"app":             "File4Base Server",
+		"app":             "File4Base API",
 		"version":         h.version,
 		"engine":          "postgres",
 		"database":        dbStatus,
 		"active_database": h.dbMgr.ActiveDatabase(),
-		"release_id":      fmt.Sprintf("file4base-server-v%s", h.version),
-		"service_id":      "file4base-core-backend",
-		"description":     "File4Base Core Engine Health",
+		"release_id":      fmt.Sprintf("file4base-api-v%s", h.version),
+		"service_id":      "file4base-api",
+		"description":     "File4Base API Engine Health",
 		"uptime_seconds":  uptimeSec,
 		"checks": map[string]interface{}{
 			"database": map[string]interface{}{

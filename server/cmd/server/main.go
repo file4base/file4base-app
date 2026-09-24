@@ -106,7 +106,7 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware)
-	r.Use(telemetry.Middleware("file4base-server", AppVersion))
+	r.Use(telemetry.Middleware("file4base-api", AppVersion))
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
@@ -114,6 +114,14 @@ func main() {
 	// Cloud-Native Probes & Diagnostic Health (/healthz, /healthz/liveness, /healthz/readiness, etc.)
 	healthHandler := api.NewHealthHandler(dbMgr, AppVersion, &isReady, &isStarted)
 	healthHandler.RegisterRoutes(r)
+
+	// Swagger UI & OpenAPI Specification (/swagger/, /swagger/openapi.json, /openapi.json, /docs)
+	if swaggerHandler, err := api.NewSwaggerHandler(); err == nil {
+		swaggerHandler.RegisterRoutes(r)
+		log.Println("Swagger UI mounted at /swagger/ and OpenAPI spec at /swagger/openapi.json")
+	} else {
+		log.Printf("Warning: failed to initialize SwaggerHandler: %v", err)
+	}
 
 	// API Domain Handlers
 	schemaHandler := api.NewSchemaHandler(schemaSvc)

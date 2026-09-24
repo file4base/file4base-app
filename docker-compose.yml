@@ -43,12 +43,13 @@ services:
     networks:
       - file4base-net
 
-  # Go Backend Core API Service
-  server:
+  # Go Backend Core API Service (file4base-app-api)
+  api:
     build:
       context: ./server
       dockerfile: Dockerfile
-    container_name: file4base-server
+    image: file4base-app-api
+    container_name: file4base-app-api
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -66,19 +67,23 @@ services:
       retries: 5
       start_period: 5s
     networks:
-      - file4base-net
+      file4base-net:
+        aliases:
+          - api
+          - server
 
   # WebDirect Client (Web UI served when launched as a Server via docker compose)
   web:
     build:
       context: ./client
       dockerfile: Dockerfile
+    image: file4base-app-web
     container_name: file4base-web
     restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
-      server:
+      api:
         condition: service_healthy
     networks:
       - file4base-net

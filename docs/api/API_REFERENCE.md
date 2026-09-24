@@ -36,7 +36,17 @@ When an error occurs (HTTP 4xx or 5xx), the response body is encoded as `applica
 
 ---
 
-## 1. System & Health Probes
+## 1. Documentation & Swagger UI
+
+### `GET /swagger/`
+Interactive Swagger UI embedded directly inside the API service container (`file4base-app-api`), enabling exploration and testing of all API endpoints. (Also accessible via `/swagger` and `/docs`).
+
+### `GET /swagger/openapi.json`
+Full OpenAPI 3.0.3 specification in JSON format. Also accessible at `/openapi.json` and `/api/v1/openapi.json`.
+
+---
+
+## 2. System & Health Probes
 
 ### `GET /healthz`
 IETF draft & diagnostic health check. Returns comprehensive system status, version, uptime, and database connectivity.
@@ -45,20 +55,16 @@ IETF draft & diagnostic health check. Returns comprehensive system status, versi
 ```json
 {
   "status": "pass",
-  "version": "0.4.6",
-  "releaseId": "0.4.6",
-  "serviceId": "file4base-server",
-  "description": "File4Base Core Backend Service",
-  "uptime": "1h23m45s",
+  "version": "0.4.7",
+  "release_id": "file4base-api-v0.4.7",
+  "service_id": "file4base-api",
+  "description": "File4Base API Engine Health",
+  "uptime_seconds": 3600,
   "checks": {
-    "database": [
-      {
-        "componentType": "datastore",
-        "observedValue": "connected",
-        "status": "pass",
-        "time": "2026-09-24T10:45:00Z"
-      }
-    ]
+    "database": {
+      "status": "pass",
+      "active_database": "file4base_dev"
+    }
   },
   "engine": "postgres",
   "database": "connected",

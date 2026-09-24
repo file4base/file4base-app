@@ -1,0 +1,890 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "File4Base API Engine",
+    "description": "Enterprise-grade REST and Dynamic Relational DDL Database Engine for File4Base. Supports runtime schema migrations, table occurrences, relationships graph, FileMaker Find Mode formula parsing, security ACL, and solution archiving.",
+    "version": "0.4.7",
+    "contact": {
+      "name": "File4Base Core Team",
+      "url": "https://github.com/file4base/file4base-app"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local API Service (Direct)"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "WebDirect Nginx Reverse Proxy"
+    },
+    {
+      "url": "/",
+      "description": "Current Host"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health & Probes",
+      "description": "Cloud-native Kubernetes/Docker liveness, readiness, and diagnostic health endpoints"
+    },
+    {
+      "name": "Schemas & DDL",
+      "description": "Dynamic database tables, columns, table occurrences, relationships, and layout catalog"
+    },
+    {
+      "name": "Data Operations",
+      "description": "Record CRUD operations, pagination, and FileMaker Find Mode criteria queries"
+    },
+    {
+      "name": "Security & Users",
+      "description": "Authentication, user management, password updates, and per-layout permissions"
+    },
+    {
+      "name": "Solutions & Backup",
+      "description": "Full database solution import and export packaging"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": ["Health & Probes"],
+        "summary": "System Health Status (RFC Draft)",
+        "description": "Returns full health diagnostic including database connectivity, uptime, version, and component status.",
+        "responses": {
+          "200": {
+            "description": "System is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthDiagnostic"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service unhealthy or database unavailable"
+          }
+        }
+      }
+    },
+    "/healthz/liveness": {
+      "get": {
+        "tags": ["Health & Probes"],
+        "summary": "Liveness Probe",
+        "description": "Checks if the HTTP server process is running.",
+        "responses": {
+          "200": {
+            "description": "Process alive"
+          }
+        }
+      }
+    },
+    "/healthz/readiness": {
+      "get": {
+        "tags": ["Health & Probes"],
+        "summary": "Readiness Probe",
+        "description": "Checks if database connections and system catalog tables are ready to accept traffic.",
+        "responses": {
+          "200": {
+            "description": "Ready to receive requests"
+          },
+          "503": {
+            "description": "Not ready or shutting down"
+          }
+        }
+      }
+    },
+    "/healthz/startup": {
+      "get": {
+        "tags": ["Health & Probes"],
+        "summary": "Startup Probe",
+        "description": "Checks if the initial database migrations and catalogs have completed.",
+        "responses": {
+          "200": {
+            "description": "Startup sequence completed"
+          },
+          "503": {
+            "description": "Startup in progress"
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/tables": {
+      "get": {
+        "tags": ["Schemas & DDL"],
+        "summary": "List Tables",
+        "description": "Retrieves all registered user database tables and their column definitions.",
+        "responses": {
+          "200": {
+            "description": "List of tables",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TableMetadata"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Create Table",
+        "description": "Creates a new physical table in PostgreSQL/MariaDB and registers it in `sys_tables` with an automatic primary key.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTableRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Table created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TableMetadata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation or SQL error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/tables/{id}/columns": {
+      "post": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Add Column to Table",
+        "description": "Executes dynamic DDL `ALTER TABLE ADD COLUMN` and registers field options in `sys_columns`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Table ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddColumnRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Column added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnMetadata"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid column parameters"
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/tables/{id}/columns/{columnId}": {
+      "put": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Update Column Metadata and Options",
+        "description": "Updates display name and FileMaker field options (auto-enter rules, default values, calculation formulas, validation rules).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Table ID",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "columnId",
+            "in": "path",
+            "required": true,
+            "description": "Column ID",
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateColumnRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Column updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ColumnMetadata"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Delete Column",
+        "description": "Drops the column from the physical database table and removes it from `sys_columns`. Cannot delete primary key.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "columnId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Column dropped successfully"
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/occurrences": {
+      "get": {
+        "tags": ["Schemas & DDL"],
+        "summary": "List Table Occurrences",
+        "responses": {
+          "200": {
+            "description": "List of table occurrences on the graph",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TableOccurrence"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Create Table Occurrence",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TableOccurrence"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Table occurrence created"
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/relationships": {
+      "get": {
+        "tags": ["Schemas & DDL"],
+        "summary": "List Relationships",
+        "responses": {
+          "200": {
+            "description": "List of relationships connecting table occurrences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Relationship"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Create Relationship",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Relationship"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Relationship created"
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/layouts": {
+      "get": {
+        "tags": ["Schemas & DDL"],
+        "summary": "List Layouts",
+        "responses": {
+          "200": {
+            "description": "List of layout models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Layout"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Create Layout",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Layout"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Layout created"
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/layouts/{id}": {
+      "put": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Update Layout",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Layout"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Layout updated" }
+        }
+      },
+      "delete": {
+        "tags": ["Schemas & DDL"],
+        "summary": "Delete Layout",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "Layout deleted" }
+        }
+      }
+    },
+    "/api/v1/data/{table}": {
+      "get": {
+        "tags": ["Data Operations"],
+        "summary": "List Records in Table",
+        "description": "Queries records from a table with pagination and sorting support.",
+        "parameters": [
+          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 100 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } },
+          { "name": "sort_by", "in": "query", "schema": { "type": "string" } },
+          { "name": "sort_asc", "in": "query", "schema": { "type": "boolean", "default": true } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of row records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "type": "object" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Data Operations"],
+        "summary": "Insert Record",
+        "parameters": [
+          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Record inserted",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/{id}": {
+      "get": {
+        "tags": ["Data Operations"],
+        "summary": "Get Record by ID",
+        "parameters": [
+          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Record details", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "404": { "description": "Record not found" }
+        }
+      },
+      "put": {
+        "tags": ["Data Operations"],
+        "summary": "Update Record",
+        "parameters": [
+          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object" } } }
+        },
+        "responses": {
+          "200": { "description": "Record updated successfully" }
+        }
+      },
+      "delete": {
+        "tags": ["Data Operations"],
+        "summary": "Delete Record",
+        "parameters": [
+          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "204": { "description": "Record deleted" }
+        }
+      }
+    },
+    "/api/v1/data/{table}/find": {
+      "post": {
+        "tags": ["Data Operations"],
+        "summary": "Execute Find Mode Search",
+        "description": "Executes a FileMaker-compatible Find query supporting wildcards (*), single characters (@/?), comparisons (>, <, >=, <=), exact (=), strict (==), negation (! / !=), ranges (...), today's date (//), and empty/non-empty search.",
+        "parameters": [
+          { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindRequest"
+              },
+              "example": {
+                "criteria": {
+                  "first_name": "Mario*",
+                  "age": "20...50"
+                },
+                "omit": false,
+                "limit": 100
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching found records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "type": "object" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/login": {
+      "post": {
+        "tags": ["Security & Users"],
+        "summary": "Authenticate User",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        }
+      }
+    },
+    "/api/v1/security/users": {
+      "get": {
+        "tags": ["Security & Users"],
+        "summary": "List Users",
+        "responses": {
+          "200": {
+            "description": "List of system users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/User" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Security & Users"],
+        "summary": "Create User",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateUserRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "User created" }
+        }
+      }
+    },
+    "/api/v1/security/permissions": {
+      "get": {
+        "tags": ["Security & Users"],
+        "summary": "List Layout Permissions",
+        "responses": {
+          "200": {
+            "description": "Permissions list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Permission" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Security & Users"],
+        "summary": "Set User Layout Permission",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/Permission" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Permission updated" }
+        }
+      }
+    },
+    "/api/v1/solutions/save-copy": {
+      "post": {
+        "tags": ["Solutions & Backup"],
+        "summary": "Save Copy as MessagePack Solution Archive",
+        "description": "Generates a complete standalone solution snapshot including tables, columns, occurrences, relationships, layouts, users, permissions, and data records.",
+        "responses": {
+          "200": {
+            "description": "Binary MessagePack (.f4p) solution file",
+            "content": {
+              "application/x-msgpack": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/load-copy": {
+      "post": {
+        "tags": ["Solutions & Backup"],
+        "summary": "Load MessagePack Solution Archive",
+        "description": "Restores or imports a full database solution package into the active catalog.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-msgpack": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Solution loaded successfully"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TableMetadata": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string", "example": "customers" },
+          "display_name": { "type": "string", "example": "Customers" },
+          "description": { "type": "string" },
+          "columns": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/ColumnMetadata" }
+          },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ColumnMetadata": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "table_id": { "type": "string" },
+          "name": { "type": "string", "example": "phone_number" },
+          "display_name": { "type": "string", "example": "Phone Number" },
+          "field_type": {
+            "type": "string",
+            "enum": ["TEXT", "NUMBER", "DATE", "TIMESTAMP", "BOOLEAN", "CONTAINER", "CALCULATION", "SUMMARY"]
+          },
+          "is_nullable": { "type": "boolean" },
+          "is_primary_key": { "type": "boolean" },
+          "default_value": { "type": "string" },
+          "calculation_formula": { "type": "string" },
+          "validation_rules": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateTableRequest": {
+        "type": "object",
+        "required": ["display_name"],
+        "properties": {
+          "display_name": { "type": "string", "example": "Invoices" },
+          "custom_name": { "type": "string", "example": "invoices" }
+        }
+      },
+      "AddColumnRequest": {
+        "type": "object",
+        "required": ["name", "display_name", "field_type"],
+        "properties": {
+          "name": { "type": "string", "example": "total_amount" },
+          "display_name": { "type": "string", "example": "Total Amount" },
+          "field_type": { "type": "string", "example": "NUMBER" },
+          "is_nullable": { "type": "boolean", "default": true },
+          "default_value": { "type": "string" },
+          "calculation_formula": { "type": "string" },
+          "validation_rules": { "type": "string" }
+        }
+      },
+      "UpdateColumnRequest": {
+        "type": "object",
+        "required": ["display_name"],
+        "properties": {
+          "display_name": { "type": "string", "example": "Invoice Total" },
+          "default_value": { "type": "string", "description": "Auto-enter and storage configuration JSON" },
+          "calculation_formula": { "type": "string", "description": "Formula expression or summary operation JSON" },
+          "validation_rules": { "type": "string", "description": "Validation constraints JSON" }
+        }
+      },
+      "TableOccurrence": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "base_table_id": { "type": "string" },
+          "name": { "type": "string", "example": "Customers_Active" },
+          "x_pos": { "type": "number", "example": 100 },
+          "y_pos": { "type": "number", "example": 120 }
+        }
+      },
+      "Relationship": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "left_occurrence_id": { "type": "string" },
+          "left_column_id": { "type": "string" },
+          "right_occurrence_id": { "type": "string" },
+          "right_column_id": { "type": "string" },
+          "operator": { "type": "string", "default": "=" },
+          "allow_creation": { "type": "boolean", "default": false },
+          "cascade_delete": { "type": "boolean", "default": false }
+        }
+      },
+      "Layout": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string", "example": "Customer Details" },
+          "table_occurrence_id": { "type": "string" },
+          "definition": { "type": "object", "description": "Deterministic JSON layout schema definition" }
+        }
+      },
+      "FindRequest": {
+        "type": "object",
+        "required": ["criteria"],
+        "properties": {
+          "criteria": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          },
+          "omit": { "type": "boolean", "default": false },
+          "limit": { "type": "integer", "default": 100 },
+          "offset": { "type": "integer", "default": 0 }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["username", "password"],
+        "properties": {
+          "username": { "type": "string", "example": "admin" },
+          "password": { "type": "string", "example": "admin123" }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "properties": {
+          "user": { "$ref": "#/components/schemas/User" },
+          "token": { "type": "string" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "username": { "type": "string" },
+          "role": { "type": "string", "enum": ["owner", "admin", "user", "guest"] },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "required": ["username", "password", "role"],
+        "properties": {
+          "username": { "type": "string" },
+          "password": { "type": "string" },
+          "role": { "type": "string", "default": "user" }
+        }
+      },
+      "Permission": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "user_id": { "type": "string" },
+          "layout_id": { "type": "string" },
+          "access_level": { "type": "string", "enum": ["no_access", "read_only", "read_write"] }
+        }
+      },
+      "HealthDiagnostic": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "pass" },
+          "version": { "type": "string", "example": "0.4.7" },
+          "release_id": { "type": "string", "example": "file4base-api-v0.4.7" },
+          "uptime_seconds": { "type": "integer" },
+          "checks": { "type": "object" }
+        }
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "description": "RFC 9457 Problem Details for HTTP APIs",
+        "properties": {
+          "type": { "type": "string", "example": "about:blank" },
+          "title": { "type": "string", "example": "Bad Request" },
+          "status": { "type": "integer", "example": 400 },
+          "detail": { "type": "string", "example": "Invalid column format" },
+          "instance": { "type": "string", "example": "/api/v1/schemas/tables" }
+        }
+      }
+    }
+  }
+}
