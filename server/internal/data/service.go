@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/google/uuid"
@@ -13,7 +15,7 @@ import (
 // FindCriterion represents a single field search condition
 type FindCriterion struct {
 	FieldName string      `json:"field_name"`
-	Operator  string      `json:"operator"` // "=", "!=", ">", "<", ">=", "<=", "LIKE", "RANGE"
+	Operator  string      `json:"operator"` // "=", "==", "!=", ">", "<", ">=", "<=", "LIKE", "RANGE", "IS_EMPTY", "IS_NOT_EMPTY"
 	Value     interface{} `json:"value"`
 	ValueTo   interface{} `json:"value_to,omitempty"` // For range queries
 }
@@ -206,10 +208,21 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 	return rowsToMaps(rows)
 }
 
-// ParseFile4BaseFindCriteria translates File4Base operators (*, ..., =, !, <, >) to SQL AST
+// ParseFile4BaseFindCriteria translates File4Base operators (*, ..., =, ==, !, !=, <, >, <=, >=, //, @) to SQL AST
 func ParseFile4BaseFindCriteria(fieldName, rawCriteria string) FindCriterion {
 	trimmed := strings.TrimSpace(rawCriteria)
+	if trimmed == "" {
+		return FindCriterion{FieldName: fieldName}
+	}
 
+	// Today's date formula: // -> current date YYYY-MM-DD
+	if trimmed == "//" {
+		trimmed = time.Now().UTC().Format("2006-01-02")
+	} else if strings.Contains(trimmed, "//") {
+		trimmed = strings.ReplaceAll(trimmed, "//", time.Now().UTC().Format("2006-01-02"))
+	}
+
+	// Range: val1...val2
 	if strings.Contains(trimmed, "...") {
 		parts := strings.SplitN(trimmed, "...", 2)
 		return FindCriterion{
@@ -218,6 +231,26 @@ func ParseFile4BaseFindCriteria(fieldName, rawCriteria string) FindCriterion {
 			Value:     strings.TrimSpace(parts[0]),
 			ValueTo:   strings.TrimSpace(parts[1]),
 		}
+	}
+
+	// Empty field: = alone
+	if trimmed == "=" {
+		return FindCriterion{FieldName: fieldName, Operator: "IS_EMPTY", Value: ""}
+	}
+
+	// Strict exact match: ==val
+	if strings.HasPrefix(trimmed, "==") {
+		return FindCriterion{FieldName: fieldName, Operator: "==", Value: strings.TrimSpace(trimmed[2:])}
+	}
+
+	// Exact match: =val
+	if strings.HasPrefix(trimmed, "=") {
+		return FindCriterion{FieldName: fieldName, Operator: "=", Value: strings.TrimSpace(trimmed[1:])}
+	}
+
+	// Non-empty field: * alone
+	if trimmed == "*" {
+		return FindCriterion{FieldName: fieldName, Operator: "IS_NOT_EMPTY", Value: ""}
 	}
 
 	if strings.HasPrefix(trimmed, ">=") {
@@ -232,20 +265,23 @@ func ParseFile4BaseFindCriteria(fieldName, rawCriteria string) FindCriterion {
 	if strings.HasPrefix(trimmed, "<") {
 		return FindCriterion{FieldName: fieldName, Operator: "<", Value: strings.TrimSpace(trimmed[1:])}
 	}
+	if strings.HasPrefix(trimmed, "!=") {
+		return FindCriterion{FieldName: fieldName, Operator: "!=", Value: strings.TrimSpace(trimmed[2:])}
+	}
 	if strings.HasPrefix(trimmed, "!") {
 		return FindCriterion{FieldName: fieldName, Operator: "!=", Value: strings.TrimSpace(trimmed[1:])}
 	}
-	if strings.HasPrefix(trimmed, "=") {
-		return FindCriterion{FieldName: fieldName, Operator: "=", Value: strings.TrimSpace(trimmed[1:])}
-	}
 
-	// Wildcard matching: File4Base '*' -> SQL '%'
-	if strings.Contains(trimmed, "*") {
+	// Wildcard matching: File4Base '*' -> SQL '%', '@' or '?' -> SQL '_'
+	hasWildcard := strings.Contains(trimmed, "*") || strings.Contains(trimmed, "@") || strings.Contains(trimmed, "?")
+	if hasWildcard {
 		sqlWildcard := strings.ReplaceAll(trimmed, "*", "%")
+		sqlWildcard = strings.ReplaceAll(sqlWildcard, "@", "_")
+		sqlWildcard = strings.ReplaceAll(sqlWildcard, "?", "_")
 		return FindCriterion{FieldName: fieldName, Operator: "LIKE", Value: sqlWildcard}
 	}
 
-	// Default: case-insensitive partial containment
+	// Default: case-insensitive partial containment (%text%)
 	return FindCriterion{FieldName: fieldName, Operator: "LIKE", Value: "%" + trimmed + "%"}
 }
 
@@ -266,23 +302,89 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 		}
 		var andClauses []string
 		for _, crit := range req.Criteria {
-			colIdent := dialect.QuoteIdentifier(crit.FieldName)
-			switch crit.Operator {
-			case "RANGE":
-				andClauses = append(andClauses, fmt.Sprintf("%s BETWEEN %s AND %s", colIdent, dialect.Placeholder(idx), dialect.Placeholder(idx+1)))
-				values = append(values, crit.Value, crit.ValueTo)
-				idx += 2
-			case "LIKE":
-				andClauses = append(andClauses, fmt.Sprintf("%s ILIKE %s", colIdent, dialect.Placeholder(idx)))
-				values = append(values, crit.Value)
-				idx++
-			default:
-				op := crit.Operator
-				if op == "" {
-					op = "="
+			if crit.FieldName == "" {
+				continue
+			}
+
+			// If operator is empty or not parsed, parse it with ParseFile4BaseFindCriteria
+			if (crit.Operator == "" || crit.Operator == "LIKE") && crit.Value != nil {
+				strVal := strings.TrimSpace(fmt.Sprintf("%v", crit.Value))
+				// If user entered explicit operator inside string
+				if strings.HasPrefix(strVal, "=") || strings.HasPrefix(strVal, "!") ||
+					strings.HasPrefix(strVal, ">") || strings.HasPrefix(strVal, "<") ||
+					strings.Contains(strVal, "...") || strVal == "*" || strVal == "//" {
+					crit = ParseFile4BaseFindCriteria(crit.FieldName, strVal)
 				}
-				andClauses = append(andClauses, fmt.Sprintf("%s %s %s", colIdent, op, dialect.Placeholder(idx)))
-				values = append(values, crit.Value)
+			}
+
+			colIdent := dialect.QuoteIdentifier(crit.FieldName)
+
+			switch crit.Operator {
+			case "IS_EMPTY":
+				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR CAST(%s AS TEXT) = '')", colIdent, colIdent))
+
+			case "IS_NOT_EMPTY":
+				andClauses = append(andClauses, fmt.Sprintf("(%s IS NOT NULL AND CAST(%s AS TEXT) <> '')", colIdent, colIdent))
+
+			case "RANGE":
+				valStr := fmt.Sprintf("%v", crit.Value)
+				valToStr := fmt.Sprintf("%v", crit.ValueTo)
+				num1, err1 := strconv.ParseFloat(valStr, 64)
+				num2, err2 := strconv.ParseFloat(valToStr, 64)
+				if err1 == nil && err2 == nil {
+					// Numeric range query with safe regex check so non-numeric column rows don't crash
+					andClauses = append(andClauses, fmt.Sprintf(
+						"(CASE WHEN CAST(%s AS TEXT) ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN CAST(CAST(%s AS TEXT) AS NUMERIC) ELSE NULL END) BETWEEN %s AND %s",
+						colIdent, colIdent, dialect.Placeholder(idx), dialect.Placeholder(idx+1),
+					))
+					values = append(values, num1, num2)
+				} else {
+					// Text or date range query
+					andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) BETWEEN %s AND %s", colIdent, dialect.Placeholder(idx), dialect.Placeholder(idx+1)))
+					values = append(values, valStr, valToStr)
+				}
+				idx += 2
+
+			case "LIKE":
+				valStr := fmt.Sprintf("%v", crit.Value)
+				// Use CAST to TEXT so it works on any column type (numeric, date, text, uuid, etc.)
+				andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) ILIKE %s", colIdent, dialect.Placeholder(idx)))
+				values = append(values, valStr)
+				idx++
+
+			case "=", "==":
+				valStr := fmt.Sprintf("%v", crit.Value)
+				// Case-insensitive exact match
+				andClauses = append(andClauses, fmt.Sprintf("LOWER(CAST(%s AS TEXT)) = LOWER(%s)", colIdent, dialect.Placeholder(idx)))
+				values = append(values, valStr)
+				idx++
+
+			case "!=":
+				valStr := fmt.Sprintf("%v", crit.Value)
+				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR LOWER(CAST(%s AS TEXT)) <> LOWER(%s))", colIdent, colIdent, dialect.Placeholder(idx)))
+				values = append(values, valStr)
+				idx++
+
+			case ">", "<", ">=", "<=":
+				valStr := fmt.Sprintf("%v", crit.Value)
+				if num, err := strconv.ParseFloat(valStr, 64); err == nil {
+					// Numeric comparison
+					andClauses = append(andClauses, fmt.Sprintf(
+						"(CASE WHEN CAST(%s AS TEXT) ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN CAST(CAST(%s AS TEXT) AS NUMERIC) ELSE NULL END) %s %s",
+						colIdent, colIdent, crit.Operator, dialect.Placeholder(idx),
+					))
+					values = append(values, num)
+				} else {
+					// Text comparison
+					andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) %s %s", colIdent, crit.Operator, dialect.Placeholder(idx)))
+					values = append(values, valStr)
+				}
+				idx++
+
+			default:
+				valStr := fmt.Sprintf("%v", crit.Value)
+				andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) ILIKE %s", colIdent, dialect.Placeholder(idx)))
+				values = append(values, "%"+valStr+"%")
 				idx++
 			}
 		}
@@ -304,7 +406,7 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 
 	limit := opts.Limit
 	if limit <= 0 || limit > 1000 {
-		limit = 100
+		limit = 500
 	}
 
 	sqlQuery := fmt.Sprintf(

@@ -186,12 +186,15 @@ Returns created `ColumnMetadata`.
 ---
 
 ### `PUT /api/v1/schemas/tables/{id}/columns/{columnId}`
-Updates column metadata (e.g. display name).
+Updates column metadata and options (display name, auto-enter rules, default values, calculation formulas, and validation rules).
 
 #### Request Body
 ```json
 {
-  "display_name": "Updated Column Name"
+  "display_name": "Updated Column Name",
+  "default_value": "{\"creation_enabled\":true,\"creation_type\":\"Date\"}",
+  "calculation_formula": "{\"formula\":\"UPPER(first_name)\",\"result_type\":\"Text\"}",
+  "validation_rules": "{\"not_empty\":true,\"unique\":true}"
 }
 ```
 

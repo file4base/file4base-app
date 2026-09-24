@@ -76,10 +76,24 @@ func TestSchemaService_LivePostgres(t *testing.T) {
 	}
 	assert.True(t, found, "Newly created table should be present in ListTables")
 
-	// 5. Update column display name
-	updatedCol, err := svc.UpdateColumn(ctx, tbl.ID, col.ID, "Grand Total")
+	// 5. Update column display name and options
+	defVal := "100"
+	calcForm := "price * 1.21"
+	valRules := `{"not_empty":true}`
+	updatedCol, err := svc.UpdateColumn(ctx, tbl.ID, col.ID, schema.UpdateColumnOptions{
+		DisplayName:        "Grand Total",
+		DefaultValue:       &defVal,
+		UpdateDefaultValue: true,
+		CalculationFormula: &calcForm,
+		UpdateCalculation:  true,
+		ValidationRules:    &valRules,
+		UpdateValidation:   true,
+	})
 	require.NoError(t, err)
 	assert.Equal(t, "Grand Total", updatedCol.DisplayName)
+	assert.Equal(t, &defVal, updatedCol.DefaultValue)
+	assert.Equal(t, &calcForm, updatedCol.CalculationFormula)
+	assert.Equal(t, &valRules, updatedCol.ValidationRules)
 
 	// 6. Delete column
 	err = svc.DeleteColumn(ctx, tbl.ID, col.ID)

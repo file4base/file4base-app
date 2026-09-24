@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -129,7 +130,10 @@ func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateColumnRequest struct {
-	DisplayName string `json:"display_name"`
+	DisplayName        string  `json:"display_name"`
+	DefaultValue       *string `json:"default_value"`
+	CalculationFormula *string `json:"calculation_formula"`
+	ValidationRules    *string `json:"validation_rules"`
 }
 
 func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
@@ -140,13 +144,41 @@ func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req UpdateColumnRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Request", "Failed to read request body")
+		return
+	}
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
 
-	col, err := h.svc.UpdateColumn(r.Context(), tableID, columnID, req.DisplayName)
+	var req UpdateColumnRequest
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	opts := schema.UpdateColumnOptions{
+		DisplayName: req.DisplayName,
+	}
+	if _, ok := raw["default_value"]; ok {
+		opts.UpdateDefaultValue = true
+		opts.DefaultValue = req.DefaultValue
+	}
+	if _, ok := raw["calculation_formula"]; ok {
+		opts.UpdateCalculation = true
+		opts.CalculationFormula = req.CalculationFormula
+	}
+	if _, ok := raw["validation_rules"]; ok {
+		opts.UpdateValidation = true
+		opts.ValidationRules = req.ValidationRules
+	}
+
+	col, err := h.svc.UpdateColumn(r.Context(), tableID, columnID, opts)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return

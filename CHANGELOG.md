@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-09-24
+
+### Added
+- **Field Options Modal ("Options for Field <name>")**:
+  - Implemented `FieldOptionsDialog` in `client/lib/features/schema_manager/field_options_dialog.dart` faithfully matching the native macOS FileMaker Pro field options dialog.
+  - **Auto-Enter Tab**: Automatic population rules for Creation/Modification (Date, Time, Timestamp, Name, Account Name), serial number generation (on creation / on commit, next value, increment), value from last visited record, default static data, calculated values (`Specify...`), looked-up values, and option to prohibit modification during data entry.
+  - **Validation Tab**: Strict data validation options including Not Empty (Always / During Entry), Unique Value, Existing Value, Strict Data Type (Date, Time of Day, 4-Digit Year, Numeric, Text), Range validation (min/max), Maximum length, and custom error message text.
+  - **Storage & Indexing Tab**: Global field storage (single value shared across all records for logos, VAT rates, session state), indexing options (None, Minimal, All full-text & fast search, auto-index), and container storage selection (internal database bytea blob vs external filesystem uploads).
+  - **Calculation & Summary Tab**: Formula editor with quick-insert function buttons (`UPPER()`, `LOWER()`, `CONCAT()`, `SUM()`, `ROUND()`, `IF()`, `CURRENT_DATE`), calculation result type selector, and Summary aggregate operations (Sum, Average, Count, Minimum, Maximum, target column selector, and running total option).
+  - Added "Options..." button with `Icons.tune` and row tap navigation in the Fields tab of `ManageDatabaseDialog` (`client/lib/features/schema_manager/manage_database_dialog.dart`).
+- **Enhanced Column Options Persistence in Backend (`server/`)**:
+  - Enhanced `Service.UpdateColumn` and `SchemaHandler.UpdateColumn` to support updating `default_value`, `calculation_formula`, and `validation_rules` in `sys_columns` using dynamic SQL for PostgreSQL and MariaDB.
+  - Updated `ApiClient.updateColumn` in Flutter client to serialize and transmit field options.
+
+### Fixed
+- **Find Mode Search Execution and Navigation Transitions**:
+  - Resolved issue where executing a search ("Perform Find") left the user trapped on the Find input form without transitioning to the found records.
+  - Implemented proper operational mode transition from `OperationalMode.find` to `OperationalMode.browse` upon search execution, showing a found set notification badge and "Show All" action.
+  - Handled zero-results scenario with an informative dialog allowing the user to either modify their criteria or return to showing all records.
+  - Replaced muddy amber card backgrounds in Find Mode with clean, high-contrast Material 3 cards, banner headers, search icons, and field type indicators.
+  - Implemented comprehensive FileMaker formula & wildcard search syntax in backend `ExecuteFind` and `ParseFile4BaseFindCriteria`:
+    - Wildcard `*` (`%`) and single character `@`/`?` (`_`).
+    - Comparison operators: `>`, `<`, `>=`, `<=`.
+    - Exact match `=` and strict exact match `==`.
+    - Negation / exclusion: `!=` or `!`.
+    - Range queries: `min...max`.
+    - Today's date shorthand: `//`.
+    - Empty field search (`=`) and non-empty field search (`*`).
+    - Wrapped column references in `CAST(col AS TEXT)` to avoid PostgreSQL type operator mismatches (`numeric ~~* text`).
+
 ## [0.4.6] - 2026-09-24
 
 ### Added

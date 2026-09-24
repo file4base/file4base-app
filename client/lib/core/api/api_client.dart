@@ -134,6 +134,9 @@ class ColumnModel {
   final String fieldType;
   final bool isNullable;
   final bool isPrimaryKey;
+  final String? defaultValue;
+  final String? calculationFormula;
+  final String? validationRules;
 
   const ColumnModel({
     required this.id,
@@ -143,6 +146,9 @@ class ColumnModel {
     required this.fieldType,
     this.isNullable = true,
     this.isPrimaryKey = false,
+    this.defaultValue,
+    this.calculationFormula,
+    this.validationRules,
   });
 
   factory ColumnModel.fromJson(Map<String, dynamic> json) {
@@ -154,6 +160,35 @@ class ColumnModel {
       fieldType: json['field_type'] as String,
       isNullable: json['is_nullable'] as bool? ?? true,
       isPrimaryKey: json['is_primary_key'] as bool? ?? false,
+      defaultValue: json['default_value'] as String?,
+      calculationFormula: json['calculation_formula'] as String?,
+      validationRules: json['validation_rules'] as String?,
+    );
+  }
+
+  ColumnModel copyWith({
+    String? id,
+    String? tableId,
+    String? name,
+    String? displayName,
+    String? fieldType,
+    bool? isNullable,
+    bool? isPrimaryKey,
+    String? defaultValue,
+    String? calculationFormula,
+    String? validationRules,
+  }) {
+    return ColumnModel(
+      id: id ?? this.id,
+      tableId: tableId ?? this.tableId,
+      name: name ?? this.name,
+      displayName: displayName ?? this.displayName,
+      fieldType: fieldType ?? this.fieldType,
+      isNullable: isNullable ?? this.isNullable,
+      isPrimaryKey: isPrimaryKey ?? this.isPrimaryKey,
+      defaultValue: defaultValue ?? this.defaultValue,
+      calculationFormula: calculationFormula ?? this.calculationFormula,
+      validationRules: validationRules ?? this.validationRules,
     );
   }
 }
@@ -429,15 +464,34 @@ class ApiClient {
     return ColumnModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  Future<ColumnModel> updateColumn(String tableId, String columnId, {
+  Future<ColumnModel> updateColumn(
+    String tableId,
+    String columnId, {
     required String displayName,
+    String? defaultValue,
+    bool updateDefaultValue = false,
+    String? calculationFormula,
+    bool updateCalculationFormula = false,
+    String? validationRules,
+    bool updateValidationRules = false,
   }) async {
+    final Map<String, dynamic> payload = {
+      'display_name': displayName,
+    };
+    if (updateDefaultValue) {
+      payload['default_value'] = defaultValue;
+    }
+    if (updateCalculationFormula) {
+      payload['calculation_formula'] = calculationFormula;
+    }
+    if (updateValidationRules) {
+      payload['validation_rules'] = validationRules;
+    }
+
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/columns/$columnId'),
       headers: _headers(contentType: 'application/json'),
-      body: jsonEncode({
-        'display_name': displayName,
-      }),
+      body: jsonEncode(payload),
     );
     _checkResponse(response);
     return ColumnModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);

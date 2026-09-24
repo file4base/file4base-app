@@ -7,6 +7,7 @@ class DataBrowserWidget extends StatefulWidget {
   final TableModel table;
   final ApiClient apiClient;
   final OperationalMode mode;
+  final ValueChanged<OperationalMode>? onModeChanged;
   final void Function(int currentIndex, int totalRecords)? onRecordChanged;
   final VoidCallback? onTableModified;
 
@@ -15,6 +16,7 @@ class DataBrowserWidget extends StatefulWidget {
     required this.table,
     required this.apiClient,
     required this.mode,
+    this.onModeChanged,
     this.onRecordChanged,
     this.onTableModified,
   });
@@ -28,10 +30,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   bool _isLoading = true;
   String? _error;
   int _currentIndex = 0;
+  bool _isFoundSet = false;
+  String? _lastFocusedFindField;
 
   int get currentIndex => _currentIndex;
   int get totalRecords => _records.length;
   bool get isOmit => _omit;
+  bool get isFoundSet => _isFoundSet;
 
   void createNewRecord() => _createNewRecord();
   void deleteCurrentRecord() => _deleteCurrentRecord();
@@ -226,7 +231,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   }
 
   Future<void> _fetchRecords() async {
-    setState(() { _isLoading = true; _error = null; });
+    setState(() { _isLoading = true; _error = null; _isFoundSet = false; });
     try {
       final rows = await widget.apiClient.listRows(widget.table.name);
       if (mounted) {
@@ -290,9 +295,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   Future<void> _performFind() async {
     final criteria = <Map<String, dynamic>>[];
     _findControllers.forEach((fieldName, controller) {
-      final text = controller.text.trim();
+      String text = controller.text.trim();
       if (text.isEmpty) return;
-      if (text.contains('...')) {
+
+      // FileMaker today's date formula: // -> current ISO date
+      final todayStr = DateTime.now().toIso8601String().split('T').first;
+      if (text == '//') {
+        text = todayStr;
+      } else if (text.contains('//')) {
+        text = text.replaceAll('//', todayStr);
+      }
+
+      if (text == '=') {
+        // Find empty field
+        criteria.add({'field_name': fieldName, 'operator': 'IS_EMPTY', 'value': ''});
+      } else if (text == '*') {
+        // Find non-empty field
+        criteria.add({'field_name': fieldName, 'operator': 'IS_NOT_EMPTY', 'value': ''});
+      } else if (text.contains('...')) {
         final parts = text.split('...');
         criteria.add({'field_name': fieldName, 'operator': 'RANGE', 'value': parts[0].trim(), 'value_to': parts[1].trim()});
       } else if (text.startsWith('>=')) {
@@ -303,26 +323,89 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
         criteria.add({'field_name': fieldName, 'operator': '>', 'value': text.substring(1).trim()});
       } else if (text.startsWith('<')) {
         criteria.add({'field_name': fieldName, 'operator': '<', 'value': text.substring(1).trim()});
+      } else if (text.startsWith('!=')) {
+        criteria.add({'field_name': fieldName, 'operator': '!=', 'value': text.substring(2).trim()});
       } else if (text.startsWith('!')) {
         criteria.add({'field_name': fieldName, 'operator': '!=', 'value': text.substring(1).trim()});
+      } else if (text.startsWith('==')) {
+        criteria.add({'field_name': fieldName, 'operator': '==', 'value': text.substring(2).trim()});
       } else if (text.startsWith('=')) {
         criteria.add({'field_name': fieldName, 'operator': '=', 'value': text.substring(1).trim()});
-      } else if (text.contains('*')) {
-        criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': text.replaceAll('*', '%')});
+      } else if (text.contains('*') || text.contains('@') || text.contains('?')) {
+        String wildcard = text.replaceAll('*', '%').replaceAll('@', '_').replaceAll('?', '_');
+        criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': wildcard});
       } else {
         criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': '%$text%'});
       }
     });
 
-    setState(() => _isLoading = true);
+    setState(() { _isLoading = true; _error = null; });
     try {
       final results = await widget.apiClient.executeFind(widget.table.name, [
         {'criteria': criteria, 'omit': _omit}
       ]);
-      if (mounted) {
-        setState(() { _records = results; _currentIndex = 0; _isLoading = false; });
+      if (!mounted) return;
+
+      if (results.isEmpty) {
+        setState(() { _isLoading = false; });
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.search_off_rounded, color: Color(0xFFE53935)),
+                SizedBox(width: 10),
+                Text('No Records Found', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ],
+            ),
+            content: const Text(
+              'No records match the specified find criteria.\n\nYou can modify your search terms or cancel to return to all records.',
+              style: TextStyle(fontSize: 13),
+            ),
+            actions: [
+              OutlinedButton(
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  _fetchRecords();
+                  widget.onModeChanged?.call(OperationalMode.browse);
+                },
+                child: const Text('Show All Records (Cancel)'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Modify Criteria'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        setState(() {
+          _records = results;
+          _currentIndex = 0;
+          _isFoundSet = true;
+          _isLoading = false;
+        });
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
+        widget.onModeChanged?.call(OperationalMode.browse);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.check_circle_outline, color: Colors.white, size: 18),
+                const SizedBox(width: 8),
+                Text('Found ${results.length} record(s) matching criteria'),
+              ],
+            ),
+            backgroundColor: const Color(0xFF2E7D32),
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'Show All',
+              textColor: Colors.white,
+              onPressed: _fetchRecords,
+            ),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
@@ -413,9 +496,40 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
               tooltip: 'Show All Records',
               onPressed: _fetchRecords,
             ),
+            if (_isFoundSet) ...[
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1E88E5).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFF1E88E5).withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.filter_alt, size: 14, color: Color(0xFF1E88E5)),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Found: ${_records.length}',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF1E88E5)),
+                    ),
+                    const SizedBox(width: 6),
+                    InkWell(
+                      onTap: _fetchRecords,
+                      borderRadius: BorderRadius.circular(10),
+                      child: const Tooltip(
+                        message: 'Clear filter and show all records',
+                        child: Icon(Icons.close, size: 14, color: Color(0xFF1E88E5)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ] else if (widget.mode == OperationalMode.find) ...[
             FilledButton.icon(
-              icon: const Icon(Icons.search),
+              icon: const Icon(Icons.search, size: 18),
               label: const Text('Perform Find (Enter)'),
               onPressed: _performFind,
             ),
@@ -425,21 +539,67 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
               selected: _omit,
               onSelected: (val) => setState(() => _omit = val),
             ),
-            const SizedBox(width: 12),
-            OutlinedButton(
+            const SizedBox(width: 8),
+            _buildOperatorsMenu(),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.clear_all, size: 16),
+              label: const Text('Clear Criteria'),
               onPressed: () {
                 for (var c in _findControllers.values) c.clear();
               },
-              child: const Text('Clear Criteria'),
             ),
-            const Spacer(),
-            Text(
-              'Operators: = (exact)  ! (not)  > <  ... (range)  * (wildcard)',
-              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+            const SizedBox(width: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.close, size: 16),
+              label: const Text('Cancel Find'),
+              onPressed: () {
+                widget.onModeChanged?.call(OperationalMode.browse);
+                _fetchRecords();
+              },
             ),
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildOperatorsMenu({String? targetField}) {
+    return PopupMenuButton<String>(
+      tooltip: 'Formulas & Operators Reference',
+      icon: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.functions, size: 16),
+          SizedBox(width: 4),
+          Text('Operators', style: TextStyle(fontSize: 12)),
+          Icon(Icons.arrow_drop_down, size: 16),
+        ],
+      ),
+      onSelected: (op) {
+        final fieldToUse = targetField ?? _lastFocusedFindField ?? (widget.table.columns.isNotEmpty ? widget.table.columns.first.name : null);
+        if (fieldToUse != null) {
+          final ctrl = _findControllers[fieldToUse];
+          if (ctrl != null) {
+            final cur = ctrl.text;
+            ctrl.text = '$cur$op';
+            ctrl.selection = TextSelection.fromPosition(TextPosition(offset: ctrl.text.length));
+          }
+        }
+      },
+      itemBuilder: (ctx) => const [
+        PopupMenuItem(value: '*', child: Text('*  Wildcard (zero or more characters)')),
+        PopupMenuItem(value: '...', child: Text('...  Range (e.g. 10...50 or 2024-01-01...2024-12-31)')),
+        PopupMenuItem(value: '=', child: Text('=  Exact word match (or = alone for empty field)')),
+        PopupMenuItem(value: '==', child: Text('==  Strict entire field match')),
+        PopupMenuItem(value: '!', child: Text('!  Not equal / omit')),
+        PopupMenuItem(value: '>', child: Text('>  Greater than')),
+        PopupMenuItem(value: '<', child: Text('<  Less than')),
+        PopupMenuItem(value: '>=', child: Text('>=  Greater than or equal')),
+        PopupMenuItem(value: '<=', child: Text('<=  Less than or equal')),
+        PopupMenuItem(value: '//', child: Text('//  Today\'s date formula')),
+        PopupMenuItem(value: '@', child: Text('@  Single character wildcard')),
+      ],
     );
   }
 
@@ -610,60 +770,264 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   }
 
   Widget _buildFindModeForm() {
-    return Padding(
-      padding: const EdgeInsets.all(24.0),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 700),
+          constraints: const BoxConstraints(maxWidth: 780),
           child: Card(
-            elevation: 1,
-            color: Colors.amber.withValues(alpha: 0.05),
+            elevation: 1.5,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
+              ),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(24.0),
-              child: ListView.separated(
-                itemCount: widget.table.columns.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 16),
-                itemBuilder: (context, idx) {
-                  final col = widget.table.columns[idx];
-                  final ctrl = _findControllers[col.name];
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Find Mode Header Banner
+                  Container(
+                    padding: const EdgeInsets.all(16.0),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: isDark ? 0.3 : 0.4),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.15),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.manage_search_rounded,
+                            size: 24,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Find Mode — ${widget.table.displayName}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Theme.of(context).colorScheme.onSurface,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'Enter values or formulas in any field to search. Records matching all criteria will be displayed in Browse Mode.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
 
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                  // Quick Operator Helper Chips
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SizedBox(
-                        width: 160,
-                        child: Row(
-                          children: [
-                            const Icon(Icons.search, size: 14, color: Colors.amber),
-                            const SizedBox(width: 4),
-                            Text(col.displayName,
-                                style: const TextStyle(fontWeight: FontWeight.bold)),
-                          ],
+                      Text(
+                        'Quick Operators & Formulas:',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                       ),
-                      Expanded(
-                        child: TextField(
-                          controller: ctrl,
-                          decoration: InputDecoration(
-                            border: const OutlineInputBorder(),
-                            isDense: true,
-                            hintText: 'Search criteria (e.g. >100, John*, 2024...)',
-                            suffixIcon: IconButton(
-                              icon: const Icon(Icons.clear, size: 16),
-                              onPressed: () => ctrl?.clear(),
-                            ),
-                          ),
-                          onSubmitted: (_) => _performFind(),
-                        ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          _buildQuickOpChip('*', 'Wildcard', '*'),
+                          _buildQuickOpChip('...', 'Range', '...'),
+                          _buildQuickOpChip('=', 'Exact', '='),
+                          _buildQuickOpChip('==', 'Strict', '=='),
+                          _buildQuickOpChip('>', 'Greater', '>'),
+                          _buildQuickOpChip('<', 'Less', '<'),
+                          _buildQuickOpChip('//', 'Today', '//'),
+                          _buildQuickOpChip('!', 'Not Equal', '!'),
+                          _buildQuickOpChip('= (empty)', 'Empty Field', '='),
+                          _buildQuickOpChip('* (non-empty)', 'Non-Empty', '*'),
+                        ],
                       ),
                     ],
-                  );
-                },
+                  ),
+                  const SizedBox(height: 20),
+                  const Divider(),
+                  const SizedBox(height: 16),
+
+                  // Field Inputs
+                  ...widget.table.columns.map((col) {
+                    final ctrl = _findControllers[col.name];
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 170,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    col.displayName,
+                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    col.fieldType,
+                                    style: TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(context).colorScheme.outline,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: Focus(
+                              onFocusChange: (hasF) {
+                                if (hasF) _lastFocusedFindField = col.name;
+                              },
+                              child: TextField(
+                                controller: ctrl,
+                                decoration: InputDecoration(
+                                  border: const OutlineInputBorder(),
+                                  isDense: true,
+                                  prefixIcon: Icon(
+                                    Icons.search,
+                                    size: 16,
+                                    color: Theme.of(context).colorScheme.primary,
+                                  ),
+                                  hintText: _findHintForType(col.fieldType),
+                                  suffixIcon: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _buildOperatorsMenu(targetField: col.name),
+                                      if (ctrl != null && ctrl.text.isNotEmpty)
+                                        IconButton(
+                                          icon: const Icon(Icons.clear, size: 16),
+                                          tooltip: 'Clear field',
+                                          onPressed: () {
+                                            ctrl.clear();
+                                            setState(() {});
+                                          },
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                onSubmitted: (_) => _performFind(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+
+                  const SizedBox(height: 8),
+                  const Divider(),
+                  const SizedBox(height: 16),
+
+                  // Bottom Action Buttons
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.close, size: 16),
+                        label: const Text('Cancel Find'),
+                        onPressed: () {
+                          widget.onModeChanged?.call(OperationalMode.browse);
+                          _fetchRecords();
+                        },
+                      ),
+                      const SizedBox(width: 10),
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.clear_all, size: 16),
+                        label: const Text('Clear Criteria'),
+                        onPressed: () {
+                          for (var c in _findControllers.values) c.clear();
+                          setState(() {});
+                        },
+                      ),
+                      const SizedBox(width: 10),
+                      FilledButton.icon(
+                        icon: const Icon(Icons.search, size: 18),
+                        label: const Text('Perform Find (Enter)'),
+                        onPressed: _performFind,
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildQuickOpChip(String label, String tooltip, String insertText) {
+    return ActionChip(
+      visualDensity: VisualDensity.compact,
+      label: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+      tooltip: tooltip,
+      onPressed: () {
+        final field = _lastFocusedFindField ?? (widget.table.columns.isNotEmpty ? widget.table.columns.first.name : null);
+        if (field != null) {
+          final ctrl = _findControllers[field];
+          if (ctrl != null) {
+            final cur = ctrl.text;
+            ctrl.text = '$cur$insertText';
+            ctrl.selection = TextSelection.fromPosition(TextPosition(offset: ctrl.text.length));
+          }
+        }
+      },
+    );
+  }
+
+  String _findHintForType(String fieldType) {
+    switch (fieldType) {
+      case 'NUMBER':
+        return 'e.g. >100, 10...50, 0, = (empty)';
+      case 'DATE':
+      case 'TIMESTAMP':
+        return 'e.g. 2026-09-24, 2024-01-01...2024-12-31, // (today)';
+      default:
+        return 'e.g. Mario*, =Exact, !=Excluded, * (non-empty)';
+    }
   }
 }

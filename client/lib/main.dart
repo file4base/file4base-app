@@ -778,7 +778,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDuplicateRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
-                  onShowAllRecords: () => _dataBrowserKey.currentState?.fetchRecords(),
+                  onShowAllRecords: () {
+                    _changeMode(OperationalMode.browse);
+                    _dataBrowserKey.currentState?.fetchRecords();
+                  },
                   onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
                   isToolbarVisible: _isToolbarVisible,
                   onToggleToolbar: (visible) => setState(() => _isToolbarVisible = visible),
@@ -817,7 +820,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                             _dataBrowserKey.currentState?.toggleOmit(val);
                           },
                           onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
-                          onShowAllRecords: () => _dataBrowserKey.currentState?.fetchRecords(),
+                          onShowAllRecords: () {
+                            _changeMode(OperationalMode.browse);
+                            _dataBrowserKey.currentState?.fetchRecords();
+                          },
                           onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                           onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
                           layoutCount: _activeTableLayouts.isEmpty ? 1 : _activeTableLayouts.length,
@@ -1103,6 +1109,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           table: _selectedTable!,
           apiClient: client,
           mode: mode,
+          onModeChanged: _changeMode,
           onTableModified: _loadTables,
           onRecordChanged: (idx, total) {
             if (mounted) {

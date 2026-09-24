@@ -105,6 +105,31 @@ func TestDataService_CRUDAndFindMode(t *testing.T) {
 	assert.Len(t, findWildcard, 1)
 	assert.Equal(t, "Mario", findWildcard[0]["first_name"])
 
+	// 5b. Find Mode: exact match (=Mario)
+	critExact := data.ParseFile4BaseFindCriteria("first_name", "=Mario")
+	findExact, err := dataSvc.ExecuteFind(ctx, tblName, []data.FindRequest{
+		{Criteria: []data.FindCriterion{critExact}},
+	}, data.QueryOptions{})
+	require.NoError(t, err)
+	assert.Len(t, findExact, 1)
+	assert.Equal(t, "Mario", findExact[0]["first_name"])
+
+	// 5c. Find Mode: comparison (>35)
+	critGreater := data.ParseFile4BaseFindCriteria("age", ">35")
+	findGreater, err := dataSvc.ExecuteFind(ctx, tblName, []data.FindRequest{
+		{Criteria: []data.FindCriterion{critGreater}},
+	}, data.QueryOptions{})
+	require.NoError(t, err)
+	assert.Len(t, findGreater, 1) // age 36
+
+	// 5d. Find Mode: not empty (*)
+	critNotEmpty := data.ParseFile4BaseFindCriteria("first_name", "*")
+	findNotEmpty, err := dataSvc.ExecuteFind(ctx, tblName, []data.FindRequest{
+		{Criteria: []data.FindCriterion{critNotEmpty}},
+	}, data.QueryOptions{})
+	require.NoError(t, err)
+	assert.Len(t, findNotEmpty, 2)
+
 	// 6. Delete row
 	err = dataSvc.DeleteRow(ctx, tblName, r2["id"].(string))
 	require.NoError(t, err)

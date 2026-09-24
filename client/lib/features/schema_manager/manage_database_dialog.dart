@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
+import 'field_options_dialog.dart';
 
 class ManageDatabaseDialog extends ConsumerStatefulWidget {
   const ManageDatabaseDialog({super.key});
@@ -218,6 +219,18 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
         ),
       ),
     );
+  }
+
+  Future<void> _showFieldOptionsDialog(ColumnModel col) async {
+    if (_selectedTable == null) return;
+    final updated = await FieldOptionsDialog.show(
+      context,
+      table: _selectedTable!,
+      column: col,
+    );
+    if (updated != null) {
+      await _loadTables();
+    }
   }
 
   Future<void> _showEditFieldDialog(ColumnModel col) async {
@@ -468,9 +481,20 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   ],
                 ),
                 subtitle: Text('Identifier: ${col.name} • Agnostic Type: ${col.fieldType}'),
+                onTap: () => _showFieldOptionsDialog(col),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.tune, size: 14),
+                      label: const Text('Options...', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: () => _showFieldOptionsDialog(col),
+                    ),
+                    const SizedBox(width: 8),
                     Text(
                       col.isNullable ? 'Nullable' : 'Required',
                       style: TextStyle(fontSize: 12, color: col.isNullable ? Colors.grey : Colors.blue),

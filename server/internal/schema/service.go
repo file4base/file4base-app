@@ -417,15 +417,41 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	return tx.Commit()
 }
 
-// UpdateColumn updates a column's metadata (e.g. display name)
-func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID string, displayName string) (*ColumnMetadata, error) {
+// UpdateColumnOptions contains parameters for updating column metadata
+type UpdateColumnOptions struct {
+	DisplayName        string
+	DefaultValue       *string
+	UpdateDefaultValue bool
+	CalculationFormula *string
+	UpdateCalculation  bool
+	ValidationRules    *string
+	UpdateValidation   bool
+}
+
+// UpdateColumn updates a column's metadata (e.g. display name, options)
+func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID string, opts UpdateColumnOptions) (*ColumnMetadata, error) {
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
-	q := `UPDATE sys_columns SET display_name = $1 WHERE id = $2 AND table_id = $3 RETURNING id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		qUpdate := `UPDATE sys_columns SET display_name = ? WHERE id = ? AND table_id = ?`
-		if _, err := db.ExecContext(ctx, qUpdate, displayName, columnID, tableID); err != nil {
+		sets := []string{"display_name = ?"}
+		args := []interface{}{opts.DisplayName}
+		if opts.UpdateDefaultValue {
+			sets = append(sets, "default_value = ?")
+			args = append(args, opts.DefaultValue)
+		}
+		if opts.UpdateCalculation {
+			sets = append(sets, "calculation_formula = ?")
+			args = append(args, opts.CalculationFormula)
+		}
+		if opts.UpdateValidation {
+			sets = append(sets, "validation_rules = ?")
+			args = append(args, opts.ValidationRules)
+		}
+		args = append(args, columnID, tableID)
+
+		qUpdate := fmt.Sprintf("UPDATE sys_columns SET %s WHERE id = ? AND table_id = ?", strings.Join(sets, ", "))
+		if _, err := db.ExecContext(ctx, qUpdate, args...); err != nil {
 			return nil, err
 		}
 		var col ColumnMetadata
@@ -436,8 +462,31 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 		return &col, nil
 	}
 
+	sets := []string{"display_name = $1"}
+	args := []interface{}{opts.DisplayName}
+	argIdx := 2
+	if opts.UpdateDefaultValue {
+		sets = append(sets, fmt.Sprintf("default_value = $%d", argIdx))
+		args = append(args, opts.DefaultValue)
+		argIdx++
+	}
+	if opts.UpdateCalculation {
+		sets = append(sets, fmt.Sprintf("calculation_formula = $%d", argIdx))
+		args = append(args, opts.CalculationFormula)
+		argIdx++
+	}
+	if opts.UpdateValidation {
+		sets = append(sets, fmt.Sprintf("validation_rules = $%d", argIdx))
+		args = append(args, opts.ValidationRules)
+		argIdx++
+	}
+	args = append(args, columnID, tableID)
+
+	q := fmt.Sprintf(`UPDATE sys_columns SET %s WHERE id = $%d AND table_id = $%d RETURNING id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at`,
+		strings.Join(sets, ", "), argIdx, argIdx+1)
+
 	var col ColumnMetadata
-	if err := db.QueryRowContext(ctx, q, displayName, columnID, tableID).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
+	if err := db.QueryRowContext(ctx, q, args...).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &col, nil
