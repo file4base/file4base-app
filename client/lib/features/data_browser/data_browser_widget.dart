@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
@@ -37,32 +38,137 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
 
   void previousRecord() {
     if (_records.isNotEmpty && _currentIndex > 0) {
-      setState(() => _currentIndex--);
-      widget.onRecordChanged?.call(_currentIndex, _records.length);
+      _saveCurrentRecord().then((_) {
+        if (!mounted) return;
+        setState(() => _currentIndex--);
+        _rebuildFieldControllers();
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
+      });
     }
   }
 
   void nextRecord() {
     if (_records.isNotEmpty && _currentIndex < _records.length - 1) {
-      setState(() => _currentIndex++);
-      widget.onRecordChanged?.call(_currentIndex, _records.length);
+      _saveCurrentRecord().then((_) {
+        if (!mounted) return;
+        setState(() => _currentIndex++);
+        _rebuildFieldControllers();
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
+      });
     }
   }
 
   void goToRecord(int index) {
     if (_records.isNotEmpty && index >= 0 && index < _records.length) {
-      setState(() => _currentIndex = index);
-      widget.onRecordChanged?.call(_currentIndex, _records.length);
+      _saveCurrentRecord().then((_) {
+        if (!mounted) return;
+        setState(() => _currentIndex = index);
+        _rebuildFieldControllers();
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
+      });
     }
   }
 
-  void toggleOmit(bool val) {
-    setState(() => _omit = val);
-  }
+  void toggleOmit(bool val) => setState(() => _omit = val);
 
-  // Find Mode criteria per field
+  // ─── Find mode ────────────────────────────────────────────────────────────
   final Map<String, TextEditingController> _findControllers = {};
   bool _omit = false;
+
+  // ─── Per-field edit state ─────────────────────────────────────────────────
+  final Map<String, TextEditingController> _fieldControllers = {};
+  final Map<String, FocusNode> _fieldFocusNodes = {};
+  final Map<String, Timer?> _fieldDebounceTimers = {};
+  // null = idle/saved, true = saving, false = error
+  final Map<String, bool?> _fieldSaving = {};
+
+  void _rebuildFieldControllers() {
+    for (final c in _fieldControllers.values) c.dispose();
+    for (final f in _fieldFocusNodes.values) f.dispose();
+    for (final t in _fieldDebounceTimers.values) t?.cancel();
+    _fieldControllers.clear();
+    _fieldFocusNodes.clear();
+    _fieldDebounceTimers.clear();
+    _fieldSaving.clear();
+
+    if (_records.isEmpty) return;
+    final record = _records[_currentIndex];
+
+    for (final col in widget.table.columns) {
+      if (col.isPrimaryKey) continue;
+      final val = record[col.name]?.toString() ?? '';
+      final ctrl = TextEditingController(text: val);
+      final fn = FocusNode();
+
+      _fieldControllers[col.name] = ctrl;
+      _fieldFocusNodes[col.name] = fn;
+      _fieldDebounceTimers[col.name] = null;
+      _fieldSaving[col.name] = null;
+
+      fn.addListener(() {
+        if (!fn.hasFocus) {
+          _fieldDebounceTimers[col.name]?.cancel();
+          _saveField(col.name, ctrl.text);
+        }
+      });
+    }
+  }
+
+  void _onFieldChanged(String colName, String newVal) {
+    _fieldDebounceTimers[colName]?.cancel();
+    _fieldDebounceTimers[colName] = Timer(
+      const Duration(milliseconds: 800),
+      () => _saveField(colName, newVal),
+    );
+  }
+
+  Future<void> _saveField(String colName, String newVal) async {
+    if (_records.isEmpty) return;
+    final record = _records[_currentIndex];
+    final id = record['id']?.toString();
+    if (id == null) return;
+
+    _records[_currentIndex][colName] = newVal;
+    if (mounted) setState(() => _fieldSaving[colName] = true);
+    try {
+      await widget.apiClient.updateRow(widget.table.name, id, {colName: newVal});
+      if (mounted) setState(() => _fieldSaving[colName] = null);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _fieldSaving[colName] = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving "${_displayName(colName)}": $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    }
+  }
+
+  String _displayName(String colName) {
+    try {
+      return widget.table.columns.firstWhere((c) => c.name == colName).displayName;
+    } catch (_) {
+      return colName;
+    }
+  }
+
+  Future<void> _saveCurrentRecord() async {
+    for (final col in widget.table.columns) {
+      if (col.isPrimaryKey) continue;
+      final ctrl = _fieldControllers[col.name];
+      if (ctrl == null) continue;
+      _fieldDebounceTimers[col.name]?.cancel();
+      final cached = _records.isNotEmpty
+          ? (_records[_currentIndex][col.name]?.toString() ?? '')
+          : '';
+      if (ctrl.text != cached) {
+        await _saveField(col.name, ctrl.text);
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -89,35 +195,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
 
   @override
   void dispose() {
-    for (var ctrl in _findControllers.values) {
-      ctrl.dispose();
-    }
+    for (var c in _findControllers.values) c.dispose();
+    for (var c in _fieldControllers.values) c.dispose();
+    for (var f in _fieldFocusNodes.values) f.dispose();
+    for (var t in _fieldDebounceTimers.values) t?.cancel();
     super.dispose();
   }
 
   Future<void> _fetchRecords() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
+    setState(() { _isLoading = true; _error = null; });
     try {
       final rows = await widget.apiClient.listRows(widget.table.name);
       if (mounted) {
-        setState(() {
-          _records = rows;
-          _currentIndex = rows.isNotEmpty ? 0 : 0;
-          _isLoading = false;
-        });
+        setState(() { _records = rows; _currentIndex = 0; _isLoading = false; });
+        _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
     }
   }
 
@@ -126,20 +221,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
       final newRecord = <String, dynamic>{};
       for (var col in widget.table.columns) {
         if (!col.isPrimaryKey) {
-          if (col.fieldType == 'NUMBER') {
-            newRecord[col.name] = 0;
-          } else if (col.fieldType == 'BOOLEAN') {
-            newRecord[col.name] = false;
-          } else {
-            newRecord[col.name] = '';
-          }
+          newRecord[col.name] = col.fieldType == 'NUMBER' ? 0
+              : col.fieldType == 'BOOLEAN' ? false : '';
         }
       }
-
       await widget.apiClient.insertRow(widget.table.name, newRecord);
       await _fetchRecords();
       if (_records.isNotEmpty) {
         setState(() => _currentIndex = _records.length - 1);
+        _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
       }
     } catch (e) {
@@ -153,10 +243,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
 
   Future<void> _deleteCurrentRecord() async {
     if (_records.isEmpty) return;
-    final rec = _records[_currentIndex];
-    final id = rec['id']?.toString();
+    final id = _records[_currentIndex]['id']?.toString();
     if (id == null) return;
-
     try {
       await widget.apiClient.deleteRow(widget.table.name, id);
       await _fetchRecords();
@@ -173,33 +261,26 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     final criteria = <Map<String, dynamic>>[];
     _findControllers.forEach((fieldName, controller) {
       final text = controller.text.trim();
-      if (text.isNotEmpty) {
-        // Parse operators
-        if (text.contains('...')) {
-          final parts = text.split('...');
-          criteria.add({
-            'field_name': fieldName,
-            'operator': 'RANGE',
-            'value': parts[0].trim(),
-            'value_to': parts[1].trim(),
-          });
-        } else if (text.startsWith('>=')) {
-          criteria.add({'field_name': fieldName, 'operator': '>=', 'value': text.substring(2).trim()});
-        } else if (text.startsWith('<=')) {
-          criteria.add({'field_name': fieldName, 'operator': '<=', 'value': text.substring(2).trim()});
-        } else if (text.startsWith('>')) {
-          criteria.add({'field_name': fieldName, 'operator': '>', 'value': text.substring(1).trim()});
-        } else if (text.startsWith('<')) {
-          criteria.add({'field_name': fieldName, 'operator': '<', 'value': text.substring(1).trim()});
-        } else if (text.startsWith('!')) {
-          criteria.add({'field_name': fieldName, 'operator': '!=', 'value': text.substring(1).trim()});
-        } else if (text.startsWith('=')) {
-          criteria.add({'field_name': fieldName, 'operator': '=', 'value': text.substring(1).trim()});
-        } else if (text.contains('*')) {
-          criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': text.replaceAll('*', '%')});
-        } else {
-          criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': '%$text%'});
-        }
+      if (text.isEmpty) return;
+      if (text.contains('...')) {
+        final parts = text.split('...');
+        criteria.add({'field_name': fieldName, 'operator': 'RANGE', 'value': parts[0].trim(), 'value_to': parts[1].trim()});
+      } else if (text.startsWith('>=')) {
+        criteria.add({'field_name': fieldName, 'operator': '>=', 'value': text.substring(2).trim()});
+      } else if (text.startsWith('<=')) {
+        criteria.add({'field_name': fieldName, 'operator': '<=', 'value': text.substring(2).trim()});
+      } else if (text.startsWith('>')) {
+        criteria.add({'field_name': fieldName, 'operator': '>', 'value': text.substring(1).trim()});
+      } else if (text.startsWith('<')) {
+        criteria.add({'field_name': fieldName, 'operator': '<', 'value': text.substring(1).trim()});
+      } else if (text.startsWith('!')) {
+        criteria.add({'field_name': fieldName, 'operator': '!=', 'value': text.substring(1).trim()});
+      } else if (text.startsWith('=')) {
+        criteria.add({'field_name': fieldName, 'operator': '=', 'value': text.substring(1).trim()});
+      } else if (text.contains('*')) {
+        criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': text.replaceAll('*', '%')});
+      } else {
+        criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': '%$text%'});
       }
     });
 
@@ -209,20 +290,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
         {'criteria': criteria, 'omit': _omit}
       ]);
       if (mounted) {
-        setState(() {
-          _records = results;
-          _currentIndex = 0;
-          _isLoading = false;
-        });
+        setState(() { _records = results; _currentIndex = 0; _isLoading = false; });
+        _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString();
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
     }
   }
 
@@ -230,7 +303,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Navigation Toolbar (Browse & Find commands)
         _buildRecordToolbar(),
         const Divider(height: 1),
         Expanded(
@@ -251,7 +323,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   Widget _buildRecordToolbar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.5),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       child: Row(
         children: [
           if (widget.mode == OperationalMode.browse) ...[
@@ -259,34 +331,38 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
               icon: const Icon(Icons.first_page),
               tooltip: 'First Record',
               onPressed: _records.isNotEmpty && _currentIndex > 0
-                  ? () => setState(() => _currentIndex = 0)
+                  ? () => _saveCurrentRecord().then((_) {
+                        if (!mounted) return;
+                        setState(() => _currentIndex = 0);
+                        _rebuildFieldControllers();
+                        widget.onRecordChanged?.call(_currentIndex, _records.length);
+                      })
                   : null,
             ),
             IconButton(
               icon: const Icon(Icons.navigate_before),
               tooltip: 'Previous Record',
-              onPressed: _records.isNotEmpty && _currentIndex > 0
-                  ? () => setState(() => _currentIndex--)
-                  : null,
+              onPressed: _records.isNotEmpty && _currentIndex > 0 ? previousRecord : null,
             ),
             Text(
-              _records.isNotEmpty
-                  ? '${_currentIndex + 1} of ${_records.length}'
-                  : '0 of 0',
+              _records.isNotEmpty ? '${_currentIndex + 1} of ${_records.length}' : '0 of 0',
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
             ),
             IconButton(
               icon: const Icon(Icons.navigate_next),
               tooltip: 'Next Record',
-              onPressed: _records.isNotEmpty && _currentIndex < _records.length - 1
-                  ? () => setState(() => _currentIndex++)
-                  : null,
+              onPressed: _records.isNotEmpty && _currentIndex < _records.length - 1 ? nextRecord : null,
             ),
             IconButton(
               icon: const Icon(Icons.last_page),
               tooltip: 'Last Record',
               onPressed: _records.isNotEmpty && _currentIndex < _records.length - 1
-                  ? () => setState(() => _currentIndex = _records.length - 1)
+                  ? () => _saveCurrentRecord().then((_) {
+                        if (!mounted) return;
+                        setState(() => _currentIndex = _records.length - 1);
+                        _rebuildFieldControllers();
+                        widget.onRecordChanged?.call(_currentIndex, _records.length);
+                      })
                   : null,
             ),
             const SizedBox(width: 16),
@@ -322,9 +398,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
             const SizedBox(width: 12),
             OutlinedButton(
               onPressed: () {
-                for (var c in _findControllers.values) {
-                  c.clear();
-                }
+                for (var c in _findControllers.values) c.clear();
               },
               child: const Text('Clear Criteria'),
             ),
@@ -375,48 +449,75 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
                 separatorBuilder: (_, __) => const SizedBox(height: 16),
                 itemBuilder: (context, idx) {
                   final col = widget.table.columns[idx];
-                  final val = record[col.name]?.toString() ?? '';
+
+                  if (col.isPrimaryKey) {
+                    return Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 160,
+                          child: Text(col.displayName,
+                              style: const TextStyle(fontWeight: FontWeight.bold)),
+                        ),
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: record[col.name]?.toString() ?? '',
+                            readOnly: true,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                              suffixIcon: Tooltip(
+                                message: 'Primary Key',
+                                child: Icon(Icons.key, size: 16),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+
+                  final ctrl = _fieldControllers[col.name];
+                  final fn = _fieldFocusNodes[col.name];
+                  final saving = _fieldSaving[col.name];
 
                   return Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       SizedBox(
                         width: 160,
-                        child: Text(
-                          col.displayName,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
+                        child: Text(col.displayName,
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
                       ),
                       Expanded(
-                        child: TextFormField(
-                          initialValue: val,
-                          readOnly: col.isPrimaryKey,
+                        child: TextField(
+                          controller: ctrl,
+                          focusNode: fn,
                           decoration: InputDecoration(
                             border: const OutlineInputBorder(),
                             isDense: true,
-                            suffixIcon: col.isPrimaryKey
-                                ? const Tooltip(
-                                    message: 'Primary Key',
-                                    child: Icon(Icons.key, size: 16),
+                            suffixIcon: saving == true
+                                ? const Padding(
+                                    padding: EdgeInsets.all(10),
+                                    child: SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                                    ),
                                   )
-                                : null,
+                                : saving == false
+                                    ? const Tooltip(
+                                        message: 'Save error — check connection',
+                                        child: Icon(Icons.error_outline,
+                                            size: 16, color: Colors.red),
+                                      )
+                                    : null,
                           ),
-                          onFieldSubmitted: (newVal) async {
-                            if (col.isPrimaryKey) return;
-                            try {
-                              await widget.apiClient.updateRow(
-                                widget.table.name,
-                                record['id'].toString(),
-                                {col.name: newVal},
-                              );
-                              await _fetchRecords();
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text('Error updating: $e')),
-                                );
-                              }
-                            }
+                          onChanged: (v) => _onFieldChanged(col.name, v),
+                          onEditingComplete: () {
+                            _fieldDebounceTimers[col.name]?.cancel();
+                            _saveField(col.name, ctrl?.text ?? '');
+                            fn?.nextFocus();
                           },
                         ),
                       ),
@@ -439,7 +540,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
           constraints: const BoxConstraints(maxWidth: 700),
           child: Card(
             elevation: 1,
-            color: Colors.amber.withOpacity(0.05),
+            color: Colors.amber.withValues(alpha: 0.05),
             child: Padding(
               padding: const EdgeInsets.all(24.0),
               child: ListView.separated(
@@ -458,10 +559,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
                           children: [
                             const Icon(Icons.search, size: 14, color: Colors.amber),
                             const SizedBox(width: 4),
-                            Text(
-                              col.displayName,
-                              style: const TextStyle(fontWeight: FontWeight.bold),
-                            ),
+                            Text(col.displayName,
+                                style: const TextStyle(fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
