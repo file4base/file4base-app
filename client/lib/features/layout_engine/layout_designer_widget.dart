@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/api/api_client.dart';
@@ -36,6 +37,52 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // Track if layout was ever persisted (has a server ID)
   bool _isPersisted = false;
 
+  // ─── Auto-save debounce ───────────────────────────────────────────────────
+  Timer? _autoSaveTimer;
+  _LayoutSaveStatus _autoSaveStatus = _LayoutSaveStatus.idle;
+  static const _autoSaveDelay = Duration(milliseconds: 1500);
+
+  /// Mark the layout as having unsaved changes and schedule a debounced save.
+  void _markLayoutDirty() {
+    _autoSaveTimer?.cancel();
+    setState(() => _autoSaveStatus = _LayoutSaveStatus.dirty);
+    _autoSaveTimer = Timer(_autoSaveDelay, _performAutoSave);
+  }
+
+  /// Silent background save to the API — does NOT show a success snackbar.
+  Future<void> _performAutoSave() async {
+    if (_isSaving) return; // explicit save in progress — skip
+    setState(() => _autoSaveStatus = _LayoutSaveStatus.saving);
+    try {
+      final newName = _nameCtrl.text.trim().isEmpty ? _layout.name : _nameCtrl.text.trim();
+      _layout = _layout.copyWith(name: newName);
+
+      if (_isPersisted) {
+        await widget.apiClient.updateLayout(
+          _layout.id,
+          _layout.name,
+          _layout.toJson(),
+        );
+      } else {
+        final created = await widget.apiClient.createLayout(
+          _layout.name,
+          toId: widget.table.id,
+          definition: _layout.toJson(),
+        );
+        _layout = _layout.copyWith(id: created.id);
+        _isPersisted = true;
+      }
+
+      if (mounted) {
+        setState(() => _autoSaveStatus = _LayoutSaveStatus.saved);
+        widget.onAutoSaveDirty?.call();
+      }
+    } catch (_) {
+      if (mounted) setState(() => _autoSaveStatus = _LayoutSaveStatus.error);
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Name editing
   late TextEditingController _nameCtrl;
   bool _isEditingName = false;
@@ -66,6 +113,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   @override
   void dispose() {
+    _autoSaveTimer?.cancel();
     _nameCtrl.dispose();
     super.dispose();
   }
@@ -182,6 +230,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       _layout = _layout.copyWith(objects: [..._layout.objects, newObj]);
       _selectedObjectId = newId;
     });
+    _markLayoutDirty();
   }
 
   void _deleteSelectedObject() {
@@ -192,6 +241,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       );
       _selectedObjectId = null;
     });
+    _markLayoutDirty();
   }
 
   // ─── Save: Create (POST) first time, Update (PUT) thereafter ───────────────
@@ -230,6 +280,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         widget.onSaved();
         // Notify parent to trigger auto-save of the .f4p solution file
         widget.onAutoSaveDirty?.call();
+        if (mounted) setState(() => _autoSaveStatus = _LayoutSaveStatus.saved);
       }
     } catch (e) {
       if (mounted) {
@@ -355,7 +406,11 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ),
           const SizedBox(width: 12),
 
-          // Save button
+          // Auto-save status dot
+          _buildAutoSaveIndicator(),
+          const SizedBox(width: 12),
+
+          // Save button (explicit)
           FilledButton.icon(
             icon: _isSaving
                 ? const SizedBox(
@@ -543,6 +598,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         onPanEnd: (_) {
           _dragStart.remove(obj.id);
           _objStartPos.remove(obj.id);
+          // Position changed — auto-save
+          _markLayoutDirty();
         },
 
         child: Stack(
@@ -936,6 +993,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       _layout = _layout.copyWith(objects: [..._layout.objects, newObj]);
       _selectedObjectId = newId;
     });
+    _markLayoutDirty();
   }
 
   void _updateSelected(LayoutObjectModel updated) {
@@ -946,8 +1004,49 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             .toList(),
       );
     });
+    _markLayoutDirty();
+  }
+
+  /// Toolbar widget showing auto-save status.
+  Widget _buildAutoSaveIndicator() {
+    final (color, icon, tip) = switch (_autoSaveStatus) {
+      _LayoutSaveStatus.saving => (Colors.blue,   Icons.sync,                 'Saving layout...'),
+      _LayoutSaveStatus.saved  => (Colors.green,  Icons.cloud_done_outlined,  'Layout auto-saved'),
+      _LayoutSaveStatus.dirty  => (Colors.orange, Icons.edit_note_outlined,   'Unsaved changes'),
+      _LayoutSaveStatus.error  => (Colors.red,    Icons.cloud_off_outlined,   'Auto-save failed — click Save Layout'),
+      _LayoutSaveStatus.idle   => (Colors.grey,   Icons.cloud_done_outlined,  'Layout saved'),
+    };
+    return Tooltip(
+      message: tip,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_autoSaveStatus == _LayoutSaveStatus.saving)
+            const SizedBox(
+              width: 12, height: 12,
+              child: CircularProgressIndicator(strokeWidth: 1.5, color: Colors.blue),
+            )
+          else
+            Icon(icon, size: 14, color: color),
+          const SizedBox(width: 4),
+          Text(
+            switch (_autoSaveStatus) {
+              _LayoutSaveStatus.saving => 'Saving...',
+              _LayoutSaveStatus.saved  => 'Saved',
+              _LayoutSaveStatus.dirty  => 'Unsaved',
+              _LayoutSaveStatus.error  => 'Error',
+              _LayoutSaveStatus.idle   => 'Auto-save',
+            },
+            style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
   }
 }
+
+// ─── Auto-save status enum ────────────────────────────────────────────────────
+enum _LayoutSaveStatus { idle, dirty, saving, saved, error }
 
 // ─── Painters ─────────────────────────────────────────────────────────────────
 
