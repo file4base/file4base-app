@@ -9,7 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.10] - 2026-09-24
+## [0.4.11] - 2026-09-24
+
+### Added
+- **Database-Scoped Manage Security Dialog (`Manage > Security` / Gestionar seguridad)**:
+  - Redesigned `ManageSecurityDialog` (`client/lib/features/security/manage_security_dialog.dart`) into a comprehensive FileMaker Pro style table/list interface scoped to the active database:
+    - **Header & Scope**: Active database badge indicator (`file4base_dev` / custom database), metric badges (Total accounts, Active, Inactive).
+    - **Sequential Indexing (`#`)**: 1-based sequential number per row for clear tabular identification.
+    - **Interactive Account Activation Toggle**: Direct Switch control to activate or deactivate accounts in real-time (`is_active` column in PostgreSQL `sys_users` table), with safety protections preventing self-deactivation and deactivating the last active Owner account.
+    - **Account Name & Identity**: User avatar with initial, username, current active session badge (`(Tú / Activa)`), and creation date tooltip.
+    - **Privilege Sets (Conjuntos de privilegios)**: Formatted, color-coded role badges:
+      - `[Acceso total] Owner`: Full administrative and schema control.
+      - `[Entrada datos y diseño] Admin`: Layout designer and data entry permissions.
+      - `[Acceso restringido] User`: Restricted access controlled by layout-level permissions.
+    - **Per-Row Action Icon Buttons**:
+      - 🔑 **Cambiar contraseña**: Fast modal dialog to update account password.
+      - ✏️ **Editar cuenta y privilegios**: Full account configuration dialog with role selector, active status switch, and per-layout permissions matrix (Read & Write / Read Only / No Access).
+      - 📋 **Duplicar cuenta**: Clone existing account with `_copia` suffix, pre-copying role and all layout permissions.
+      - 🗑️ **Eliminar cuenta**: Permanent deletion with confirmation dialog, protected against deleting self or the sole Owner.
+    - **Search & Filter Toolbar**: Instant search bar filtering by username or privilege role, plus status filter chips (`Todas`, `Activas`, `Inactivas`).
+    - **Layout Privileges Matrix Tab («Privilegios de presentaciones»)**: Solution-wide layout audit view inspecting user access levels across each layout in the database.
+    - **Extended Privileges Tab («Privilegios ampliados»)**: FileMaker-style network and protocol privileges configuration (`fmapp`, `fmwebdirect`, `fmrest`, `fmexport`) per privilege set.
+
+### Changed
+- **Backend Schema & Security Service**:
+  - Added `is_active BOOLEAN NOT NULL DEFAULT TRUE` column to `sys_users` table and migration in `server/internal/schema/service.go`.
+  - Updated `Authenticate`, `ListUsers`, `CreateUser`, and `UpdateUser` in `server/internal/schema/security_service.go` to enforce account activation status and reject deactivated accounts with `user account is deactivated`.
+  - Updated REST API endpoint `/api/v1/security/users` (`server/internal/api/security_handler.go`) to accept `is_active` in user creation and update requests.
+- **Frontend ApiClient & Models**:
+  - Added `isActive` property to `UserModel` with `copyWith`, `toJson`, and updated `fromJson`.
+  - Added `isActive` parameter to `ApiClient.createUser` and `ApiClient.updateUser`.
+
 
 ### Removed
 - **"Send Mail..." File Menu Item**:

@@ -242,6 +242,7 @@ class File4BaseMenuBar extends StatelessWidget {
             MenuItemButton(
               onPressed: onManageSecurity ??
                   () => _showRoadmapDialog(context, 'Manage Security', 'Roadmap Phase 8', 'User accounts, privilege sets, and extended access rules.'),
+              shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
               child: const Text('Security...'),
             ),
             MenuItemButton(

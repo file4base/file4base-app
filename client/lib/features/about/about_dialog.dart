@@ -21,7 +21,7 @@ class _AboutFile4BaseDialogState extends State<AboutFile4BaseDialog>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  static const String _version = '0.4.10';
+  static const String _version = '0.4.11';
 
   @override
   void initState() {

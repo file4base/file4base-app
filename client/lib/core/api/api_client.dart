@@ -288,6 +288,7 @@ class UserModel {
   final String id;
   final String username;
   final String role; // 'owner', 'admin', 'user'
+  final bool isActive;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final List<UserLayoutPermissionModel> permissions;
@@ -296,6 +297,7 @@ class UserModel {
     required this.id,
     required this.username,
     required this.role,
+    this.isActive = true,
     this.createdAt,
     this.updatedAt,
     this.permissions = const [],
@@ -303,6 +305,26 @@ class UserModel {
 
   bool get isOwner => role == 'owner';
   bool get isAdmin => role == 'admin' || role == 'owner';
+
+  UserModel copyWith({
+    String? id,
+    String? username,
+    String? role,
+    bool? isActive,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    List<UserLayoutPermissionModel>? permissions,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      role: role ?? this.role,
+      isActive: isActive ?? this.isActive,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      permissions: permissions ?? this.permissions,
+    );
+  }
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
     var rawPerms = json['permissions'];
@@ -315,11 +337,22 @@ class UserModel {
       id: json['id'] as String? ?? '',
       username: json['username'] as String? ?? '',
       role: json['role'] as String? ?? 'user',
+      isActive: json['is_active'] as bool? ?? true,
       createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
       updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
       permissions: perms,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'username': username,
+    'role': role,
+    'is_active': isActive,
+    if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
+    if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
+    'permissions': permissions.map((p) => p.toJson()).toList(),
+  };
 }
 
 class AuthResult {
@@ -761,6 +794,7 @@ class ApiClient {
     required String username,
     required String password,
     required String role,
+    bool isActive = true,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/security/users'),
@@ -769,6 +803,7 @@ class ApiClient {
         'username': username,
         'password': password,
         'role': role,
+        'is_active': isActive,
       }),
     );
     _checkResponse(response);
@@ -779,10 +814,14 @@ class ApiClient {
     String id, {
     String? password,
     required String role,
+    bool? isActive,
   }) async {
     final Map<String, dynamic> body = {'role': role};
     if (password != null && password.isNotEmpty) {
       body['password'] = password;
+    }
+    if (isActive != null) {
+      body['is_active'] = isActive;
     }
 
     final response = await _httpClient.put(

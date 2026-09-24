@@ -1085,7 +1085,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       return;
                     }
                     final client = ref.read(apiClientProvider);
-                    await ManageSecurityDialog.show(context, client, _currentUser!);
+                    await ManageSecurityDialog.show(
+                      context,
+                      client,
+                      _currentUser!,
+                      databaseName: _activeDatabaseName,
+                    );
                     await _loadUserPermissions();
                     await _loadTables();
                   },

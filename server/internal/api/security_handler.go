@@ -95,6 +95,7 @@ type CreateUserRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Role     string `json:"role"`
+	IsActive *bool  `json:"is_active,omitempty"`
 }
 
 func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +105,13 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.schemaSvc.CreateUser(r.Context(), req.Username, req.Password, req.Role)
+	var user *schema.UserMetadata
+	var err error
+	if req.IsActive != nil {
+		user, err = h.schemaSvc.CreateUser(r.Context(), req.Username, req.Password, req.Role, *req.IsActive)
+	} else {
+		user, err = h.schemaSvc.CreateUser(r.Context(), req.Username, req.Password, req.Role)
+	}
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Creation Error", err.Error())
 		return
@@ -118,6 +125,7 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 type UpdateUserRequest struct {
 	Password string `json:"password,omitempty"`
 	Role     string `json:"role"`
+	IsActive *bool  `json:"is_active,omitempty"`
 }
 
 func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +136,7 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.schemaSvc.UpdateUser(r.Context(), id, req.Password, req.Role); err != nil {
+	if err := h.schemaSvc.UpdateUser(r.Context(), id, req.Password, req.Role, req.IsActive); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Update Error", err.Error())
 		return
 	}

@@ -174,7 +174,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
         return;
       }
 
-      if (mounted && auth != null) {
+      if (mounted) {
         final authWithSolution = auth.copyWith(
           fileName: picked.name,
           solutionName: pkg.solutionName,
