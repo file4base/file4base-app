@@ -8,6 +8,12 @@ class PlatformDirectoryResult {
   const PlatformDirectoryResult({required this.displayName, required this.handleOrPath});
 }
 
+class PlatformFileResult {
+  final String name;
+  final Uint8List bytes;
+  const PlatformFileResult({required this.name, required this.bytes});
+}
+
 void triggerBrowserDownload(Uint8List bytes, String filename) {
   // Desktop target stub - handled via file picker/local disk writing
 }
@@ -19,6 +25,19 @@ Future<PlatformDirectoryResult?> platformPickDirectory() async {
   if (path == null || path.isEmpty) return null;
   final name = path.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).lastOrNull ?? path;
   return PlatformDirectoryResult(displayName: name, handleOrPath: path);
+}
+
+Future<PlatformFileResult?> platformPickFile({
+  List<String> allowedExtensions = const ['f4p', 'f4b', 'f4data', 'msgpack'],
+}) async {
+  final files = await FilePicker.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: allowedExtensions,
+  );
+  if (files.isEmpty) return null;
+  final file = files.first;
+  final bytes = await file.xFile.readAsBytes();
+  return PlatformFileResult(name: file.name, bytes: bytes);
 }
 
 Future<bool> platformSaveFilesToDirectory({

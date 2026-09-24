@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:typed_data';
@@ -9,6 +10,12 @@ class PlatformDirectoryResult {
   const PlatformDirectoryResult({required this.displayName, required this.handleOrPath});
 }
 
+class PlatformFileResult {
+  final String name;
+  final Uint8List bytes;
+  const PlatformFileResult({required this.name, required this.bytes});
+}
+
 void triggerBrowserDownload(Uint8List bytes, String filename) {
   final blob = web.Blob([bytes.toJS].toJS);
   final url = web.URL.createObjectURL(blob);
@@ -17,6 +24,88 @@ void triggerBrowserDownload(Uint8List bytes, String filename) {
   anchor.download = filename;
   anchor.click();
   web.URL.revokeObjectURL(url);
+}
+
+Future<PlatformFileResult?> platformPickFile({
+  List<String> allowedExtensions = const ['f4p', 'f4b', 'f4data', 'msgpack'],
+}) async {
+  final completer = Completer<PlatformFileResult?>();
+
+  final input = web.document.createElement('input') as web.HTMLInputElement;
+  input.type = 'file';
+  if (allowedExtensions.isNotEmpty) {
+    input.accept = allowedExtensions.map((e) => '.$e').join(',');
+  }
+  input.style.display = 'none';
+
+  web.document.body?.append(input);
+
+  void cleanup() {
+    input.remove();
+  }
+
+  input.addEventListener(
+    'change',
+    ((web.Event event) {
+      final files = input.files;
+      if (files == null || files.length == 0) {
+        cleanup();
+        if (!completer.isCompleted) completer.complete(null);
+        return;
+      }
+
+      final file = files.item(0);
+      if (file == null) {
+        cleanup();
+        if (!completer.isCompleted) completer.complete(null);
+        return;
+      }
+
+      final reader = web.FileReader();
+      reader.addEventListener(
+        'load',
+        ((web.Event _) {
+          try {
+            final arrayBuffer = reader.result as JSArrayBuffer;
+            final bytes = arrayBuffer.toDart.asUint8List();
+            cleanup();
+            if (!completer.isCompleted) {
+              completer.complete(PlatformFileResult(name: file.name, bytes: bytes));
+            }
+          } catch (e) {
+            cleanup();
+            if (!completer.isCompleted) {
+              completer.completeError('Failed to read file bytes: $e');
+            }
+          }
+        }).toJS,
+      );
+
+      reader.addEventListener(
+        'error',
+        ((web.Event _) {
+          cleanup();
+          if (!completer.isCompleted) {
+            completer.completeError('Error reading file from disk');
+          }
+        }).toJS,
+      );
+
+      reader.readAsArrayBuffer(file);
+    }).toJS,
+  );
+
+  input.addEventListener(
+    'cancel',
+    ((web.Event _) {
+      cleanup();
+      if (!completer.isCompleted) completer.complete(null);
+    }).toJS,
+  );
+
+  input.click();
+
+  return completer.future;
 }
 
 Future<PlatformDirectoryResult?> platformPickDirectory() async {

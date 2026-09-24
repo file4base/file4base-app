@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-09-24
+
+### Fixed
+- **Web File Picker in Open Solution Dialog**:
+  - Implemented `platformPickFile()` in `client/lib/core/services/solution_storage_web.dart` using standard HTML5 file chooser (`<input type="file">` and `FileReader`).
+  - Replaced unsupported `FilePicker.pickFiles` call on Web which previously threw `UnimplementedError` when trying to browse and select `.f4p` / `.f4b` files from disk.
+  - Seamless file picking across macOS Finder, Windows Explorer, and Linux file managers via browser file dialog.
+
 ## [0.4.4] - 2026-09-24
 
 ### Added

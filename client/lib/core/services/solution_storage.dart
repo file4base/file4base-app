@@ -114,20 +114,13 @@ class SolutionStorageService {
   }
 
   /// Prompts the user to pick a solution file (.f4p new, .f4b legacy) or data file (.f4data).
+  /// On Desktop, uses native OS file picker.
+  /// On Web, uses HTML5 file chooser without throwing UnimplementedError.
   static Future<PickedSolutionFile?> pickFile({
     List<String> allowedExtensions = const ['f4p', 'f4b', 'f4data', 'msgpack'],
   }) async {
-    final files = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: allowedExtensions,
-    );
-
-    if (files.isEmpty) {
-      return null;
-    }
-
-    final file = files.first;
-    final bytes = await file.xFile.readAsBytes();
-    return PickedSolutionFile(name: file.name, bytes: bytes);
+    final res = await platformPickFile(allowedExtensions: allowedExtensions);
+    if (res == null) return null;
+    return PickedSolutionFile(name: res.name, bytes: res.bytes);
   }
 }
