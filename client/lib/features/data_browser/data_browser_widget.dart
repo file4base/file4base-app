@@ -8,6 +8,7 @@ class DataBrowserWidget extends StatefulWidget {
   final ApiClient apiClient;
   final OperationalMode mode;
   final void Function(int currentIndex, int totalRecords)? onRecordChanged;
+  final VoidCallback? onTableModified;
 
   const DataBrowserWidget({
     super.key,
@@ -15,6 +16,7 @@ class DataBrowserWidget extends StatefulWidget {
     required this.apiClient,
     required this.mode,
     this.onRecordChanged,
+    this.onTableModified,
   });
 
   @override
@@ -180,10 +182,23 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   @override
   void didUpdateWidget(covariant DataBrowserWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.table.id != widget.table.id) {
+    final columnsChanged = oldWidget.table.columns.length != widget.table.columns.length ||
+        !_sameColumns(oldWidget.table.columns, widget.table.columns);
+    if (oldWidget.table.id != widget.table.id || columnsChanged) {
       _initFindControllers();
+      _rebuildFieldControllers();
       _fetchRecords();
     }
+  }
+
+  bool _sameColumns(List<ColumnModel> a, List<ColumnModel> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id || a[i].displayName != b[i].displayName || a[i].name != b[i].name) {
+        return false;
+      }
+    }
+    return true;
   }
 
   void _initFindControllers() {
@@ -195,10 +210,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
 
   @override
   void dispose() {
-    for (var c in _findControllers.values) c.dispose();
-    for (var c in _fieldControllers.values) c.dispose();
-    for (var f in _fieldFocusNodes.values) f.dispose();
-    for (var t in _fieldDebounceTimers.values) t?.cancel();
+    for (var c in _findControllers.values) {
+      c.dispose();
+    }
+    for (var c in _fieldControllers.values) {
+      c.dispose();
+    }
+    for (var f in _fieldFocusNodes.values) {
+      f.dispose();
+    }
+    for (var t in _fieldDebounceTimers.values) {
+      t?.cancel();
+    }
     super.dispose();
   }
 
@@ -217,12 +240,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
   }
 
   Future<void> _createNewRecord() async {
+    await _saveCurrentRecord();
     try {
       final newRecord = <String, dynamic>{};
       for (var col in widget.table.columns) {
         if (!col.isPrimaryKey) {
-          newRecord[col.name] = col.fieldType == 'NUMBER' ? 0
-              : col.fieldType == 'BOOLEAN' ? false : '';
+          newRecord[col.name] = col.fieldType == 'NUMBER'
+              ? 0
+              : col.fieldType == 'BOOLEAN'
+                  ? false
+                  : '';
         }
       }
       await widget.apiClient.insertRow(widget.table.name, newRecord);
@@ -235,7 +262,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error creating record: $e')),
+          SnackBar(content: Text('Error creating record: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -243,6 +270,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
 
   Future<void> _deleteCurrentRecord() async {
     if (_records.isEmpty) return;
+    for (final t in _fieldDebounceTimers.values) {
+      t?.cancel();
+    }
     final id = _records[_currentIndex]['id']?.toString();
     if (id == null) return;
     try {
@@ -251,7 +281,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting record: $e')),
+          SnackBar(content: Text('Error deleting record: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -432,6 +462,181 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
     );
   }
 
+  Future<void> _showAddFieldDialog() async {
+    final nameCtrl = TextEditingController();
+    final dispCtrl = TextEditingController();
+    String selectedType = 'TEXT';
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('New Field for "${widget.table.displayName}"'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: dispCtrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Field Label (e.g. Phone Number)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (val) {
+                  if (nameCtrl.text.isEmpty ||
+                      nameCtrl.text == val.toLowerCase().replaceAll(' ', '_')) {
+                    nameCtrl.text = val.toLowerCase().replaceAll(' ', '_');
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Column Identifier (e.g. phone_number)',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: selectedType,
+                decoration: const InputDecoration(
+                  labelText: 'Field Type',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'TEXT', child: Text('Text')),
+                  DropdownMenuItem(value: 'NUMBER', child: Text('Number')),
+                  DropdownMenuItem(value: 'DATE', child: Text('Date')),
+                  DropdownMenuItem(value: 'TIMESTAMP', child: Text('Timestamp')),
+                  DropdownMenuItem(value: 'BOOLEAN', child: Text('Boolean')),
+                ],
+                onChanged: (val) {
+                  if (val != null) {
+                    setDialogState(() => selectedType = val);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                final disp = dispCtrl.text.trim();
+                if (name.isEmpty || disp.isEmpty) return;
+                Navigator.pop(ctx);
+                try {
+                  await widget.apiClient.addColumn(
+                    widget.table.id,
+                    name: name,
+                    displayName: disp,
+                    fieldType: selectedType,
+                  );
+                  widget.onTableModified?.call();
+                } catch (e) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Error adding field: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: const Text('Add Field'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEditFieldDialog(ColumnModel col) async {
+    final dispCtrl = TextEditingController(text: col.displayName);
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Edit Field "${col.displayName}"'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('SQL Identifier: ${col.name}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: dispCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Display Name / Label',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              final newDisp = dispCtrl.text.trim();
+              if (newDisp.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                await widget.apiClient.updateColumn(widget.table.id, col.id, displayName: newDisp);
+                widget.onTableModified?.call();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error updating field: $e'), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showDeleteFieldDialog(ColumnModel col) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete Field "${col.displayName}"?'),
+        content: Text('Are you sure you want to drop column "${col.name}"? All data stored in this field across all records will be permanently deleted.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete Field'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await widget.apiClient.deleteColumn(widget.table.id, col.id);
+        widget.onTableModified?.call();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error deleting field: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
+
   Widget _buildBrowseModeContent() {
     final record = _records[_currentIndex];
 
@@ -439,91 +644,183 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
       padding: const EdgeInsets.all(24.0),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 700),
+          constraints: const BoxConstraints(maxWidth: 720),
           child: Card(
             elevation: 1,
             child: Padding(
               padding: const EdgeInsets.all(24.0),
-              child: ListView.separated(
-                itemCount: widget.table.columns.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 16),
-                itemBuilder: (context, idx) {
-                  final col = widget.table.columns[idx];
-
-                  if (col.isPrimaryKey) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 160,
-                          child: Text(col.displayName,
-                              style: const TextStyle(fontWeight: FontWeight.bold)),
-                        ),
-                        Expanded(
-                          child: TextFormField(
-                            initialValue: record[col.name]?.toString() ?? '',
-                            readOnly: true,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                              suffixIcon: Tooltip(
-                                message: 'Primary Key',
-                                child: Icon(Icons.key, size: 16),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  }
-
-                  final ctrl = _fieldControllers[col.name];
-                  final fn = _fieldFocusNodes[col.name];
-                  final saving = _fieldSaving[col.name];
-
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Header with record info and live status
+                  Row(
                     children: [
-                      SizedBox(
-                        width: 160,
-                        child: Text(col.displayName,
-                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Icon(Icons.badge_outlined, size: 20, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${widget.table.displayName} • Ficha ${_currentIndex + 1} de ${_records.length}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                       ),
-                      Expanded(
-                        child: TextField(
-                          controller: ctrl,
-                          focusNode: fn,
-                          decoration: InputDecoration(
-                            border: const OutlineInputBorder(),
-                            isDense: true,
-                            suffixIcon: saving == true
-                                ? const Padding(
-                                    padding: EdgeInsets.all(10),
-                                    child: SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                                    ),
-                                  )
-                                : saving == false
-                                    ? const Tooltip(
-                                        message: 'Save error — check connection',
-                                        child: Icon(Icons.error_outline,
-                                            size: 16, color: Colors.red),
-                                      )
-                                    : null,
-                          ),
-                          onChanged: (v) => _onFieldChanged(col.name, v),
-                          onEditingComplete: () {
-                            _fieldDebounceTimers[col.name]?.cancel();
-                            _saveField(col.name, ctrl?.text ?? '');
-                            fn?.nextFocus();
-                          },
+                      const Spacer(),
+                      // Status pill
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.green.shade600, width: 0.8),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.sync, size: 12, color: Colors.green),
+                            SizedBox(width: 4),
+                            Text('Auto-saved to DB', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green)),
+                          ],
                         ),
                       ),
                     ],
-                  );
-                },
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 16),
+                  // Column fields
+                  ...widget.table.columns.map((col) {
+                    if (col.isPrimaryKey) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 160,
+                              child: Text(col.displayName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            ),
+                            Expanded(
+                              child: TextFormField(
+                                initialValue: record[col.name]?.toString() ?? '',
+                                readOnly: true,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                  suffixIcon: Tooltip(
+                                    message: 'Primary Key',
+                                    child: Icon(Icons.key, size: 16),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 40),
+                          ],
+                        ),
+                      );
+                    }
+
+                    final ctrl = _fieldControllers[col.name];
+                    final fn = _fieldFocusNodes[col.name];
+                    final saving = _fieldSaving[col.name];
+
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 16),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 160,
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    col.displayName,
+                                    style: const TextStyle(fontWeight: FontWeight.bold),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: ctrl,
+                              focusNode: fn,
+                              decoration: InputDecoration(
+                                border: const OutlineInputBorder(),
+                                isDense: true,
+                                suffixIcon: saving == true
+                                    ? const Padding(
+                                        padding: EdgeInsets.all(10),
+                                        child: SizedBox(
+                                          width: 14,
+                                          height: 14,
+                                          child: CircularProgressIndicator(strokeWidth: 1.5),
+                                        ),
+                                      )
+                                    : saving == false
+                                        ? const Tooltip(
+                                            message: 'Save error — check connection',
+                                            child: Icon(Icons.error_outline, size: 16, color: Colors.red),
+                                          )
+                                        : null,
+                              ),
+                              onChanged: (v) => _onFieldChanged(col.name, v),
+                              onEditingComplete: () {
+                                _fieldDebounceTimers[col.name]?.cancel();
+                                _saveField(col.name, ctrl?.text ?? '');
+                                fn?.nextFocus();
+                              },
+                            ),
+                          ),
+                          PopupMenuButton<String>(
+                            icon: const Icon(Icons.more_vert, size: 18, color: Colors.grey),
+                            tooltip: 'Field Options',
+                            itemBuilder: (ctx) => [
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.edit_outlined, size: 16),
+                                    SizedBox(width: 8),
+                                    Text('Rename Field...'),
+                                  ],
+                                ),
+                              ),
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.delete_outline, size: 16, color: Colors.red),
+                                    SizedBox(width: 8),
+                                    Text('Delete Field...', style: TextStyle(color: Colors.red)),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            onSelected: (action) {
+                              if (action == 'edit') {
+                                _showEditFieldDialog(col);
+                              } else if (action == 'delete') {
+                                _showDeleteFieldDialog(col);
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 8),
+                  const Divider(),
+                  const SizedBox(height: 12),
+                  // Add field button
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Add Field to Table...'),
+                      onPressed: _showAddFieldDialog,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

@@ -75,4 +75,22 @@ func TestSchemaService_LivePostgres(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "Newly created table should be present in ListTables")
+
+	// 5. Update column display name
+	updatedCol, err := svc.UpdateColumn(ctx, tbl.ID, col.ID, "Grand Total")
+	require.NoError(t, err)
+	assert.Equal(t, "Grand Total", updatedCol.DisplayName)
+
+	// 6. Delete column
+	err = svc.DeleteColumn(ctx, tbl.ID, col.ID)
+	require.NoError(t, err)
+
+	// Verify column was removed
+	tablesAfterDelete, err := svc.ListTables(ctx)
+	require.NoError(t, err)
+	for _, item := range tablesAfterDelete {
+		if item.ID == tbl.ID {
+			assert.Len(t, item.Columns, 1) // only id column left
+		}
+	}
 }

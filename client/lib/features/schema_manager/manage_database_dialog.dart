@@ -220,6 +220,87 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     );
   }
 
+  Future<void> _showEditFieldDialog(ColumnModel col) async {
+    final dispController = TextEditingController(text: col.displayName);
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Edit Field "${col.displayName}"'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('SQL Identifier: ${col.name}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: dispController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Display Name / Label',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              final newDisp = dispController.text.trim();
+              if (newDisp.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                final client = ref.read(apiClientProvider);
+                await client.updateColumn(_selectedTable!.id, col.id, displayName: newDisp);
+                await _loadTables();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error updating field: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showDeleteFieldDialog(ColumnModel col) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete Field "${col.displayName}"?'),
+        content: Text('Are you sure you want to drop column "${col.name}" from table "${_selectedTable!.displayName}"? All data stored in this column will be permanently deleted.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete Field'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        final client = ref.read(apiClientProvider);
+        await client.deleteColumn(_selectedTable!.id, col.id);
+        await _loadTables();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error deleting field: $e')),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -387,9 +468,28 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   ],
                 ),
                 subtitle: Text('Identifier: ${col.name} • Agnostic Type: ${col.fieldType}'),
-                trailing: col.isNullable
-                    ? const Text('Nullable', style: TextStyle(fontSize: 12, color: Colors.grey))
-                    : const Text('Required', style: TextStyle(fontSize: 12, color: Colors.blue)),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      col.isNullable ? 'Nullable' : 'Required',
+                      style: TextStyle(fontSize: 12, color: col.isNullable ? Colors.grey : Colors.blue),
+                    ),
+                    if (!col.isPrimaryKey) ...[
+                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 16),
+                        tooltip: 'Rename Field',
+                        onPressed: () => _showEditFieldDialog(col),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
+                        tooltip: 'Delete Field',
+                        onPressed: () => _showDeleteFieldDialog(col),
+                      ),
+                    ],
+                  ],
+                ),
               );
             },
           ),

@@ -251,7 +251,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           _serverLayouts = layouts;
           _isLoadingTables = false;
           if (tables.isNotEmpty) {
-            if (_selectedTable == null || !tables.any((t) => t.id == _selectedTable!.id)) {
+            if (_selectedTable != null && tables.any((t) => t.id == _selectedTable!.id)) {
+              _selectedTable = tables.firstWhere((t) => t.id == _selectedTable!.id);
+            } else {
               _selectedTable = tables.first;
             }
             _resolveActiveLayoutForTable(_selectedTable!);
@@ -1101,6 +1103,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           table: _selectedTable!,
           apiClient: client,
           mode: mode,
+          onTableModified: _loadTables,
           onRecordChanged: (idx, total) {
             if (mounted) {
               setState(() {

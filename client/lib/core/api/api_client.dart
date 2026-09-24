@@ -287,6 +287,34 @@ class ApiClient {
     }
   }
 
+  Future<ColumnModel> updateColumn(String tableId, String columnId, {
+    required String displayName,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/columns/$columnId'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'display_name': displayName,
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      return ColumnModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    } else {
+      throw Exception('Failed to update column: ${response.body}');
+    }
+  }
+
+  Future<void> deleteColumn(String tableId, String columnId) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/columns/$columnId'),
+    );
+
+    if (response.statusCode != 204 && response.statusCode != 200) {
+      throw Exception('Failed to delete column: ${response.body}');
+    }
+  }
+
   Future<List<Map<String, dynamic>>> listRows(String table, {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true}) async {
     final uri = Uri.parse('$baseUrl/api/v1/data/$table').replace(queryParameters: {
       'limit': limit.toString(),

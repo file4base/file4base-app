@@ -361,6 +361,88 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 	return &col, nil
 }
 
+// DeleteColumn removes a column from metadata and drops it from the physical table
+func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID string) error {
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+
+	// 1. Get table name
+	var tableName string
+	qTable := `SELECT name FROM sys_tables WHERE id = $1`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		qTable = `SELECT name FROM sys_tables WHERE id = ?`
+	}
+	if err := db.QueryRowContext(ctx, qTable, tableID).Scan(&tableName); err != nil {
+		return fmt.Errorf("table not found: %w", err)
+	}
+
+	// 2. Get column name and check primary key
+	var colName string
+	var isPrimaryKey bool
+	qCol := `SELECT name, is_primary_key FROM sys_columns WHERE id = $1 AND table_id = $2`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		qCol = `SELECT name, is_primary_key FROM sys_columns WHERE id = ? AND table_id = ?`
+	}
+	if err := db.QueryRowContext(ctx, qCol, columnID, tableID).Scan(&colName, &isPrimaryKey); err != nil {
+		return fmt.Errorf("column not found: %w", err)
+	}
+
+	if isPrimaryKey {
+		return fmt.Errorf("cannot delete primary key column")
+	}
+
+	dropSQL, err := dialect.BuildDropColumnSQL(tableName, colName)
+	if err != nil {
+		return fmt.Errorf("failed generating drop column SQL: %w", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
+		return fmt.Errorf("failed dropping column from physical table: %w", err)
+	}
+
+	deleteSQL := `DELETE FROM sys_columns WHERE id = $1`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		deleteSQL = `DELETE FROM sys_columns WHERE id = ?`
+	}
+	if _, err := tx.ExecContext(ctx, deleteSQL, columnID); err != nil {
+		return fmt.Errorf("failed removing column from sys_columns: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// UpdateColumn updates a column's metadata (e.g. display name)
+func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID string, displayName string) (*ColumnMetadata, error) {
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+
+	q := `UPDATE sys_columns SET display_name = $1 WHERE id = $2 AND table_id = $3 RETURNING id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		qUpdate := `UPDATE sys_columns SET display_name = ? WHERE id = ? AND table_id = ?`
+		if _, err := db.ExecContext(ctx, qUpdate, displayName, columnID, tableID); err != nil {
+			return nil, err
+		}
+		var col ColumnMetadata
+		qGet := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at FROM sys_columns WHERE id = ?`
+		if err := db.QueryRowContext(ctx, qGet, columnID).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
+			return nil, err
+		}
+		return &col, nil
+	}
+
+	var col ColumnMetadata
+	if err := db.QueryRowContext(ctx, q, displayName, columnID, tableID).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
+		return nil, err
+	}
+	return &col, nil
+}
+
 // ListTables retrieves all registered tables with their columns
 func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
 	db := s.driver.DB()

@@ -12,8 +12,8 @@ class PreflightDialog extends StatefulWidget {
     final dockerReq = await EnvironmentChecker.checkDocker();
     final archReq = await EnvironmentChecker.checkPlatformArchitecture();
 
-    // If Docker is satisfied, we can proceed automatically or show a quick status
-    if (dockerReq.status == RequirementStatus.satisfied) {
+    // If requirements are satisfied, we can proceed automatically or show a quick status
+    if (dockerReq.status == RequirementStatus.satisfied && archReq.status == RequirementStatus.satisfied) {
       onProceed();
       return;
     }

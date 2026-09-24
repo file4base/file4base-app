@@ -22,6 +22,8 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/tables", h.ListTables)
 		r.Post("/tables", h.CreateTable)
 		r.Post("/tables/{id}/columns", h.AddColumn)
+		r.Put("/tables/{id}/columns/{columnId}", h.UpdateColumn)
+		r.Delete("/tables/{id}/columns/{columnId}", h.DeleteColumn)
 		r.Get("/occurrences", h.ListOccurrences)
 		r.Get("/layouts", h.ListLayouts)
 		r.Post("/layouts", h.CreateLayout)
@@ -123,6 +125,50 @@ func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(col)
+}
+
+type UpdateColumnRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
+	tableID := chi.URLParam(r, "id")
+	columnID := chi.URLParam(r, "columnId")
+	if tableID == "" || columnID == "" {
+		http.Error(w, "table id and column id required", http.StatusBadRequest)
+		return
+	}
+
+	var req UpdateColumnRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	col, err := h.svc.UpdateColumn(r.Context(), tableID, columnID, req.DisplayName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(col)
+}
+
+func (h *SchemaHandler) DeleteColumn(w http.ResponseWriter, r *http.Request) {
+	tableID := chi.URLParam(r, "id")
+	columnID := chi.URLParam(r, "columnId")
+	if tableID == "" || columnID == "" {
+		http.Error(w, "table id and column id required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.svc.DeleteColumn(r.Context(), tableID, columnID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SchemaHandler) ListOccurrences(w http.ResponseWriter, r *http.Request) {

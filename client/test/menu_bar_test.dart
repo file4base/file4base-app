@@ -79,5 +79,8 @@ void main() {
     // Records should now be replaced by Requests
     expect(find.text('Records'), findsNothing);
     expect(find.text('Requests'), findsOneWidget);
+    expect(manageDatabaseCalled, isFalse);
+    expect(openRemoteCalled, isFalse);
+    expect(aboutCalled, isFalse);
   });
 }

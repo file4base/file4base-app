@@ -144,7 +144,7 @@ class _AboutFile4BaseDialogState extends State<AboutFile4BaseDialog> {
         ),
         const SizedBox(height: 16),
         const Text(
-          'Version 0.4.3 (Alpha)',
+          'Version 0.4.4 (Alpha)',
           style: TextStyle(
             fontSize: 11,
             color: Color(0xFF555555),

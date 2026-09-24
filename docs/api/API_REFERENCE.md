@@ -96,6 +96,28 @@ Returns created `ColumnMetadata`.
 
 ---
 
+### `PUT /api/v1/schemas/tables/{id}/columns/{columnId}`
+Updates column metadata (e.g. display name).
+
+#### Request Body
+```json
+{
+  "display_name": "Updated Column Name"
+}
+```
+
+#### Response `200 OK`
+Returns updated `ColumnMetadata`.
+
+---
+
+### `DELETE /api/v1/schemas/tables/{id}/columns/{columnId}`
+Drops the column from the physical database table and removes it from `sys_columns`. Cannot delete primary key.
+
+#### Response `204 No Content`
+
+---
+
 ### `GET /api/v1/schemas/occurrences`
 Lists all Table Occurrences in the relationship graph.
 

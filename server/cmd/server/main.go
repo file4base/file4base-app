@@ -22,7 +22,7 @@ import (
 
 )
 
-const AppVersion = "0.4.3"
+const AppVersion = "0.4.4"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
