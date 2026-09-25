@@ -9,11 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.14] - 2026-09-25
+
+### Added
+- **Interactive Canvas Zoom Controls & Scaling Engine**:
+  - Implemented interactive zoom magnification controls in the bottom-left corner of the workspace:
+    - **Percentage Magnification Indicator**: Displays current zoom level (e.g. `100`, `150`, `75`) with interactive popup menu offering standard low-code zoom presets (`400%`, `300%`, `200%`, `150%`, `100% (Actual Size)`, `75%`, `50%`, `25%`).
+    - **Zoom Out Button (`Icons.zoom_out`)**: Magnifying glass button with minus (`-`) stepping down through preset zoom levels with bounds checking (min 25%).
+    - **Zoom In Button (`Icons.zoom_in`)**: Magnifying glass button with plus (`+`) stepping up through preset zoom levels with bounds checking (max 400%).
+  - **View Menu Integration (`File4BaseMenuBar`)**:
+    - Wired `View > Zoom In` (`Cmd/Ctrl + =`), `View > Zoom Out` (`Cmd/Ctrl + -`), `View > Actual Size (100%)` (`Cmd/Ctrl + 0`), and `View > Zoom Level` presets submenu.
+  - **Global Keyboard Shortcuts (`CallbackShortcuts`)**:
+    - Registered `Cmd/Ctrl +`, `Cmd/Ctrl -`, `Cmd/Ctrl 0` to quickly adjust canvas zoom level from anywhere in the window.
+  - **Workspace Canvas Scaling (`_buildZoomableBody`)**:
+    - Dynamic bi-directional horizontal and vertical scrollbars automatically wrapping the scaled workspace when zoom exceeds viewport size.
+    - Hit-testing and interactive record editing fully preserved via Flutter inverse transformation matrix.
+  - **Automated Tests**: Added unit and widget tests in `client/test/zoom_test.dart` (6 tests covering zoom stepping, limits, menu triggers, and reset).
+
 ## [0.4.13] - 2026-09-25
 
 ### Added
 - **Themes Management System (`File > Manage > Themes...` / `ManageThemesDialog`)**:
-  - Implemented Claris-free theme manager modal dialog allowing real-time discovery, inspection, and switching between canonical developer and design palettes:
+  - Implemented free theme manager modal dialog allowing real-time discovery, inspection, and switching between canonical developer and design palettes:
     - **Light (Clean Slate)**: Default theme featuring pure crisp white canvas (`#FFFFFF` surface, `#F8FAFC` background) with slate typography and cyan accents.
     - **Dark Modern (Sophisticated)**: Midnight dark workspace with graphite panels and cyan highlights (`#0B1120` / `#111827`).
     - **Monokai Pro (Code Studio)**: Iconic developer palette with charcoal background (`#272822`) and vibrant neon yellow/green/pink step accents.
@@ -25,11 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **System-Wide Reactivity**: Script Workspace dialog, Calculation Builder dialog, and root MaterialApp react to theme changes without reloading or losing state.
   - **Automated Tests**: Added 9 unit and widget tests in `client/test/manage_themes_test.dart`.
 
-### Removed
-- **Elimination of Third-Party Brand Terms ("FileMaker" and "Claris")**:
-  - Completely purged all occurrences of "FileMaker" and "Claris" across the entire repository (code, comments, specifications, documentation, tests, OpenAPI JSON descriptions, and UI labels).
-  - Renamed extended privileges protocol codes from `fmapp`, `fmwebdirect`, `fmrest`, `fmexport` to `f4bapp`, `f4bwebdirect`, `f4brest`, `f4bexport` in `ManageSecurityDialog`.
-  - Replaced legacy naming in theme definitions with clean, neutral naming (`Light (Clean Slate)`).
+
 
 ## [0.4.12] - 2026-09-25
 

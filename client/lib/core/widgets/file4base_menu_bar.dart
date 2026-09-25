@@ -29,6 +29,11 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onSaveLayout;
   final bool isToolbarVisible;
   final ValueChanged<bool> onToggleToolbar;
+  final VoidCallback? onZoomIn;
+  final VoidCallback? onZoomOut;
+  final VoidCallback? onResetZoom;
+  final ValueChanged<double>? onSelectZoom;
+  final double? zoomLevel;
 
   const File4BaseMenuBar({
     super.key,
@@ -58,6 +63,11 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onSaveLayout,
     required this.isToolbarVisible,
     required this.onToggleToolbar,
+    this.onZoomIn,
+    this.onZoomOut,
+    this.onResetZoom,
+    this.onSelectZoom,
+    this.zoomLevel,
   });
 
   void _showNotice(BuildContext context, String title, String message) {
@@ -515,14 +525,32 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Zoom In', 'Scale view to 125%.'),
+          onPressed: onZoomIn,
           shortcut: const SingleActivator(LogicalKeyboardKey.equal, meta: true),
           child: const Text('Zoom In'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Zoom Out', 'Scale view to 75%.'),
+          onPressed: onZoomOut,
           shortcut: const SingleActivator(LogicalKeyboardKey.minus, meta: true),
           child: const Text('Zoom Out'),
+        ),
+        MenuItemButton(
+          onPressed: onResetZoom,
+          shortcut: const SingleActivator(LogicalKeyboardKey.digit0, meta: true),
+          child: const Text('Actual Size (100%)'),
+        ),
+        SubmenuButton(
+          menuChildren: [
+            for (final level in [4.0, 3.0, 2.0, 1.5, 1.0, 0.75, 0.5, 0.25])
+              MenuItemButton(
+                leadingIcon: zoomLevel != null && (zoomLevel! - level).abs() < 0.001
+                    ? const Icon(Icons.check, size: 14)
+                    : null,
+                onPressed: onSelectZoom != null ? () => onSelectZoom!(level) : null,
+                child: Text('${(level * 100).round()}%'),
+              ),
+          ],
+          child: const Text('Zoom Level'),
         ),
       ],
       child: const Text('View', style: TextStyle(fontSize: 13)),

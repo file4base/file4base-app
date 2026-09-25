@@ -1,8 +1,10 @@
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/api/api_client.dart';
+import 'core/providers/zoom_provider.dart';
 import 'core/models/solution_models.dart';
 import 'core/services/auto_save_service.dart';
 import 'core/services/solution_storage.dart';
@@ -1049,6 +1051,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         const SingleActivator(LogicalKeyboardKey.keyO, meta: true): () => _handleOpenSolution(),
         const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () => _handleNewDatabase(),
         const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): () => _handlePageSetup(),
+        const SingleActivator(LogicalKeyboardKey.equal, meta: true): () => ref.read(zoomProvider.notifier).zoomIn(),
+        const SingleActivator(LogicalKeyboardKey.equal, control: true): () => ref.read(zoomProvider.notifier).zoomIn(),
+        const SingleActivator(LogicalKeyboardKey.add, meta: true): () => ref.read(zoomProvider.notifier).zoomIn(),
+        const SingleActivator(LogicalKeyboardKey.add, control: true): () => ref.read(zoomProvider.notifier).zoomIn(),
+        const SingleActivator(LogicalKeyboardKey.minus, meta: true): () => ref.read(zoomProvider.notifier).zoomOut(),
+        const SingleActivator(LogicalKeyboardKey.minus, control: true): () => ref.read(zoomProvider.notifier).zoomOut(),
+        const SingleActivator(LogicalKeyboardKey.digit0, meta: true): () => ref.read(zoomProvider.notifier).resetZoom(),
+        const SingleActivator(LogicalKeyboardKey.digit0, control: true): () => ref.read(zoomProvider.notifier).resetZoom(),
       },
       child: Focus(
         autofocus: true,
@@ -1137,6 +1147,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
                   isToolbarVisible: _isToolbarVisible,
                   onToggleToolbar: (visible) => setState(() => _isToolbarVisible = visible),
+                  onZoomIn: () => ref.read(zoomProvider.notifier).zoomIn(),
+                  onZoomOut: () => ref.read(zoomProvider.notifier).zoomOut(),
+                  onResetZoom: () => ref.read(zoomProvider.notifier).resetZoom(),
+                  onSelectZoom: (level) => ref.read(zoomProvider.notifier).setZoom(level),
+                  zoomLevel: ref.watch(zoomProvider),
                 ),
                 // Main Workspace: Classic File4Base Left Status Sidebar + Content Area
                 Expanded(
@@ -1200,7 +1215,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
                         ),
                       Expanded(
-                        child: _buildBody(context, mode),
+                        child: _buildZoomableBody(context, mode, ref.watch(zoomProvider)),
                       ),
                     ],
                   ),
@@ -1224,6 +1239,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       OperationalMode.layout => 'Layout',
       OperationalMode.preview => 'Preview',
     };
+    final zoomLevel = ref.watch(zoomProvider);
+    final percent = (zoomLevel * 100).round();
 
     return Container(
       height: 24,
@@ -1234,19 +1251,102 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       ),
       child: Row(
         children: [
-          // Zoom indicator
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
-              borderRadius: BorderRadius.circular(2),
+          // Zoom indicator (% of magnification + dropdown menu)
+          PopupMenuButton<double>(
+            tooltip: 'Nivel de Zoom ($percent%)',
+            initialValue: zoomLevel,
+            elevation: 4,
+            padding: EdgeInsets.zero,
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(6),
+              side: BorderSide(color: borderColor),
             ),
-            child: const Text('100', style: TextStyle(fontSize: 10, fontFamily: 'monospace')),
+            onSelected: (val) => ref.read(zoomProvider.notifier).setZoom(val),
+            itemBuilder: (context) => [
+              for (final step in ZoomNotifier.zoomSteps.reversed)
+                PopupMenuItem<double>(
+                  value: step,
+                  height: 28,
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        child: (step - zoomLevel).abs() < 0.001
+                            ? const Icon(Icons.check, size: 14, color: Color(0xFF0284C7))
+                            : null,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${(step * 100).round()}%${(step - 1.0).abs() < 0.001 ? " (100%)" : ""}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: (step - zoomLevel).abs() < 0.001
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
+                borderRadius: BorderRadius.circular(2),
+                color: isDark ? const Color(0xFF21262D) : const Color(0xFFF3F4F6),
+              ),
+              child: Text(
+                '$percent',
+                style: const TextStyle(fontSize: 10, fontFamily: 'monospace', fontWeight: FontWeight.bold),
+              ),
+            ),
           ),
           const SizedBox(width: 4),
-          const Icon(Icons.zoom_out, size: 14, color: Colors.grey),
+
+          // Zoom Out (-) Button
+          Tooltip(
+            message: 'Zoom Out (Cmd -)',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(2),
+              onTap: zoomLevel > ZoomNotifier.zoomSteps.first + 0.001
+                  ? () => ref.read(zoomProvider.notifier).zoomOut()
+                  : null,
+              child: Padding(
+                padding: const EdgeInsets.all(1.0),
+                child: Icon(
+                  Icons.zoom_out,
+                  size: 14,
+                  color: zoomLevel > ZoomNotifier.zoomSteps.first + 0.001
+                      ? (isDark ? Colors.white70 : Colors.black87)
+                      : Colors.grey.withValues(alpha: 0.35),
+                ),
+              ),
+            ),
+          ),
           const SizedBox(width: 2),
-          const Icon(Icons.zoom_in, size: 14, color: Colors.grey),
+
+          // Zoom In (+) Button
+          Tooltip(
+            message: 'Zoom In (Cmd +)',
+            child: InkWell(
+              borderRadius: BorderRadius.circular(2),
+              onTap: zoomLevel < ZoomNotifier.zoomSteps.last - 0.001
+                  ? () => ref.read(zoomProvider.notifier).zoomIn()
+                  : null,
+              child: Padding(
+                padding: const EdgeInsets.all(1.0),
+                child: Icon(
+                  Icons.zoom_in,
+                  size: 14,
+                  color: zoomLevel < ZoomNotifier.zoomSteps.last - 0.001
+                      ? (isDark ? Colors.white70 : Colors.black87)
+                      : Colors.grey.withValues(alpha: 0.35),
+                ),
+              ),
+            ),
+          ),
           const SizedBox(width: 8),
           const VerticalDivider(width: 1, indent: 4, endIndent: 4),
           const SizedBox(width: 8),
@@ -1439,6 +1539,49 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildZoomableBody(BuildContext context, OperationalMode mode, double zoomLevel) {
+    final child = _buildBody(context, mode);
+    if ((zoomLevel - 1.0).abs() < 0.001) {
+      return child;
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaledWidth = constraints.maxWidth * zoomLevel;
+        final scaledHeight = constraints.maxHeight * zoomLevel;
+
+        return Scrollbar(
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.vertical,
+                child: SizedBox(
+                  width: math.max(constraints.maxWidth, scaledWidth),
+                  height: math.max(constraints.maxHeight, scaledHeight),
+                  child: Align(
+                    alignment: Alignment.topLeft,
+                    child: Transform.scale(
+                      scale: zoomLevel,
+                      alignment: Alignment.topLeft,
+                      child: SizedBox(
+                        width: constraints.maxWidth,
+                        height: constraints.maxHeight,
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
