@@ -32,6 +32,12 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/layouts/{id}", h.GetLayout)
 		r.Put("/layouts/{id}", h.UpdateLayout)
 		r.Delete("/layouts/{id}", h.DeleteLayout)
+		r.Get("/scripts", h.ListScripts)
+		r.Post("/scripts", h.CreateScript)
+		r.Get("/scripts/{id}", h.GetScript)
+		r.Put("/scripts/{id}", h.UpdateScript)
+		r.Delete("/scripts/{id}", h.DeleteScript)
+		r.Post("/scripts/{id}/duplicate", h.DuplicateScript)
 	})
 
 	// Also support top-level /api/v1/layouts
@@ -41,6 +47,16 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/{id}", h.GetLayout)
 		r.Put("/{id}", h.UpdateLayout)
 		r.Delete("/{id}", h.DeleteLayout)
+	})
+
+	// Also support top-level /api/v1/scripts
+	r.Route("/api/v1/scripts", func(r chi.Router) {
+		r.Get("/", h.ListScripts)
+		r.Post("/", h.CreateScript)
+		r.Get("/{id}", h.GetScript)
+		r.Put("/{id}", h.UpdateScript)
+		r.Delete("/{id}", h.DeleteScript)
+		r.Post("/{id}/duplicate", h.DuplicateScript)
 	})
 }
 
@@ -292,3 +308,110 @@ func (h *SchemaHandler) DeleteLayout(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (h *SchemaHandler) ListScripts(w http.ResponseWriter, r *http.Request) {
+	scripts, err := h.svc.ListScripts(r.Context())
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(scripts)
+}
+
+func (h *SchemaHandler) GetScript(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	script, err := h.svc.GetScript(r.Context(), id)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Script Not Found", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(script)
+}
+
+type CreateScriptRequest struct {
+	Name         string                     `json:"name"`
+	ContextTable string                     `json:"context_table,omitempty"`
+	FolderID     *string                    `json:"folder_id,omitempty"`
+	IsActive     *bool                      `json:"is_active,omitempty"`
+	Steps        []schema.ScriptStepMetadata `json:"steps,omitempty"`
+}
+
+func (h *SchemaHandler) CreateScript(w http.ResponseWriter, r *http.Request) {
+	var req CreateScriptRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if req.Name == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "name is required")
+		return
+	}
+	active := true
+	if req.IsActive != nil {
+		active = *req.IsActive
+	}
+	script, err := h.svc.CreateScript(r.Context(), req.Name, req.ContextTable, req.FolderID, active, req.Steps)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Script Error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(script)
+}
+
+type UpdateScriptRequest struct {
+	Name         string                     `json:"name"`
+	ContextTable string                     `json:"context_table,omitempty"`
+	FolderID     *string                    `json:"folder_id,omitempty"`
+	IsActive     *bool                      `json:"is_active,omitempty"`
+	Steps        []schema.ScriptStepMetadata `json:"steps,omitempty"`
+}
+
+func (h *SchemaHandler) UpdateScript(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req UpdateScriptRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if req.Name == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "name is required")
+		return
+	}
+	active := true
+	if req.IsActive != nil {
+		active = *req.IsActive
+	}
+	script, err := h.svc.UpdateScript(r.Context(), id, req.Name, req.ContextTable, req.FolderID, active, req.Steps)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Script Error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(script)
+}
+
+func (h *SchemaHandler) DeleteScript(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.DeleteScript(r.Context(), id); err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *SchemaHandler) DuplicateScript(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	script, err := h.svc.DuplicateScript(r.Context(), id)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Duplicate Script Error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(script)
+}
+

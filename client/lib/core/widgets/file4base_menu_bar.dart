@@ -8,6 +8,8 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback onManageDatabase;
   final VoidCallback? onManageLayouts;
   final VoidCallback? onManageSecurity;
+  final VoidCallback? onManageScripts;
+  final VoidCallback? onScriptWorkspace;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
   final VoidCallback? onNewDatabase;
@@ -34,6 +36,8 @@ class File4BaseMenuBar extends StatelessWidget {
     required this.onManageDatabase,
     this.onManageLayouts,
     this.onManageSecurity,
+    this.onManageScripts,
+    this.onScriptWorkspace,
     required this.onOpenRemote,
     required this.onAbout,
     this.onNewDatabase,
@@ -262,7 +266,7 @@ class File4BaseMenuBar extends StatelessWidget {
               child: const Text('Layouts...'),
             ),
             MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Manage Scripts', 'Roadmap Phase 7', 'Automated workflows and calculation scripts.'),
+              onPressed: onManageScripts ?? onScriptWorkspace ?? () => _showRoadmapDialog(context, 'Manage Scripts', 'Roadmap Phase 7', 'Automated workflows and calculation scripts.'),
               child: const Text('Scripts...'),
             ),
             MenuItemButton(
@@ -801,7 +805,7 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: () => _showRoadmapDialog(
+          onPressed: onScriptWorkspace ?? onManageScripts ?? () => _showRoadmapDialog(
             context,
             'Script Workspace',
             'Roadmap Phase 7',

@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.12] - 2026-09-25
+
+### Added
+- **Script Workspace IDE & Execution Engine (`Scripts > Script Workspace...` / `Manage > Scripts...`)**:
+  - Implemented 3-panel visual scripting canvas matching the Claris FileMaker Script Workspace canonical architecture:
+    - **Header & Controls**: Active database badge (`file4base_dev`), real-time unsaved changes indicator, `▶ Ejecutar` (Run script) button with execution simulation and trace inspector, `🐞 Depurar` (Debug script) button with step-by-step visual execution and live variable inspection stack (`$subtotal`, `$counter`, `Get(LastError)`), and `💾 Guardar` button persisting script definitions.
+    - **Left Panel (Scripts Explorer)**: Real-time search filter `TextField`, `+ Guión` quick creation, active status switches, sequence step badges, and context menu (`Activar/Desactivar`, `Duplicar`, `Eliminar`).
+    - **Center Panel (Sequential Step Editor)**: Multi-tab editor for concurrently open scripts with close buttons (`✕`), inline script renaming, context table occurrence selector (`Invoices`, `Customers`, etc.), `ReorderableListView` supporting drag-and-drop step rearrangement, 2-digit indices (`01`, `02`...), step activation checkboxes, category badges (Violet for Navigation, Emerald for Records, Amber for Control & Logic, Cyan for Fields/Variables, Rose for Integration), monospace parameter preview brackets, and hierarchical vertical nesting lines for `If/Else/End If` and `Loop/End Loop`.
+    - **Bottom Zone (Contextual Parameter Inspector)**: Context-aware inspector adapting to the active instruction type (`set_variable`, `set_field`, `go_to_layout`, `if`, `exit_loop_if`, `perform_rest_api`, etc.) with variable/target field inputs and `[ fx Especificar... ]` calculation launcher.
+    - **Right Panel (Step Catalog)**: Categorized catalog with 4 major FileMaker categories (Navegación, Registros, Control y Lógica, Integración y Datos), description tooltips, and click/double-click instant insertion.
+    - **Bottom Status Bar**: Context table occurrence indicator, total steps counter, and execution engine status badge (`File4Base Script Engine v1.0 (Go/CEL)`).
+- **Calculation & Formula Builder Dialog (`CalculationBuilderDialog`)**:
+  - Canonically styled formula editor with table occurrence and field browser (`Table::Field`), mathematical and logical operator palette (`+`, `-`, `*`, `/`, `^`, `&`, `=`, `≠`, `>`, `<`, `≥`, `≤`, `AND`, `OR`, `NOT`, `( )`, `" "`), categorized functions list (Agregación, Lógica, Texto, Fecha & Hora, Sistema), search filters, and monospace syntax editor.
+- **Backend Schema & Script Service (Go & PostgreSQL/MariaDB)**:
+  - Added DDL for `sys_scripts` and `sys_script_steps` system tables in `server/internal/schema/service.go`.
+  - Added CRUD and step management in `server/internal/schema/script_service.go` (`ListScripts`, `GetScript`, `CreateScript`, `UpdateScript`, `DeleteScript`, `DuplicateScript`).
+  - Added REST API endpoints under `/api/v1/schemas/scripts` and `/api/v1/scripts` in `server/internal/api/schema_handler.go`.
+  - Added unit test suite in `server/internal/schema/script_service_test.go` (`TestScriptService_CRUD`).
+- **Solution Packaging (`.f4b`)**:
+  - Updated `SolutionPackage` in `client/lib/core/models/solution_models.dart` to serialize and deserialize scripts alongside layouts and tables.
+- **Automated Tests**:
+  - Added widget and model test suite in `client/test/script_workspace_test.dart` (5 tests covering model serialization, formula dialog, and 3-panel workspace layout).
+
 ## [0.4.11] - 2026-09-24
 
 ### Added

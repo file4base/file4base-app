@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import '../models/script_models.dart';
+
+export '../models/script_models.dart';
 
 /// RFC 9457 Problem Details Exception
 class ApiException implements Exception {
@@ -859,8 +862,69 @@ class ApiClient {
     _checkResponse(response);
   }
 
+  // ==========================================
+  // Script Workspace API
+  // ==========================================
+
+  Future<List<ScriptModel>> listScripts({String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/schemas/scripts'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => ScriptModel.fromJson(item as Map<String, dynamic>)).toList();
+  }
+
+  Future<ScriptModel> getScript(String id, {String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/schemas/scripts/$id'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    return ScriptModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<ScriptModel> createScript(Map<String, dynamic> data, {String? database}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/schemas/scripts'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
+      body: jsonEncode(data),
+    );
+    _checkResponse(response);
+    return ScriptModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<ScriptModel> updateScript(String id, Map<String, dynamic> data, {String? database}) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/schemas/scripts/$id'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
+      body: jsonEncode(data),
+    );
+    _checkResponse(response);
+    return ScriptModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteScript(String id, {String? database}) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/schemas/scripts/$id'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+  }
+
+  Future<ScriptModel> duplicateScript(String id, {String? database}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/schemas/scripts/$id/duplicate'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    return ScriptModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   void close() {
     _httpClient.close();
   }
 }
+
 

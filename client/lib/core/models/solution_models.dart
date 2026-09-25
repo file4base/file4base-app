@@ -96,6 +96,7 @@ class SolutionPackage {
   final List<Map<String, dynamic>> tableOccurrences;
   final List<Map<String, dynamic>> layouts;
   final List<Map<String, dynamic>> users;
+  final List<Map<String, dynamic>> scripts;
   final FileOptionsModel fileOptions;
   final PageSetupModel pageSetup;
   final String createdAt;
@@ -110,6 +111,7 @@ class SolutionPackage {
     this.tableOccurrences = const [],
     this.layouts = const [],
     this.users = const [],
+    this.scripts = const [],
     this.fileOptions = const FileOptionsModel(),
     this.pageSetup = const PageSetupModel(),
     String? createdAt,
@@ -127,6 +129,7 @@ class SolutionPackage {
       'table_occurrences': tableOccurrences,
       'layouts': layouts,
       'users': users,
+      'scripts': scripts,
       'file_options': fileOptions.toJson(),
       'page_setup': pageSetup.toJson(),
       'created_at': createdAt,
@@ -156,6 +159,7 @@ class SolutionPackage {
       tableOccurrences: parseList(map['table_occurrences']),
       layouts: parseList(map['layouts']),
       users: parseList(map['users']),
+      scripts: parseList(map['scripts']),
       fileOptions: map['file_options'] is Map
           ? FileOptionsModel.fromJson(Map<String, dynamic>.from(map['file_options']))
           : const FileOptionsModel(),
@@ -189,6 +193,7 @@ class SolutionPackage {
     required List<TableOccurrenceModel> occurrences,
     required List<LayoutModel> layouts,
     List<Map<String, dynamic>> users = const [],
+    List<ScriptModel> scripts = const [],
     FileOptionsModel fileOptions = const FileOptionsModel(),
     PageSetupModel pageSetup = const PageSetupModel(),
   }) {
@@ -223,12 +228,15 @@ class SolutionPackage {
       'definition': l.definition,
     }).toList();
 
+    final scriptMap = scripts.map((s) => s.toJson()).toList();
+
     return SolutionPackage(
       solutionName: solutionName,
       databaseConnection: dbConfig,
       tables: tablesMap,
       tableOccurrences: occMap,
       layouts: layMap,
+      scripts: scriptMap,
       fileOptions: fileOptions,
       pageSetup: pageSetup,
       users: users.isNotEmpty

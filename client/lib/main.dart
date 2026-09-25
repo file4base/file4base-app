@@ -21,6 +21,7 @@ import 'core/models/file_options_model.dart';
 import 'core/models/page_setup_model.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
+import 'features/script_workspace/script_workspace_dialog.dart';
 import 'features/security/manage_security_dialog.dart';
 import 'features/solution_manager/file_options_dialog.dart';
 import 'features/solution_manager/new_database_dialog.dart';
@@ -1093,6 +1094,22 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     );
                     await _loadUserPermissions();
                     await _loadTables();
+                  },
+                  onManageScripts: () async {
+                    final client = ref.read(apiClientProvider);
+                    await ScriptWorkspaceDialog.show(
+                      context,
+                      client,
+                      databaseName: _activeDatabaseName,
+                    );
+                  },
+                  onScriptWorkspace: () async {
+                    final client = ref.read(apiClientProvider);
+                    await ScriptWorkspaceDialog.show(
+                      context,
+                      client,
+                      databaseName: _activeDatabaseName,
+                    );
                   },
                   onOpenRemote: () {
                     final currentUrl = ref.read(serverUrlProvider);

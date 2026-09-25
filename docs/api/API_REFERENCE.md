@@ -569,3 +569,106 @@ Saves per-layout permissions for a user.
 }
 ```
 
+---
+
+## 8. Script Workspace & Automation
+
+### `GET /api/v1/schemas/scripts`
+Lists all scripts in the active database, including their complete sequential step hierarchy.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "name": "on_invoice_created",
+    "context_table": "Invoices",
+    "is_active": true,
+    "steps": [
+      {
+        "id": "step-1",
+        "script_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "sequence_idx": 1,
+        "step_type": "go_to_layout",
+        "params": { "layout_name": "Invoices_Detail" },
+        "is_enabled": true
+      },
+      {
+        "id": "step-2",
+        "script_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        "sequence_idx": 2,
+        "step_type": "set_variable",
+        "params": { "variable": "$subtotal", "calc": "Sum(Items.price)" },
+        "is_enabled": true
+      }
+    ]
+  }
+]
+```
+
+---
+
+### `POST /api/v1/schemas/scripts`
+Creates a new script with optional initial step instructions.
+
+#### Request Body
+```json
+{
+  "name": "monthly_report_generation",
+  "context_table": "Reports",
+  "is_active": true,
+  "steps": [
+    {
+      "sequence_idx": 1,
+      "step_type": "go_to_layout",
+      "params": { "layout_name": "Reports_Summary" },
+      "is_enabled": true
+    }
+  ]
+}
+```
+
+---
+
+### `GET /api/v1/schemas/scripts/{id}`
+Retrieves a single script definition with all associated steps ordered by `sequence_idx`.
+
+---
+
+### `PUT /api/v1/schemas/scripts/{id}`
+Updates script metadata and atomically synchronizes the sequential steps list.
+
+#### Request Body
+```json
+{
+  "name": "monthly_report_generation_v2",
+  "context_table": "Reports",
+  "is_active": true,
+  "steps": [
+    {
+      "sequence_idx": 1,
+      "step_type": "go_to_layout",
+      "params": { "layout_name": "Reports_Summary" },
+      "is_enabled": true
+    },
+    {
+      "sequence_idx": 2,
+      "step_type": "commit_records",
+      "params": { "validate": true },
+      "is_enabled": true
+    }
+  ]
+}
+```
+
+---
+
+### `DELETE /api/v1/schemas/scripts/{id}`
+Deletes a script and cascades removal of all associated steps.
+
+---
+
+### `POST /api/v1/schemas/scripts/{id}/duplicate`
+Clones an existing script and all its steps, appending `_copy` to the name.
+
+

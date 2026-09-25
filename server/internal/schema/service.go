@@ -142,6 +142,25 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS sys_scripts (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			context_table VARCHAR(128) DEFAULT '',
+			folder_id VARCHAR(36),
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
+			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+		);`,
+		`CREATE TABLE IF NOT EXISTS sys_script_steps (
+			id VARCHAR(36) PRIMARY KEY,
+			script_id VARCHAR(36) NOT NULL REFERENCES sys_scripts(id) ON DELETE CASCADE,
+			sequence_idx INT NOT NULL,
+			step_type VARCHAR(64) NOT NULL,
+			params TEXT NOT NULL DEFAULT '{}',
+			is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			parent_step_id VARCHAR(36),
+			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+		);`,
 	}
 
 	db := s.driver.DB()
