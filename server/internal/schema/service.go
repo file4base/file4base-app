@@ -559,3 +559,188 @@ func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
 
 	return tables, nil
 }
+
+// DeleteTable removes a table entirely: drops the physical table and deletes sys_* metadata.
+func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+
+	// 1. Look up the physical table name
+	var tableName string
+	qTable := `SELECT name FROM sys_tables WHERE id = $1`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		qTable = `SELECT name FROM sys_tables WHERE id = ?`
+	}
+	if err := db.QueryRowContext(ctx, qTable, tableID).Scan(&tableName); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("table not found: %s", tableID)
+		}
+		return err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 2. Drop physical table
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %q", tableName)); err != nil {
+		return fmt.Errorf("failed dropping physical table %s: %w", tableName, err)
+	}
+
+	// 3. Delete from sys_tables (cascades to sys_columns and sys_table_occurrences via FK)
+	delSQL := `DELETE FROM sys_tables WHERE id = $1`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		delSQL = `DELETE FROM sys_tables WHERE id = ?`
+	}
+	if _, err := tx.ExecContext(ctx, delSQL, tableID); err != nil {
+		return fmt.Errorf("failed deleting table metadata: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+// RenameTable updates the display_name of a table in the system catalog.
+func (s *Service) RenameTable(ctx context.Context, tableID string, newDisplayName string) (*TableMetadata, error) {
+	newDisplayName = strings.TrimSpace(newDisplayName)
+	if newDisplayName == "" {
+		return nil, fmt.Errorf("display_name cannot be empty")
+	}
+
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+	now := time.Now().UTC()
+
+	updSQL := `UPDATE sys_tables SET display_name = $1, updated_at = $2 WHERE id = $3`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		updSQL = `UPDATE sys_tables SET display_name = ?, updated_at = ? WHERE id = ?`
+	}
+	res, err := db.ExecContext(ctx, updSQL, newDisplayName, now, tableID)
+	if err != nil {
+		return nil, fmt.Errorf("failed updating table display_name: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return nil, fmt.Errorf("table not found: %s", tableID)
+	}
+
+	// Return updated record
+	var t TableMetadata
+	selSQL := `SELECT id, name, display_name, COALESCE(description,''), created_at, updated_at FROM sys_tables WHERE id = $1`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		selSQL = `SELECT id, name, display_name, COALESCE(description,''), created_at, updated_at FROM sys_tables WHERE id = ?`
+	}
+	if err := db.QueryRowContext(ctx, selSQL, tableID).Scan(&t.ID, &t.Name, &t.DisplayName, &t.Description, &t.CreatedAt, &t.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// DuplicateTable creates a new table with the same structure as an existing table.
+func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMetadata, error) {
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+
+	// 1. Fetch original table metadata
+	var origName, origDisplayName string
+	qTable := `SELECT name, display_name FROM sys_tables WHERE id = $1`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		qTable = `SELECT name, display_name FROM sys_tables WHERE id = ?`
+	}
+	if err := db.QueryRowContext(ctx, qTable, tableID).Scan(&origName, &origDisplayName); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("table not found: %s", tableID)
+		}
+		return nil, err
+	}
+
+	// 2. Fetch columns of the original table (excluding PK)
+	colQuery := `SELECT name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		colQuery = `SELECT name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+	}
+	cRows, err := db.QueryContext(ctx, colQuery, tableID)
+	if err != nil {
+		return nil, err
+	}
+	defer cRows.Close()
+
+	type srcCol struct {
+		name, displayName, fieldType string
+		isNullable, isPrimaryKey     bool
+		defaultValue, calcFormula, validationRules *string
+	}
+	var cols []srcCol
+	for cRows.Next() {
+		var c srcCol
+		var fType string
+		if err := cRows.Scan(&c.name, &c.displayName, &fType, &c.isNullable, &c.isPrimaryKey, &c.defaultValue, &c.calcFormula, &c.validationRules); err != nil {
+			return nil, err
+		}
+		c.fieldType = fType
+		cols = append(cols, c)
+	}
+	cRows.Close()
+
+	// 3. Generate a unique new name
+	newName := origName + "_copy"
+	newDisplayName := origDisplayName + " (Copy)"
+
+	// Create the duplicate table using CreateTable (which adds the PK column)
+	newTbl, err := s.CreateTable(ctx, newDisplayName, newName)
+	if err != nil {
+		// If name conflict, append timestamp
+		newName = fmt.Sprintf("%s_copy_%d", origName, time.Now().UnixMilli())
+		newDisplayName = fmt.Sprintf("%s (Copy %d)", origDisplayName, time.Now().UnixMilli())
+		newTbl, err = s.CreateTable(ctx, newDisplayName, newName)
+		if err != nil {
+			return nil, fmt.Errorf("failed creating duplicate table: %w", err)
+		}
+	}
+
+	// 4. Add non-PK columns to the duplicate
+	for _, c := range cols {
+		if c.isPrimaryKey {
+			continue
+		}
+		_, err := s.AddColumn(ctx, newTbl.ID, ColumnMetadata{
+			Name:               c.name,
+			DisplayName:        c.displayName,
+			FieldType:          dbal.AgnosticFieldType(c.fieldType),
+			IsNullable:         c.isNullable,
+			DefaultValue:       c.defaultValue,
+			CalculationFormula: c.calcFormula,
+			ValidationRules:    c.validationRules,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed copying column %s: %w", c.name, err)
+		}
+	}
+
+	return newTbl, nil
+}
+
+// TruncateTable deletes all data rows from the physical table.
+func (s *Service) TruncateTable(ctx context.Context, tableID string) error {
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+
+	var tableName string
+	qTable := `SELECT name FROM sys_tables WHERE id = $1`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		qTable = `SELECT name FROM sys_tables WHERE id = ?`
+	}
+	if err := db.QueryRowContext(ctx, qTable, tableID).Scan(&tableName); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("table not found: %s", tableID)
+		}
+		return err
+	}
+
+	// Use DELETE instead of TRUNCATE to avoid DDL-in-transaction issues on some drivers
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %q", tableName)); err != nil {
+		return fmt.Errorf("failed truncating table %s: %w", tableName, err)
+	}
+	return nil
+}

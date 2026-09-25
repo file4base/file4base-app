@@ -4,6 +4,8 @@ import '../../core/api/api_client.dart';
 import '../../main.dart';
 import 'field_options_dialog.dart';
 
+import 'widgets/relationship_graph_widget.dart';
+
 class ManageDatabaseDialog extends ConsumerStatefulWidget {
   const ManageDatabaseDialog({super.key});
 
@@ -23,6 +25,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
   List<TableModel> _tables = [];
+  List<TableOccurrenceModel> _occurrences = [];
+  List<RelationshipModel> _relationships = [];
   TableModel? _selectedTable;
   bool _isLoading = true;
   String? _errorMessage;
@@ -49,9 +53,13 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     final client = ref.read(apiClientProvider);
     try {
       final tables = await client.listTables();
+      final occurrences = await client.listOccurrences();
+      final relationships = await client.listRelationships();
       if (mounted) {
         setState(() {
           _tables = tables;
+          _occurrences = occurrences;
+          _relationships = relationships;
           if (_selectedTable != null) {
             _selectedTable = tables.firstWhere(
               (t) => t.id == _selectedTable!.id,
@@ -314,12 +322,165 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     }
   }
 
+  // ─── Table-level action dialogs ──────────────────────────────────────────
+
+  Future<void> _showRenameTableDialog(TableModel tbl) async {
+    final ctrl = TextEditingController(text: tbl.displayName);
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename Table'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('SQL name (unchanged): ${tbl.name}',
+                style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 12),
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Display Name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              final newName = ctrl.text.trim();
+              if (newName.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                final client = ref.read(apiClientProvider);
+                await client.renameTable(tbl.id, newName);
+                await _loadTables();
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error renaming table: $e')),
+                  );
+                }
+              }
+            },
+            child: const Text('Rename'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showDuplicateTableDialog(TableModel tbl) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Duplicate Table'),
+        content: Text(
+          'This will create a copy of "${tbl.displayName}" with all its field definitions (no data). Continue?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Duplicate'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final client = ref.read(apiClientProvider);
+      await client.duplicateTable(tbl.id);
+      await _loadTables();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error duplicating table: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showTruncateTableDialog(TableModel tbl) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Empty Table (Truncate)'),
+        content: Text(
+          'This will permanently delete ALL rows in "${tbl.displayName}" (${tbl.name}).\n\nThe table structure and fields are preserved, but every record will be erased. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Empty Table'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final client = ref.read(apiClientProvider);
+      await client.truncateTable(tbl.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Table "${tbl.displayName}" has been emptied.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error emptying table: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showDeleteTableDialog(TableModel tbl) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete Table "${tbl.displayName}"?'),
+        content: Text(
+          'This will permanently drop the table "${tbl.name}" and ALL of its data, including every record and field definition. This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete Table'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final client = ref.read(apiClientProvider);
+      await client.deleteTable(tbl.id);
+      if (_selectedTable?.id == tbl.id) {
+        setState(() => _selectedTable = null);
+      }
+      await _loadTables();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting table: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
-      insetPadding: const EdgeInsets.all(32.0),
+      insetPadding: const EdgeInsets.all(24.0),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minWidth: 800, maxWidth: 1000, minHeight: 550, maxHeight: 700),
+        constraints: const BoxConstraints(minWidth: 850, maxWidth: 1200, minHeight: 600, maxHeight: 820),
         child: Column(
           children: [
             // Header bar
@@ -413,16 +574,61 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                 leading: const Icon(Icons.table_view),
                 title: Text(tbl.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
                 subtitle: Text('SQL Table: ${tbl.name} • ${tbl.columns.length} columns'),
-                trailing: TextButton(
-                  child: const Text('Inspect Fields'),
-                  onPressed: () {
-                    setState(() => _selectedTable = tbl);
-                    _tabController.animateTo(1);
-                  },
+                onTap: () => setState(() => _selectedTable = tbl),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Inspect Fields shortcut
+                    Tooltip(
+                      message: 'Inspect Fields',
+                      child: TextButton.icon(
+                        icon: const Icon(Icons.view_column_outlined, size: 15),
+                        label: const Text('Fields', style: TextStyle(fontSize: 12)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed: () {
+                          setState(() => _selectedTable = tbl);
+                          _tabController.animateTo(1);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const VerticalDivider(width: 1, indent: 8, endIndent: 8),
+                    const SizedBox(width: 4),
+                    // Rename
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      tooltip: 'Rename Table',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _showRenameTableDialog(tbl),
+                    ),
+                    // Duplicate
+                    IconButton(
+                      icon: const Icon(Icons.copy_outlined, size: 18),
+                      tooltip: 'Duplicate Table',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => _showDuplicateTableDialog(tbl),
+                    ),
+                    // Truncate / Empty
+                    IconButton(
+                      icon: const Icon(Icons.cleaning_services_outlined, size: 18),
+                      tooltip: 'Empty Table (Truncate)',
+                      visualDensity: VisualDensity.compact,
+                      color: Colors.orange,
+                      onPressed: () => _showTruncateTableDialog(tbl),
+                    ),
+                    // Delete
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      tooltip: 'Delete Table',
+                      visualDensity: VisualDensity.compact,
+                      color: Colors.red,
+                      onPressed: () => _showDeleteTableDialog(tbl),
+                    ),
+                  ],
                 ),
-                onTap: () {
-                  setState(() => _selectedTable = tbl);
-                },
               );
             },
           ),
@@ -523,27 +729,12 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
   }
 
   Widget _buildRelationshipsGraphTab() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.account_tree_outlined, size: 64, color: Colors.grey),
-            const SizedBox(height: 16),
-            const Text(
-              'Relationship Graph Canvas',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Interactive node-based canvas showing Table Occurrences (TO) and draggable match field links.\nFound ${_tables.length} table occurrences ready for connecting.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.grey),
-            ),
-          ],
-        ),
-      ),
+    return RelationshipGraphWidget(
+      tables: _tables,
+      occurrences: _occurrences,
+      relationships: _relationships,
+      apiClient: ref.read(apiClientProvider),
+      onSchemaChanged: _loadTables,
     );
   }
 }

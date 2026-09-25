@@ -219,6 +219,66 @@ Drops the column from the physical database table and removes it from `sys_colum
 ### `GET /api/v1/schemas/occurrences`
 Lists all Table Occurrences in the relationship graph.
 
+### `POST /api/v1/schemas/occurrences`
+Creates a new Table Occurrence tied to a base table.
+```json
+{
+  "base_table_id": "table-uuid",
+  "name": "CUSTOMERS 2",
+  "x_pos": 250,
+  "y_pos": 180
+}
+```
+
+### `PUT /api/v1/schemas/occurrences/{id}`
+Updates an occurrence name and/or its canvas coordinates `(x_pos, y_pos)`.
+```json
+{
+  "name": "CUSTOMERS 2",
+  "x_pos": 320,
+  "y_pos": 220
+}
+```
+
+### `DELETE /api/v1/schemas/occurrences/{id}`
+Deletes a Table Occurrence. Cascades to any relationships connecting to it.
+
+---
+
+### `GET /api/v1/schemas/relationships`
+Lists all relationships between Table Occurrences in the relational graph.
+
+### `POST /api/v1/schemas/relationships`
+Creates a new relationship between two Table Occurrence fields.
+```json
+{
+  "name": "Cust_to_Invoices",
+  "left_occurrence_id": "occ-1-uuid",
+  "left_column_id": "col-1-uuid",
+  "right_occurrence_id": "occ-2-uuid",
+  "right_column_id": "col-2-uuid",
+  "operator": "=",
+  "allow_creation": true,
+  "cascade_delete": false,
+  "sort_related": ""
+}
+```
+
+### `PUT /api/v1/schemas/relationships/{id}`
+Updates a relationship definition.
+```json
+{
+  "name": "Cust_to_Invoices",
+  "operator": "=",
+  "allow_creation": true,
+  "cascade_delete": true,
+  "sort_related": ""
+}
+```
+
+### `DELETE /api/v1/schemas/relationships/{id}`
+Deletes a relationship definition.
+
 ---
 
 ## 3. Visual Layouts

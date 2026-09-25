@@ -108,6 +108,11 @@ func (s *Service) ExportSolution(ctx context.Context, solutionName string, dbCon
 		return nil, fmt.Errorf("failed listing layouts: %w", err)
 	}
 
+	relationships, err := s.ListRelationships(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing relationships: %w", err)
+	}
+
 	now := time.Now().UTC()
 	encodedDBConfig := dbConfig
 	encodedDBConfig.User = EncodeCredential(dbConfig.User)
@@ -120,7 +125,7 @@ func (s *Service) ExportSolution(ctx context.Context, solutionName string, dbCon
 		DatabaseConnection: encodedDBConfig,
 		Tables:             tables,
 		TableOccurrences:   occurrences,
-		Relationships:      make([]RelationshipMetadata, 0),
+		Relationships:      relationships,
 		Layouts:            layouts,
 		Users: []UserAccount{
 			{
@@ -196,7 +201,39 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*SolutionBun
 		}
 	}
 
-	// 4. Import layouts
+	// 4. Import table occurrences
+	allOccs, _ := s.ListTableOccurrences(ctx)
+	occMap := make(map[string]bool)
+	for _, o := range allOccs {
+		occMap[o.Name] = true
+	}
+	for _, occ := range bundle.TableOccurrences {
+		if !occMap[occ.Name] {
+			_, _ = s.CreateTableOccurrence(ctx, CreateOccurrenceInput{
+				BaseTableID: occ.BaseTableID,
+				Name:        occ.Name,
+				XPos:        occ.XPos,
+				YPos:        occ.YPos,
+			})
+		}
+	}
+
+	// 5. Import relationships
+	for _, rel := range bundle.Relationships {
+		_, _ = s.CreateRelationship(ctx, CreateRelationshipInput{
+			Name:              rel.Name,
+			LeftOccurrenceID:  rel.LeftOccurrenceID,
+			LeftColumnID:      rel.LeftColumnID,
+			RightOccurrenceID: rel.RightOccurrenceID,
+			RightColumnID:     rel.RightColumnID,
+			Operator:          rel.Operator,
+			AllowCreation:     rel.AllowCreation,
+			CascadeDelete:     rel.CascadeDelete,
+			SortRelated:       &rel.SortRelated,
+		})
+	}
+
+	// 6. Import layouts
 	for _, lay := range bundle.Layouts {
 		_, err := s.GetLayout(ctx, lay.ID)
 		if err != nil {

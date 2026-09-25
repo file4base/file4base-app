@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.15] - 2026-09-25
+
+### Added
+- **Visual Relationships Graph (`File > Manage > Database > Relationships Graph`)**:
+  - Implemented the visual relational schema graph in Tab 3 of `ManageDatabaseDialog`, matching the canonical low-code relational specification:
+    - **Draggable Table Occurrence (TO) Boxes**: Interactive cards showing occurrence names (`CLIENTES`, `FACTURAS`, `CLIENTES 2`), header bar with collapse/expand toggle, and field lists with key icons.
+    - **Selection State & Amber Glow**: Selected Table Occurrence displays an amber/gold halo glow outline matching the visual design.
+    - **Relational Match Connector Lines**: Smooth orthogonal cubic bezier curves linking connected fields across occurrences.
+    - **Interactive Operator Badges**: Centered badges on relationship lines displaying criteria comparison operators (`=`, `≠`, `<`, `≤`, `>`, `≥`). Clicking selects the relationship, double-clicking opens relationship editor.
+    - **"Especificar tabla" Modal Dialog (`SpecifyTableDialog`)**:
+      - Exact replication of the canonical dialog: source dropdown ("Archivo actual"), table list view with selection highlight, and automatic occurrence name generator (suggesting e.g. `CLIENTES 2` when `CLIENTES` already exists).
+    - **"Especificar relación" Modal Dialog (`SpecifyRelationshipDialog`)**:
+      - Two-column table occurrence and field selectors with middle comparison operator dropdown.
+      - Canonical relational checkboxes:
+        - `Permitir la creación de registros en esta tabla a través de esta relación` (`allow_creation`)
+        - `Eliminar registros relacionados en esta tabla cuando se elimine un registro en la otra tabla` (`cascade_delete`)
+        - `Ordenar registros relacionados` (`sort_related`)
+      - Relationship deletion and criteria update actions.
+    - **Canvas Toolbar & Navigation**: Buttons to add occurrence (`+ Tabla...`), add relationship (`+ Relación...`), delete selection, and center/reset view (`Centrar vista`).
+- **Backend Schema & REST APIs**:
+  - Added full CRUD endpoints for Table Occurrences:
+    - `GET /api/v1/schemas/occurrences`: Lists all occurrences.
+    - `POST /api/v1/schemas/occurrences`: Creates a new table occurrence.
+    - `PUT /api/v1/schemas/occurrences/{id}`: Updates occurrence name and/or coordinates `(x_pos, y_pos)`.
+    - `DELETE /api/v1/schemas/occurrences/{id}`: Deletes occurrence with cascading cleanup.
+  - Added full CRUD endpoints for Relationships:
+    - `GET /api/v1/schemas/relationships`: Lists all relationships.
+    - `POST /api/v1/schemas/relationships`: Creates a new relationship.
+    - `PUT /api/v1/schemas/relationships/{id}`: Updates relationship operator, name, or cascade options.
+    - `DELETE /api/v1/schemas/relationships/{id}`: Deletes relationship.
+  - Cross-engine support for both PostgreSQL and MariaDB dialects.
+  - Solution bundle export and import now packages both Table Occurrences and Relationships.
+- **Automated Tests**:
+  - Added 6 Flutter tests in `client/test/relationships_graph_test.dart` (model serialization, `SpecifyTableDialog`, `SpecifyRelationshipDialog`, and `RelationshipGraphWidget` canvas).
+  - Added Go tests in `server/internal/schema/relationship_service_test.go` and `server/internal/api/schema_handler_test.go`.
+
 ## [0.4.14] - 2026-09-25
 
 ### Added

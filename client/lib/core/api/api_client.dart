@@ -215,11 +215,89 @@ class TableOccurrenceModel {
     return TableOccurrenceModel(
       id: json['id'] as String,
       baseTableId: json['base_table_id'] as String,
-      name: json['name'] as String,
+      name: json['name'] as String? ?? '',
       xPos: (json['x_pos'] as num?)?.toDouble() ?? 100.0,
       yPos: (json['y_pos'] as num?)?.toDouble() ?? 100.0,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'base_table_id': baseTableId,
+    'name': name,
+    'x_pos': xPos,
+    'y_pos': yPos,
+  };
+
+  TableOccurrenceModel copyWith({
+    String? id,
+    String? baseTableId,
+    String? name,
+    double? xPos,
+    double? yPos,
+  }) {
+    return TableOccurrenceModel(
+      id: id ?? this.id,
+      baseTableId: baseTableId ?? this.baseTableId,
+      name: name ?? this.name,
+      xPos: xPos ?? this.xPos,
+      yPos: yPos ?? this.yPos,
+    );
+  }
+}
+
+class RelationshipModel {
+  final String id;
+  final String name;
+  final String leftOccurrenceId;
+  final String leftColumnId;
+  final String rightOccurrenceId;
+  final String rightColumnId;
+  final String operator;
+  final bool allowCreation;
+  final bool cascadeDelete;
+  final String? sortRelated;
+
+  const RelationshipModel({
+    required this.id,
+    required this.name,
+    required this.leftOccurrenceId,
+    required this.leftColumnId,
+    required this.rightOccurrenceId,
+    required this.rightColumnId,
+    this.operator = '=',
+    this.allowCreation = false,
+    this.cascadeDelete = false,
+    this.sortRelated,
+  });
+
+  factory RelationshipModel.fromJson(Map<String, dynamic> json) {
+    return RelationshipModel(
+      id: json['id'] as String,
+      name: json['name'] as String? ?? '',
+      leftOccurrenceId: json['left_occurrence_id'] as String,
+      leftColumnId: json['left_column_id'] as String,
+      rightOccurrenceId: json['right_occurrence_id'] as String,
+      rightColumnId: json['right_column_id'] as String,
+      operator: json['operator'] as String? ?? '=',
+      allowCreation: json['allow_creation'] as bool? ?? false,
+      cascadeDelete: json['cascade_delete'] as bool? ?? false,
+      sortRelated: json['sort_related'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'left_occurrence_id': leftOccurrenceId,
+    'left_column_id': leftColumnId,
+    'right_occurrence_id': rightOccurrenceId,
+    'right_column_id': rightColumnId,
+    'operator': operator,
+    'allow_creation': allowCreation,
+    'cascade_delete': cascadeDelete,
+    if (sortRelated != null) 'sort_related': sortRelated,
+  };
 }
 
 class LayoutModel {
@@ -506,6 +584,41 @@ class ApiClient {
     return TableModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  Future<void> deleteTable(String tableId) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  Future<TableModel> renameTable(String tableId, String newDisplayName) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/rename'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'display_name': newDisplayName}),
+    );
+    _checkResponse(response);
+    return TableModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<TableModel> duplicateTable(String tableId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/duplicate'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return TableModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> truncateTable(String tableId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/schemas/tables/$tableId/truncate'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
   Future<ColumnModel> addColumn(String tableId, {
     required String name,
     required String displayName,
@@ -631,6 +744,124 @@ class ApiClient {
     _checkResponse(response);
     final list = jsonDecode(response.body) as List<dynamic>;
     return list.map((item) => TableOccurrenceModel.fromJson(item as Map<String, dynamic>)).toList();
+  }
+
+  Future<TableOccurrenceModel> createOccurrence({
+    required String baseTableId,
+    required String name,
+    double xPos = 100.0,
+    double yPos = 100.0,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/schemas/occurrences'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'base_table_id': baseTableId,
+        'name': name,
+        'x_pos': xPos,
+        'y_pos': yPos,
+      }),
+    );
+    _checkResponse(response);
+    return TableOccurrenceModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<TableOccurrenceModel> updateOccurrence(
+    String id, {
+    String? name,
+    double? xPos,
+    double? yPos,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/schemas/occurrences/$id'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (name != null) 'name': name,
+        if (xPos != null) 'x_pos': xPos,
+        if (yPos != null) 'y_pos': yPos,
+      }),
+    );
+    _checkResponse(response);
+    return TableOccurrenceModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteOccurrence(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/schemas/occurrences/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  Future<List<RelationshipModel>> listRelationships() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/schemas/relationships'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => RelationshipModel.fromJson(item as Map<String, dynamic>)).toList();
+  }
+
+  Future<RelationshipModel> createRelationship({
+    required String leftOccurrenceId,
+    required String leftColumnId,
+    required String rightOccurrenceId,
+    required String rightColumnId,
+    String operator = '=',
+    String? name,
+    bool allowCreation = false,
+    bool cascadeDelete = false,
+    String? sortRelated,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/schemas/relationships'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'left_occurrence_id': leftOccurrenceId,
+        'left_column_id': leftColumnId,
+        'right_occurrence_id': rightOccurrenceId,
+        'right_column_id': rightColumnId,
+        'operator': operator,
+        if (name != null) 'name': name,
+        'allow_creation': allowCreation,
+        'cascade_delete': cascadeDelete,
+        if (sortRelated != null) 'sort_related': sortRelated,
+      }),
+    );
+    _checkResponse(response);
+    return RelationshipModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<RelationshipModel> updateRelationship(
+    String id, {
+    String? name,
+    String? operator,
+    bool? allowCreation,
+    bool? cascadeDelete,
+    String? sortRelated,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/schemas/relationships/$id'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (name != null) 'name': name,
+        if (operator != null) 'operator': operator,
+        if (allowCreation != null) 'allow_creation': allowCreation,
+        if (cascadeDelete != null) 'cascade_delete': cascadeDelete,
+        if (sortRelated != null) 'sort_related': sortRelated,
+      }),
+    );
+    _checkResponse(response);
+    return RelationshipModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteRelationship(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/schemas/relationships/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
   }
 
   Future<List<LayoutModel>> listLayouts() async {

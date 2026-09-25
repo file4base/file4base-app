@@ -23,10 +23,21 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/schemas", func(r chi.Router) {
 		r.Get("/tables", h.ListTables)
 		r.Post("/tables", h.CreateTable)
+		r.Delete("/tables/{id}", h.DeleteTable)
+		r.Put("/tables/{id}/rename", h.RenameTable)
+		r.Post("/tables/{id}/duplicate", h.DuplicateTable)
+		r.Post("/tables/{id}/truncate", h.TruncateTable)
 		r.Post("/tables/{id}/columns", h.AddColumn)
 		r.Put("/tables/{id}/columns/{columnId}", h.UpdateColumn)
 		r.Delete("/tables/{id}/columns/{columnId}", h.DeleteColumn)
 		r.Get("/occurrences", h.ListOccurrences)
+		r.Post("/occurrences", h.CreateOccurrence)
+		r.Put("/occurrences/{id}", h.UpdateOccurrence)
+		r.Delete("/occurrences/{id}", h.DeleteOccurrence)
+		r.Get("/relationships", h.ListRelationships)
+		r.Post("/relationships", h.CreateRelationship)
+		r.Put("/relationships/{id}", h.UpdateRelationship)
+		r.Delete("/relationships/{id}", h.DeleteRelationship)
 		r.Get("/layouts", h.ListLayouts)
 		r.Post("/layouts", h.CreateLayout)
 		r.Get("/layouts/{id}", h.GetLayout)
@@ -38,6 +49,22 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		r.Put("/scripts/{id}", h.UpdateScript)
 		r.Delete("/scripts/{id}", h.DeleteScript)
 		r.Post("/scripts/{id}/duplicate", h.DuplicateScript)
+	})
+
+	// Also support top-level /api/v1/occurrences
+	r.Route("/api/v1/occurrences", func(r chi.Router) {
+		r.Get("/", h.ListOccurrences)
+		r.Post("/", h.CreateOccurrence)
+		r.Put("/{id}", h.UpdateOccurrence)
+		r.Delete("/{id}", h.DeleteOccurrence)
+	})
+
+	// Also support top-level /api/v1/relationships
+	r.Route("/api/v1/relationships", func(r chi.Router) {
+		r.Get("/", h.ListRelationships)
+		r.Post("/", h.CreateRelationship)
+		r.Put("/{id}", h.UpdateRelationship)
+		r.Delete("/{id}", h.DeleteRelationship)
 	})
 
 	// Also support top-level /api/v1/layouts
@@ -96,6 +123,76 @@ func (h *SchemaHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(tbl)
+}
+
+func (h *SchemaHandler) DeleteTable(w http.ResponseWriter, r *http.Request) {
+	tableID := chi.URLParam(r, "id")
+	if tableID == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id is required")
+		return
+	}
+	if err := h.svc.DeleteTable(r.Context(), tableID); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type RenameTableRequest struct {
+	DisplayName string `json:"display_name"`
+}
+
+func (h *SchemaHandler) RenameTable(w http.ResponseWriter, r *http.Request) {
+	tableID := chi.URLParam(r, "id")
+	if tableID == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id is required")
+		return
+	}
+	var req RenameTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if req.DisplayName == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "display_name is required")
+		return
+	}
+	tbl, err := h.svc.RenameTable(r.Context(), tableID, req.DisplayName)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(tbl)
+}
+
+func (h *SchemaHandler) DuplicateTable(w http.ResponseWriter, r *http.Request) {
+	tableID := chi.URLParam(r, "id")
+	if tableID == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id is required")
+		return
+	}
+	tbl, err := h.svc.DuplicateTable(r.Context(), tableID)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(tbl)
+}
+
+func (h *SchemaHandler) TruncateTable(w http.ResponseWriter, r *http.Request) {
+	tableID := chi.URLParam(r, "id")
+	if tableID == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "table id is required")
+		return
+	}
+	if err := h.svc.TruncateTable(r.Context(), tableID); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type AddColumnRequest struct {
@@ -228,6 +325,138 @@ func (h *SchemaHandler) ListOccurrences(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(occurrences)
+}
+
+func (h *SchemaHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request) {
+	var input schema.CreateOccurrenceInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	if input.BaseTableID == "" || input.Name == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "base_table_id and name are required")
+		return
+	}
+
+	occ, err := h.svc.CreateTableOccurrence(r.Context(), input)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(occ)
+}
+
+func (h *SchemaHandler) UpdateOccurrence(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "occurrence id is required")
+		return
+	}
+
+	var input schema.UpdateOccurrenceInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	occ, err := h.svc.UpdateTableOccurrence(r.Context(), id, input)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(occ)
+}
+
+func (h *SchemaHandler) DeleteOccurrence(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "occurrence id is required")
+		return
+	}
+
+	if err := h.svc.DeleteTableOccurrence(r.Context(), id); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *SchemaHandler) ListRelationships(w http.ResponseWriter, r *http.Request) {
+	relationships, err := h.svc.ListRelationships(r.Context())
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(relationships)
+}
+
+func (h *SchemaHandler) CreateRelationship(w http.ResponseWriter, r *http.Request) {
+	var input schema.CreateRelationshipInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	if input.LeftOccurrenceID == "" || input.RightOccurrenceID == "" || input.LeftColumnID == "" || input.RightColumnID == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "left and right occurrences and columns are required")
+		return
+	}
+
+	rel, err := h.svc.CreateRelationship(r.Context(), input)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(rel)
+}
+
+func (h *SchemaHandler) UpdateRelationship(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "relationship id is required")
+		return
+	}
+
+	var input schema.UpdateRelationshipInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	rel, err := h.svc.UpdateRelationship(r.Context(), id, input)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(rel)
+}
+
+func (h *SchemaHandler) DeleteRelationship(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Bad Request", "relationship id is required")
+		return
+	}
+
+	if err := h.svc.DeleteRelationship(r.Context(), id); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *SchemaHandler) ListLayouts(w http.ResponseWriter, r *http.Request) {
