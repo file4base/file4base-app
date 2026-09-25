@@ -1546,28 +1546,28 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
             child: ListView(
               children: [
                 _buildExtPrivCard(
-                  code: 'fmapp',
+                  code: 'f4bapp',
                   title: 'Acceso mediante File4Base Desktop',
                   description: 'Permite abrir y usar la base de datos a través de la aplicación cliente nativa (macOS / Linux / Windows).',
                   icon: Icons.desktop_windows_outlined,
                   states: _extPrivDesktop,
                 ),
                 _buildExtPrivCard(
-                  code: 'fmwebdirect',
+                  code: 'f4bwebdirect',
                   title: 'Acceso mediante File4Base WebDirect',
                   description: 'Permite abrir y usar la base de datos de manera directa a través de exploradores web modernos vía Nginx.',
                   icon: Icons.language_outlined,
                   states: _extPrivWebDirect,
                 ),
                 _buildExtPrivCard(
-                  code: 'fmrest',
+                  code: 'f4brest',
                   title: 'Acceso mediante API REST / Data API',
                   description: 'Permite consultas JSON, ingestión de registros y automatizaciones backend a través de endpoints REST seguros.',
                   icon: Icons.api_outlined,
                   states: _extPrivRest,
                 ),
                 _buildExtPrivCard(
-                  code: 'fmexport',
+                  code: 'f4bexport',
                   title: 'Exportación masiva de registros',
                   description: 'Permite exportar datos a formatos Excel, CSV, JSON y paquetes de solución empaquetados .f4b.',
                   icon: Icons.file_download_outlined,

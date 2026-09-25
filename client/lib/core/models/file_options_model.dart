@@ -1,5 +1,5 @@
 /// FileOptionsModel defines startup credentials, initial layout, toolbar visibility,
-/// and script triggers (OnFirstWindowOpen, OnLastWindowClose, etc.) faithful to FileMaker Pro File Options.
+/// and script triggers (OnFirstWindowOpen, OnLastWindowClose, etc.) for File4Base File Options.
 class FileOptionsModel {
   // --- Pestaña «Abrir» (Open) ---
   final bool autoLoginEnabled;

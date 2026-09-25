@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/theme/theme_model.dart';
+import '../../core/theme/theme_provider.dart';
 
-class CalculationBuilderDialog extends StatefulWidget {
+class CalculationBuilderDialog extends ConsumerStatefulWidget {
   final String initialFormula;
   final String? contextTable;
   final List<String> availableTables;
@@ -34,10 +37,10 @@ class CalculationBuilderDialog extends StatefulWidget {
   }
 
   @override
-  State<CalculationBuilderDialog> createState() => _CalculationBuilderDialogState();
+  ConsumerState<CalculationBuilderDialog> createState() => _CalculationBuilderDialogState();
 }
 
-class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
+class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDialog> {
   late TextEditingController _formulaController;
   late FocusNode _formulaFocusNode;
   String _selectedTable = '';
@@ -148,18 +151,20 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = ref.watch(appThemeProvider);
+
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
         width: 1040,
         height: 660,
         decoration: BoxDecoration(
-          color: const Color(0xFF0F172A),
+          color: theme.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF334155)),
+          border: Border.all(color: theme.border),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.6),
+              color: Colors.black.withValues(alpha: theme.isDark ? 0.6 : 0.2),
               blurRadius: 32,
               offset: const Offset(0, 12),
             ),
@@ -170,19 +175,19 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
             // Top Window Bar
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1E293B),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                border: Border(bottom: BorderSide(color: Color(0xFF334155))),
+              decoration: BoxDecoration(
+                color: theme.surfaceContainer,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                border: Border(bottom: BorderSide(color: theme.border)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.functions, color: Color(0xFF38BDF8), size: 20),
+                  Icon(Icons.functions, color: theme.primaryAccent, size: 20),
                   const SizedBox(width: 10),
-                  const Text(
+                  Text(
                     'Especificar cálculo',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: theme.textPrimary,
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),
@@ -192,18 +197,18 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0284C7).withValues(alpha: 0.2),
+                        color: theme.primaryAccent.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: const Color(0xFF0284C7).withValues(alpha: 0.4)),
+                        border: Border.all(color: theme.primaryAccent.withValues(alpha: 0.3)),
                       ),
                       child: Text(
                         'Contexto: $_selectedTable',
-                        style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontWeight: FontWeight.w500),
+                        style: TextStyle(color: theme.primaryAccent, fontSize: 12, fontWeight: FontWeight.w500),
                       ),
                     ),
                   const SizedBox(width: 12),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.grey, size: 20),
+                    icon: Icon(Icons.close, color: theme.textSecondary, size: 20),
                     onPressed: () => Navigator.of(context).pop(),
                     tooltip: 'Cerrar',
                     splashRadius: 18,
@@ -219,9 +224,9 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                   // Left: Fields panel
                   Container(
                     width: 250,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF111827),
-                      border: Border(right: BorderSide(color: Color(0xFF1F2937))),
+                    decoration: BoxDecoration(
+                      color: theme.surface,
+                      border: Border(right: BorderSide(color: theme.border)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -229,28 +234,28 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                         // Table selector
                         Container(
                           padding: const EdgeInsets.all(10),
-                          decoration: const BoxDecoration(
-                            border: Border(bottom: BorderSide(color: Color(0xFF1F2937))),
+                          decoration: BoxDecoration(
+                            border: Border(bottom: BorderSide(color: theme.border)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Ocurrencia de tabla', style: TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.bold)),
+                              Text('Ocurrencia de tabla', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF1E293B),
+                                  color: theme.surfaceContainer,
                                   borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: const Color(0xFF334155)),
+                                  border: Border.all(color: theme.border),
                                 ),
                                 child: DropdownButtonHideUnderline(
                                   child: DropdownButton<String>(
                                     isExpanded: true,
-                                    dropdownColor: const Color(0xFF1E293B),
+                                    dropdownColor: theme.surface,
                                     value: _selectedTable.isNotEmpty ? _selectedTable : null,
-                                    hint: const Text('Seleccionar tabla...', style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                                    hint: Text('Seleccionar tabla...', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
+                                    style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                     items: widget.availableTables.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                                     onChanged: (val) {
                                       if (val != null) setState(() => _selectedTable = val);
@@ -263,14 +268,14 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                               SizedBox(
                                 height: 32,
                                 child: TextField(
-                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                  style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                   decoration: InputDecoration(
                                     hintText: 'Filtrar campos...',
-                                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 11),
-                                    prefixIcon: const Icon(Icons.search, size: 16, color: Colors.grey),
+                                    hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                                    prefixIcon: Icon(Icons.search, size: 16, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
                                     filled: true,
-                                    fillColor: const Color(0xFF1E293B),
+                                    fillColor: theme.surfaceContainer,
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
                                   ),
                                   onChanged: (v) => setState(() => _fieldSearch = v),
@@ -293,12 +298,12 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                                   child: Row(
                                     children: [
-                                      const Icon(Icons.data_object, color: Color(0xFF38BDF8), size: 14),
+                                      Icon(Icons.data_object, color: theme.fieldsColor, size: 14),
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
                                           field,
-                                          style: const TextStyle(color: Color(0xFFE2E8F0), fontSize: 12),
+                                          style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
@@ -316,7 +321,7 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                   // Center: Formula Editor & Operators
                   Expanded(
                     child: Container(
-                      color: const Color(0xFF0B1120),
+                      color: theme.background,
                       padding: const EdgeInsets.all(12),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -326,9 +331,9 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                             margin: const EdgeInsets.only(bottom: 10),
                             decoration: BoxDecoration(
-                              color: const Color(0xFF1E293B),
+                              color: theme.surfaceContainer,
                               borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: const Color(0xFF334155)),
+                              border: Border.all(color: theme.border),
                             ),
                             child: Wrap(
                               spacing: 6,
@@ -340,14 +345,14 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFF0F172A),
+                                      color: theme.surface,
                                       borderRadius: BorderRadius.circular(4),
-                                      border: Border.all(color: const Color(0xFF334155)),
+                                      border: Border.all(color: theme.border),
                                     ),
                                     child: Text(
                                       op,
-                                      style: const TextStyle(
-                                        color: Color(0xFF38BDF8),
+                                      style: TextStyle(
+                                        color: theme.primaryAccent,
                                         fontSize: 12,
                                         fontWeight: FontWeight.bold,
                                         fontFamily: 'monospace',
@@ -360,14 +365,14 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                           ),
 
                           // Formula Box
-                          const Text('Fórmula / Cálculo:', style: TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.bold)),
+                          Text('Fórmula / Cálculo:', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 6),
                           Expanded(
                             child: Container(
                               decoration: BoxDecoration(
-                                color: const Color(0xFF030712),
+                                color: theme.surface,
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: const Color(0xFF1E293B)),
+                                border: Border.all(color: theme.border),
                               ),
                               padding: const EdgeInsets.all(12),
                               child: TextField(
@@ -375,15 +380,15 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                                 focusNode: _formulaFocusNode,
                                 maxLines: null,
                                 expands: true,
-                                style: const TextStyle(
-                                  color: Color(0xFFF8FAFC),
+                                style: TextStyle(
+                                  color: theme.textPrimary,
                                   fontSize: 13,
                                   fontFamily: 'monospace',
                                   height: 1.4,
                                 ),
-                                decoration: const InputDecoration(
+                                decoration: InputDecoration(
                                   hintText: '// Escribe o inserta campos, funciones y operadores aquí...',
-                                  hintStyle: TextStyle(color: Color(0xFF475569), fontSize: 12),
+                                  hintStyle: TextStyle(color: theme.textSecondary, fontSize: 12),
                                   border: InputBorder.none,
                                 ),
                               ),
@@ -397,9 +402,9 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                   // Right: Functions Catalog
                   Container(
                     width: 280,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF111827),
-                      border: Border(left: BorderSide(color: Color(0xFF1F2937))),
+                    decoration: BoxDecoration(
+                      color: theme.surface,
+                      border: Border(left: BorderSide(color: theme.border)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,27 +412,27 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                         // Categories and Search
                         Container(
                           padding: const EdgeInsets.all(10),
-                          decoration: const BoxDecoration(
-                            border: Border(bottom: BorderSide(color: Color(0xFF1F2937))),
+                          decoration: BoxDecoration(
+                            border: Border(bottom: BorderSide(color: theme.border)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Funciones integradas', style: TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.bold)),
+                              Text('Funciones integradas', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF1E293B),
+                                  color: theme.surfaceContainer,
                                   borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(color: const Color(0xFF334155)),
+                                  border: Border.all(color: theme.border),
                                 ),
                                 child: DropdownButtonHideUnderline(
                                   child: DropdownButton<String>(
                                     isExpanded: true,
-                                    dropdownColor: const Color(0xFF1E293B),
+                                    dropdownColor: theme.surface,
                                     value: _functionCategory,
-                                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                                    style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                     items: ['Todas', ..._functionsByCategory.keys].map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
                                     onChanged: (val) {
                                       if (val != null) setState(() => _functionCategory = val);
@@ -439,14 +444,14 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                               SizedBox(
                                 height: 32,
                                 child: TextField(
-                                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                                  style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                   decoration: InputDecoration(
                                     hintText: 'Buscar función...',
-                                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 11),
-                                    prefixIcon: const Icon(Icons.search, size: 16, color: Colors.grey),
+                                    hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                                    prefixIcon: Icon(Icons.search, size: 16, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
                                     filled: true,
-                                    fillColor: const Color(0xFF1E293B),
+                                    fillColor: theme.surfaceContainer,
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
                                   ),
                                   onChanged: (v) => setState(() => _functionSearch = v),
@@ -464,16 +469,16 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                                 onTap: () => _insertAtCursor(fn['syntax']!),
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                  decoration: const BoxDecoration(
-                                    border: Border(bottom: BorderSide(color: Color(0xFF1F2937), width: 0.5)),
+                                  decoration: BoxDecoration(
+                                    border: Border(bottom: BorderSide(color: theme.border.withValues(alpha: 0.5), width: 0.5)),
                                   ),
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         fn['name']!,
-                                        style: const TextStyle(
-                                          color: Color(0xFFF59E0B),
+                                        style: TextStyle(
+                                          color: theme.controlColor,
                                           fontSize: 12,
                                           fontWeight: FontWeight.bold,
                                           fontFamily: 'monospace',
@@ -482,7 +487,7 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                                       const SizedBox(height: 2),
                                       Text(
                                         fn['desc']!,
-                                        style: const TextStyle(color: Colors.grey, fontSize: 10),
+                                        style: TextStyle(color: theme.textSecondary, fontSize: 10),
                                         maxLines: 2,
                                         overflow: TextOverflow.ellipsis,
                                       ),
@@ -503,19 +508,19 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
             // Bottom Actions Bar
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1E293B),
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
-                border: Border(top: BorderSide(color: Color(0xFF334155))),
+              decoration: BoxDecoration(
+                color: theme.surfaceContainer,
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                border: Border(top: BorderSide(color: theme.border)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.info_outline, color: Colors.grey, size: 16),
+                  Icon(Icons.info_outline, color: theme.textSecondary, size: 16),
                   const SizedBox(width: 8),
-                  const Expanded(
+                  Expanded(
                     child: Text(
                       'Haz doble clic en campos o funciones para insertarlos en la fórmula.',
-                      style: TextStyle(color: Colors.grey, fontSize: 11),
+                      style: TextStyle(color: theme.textSecondary, fontSize: 11),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -523,8 +528,8 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                   OutlinedButton(
                     onPressed: () => Navigator.of(context).pop(),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.grey.shade300,
-                      side: const BorderSide(color: Color(0xFF475569)),
+                      foregroundColor: theme.textSecondary,
+                      side: BorderSide(color: theme.border),
                     ),
                     child: const Text('Cancelar'),
                   ),
@@ -534,8 +539,8 @@ class _CalculationBuilderDialogState extends State<CalculationBuilderDialog> {
                       Navigator.of(context).pop(_formulaController.text);
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0284C7),
-                      foregroundColor: Colors.white,
+                      backgroundColor: theme.primaryAccent,
+                      foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
                     ),
                     child: const Text('Aceptar'),
                   ),

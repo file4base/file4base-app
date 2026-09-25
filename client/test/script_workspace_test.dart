@@ -4,6 +4,7 @@ import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/features/script_workspace/calculation_builder_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -69,7 +70,7 @@ void main() {
       expect(decoded.steps[1].category, 'records');
     });
 
-    test('ScriptCatalogItem contains categories and FileMaker instructions', () {
+    test('ScriptCatalogItem contains categories and script instructions', () {
       final catalog = ScriptCatalogItem.catalog;
       expect(catalog.isNotEmpty, true);
 
@@ -94,16 +95,18 @@ void main() {
       addTearDown(() => tester.view.resetPhysicalSize());
 
       await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: CalculationBuilderDialog(
-              initialFormula: 'Sum(Items::Price)',
-              contextTable: 'Invoices',
-              availableTables: ['Invoices', 'Items', 'Customers'],
-              fieldsByTable: {
-                'Invoices': ['id', 'total', 'customer_id'],
-                'Items': ['id', 'invoice_id', 'price', 'quantity'],
-              },
+        const ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: CalculationBuilderDialog(
+                initialFormula: 'Sum(Items::Price)',
+                contextTable: 'Invoices',
+                availableTables: ['Invoices', 'Items', 'Customers'],
+                fieldsByTable: {
+                  'Invoices': ['id', 'total', 'customer_id'],
+                  'Items': ['id', 'invoice_id', 'price', 'quantity'],
+                },
+              ),
             ),
           ),
         ),
@@ -191,11 +194,13 @@ void main() {
       final apiClient = ApiClient(baseUrl: 'http://localhost:8080', httpClient: mockClient);
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: ScriptWorkspaceDialog(
-              apiClient: apiClient,
-              databaseName: 'test_db',
+        ProviderScope(
+          child: MaterialApp(
+            home: Scaffold(
+              body: ScriptWorkspaceDialog(
+                apiClient: apiClient,
+                databaseName: 'test_db',
+              ),
             ),
           ),
         ),

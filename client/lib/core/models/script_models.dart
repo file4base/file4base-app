@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../theme/theme_model.dart';
 
 class ScriptStepModel {
   final String id;
@@ -126,6 +127,24 @@ class ScriptStepModel {
         return const Color(0xFFF43F5E); // Rose
       default:
         return Colors.blueGrey;
+    }
+  }
+
+  Color getCategoryColor([AppThemeDefinition? theme]) {
+    if (theme == null) return categoryColor;
+    switch (category) {
+      case 'navigation':
+        return theme.navColor;
+      case 'fields':
+        return theme.fieldsColor;
+      case 'control':
+        return theme.controlColor;
+      case 'records':
+        return theme.recordsColor;
+      case 'integration':
+        return theme.integrationColor;
+      default:
+        return theme.textSecondary;
     }
   }
 

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/api_client.dart';
+import '../../core/theme/theme_model.dart';
+import '../../core/theme/theme_provider.dart';
 import 'calculation_builder_dialog.dart';
 
-class ScriptWorkspaceDialog extends StatefulWidget {
+class ScriptWorkspaceDialog extends ConsumerStatefulWidget {
   final ApiClient apiClient;
   final String? databaseName;
 
@@ -28,10 +31,10 @@ class ScriptWorkspaceDialog extends StatefulWidget {
   }
 
   @override
-  State<ScriptWorkspaceDialog> createState() => _ScriptWorkspaceDialogState();
+  ConsumerState<ScriptWorkspaceDialog> createState() => _ScriptWorkspaceDialogState();
 }
 
-class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
+class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -529,21 +532,22 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
   void _runActiveScript() {
     final script = _activeScript;
     if (script == null) return;
+    final theme = ref.read(appThemeProvider);
 
     // Show simulated execution results dialog
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF111827),
+        backgroundColor: theme.surface,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: Color(0xFF10B981)),
+          side: BorderSide(color: theme.successColor),
         ),
         title: Row(
           children: [
-            const Icon(Icons.play_circle_fill, color: Color(0xFF10B981), size: 24),
+            Icon(Icons.play_circle_fill, color: theme.successColor, size: 24),
             const SizedBox(width: 10),
-            Text('Ejecución: ${script.name}', style: const TextStyle(color: Colors.white, fontSize: 16)),
+            Text('Ejecución: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
           ],
         ),
         content: SizedBox(
@@ -555,28 +559,28 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF030712),
+                  color: theme.surfaceContainer,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: const Color(0xFF1F2937)),
+                  border: Border.all(color: theme.border),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Estado: EXITOSO (0 errores)', style: TextStyle(color: Colors.green.shade400, fontWeight: FontWeight.bold, fontSize: 13)),
+                    Text('Estado: EXITOSO (0 errores)', style: TextStyle(color: theme.successColor, fontWeight: FontWeight.bold, fontSize: 13)),
                     const SizedBox(height: 6),
-                    Text('Pasos ejecutados: ${script.steps.where((s) => s.isEnabled).length} de ${script.steps.length}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                    Text('Contexto de tabla: ${script.contextTable.isEmpty ? "Predeterminado" : script.contextTable}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                    const Divider(color: Color(0xFF1F2937), height: 16),
-                    const Text('Traza de ejecución en motor File4Base:', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold)),
+                    Text('Pasos ejecutados: ${script.steps.where((s) => s.isEnabled).length} de ${script.steps.length}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
+                    Text('Contexto de tabla: ${script.contextTable.isEmpty ? "Predeterminado" : script.contextTable}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
+                    Divider(color: theme.border, height: 16),
+                    Text('Traza de ejecución en motor File4Base:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 4),
                     ...script.steps.where((s) => s.isEnabled).take(5).map((s) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
                       child: Text('✔ ${s.sequenceIdx.toString().padLeft(2, "0")} ${s.displayName} ${s.previewText}',
-                        style: const TextStyle(color: Color(0xFFE2E8F0), fontSize: 11, fontFamily: 'monospace'),
+                        style: TextStyle(color: theme.textPrimary, fontSize: 11, fontFamily: 'monospace'),
                       ),
                     )),
                     if (script.steps.where((s) => s.isEnabled).length > 5)
-                      const Text('... (resto de pasos completados)', style: TextStyle(color: Colors.grey, fontSize: 10, fontStyle: FontStyle.italic)),
+                      Text('... (resto de pasos completados)', style: TextStyle(color: theme.textSecondary, fontSize: 10, fontStyle: FontStyle.italic)),
                   ],
                 ),
               ),
@@ -585,7 +589,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
         ),
         actions: [
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981), foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(backgroundColor: theme.successColor, foregroundColor: Colors.white),
             onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('Cerrar'),
           ),
@@ -597,6 +601,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
   void _debugActiveScript() {
     final script = _activeScript;
     if (script == null) return;
+    final theme = ref.read(appThemeProvider);
 
     int debugStep = 0;
     final activeSteps = script.steps.where((s) => s.isEnabled).toList();
@@ -613,16 +618,16 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
           final currentStep = (debugStep < activeSteps.length) ? activeSteps[debugStep] : null;
 
           return AlertDialog(
-            backgroundColor: const Color(0xFF0F172A),
+            backgroundColor: theme.surface,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              side: const BorderSide(color: Color(0xFF38BDF8)),
+              side: BorderSide(color: theme.primaryAccent),
             ),
             title: Row(
               children: [
-                const Icon(Icons.bug_report, color: Color(0xFF38BDF8), size: 24),
+                Icon(Icons.bug_report, color: theme.primaryAccent, size: 24),
                 const SizedBox(width: 10),
-                Text('Depurador de guiones: ${script.name}', style: const TextStyle(color: Colors.white, fontSize: 16)),
+                Text('Depurador de guiones: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
               ],
             ),
             content: SizedBox(
@@ -634,22 +639,22 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1E293B),
+                      color: theme.surfaceContainer,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFF334155)),
+                      border: Border.all(color: theme.border),
                     ),
                     child: Row(
                       children: [
-                        Text('Paso ${debugStep + 1} de ${activeSteps.length}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text('Paso ${debugStep + 1} de ${activeSteps.length}', style: TextStyle(color: theme.textPrimary, fontWeight: FontWeight.bold, fontSize: 12)),
                         const Spacer(),
                         if (currentStep != null)
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                             decoration: BoxDecoration(
-                              color: currentStep.categoryColor.withValues(alpha: 0.2),
+                              color: currentStep.getCategoryColor(theme).withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(4),
                             ),
-                            child: Text(currentStep.displayName, style: TextStyle(color: currentStep.categoryColor, fontSize: 11, fontWeight: FontWeight.bold)),
+                            child: Text(currentStep.displayName, style: TextStyle(color: currentStep.getCategoryColor(theme), fontSize: 11, fontWeight: FontWeight.bold)),
                           ),
                       ],
                     ),
@@ -660,37 +665,39 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                     child: Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF030712),
+                        color: theme.surfaceContainer,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: const Color(0xFF1E293B)),
+                        border: Border.all(color: theme.border),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Instrucción activa:', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                          Text('Instrucción activa:', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                           const SizedBox(height: 4),
                           if (currentStep != null)
                             Row(
                               children: [
-                                const Icon(Icons.arrow_right_alt, color: Color(0xFF38BDF8), size: 20),
+                                Icon(Icons.arrow_right_alt, color: theme.primaryAccent, size: 20),
                                 const SizedBox(width: 6),
-                                Text(
-                                  '${currentStep.displayName} ${currentStep.previewText}',
-                                  style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontSize: 13, fontWeight: FontWeight.bold),
+                                Expanded(
+                                  child: Text(
+                                    '${currentStep.displayName} ${currentStep.previewText}',
+                                    style: TextStyle(color: theme.textPrimary, fontFamily: 'monospace', fontSize: 13, fontWeight: FontWeight.bold),
+                                  ),
                                 ),
                               ],
                             )
                           else
-                            const Text('Fin de ejecución del guión.', style: TextStyle(color: Color(0xFF10B981), fontSize: 14, fontWeight: FontWeight.bold)),
-                          const Divider(color: Color(0xFF1E293B), height: 20),
-                          const Text('Pila de variables e inspección:', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold)),
+                            Text('Fin de ejecución del guión.', style: TextStyle(color: theme.successColor, fontSize: 14, fontWeight: FontWeight.bold)),
+                          Divider(color: theme.border, height: 20),
+                          Text('Pila de variables e inspección:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 6),
                           ...debugVariables.entries.map((e) => Padding(
                             padding: const EdgeInsets.symmetric(vertical: 2),
                             child: Row(
                               children: [
-                                Text('${e.key}: ', style: const TextStyle(color: Color(0xFFF59E0B), fontFamily: 'monospace', fontSize: 12)),
-                                Text(e.value, style: const TextStyle(color: Colors.white, fontFamily: 'monospace', fontSize: 12)),
+                                Text('${e.key}: ', style: TextStyle(color: theme.controlColor, fontFamily: 'monospace', fontSize: 12)),
+                                Text(e.value, style: TextStyle(color: theme.textPrimary, fontFamily: 'monospace', fontSize: 12)),
                               ],
                             ),
                           )),
@@ -706,8 +713,8 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                 icon: const Icon(Icons.skip_next, size: 18),
                 label: const Text('Paso siguiente'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF38BDF8),
-                  side: const BorderSide(color: Color(0xFF38BDF8)),
+                  foregroundColor: theme.primaryAccent,
+                  side: BorderSide(color: theme.primaryAccent),
                 ),
                 onPressed: currentStep != null ? () {
                   setDbgState(() {
@@ -721,7 +728,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                 } : null,
               ),
               ElevatedButton(
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7), foregroundColor: Colors.white),
+                style: ElevatedButton.styleFrom(backgroundColor: theme.primaryAccent, foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white),
                 onPressed: () => Navigator.of(ctx).pop(),
                 child: const Text('Cerrar'),
               ),
@@ -752,6 +759,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = ref.watch(appThemeProvider);
     final activeDb = widget.databaseName ?? 'file4base_dev';
     final script = _activeScript;
     final activeStep = _activeStep;
@@ -762,12 +770,12 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
         width: 1260,
         height: 780,
         decoration: BoxDecoration(
-          color: const Color(0xFF0B1120),
+          color: theme.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF1F2937)),
+          border: Border.all(color: theme.border),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.6),
+              color: Colors.black.withValues(alpha: theme.isDark ? 0.6 : 0.2),
               blurRadius: 36,
               offset: const Offset(0, 16),
             ),
@@ -778,30 +786,30 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
             // Top Window Bar
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              decoration: const BoxDecoration(
-                color: Color(0xFF111827),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                border: Border(bottom: BorderSide(color: Color(0xFF1F2937))),
+              decoration: BoxDecoration(
+                color: theme.surfaceContainer,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                border: Border(bottom: BorderSide(color: theme.border)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.code_rounded, color: Color(0xFF38BDF8), size: 22),
+                  Icon(Icons.code_rounded, color: theme.primaryAccent, size: 22),
                   const SizedBox(width: 10),
-                  const Text(
+                  Text(
                     'Espacio de trabajo de guiones',
-                    style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold),
+                    style: TextStyle(color: theme.textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(width: 12),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF0284C7).withValues(alpha: 0.2),
+                      color: theme.primaryAccent.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: const Color(0xFF0284C7).withValues(alpha: 0.4)),
+                      border: Border.all(color: theme.primaryAccent.withValues(alpha: 0.3)),
                     ),
                     child: Text(
                       'Base: $activeDb',
-                      style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.w500),
+                      style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.w500),
                     ),
                   ),
                   if (_hasUnsavedChanges) ...[
@@ -809,11 +817,11 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.amber.shade900.withValues(alpha: 0.3),
+                        color: theme.warningColor.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.amber.shade700),
+                        border: Border.all(color: theme.warningColor),
                       ),
-                      child: const Text('Sin guardar', style: TextStyle(color: Colors.amber, fontSize: 10, fontWeight: FontWeight.bold)),
+                      child: Text('Sin guardar', style: TextStyle(color: theme.warningColor, fontSize: 10, fontWeight: FontWeight.bold)),
                     ),
                   ],
                   const Spacer(),
@@ -822,7 +830,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                     icon: const Icon(Icons.play_arrow, size: 16),
                     label: const Text('Ejecutar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF10B981),
+                      backgroundColor: theme.successColor,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       minimumSize: Size.zero,
@@ -835,7 +843,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                     icon: const Icon(Icons.bug_report, size: 16),
                     label: const Text('Depurar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0284C7),
+                      backgroundColor: theme.secondaryAccent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       minimumSize: Size.zero,
@@ -848,8 +856,8 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                     icon: const Icon(Icons.save, size: 16),
                     label: const Text('Guardar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF38BDF8),
-                      foregroundColor: const Color(0xFF0B1120),
+                      backgroundColor: theme.primaryAccent,
+                      foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       minimumSize: Size.zero,
                     ),
@@ -857,7 +865,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   ),
                   const SizedBox(width: 12),
                   IconButton(
-                    icon: const Icon(Icons.close, color: Colors.grey, size: 20),
+                    icon: Icon(Icons.close, color: theme.textSecondary, size: 20),
                     onPressed: () => Navigator.of(context).pop(),
                     tooltip: 'Cerrar ventana',
                     splashRadius: 18,
@@ -867,23 +875,23 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
             ),
 
             if (_isLoading)
-              const LinearProgressIndicator(
+              LinearProgressIndicator(
                 minHeight: 2,
-                backgroundColor: Color(0xFF1E293B),
-                valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF38BDF8)),
+                backgroundColor: theme.surfaceContainer,
+                valueColor: AlwaysStoppedAnimation<Color>(theme.primaryAccent),
               ),
             if (_errorMessage != null)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                color: Colors.red.shade900.withValues(alpha: 0.3),
+                color: theme.errorColor.withValues(alpha: 0.15),
                 child: Row(
                   children: [
-                    const Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 14),
+                    Icon(Icons.warning_amber_rounded, color: theme.errorColor, size: 14),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'Aviso: $_errorMessage',
-                        style: const TextStyle(color: Colors.redAccent, fontSize: 11),
+                        style: TextStyle(color: theme.errorColor, fontSize: 11),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -898,9 +906,9 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   // 1. LEFT PANEL: Scripts Explorer
                   Container(
                     width: 250,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF111827),
-                      border: Border(right: BorderSide(color: Color(0xFF1F2937))),
+                    decoration: BoxDecoration(
+                      color: theme.surface,
+                      border: Border(right: BorderSide(color: theme.border)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -908,15 +916,15 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                         // Search bar & toolbar
                         Container(
                           padding: const EdgeInsets.all(10),
-                          decoration: const BoxDecoration(
-                            border: Border(bottom: BorderSide(color: Color(0xFF1F2937))),
+                          decoration: BoxDecoration(
+                            border: Border(bottom: BorderSide(color: theme.border)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
                                 children: [
-                                  const Text('Guiones', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                                  Text('Guiones', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
                                   const Spacer(),
                                   InkWell(
                                     onTap: _addNewScript,
@@ -924,16 +932,16 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                     child: Container(
                                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFF1E293B),
+                                        color: theme.surfaceContainer,
                                         borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(color: const Color(0xFF334155)),
+                                        border: Border.all(color: theme.border),
                                       ),
-                                      child: const Row(
+                                      child: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(Icons.add, size: 13, color: Color(0xFF38BDF8)),
-                                          SizedBox(width: 3),
-                                          Text('Guión', style: TextStyle(color: Color(0xFF38BDF8), fontSize: 10, fontWeight: FontWeight.bold)),
+                                          Icon(Icons.add, size: 13, color: theme.primaryAccent),
+                                          const SizedBox(width: 3),
+                                          Text('Guión', style: TextStyle(color: theme.primaryAccent, fontSize: 10, fontWeight: FontWeight.bold)),
                                         ],
                                       ),
                                     ),
@@ -944,14 +952,14 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                               SizedBox(
                                 height: 30,
                                 child: TextField(
-                                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                                  style: TextStyle(color: theme.textPrimary, fontSize: 11),
                                   decoration: InputDecoration(
                                     hintText: 'Buscar guión...',
-                                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 11),
-                                    prefixIcon: const Icon(Icons.search, size: 15, color: Colors.grey),
+                                    hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                                    prefixIcon: Icon(Icons.search, size: 15, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
                                     filled: true,
-                                    fillColor: const Color(0xFF1E293B),
+                                    fillColor: theme.surfaceContainer,
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
                                   ),
                                   onChanged: (v) => setState(() => _scriptFilter = v),
@@ -975,22 +983,22 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                                   decoration: BoxDecoration(
-                                    color: isSelected ? const Color(0xFF1E293B) : Colors.transparent,
-                                    border: isSelected ? const Border(left: BorderSide(color: Color(0xFF38BDF8), width: 3)) : null,
+                                    color: isSelected ? theme.primaryAccent.withValues(alpha: 0.15) : Colors.transparent,
+                                    border: isSelected ? Border(left: BorderSide(color: theme.primaryAccent, width: 3)) : null,
                                   ),
                                   child: Row(
                                     children: [
                                       Icon(
                                         Icons.description_outlined,
                                         size: 16,
-                                        color: s.isActive ? const Color(0xFF38BDF8) : Colors.grey,
+                                        color: s.isActive ? theme.primaryAccent : theme.textSecondary,
                                       ),
                                       const SizedBox(width: 8),
                                       Expanded(
                                         child: Text(
                                           s.name,
                                           style: TextStyle(
-                                            color: isSelected ? Colors.white : (s.isActive ? const Color(0xFFE2E8F0) : Colors.grey),
+                                            color: isSelected ? theme.primaryAccent : (s.isActive ? theme.textPrimary : theme.textSecondary),
                                             fontSize: 12,
                                             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
                                           ),
@@ -1001,31 +1009,31 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                       Container(
                                         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                                         decoration: BoxDecoration(
-                                          color: const Color(0xFF0F172A),
+                                          color: theme.surfaceContainer,
                                           borderRadius: BorderRadius.circular(4),
                                         ),
                                         child: Text(
                                           '${s.steps.length}',
-                                          style: const TextStyle(color: Colors.grey, fontSize: 10),
+                                          style: TextStyle(color: theme.textSecondary, fontSize: 10),
                                         ),
                                       ),
                                       // Context menu popup
                                       PopupMenuButton<String>(
                                         padding: EdgeInsets.zero,
-                                        icon: const Icon(Icons.more_vert, size: 16, color: Colors.grey),
-                                        color: const Color(0xFF1E293B),
+                                        icon: Icon(Icons.more_vert, size: 16, color: theme.textSecondary),
+                                        color: theme.surface,
                                         itemBuilder: (ctx) => [
                                           PopupMenuItem(
                                             value: 'toggle',
-                                            child: Text(s.isActive ? 'Desactivar guión' : 'Activar guión', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                            child: Text(s.isActive ? 'Desactivar guión' : 'Activar guión', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
                                           ),
-                                          const PopupMenuItem(
+                                          PopupMenuItem(
                                             value: 'duplicate',
-                                            child: Text('Duplicar', style: TextStyle(color: Colors.white, fontSize: 12)),
+                                            child: Text('Duplicar', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
                                           ),
-                                          const PopupMenuItem(
+                                          PopupMenuItem(
                                             value: 'delete',
-                                            child: Text('Eliminar', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                                            child: Text('Eliminar', style: TextStyle(color: theme.errorColor, fontSize: 12)),
                                           ),
                                         ],
                                         onSelected: (val) {
@@ -1052,9 +1060,9 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                         // Tabs bar
                         Container(
                           height: 38,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF0F172A),
-                            border: Border(bottom: BorderSide(color: Color(0xFF1F2937))),
+                          decoration: BoxDecoration(
+                            color: theme.surfaceContainer,
+                            border: Border(bottom: BorderSide(color: theme.border)),
                           ),
                           child: ListView(
                             scrollDirection: Axis.horizontal,
@@ -1067,20 +1075,20 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 14),
                                   decoration: BoxDecoration(
-                                    color: isActiveTab ? const Color(0xFF0B1120) : Colors.transparent,
+                                    color: isActiveTab ? theme.surface : Colors.transparent,
                                     border: Border(
-                                      top: isActiveTab ? const BorderSide(color: Color(0xFF38BDF8), width: 2) : BorderSide.none,
-                                      right: const BorderSide(color: Color(0xFF1F2937)),
+                                      top: isActiveTab ? BorderSide(color: theme.primaryAccent, width: 2) : BorderSide.none,
+                                      right: BorderSide(color: theme.border),
                                     ),
                                   ),
                                   child: Row(
                                     children: [
-                                      Icon(Icons.code, size: 14, color: isActiveTab ? const Color(0xFF38BDF8) : Colors.grey),
+                                      Icon(Icons.code, size: 14, color: isActiveTab ? theme.primaryAccent : theme.textSecondary),
                                       const SizedBox(width: 8),
                                       Text(
                                         tabScript.name,
                                         style: TextStyle(
-                                          color: isActiveTab ? Colors.white : Colors.grey,
+                                          color: isActiveTab ? theme.textPrimary : theme.textSecondary,
                                           fontSize: 12,
                                           fontWeight: isActiveTab ? FontWeight.bold : FontWeight.normal,
                                         ),
@@ -1088,7 +1096,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                       const SizedBox(width: 10),
                                       InkWell(
                                         onTap: () => _closeTab(sid),
-                                        child: const Icon(Icons.close, size: 14, color: Colors.grey),
+                                        child: Icon(Icons.close, size: 14, color: theme.textSecondary),
                                       ),
                                     ],
                                   ),
@@ -1105,14 +1113,14 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.terminal, size: 48, color: Color(0xFF334155)),
+                                  Icon(Icons.terminal, size: 48, color: theme.textSecondary),
                                   const SizedBox(height: 12),
-                                  const Text('No hay ningún guión seleccionado.', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                                  Text('No hay ningún guión seleccionado.', style: TextStyle(color: theme.textSecondary, fontSize: 14)),
                                   const SizedBox(height: 12),
                                   ElevatedButton.icon(
                                     icon: const Icon(Icons.add, size: 16),
                                     label: const Text('Crear nuevo guión'),
-                                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0284C7)),
+                                    style: ElevatedButton.styleFrom(backgroundColor: theme.primaryAccent),
                                     onPressed: _addNewScript,
                                   ),
                                 ],
@@ -1126,26 +1134,26 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                 // Subheader with script metadata
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF0B1120),
-                                    border: Border(bottom: BorderSide(color: Color(0xFF1F2937))),
+                                  decoration: BoxDecoration(
+                                    color: theme.surface,
+                                    border: Border(bottom: BorderSide(color: theme.border)),
                                   ),
                                   child: SingleChildScrollView(
                                     scrollDirection: Axis.horizontal,
                                     child: Row(
                                       children: [
-                                        const Text('Nombre: ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                                        Text('Nombre: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                                         SizedBox(
                                           width: 160,
                                           height: 28,
                                           child: TextFormField(
                                             initialValue: script.name,
-                                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                                            decoration: const InputDecoration(
-                                              contentPadding: EdgeInsets.symmetric(horizontal: 6),
+                                            style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold),
+                                            decoration: InputDecoration(
+                                              contentPadding: const EdgeInsets.symmetric(horizontal: 6),
                                               filled: true,
-                                              fillColor: Color(0xFF111827),
-                                              border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                                              fillColor: theme.surfaceContainer,
+                                              border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
                                             ),
                                             onChanged: (val) {
                                               final idx = _scripts.indexWhere((s) => s.id == script.id);
@@ -1159,21 +1167,21 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                           ),
                                         ),
                                         const SizedBox(width: 16),
-                                        const Text('Contexto (Tabla): ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                                        Text('Contexto (Tabla): ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                                         Container(
                                           height: 28,
                                           padding: const EdgeInsets.symmetric(horizontal: 8),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFF111827),
+                                            color: theme.surfaceContainer,
                                             borderRadius: BorderRadius.circular(4),
-                                            border: Border.all(color: const Color(0xFF334155)),
+                                            border: Border.all(color: theme.border),
                                           ),
                                           child: DropdownButtonHideUnderline(
                                             child: DropdownButton<String>(
                                               value: _tables.any((t) => t.name == script.contextTable) ? script.contextTable : (_tables.isNotEmpty ? _tables.first.name : null),
-                                              hint: const Text('Sin tabla', style: TextStyle(color: Colors.grey, fontSize: 11)),
-                                              dropdownColor: const Color(0xFF1E293B),
-                                              style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.bold),
+                                              hint: Text('Sin tabla', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                                              dropdownColor: theme.surface,
+                                              style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold),
                                               items: _tables.map((t) => DropdownMenuItem(value: t.name, child: Text(t.name))).toList(),
                                               onChanged: (val) {
                                                 if (val != null) {
@@ -1192,7 +1200,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                         const SizedBox(width: 16),
                                         Text(
                                           '${script.steps.length} pasos',
-                                          style: const TextStyle(color: Colors.grey, fontSize: 11),
+                                          style: TextStyle(color: theme.textSecondary, fontSize: 11),
                                         ),
                                       ],
                                     ),
@@ -1202,10 +1210,10 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                 // Sequential Steps Reorderable List
                                 Expanded(
                                   child: Container(
-                                    color: const Color(0xFF030712),
+                                    color: theme.background,
                                     child: script.steps.isEmpty
-                                        ? const Center(
-                                            child: Text('Este guión no contiene pasos. Añade pasos desde el catálogo a la derecha.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                        ? Center(
+                                            child: Text('Este guión no contiene pasos. Añade pasos desde el catálogo a la derecha.', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
                                           )
                                         : ReorderableListView.builder(
                                             padding: const EdgeInsets.symmetric(vertical: 6),
@@ -1215,6 +1223,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                               final step = script.steps[idx];
                                               final isSelected = _selectedStepIdx == idx;
                                               final indent = _calculateStepIndent(script.steps, idx);
+                                              final catColor = step.getCategoryColor(theme);
 
                                               return InkWell(
                                                 key: ValueKey(step.id),
@@ -1223,9 +1232,9 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                                   margin: const EdgeInsets.symmetric(vertical: 1),
                                                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                                   decoration: BoxDecoration(
-                                                    color: isSelected ? const Color(0xFF1E293B) : Colors.transparent,
+                                                    color: isSelected ? theme.primaryAccent.withValues(alpha: 0.15) : Colors.transparent,
                                                     border: isSelected
-                                                        ? const Border(left: BorderSide(color: Color(0xFF38BDF8), width: 3))
+                                                        ? Border(left: BorderSide(color: theme.primaryAccent, width: 3))
                                                         : null,
                                                   ),
                                                   child: Row(
@@ -1236,7 +1245,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                                         Container(
                                                           width: 2,
                                                           height: 20,
-                                                          color: const Color(0xFF334155),
+                                                          color: theme.border,
                                                           margin: const EdgeInsets.only(right: 8),
                                                         ),
 
@@ -1247,7 +1256,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                                         child: Text(
                                                           (idx + 1).toString().padLeft(2, '0'),
                                                           style: TextStyle(
-                                                            color: isSelected ? const Color(0xFF38BDF8) : const Color(0xFF475569),
+                                                            color: isSelected ? theme.primaryAccent : theme.textSecondary,
                                                             fontSize: 11,
                                                             fontFamily: 'monospace',
                                                             fontWeight: FontWeight.bold,
@@ -1262,7 +1271,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                                         child: Icon(
                                                           step.isEnabled ? Icons.check_box : Icons.check_box_outline_blank,
                                                           size: 16,
-                                                          color: step.isEnabled ? const Color(0xFF10B981) : Colors.grey,
+                                                          color: step.isEnabled ? theme.successColor : theme.textSecondary,
                                                         ),
                                                       ),
                                                       const SizedBox(width: 8),
@@ -1271,13 +1280,13 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                                       Container(
                                                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                                         decoration: BoxDecoration(
-                                                          color: step.categoryColor.withValues(alpha: 0.15),
+                                                          color: catColor.withValues(alpha: 0.15),
                                                           borderRadius: BorderRadius.circular(4),
-                                                          border: Border.all(color: step.categoryColor.withValues(alpha: 0.4)),
+                                                          border: Border.all(color: catColor.withValues(alpha: 0.4)),
                                                         ),
                                                         child: Text(
                                                           step.category.toUpperCase(),
-                                                          style: TextStyle(color: step.categoryColor, fontSize: 9, fontWeight: FontWeight.bold),
+                                                          style: TextStyle(color: catColor, fontSize: 9, fontWeight: FontWeight.bold),
                                                         ),
                                                       ),
                                                       const SizedBox(width: 10),
@@ -1286,7 +1295,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                                       Text(
                                                         step.displayName,
                                                         style: TextStyle(
-                                                          color: step.isEnabled ? Colors.white : Colors.grey,
+                                                          color: step.isEnabled ? theme.textPrimary : theme.textSecondary,
                                                           fontSize: 12,
                                                           fontWeight: FontWeight.bold,
                                                         ),
@@ -1298,7 +1307,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                                         child: Text(
                                                           step.previewText,
                                                           style: TextStyle(
-                                                            color: step.isEnabled ? const Color(0xFF38BDF8) : Colors.grey.shade600,
+                                                            color: step.isEnabled ? theme.primaryAccent : theme.textSecondary,
                                                             fontSize: 12,
                                                             fontFamily: 'monospace',
                                                           ),
@@ -1308,7 +1317,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
 
                                                       // Quick delete step
                                                       IconButton(
-                                                        icon: const Icon(Icons.close, size: 14, color: Colors.grey),
+                                                        icon: Icon(Icons.close, size: 14, color: theme.textSecondary),
                                                         padding: EdgeInsets.zero,
                                                         constraints: const BoxConstraints(),
                                                         splashRadius: 14,
@@ -1326,16 +1335,16 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                                 // Bottom Contextual Parameter Inspector
                                 Container(
                                   height: 140,
-                                  decoration: const BoxDecoration(
-                                    color: Color(0xFF111827),
-                                    border: Border(top: BorderSide(color: Color(0xFF1F2937))),
+                                  decoration: BoxDecoration(
+                                    color: theme.surface,
+                                    border: Border(top: BorderSide(color: theme.border)),
                                   ),
                                   padding: const EdgeInsets.all(12),
                                   child: activeStep == null
-                                      ? const Center(
-                                          child: Text('Selecciona una instrucción de la lista superior para configurar sus parámetros.', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                                      ? Center(
+                                          child: Text('Selecciona una instrucción de la lista superior para configurar sus parámetros.', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                                         )
-                                      : _buildContextualInspector(activeStep),
+                                      : _buildContextualInspector(activeStep, theme),
                                 ),
                               ],
                             ),
@@ -1347,9 +1356,9 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   // 3. RIGHT PANEL: Step Catalog
                   Container(
                     width: 270,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF111827),
-                      border: Border(left: BorderSide(color: Color(0xFF1F2937))),
+                    decoration: BoxDecoration(
+                      color: theme.surface,
+                      border: Border(left: BorderSide(color: theme.border)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1357,25 +1366,25 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                         // Header and Search
                         Container(
                           padding: const EdgeInsets.all(10),
-                          decoration: const BoxDecoration(
-                            border: Border(bottom: BorderSide(color: Color(0xFF1F2937))),
+                          decoration: BoxDecoration(
+                            border: Border(bottom: BorderSide(color: theme.border)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Catálogo de pasos', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                              Text('Catálogo de pasos', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 8),
                               SizedBox(
                                 height: 30,
                                 child: TextField(
-                                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                                  style: TextStyle(color: theme.textPrimary, fontSize: 11),
                                   decoration: InputDecoration(
                                     hintText: 'Filtrar pasos...',
-                                    hintStyle: const TextStyle(color: Colors.grey, fontSize: 11),
-                                    prefixIcon: const Icon(Icons.search, size: 15, color: Colors.grey),
+                                    hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                                    prefixIcon: Icon(Icons.search, size: 15, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
                                     filled: true,
-                                    fillColor: const Color(0xFF1E293B),
+                                    fillColor: theme.surfaceContainer,
                                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(6), borderSide: BorderSide.none),
                                   ),
                                   onChanged: (v) => setState(() => _catalogFilter = v),
@@ -1389,7 +1398,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                         Expanded(
                           child: ListView(
                             padding: const EdgeInsets.symmetric(vertical: 4),
-                            children: _buildCatalogItems(),
+                            children: _buildCatalogItems(theme),
                           ),
                         ),
                       ],
@@ -1402,32 +1411,32 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
             // Bottom Status Bar
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: const BoxDecoration(
-                color: Color(0xFF0F172A),
-                borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
-                border: Border(top: BorderSide(color: Color(0xFF1F2937))),
+              decoration: BoxDecoration(
+                color: theme.surfaceContainer,
+                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(12)),
+                border: Border(top: BorderSide(color: theme.border)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.table_chart_outlined, color: Color(0xFF38BDF8), size: 14),
+                  Icon(Icons.table_chart_outlined, color: theme.primaryAccent, size: 14),
                   const SizedBox(width: 6),
                   Text(
                     'Contexto: ${script?.contextTable.isNotEmpty == true ? script!.contextTable : "Global"}',
-                    style: const TextStyle(color: Colors.grey, fontSize: 11),
+                    style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                   const SizedBox(width: 16),
-                  const Icon(Icons.list_alt, color: Color(0xFF10B981), size: 14),
+                  Icon(Icons.list_alt, color: theme.successColor, size: 14),
                   const SizedBox(width: 6),
                   Text(
                     'Pasos: ${script?.steps.length ?? 0}',
-                    style: const TextStyle(color: Colors.grey, fontSize: 11),
+                    style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                   const Spacer(),
-                  const Icon(Icons.bolt, color: Color(0xFF38BDF8), size: 14),
+                  Icon(Icons.bolt, color: theme.primaryAccent, size: 14),
                   const SizedBox(width: 6),
-                  const Text(
+                  Text(
                     'Motor: File4Base Script Engine v1.0 (Go/CEL)',
-                    style: TextStyle(color: Colors.grey, fontSize: 11),
+                    style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                 ],
               ),
@@ -1439,7 +1448,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
   }
 
   // Build Contextual Inspector for active step
-  Widget _buildContextualInspector(ScriptStepModel step) {
+  Widget _buildContextualInspector(ScriptStepModel step, AppThemeDefinition theme) {
     switch (step.stepType) {
       case 'set_variable':
         return Column(
@@ -1447,45 +1456,45 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.tune, color: Color(0xFF38BDF8), size: 16),
+                Icon(Icons.tune, color: theme.primaryAccent, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                const Text('Nombre de variable: ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                Text('Nombre de variable: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 SizedBox(
                   width: 140,
                   height: 30,
                   child: TextFormField(
                     key: ValueKey('${step.id}-var'),
                     initialValue: step.params['variable']?.toString() ?? r'$var',
-                    style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontFamily: 'monospace'),
-                    decoration: const InputDecoration(
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                    style: TextStyle(color: theme.primaryAccent, fontSize: 12, fontFamily: 'monospace'),
+                    decoration: InputDecoration(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                       filled: true,
-                      fillColor: Color(0xFF0F172A),
-                      border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                      fillColor: theme.surfaceContainer,
+                      border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
                     ),
                     onChanged: (v) => _updateStepParam('variable', v),
                   ),
                 ),
                 const SizedBox(width: 16),
-                const Text('Valor / Cálculo: ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                Text('Valor / Cálculo: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Expanded(
                   child: SizedBox(
                     height: 30,
                     child: TextFormField(
                       key: ValueKey('${step.id}-calc'),
                       initialValue: step.params['calc']?.toString() ?? '',
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'monospace'),
-                      decoration: const InputDecoration(
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                      style: TextStyle(color: theme.textPrimary, fontSize: 12, fontFamily: 'monospace'),
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                         filled: true,
-                        fillColor: Color(0xFF0F172A),
-                        border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                        fillColor: theme.surfaceContainer,
+                        border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
                       ),
                       onChanged: (v) => _updateStepParam('calc', v),
                     ),
@@ -1496,8 +1505,8 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   icon: const Icon(Icons.functions, size: 14),
                   label: const Text('fx Especificar...', style: TextStyle(fontSize: 11)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0284C7),
-                    foregroundColor: Colors.white,
+                    backgroundColor: theme.primaryAccent,
+                    foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                   onPressed: () => _openCalculationDialogForParam('calc'),
@@ -1513,47 +1522,47 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.tune, color: Color(0xFF38BDF8), size: 16),
+                Icon(Icons.tune, color: theme.primaryAccent, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                const Text('Campo destino: ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                Text('Campo destino: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 SizedBox(
                   width: 200,
                   height: 30,
                   child: TextFormField(
                     key: ValueKey('${step.id}-field'),
                     initialValue: step.params['field']?.toString() ?? '',
-                    style: const TextStyle(color: Color(0xFF38BDF8), fontSize: 12, fontFamily: 'monospace'),
-                    decoration: const InputDecoration(
+                    style: TextStyle(color: theme.fieldsColor, fontSize: 12, fontFamily: 'monospace'),
+                    decoration: InputDecoration(
                       hintText: 'Tabla::Campo',
-                      hintStyle: TextStyle(color: Colors.grey, fontSize: 11),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                      hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                       filled: true,
-                      fillColor: Color(0xFF0F172A),
-                      border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                      fillColor: theme.surfaceContainer,
+                      border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
                     ),
                     onChanged: (v) => _updateStepParam('field', v),
                   ),
                 ),
                 const SizedBox(width: 16),
-                const Text('Valor calculado: ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                Text('Valor calculado: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Expanded(
                   child: SizedBox(
                     height: 30,
                     child: TextFormField(
                       key: ValueKey('${step.id}-value'),
                       initialValue: step.params['value']?.toString() ?? '',
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'monospace'),
-                      decoration: const InputDecoration(
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                      style: TextStyle(color: theme.textPrimary, fontSize: 12, fontFamily: 'monospace'),
+                      decoration: InputDecoration(
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                         filled: true,
-                        fillColor: Color(0xFF0F172A),
-                        border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                        fillColor: theme.surfaceContainer,
+                        border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
                       ),
                       onChanged: (v) => _updateStepParam('value', v),
                     ),
@@ -1564,8 +1573,8 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   icon: const Icon(Icons.functions, size: 14),
                   label: const Text('fx Especificar...', style: TextStyle(fontSize: 11)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0284C7),
-                    foregroundColor: Colors.white,
+                    backgroundColor: theme.primaryAccent,
+                    foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                   onPressed: () => _openCalculationDialogForParam('value'),
@@ -1581,31 +1590,31 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.tune, color: Color(0xFFA855F7), size: 16),
+                Icon(Icons.tune, color: theme.navColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                const Text('Presentación destino: ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                Text('Presentación destino: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Container(
                   height: 30,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0F172A),
+                    color: theme.surfaceContainer,
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: const Color(0xFF334155)),
+                    border: Border.all(color: theme.border),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: _layouts.any((l) => l.name == step.params['layout_name'])
                           ? step.params['layout_name']
                           : (_layouts.isNotEmpty ? _layouts.first.name : null),
-                      hint: const Text('Seleccionar presentación...', style: TextStyle(color: Colors.grey, fontSize: 11)),
-                      dropdownColor: const Color(0xFF1E293B),
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      hint: Text('Seleccionar presentación...', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                      dropdownColor: theme.surface,
+                      style: TextStyle(color: theme.textPrimary, fontSize: 12),
                       items: _layouts.map((l) => DropdownMenuItem(value: l.name, child: Text(l.name))).toList(),
                       onChanged: (v) {
                         if (v != null) _updateStepParam('layout_name', v);
@@ -1625,29 +1634,29 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.tune, color: Color(0xFFF59E0B), size: 16),
+                Icon(Icons.tune, color: theme.controlColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                const Text('Condición lógica: ', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                Text('Condición lógica: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Expanded(
                   child: SizedBox(
                     height: 30,
                     child: TextFormField(
                       key: ValueKey('${step.id}-cond'),
                       initialValue: step.params['condition']?.toString() ?? '',
-                      style: const TextStyle(color: Color(0xFFF59E0B), fontSize: 12, fontFamily: 'monospace'),
-                      decoration: const InputDecoration(
+                      style: TextStyle(color: theme.controlColor, fontSize: 12, fontFamily: 'monospace'),
+                      decoration: InputDecoration(
                         hintText: 'Ej. Invoices::Total > 5000',
-                        hintStyle: TextStyle(color: Colors.grey, fontSize: 11),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                        hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                         filled: true,
-                        fillColor: Color(0xFF0F172A),
-                        border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                        fillColor: theme.surfaceContainer,
+                        border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
                       ),
                       onChanged: (v) => _updateStepParam('condition', v),
                     ),
@@ -1658,8 +1667,8 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   icon: const Icon(Icons.functions, size: 14),
                   label: const Text('fx Especificar...', style: TextStyle(fontSize: 11)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0284C7),
-                    foregroundColor: Colors.white,
+                    backgroundColor: theme.primaryAccent,
+                    foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                   onPressed: () => _openCalculationDialogForParam('condition'),
@@ -1675,9 +1684,9 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.tune, color: Color(0xFFF43F5E), size: 16),
+                Icon(Icons.tune, color: theme.integrationColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
@@ -1687,15 +1696,15 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                   height: 30,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF0F172A),
+                    color: theme.surfaceContainer,
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: const Color(0xFF334155)),
+                    border: Border.all(color: theme.border),
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
                       value: step.params['method']?.toString() ?? 'POST',
-                      dropdownColor: const Color(0xFF1E293B),
-                      style: const TextStyle(color: Color(0xFFF43F5E), fontSize: 11, fontWeight: FontWeight.bold),
+                      dropdownColor: theme.surface,
+                      style: TextStyle(color: theme.integrationColor, fontSize: 11, fontWeight: FontWeight.bold),
                       items: ['GET', 'POST', 'PUT', 'DELETE'].map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
                       onChanged: (v) {
                         if (v != null) _updateStepParam('method', v);
@@ -1710,14 +1719,14 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                     child: TextFormField(
                       key: ValueKey('${step.id}-url'),
                       initialValue: step.params['url']?.toString() ?? '',
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontFamily: 'monospace'),
-                      decoration: const InputDecoration(
+                      style: TextStyle(color: theme.textPrimary, fontSize: 12, fontFamily: 'monospace'),
+                      decoration: InputDecoration(
                         hintText: 'https://api.example.com/v1/endpoint',
-                        hintStyle: TextStyle(color: Colors.grey, fontSize: 11),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8),
+                        hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                         filled: true,
-                        fillColor: Color(0xFF0F172A),
-                        border: OutlineInputBorder(borderSide: BorderSide(color: Color(0xFF334155))),
+                        fillColor: theme.surfaceContainer,
+                        border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
                       ),
                       onChanged: (v) => _updateStepParam('url', v),
                     ),
@@ -1729,20 +1738,21 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
         );
 
       default:
+        final catColor = step.getCategoryColor(theme);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.tune, color: step.categoryColor, size: 16),
+                Icon(Icons.tune, color: catColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Text(
               'Esta instrucción no requiere parámetros adicionales o se ejecuta con sus opciones predeterminadas.',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+              style: TextStyle(color: theme.textSecondary, fontSize: 12),
             ),
           ],
         );
@@ -1750,7 +1760,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
   }
 
   // Build Catalog categorized list
-  List<Widget> _buildCatalogItems() {
+  List<Widget> _buildCatalogItems(AppThemeDefinition theme) {
     final Map<String, List<ScriptCatalogItem>> categorized = {};
     for (final item in ScriptCatalogItem.catalog) {
       if (_catalogFilter.isNotEmpty &&
@@ -1766,11 +1776,11 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
       widgets.add(
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          color: const Color(0xFF0F172A),
+          color: theme.surfaceContainer,
           child: Text(
             entry.key,
-            style: const TextStyle(
-              color: Color(0xFF94A3B8),
+            style: TextStyle(
+              color: theme.textSecondary,
               fontSize: 10,
               fontWeight: FontWeight.bold,
               letterSpacing: 0.5,
@@ -1785,20 +1795,20 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
             onTap: () => _addStepToActiveScript(item),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFF1F2937), width: 0.5)),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: theme.border.withValues(alpha: 0.5), width: 0.5)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.add_circle_outline, size: 13, color: Color(0xFF38BDF8)),
+                      Icon(Icons.add_circle_outline, size: 13, color: theme.primaryAccent),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
                           item.label.replaceAll('+ ', ''),
-                          style: const TextStyle(color: Color(0xFFF1F5F9), fontSize: 11, fontWeight: FontWeight.w500),
+                          style: TextStyle(color: theme.textPrimary, fontSize: 11, fontWeight: FontWeight.w500),
                         ),
                       ),
                     ],
@@ -1808,7 +1818,7 @@ class _ScriptWorkspaceDialogState extends State<ScriptWorkspaceDialog> {
                     padding: const EdgeInsets.only(left: 19),
                     child: Text(
                       item.description,
-                      style: const TextStyle(color: Colors.grey, fontSize: 9),
+                      style: TextStyle(color: theme.textSecondary, fontSize: 9),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

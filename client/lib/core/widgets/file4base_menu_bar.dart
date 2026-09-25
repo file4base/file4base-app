@@ -10,6 +10,7 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onManageSecurity;
   final VoidCallback? onManageScripts;
   final VoidCallback? onScriptWorkspace;
+  final VoidCallback? onManageThemes;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
   final VoidCallback? onNewDatabase;
@@ -38,6 +39,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onManageSecurity,
     this.onManageScripts,
     this.onScriptWorkspace,
+    this.onManageThemes,
     required this.onOpenRemote,
     required this.onAbout,
     this.onNewDatabase,
@@ -274,7 +276,7 @@ class File4BaseMenuBar extends StatelessWidget {
               child: const Text('Containers...'),
             ),
             MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Themes', 'Roadmap Phase 5', 'Visual styling themes, typography rules, and CSS presets.'),
+              onPressed: onManageThemes ?? () => _showRoadmapDialog(context, 'Themes', 'Roadmap Phase 5', 'Visual styling themes, typography rules, and CSS presets.'),
               child: const Text('Themes...'),
             ),
           ],

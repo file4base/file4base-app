@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "File4Base API Engine",
-    "description": "Enterprise-grade REST and Dynamic Relational DDL Database Engine for File4Base. Supports runtime schema migrations, table occurrences, relationships graph, FileMaker Find Mode formula parsing, security ACL, and solution archiving.",
+    "description": "Enterprise-grade REST and Dynamic Relational DDL Database Engine for File4Base. Supports runtime schema migrations, table occurrences, relationships graph, dynamic Find Mode formula parsing, security ACL, and solution archiving.",
     "version": "0.4.7",
     "contact": {
       "name": "File4Base Core Team",
@@ -34,7 +34,7 @@
     },
     {
       "name": "Data Operations",
-      "description": "Record CRUD operations, pagination, and FileMaker Find Mode criteria queries"
+      "description": "Record CRUD operations, pagination, and Find Mode criteria queries"
     },
     {
       "name": "Security & Users",
@@ -216,7 +216,7 @@
       "put": {
         "tags": ["Schemas & DDL"],
         "summary": "Update Column Metadata and Options",
-        "description": "Updates display name and FileMaker field options (auto-enter rules, default values, calculation formulas, validation rules).",
+        "description": "Updates display name and field options (auto-enter rules, default values, calculation formulas, validation rules).",
         "parameters": [
           {
             "name": "id",
@@ -529,7 +529,7 @@
       "post": {
         "tags": ["Data Operations"],
         "summary": "Execute Find Mode Search",
-        "description": "Executes a FileMaker-compatible Find query supporting wildcards (*), single characters (@/?), comparisons (>, <, >=, <=), exact (=), strict (==), negation (! / !=), ranges (...), today's date (//), and empty/non-empty search.",
+        "description": "Executes a Find query supporting wildcards (*), single characters (@/?), comparisons (>, <, >=, <=), exact (=), strict (==), negation (! / !=), ranges (...), today's date (//), and empty/non-empty search.",
         "parameters": [
           { "name": "table", "in": "path", "required": true, "schema": { "type": "string" } }
         ],

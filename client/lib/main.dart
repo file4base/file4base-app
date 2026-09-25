@@ -19,6 +19,8 @@ import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'core/models/file_options_model.dart';
 import 'core/models/page_setup_model.dart';
+import 'core/theme/theme_model.dart';
+import 'core/theme/theme_provider.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
 import 'features/script_workspace/script_workspace_dialog.dart';
@@ -28,6 +30,7 @@ import 'features/solution_manager/new_database_dialog.dart';
 import 'features/solution_manager/open_solution_dialog.dart';
 import 'features/solution_manager/page_setup_dialog.dart';
 import 'features/solution_manager/save_copy_dialog.dart';
+import 'features/theme_manager/manage_themes_dialog.dart';
 
 enum OperationalMode {
   browse,
@@ -78,32 +81,23 @@ void main() {
   runApp(const ProviderScope(child: File4BaseApp()));
 }
 
-class File4BaseApp extends StatelessWidget {
+class File4BaseApp extends ConsumerWidget {
   const File4BaseApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final activeTheme = ref.watch(appThemeProvider);
     return MaterialApp(
       title: 'File4Base',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E88E5),
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E88E5),
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
-      ),
+      theme: activeTheme.toThemeData(),
+      darkTheme: activeTheme.isDark ? activeTheme.toThemeData() : AppThemes.dark.toThemeData(),
+      themeMode: activeTheme.isDark ? ThemeMode.dark : ThemeMode.light,
       home: const WorkspaceShell(),
     );
   }
 }
+
 
 class WorkspaceShell extends ConsumerStatefulWidget {
   const WorkspaceShell({super.key});
@@ -1111,6 +1105,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       databaseName: _activeDatabaseName,
                     );
                   },
+                  onManageThemes: () => ManageThemesDialog.show(context),
                   onOpenRemote: () {
                     final currentUrl = ref.read(serverUrlProvider);
                     ServerConnectionDialog.show(

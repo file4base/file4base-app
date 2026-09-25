@@ -307,7 +307,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> {
       String text = controller.text.trim();
       if (text.isEmpty) return;
 
-      // FileMaker today's date formula: // -> current ISO date
+      // Standard today's date formula: // -> current ISO date
       final todayStr = DateTime.now().toIso8601String().split('T').first;
       if (text == '//') {
         text = todayStr;

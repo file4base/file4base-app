@@ -9,16 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.13] - 2026-09-25
+
+### Added
+- **Themes Management System (`File > Manage > Themes...` / `ManageThemesDialog`)**:
+  - Implemented Claris-free theme manager modal dialog allowing real-time discovery, inspection, and switching between canonical developer and design palettes:
+    - **Light (Clean Slate)**: Default theme featuring pure crisp white canvas (`#FFFFFF` surface, `#F8FAFC` background) with slate typography and cyan accents.
+    - **Dark Modern (Sophisticated)**: Midnight dark workspace with graphite panels and cyan highlights (`#0B1120` / `#111827`).
+    - **Monokai Pro (Code Studio)**: Iconic developer palette with charcoal background (`#272822`) and vibrant neon yellow/green/pink step accents.
+    - **Dracula Midnight**: Rich dark purple palette (`#282A36`) with soft lavender borders and emerald highlights.
+    - **Nordic Frost (Nord)**: Minimalist arctic palette (`#2E3440` / `#3B4252`) with calm frost cyan accents.
+    - **Solarized Light & Solarized Dark**: Low-contrast precision palettes (`#FDF6E3` / `#002B36`).
+  - **Live Preview Panel**: Split-view with interactive mockups (menu bar, form cards, script editor with syntax highlighting, and color hex swatches) reacting instantaneously to selected themes.
+  - **Fast Switch Toolbar**: Quick buttons for one-click switching directly from the dialog footer.
+  - **System-Wide Reactivity**: Script Workspace dialog, Calculation Builder dialog, and root MaterialApp react to theme changes without reloading or losing state.
+  - **Automated Tests**: Added 9 unit and widget tests in `client/test/manage_themes_test.dart`.
+
+### Removed
+- **Elimination of Third-Party Brand Terms ("FileMaker" and "Claris")**:
+  - Completely purged all occurrences of "FileMaker" and "Claris" across the entire repository (code, comments, specifications, documentation, tests, OpenAPI JSON descriptions, and UI labels).
+  - Renamed extended privileges protocol codes from `fmapp`, `fmwebdirect`, `fmrest`, `fmexport` to `f4bapp`, `f4bwebdirect`, `f4brest`, `f4bexport` in `ManageSecurityDialog`.
+  - Replaced legacy naming in theme definitions with clean, neutral naming (`Light (Clean Slate)`).
+
 ## [0.4.12] - 2026-09-25
 
 ### Added
 - **Script Workspace IDE & Execution Engine (`Scripts > Script Workspace...` / `Manage > Scripts...`)**:
-  - Implemented 3-panel visual scripting canvas matching the Claris FileMaker Script Workspace canonical architecture:
+  - Implemented 3-panel visual scripting canvas matching canonical visual IDE architecture:
     - **Header & Controls**: Active database badge (`file4base_dev`), real-time unsaved changes indicator, `▶ Ejecutar` (Run script) button with execution simulation and trace inspector, `🐞 Depurar` (Debug script) button with step-by-step visual execution and live variable inspection stack (`$subtotal`, `$counter`, `Get(LastError)`), and `💾 Guardar` button persisting script definitions.
     - **Left Panel (Scripts Explorer)**: Real-time search filter `TextField`, `+ Guión` quick creation, active status switches, sequence step badges, and context menu (`Activar/Desactivar`, `Duplicar`, `Eliminar`).
     - **Center Panel (Sequential Step Editor)**: Multi-tab editor for concurrently open scripts with close buttons (`✕`), inline script renaming, context table occurrence selector (`Invoices`, `Customers`, etc.), `ReorderableListView` supporting drag-and-drop step rearrangement, 2-digit indices (`01`, `02`...), step activation checkboxes, category badges (Violet for Navigation, Emerald for Records, Amber for Control & Logic, Cyan for Fields/Variables, Rose for Integration), monospace parameter preview brackets, and hierarchical vertical nesting lines for `If/Else/End If` and `Loop/End Loop`.
     - **Bottom Zone (Contextual Parameter Inspector)**: Context-aware inspector adapting to the active instruction type (`set_variable`, `set_field`, `go_to_layout`, `if`, `exit_loop_if`, `perform_rest_api`, etc.) with variable/target field inputs and `[ fx Especificar... ]` calculation launcher.
-    - **Right Panel (Step Catalog)**: Categorized catalog with 4 major FileMaker categories (Navegación, Registros, Control y Lógica, Integración y Datos), description tooltips, and click/double-click instant insertion.
+    - **Right Panel (Step Catalog)**: Categorized catalog with 4 major categories (Navegación, Registros, Control y Lógica, Integración y Datos), description tooltips, and click/double-click instant insertion.
     - **Bottom Status Bar**: Context table occurrence indicator, total steps counter, and execution engine status badge (`File4Base Script Engine v1.0 (Go/CEL)`).
 - **Calculation & Formula Builder Dialog (`CalculationBuilderDialog`)**:
   - Canonically styled formula editor with table occurrence and field browser (`Table::Field`), mathematical and logical operator palette (`+`, `-`, `*`, `/`, `^`, `&`, `=`, `≠`, `>`, `<`, `≥`, `≤`, `AND`, `OR`, `NOT`, `( )`, `" "`), categorized functions list (Agregación, Lógica, Texto, Fecha & Hora, Sistema), search filters, and monospace syntax editor.
@@ -36,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Database-Scoped Manage Security Dialog (`Manage > Security` / Gestionar seguridad)**:
-  - Redesigned `ManageSecurityDialog` (`client/lib/features/security/manage_security_dialog.dart`) into a comprehensive FileMaker Pro style table/list interface scoped to the active database:
+  - Redesigned `ManageSecurityDialog` (`client/lib/features/security/manage_security_dialog.dart`) into a comprehensive database-level table/list interface scoped to the active database:
     - **Header & Scope**: Active database badge indicator (`file4base_dev` / custom database), metric badges (Total accounts, Active, Inactive).
     - **Sequential Indexing (`#`)**: 1-based sequential number per row for clear tabular identification.
     - **Interactive Account Activation Toggle**: Direct Switch control to activate or deactivate accounts in real-time (`is_active` column in PostgreSQL `sys_users` table), with safety protections preventing self-deactivation and deactivating the last active Owner account.
@@ -52,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       - 🗑️ **Eliminar cuenta**: Permanent deletion with confirmation dialog, protected against deleting self or the sole Owner.
     - **Search & Filter Toolbar**: Instant search bar filtering by username or privilege role, plus status filter chips (`Todas`, `Activas`, `Inactivas`).
     - **Layout Privileges Matrix Tab («Privilegios de presentaciones»)**: Solution-wide layout audit view inspecting user access levels across each layout in the database.
-    - **Extended Privileges Tab («Privilegios ampliados»)**: FileMaker-style network and protocol privileges configuration (`fmapp`, `fmwebdirect`, `fmrest`, `fmexport`) per privilege set.
+    - **Extended Privileges Tab («Privilegios ampliados»)**: Network and protocol privileges configuration (`f4bapp`, `f4bwebdirect`, `f4brest`, `f4bexport`) per privilege set.
 
 ### Changed
 - **Backend Schema & Security Service**:
@@ -72,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **File Options Dialog (`File > File Options...`)**:
-  - Implemented `FileOptionsDialog` (`client/lib/features/solution_manager/file_options_dialog.dart`) and `FileOptionsModel` (`client/lib/core/models/file_options_model.dart`) adhering to canonical Claris FileMaker Pro File Options:
+  - Implemented `FileOptionsDialog` (`client/lib/features/solution_manager/file_options_dialog.dart`) and `FileOptionsModel` (`client/lib/core/models/file_options_model.dart`) adhering to canonical File4Base File Options:
     - **Tab 1: «Abrir» (Open)**:
       - *Iniciar sesión como*: Configure automatic login using a default account and password, or entering via the Guest account.
       - *Cambiar contraseña*: Integrated password management modal to update account credentials.
@@ -115,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Unified Layout Selector Across Modes (Browse, Layout, Preview)**:
   - Replaced the erroneous top table selector in the left status sidebar (`File4BaseStatusSidebar`) with a dedicated Layout Selector dropdown (`Icons.view_quilt`).
-  - Restored canonical FileMaker Pro architecture where records are always viewed, found, and printed through a Layout representation (Presentación).
+  - Restored canonical low-code database architecture where records are always viewed, found, and printed through a Layout representation (Presentación).
   - Supported switching between all layouts in the active solution with instant synchronization across Browse Mode, Find Mode, Layout Mode, and Preview Mode.
   - Included quick actions in the layout dropdown: **New Layout...** and **Manage Layouts...**.
 - **Comprehensive Solution Layout Management (`ManageLayoutsDialog`)**:
@@ -142,7 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Field Options Modal ("Options for Field <name>")**:
-  - Implemented `FieldOptionsDialog` in `client/lib/features/schema_manager/field_options_dialog.dart` faithfully matching the native macOS FileMaker Pro field options dialog.
+  - Implemented `FieldOptionsDialog` in `client/lib/features/schema_manager/field_options_dialog.dart` faithfully matching the native field options dialog.
   - **Auto-Enter Tab**: Automatic population rules for Creation/Modification (Date, Time, Timestamp, Name, Account Name), serial number generation (on creation / on commit, next value, increment), value from last visited record, default static data, calculated values (`Specify...`), looked-up values, and option to prohibit modification during data entry.
   - **Validation Tab**: Strict data validation options including Not Empty (Always / During Entry), Unique Value, Existing Value, Strict Data Type (Date, Time of Day, 4-Digit Year, Numeric, Text), Range validation (min/max), Maximum length, and custom error message text.
   - **Storage & Indexing Tab**: Global field storage (single value shared across all records for logos, VAT rates, session state), indexing options (None, Minimal, All full-text & fast search, auto-index), and container storage selection (internal database bytea blob vs external filesystem uploads).
@@ -166,7 +188,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Implemented proper operational mode transition from `OperationalMode.find` to `OperationalMode.browse` upon search execution, showing a found set notification badge and "Show All" action.
   - Handled zero-results scenario with an informative dialog allowing the user to either modify their criteria or return to showing all records.
   - Replaced muddy amber card backgrounds in Find Mode with clean, high-contrast Material 3 cards, banner headers, search icons, and field type indicators.
-  - Implemented comprehensive FileMaker formula & wildcard search syntax in backend `ExecuteFind` and `ParseFile4BaseFindCriteria`:
+  - Implemented comprehensive formula & wildcard search syntax in backend `ExecuteFind` and `ParseFile4BaseFindCriteria`:
     - Wildcard `*` (`%`) and single character `@`/`?` (`_`).
     - Comparison operators: `>`, `<`, `>=`, `<=`.
     - Exact match `=` and strict exact match `==`.
