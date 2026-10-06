@@ -77,7 +77,8 @@ func TestSchemaService_LivePostgres(t *testing.T) {
 	assert.True(t, found, "Newly created table should be present in ListTables")
 
 	// 5. Update column display name and options
-	defVal := "100"
+	// default_value holds the field options JSON (never SQL, see #1)
+	defVal := `{"data_enabled":true,"data_value":"100"}`
 	calcForm := "price * 1.21"
 	valRules := `{"not_empty":true}`
 	updatedCol, err := svc.UpdateColumn(ctx, tbl.ID, col.ID, schema.UpdateColumnOptions{
