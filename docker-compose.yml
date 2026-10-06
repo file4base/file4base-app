@@ -64,7 +64,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.7.1}
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.8.0}
     container_name: file4base-api
     restart: unless-stopped
     ports:
@@ -101,7 +101,7 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.7.1}
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.8.0}
     container_name: file4base-web
     restart: unless-stopped
     ports:

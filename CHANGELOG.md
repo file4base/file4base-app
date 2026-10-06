@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-06
+
 ### Added
 - Layout mode: with no object selected, the inspector shows the layout's own properties: width and height (and the header, body and footer heights), background color, background picture (fill, fit, stretch or tile), OnLayoutEnter / OnLayoutExit script triggers and a transition effect (fade, slide or zoom). New layouts get them too. Browse mode paints the background, plays the transition when a layout is shown and runs the triggers: OnLayoutEnter when the layout is shown, OnLayoutExit then OnLayoutEnter when going to another layout. Preview mode paints the background as well.
 - Layout mode: select several objects with Shift-click or by dragging a selection rectangle on the empty canvas. Selected groups can be dragged, nudged with the arrow keys, duplicated and deleted together.
