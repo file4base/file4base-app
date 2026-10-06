@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-06
+
 ### Fixed
 - Preview mode: the left sidebar showed "Page: 1 of 1" and "Margins: 0.5 in", both fixed values that ignored Page Setup. It now shows the paper size and orientation, the real printable area and the four margins, with a Page Setup button, in the same card as the other modes. Which record is shown is reported by the preview's own toolbar.
 - Find mode: the left sidebar did not match the rest of the interface. Its controls floated on the background with mixed alignment (a centred notebook drawing above left-aligned text), and it showed a "Requests: 1" counter that was always 1. The Find controls now sit in the same titled card as the Layout selector above them, the Omit checkbox toggles from its label too, the buttons say "Perform Find" and "Cancel Find", and the fake counter is gone. The Perform Find button is now readable in dark mode.
