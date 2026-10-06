@@ -116,7 +116,7 @@ class CheckUpdatesDialog extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Tu instalación está al día con la rama principal (main).',
+                      'Your installation is up to date with the main branch.',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
                     ),
@@ -134,7 +134,7 @@ class CheckUpdatesDialog extends StatelessWidget {
                         children: [
                           const Expanded(
                             child: Text(
-                              'Versión instalada:',
+                              'Installed version:',
                               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                             ),
                           ),
@@ -170,7 +170,7 @@ class CheckUpdatesDialog extends StatelessWidget {
                     OutlinedButton.icon(
                       onPressed: _openReleases,
                       icon: const Icon(Icons.open_in_new, size: 15),
-                      label: const Text('Ver Releases en GitHub', style: TextStyle(fontSize: 12)),
+                      label: const Text('View Releases on GitHub', style: TextStyle(fontSize: 12)),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -184,7 +184,7 @@ class CheckUpdatesDialog extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                       ),
-                      child: const Text('Aceptar', style: TextStyle(fontSize: 12)),
+                      child: const Text('OK', style: TextStyle(fontSize: 12)),
                     ),
                   ],
                 ),

@@ -151,55 +151,55 @@ class ScriptStepModel {
   String get displayName {
     switch (stepType) {
       case 'go_to_layout':
-        return 'Ir a Presentación';
+        return 'Go to Layout';
       case 'go_to_record':
-        return 'Ir a Registro';
+        return 'Go to Record';
       case 'enter_find_mode':
-        return 'Entrar en Modo Buscar';
+        return 'Enter Find Mode';
       case 'go_to_field':
-        return 'Ir al Campo';
+        return 'Go to Field';
       case 'new_record':
-        return 'Nuevo Registro';
+        return 'New Record';
       case 'commit_records':
-        return 'Guardar Registros (Commit)';
+        return 'Commit Records';
       case 'delete_record':
-        return 'Eliminar Registro Actual';
+        return 'Delete Current Record';
       case 'revert_record':
-        return 'Revertir Registro';
+        return 'Revert Record';
       case 'duplicate_record':
-        return 'Duplicar Registro';
+        return 'Duplicate Record';
       case 'if':
-        return 'Si';
+        return 'If';
       case 'else':
-        return 'Sino';
+        return 'Else';
       case 'end_if':
-        return 'Fin Si';
+        return 'End If';
       case 'loop':
-        return 'Bucle (Loop)';
+        return 'Loop';
       case 'exit_loop_if':
-        return 'Salir del Bucle si';
+        return 'Exit Loop If';
       case 'end_loop':
-        return 'Fin de Bucle';
+        return 'End Loop';
       case 'set_variable':
-        return 'Establecer Variable';
+        return 'Set Variable';
       case 'set_field':
-        return 'Establecer Campo';
+        return 'Set Field';
       case 'clear_field':
-        return 'Limpiar Campo';
+        return 'Clear Field';
       case 'perform_script':
-        return 'Ejecutar Script';
+        return 'Perform Script';
       case 'pause_script':
-        return 'Pausar / Continuar Script';
+        return 'Pause / Resume Script';
       case 'halt_script':
-        return 'Detener Script';
+        return 'Halt Script';
       case 'perform_rest_api':
-        return 'Ejecutar API REST (cURL)';
+        return 'Perform REST API (cURL)';
       case 'insert_from_url':
-        return 'Insertar desde URL';
+        return 'Insert from URL';
       case 'send_webhook':
-        return 'Enviar Notificación Webhook';
+        return 'Send Webhook Notification';
       case 'show_dialog':
-        return 'Mostrar Cuadro de Diálogo';
+        return 'Show Custom Dialog';
       default:
         return stepType;
     }
@@ -208,27 +208,27 @@ class ScriptStepModel {
   String get previewText {
     switch (stepType) {
       case 'go_to_layout':
-        return '[${params['layout_name'] ?? 'Presentación original'}]';
+        return '[${params['layout_name'] ?? 'Original layout'}]';
       case 'go_to_record':
-        return '[${params['target'] ?? 'Siguiente'}]';
+        return '[${params['target'] ?? 'Next'}]';
       case 'enter_find_mode':
-        return '[Pausar: ${params['pause'] == true ? 'Activado' : 'Desactivado'}]';
+        return '[Pause: ${params['pause'] == true ? 'On' : 'Off'}]';
       case 'set_variable':
         final vName = params['variable']?.toString() ?? r'$var';
         final cExpr = params['calc']?.toString() ?? '';
         return '[$vName = $cExpr]';
       case 'set_field':
-        return '[${params['field'] ?? 'Campo'}; ${params['value'] ?? ''}]';
+        return '[${params['field'] ?? 'Field'}; ${params['value'] ?? ''}]';
       case 'if':
-        return '[${params['condition'] ?? 'Condición'}]';
+        return '[${params['condition'] ?? 'Condition'}]';
       case 'exit_loop_if':
-        return '[${params['condition'] ?? 'Condición'}]';
+        return '[${params['condition'] ?? 'Condition'}]';
       case 'perform_script':
-        return '[${params['script_name'] ?? 'Script'}; Parámetro: ${params['param'] ?? ''}]';
+        return '[${params['script_name'] ?? 'Script'}; Parameter: ${params['param'] ?? ''}]';
       case 'commit_records':
-        return '[Con validaciones activas]';
+        return '[With validation enabled]';
       case 'show_dialog':
-        return '["${params['message'] ?? 'Mensaje'}"; Botones: "${params['button_ok'] ?? 'Aceptar'}"]';
+        return '["${params['message'] ?? 'Message'}"; Buttons: "${params['button_ok'] ?? 'OK'}"]';
       case 'perform_rest_api':
         return '[${params['method'] ?? 'POST'} ${params['url'] ?? 'https://...'}]';
       case 'insert_from_url':
@@ -336,132 +336,132 @@ class ScriptCatalogItem {
     // Navigation
     ScriptCatalogItem(
       stepType: 'go_to_layout',
-      label: '+ Ir a Presentación',
-      category: 'NAVEGACIÓN',
-      description: 'Cambia a una presentación específica de la base de datos.',
+      label: '+ Go to Layout',
+      category: 'NAVIGATION',
+      description: 'Switches to a specific database layout.',
       defaultParams: {'layout_name': ''},
     ),
     ScriptCatalogItem(
       stepType: 'go_to_record',
-      label: '+ Ir a Registro [ Siguiente | ID ]',
-      category: 'NAVEGACIÓN',
-      description: 'Navega al primer, último, siguiente o registro específico.',
-      defaultParams: {'target': 'Siguiente'},
+      label: '+ Go to Record [ Next | ID ]',
+      category: 'NAVIGATION',
+      description: 'Navigates to the first, last, next, or specified record.',
+      defaultParams: {'target': 'Next'},
     ),
     ScriptCatalogItem(
       stepType: 'enter_find_mode',
-      label: '+ Entrar en Modo Buscar',
-      category: 'NAVEGACIÓN',
-      description: 'Pasa a modo de búsqueda para especificar criterios.',
+      label: '+ Enter Find Mode',
+      category: 'NAVIGATION',
+      description: 'Enters Find mode to specify search criteria.',
       defaultParams: {'pause': false},
     ),
     ScriptCatalogItem(
       stepType: 'go_to_field',
-      label: '+ Ir al Campo',
-      category: 'NAVEGACIÓN',
-      description: 'Sitúa el foco del cursor en un campo específico.',
+      label: '+ Go to Field',
+      category: 'NAVIGATION',
+      description: 'Moves keyboard focus to a specific field.',
       defaultParams: {'field': ''},
     ),
 
     // Records
     ScriptCatalogItem(
       stepType: 'new_record',
-      label: '+ Nuevo Registro',
-      category: 'REGISTROS',
-      description: 'Crea un nuevo registro en la tabla actual.',
+      label: '+ New Record',
+      category: 'RECORDS',
+      description: 'Creates a new record in the current table.',
     ),
     ScriptCatalogItem(
       stepType: 'commit_records',
-      label: '+ Guardar Registros (Commit)',
-      category: 'REGISTROS',
-      description: 'Confirma los cambios pendientes en el servidor.',
+      label: '+ Commit Records',
+      category: 'RECORDS',
+      description: 'Commits pending changes to the server.',
       defaultParams: {'validate': true},
     ),
     ScriptCatalogItem(
       stepType: 'delete_record',
-      label: '+ Eliminar Registro Actual',
-      category: 'REGISTROS',
-      description: 'Borra de forma permanente el registro activo.',
+      label: '+ Delete Current Record',
+      category: 'RECORDS',
+      description: 'Permanently deletes the current record.',
       defaultParams: {'dialog': true},
     ),
     ScriptCatalogItem(
       stepType: 'revert_record',
-      label: '+ Revertir Registro',
-      category: 'REGISTROS',
-      description: 'Descarta las modificaciones no guardadas en el registro.',
+      label: '+ Revert Record',
+      category: 'RECORDS',
+      description: 'Discards unsaved changes to the record.',
     ),
 
     // Control & Logic
     ScriptCatalogItem(
       stepType: 'if',
-      label: '+ Si / Sino / Fin Si',
-      category: 'CONTROL Y LÓGICA',
-      description: 'Ejecuta pasos condicionalmente si el cálculo es verdadero.',
+      label: '+ If / Else / End If',
+      category: 'CONTROL & LOGIC',
+      description: 'Runs steps conditionally when the calculation is true.',
       defaultParams: {'condition': ''},
     ),
     ScriptCatalogItem(
       stepType: 'loop',
-      label: '+ Bucle (Loop) / Salir de Bucle si',
-      category: 'CONTROL Y LÓGICA',
-      description: 'Repite un conjunto de pasos hasta que se cumpla una condición.',
+      label: '+ Loop / Exit Loop If',
+      category: 'CONTROL & LOGIC',
+      description: 'Repeats a set of steps until a condition is met.',
     ),
     ScriptCatalogItem(
       stepType: 'set_variable',
-      label: '+ Establecer Variable',
-      category: 'CONTROL Y LÓGICA',
-      description: r'Asigna un cálculo o valor a una variable local ($) o global ($$).',
+      label: '+ Set Variable',
+      category: 'CONTROL & LOGIC',
+      description: r'Assigns a calculation or value to a local ($) or global ($$) variable.',
       defaultParams: {'variable': r'$var', 'calc': ''},
     ),
     ScriptCatalogItem(
       stepType: 'set_field',
-      label: '+ Establecer Campo',
-      category: 'CONTROL Y LÓGICA',
-      description: 'Asigna el resultado de un cálculo al campo especificado.',
+      label: '+ Set Field',
+      category: 'CONTROL & LOGIC',
+      description: 'Assigns the result of a calculation to the specified field.',
       defaultParams: {'field': '', 'value': ''},
     ),
     ScriptCatalogItem(
       stepType: 'perform_script',
-      label: '+ Ejecutar Script',
-      category: 'CONTROL Y LÓGICA',
-      description: 'Llama a otro script pasando un parámetro opcional.',
+      label: '+ Perform Script',
+      category: 'CONTROL & LOGIC',
+      description: 'Calls another script with an optional parameter.',
       defaultParams: {'script_name': '', 'param': ''},
     ),
     ScriptCatalogItem(
       stepType: 'pause_script',
-      label: '+ Pausar / Continuar Script',
-      category: 'CONTROL Y LÓGICA',
-      description: 'Detiene temporalmente el script durante N segundos o indefinido.',
+      label: '+ Pause / Resume Script',
+      category: 'CONTROL & LOGIC',
+      description: 'Pauses the script for N seconds or indefinitely.',
       defaultParams: {'duration_seconds': 0},
     ),
 
     // Integration & Data
     ScriptCatalogItem(
       stepType: 'perform_rest_api',
-      label: '+ Ejecutar API REST (cURL)',
-      category: 'INTEGRACIÓN Y DATOS',
-      description: 'Realiza peticiones HTTP GET, POST, PUT a servicios externos.',
+      label: '+ Perform REST API (cURL)',
+      category: 'INTEGRATION & DATA',
+      description: 'Sends HTTP GET, POST, or PUT requests to external services.',
       defaultParams: {'method': 'POST', 'url': 'https://api.example.com'},
     ),
     ScriptCatalogItem(
       stepType: 'insert_from_url',
-      label: '+ Insertar desde URL',
-      category: 'INTEGRACIÓN Y DATOS',
-      description: 'Descarga contenido de una URL y lo almacena en un campo o variable.',
+      label: '+ Insert from URL',
+      category: 'INTEGRATION & DATA',
+      description: 'Downloads content from a URL and stores it in a field or variable.',
       defaultParams: {'url': 'https://', 'target': r'$response'},
     ),
     ScriptCatalogItem(
       stepType: 'send_webhook',
-      label: '+ Enviar Notificación Webhook',
-      category: 'INTEGRACIÓN Y DATOS',
-      description: 'Emite un payload JSON hacia un webhook registrado.',
+      label: '+ Send Webhook Notification',
+      category: 'INTEGRATION & DATA',
+      description: 'Sends a JSON payload to a registered webhook.',
       defaultParams: {'endpoint': ''},
     ),
     ScriptCatalogItem(
       stepType: 'show_dialog',
-      label: '+ Mostrar Cuadro de Diálogo',
-      category: 'INTEGRACIÓN Y DATOS',
-      description: 'Muestra una ventana modal de alerta con botones configurables.',
-      defaultParams: {'title': 'Aviso', 'message': '', 'button_ok': 'Aceptar'},
+      label: '+ Show Custom Dialog',
+      category: 'INTEGRATION & DATA',
+      description: 'Displays a modal alert with configurable buttons.',
+      defaultParams: {'title': 'Notice', 'message': '', 'button_ok': 'OK'},
     ),
   ];
 }

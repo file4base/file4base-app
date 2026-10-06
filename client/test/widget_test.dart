@@ -13,6 +13,26 @@ void main() {
     EnvironmentChecker.isTestMode = false;
   });
 
+  testWidgets('App uses English when the host locale is Spanish',
+      (WidgetTester tester) async {
+    tester.binding.platformDispatcher.localesTestValue = const [Locale('es')];
+    addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const ProviderScope(child: File4BaseApp()),
+    );
+    await tester.pump();
+
+    final context = tester.element(find.byType(WorkspaceShell));
+    expect(Localizations.localeOf(context), const Locale('en'));
+    expect(MaterialLocalizations.of(context).cancelButtonLabel, 'Cancel');
+    expect(find.text('Welcome to File4Base'), findsOneWidget);
+  });
+
   testWidgets('App renders canonical menu, left status sidebar, and switches mode',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1440, 900);

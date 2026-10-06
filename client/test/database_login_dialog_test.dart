@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
-  testWidgets('DatabaseLoginDialog displays Cargar de disco duro and Cancelar and requires password',
+  testWidgets('DatabaseLoginDialog displays Load from disk and Cancel and requires password',
       (WidgetTester tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
@@ -37,11 +37,11 @@ void main() {
     // Verify dialog header
     expect(find.text('File4Base Connect & Login'), findsOneWidget);
 
-    // Verify Cargar de disco duro button exists
-    expect(find.text('Cargar de disco duro...'), findsOneWidget);
+    // Verify Load from disk button exists
+    expect(find.text('Load from disk...'), findsOneWidget);
 
-    // Verify Cancelar button exists
-    expect(find.text('Cancelar'), findsAtLeastNWidgets(1));
+    // Verify Cancel button exists
+    expect(find.text('Cancel'), findsAtLeastNWidgets(1));
 
     // Verify Password field starts empty
     final passwordFieldFinder = find.widgetWithText(TextFormField, 'Password');

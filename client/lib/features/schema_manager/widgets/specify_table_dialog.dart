@@ -11,7 +11,7 @@ class SpecifyTableDialog extends StatefulWidget {
     super.key,
     required this.tables,
     required this.existingOccurrences,
-    this.activeDatabaseName = 'Archivo actual',
+    this.activeDatabaseName = 'Current file',
     this.initialOccurrence,
   });
 
@@ -19,7 +19,7 @@ class SpecifyTableDialog extends StatefulWidget {
     BuildContext context, {
     required List<TableModel> tables,
     required List<TableOccurrenceModel> existingOccurrences,
-    String activeDatabaseName = 'Archivo actual',
+    String activeDatabaseName = 'Current file',
     TableOccurrenceModel? initialOccurrence,
   }) {
     return showDialog<Map<String, dynamic>>(
@@ -41,7 +41,7 @@ class SpecifyTableDialog extends StatefulWidget {
 class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
   TableModel? _selectedTable;
   late final TextEditingController _nameController;
-  String _selectedDataSource = 'Archivo actual';
+  String _selectedDataSource = 'Current file';
 
   @override
   void initState() {
@@ -96,7 +96,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
         children: [
           Icon(Icons.table_chart_outlined, color: theme.colorScheme.primary, size: 22),
           const SizedBox(width: 8),
-          const Text('Especificar tabla', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('Specify Table', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         ],
       ),
       content: SizedBox(
@@ -106,13 +106,13 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Seleccione la tabla que va a incluir en el gráfico de este archivo o de otra fuente de datos. Se puede incluir la misma tabla en el gráfico más de una vez.',
+              'Select a table from this file or another data source to include in the graph. The same table can appear more than once.',
               style: TextStyle(fontSize: 12.5, color: theme.textTheme.bodySmall?.color ?? Colors.grey[700], height: 1.3),
             ),
             const SizedBox(height: 16),
             Row(
               children: [
-                const Text('Fuente de datos:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                const Text('Data source:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Container(
@@ -128,8 +128,8 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
                         isExpanded: true,
                         items: [
                           DropdownMenuItem(
-                            value: 'Archivo actual',
-                            child: Text('Archivo actual ("${widget.activeDatabaseName}")', style: const TextStyle(fontSize: 13)),
+                            value: 'Current file',
+                            child: Text('Current file ("${widget.activeDatabaseName}")', style: const TextStyle(fontSize: 13)),
                           ),
                         ],
                         onChanged: (val) {
@@ -151,7 +151,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
               ),
               child: widget.tables.isEmpty
                   ? const Center(
-                      child: Text('No hay tablas disponibles', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                      child: Text('No tables available', style: TextStyle(color: Colors.grey, fontSize: 13)),
                     )
                   : ListView.builder(
                       itemCount: widget.tables.length,
@@ -182,7 +182,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
                                   ),
                                 ),
                                 Text(
-                                  '${tbl.columns.length} campos',
+                                  '${tbl.columns.length} fields',
                                   style: TextStyle(fontSize: 11, color: Colors.grey[600]),
                                 ),
                               ],
@@ -197,7 +197,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
               children: [
                 const SizedBox(
                   width: 70,
-                  child: Text('Nombre:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  child: Text('Name:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                 ),
                 Expanded(
                   child: TextField(
@@ -218,7 +218,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
       actions: [
         OutlinedButton(
           onPressed: () => Navigator.of(context).pop(null),
-          child: const Text('Cancelar'),
+          child: const Text('Cancel'),
         ),
         ElevatedButton(
           onPressed: _selectedTable == null || _nameController.text.trim().isEmpty
@@ -229,7 +229,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
                     'name': _nameController.text.trim(),
                   });
                 },
-          child: const Text('Aceptar'),
+          child: const Text('OK'),
         ),
       ],
     );

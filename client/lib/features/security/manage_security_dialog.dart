@@ -137,7 +137,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     if (_isCurrentUser(user)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No puedes desactivar tu propia cuenta activa.'),
+          content: Text('You cannot deactivate your current account.'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -147,7 +147,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     if (!newActive && _isLastActiveOwner(user)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Debe existir al menos una cuenta con rol Owner (Acceso total) activa en la base de datos.'),
+          content: Text('The database must have at least one active Owner account with full access.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -174,7 +174,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Cuenta "${user.username}" ${newActive ? 'activada' : 'desactivada'} correctamente.'),
+            content: Text('Account "${user.username}" ${newActive ? 'activated' : 'deactivated'} successfully.'),
             backgroundColor: newActive ? Colors.green.shade700 : Colors.blueGrey,
             duration: const Duration(seconds: 2),
           ),
@@ -184,7 +184,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al cambiar estado de cuenta: $e'),
+            content: Text('Error changing account status: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -208,7 +208,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               const Icon(Icons.key_outlined, color: Color(0xFF1E88E5), size: 22),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Cambiar contraseña: ${user.username}', style: const TextStyle(fontSize: 16)),
+                child: Text('Change password: ${user.username}', style: const TextStyle(fontSize: 16)),
               ),
             ],
           ),
@@ -219,7 +219,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Introduce la nueva contraseña para la cuenta "${user.username}".',
+                  'Enter the new password for account "${user.username}".',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 16),
@@ -227,7 +227,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   controller: passwordController,
                   obscureText: obscure,
                   decoration: InputDecoration(
-                    labelText: 'Nueva contraseña',
+                    labelText: 'New password',
                     border: const OutlineInputBorder(),
                     isDense: true,
                     prefixIcon: const Icon(Icons.lock_outline, size: 18),
@@ -242,7 +242,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   controller: confirmController,
                   obscureText: obscure,
                   decoration: InputDecoration(
-                    labelText: 'Confirmar contraseña',
+                    labelText: 'Confirm password',
                     border: const OutlineInputBorder(),
                     isDense: true,
                     prefixIcon: const Icon(Icons.lock_reset, size: 18),
@@ -262,7 +262,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancelar'),
+              child: const Text('Cancel'),
             ),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
@@ -270,16 +270,16 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                 foregroundColor: Colors.white,
               ),
               icon: const Icon(Icons.check, size: 18),
-              label: const Text('Guardar contraseña'),
+              label: const Text('Save password'),
               onPressed: () async {
                 final p1 = passwordController.text;
                 final p2 = confirmController.text;
                 if (p1.isEmpty) {
-                  setDlgState(() => dialogError = 'La contraseña no puede estar vacía.');
+                  setDlgState(() => dialogError = 'Password cannot be empty.');
                   return;
                 }
                 if (p1 != p2) {
-                  setDlgState(() => dialogError = 'Las contraseñas no coinciden.');
+                  setDlgState(() => dialogError = 'Passwords do not match.');
                   return;
                 }
 
@@ -297,7 +297,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Contraseña de "${user.username}" actualizada correctamente.'),
+                        content: Text('Password for "${user.username}" updated successfully.'),
                         backgroundColor: Colors.green.shade700,
                       ),
                     );
@@ -357,12 +357,12 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        isNew ? 'Nueva cuenta de usuario' : 'Editar cuenta: ${userToEdit.username}',
+                        isNew ? 'New user account' : 'Edit account: ${userToEdit.username}',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                       ),
                       if ((widget.databaseName ?? '').isNotEmpty)
                         Text(
-                          'Base de datos activa: ${widget.databaseName}',
+                          'Active database: ${widget.databaseName}',
                           style: const TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                     ],
@@ -401,7 +401,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                   controller: usernameController,
                                   enabled: isNew || (userToEdit.role != 'owner'),
                                   decoration: const InputDecoration(
-                                    labelText: 'Nombre de cuenta / Usuario *',
+                                    labelText: 'Account name / Username *',
                                     border: OutlineInputBorder(),
                                     isDense: true,
                                     prefixIcon: Icon(Icons.person_outline, size: 18),
@@ -414,7 +414,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                 child: DropdownButtonFormField<String>(
                                   value: selectedRole,
                                   decoration: const InputDecoration(
-                                    labelText: 'Conjunto de privilegios *',
+                                    labelText: 'Privilege set *',
                                     border: OutlineInputBorder(),
                                     isDense: true,
                                     prefixIcon: Icon(Icons.admin_panel_settings_outlined, size: 18),
@@ -422,15 +422,15 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                   items: const [
                                     DropdownMenuItem(
                                       value: 'owner',
-                                      child: Text('[Acceso total] Owner'),
+                                      child: Text('[Full Access] Owner'),
                                     ),
                                     DropdownMenuItem(
                                       value: 'admin',
-                                      child: Text('[Entrada datos y diseño] Admin'),
+                                      child: Text('[Data Entry and Design] Admin'),
                                     ),
                                     DropdownMenuItem(
                                       value: 'user',
-                                      child: Text('[Acceso restringido] User'),
+                                      child: Text('[Restricted Access] User'),
                                     ),
                                   ],
                                   onChanged: isOwnerLocked ? null : (v) => setDlgState(() => selectedRole = v ?? 'user'),
@@ -449,8 +449,8 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                   controller: passwordController,
                                   obscureText: obscurePassword,
                                   decoration: InputDecoration(
-                                    labelText: isNew ? 'Contraseña inicial *' : 'Nueva contraseña (opcional)',
-                                    hintText: isNew ? 'Obligatorio' : 'Dejar en blanco para no cambiar',
+                                    labelText: isNew ? 'Initial password *' : 'New password (optional)',
+                                    hintText: isNew ? 'Required' : 'Leave blank to keep the current password',
                                     border: const OutlineInputBorder(),
                                     isDense: true,
                                     prefixIcon: const Icon(Icons.lock_outline, size: 18),
@@ -460,7 +460,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                         size: 18,
                                       ),
                                       onPressed: () => setDlgState(() => obscurePassword = !obscurePassword),
-                                      tooltip: obscurePassword ? 'Mostrar contraseña' : 'Ocultar contraseña',
+                                      tooltip: obscurePassword ? 'Show password' : 'Hide password',
                                     ),
                                   ),
                                 ),
@@ -478,7 +478,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                     children: [
                                       Expanded(
                                         child: Text(
-                                          isActive ? 'Cuenta Activa' : 'Desactivada',
+                                          isActive ? 'Active account' : 'Inactive',
                                           style: TextStyle(
                                             fontSize: 12,
                                             fontWeight: FontWeight.bold,
@@ -510,7 +510,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               const Icon(Icons.dashboard_customize_outlined, size: 18, color: Color(0xFF1E88E5)),
                               const SizedBox(width: 8),
                               const Text(
-                                'Privilegios de acceso por Presentación (Layouts)',
+                                'Layout access privileges',
                                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                               const Spacer(),
@@ -522,7 +522,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                     }
                                   });
                                 },
-                                child: const Text('Todo L/E', style: TextStyle(fontSize: 11)),
+                                child: const Text('All Read/Write', style: TextStyle(fontSize: 11)),
                               ),
                               TextButton(
                                 onPressed: () {
@@ -532,7 +532,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                     }
                                   });
                                 },
-                                child: const Text('Solo Lectura', style: TextStyle(fontSize: 11)),
+                                child: const Text('Read Only', style: TextStyle(fontSize: 11)),
                               ),
                             ],
                           ),
@@ -547,7 +547,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: const Center(
-                                child: Text('No hay presentaciones definidas en esta solución todavía.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                child: Text('No layouts are defined in this solution yet.', style: TextStyle(color: Colors.grey, fontSize: 12)),
                               ),
                             )
                           else
@@ -578,18 +578,18 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                           segments: const [
                                             ButtonSegment(
                                               value: 'read_write',
-                                              label: Text('L/E', style: TextStyle(fontSize: 10)),
-                                              tooltip: 'Lectura y Escritura',
+                                              label: Text('R/W', style: TextStyle(fontSize: 10)),
+                                              tooltip: 'Read and Write',
                                             ),
                                             ButtonSegment(
                                               value: 'read_only',
-                                              label: Text('Lectura', style: TextStyle(fontSize: 10)),
-                                              tooltip: 'Solo Lectura',
+                                              label: Text('Read', style: TextStyle(fontSize: 10)),
+                                              tooltip: 'Read Only',
                                             ),
                                             ButtonSegment(
                                               value: 'none',
-                                              label: Text('Sin acceso', style: TextStyle(fontSize: 10)),
-                                              tooltip: 'Sin acceso',
+                                              label: Text('No access', style: TextStyle(fontSize: 10)),
+                                              tooltip: 'No access',
                                             ),
                                           ],
                                           selected: {curPerm},
@@ -610,7 +610,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
             actions: [
               TextButton(
                 onPressed: isSaving ? null : () => Navigator.of(ctx).pop(),
-                child: const Text('Cancelar'),
+                child: const Text('Cancel'),
               ),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
@@ -618,7 +618,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   foregroundColor: Colors.white,
                 ),
                 icon: const Icon(Icons.check, size: 18),
-                label: Text(isNew ? 'Crear cuenta' : 'Guardar cambios'),
+                label: Text(isNew ? 'Create account' : 'Save changes'),
                 onPressed: isSaving
                     ? null
                     : () async {
@@ -626,11 +626,11 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                         final pass = passwordController.text.trim();
 
                         if (uname.isEmpty) {
-                          setDlgState(() => dialogError = 'El nombre de usuario no puede estar vacío.');
+                          setDlgState(() => dialogError = 'Username cannot be empty.');
                           return;
                         }
                         if (isNew && pass.isEmpty) {
-                          setDlgState(() => dialogError = 'La contraseña es requerida para cuentas nuevas.');
+                          setDlgState(() => dialogError = 'A password is required for new accounts.');
                           return;
                         }
 
@@ -678,7 +678,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                           if (mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
-                                content: Text('Cuenta "$uname" guardada correctamente.'),
+                                content: Text('Account "$uname" saved successfully.'),
                                 backgroundColor: Colors.green.shade700,
                               ),
                             );
@@ -699,7 +699,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   }
 
   Future<void> _duplicateUser(UserModel user) async {
-    final cloneName = '${user.username}_copia';
+    final cloneName = '${user.username}_copy';
     final passwordController = TextEditingController();
     String? dialogError;
     bool obscurePassword = true;
@@ -713,7 +713,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
             children: [
               const Icon(Icons.content_copy_outlined, color: Color(0xFF1E88E5), size: 22),
               const SizedBox(width: 8),
-              Text('Duplicar cuenta: ${user.username}', style: const TextStyle(fontSize: 16)),
+              Text('Duplicate account: ${user.username}', style: const TextStyle(fontSize: 16)),
             ],
           ),
           content: SizedBox(
@@ -723,17 +723,17 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Se creará un duplicado con rol "${user.role.toUpperCase()}" y los mismos privilegios de presentaciones.',
+                  'A duplicate will be created with the "${user.role.toUpperCase()}" role and the same layout privileges.',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 16),
-                Text('Nuevo nombre de cuenta: $cloneName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                Text('New account name: $cloneName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                 const SizedBox(height: 12),
                 TextField(
                   controller: passwordController,
                   obscureText: obscurePassword,
                   decoration: InputDecoration(
-                    labelText: 'Contraseña para la nueva cuenta *',
+                    labelText: 'Password for the new account *',
                     border: const OutlineInputBorder(),
                     isDense: true,
                     prefixIcon: const Icon(Icons.lock_outline, size: 18),
@@ -743,7 +743,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                         size: 18,
                       ),
                       onPressed: () => setDlgState(() => obscurePassword = !obscurePassword),
-                      tooltip: obscurePassword ? 'Mostrar contraseña' : 'Ocultar contraseña',
+                      tooltip: obscurePassword ? 'Show password' : 'Hide password',
                     ),
                   ),
                 ),
@@ -757,7 +757,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancelar'),
+              child: const Text('Cancel'),
             ),
             ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
@@ -765,11 +765,11 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                 foregroundColor: Colors.white,
               ),
               icon: const Icon(Icons.copy, size: 18),
-              label: const Text('Duplicar'),
+              label: const Text('Duplicate'),
               onPressed: () async {
                 final pass = passwordController.text.trim();
                 if (pass.isEmpty) {
-                  setDlgState(() => dialogError = 'Introduce una contraseña para el usuario duplicado.');
+                  setDlgState(() => dialogError = 'Enter a password for the duplicated account.');
                   return;
                 }
 
@@ -800,7 +800,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text('Cuenta duplicada con éxito: $cloneName'),
+                        content: Text('Account duplicated successfully: $cloneName'),
                         backgroundColor: Colors.green.shade700,
                       ),
                     );
@@ -820,7 +820,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     if (_isCurrentUser(user)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('No puedes eliminar tu propia cuenta en sesión.'),
+          content: Text('You cannot delete your current account.'),
           backgroundColor: Colors.red,
         ),
       );
@@ -832,7 +832,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       if (owners <= 1) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('No se puede eliminar el único usuario Owner (Acceso total) de la base de datos.'),
+            content: Text('The only Owner account with full access cannot be deleted.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -848,18 +848,18 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
           children: const [
             Icon(Icons.warning_amber_rounded, color: Colors.red, size: 24),
             SizedBox(width: 8),
-            Text('Eliminar cuenta de usuario'),
+            Text('Delete user account'),
           ],
         ),
         content: Text(
-          '¿Estás completamente seguro de que deseas eliminar permanentemente la cuenta "${user.username}"?\nEsta acción no se puede deshacer.',
+          'Permanently delete account "${user.username}"?\nThis action cannot be undone.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Eliminar definitivamente'),
+            child: const Text('Delete permanently'),
           ),
         ],
       ),
@@ -875,7 +875,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Cuenta "${user.username}" eliminada correctamente.'),
+            content: Text('Account "${user.username}" deleted successfully.'),
             backgroundColor: Colors.blueGrey,
           ),
         );
@@ -884,7 +884,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error al eliminar usuario: $e'),
+            content: Text('Error deleting user: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -902,19 +902,19 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       case 'owner':
         bg = Colors.amber.shade900.withValues(alpha: 0.25);
         fg = Colors.amber.shade400;
-        label = '[Acceso total] Owner';
+        label = '[Full Access] Owner';
         icon = Icons.verified_user_outlined;
         break;
       case 'admin':
         bg = Colors.blue.shade900.withValues(alpha: 0.25);
         fg = Colors.blue.shade300;
-        label = '[Entrada datos y diseño] Admin';
+        label = '[Data Entry and Design] Admin';
         icon = Icons.design_services_outlined;
         break;
       default:
         bg = Colors.teal.shade900.withValues(alpha: 0.25);
         fg = Colors.teal.shade300;
-        label = '[Acceso restringido] User';
+        label = '[Restricted Access] User';
         icon = Icons.person_outline;
     }
 
@@ -983,7 +983,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                       Row(
                         children: [
                           const Text(
-                            'Gestionar Seguridad',
+                            'Manage Security',
                             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                           ),
                           const SizedBox(width: 10),
@@ -1009,7 +1009,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                         ],
                       ),
                       const Text(
-                        'Cuentas, conjuntos de privilegios y permisos de acceso por base de datos',
+                        'Accounts, privilege sets, and access permissions for each database',
                         style: TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                     ],
@@ -1018,7 +1018,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close, size: 20),
-                    tooltip: 'Cerrar',
+                    tooltip: 'Close',
                   ),
                 ],
               ),
@@ -1043,7 +1043,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                       children: [
                         const Icon(Icons.people_outline, size: 16),
                         const SizedBox(width: 6),
-                        const Text('Cuentas'),
+                        const Text('Accounts'),
                         const SizedBox(width: 6),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -1061,7 +1061,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                       children: [
                         Icon(Icons.dashboard_customize_outlined, size: 16),
                         SizedBox(width: 6),
-                        Text('Privilegios de presentaciones'),
+                        Text('Layout privileges'),
                       ],
                     ),
                   ),
@@ -1070,7 +1070,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                       children: [
                         Icon(Icons.public, size: 16),
                         SizedBox(width: 6),
-                        Text('Privilegios ampliados'),
+                        Text('Extended privileges'),
                       ],
                     ),
                   ),
@@ -1116,7 +1116,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               child: Row(
                 children: [
                   Text(
-                    'Total: ${_users.length} cuentas  •  $_activeCount activas  •  $_inactiveCount inactivas',
+                    'Total: ${_users.length} accounts  •  $_activeCount active  •  $_inactiveCount inactive',
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                   const Spacer(),
@@ -1125,7 +1125,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                     ),
-                    child: const Text('Cerrar'),
+                    child: const Text('Close'),
                   ),
                 ],
               ),
@@ -1151,7 +1151,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                 child: TextField(
                   onChanged: (val) => setState(() => _searchQuery = val.trim()),
                   decoration: InputDecoration(
-                    hintText: 'Buscar cuentas por nombre o rol...',
+                    hintText: 'Search accounts by name or role...',
                     hintStyle: const TextStyle(fontSize: 12),
                     prefixIcon: const Icon(Icons.search, size: 18),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
@@ -1168,15 +1168,15 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                 segments: const [
                   ButtonSegment(
                     value: 'all',
-                    label: Text('Todas', style: TextStyle(fontSize: 11)),
+                    label: Text('All', style: TextStyle(fontSize: 11)),
                   ),
                   ButtonSegment(
                     value: 'active',
-                    label: Text('Activas', style: TextStyle(fontSize: 11)),
+                    label: Text('Active', style: TextStyle(fontSize: 11)),
                   ),
                   ButtonSegment(
                     value: 'inactive',
-                    label: Text('Inactivas', style: TextStyle(fontSize: 11)),
+                    label: Text('Inactive', style: TextStyle(fontSize: 11)),
                   ),
                 ],
                 selected: {_statusFilter},
@@ -1194,7 +1194,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 ),
                 icon: const Icon(Icons.person_add_alt, size: 18),
-                label: const Text('Nueva cuenta...'),
+                label: const Text('New account...'),
               ),
             ],
           ),
@@ -1218,11 +1218,11 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                       child: Row(
                         children: const [
                           SizedBox(width: 40, child: Text('#', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
-                          SizedBox(width: 140, child: Text('ESTADO', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
-                          Expanded(flex: 3, child: Text('NOMBRE DE CUENTA', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
-                          Expanded(flex: 3, child: Text('CONJUNTO DE PRIVILEGIOS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
-                          Expanded(flex: 2, child: Text('PRESENTACIONES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
-                          SizedBox(width: 180, child: Text('OPCIONES', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          SizedBox(width: 140, child: Text('STATUS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          Expanded(flex: 3, child: Text('ACCOUNT NAME', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          Expanded(flex: 3, child: Text('PRIVILEGE SET', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          Expanded(flex: 2, child: Text('LAYOUTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          SizedBox(width: 180, child: Text('OPTIONS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                         ],
                       ),
                     ),
@@ -1238,7 +1238,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                   const Icon(Icons.search_off, size: 36, color: Colors.grey),
                                   const SizedBox(height: 8),
                                   Text(
-                                    _searchQuery.isNotEmpty ? 'No hay cuentas que coincidan con "$_searchQuery"' : 'No hay cuentas registradas',
+                                    _searchQuery.isNotEmpty ? 'No accounts match "$_searchQuery"' : 'No accounts registered',
                                     style: const TextStyle(color: Colors.grey, fontSize: 13),
                                   ),
                                 ],
@@ -1290,7 +1290,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                             ),
                                             const SizedBox(width: 6),
                                             Text(
-                                              user.isActive ? 'Activa' : 'Inactiva',
+                                              user.isActive ? 'Active' : 'Inactive',
                                               style: TextStyle(
                                                 fontSize: 11,
                                                 fontWeight: FontWeight.bold,
@@ -1345,7 +1345,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                             border: Border.all(color: Colors.green.shade600, width: 0.8),
                                                           ),
                                                           child: const Text(
-                                                            'Tú / Activa',
+                                                            'You / Active',
                                                             style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.greenAccent),
                                                           ),
                                                         ),
@@ -1354,7 +1354,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                   ),
                                                   if (user.createdAt != null)
                                                     Text(
-                                                      'Creado: ${user.createdAt!.toLocal().toString().split('.').first}',
+                                                      'Created: ${user.createdAt!.toLocal().toString().split('.').first}',
                                                       style: const TextStyle(fontSize: 10, color: Colors.grey),
                                                     ),
                                                 ],
@@ -1378,10 +1378,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                         flex: 2,
                                         child: Text(
                                           _layouts.isEmpty
-                                              ? 'Sin presentaciones'
+                                              ? 'No layouts'
                                               : (user.role == 'owner'
-                                                  ? 'Todas (${_layouts.length})'
-                                                  : '$accessibleLayouts de ${_layouts.length} accesibles'),
+                                                  ? 'All (${_layouts.length})'
+                                                  : '$accessibleLayouts of ${_layouts.length} accessible'),
                                           style: const TextStyle(fontSize: 12, color: Colors.grey),
                                         ),
                                       ),
@@ -1398,7 +1398,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               padding: const EdgeInsets.all(4),
                                               constraints: const BoxConstraints(),
                                               icon: const Icon(Icons.key_outlined, size: 18),
-                                              tooltip: 'Cambiar contraseña',
+                                              tooltip: 'Change password',
                                               onPressed: () => _showChangePasswordDialog(user),
                                             ),
                                             const SizedBox(width: 4),
@@ -1409,7 +1409,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               padding: const EdgeInsets.all(4),
                                               constraints: const BoxConstraints(),
                                               icon: const Icon(Icons.edit_outlined, size: 18),
-                                              tooltip: 'Editar cuenta y privilegios',
+                                              tooltip: 'Edit account and privileges',
                                               onPressed: () => _showAccountDialog(userToEdit: user),
                                             ),
                                             const SizedBox(width: 4),
@@ -1420,7 +1420,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               padding: const EdgeInsets.all(4),
                                               constraints: const BoxConstraints(),
                                               icon: const Icon(Icons.content_copy_outlined, size: 18),
-                                              tooltip: 'Duplicar cuenta',
+                                              tooltip: 'Duplicate account',
                                               onPressed: () => _duplicateUser(user),
                                             ),
                                             const SizedBox(width: 4),
@@ -1437,7 +1437,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                     ? Colors.grey.shade700
                                                     : Colors.redAccent,
                                               ),
-                                              tooltip: isCurrent ? 'No puedes eliminarte a ti mismo' : 'Eliminar cuenta',
+                                              tooltip: isCurrent ? 'You cannot delete your own account' : 'Delete account',
                                               onPressed: (isCurrent || (user.role == 'owner' && _users.where((u) => u.role == 'owner').length <= 1))
                                                   ? null
                                                   : () => _deleteUser(user),
@@ -1472,26 +1472,26 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               const Icon(Icons.visibility_outlined, size: 20, color: Color(0xFF1E88E5)),
               const SizedBox(width: 8),
               const Text(
-                'Matriz de Privilegios de Presentaciones',
+                'Layout Privileges Matrix',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
               ),
               const Spacer(),
               Text(
-                '${_layouts.length} presentaciones en base de datos',
+                '${_layouts.length} layouts in the database',
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
           ),
           const SizedBox(height: 6),
           const Text(
-            'Visualiza qué nivel de acceso tienen las cuentas registradas sobre cada pantalla o presentación.',
+            'View the access level each registered account has for every layout.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
           const SizedBox(height: 14),
 
           Expanded(
             child: _layouts.isEmpty
-                ? const Center(child: Text('No hay presentaciones registradas en esta solución.', style: TextStyle(color: Colors.grey)))
+                ? const Center(child: Text('No layouts are registered in this solution.', style: TextStyle(color: Colors.grey)))
                 : Container(
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.grey.shade800),
@@ -1505,7 +1505,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                         return ExpansionTile(
                           leading: const Icon(Icons.dashboard_customize_outlined, color: Color(0xFF1E88E5)),
                           title: Text(l.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                          subtitle: Text('ID: ${l.id}  •  Ocurrencia: ${l.tableOccurrenceId}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                          subtitle: Text('ID: ${l.id}  •  Occurrence: ${l.tableOccurrenceId}', style: const TextStyle(fontSize: 11, color: Colors.grey)),
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1519,13 +1519,13 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                   );
 
                                   Color badgeColor = Colors.green;
-                                  String badgeText = 'Lectura y Escritura';
+                                  String badgeText = 'Read and Write';
                                   if (p.accessLevel == 'read_only') {
                                     badgeColor = Colors.blue;
-                                    badgeText = 'Solo Lectura';
+                                    badgeText = 'Read Only';
                                   } else if (p.accessLevel == 'none') {
                                     badgeColor = Colors.red;
-                                    badgeText = 'Sin acceso';
+                                    badgeText = 'No access';
                                   }
 
                                   return Padding(
@@ -1573,14 +1573,14 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               Icon(Icons.public, size: 20, color: Color(0xFF1E88E5)),
               SizedBox(width: 8),
               Text(
-                'Privilegios Ampliados de Red y Protocolo (Extended Privileges)',
+                'Network and Protocol Access (Extended Privileges)',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
               ),
             ],
           ),
           const SizedBox(height: 6),
           const Text(
-            'Controla qué métodos de acceso a datos y clientes remotos están permitidos para cada conjunto de privilegios.',
+            'Control the data access methods and remote clients allowed for each privilege set.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
           const SizedBox(height: 16),
@@ -1590,29 +1590,29 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               children: [
                 _buildExtPrivCard(
                   code: 'f4bapp',
-                  title: 'Acceso mediante File4Base Desktop',
-                  description: 'Permite abrir y usar la base de datos a través de la aplicación cliente nativa (macOS / Linux / Windows).',
+                  title: 'Access via File4Base Desktop',
+                  description: 'Allow database access through the native desktop client (macOS / Linux / Windows).',
                   icon: Icons.desktop_windows_outlined,
                   states: _extPrivDesktop,
                 ),
                 _buildExtPrivCard(
                   code: 'f4bwebdirect',
-                  title: 'Acceso mediante File4Base WebDirect',
-                  description: 'Permite abrir y usar la base de datos de manera directa a través de exploradores web modernos vía Nginx.',
+                  title: 'Access via File4Base WebDirect',
+                  description: 'Allow database access through modern web browsers via Nginx.',
                   icon: Icons.language_outlined,
                   states: _extPrivWebDirect,
                 ),
                 _buildExtPrivCard(
                   code: 'f4brest',
-                  title: 'Acceso mediante API REST / Data API',
-                  description: 'Permite consultas JSON, ingestión de registros y automatizaciones backend a través de endpoints REST seguros.',
+                  title: 'Access via REST API / Data API',
+                  description: 'Allow JSON queries, record ingestion, and backend automation through secure REST endpoints.',
                   icon: Icons.api_outlined,
                   states: _extPrivRest,
                 ),
                 _buildExtPrivCard(
                   code: 'f4bexport',
-                  title: 'Exportación masiva de registros',
-                  description: 'Permite exportar datos a formatos Excel, CSV, JSON y paquetes de solución empaquetados .f4b.',
+                  title: 'Bulk record export',
+                  description: 'Allow data export to Excel, CSV, JSON, and packaged .f4b solution files.',
                   icon: Icons.file_download_outlined,
                   states: _extPrivExport,
                 ),

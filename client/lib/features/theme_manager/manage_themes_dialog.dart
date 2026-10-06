@@ -48,7 +48,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
           children: [
             const Icon(Icons.check_circle, color: Colors.white, size: 20),
             const SizedBox(width: 8),
-            Text('Tema aplicado: ${theme.name}'),
+            Text('Theme applied: ${theme.name}'),
           ],
         ),
         backgroundColor: theme.primaryAccent,
@@ -94,7 +94,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                   Icon(Icons.palette_outlined, color: activeTheme.primaryAccent, size: 22),
                   const SizedBox(width: 10),
                   Text(
-                    'Gestionar temas (Manage Themes)',
+                    'Manage Themes',
                     style: TextStyle(
                       color: activeTheme.textPrimary,
                       fontSize: 15,
@@ -111,7 +111,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                         border: Border.all(color: activeTheme.primaryAccent.withValues(alpha: 0.3)),
                       ),
                       child: Text(
-                        'Activo: ${activeTheme.name}',
+                        'Active: ${activeTheme.name}',
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: activeTheme.primaryAccent,
@@ -125,7 +125,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                   IconButton(
                     icon: Icon(Icons.close, color: activeTheme.textSecondary, size: 20),
                     onPressed: () => Navigator.of(context).pop(),
-                    tooltip: 'Cerrar',
+                    tooltip: 'Close',
                     splashRadius: 18,
                   ),
                 ],
@@ -154,7 +154,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                             child: TextField(
                               style: TextStyle(color: activeTheme.textPrimary, fontSize: 12),
                               decoration: InputDecoration(
-                                hintText: 'Filtrar temas...',
+                                hintText: 'Filter themes...',
                                 hintStyle: TextStyle(color: activeTheme.textSecondary, fontSize: 12),
                                 prefixIcon: Icon(Icons.search, size: 16, color: activeTheme.textSecondary),
                                 contentPadding: EdgeInsets.zero,
@@ -227,7 +227,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                                                 border: Border.all(color: activeTheme.successColor.withValues(alpha: 0.4)),
                                               ),
                                               child: Text(
-                                                '✔ ACTIVO',
+                                                '✔ ACTIVE',
                                                 style: TextStyle(
                                                   color: activeTheme.successColor,
                                                   fontSize: 9,
@@ -248,13 +248,13 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                                       // Color swatches row
                                       Row(
                                         children: [
-                                          _buildColorSwatch('Fondo', theme.background),
+                                          _buildColorSwatch('Background', theme.background),
                                           const SizedBox(width: 4),
-                                          _buildColorSwatch('Superficie', theme.surface),
+                                          _buildColorSwatch('Surface', theme.surface),
                                           const SizedBox(width: 4),
-                                          _buildColorSwatch('Acento 1', theme.primaryAccent),
+                                          _buildColorSwatch('Accent 1', theme.primaryAccent),
                                           const SizedBox(width: 4),
-                                          _buildColorSwatch('Acento 2', theme.secondaryAccent),
+                                          _buildColorSwatch('Accent 2', theme.secondaryAccent),
                                           const Spacer(),
                                           Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -263,7 +263,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                                               borderRadius: BorderRadius.circular(4),
                                             ),
                                             child: Text(
-                                              theme.isDark ? 'Oscuro' : 'Claro',
+                                              theme.isDark ? 'Dark' : 'Light',
                                               style: TextStyle(color: activeTheme.textSecondary, fontSize: 9),
                                             ),
                                           ),
@@ -291,7 +291,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                           Row(
                             children: [
                               Text(
-                                'Vista previa:',
+                                'Preview:',
                                 style: TextStyle(color: activeTheme.textSecondary, fontSize: 12, fontWeight: FontWeight.bold),
                               ),
                               const SizedBox(width: 6),
@@ -306,7 +306,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                               if (!isPreviewActive)
                                 ElevatedButton.icon(
                                   icon: const Icon(Icons.check, size: 14),
-                                  label: const Text('Aplicar este tema', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                  label: const Text('Apply this theme', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: _selectedTheme.primaryAccent,
                                     foregroundColor: Colors.white,
@@ -343,7 +343,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                 children: [
                   OutlinedButton.icon(
                     icon: const Icon(Icons.light_mode, size: 14),
-                    label: const Text('Light (Blanco)', style: TextStyle(fontSize: 11)),
+                    label: const Text('Light', style: TextStyle(fontSize: 11)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: activeTheme.textPrimary,
                       side: BorderSide(color: activeTheme.border),
@@ -375,7 +375,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                       foregroundColor: activeTheme.textPrimary,
                       side: BorderSide(color: activeTheme.border),
                     ),
-                    child: const Text('Cerrar'),
+                    child: const Text('Close'),
                   ),
                   const SizedBox(width: 8),
                   ElevatedButton(
@@ -387,7 +387,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                       backgroundColor: _selectedTheme.primaryAccent,
                       foregroundColor: Colors.white,
                     ),
-                    child: const Text('Aceptar y Aplicar'),
+                    child: const Text('Apply and Close'),
                   ),
                 ],
               ),
@@ -474,7 +474,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                           Row(
                             children: [
                               Expanded(
-                                child: Text('Factura #1084', style: TextStyle(color: theme.textPrimary, fontSize: 11, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
+                                child: Text('Invoice #1084', style: TextStyle(color: theme.textPrimary, fontSize: 11, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis),
                               ),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
@@ -482,7 +482,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                                   color: theme.successColor.withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
-                                child: Text('EMITIDA', style: TextStyle(color: theme.successColor, fontSize: 9, fontWeight: FontWeight.bold)),
+                                child: Text('ISSUED', style: TextStyle(color: theme.successColor, fontSize: 9, fontWeight: FontWeight.bold)),
                               ),
                             ],
                           ),
@@ -497,13 +497,13 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text('Cliente:', style: TextStyle(color: theme.textSecondary, fontSize: 10)),
+                                Text('Customer:', style: TextStyle(color: theme.textSecondary, fontSize: 10)),
                                 const SizedBox(height: 2),
-                                Text('Distribuciones Globales S.A.', style: TextStyle(color: theme.textPrimary, fontSize: 11, fontWeight: FontWeight.w600)),
+                                Text('Global Distributors Ltd.', style: TextStyle(color: theme.textPrimary, fontSize: 11, fontWeight: FontWeight.w600)),
                                 const SizedBox(height: 6),
-                                Text('Subtotal / Importe:', style: TextStyle(color: theme.textSecondary, fontSize: 10)),
+                                Text('Subtotal / Amount:', style: TextStyle(color: theme.textSecondary, fontSize: 10)),
                                 const SizedBox(height: 2),
-                                Text('5.240,00 €', style: TextStyle(color: theme.primaryAccent, fontSize: 13, fontWeight: FontWeight.bold)),
+                                Text('€5,240.00', style: TextStyle(color: theme.primaryAccent, fontSize: 13, fontWeight: FontWeight.bold)),
                               ],
                             ),
                           ),
@@ -518,7 +518,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                   minimumSize: Size.zero,
                                 ),
-                                child: const Text('Cancelar', style: TextStyle(fontSize: 10)),
+                                child: const Text('Cancel', style: TextStyle(fontSize: 10)),
                               ),
                               const SizedBox(width: 8),
                               ElevatedButton(
@@ -529,7 +529,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                                   minimumSize: Size.zero,
                                 ),
-                                child: const Text('Guardar', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                                child: const Text('Save', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                               ),
                             ],
                           ),
@@ -552,25 +552,25 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                             children: [
                               Icon(Icons.code, size: 14, color: theme.primaryAccent),
                               const SizedBox(width: 6),
-                              Text('Guión: on_invoice_created', style: TextStyle(color: theme.textPrimary, fontSize: 11, fontWeight: FontWeight.bold)),
+                              Text('Script: on_invoice_created', style: TextStyle(color: theme.textPrimary, fontSize: 11, fontWeight: FontWeight.bold)),
                             ],
                           ),
                           const SizedBox(height: 8),
                           // Steps
-                          _buildMockStep(theme, '01', 'Ir a Presentación', '[Invoices_Detail]', theme.navColor),
-                          _buildMockStep(theme, '02', 'Establecer Variable', r'[$subtotal = Sum(Items.price)]', theme.fieldsColor),
-                          _buildMockStep(theme, '03', 'Si', '[Invoices::Total > 5000]', theme.controlColor),
-                          _buildMockStep(theme, '04', 'Guardar Registros', '[Commit]', theme.recordsColor),
+                          _buildMockStep(theme, '01', 'Go to Layout', '[Invoices_Detail]', theme.navColor),
+                          _buildMockStep(theme, '02', 'Set Variable', r'[$subtotal = Sum(Items.price)]', theme.fieldsColor),
+                          _buildMockStep(theme, '03', 'If', '[Invoices::Total > 5000]', theme.controlColor),
+                          _buildMockStep(theme, '04', 'Commit Records', '[Commit]', theme.recordsColor),
                           const Spacer(),
                           // Theme hex chips
                           Wrap(
                             spacing: 4,
                             runSpacing: 4,
                             children: [
-                              _buildHexBadge('Fondo', theme.background, theme),
-                              _buildHexBadge('Superficie', theme.surface, theme),
-                              _buildHexBadge('Acento', theme.primaryAccent, theme),
-                              _buildHexBadge('Texto', theme.textPrimary, theme),
+                              _buildHexBadge('Background', theme.background, theme),
+                              _buildHexBadge('Surface', theme.surface, theme),
+                              _buildHexBadge('Accent', theme.primaryAccent, theme),
+                              _buildHexBadge('Text', theme.textPrimary, theme),
                             ],
                           ),
                         ],

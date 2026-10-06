@@ -15,10 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preview mode "Export PDF / Print" printed a capture of the whole browser window (toolbars included) instead of the previewed page, and did nothing in the desktop app. It now builds a PDF of the previewed sheet only, at the Page Setup paper size and orientation, and opens the print dialog with it (web and desktop). Content taller than one sheet continues on the next pages.
 - File > Print prints the page shown in Preview mode in the same way.
 - Preview mode cut off layouts wider than the paper (and printed them cut off); they are now scaled down to fit the printable width.
+- Script Workspace: closing with unsaved scripts asks again to save them (the confirmation was dropped while merging the English UI change).
 
 ### Added
 - Preview mode "Print / Export PDF" menu: print this page, print all records (one sheet per record), and save this page or all records as a PDF file.
 - Client dependencies `pdf` and `printing`.
+
+### Changed
+- Use English throughout the client interface, including security, scripts, relationships, themes, file options, page setup, and help dialogs.
+- Set English as the default client locale regardless of the host language, including standard Material controls.
 
 ## [0.7.0] - 2026-10-06
 

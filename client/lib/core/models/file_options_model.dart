@@ -1,7 +1,7 @@
 /// FileOptionsModel defines startup credentials, initial layout, toolbar visibility,
 /// and script triggers (OnFirstWindowOpen, OnLastWindowClose, etc.) for File4Base File Options.
 class FileOptionsModel {
-  // --- Pestaña «Abrir» (Open) ---
+  // --- Open tab ---
   final bool autoLoginEnabled;
   final bool isGuestLogin;
   final String defaultUsername;
@@ -11,7 +11,7 @@ class FileOptionsModel {
   final String startupLayoutName;
   final bool hideAllToolbars;
 
-  // --- Pestaña «Activadores de guión» (Script Triggers) ---
+  // --- Script Triggers tab ---
   final bool onFirstWindowOpenEnabled;
   final String onFirstWindowOpenScript;
   final String onFirstWindowOpenParam;

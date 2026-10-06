@@ -213,8 +213,8 @@ void main() {
         ),
       );
 
-      expect(find.text('Especificar tabla'), findsOneWidget);
-      expect(find.text('Fuente de datos:'), findsOneWidget);
+      expect(find.text('Specify Table'), findsOneWidget);
+      expect(find.text('Data source:'), findsOneWidget);
       expect(find.textContaining('demo.fmp'), findsOneWidget);
       expect(find.text('Clientes'), findsWidgets);
       expect(find.text('Facturas'), findsOneWidget);
@@ -222,8 +222,8 @@ void main() {
       // Since 'Clientes' already exists, suggested name should be 'Clientes 2'
       expect(find.text('Clientes 2'), findsOneWidget);
 
-      expect(find.text('Cancelar'), findsOneWidget);
-      expect(find.text('Aceptar'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('OK'), findsOneWidget);
     });
 
     testWidgets('selecting Facturas updates suggested name to Facturas', (tester) async {
@@ -299,13 +299,13 @@ void main() {
         ),
       );
 
-      expect(find.text('Especificar relación'), findsOneWidget);
+      expect(find.text('Specify Relationship'), findsOneWidget);
       expect(find.text('CLIENTES'), findsWidgets);
       expect(find.text('clientes_FACTURAS'), findsWidgets);
       expect(find.text('='), findsWidgets);
-      expect(find.text('Permitir la creación de registros en esta tabla a través de esta relación'), findsOneWidget);
-      expect(find.text('Eliminar registros relacionados en esta tabla cuando se elimine un registro en la otra tabla'), findsOneWidget);
-      expect(find.text('Ordenar registros relacionados'), findsOneWidget);
+      expect(find.text('Allow records to be created in this table through this relationship'), findsOneWidget);
+      expect(find.text('Delete related records in this table when a record is deleted in the other table'), findsOneWidget);
+      expect(find.text('Sort related records'), findsOneWidget);
     });
   });
 
@@ -380,9 +380,9 @@ void main() {
       );
 
       // Verify Toolbar
-      expect(find.text('Tabla...'), findsOneWidget);
-      expect(find.text('Relación...'), findsOneWidget);
-      expect(find.text('3 ocurrencias  •  1 relaciones'), findsOneWidget);
+      expect(find.text('Table...'), findsOneWidget);
+      expect(find.text('Relationship...'), findsOneWidget);
+      expect(find.text('3 occurrences  •  1 relationships'), findsOneWidget);
 
       // Verify Table Occurrence Boxes
       expect(find.text('CLIENTES'), findsOneWidget);

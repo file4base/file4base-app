@@ -107,40 +107,40 @@ void main() {
       await tester.pumpAndSettle();
 
       // Check Window Title and Database Badge
-      expect(find.text('Gestionar Seguridad'), findsOneWidget);
+      expect(find.text('Manage Security'), findsOneWidget);
       expect(find.text('solucion_contable'), findsOneWidget);
 
       // Check Tabs
-      expect(find.text('Cuentas'), findsOneWidget);
-      expect(find.text('Privilegios de presentaciones'), findsOneWidget);
-      expect(find.text('Privilegios ampliados'), findsOneWidget);
+      expect(find.text('Accounts'), findsOneWidget);
+      expect(find.text('Layout privileges'), findsOneWidget);
+      expect(find.text('Extended privileges'), findsOneWidget);
 
       // Check Table headers
       expect(find.text('#'), findsOneWidget);
-      expect(find.text('ESTADO'), findsOneWidget);
-      expect(find.text('NOMBRE DE CUENTA'), findsOneWidget);
-      expect(find.text('CONJUNTO DE PRIVILEGIOS'), findsOneWidget);
-      expect(find.text('OPCIONES'), findsOneWidget);
+      expect(find.text('STATUS'), findsOneWidget);
+      expect(find.text('ACCOUNT NAME'), findsOneWidget);
+      expect(find.text('PRIVILEGE SET'), findsOneWidget);
+      expect(find.text('OPTIONS'), findsOneWidget);
 
       // Check Users Listed
       expect(find.text('admin_root'), findsOneWidget);
       expect(find.text('operator_bob'), findsOneWidget);
-      expect(find.text('Tú / Activa'), findsOneWidget); // Current user badge
+      expect(find.text('You / Active'), findsOneWidget); // Current user badge
 
       // Check Sequential numbers
       expect(find.text('1'), findsOneWidget);
       expect(find.text('2'), findsWidgets);
 
-      // Check Status labels
-      expect(find.text('Activa'), findsOneWidget);
-      expect(find.text('Inactiva'), findsOneWidget);
+      // Each status appears in both the filter and its matching account row.
+      expect(find.text('Active'), findsNWidgets(2));
+      expect(find.text('Inactive'), findsNWidgets(2));
 
       // Check Role Badges
-      expect(find.text('[Acceso total] Owner'), findsOneWidget);
-      expect(find.text('[Acceso restringido] User'), findsOneWidget);
+      expect(find.text('[Full Access] Owner'), findsOneWidget);
+      expect(find.text('[Restricted Access] User'), findsOneWidget);
 
       // Check New Account button
-      expect(find.text('Nueva cuenta...'), findsOneWidget);
+      expect(find.text('New account...'), findsOneWidget);
     });
 
     testWidgets('scopes API requests to databaseName and calls onModified on changes', (tester) async {

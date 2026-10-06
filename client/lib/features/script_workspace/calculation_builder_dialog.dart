@@ -46,7 +46,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
   String _selectedTable = '';
   String _fieldSearch = '';
   String _functionSearch = '';
-  String _functionCategory = 'Todas';
+  String _functionCategory = 'All';
 
   static const List<String> _operators = [
     '+', '-', '*', '/', '^', '&',
@@ -55,36 +55,36 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
   ];
 
   static const Map<String, List<Map<String, String>>> _functionsByCategory = {
-    'Agregación': [
-      {'name': 'Sum', 'syntax': 'Sum( campo )', 'desc': 'Suma todos los valores no vacíos.'},
-      {'name': 'Average', 'syntax': 'Average( campo )', 'desc': 'Calcula la media de los valores.'},
-      {'name': 'Count', 'syntax': 'Count( campo )', 'desc': 'Cuenta los valores válidos no vacíos.'},
-      {'name': 'Max', 'syntax': 'Max( campo )', 'desc': 'Determina el valor máximo.'},
-      {'name': 'Min', 'syntax': 'Min( campo )', 'desc': 'Determina el valor mínimo.'},
+    'Aggregate': [
+      {'name': 'Sum', 'syntax': 'Sum( field )', 'desc': 'Sums all nonempty values.'},
+      {'name': 'Average', 'syntax': 'Average( field )', 'desc': 'Calculates the average of the values.'},
+      {'name': 'Count', 'syntax': 'Count( field )', 'desc': 'Counts valid, nonempty values.'},
+      {'name': 'Max', 'syntax': 'Max( field )', 'desc': 'Returns the maximum value.'},
+      {'name': 'Min', 'syntax': 'Min( field )', 'desc': 'Returns the minimum value.'},
     ],
-    'Lógica': [
-      {'name': 'If', 'syntax': 'If( condición ; resultado1 ; resultado2 )', 'desc': 'Evalúa una condición y retorna un valor según sea verdadera o falsa.'},
-      {'name': 'IsEmpty', 'syntax': 'IsEmpty( campo )', 'desc': 'Devuelve 1 (verdadero) si el campo está vacío.'},
-      {'name': 'IsValid', 'syntax': 'IsValid( campo )', 'desc': 'Devuelve 1 si el campo contiene un valor válido.'},
-      {'name': 'Case', 'syntax': 'Case( prueba1 ; result1 ; [prueba2 ; result2] ; default )', 'desc': 'Evalúa múltiples condiciones secuenciales.'},
+    'Logical': [
+      {'name': 'If', 'syntax': 'If( condition ; result1 ; result2 )', 'desc': 'Evaluates a condition and returns a value according to whether it is true or false.'},
+      {'name': 'IsEmpty', 'syntax': 'IsEmpty( field )', 'desc': 'Returns 1 (true) if the field is empty.'},
+      {'name': 'IsValid', 'syntax': 'IsValid( field )', 'desc': 'Returns 1 if the field contains a valid value.'},
+      {'name': 'Case', 'syntax': 'Case( test1 ; result1 ; [test2 ; result2] ; default )', 'desc': 'Evaluates multiple conditions in sequence.'},
     ],
-    'Texto': [
-      {'name': 'Length', 'syntax': 'Length( texto )', 'desc': 'Retorna la longitud en caracteres.'},
-      {'name': 'Lower', 'syntax': 'Lower( texto )', 'desc': 'Convierte el texto a minúsculas.'},
-      {'name': 'Upper', 'syntax': 'Upper( texto )', 'desc': 'Convierte el texto a mayúsculas.'},
-      {'name': 'Trim', 'syntax': 'Trim( texto )', 'desc': 'Elimina espacios al inicio y al final.'},
-      {'name': 'Substitute', 'syntax': 'Substitute( texto ; buscar ; reemplazar )', 'desc': 'Sustituye texto por otro especificado.'},
+    'Text': [
+      {'name': 'Length', 'syntax': 'Length( text )', 'desc': 'Returns the length in characters.'},
+      {'name': 'Lower', 'syntax': 'Lower( text )', 'desc': 'Converts text to lowercase.'},
+      {'name': 'Upper', 'syntax': 'Upper( text )', 'desc': 'Converts text to uppercase.'},
+      {'name': 'Trim', 'syntax': 'Trim( text )', 'desc': 'Removes leading and trailing spaces.'},
+      {'name': 'Substitute', 'syntax': 'Substitute( text ; search ; replacement )', 'desc': 'Replaces text with the specified text.'},
     ],
-    'Fecha & Hora': [
-      {'name': 'Get(CurrentDate)', 'syntax': 'Get(CurrentDate)', 'desc': 'Devuelve la fecha actual del sistema.'},
-      {'name': 'Get(CurrentTime)', 'syntax': 'Get(CurrentTime)', 'desc': 'Devuelve la hora actual del sistema.'},
-      {'name': 'Get(CurrentTimestamp)', 'syntax': 'Get(CurrentTimestamp)', 'desc': 'Devuelve marca temporal completa.'},
+    'Date & Time': [
+      {'name': 'Get(CurrentDate)', 'syntax': 'Get(CurrentDate)', 'desc': 'Returns the current system date.'},
+      {'name': 'Get(CurrentTime)', 'syntax': 'Get(CurrentTime)', 'desc': 'Returns the current system time.'},
+      {'name': 'Get(CurrentTimestamp)', 'syntax': 'Get(CurrentTimestamp)', 'desc': 'Returns the current timestamp.'},
     ],
-    'Sistema': [
-      {'name': 'Get(AccountName)', 'syntax': 'Get(AccountName)', 'desc': 'Nombre de la cuenta del usuario activo.'},
-      {'name': 'Get(LayoutName)', 'syntax': 'Get(LayoutName)', 'desc': 'Nombre de la presentación activa.'},
-      {'name': 'Get(RecordID)', 'syntax': 'Get(RecordID)', 'desc': 'Identificador único del registro.'},
-      {'name': 'Get(LastError)', 'syntax': 'Get(LastError)', 'desc': 'Código de error de la última acción.'},
+    'System': [
+      {'name': 'Get(AccountName)', 'syntax': 'Get(AccountName)', 'desc': 'Returns the active account name.'},
+      {'name': 'Get(LayoutName)', 'syntax': 'Get(LayoutName)', 'desc': 'Returns the active layout name.'},
+      {'name': 'Get(RecordID)', 'syntax': 'Get(RecordID)', 'desc': 'Returns the unique record identifier.'},
+      {'name': 'Get(LastError)', 'syntax': 'Get(LastError)', 'desc': 'Returns the error code from the last action.'},
     ],
   };
 
@@ -132,7 +132,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
 
   List<Map<String, String>> _getFilteredFunctions() {
     List<Map<String, String>> list = [];
-    if (_functionCategory == 'Todas') {
+    if (_functionCategory == 'All') {
       for (final cat in _functionsByCategory.values) {
         list.addAll(cat);
       }
@@ -185,7 +185,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                   Icon(Icons.functions, color: theme.primaryAccent, size: 20),
                   const SizedBox(width: 10),
                   Text(
-                    'Especificar cálculo',
+                    'Specify Calculation',
                     style: TextStyle(
                       color: theme.textPrimary,
                       fontSize: 15,
@@ -202,7 +202,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                         border: Border.all(color: theme.primaryAccent.withValues(alpha: 0.3)),
                       ),
                       child: Text(
-                        'Contexto: $_selectedTable',
+                        'Context: $_selectedTable',
                         style: TextStyle(color: theme.primaryAccent, fontSize: 12, fontWeight: FontWeight.w500),
                       ),
                     ),
@@ -210,7 +210,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                   IconButton(
                     icon: Icon(Icons.close, color: theme.textSecondary, size: 20),
                     onPressed: () => Navigator.of(context).pop(),
-                    tooltip: 'Cerrar',
+                    tooltip: 'Close',
                     splashRadius: 18,
                   ),
                 ],
@@ -240,7 +240,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Ocurrencia de tabla', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+                              Text('Table occurrence', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -254,7 +254,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                                     isExpanded: true,
                                     dropdownColor: theme.surface,
                                     value: _selectedTable.isNotEmpty ? _selectedTable : null,
-                                    hint: Text('Seleccionar tabla...', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
+                                    hint: Text('Select table...', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
                                     style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                     items: widget.availableTables.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                                     onChanged: (val) {
@@ -270,7 +270,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                                 child: TextField(
                                   style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                   decoration: InputDecoration(
-                                    hintText: 'Filtrar campos...',
+                                    hintText: 'Filter fields...',
                                     hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
                                     prefixIcon: Icon(Icons.search, size: 16, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
@@ -365,7 +365,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                           ),
 
                           // Formula Box
-                          Text('Fórmula / Cálculo:', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+                          Text('Formula / Calculation:', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 6),
                           Expanded(
                             child: Container(
@@ -387,7 +387,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                                   height: 1.4,
                                 ),
                                 decoration: InputDecoration(
-                                  hintText: '// Escribe o inserta campos, funciones y operadores aquí...',
+                                  hintText: '// Type or insert fields, functions, and operators here...',
                                   hintStyle: TextStyle(color: theme.textSecondary, fontSize: 12),
                                   border: InputBorder.none,
                                 ),
@@ -418,7 +418,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Funciones integradas', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+                              Text('Built-in functions', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 6),
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -433,7 +433,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                                     dropdownColor: theme.surface,
                                     value: _functionCategory,
                                     style: TextStyle(color: theme.textPrimary, fontSize: 12),
-                                    items: ['Todas', ..._functionsByCategory.keys].map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                                    items: ['All', ..._functionsByCategory.keys].map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
                                     onChanged: (val) {
                                       if (val != null) setState(() => _functionCategory = val);
                                     },
@@ -446,7 +446,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                                 child: TextField(
                                   style: TextStyle(color: theme.textPrimary, fontSize: 12),
                                   decoration: InputDecoration(
-                                    hintText: 'Buscar función...',
+                                    hintText: 'Search functions...',
                                     hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
                                     prefixIcon: Icon(Icons.search, size: 16, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
@@ -519,7 +519,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Haz doble clic en campos o funciones para insertarlos en la fórmula.',
+                      'Double-click fields or functions to insert them into the formula.',
                       style: TextStyle(color: theme.textSecondary, fontSize: 11),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -531,7 +531,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                       foregroundColor: theme.textSecondary,
                       side: BorderSide(color: theme.border),
                     ),
-                    child: const Text('Cancelar'),
+                    child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton(
@@ -542,7 +542,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                       backgroundColor: theme.primaryAccent,
                       foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
                     ),
-                    child: const Text('Aceptar'),
+                    child: const Text('OK'),
                   ),
                 ],
               ),

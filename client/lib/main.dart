@@ -110,6 +110,8 @@ class File4BaseApp extends ConsumerWidget {
     return MaterialApp(
       title: 'File4Base',
       debugShowCheckedModeBanner: false,
+      locale: const Locale('en'),
+      supportedLocales: const [Locale('en')],
       theme: activeTheme.toThemeData(),
       darkTheme: activeTheme.isDark ? activeTheme.toThemeData() : AppThemes.dark.toThemeData(),
       themeMode: activeTheme.isDark ? ThemeMode.dark : ThemeMode.light,
@@ -282,7 +284,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Sesión cerrada. Acceso a base de datos protegido.'),
+        content: Text('Signed out. Database access is protected.'),
         duration: Duration(seconds: 2),
       ),
     );
@@ -1523,7 +1525,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         children: [
           // Zoom indicator (% of magnification + dropdown menu)
           PopupMenuButton<double>(
-            tooltip: 'Nivel de Zoom ($percent%)',
+            tooltip: 'Zoom level ($percent%)',
             initialValue: zoomLevel,
             elevation: 4,
             padding: EdgeInsets.zero,
@@ -2121,13 +2123,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   ),
                   const SizedBox(height: 20),
                   const Text(
-                    'Solución Protegida / Iniciar Sesión',
+                    'Protected Solution / Sign In',
                     style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Esta base de datos está protegida contra acceso no autorizado. Para examinar registros, presentaciones y esquemas, inicia sesión con una cuenta autorizada.',
+                    'This database is protected against unauthorized access. Sign in with an authorized account to browse records, layouts, and schemas.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: theme.colorScheme.onSurfaceVariant,
@@ -2151,7 +2153,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                         const Icon(Icons.dns_outlined, size: 14, color: Colors.blueAccent),
                         const SizedBox(width: 8),
                         Text(
-                          'Base de datos: $_activeDatabaseName',
+                          'Database: $_activeDatabaseName',
                           style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                         ),
                       ],
@@ -2162,7 +2164,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     width: double.infinity,
                     child: FilledButton.icon(
                       icon: const Icon(Icons.login, size: 18),
-                      label: const Text('Iniciar Sesión en Base de Datos'),
+                      label: const Text('Sign In to Database'),
                       style: FilledButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -2176,7 +2178,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       Expanded(
                         child: OutlinedButton.icon(
                           icon: const Icon(Icons.folder_open, size: 16),
-                          label: const Text('Abrir Solución (.f4p)'),
+                          label: const Text('Open Solution (.f4p)'),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -2188,7 +2190,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       Expanded(
                         child: OutlinedButton.icon(
                           icon: const Icon(Icons.add_box_outlined, size: 16),
-                          label: const Text('Nueva Solución...'),
+                          label: const Text('New Solution...'),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 12),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

@@ -42,7 +42,7 @@ class FileOptionsDialog extends StatefulWidget {
 class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  // --- Tab 1: Abrir (Open) ---
+  // --- Tab 1: Open ---
   late bool _autoLoginEnabled;
   late bool _isGuestLogin;
   late TextEditingController _usernameController;
@@ -54,7 +54,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
   late bool _hideAllToolbars;
 
-  // --- Tab 2: Activadores de guión (Script Triggers) ---
+  // --- Tab 2: Script Triggers ---
   late bool _onFirstWindowOpenEnabled;
   late TextEditingController _onFirstWindowOpenScriptCtrl;
   late TextEditingController _onFirstWindowOpenParamCtrl;
@@ -147,7 +147,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
             children: const [
               Icon(Icons.password, color: Color(0xFF1E88E5), size: 22),
               SizedBox(width: 8),
-              Text('Cambiar Contraseña', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              Text('Change Password', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             ],
           ),
           content: SizedBox(
@@ -157,7 +157,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Usuario activo: ${widget.currentUser?.username ?? _usernameController.text}',
+                  'Active user: ${widget.currentUser?.username ?? _usernameController.text}',
                   style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                 ),
                 const SizedBox(height: 14),
@@ -165,7 +165,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                   controller: newPasswordCtrl,
                   obscureText: obscure,
                   decoration: InputDecoration(
-                    labelText: 'Nueva Contraseña',
+                    labelText: 'New password',
                     border: const OutlineInputBorder(),
                     isDense: true,
                     suffixIcon: IconButton(
@@ -179,7 +179,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                   controller: confirmPasswordCtrl,
                   obscureText: obscure,
                   decoration: InputDecoration(
-                    labelText: 'Confirmar Contraseña',
+                    labelText: 'Confirm password',
                     border: const OutlineInputBorder(),
                     isDense: true,
                     suffixIcon: IconButton(
@@ -194,14 +194,14 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancelar'),
+              child: const Text('Cancel'),
             ),
             FilledButton(
               onPressed: () async {
                 final newPass = newPasswordCtrl.text;
                 if (newPass != confirmPasswordCtrl.text) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Las contraseñas no coinciden'), backgroundColor: Colors.red),
+                    const SnackBar(content: Text('Passwords do not match'), backgroundColor: Colors.red),
                   );
                   return;
                 }
@@ -218,11 +218,11 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                 if (ctx.mounted) Navigator.of(ctx).pop();
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Contraseña actualizada correctamente.')),
+                    const SnackBar(content: Text('Password updated successfully.')),
                   );
                 }
               },
-              child: const Text('Guardar'),
+              child: const Text('Save'),
             ),
           ],
         ),
@@ -288,15 +288,15 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('File Options / Opciones de Archivo', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                        Text('Configuración de inicio, credenciales y activadores de guión', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        Text('File Options', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                        Text('Startup settings, credentials, and script triggers', style: TextStyle(fontSize: 12, color: Colors.grey)),
                       ],
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close, size: 20),
-                    tooltip: 'Cerrar',
+                    tooltip: 'Close',
                   ),
                 ],
               ),
@@ -316,8 +316,8 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                 labelColor: const Color(0xFF1E88E5),
                 unselectedLabelColor: Colors.grey,
                 tabs: const [
-                  Tab(icon: Icon(Icons.login, size: 18), text: '«Abrir» (Open)'),
-                  Tab(icon: Icon(Icons.bolt, size: 18), text: '«Activadores de guión» (Script Triggers)'),
+                  Tab(icon: Icon(Icons.login, size: 18), text: 'Open'),
+                  Tab(icon: Icon(Icons.bolt, size: 18), text: 'Script Triggers'),
                 ],
               ),
             ),
@@ -343,13 +343,13 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                 children: [
                   OutlinedButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
+                    child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 12),
                   FilledButton(
                     onPressed: _onSave,
                     style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1E88E5)),
-                    child: const Text('Aceptar'),
+                    child: const Text('OK'),
                   ),
                 ],
               ),
@@ -366,7 +366,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Section: Iniciar sesión como
+          // Section: Sign in as
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -384,7 +384,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                     ),
                     const Expanded(
                       child: Text(
-                        'Iniciar sesión como:',
+                        'Sign in as:',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ),
@@ -398,7 +398,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                       RadioListTile<bool>(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Nombre de cuenta y contraseña:'),
+                        title: const Text('Account name and password:'),
                         value: false,
                         groupValue: _isGuestLogin,
                         onChanged: _autoLoginEnabled
@@ -414,7 +414,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                                 controller: _usernameController,
                                 enabled: _autoLoginEnabled && !_isGuestLogin,
                                 decoration: const InputDecoration(
-                                  labelText: 'Cuenta',
+                                  labelText: 'Account',
                                   isDense: true,
                                   border: OutlineInputBorder(),
                                 ),
@@ -427,7 +427,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                                 enabled: _autoLoginEnabled && !_isGuestLogin,
                                 obscureText: _obscurePassword,
                                 decoration: InputDecoration(
-                                  labelText: 'Contraseña',
+                                  labelText: 'Password',
                                   isDense: true,
                                   border: const OutlineInputBorder(),
                                   suffixIcon: IconButton(
@@ -444,7 +444,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                       RadioListTile<bool>(
                         dense: true,
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Cuenta de invitado (Guest account)'),
+                        title: const Text('Guest account'),
                         value: true,
                         groupValue: _isGuestLogin,
                         onChanged: _autoLoginEnabled
@@ -460,7 +460,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                   child: OutlinedButton.icon(
                     onPressed: _handleChangePassword,
                     icon: const Icon(Icons.key, size: 16),
-                    label: const Text('Cambiar contraseña...', style: TextStyle(fontSize: 12)),
+                    label: const Text('Change password...', style: TextStyle(fontSize: 12)),
                   ),
                 ),
               ],
@@ -469,7 +469,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
           const SizedBox(height: 16),
 
-          // Section: Presentación de inicio
+          // Section: Startup layout
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -487,7 +487,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                     ),
                     const Expanded(
                       child: Text(
-                        'Presentación de inicio (Cambiar a presentación al abrir):',
+                        'Startup layout (switch to layout on open):',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                     ),
@@ -502,7 +502,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                     decoration: const InputDecoration(
                       isDense: true,
                       border: OutlineInputBorder(),
-                      helperText: 'Selecciona la presentación exacta que se mostrará al abrir la base de datos.',
+                      helperText: 'Select the layout to display when the database opens.',
                     ),
                     items: widget.layouts.map((l) {
                       return DropdownMenuItem<String>(
@@ -521,7 +521,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
           const SizedBox(height: 16),
 
-          // Section: Ocultar todas las barras de herramientas
+          // Section: Hide all toolbars
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -541,12 +541,12 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Ocultar todas las barras de herramientas',
+                        'Hide all toolbars',
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                       SizedBox(height: 4),
                       Text(
-                        'Permite mostrar la aplicación a pantalla completa o limpia de menús y barras de herramientas nativas.',
+                        'Display the application full screen or without native menus and toolbars.',
                         style: TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ],
@@ -579,7 +579,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Permite asignar scripts para que se ejecuten automáticamente ante ciertos eventos del archivo, siendo el más común OnFirstWindowOpen (al abrir la primera ventana) o OnLastWindowClose (al cerrar).',
+                    'Assign scripts to file events, such as OnFirstWindowOpen when the first window opens or OnLastWindowClose when the last window closes.',
                     style: TextStyle(fontSize: 12, height: 1.3),
                   ),
                 ),
@@ -590,7 +590,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
           _buildTriggerTile(
             eventName: 'OnFirstWindowOpen',
-            eventDescription: 'Se ejecuta cada vez que se abre la primera ventana de un archivo de base de datos.',
+            eventDescription: 'Runs when the first window of a database file opens.',
             enabled: _onFirstWindowOpenEnabled,
             onChanged: (v) => setState(() => _onFirstWindowOpenEnabled = v ?? false),
             scriptCtrl: _onFirstWindowOpenScriptCtrl,
@@ -600,7 +600,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
           _buildTriggerTile(
             eventName: 'OnLastWindowClose',
-            eventDescription: 'Se ejecuta cada vez que se cierra la última ventana abierta de un archivo de base de datos.',
+            eventDescription: 'Runs when the last open window of a database file closes.',
             enabled: _onLastWindowCloseEnabled,
             onChanged: (v) => setState(() => _onLastWindowCloseEnabled = v ?? false),
             scriptCtrl: _onLastWindowCloseScriptCtrl,
@@ -610,7 +610,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
           _buildTriggerTile(
             eventName: 'OnWindowOpen',
-            eventDescription: 'Se ejecuta cada vez que se abre cualquier ventana del archivo.',
+            eventDescription: 'Runs whenever a window of the file opens.',
             enabled: _onWindowOpenEnabled,
             onChanged: (v) => setState(() => _onWindowOpenEnabled = v ?? false),
             scriptCtrl: _onWindowOpenScriptCtrl,
@@ -620,7 +620,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
           _buildTriggerTile(
             eventName: 'OnWindowClose',
-            eventDescription: 'Se ejecuta cada vez que se cierra una ventana del archivo.',
+            eventDescription: 'Runs whenever a window of the file closes.',
             enabled: _onWindowCloseEnabled,
             onChanged: (v) => setState(() => _onWindowCloseEnabled = v ?? false),
             scriptCtrl: _onWindowCloseScriptCtrl,
@@ -630,7 +630,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
 
           _buildTriggerTile(
             eventName: 'OnFileAVPlayerChange',
-            eventDescription: 'Se ejecuta si un archivo multimedia está reproduciéndose y el estado del reproductor cambia.',
+            eventDescription: 'Runs when the media player state changes during playback.',
             enabled: _onFileAVPlayerChangeEnabled,
             onChanged: (v) => setState(() => _onFileAVPlayerChangeEnabled = v ?? false),
             scriptCtrl: _onFileAVPlayerChangeScriptCtrl,
@@ -687,8 +687,8 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                     child: TextField(
                       controller: scriptCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Nombre del Guión (Script)',
-                        hintText: 'ej. Inicializar_Sesion',
+                        labelText: 'Script name',
+                        hintText: 'e.g. Initialize_Session',
                         isDense: true,
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.code, size: 16),
@@ -701,8 +701,8 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
                     child: TextField(
                       controller: paramCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Parámetro Opcional',
-                        hintText: 'ej. {"role":"admin"}',
+                        labelText: 'Optional parameter',
+                        hintText: 'e.g. {"role":"admin"}',
                         isDense: true,
                         border: OutlineInputBorder(),
                       ),

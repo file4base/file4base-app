@@ -1706,7 +1706,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       Icon(Icons.badge_outlined, size: 20, color: Theme.of(context).colorScheme.primary),
                       const SizedBox(width: 8),
                       Text(
-                        '${widget.table.displayName} • Ficha ${_currentIndex + 1} de ${_records.length}',
+                        '${widget.table.displayName} • Record ${_currentIndex + 1} of ${_records.length}',
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                       ),
                       const Spacer(),

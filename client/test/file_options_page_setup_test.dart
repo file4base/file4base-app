@@ -217,16 +217,16 @@ void main() {
       await tester.pumpAndSettle();
 
       // Verify tabs
-      expect(find.text('«Abrir» (Open)'), findsOneWidget);
-      expect(find.text('«Activadores de guión» (Script Triggers)'), findsOneWidget);
+      expect(find.text('Open'), findsOneWidget);
+      expect(find.text('Script Triggers'), findsOneWidget);
 
       // Check Open tab contents
-      expect(find.text('Iniciar sesión como:'), findsOneWidget);
-      expect(find.text('Cambiar contraseña...'), findsOneWidget);
-      expect(find.text('Ocultar todas las barras de herramientas'), findsOneWidget);
+      expect(find.text('Sign in as:'), findsOneWidget);
+      expect(find.text('Change password...'), findsOneWidget);
+      expect(find.text('Hide all toolbars'), findsOneWidget);
 
       // Switch to Script Triggers tab
-      await tester.tap(find.text('«Activadores de guión» (Script Triggers)'));
+      await tester.tap(find.text('Script Triggers'));
       await tester.pumpAndSettle();
 
       expect(find.text('OnFirstWindowOpen'), findsOneWidget);
@@ -252,13 +252,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Ajustar página / Configurar impresión (Page Setup)'), findsOneWidget);
-      expect(find.text('Formatear para / Impresora:'), findsOneWidget);
-      expect(find.text('Tamaño del papel:'), findsOneWidget);
-      expect(find.text('Orientación:'), findsOneWidget);
-      expect(find.text('Márgenes (mm):'), findsOneWidget);
-      expect(find.text('Cálculo de Límites de Página'), findsOneWidget);
-      expect(find.text('Área útil'), findsOneWidget);
+      expect(find.text('Page Setup'), findsOneWidget);
+      expect(find.text('Printer:'), findsOneWidget);
+      expect(find.text('Paper size:'), findsOneWidget);
+      expect(find.text('Orientation:'), findsOneWidget);
+      expect(find.text('Margins (mm):'), findsOneWidget);
+      expect(find.text('Page Boundaries'), findsOneWidget);
+      expect(find.text('Printable area'), findsOneWidget);
     });
   });
 }

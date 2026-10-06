@@ -110,8 +110,8 @@ class AppThemes {
   static const AppThemeDefinition light = AppThemeDefinition(
     id: AppThemeId.light,
     name: 'Light (Clean Slate)',
-    description: 'Tema estándar blanco limpio de alta legibilidad, ideal para entornos de oficina y diseño claro.',
-    category: 'Estándar',
+    description: 'A clean white theme with high readability for office work and light interfaces.',
+    category: 'Standard',
     isDark: false,
     background: Color(0xFFF8FAFC), // Slate 50
     surface: Color(0xFFFFFFFF),    // Pure white
@@ -134,8 +134,8 @@ class AppThemes {
   static const AppThemeDefinition dark = AppThemeDefinition(
     id: AppThemeId.dark,
     name: 'Dark Modern (Sophisticated)',
-    description: 'Modo oscuro medianoche con paneles grafito y acentos cian, diseñado para máxima comodidad visual.',
-    category: 'Desarrollo y Oscuro',
+    description: 'A midnight dark theme with graphite panels and cyan accents for visual comfort.',
+    category: 'Development & Dark',
     isDark: true,
     background: Color(0xFF0B1120), // Deep Midnight
     surface: Color(0xFF111827),    // Dark surface
@@ -158,8 +158,8 @@ class AppThemes {
   static const AppThemeDefinition monokai = AppThemeDefinition(
     id: AppThemeId.monokai,
     name: 'Monokai Pro (Code Studio)',
-    description: 'La legendaria paleta de desarrollo Monokai: fondo carbón cálido con contrastes vivos rosa, verde y naranja.',
-    category: 'Desarrollo y Oscuro',
+    description: 'The classic Monokai palette: a warm charcoal background with vivid pink, green, and orange accents.',
+    category: 'Development & Dark',
     isDark: true,
     background: Color(0xFF272822), // Monokai Charcoal
     surface: Color(0xFF1E1F1C),    // Monokai Panel
@@ -182,8 +182,8 @@ class AppThemes {
   static const AppThemeDefinition dracula = AppThemeDefinition(
     id: AppThemeId.dracula,
     name: 'Dracula Midnight',
-    description: 'El célebre tema de vampiros con fondo índigo oscuro, acentos púrpura neón y resaltados pastel.',
-    category: 'Desarrollo y Oscuro',
+    description: 'A dark indigo theme with neon purple accents and pastel highlights.',
+    category: 'Development & Dark',
     isDark: true,
     background: Color(0xFF282A36), // Dracula Background
     surface: Color(0xFF21222C),    // Dracula Surface
@@ -206,8 +206,8 @@ class AppThemes {
   static const AppThemeDefinition nord = AppThemeDefinition(
     id: AppThemeId.nord,
     name: 'Nordic Frost (Nord)',
-    description: 'Paleta ártica escandinava en azules polares, nieve y tonos fríos armónicos sin fatiga visual.',
-    category: 'Moderno y Frío',
+    description: 'An Arctic palette of polar blues, snowy whites, and balanced cool tones.',
+    category: 'Modern & Cool',
     isDark: true,
     background: Color(0xFF2E3440), // Polar Night 0
     surface: Color(0xFF3B4252),    // Polar Night 1
@@ -230,8 +230,8 @@ class AppThemes {
   static const AppThemeDefinition solarizedLight = AppThemeDefinition(
     id: AppThemeId.solarizedLight,
     name: 'Solarized Light',
-    description: 'La formulación científica de Ethan Schoonover en tonos pergamino cálidos y tinta cian suave.',
-    category: 'Clásicos y Cálidos',
+    description: 'The Ethan Schoonover palette with warm parchment tones and soft cyan accents.',
+    category: 'Classic & Warm',
     isDark: false,
     background: Color(0xFFFDF6E3), // Base 3
     surface: Color(0xFFEEE8D5),    // Base 2
@@ -254,8 +254,8 @@ class AppThemes {
   static const AppThemeDefinition solarizedDark = AppThemeDefinition(
     id: AppThemeId.solarizedDark,
     name: 'Solarized Dark',
-    description: 'Variante oscura de Solarized con base verde azulado marino y contrastes precisos para terminal.',
-    category: 'Clásicos y Cálidos',
+    description: 'The dark Solarized variant with a deep teal background and clear terminal contrast.',
+    category: 'Classic & Warm',
     isDark: true,
     background: Color(0xFF002B36), // Base 03
     surface: Color(0xFF073642),    // Base 02
