@@ -214,11 +214,11 @@ void main() {
 
     // Verify IssuesGuideDialog opens
     expect(find.text('Service & Support — GitHub Issues'), findsOneWidget);
-    expect(find.text('Ver Issues Existentes'), findsOneWidget);
-    expect(find.text('Ir a GitHub Issues'), findsOneWidget);
+    expect(find.text('View Existing Issues'), findsOneWidget);
+    expect(find.text('Open GitHub Issues'), findsOneWidget);
 
     // Close Issues dialog
-    await tester.tap(find.text('Cancelar'));
+    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(find.text('Service & Support — GitHub Issues'), findsNothing);
 
@@ -231,10 +231,10 @@ void main() {
     // Verify CheckUpdatesDialog opens
     expect(find.text('Check for Updates'), findsOneWidget);
     expect(find.text('File4Base v0.4.23'), findsOneWidget);
-    expect(find.text('Ver Releases en GitHub'), findsOneWidget);
+    expect(find.text('View Releases on GitHub'), findsOneWidget);
 
     // Close Updates dialog
-    await tester.tap(find.text('Aceptar'));
+    await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
     expect(find.text('Check for Updates'), findsNothing);
   });

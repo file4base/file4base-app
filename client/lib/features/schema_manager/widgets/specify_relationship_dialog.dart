@@ -149,7 +149,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
       ),
       child: columns.isEmpty
           ? const Center(
-              child: Text('Sin campos', style: TextStyle(color: Colors.grey, fontSize: 12)),
+              child: Text('No fields', style: TextStyle(color: Colors.grey, fontSize: 12)),
             )
           : ListView.builder(
               itemCount: columns.length,
@@ -204,7 +204,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
           Icon(Icons.hub_outlined, color: theme.colorScheme.primary, size: 22),
           const SizedBox(width: 8),
           Text(
-            widget.initialRelationship != null ? 'Editar relación' : 'Especificar relación',
+            widget.initialRelationship != null ? 'Edit Relationship' : 'Specify Relationship',
             style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
         ],
@@ -217,7 +217,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Establezca una relación entre dos ocurrencias de tabla seleccionando los campos que deben coincidir.',
+              'Define a relationship between two table occurrences by selecting the fields to match.',
               style: TextStyle(fontSize: 12.5, color: theme.textTheme.bodySmall?.color ?? Colors.grey[700]),
             ),
             const SizedBox(height: 16),
@@ -275,7 +275,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                   padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 30.0),
                   child: Column(
                     children: [
-                      const Text('Criterio', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      const Text('Match', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -359,7 +359,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               contentPadding: EdgeInsets.zero,
               value: _allowCreation,
               title: const Text(
-                'Permitir la creación de registros en esta tabla a través de esta relación',
+                'Allow records to be created in this table through this relationship',
                 style: TextStyle(fontSize: 12.5),
               ),
               controlAffinity: ListTileControlAffinity.leading,
@@ -370,7 +370,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               contentPadding: EdgeInsets.zero,
               value: _cascadeDelete,
               title: const Text(
-                'Eliminar registros relacionados en esta tabla cuando se elimine un registro en la otra tabla',
+                'Delete related records in this table when a record is deleted in the other table',
                 style: TextStyle(fontSize: 12.5),
               ),
               controlAffinity: ListTileControlAffinity.leading,
@@ -381,7 +381,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               contentPadding: EdgeInsets.zero,
               value: _sortRelated,
               title: const Text(
-                'Ordenar registros relacionados',
+                'Sort related records',
                 style: TextStyle(fontSize: 12.5),
               ),
               controlAffinity: ListTileControlAffinity.leading,
@@ -398,11 +398,11 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               Navigator.of(context).pop({'delete': true, 'id': widget.initialRelationship!.id});
             },
             style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Eliminar relación'),
+            child: const Text('Delete relationship'),
           ),
         OutlinedButton(
           onPressed: () => Navigator.of(context).pop(null),
-          child: const Text('Cancelar'),
+          child: const Text('Cancel'),
         ),
         ElevatedButton(
           onPressed: _leftOccurrence == null ||
@@ -424,7 +424,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                     'sort_related': _sortRelated ? 'asc' : null,
                   });
                 },
-          child: const Text('Aceptar'),
+          child: const Text('OK'),
         ),
       ],
     );

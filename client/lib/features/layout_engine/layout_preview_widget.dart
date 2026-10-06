@@ -121,7 +121,7 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                     color: const Color(0xFF1E88E5),
                   ),
                   label: Text(
-                    '${widget.pageSetup.paperSizeName} (${widget.pageSetup.isLandscape ? "Horizontal" : "Vertical"}) - ${widget.pageSetup.printableWidthMm.toStringAsFixed(0)}×${widget.pageSetup.printableHeightMm.toStringAsFixed(0)} mm',
+                    '${widget.pageSetup.paperSizeName} (${widget.pageSetup.isLandscape ? "Landscape" : "Portrait"}) - ${widget.pageSetup.printableWidthMm.toStringAsFixed(0)}×${widget.pageSetup.printableHeightMm.toStringAsFixed(0)} mm',
                     style: const TextStyle(fontSize: 11),
                   ),
                   padding: EdgeInsets.zero,

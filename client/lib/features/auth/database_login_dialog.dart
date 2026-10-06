@@ -289,7 +289,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Cancelar',
+                    tooltip: 'Cancel',
                     icon: const Icon(Icons.close, size: 20),
                     onPressed: () => Navigator.of(context).pop(null),
                   ),
@@ -430,7 +430,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'La contraseña de la base de datos es la contraseña de acceso si no hay otros usuarios. Debe introducirse siempre.',
+                              'Use the database password to sign in if there are no other users. A password is always required.',
                               style: TextStyle(fontSize: 11, color: Colors.grey),
                             ),
                           ),
@@ -463,7 +463,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
 
                     const SizedBox(height: 10),
 
-                    // Secondary Actions: Cargar de disco duro + Cancelar
+                    // Secondary Actions: Load from disk + Cancel
                     Row(
                       children: [
                         Expanded(
@@ -475,7 +475,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                             ),
                             icon: const Icon(Icons.folder_open, size: 18),
                             label: const Text(
-                              'Cargar de disco duro...',
+                              'Load from disk...',
                               style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                             ),
                           ),
@@ -486,7 +486,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                           style: TextButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                           ),
-                          child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+                          child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
                         ),
                       ],
                     ),

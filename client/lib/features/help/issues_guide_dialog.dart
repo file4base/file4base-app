@@ -84,7 +84,7 @@ class IssuesGuideDialog extends StatelessWidget {
                             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                           Text(
-                            'Guía de buenas prácticas antes de abrir un ticket o incidencia',
+                            'Guidelines for submitting an issue',
                             style: TextStyle(
                               fontSize: 11,
                               color: theme.colorScheme.onSurfaceVariant,
@@ -96,7 +96,7 @@ class IssuesGuideDialog extends StatelessWidget {
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
                       icon: const Icon(Icons.close, size: 20),
-                      tooltip: 'Cerrar',
+                      tooltip: 'Close',
                     ),
                   ],
                 ),
@@ -124,8 +124,8 @@ class IssuesGuideDialog extends StatelessWidget {
                             SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                'El seguimiento de incidencias, errores y peticiones de características '
-                                'se gestiona públicamente en el repositorio GitHub de File4Base.',
+                                'Issues, bugs, and feature requests '
+                                'are tracked publicly in the File4Base GitHub repository.',
                                 style: TextStyle(fontSize: 12, height: 1.4),
                               ),
                             ),
@@ -134,48 +134,48 @@ class IssuesGuideDialog extends StatelessWidget {
                       ),
                       const SizedBox(height: 14),
                       const Text(
-                        'Pautas para trabajar con Issues:',
+                        'Issue reporting guidelines:',
                         style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 10),
                       _buildGuidelineRow(
                         context,
                         icon: Icons.search_rounded,
-                        title: '1. Busca incidencias existentes',
+                        title: '1. Search existing issues',
                         description:
-                            'Comprueba si el problema ya ha sido reportado previamente para evitar tickets duplicados y unificar la discusión.',
+                            'Check whether the problem has already been reported to avoid duplicate issues and keep the discussion together.',
                       ),
                       const SizedBox(height: 10),
                       _buildGuidelineRow(
                         context,
                         icon: Icons.title_rounded,
-                        title: '2. Título claro con etiqueta',
+                        title: '2. Use a clear, labeled title',
                         description:
-                            'Utiliza prefijos descriptivos como [Bug], [Feature], [Desktop] o [WebDirect] (ej: "[Bug] Error al conectar con PostgreSQL").',
+                            'Use descriptive prefixes such as [Bug], [Feature], [Desktop], or [WebDirect] (e.g. "[Bug] Cannot connect to PostgreSQL").',
                       ),
                       const SizedBox(height: 10),
                       _buildGuidelineRow(
                         context,
                         icon: Icons.format_list_numbered_rounded,
-                        title: '3. Pasos exactos para reproducir',
+                        title: '3. Provide exact reproduction steps',
                         description:
-                            'Detalla paso a paso qué acciones causan el comportamiento inesperado y cuál era el resultado esperado.',
+                            'Describe the steps that cause the unexpected behavior and explain the expected result.',
                       ),
                       const SizedBox(height: 10),
                       _buildGuidelineRow(
                         context,
                         icon: Icons.devices_rounded,
-                        title: '4. Datos de entorno y logs',
+                        title: '4. Include environment details and logs',
                         description:
-                            'Indica tu versión de File4Base (v0.4.18), sistema operativo (macOS, Windows, Linux, Web) y logs del contenedor si aplica.',
+                            'Include your File4Base version, operating system (macOS, Windows, Linux, or Web), and relevant container logs.',
                       ),
                       const SizedBox(height: 10),
                       _buildGuidelineRow(
                         context,
                         icon: Icons.security_rounded,
-                        title: '5. Privacidad y credenciales',
+                        title: '5. Protect privacy and credentials',
                         description:
-                            'Nunca incluyas contraseñas reales, tokens ni datos confidenciales en los logs o capturas de pantalla adjuntas.',
+                            'Never include real passwords, tokens, or confidential data in attached logs or screenshots.',
                       ),
                     ],
                   ),
@@ -205,7 +205,7 @@ class IssuesGuideDialog extends StatelessWidget {
                         _openUrl('https://github.com/file4base/file4base-app/issues');
                       },
                       icon: const Icon(Icons.search, size: 15),
-                      label: const Text('Ver Issues Existentes', style: TextStyle(fontSize: 12)),
+                      label: const Text('View Existing Issues', style: TextStyle(fontSize: 12)),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -216,7 +216,7 @@ class IssuesGuideDialog extends StatelessWidget {
                       children: [
                         TextButton(
                           onPressed: () => Navigator.of(context).pop(),
-                          child: const Text('Cancelar', style: TextStyle(fontSize: 12)),
+                          child: const Text('Cancel', style: TextStyle(fontSize: 12)),
                         ),
                         const SizedBox(width: 6),
                         FilledButton.icon(
@@ -225,7 +225,7 @@ class IssuesGuideDialog extends StatelessWidget {
                             _openUrl('https://github.com/file4base/file4base-app/issues/new/choose');
                           },
                           icon: const Icon(Icons.open_in_new_rounded, size: 15),
-                          label: const Text('Ir a GitHub Issues', style: TextStyle(fontSize: 12)),
+                          label: const Text('Open GitHub Issues', style: TextStyle(fontSize: 12)),
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xFF1E88E5),
                             foregroundColor: Colors.white,

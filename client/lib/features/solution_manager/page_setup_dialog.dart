@@ -38,12 +38,12 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
 
   static const Map<String, ({double width, double height, String desc})> _standardSizes = {
     'A4': (width: 210.0, height: 297.0, desc: 'A4 (210 × 297 mm)'),
-    'US Letter': (width: 215.9, height: 279.4, desc: 'Carta / US Letter (8.5 × 11 in / 215.9 × 279.4 mm)'),
-    'US Legal': (width: 215.9, height: 355.6, desc: 'Oficio / US Legal (8.5 × 14 in / 215.9 × 355.6 mm)'),
+    'US Letter': (width: 215.9, height: 279.4, desc: 'US Letter (8.5 × 11 in / 215.9 × 279.4 mm)'),
+    'US Legal': (width: 215.9, height: 355.6, desc: 'US Legal (8.5 × 14 in / 215.9 × 355.6 mm)'),
     'A3': (width: 297.0, height: 420.0, desc: 'A3 (297 × 420 mm)'),
     'A5': (width: 148.0, height: 210.0, desc: 'A5 (148 × 210 mm)'),
     'B5': (width: 176.0, height: 250.0, desc: 'B5 (176 × 250 mm)'),
-    'Custom': (width: 210.0, height: 297.0, desc: 'Personalizado (Custom)...'),
+    'Custom': (width: 210.0, height: 297.0, desc: 'Custom...'),
   };
 
   static const List<String> _printers = [
@@ -144,15 +144,15 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Ajustar página / Configurar impresión (Page Setup)', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                        Text('Definir impresora, tamaño, orientación y cálculo de márgenes para presentaciones e informes', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                        Text('Page Setup', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                        Text('Set the printer, paper size, orientation, and margins for layouts and reports', style: TextStyle(fontSize: 12, color: Colors.grey)),
                       ],
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.close, size: 20),
-                    tooltip: 'Cerrar',
+                    tooltip: 'Close',
                   ),
                 ],
               ),
@@ -172,8 +172,8 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // 1. Selección de Impresora
-                          const Text('Formatear para / Impresora:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          // 1. Printer selection
+                          const Text('Printer:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                           const SizedBox(height: 6),
                           DropdownButtonFormField<String>(
                             value: _printers.contains(_printer) ? _printer : _printers.first,
@@ -181,16 +181,16 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                             decoration: const InputDecoration(
                               isDense: true,
                               border: OutlineInputBorder(),
-                              helperText: '«Cualquier impresora» es recomendada para máxima compatibilidad entre equipos.',
+                              helperText: 'Any Printer is recommended for compatibility across computers.',
                             ),
                             items: _printers.map((p) {
                               final label = p == 'Any Printer'
-                                  ? 'Cualquier impresora (Any Printer - Recomendada)'
+                                  ? 'Any Printer (Recommended)'
                                   : p == 'System Default Printer'
-                                      ? 'Impresora predeterminada del sistema'
+                                      ? 'System Default Printer'
                                       : p == 'PDF Document Writer'
-                                          ? 'Documento PDF (Impresora virtual PDF)'
-                                          : 'Impresora de red / Oficina';
+                                          ? 'PDF Document Writer'
+                                          : 'Network Office Printer';
                               return DropdownMenuItem(value: p, child: Text(label, style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis));
                             }).toList(),
                             onChanged: (val) {
@@ -199,8 +199,8 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                           ),
                           const SizedBox(height: 16),
 
-                          // 2. Tamaño del papel
-                          const Text('Tamaño del papel:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          // 2. Paper size
+                          const Text('Paper size:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                           const SizedBox(height: 6),
                           DropdownButtonFormField<String>(
                             value: _paperSizeName,
@@ -222,7 +222,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                   child: TextFormField(
                                     initialValue: _paperWidthMm.toStringAsFixed(1),
                                     decoration: const InputDecoration(
-                                      labelText: 'Ancho (mm)',
+                                      labelText: 'Width (mm)',
                                       isDense: true,
                                       border: OutlineInputBorder(),
                                     ),
@@ -238,7 +238,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                   child: TextFormField(
                                     initialValue: _paperHeightMm.toStringAsFixed(1),
                                     decoration: const InputDecoration(
-                                      labelText: 'Alto (mm)',
+                                      labelText: 'Height (mm)',
                                       isDense: true,
                                       border: OutlineInputBorder(),
                                     ),
@@ -254,8 +254,8 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                           ],
                           const SizedBox(height: 16),
 
-                          // 3. Orientación
-                          const Text('Orientación:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          // 3. Orientation
+                          const Text('Orientation:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                           const SizedBox(height: 8),
                           Row(
                             children: [
@@ -284,7 +284,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                         const SizedBox(width: 6),
                                         Expanded(
                                           child: Text(
-                                            'Vertical\n(Portrait)',
+                                            'Portrait',
                                             style: TextStyle(
                                               fontSize: 11,
                                               fontWeight: !_isLandscape ? FontWeight.bold : FontWeight.normal,
@@ -323,7 +323,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                         const SizedBox(width: 6),
                                         Expanded(
                                           child: Text(
-                                            'Horizontal\n(Landscape)',
+                                            'Landscape',
                                             style: TextStyle(
                                               fontSize: 11,
                                               fontWeight: _isLandscape ? FontWeight.bold : FontWeight.normal,
@@ -340,8 +340,8 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                           ),
                           const SizedBox(height: 16),
 
-                          // 4. Cálculo de Márgenes (mm)
-                          const Text('Márgenes (mm):', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          // 4. Margin calculation (mm)
+                          const Text('Margins (mm):', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                           const SizedBox(height: 8),
                           Row(
                             children: [
@@ -350,7 +350,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                   controller: _marginTopCtrl,
                                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                   decoration: const InputDecoration(
-                                    labelText: 'Superior',
+                                    labelText: 'Top',
                                     suffixText: 'mm',
                                     isDense: true,
                                     border: OutlineInputBorder(),
@@ -364,7 +364,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                   controller: _marginBottomCtrl,
                                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                   decoration: const InputDecoration(
-                                    labelText: 'Inferior',
+                                    labelText: 'Bottom',
                                     suffixText: 'mm',
                                     isDense: true,
                                     border: OutlineInputBorder(),
@@ -382,7 +382,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                   controller: _marginLeftCtrl,
                                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                   decoration: const InputDecoration(
-                                    labelText: 'Izquierdo',
+                                    labelText: 'Left',
                                     suffixText: 'mm',
                                     isDense: true,
                                     border: OutlineInputBorder(),
@@ -396,7 +396,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                   controller: _marginRightCtrl,
                                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                   decoration: const InputDecoration(
-                                    labelText: 'Derecho',
+                                    labelText: 'Right',
                                     suffixText: 'mm',
                                     isDense: true,
                                     border: OutlineInputBorder(),
@@ -431,7 +431,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                 SizedBox(width: 6),
                                 Expanded(
                                   child: Text(
-                                    'Cálculo de Límites de Página',
+                                    'Page Boundaries',
                                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                                   ),
                                 ),
@@ -466,7 +466,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                         ),
                                         child: const Center(
                                           child: Text(
-                                            'Área útil',
+                                            'Printable area',
                                             style: TextStyle(fontSize: 9, color: Color(0xFF1E88E5), fontWeight: FontWeight.bold),
                                           ),
                                         ),
@@ -479,11 +479,11 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                             const SizedBox(height: 16),
 
                             // Calculation metrics table
-                            _buildMetricRow('Dimensiones totales:', '${current.effectiveWidthMm.toStringAsFixed(1)} × ${current.effectiveHeightMm.toStringAsFixed(1)} mm'),
-                            _buildMetricRow('En puntos PostScript (pt):', '${current.totalWidthPt.toStringAsFixed(0)} × ${current.totalHeightPt.toStringAsFixed(0)} pt'),
+                            _buildMetricRow('Total dimensions:', '${current.effectiveWidthMm.toStringAsFixed(1)} × ${current.effectiveHeightMm.toStringAsFixed(1)} mm'),
+                            _buildMetricRow('In PostScript points (pt):', '${current.totalWidthPt.toStringAsFixed(0)} × ${current.totalHeightPt.toStringAsFixed(0)} pt'),
                             const Divider(height: 12),
-                            _buildMetricRow('Ancho útil imprimible:', '${current.printableWidthMm.toStringAsFixed(1)} mm (${current.printableWidthPt.toStringAsFixed(0)} pt)', isBold: true),
-                            _buildMetricRow('Alto útil imprimible:', '${current.printableHeightMm.toStringAsFixed(1)} mm (${current.printableHeightPt.toStringAsFixed(0)} pt)', isBold: true),
+                            _buildMetricRow('Printable width:', '${current.printableWidthMm.toStringAsFixed(1)} mm (${current.printableWidthPt.toStringAsFixed(0)} pt)', isBold: true),
+                            _buildMetricRow('Printable height:', '${current.printableHeightMm.toStringAsFixed(1)} mm (${current.printableHeightPt.toStringAsFixed(0)} pt)', isBold: true),
                             const SizedBox(height: 12),
 
                             Container(
@@ -493,7 +493,7 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: const Text(
-                                'file4base utiliza esta configuración para calcular los límites de la página, los saltos de sección y el ancho útil en tus presentaciones e informes.',
+                                'File4Base uses these settings to calculate page boundaries, section breaks, and printable width in layouts and reports.',
                                 style: TextStyle(fontSize: 11, height: 1.3, color: Colors.blueGrey),
                               ),
                             ),
@@ -516,18 +516,18 @@ class _PageSetupDialogState extends State<PageSetupDialog> {
                   TextButton.icon(
                     onPressed: _restoreDefaults,
                     icon: const Icon(Icons.restore, size: 16),
-                    label: const Text('Valores predeterminados', style: TextStyle(fontSize: 12)),
+                    label: const Text('Defaults', style: TextStyle(fontSize: 12)),
                   ),
                   const Spacer(),
                   OutlinedButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancelar'),
+                    child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 12),
                   FilledButton(
                     onPressed: () => Navigator.of(context).pop(current),
                     style: FilledButton.styleFrom(backgroundColor: const Color(0xFF1E88E5)),
-                    child: const Text('Aceptar'),
+                    child: const Text('OK'),
                   ),
                 ],
               ),

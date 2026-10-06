@@ -21,7 +21,7 @@ void main() {
       );
 
       expect(step.category, 'navigation');
-      expect(step.displayName, 'Ir a Presentación');
+      expect(step.displayName, 'Go to Layout');
       expect(step.previewText, '[Invoices_Detail]');
 
       final json = step.toJson();
@@ -74,10 +74,10 @@ void main() {
       expect(catalog.isNotEmpty, true);
 
       final categories = catalog.map((c) => c.category).toSet();
-      expect(categories.contains('NAVEGACIÓN'), true);
-      expect(categories.contains('REGISTROS'), true);
-      expect(categories.contains('CONTROL Y LÓGICA'), true);
-      expect(categories.contains('INTEGRACIÓN Y DATOS'), true);
+      expect(categories.contains('NAVIGATION'), true);
+      expect(categories.contains('RECORDS'), true);
+      expect(categories.contains('CONTROL & LOGIC'), true);
+      expect(categories.contains('INTEGRATION & DATA'), true);
 
       expect(catalog.any((c) => c.stepType == 'go_to_layout'), true);
       expect(catalog.any((c) => c.stepType == 'set_variable'), true);
@@ -112,13 +112,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Especificar cálculo'), findsOneWidget);
-      expect(find.text('Contexto: Invoices'), findsOneWidget);
-      expect(find.text('Ocurrencia de tabla'), findsOneWidget);
-      expect(find.text('Funciones integradas'), findsOneWidget);
-      expect(find.text('Fórmula / Cálculo:'), findsOneWidget);
+      expect(find.text('Specify Calculation'), findsOneWidget);
+      expect(find.text('Context: Invoices'), findsOneWidget);
+      expect(find.text('Table occurrence'), findsOneWidget);
+      expect(find.text('Built-in functions'), findsOneWidget);
+      expect(find.text('Formula / Calculation:'), findsOneWidget);
       expect(find.text('Sum(Items::Price)'), findsOneWidget);
-      expect(find.text('Aceptar'), findsOneWidget);
+      expect(find.text('OK'), findsOneWidget);
     });
   });
 
@@ -207,37 +207,37 @@ void main() {
       await tester.pumpAndSettle();
 
       // Top bar elements
-      expect(find.text('Espacio de trabajo de guiones'), findsOneWidget);
-      expect(find.text('Base: test_db'), findsOneWidget);
-      expect(find.text('Ejecutar'), findsOneWidget);
-      expect(find.text('Depurar'), findsOneWidget);
-      expect(find.text('Guardar'), findsOneWidget);
+      expect(find.text('Script Workspace'), findsOneWidget);
+      expect(find.text('Database: test_db'), findsOneWidget);
+      expect(find.text('Run'), findsOneWidget);
+      expect(find.text('Debug'), findsOneWidget);
+      expect(find.text('Save'), findsOneWidget);
 
       // Left panel
-      expect(find.text('Guiones'), findsOneWidget);
+      expect(find.text('Scripts'), findsOneWidget);
       expect(find.text('test_workflow'), findsWidgets);
 
       // Center panel (step list and inspector)
       expect(find.text('01'), findsOneWidget);
       expect(find.text('02'), findsOneWidget);
-      expect(find.text('Ir a Presentación'), findsWidgets);
-      expect(find.text('Establecer Variable'), findsWidgets);
+      expect(find.text('Go to Layout'), findsWidgets);
+      expect(find.text('Set Variable'), findsWidgets);
       expect(find.text('[Invoices_Detail]'), findsOneWidget);
 
       // Right panel (catalog)
-      expect(find.text('Catálogo de pasos'), findsOneWidget);
-      expect(find.text('NAVEGACIÓN'), findsOneWidget);
-      expect(find.text('REGISTROS'), findsOneWidget);
-      expect(find.text('CONTROL Y LÓGICA'), findsOneWidget);
+      expect(find.text('Step catalog'), findsOneWidget);
+      expect(find.text('NAVIGATION'), findsNWidgets(2));
+      expect(find.text('RECORDS'), findsOneWidget);
+      expect(find.text('CONTROL & LOGIC'), findsOneWidget);
 
-      // Scroll catalog to verify INTEGRACIÓN Y DATOS
+      // Scroll catalog to verify INTEGRATION & DATA
       final catalogScrollable = find.byType(Scrollable).last;
       await tester.scrollUntilVisible(
-        find.text('INTEGRACIÓN Y DATOS'),
+        find.text('INTEGRATION & DATA'),
         100,
         scrollable: catalogScrollable,
       );
-      expect(find.text('INTEGRACIÓN Y DATOS'), findsOneWidget);
+      expect(find.text('INTEGRATION & DATA'), findsOneWidget);
     });
   });
 

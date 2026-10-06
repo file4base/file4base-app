@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Use English throughout the client interface, including security, scripts, relationships, themes, file options, page setup, and help dialogs.
+- Set English as the default client locale regardless of the host language, including standard Material controls.
 ## [0.7.0] - 2026-10-06
 
 ### Added

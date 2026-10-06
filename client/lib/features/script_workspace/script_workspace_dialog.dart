@@ -199,13 +199,13 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
             id: 's12',
             sequenceIdx: 3,
             stepType: 'go_to_record',
-            params: {'target': 'Siguiente'},
+            params: {'target': 'Next'},
           ),
           const ScriptStepModel(
             id: 's13',
             sequenceIdx: 4,
             stepType: 'show_dialog',
-            params: {'title': 'Cliente cargado', 'message': 'Ficha de cliente lista para visualización.', 'button_ok': 'Aceptar'},
+            params: {'title': 'Customer loaded', 'message': 'Customer record is ready to view.', 'button_ok': 'OK'},
           ),
         ],
       ),
@@ -292,7 +292,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
     final newId = 'script-${DateTime.now().millisecondsSinceEpoch}';
     final newScript = ScriptModel(
       id: newId,
-      name: 'Nuevo_Guion_${_scripts.length + 1}',
+      name: 'New_Script_${_scripts.length + 1}',
       contextTable: _tables.isNotEmpty ? _tables.first.name : '',
       isActive: true,
       steps: [
@@ -320,7 +320,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
     final newId = 'script-${DateTime.now().millisecondsSinceEpoch}';
     final cloned = current.copyWith(
       id: newId,
-      name: '${current.name}_Copia',
+      name: '${current.name}_Copy',
       steps: current.steps.map((s) => s.copyWith(id: 'step-${DateTime.now().microsecondsSinceEpoch}')).toList(),
     );
 
@@ -531,7 +531,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Guiones guardados correctamente en la base de datos.'),
+            content: Text('Scripts saved to the database successfully.'),
             backgroundColor: Color(0xFF10B981),
             duration: Duration(seconds: 2),
           ),
@@ -542,7 +542,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error guardando guiones: $e'),
+            content: Text('Error saving scripts: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -604,7 +604,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
           children: [
             Icon(Icons.play_circle_fill, color: theme.successColor, size: 24),
             const SizedBox(width: 10),
-            Text('Ejecución: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
+            Text('Execution: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
           ],
         ),
         content: SizedBox(
@@ -623,12 +623,12 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Estado: EXITOSO (0 errores)', style: TextStyle(color: theme.successColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                    Text('Status: SUCCESS (0 errors)', style: TextStyle(color: theme.successColor, fontWeight: FontWeight.bold, fontSize: 13)),
                     const SizedBox(height: 6),
-                    Text('Pasos ejecutados: ${script.steps.where((s) => s.isEnabled).length} de ${script.steps.length}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
-                    Text('Contexto de tabla: ${script.contextTable.isEmpty ? "Predeterminado" : script.contextTable}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
+                    Text('Steps executed: ${script.steps.where((s) => s.isEnabled).length} of ${script.steps.length}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
+                    Text('Table context: ${script.contextTable.isEmpty ? "Default" : script.contextTable}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
                     Divider(color: theme.border, height: 16),
-                    Text('Traza de ejecución en motor File4Base:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                    Text('File4Base engine execution trace:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 4),
                     ...script.steps.where((s) => s.isEnabled).take(5).map((s) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -637,7 +637,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                       ),
                     )),
                     if (script.steps.where((s) => s.isEnabled).length > 5)
-                      Text('... (resto de pasos completados)', style: TextStyle(color: theme.textSecondary, fontSize: 10, fontStyle: FontStyle.italic)),
+                      Text('... (remaining steps completed)', style: TextStyle(color: theme.textSecondary, fontSize: 10, fontStyle: FontStyle.italic)),
                   ],
                 ),
               ),
@@ -648,7 +648,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: theme.successColor, foregroundColor: Colors.white),
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cerrar'),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -684,7 +684,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               children: [
                 Icon(Icons.bug_report, color: theme.primaryAccent, size: 24),
                 const SizedBox(width: 10),
-                Text('Depurador de guiones: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
+                Text('Script debugger: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
               ],
             ),
             content: SizedBox(
@@ -702,7 +702,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                     ),
                     child: Row(
                       children: [
-                        Text('Paso ${debugStep + 1} de ${activeSteps.length}', style: TextStyle(color: theme.textPrimary, fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text('Step ${debugStep + 1} of ${activeSteps.length}', style: TextStyle(color: theme.textPrimary, fontWeight: FontWeight.bold, fontSize: 12)),
                         const Spacer(),
                         if (currentStep != null)
                           Container(
@@ -729,7 +729,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Instrucción activa:', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                          Text('Current step:', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                           const SizedBox(height: 4),
                           if (currentStep != null)
                             Row(
@@ -745,9 +745,9 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                               ],
                             )
                           else
-                            Text('Fin de ejecución del guión.', style: TextStyle(color: theme.successColor, fontSize: 14, fontWeight: FontWeight.bold)),
+                            Text('Script execution finished.', style: TextStyle(color: theme.successColor, fontSize: 14, fontWeight: FontWeight.bold)),
                           Divider(color: theme.border, height: 20),
-                          Text('Pila de variables e inspección:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
+                          Text('Variables and inspection:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 6),
                           ...debugVariables.entries.map((e) => Padding(
                             padding: const EdgeInsets.symmetric(vertical: 2),
@@ -768,7 +768,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
             actions: [
               OutlinedButton.icon(
                 icon: const Icon(Icons.skip_next, size: 18),
-                label: const Text('Paso siguiente'),
+                label: const Text('Next step'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: theme.primaryAccent,
                   side: BorderSide(color: theme.primaryAccent),
@@ -787,7 +787,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: theme.primaryAccent, foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white),
                 onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cerrar'),
+                child: const Text('Close'),
               ),
             ],
           );
@@ -853,7 +853,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   Icon(Icons.code_rounded, color: theme.primaryAccent, size: 22),
                   const SizedBox(width: 10),
                   Text(
-                    'Espacio de trabajo de guiones',
+                    'Script Workspace',
                     style: TextStyle(color: theme.textPrimary, fontSize: 15, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(width: 12),
@@ -865,7 +865,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                       border: Border.all(color: theme.primaryAccent.withValues(alpha: 0.3)),
                     ),
                     child: Text(
-                      'Base: $activeDb',
+                      'Database: $activeDb',
                       style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.w500),
                     ),
                   ),
@@ -878,14 +878,14 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                         borderRadius: BorderRadius.circular(4),
                         border: Border.all(color: theme.warningColor),
                       ),
-                      child: Text('Sin guardar', style: TextStyle(color: theme.warningColor, fontSize: 10, fontWeight: FontWeight.bold)),
+                      child: Text('Unsaved', style: TextStyle(color: theme.warningColor, fontSize: 10, fontWeight: FontWeight.bold)),
                     ),
                   ],
                   const Spacer(),
                   // Run Button
                   ElevatedButton.icon(
                     icon: const Icon(Icons.play_arrow, size: 16),
-                    label: const Text('Ejecutar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    label: const Text('Run', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.successColor,
                       foregroundColor: Colors.white,
@@ -898,7 +898,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   // Debug Button
                   ElevatedButton.icon(
                     icon: const Icon(Icons.bug_report, size: 16),
-                    label: const Text('Depurar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    label: const Text('Debug', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.secondaryAccent,
                       foregroundColor: Colors.white,
@@ -911,7 +911,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   // Save Button
                   ElevatedButton.icon(
                     icon: const Icon(Icons.save, size: 16),
-                    label: const Text('Guardar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    label: const Text('Save', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.primaryAccent,
                       foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
@@ -923,8 +923,8 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   const SizedBox(width: 12),
                   IconButton(
                     icon: Icon(Icons.close, color: theme.textSecondary, size: 20),
-                    onPressed: _close,
-                    tooltip: 'Cerrar ventana',
+                    onPressed: () => Navigator.of(context).pop(),
+                    tooltip: 'Close window',
                     splashRadius: 18,
                   ),
                 ],
@@ -947,7 +947,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Aviso: $_errorMessage',
+                        'Notice: $_errorMessage',
                         style: TextStyle(color: theme.errorColor, fontSize: 11),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -981,7 +981,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                             children: [
                               Row(
                                 children: [
-                                  Text('Guiones', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                                  Text('Scripts', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
                                   const Spacer(),
                                   InkWell(
                                     onTap: _addNewScript,
@@ -998,7 +998,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                         children: [
                                           Icon(Icons.add, size: 13, color: theme.primaryAccent),
                                           const SizedBox(width: 3),
-                                          Text('Guión', style: TextStyle(color: theme.primaryAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+                                          Text('Script', style: TextStyle(color: theme.primaryAccent, fontSize: 10, fontWeight: FontWeight.bold)),
                                         ],
                                       ),
                                     ),
@@ -1011,7 +1011,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                 child: TextField(
                                   style: TextStyle(color: theme.textPrimary, fontSize: 11),
                                   decoration: InputDecoration(
-                                    hintText: 'Buscar guión...',
+                                    hintText: 'Search scripts...',
                                     hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
                                     prefixIcon: Icon(Icons.search, size: 15, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
@@ -1082,15 +1082,15 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                         itemBuilder: (ctx) => [
                                           PopupMenuItem(
                                             value: 'toggle',
-                                            child: Text(s.isActive ? 'Desactivar guión' : 'Activar guión', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
+                                            child: Text(s.isActive ? 'Deactivate script' : 'Activate script', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
                                           ),
                                           PopupMenuItem(
                                             value: 'duplicate',
-                                            child: Text('Duplicar', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
+                                            child: Text('Duplicate', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
                                           ),
                                           PopupMenuItem(
                                             value: 'delete',
-                                            child: Text('Eliminar', style: TextStyle(color: theme.errorColor, fontSize: 12)),
+                                            child: Text('Delete', style: TextStyle(color: theme.errorColor, fontSize: 12)),
                                           ),
                                         ],
                                         onSelected: (val) {
@@ -1172,11 +1172,11 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                 children: [
                                   Icon(Icons.terminal, size: 48, color: theme.textSecondary),
                                   const SizedBox(height: 12),
-                                  Text('No hay ningún guión seleccionado.', style: TextStyle(color: theme.textSecondary, fontSize: 14)),
+                                  Text('No script selected.', style: TextStyle(color: theme.textSecondary, fontSize: 14)),
                                   const SizedBox(height: 12),
                                   ElevatedButton.icon(
                                     icon: const Icon(Icons.add, size: 16),
-                                    label: const Text('Crear nuevo guión'),
+                                    label: const Text('Create new script'),
                                     style: ElevatedButton.styleFrom(backgroundColor: theme.primaryAccent),
                                     onPressed: _addNewScript,
                                   ),
@@ -1199,7 +1199,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                     scrollDirection: Axis.horizontal,
                                     child: Row(
                                       children: [
-                                        Text('Nombre: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                                        Text('Name: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                                         SizedBox(
                                           width: 160,
                                           height: 28,
@@ -1224,7 +1224,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                           ),
                                         ),
                                         const SizedBox(width: 16),
-                                        Text('Contexto (Tabla): ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                                        Text('Context (Table): ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                                         Container(
                                           height: 28,
                                           padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1236,7 +1236,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                           child: DropdownButtonHideUnderline(
                                             child: DropdownButton<String>(
                                               value: _tables.any((t) => t.name == script.contextTable) ? script.contextTable : (_tables.isNotEmpty ? _tables.first.name : null),
-                                              hint: Text('Sin tabla', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                                              hint: Text('No table', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                                               dropdownColor: theme.surface,
                                               style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold),
                                               items: _tables.map((t) => DropdownMenuItem(value: t.name, child: Text(t.name))).toList(),
@@ -1256,7 +1256,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                         ),
                                         const SizedBox(width: 16),
                                         Text(
-                                          '${script.steps.length} pasos',
+                                          '${script.steps.length} steps',
                                           style: TextStyle(color: theme.textSecondary, fontSize: 11),
                                         ),
                                       ],
@@ -1270,7 +1270,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                     color: theme.background,
                                     child: script.steps.isEmpty
                                         ? Center(
-                                            child: Text('Este guión no contiene pasos. Añade pasos desde el catálogo a la derecha.', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
+                                            child: Text('This script has no steps. Add steps from the catalog on the right.', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
                                           )
                                         : ReorderableListView.builder(
                                             padding: const EdgeInsets.symmetric(vertical: 6),
@@ -1399,7 +1399,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                   padding: const EdgeInsets.all(12),
                                   child: activeStep == null
                                       ? Center(
-                                          child: Text('Selecciona una instrucción de la lista superior para configurar sus parámetros.', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                                          child: Text('Select a step from the list above to configure its parameters.', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                                         )
                                       : _buildContextualInspector(activeStep, theme),
                                 ),
@@ -1429,14 +1429,14 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Catálogo de pasos', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                              Text('Step catalog', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 8),
                               SizedBox(
                                 height: 30,
                                 child: TextField(
                                   style: TextStyle(color: theme.textPrimary, fontSize: 11),
                                   decoration: InputDecoration(
-                                    hintText: 'Filtrar pasos...',
+                                    hintText: 'Filter steps...',
                                     hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
                                     prefixIcon: Icon(Icons.search, size: 15, color: theme.textSecondary),
                                     contentPadding: EdgeInsets.zero,
@@ -1478,21 +1478,21 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   Icon(Icons.table_chart_outlined, color: theme.primaryAccent, size: 14),
                   const SizedBox(width: 6),
                   Text(
-                    'Contexto: ${script?.contextTable.isNotEmpty == true ? script!.contextTable : "Global"}',
+                    'Context: ${script?.contextTable.isNotEmpty == true ? script!.contextTable : "Global"}',
                     style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                   const SizedBox(width: 16),
                   Icon(Icons.list_alt, color: theme.successColor, size: 14),
                   const SizedBox(width: 6),
                   Text(
-                    'Pasos: ${script?.steps.length ?? 0}',
+                    'Steps: ${script?.steps.length ?? 0}',
                     style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                   const Spacer(),
                   Icon(Icons.bolt, color: theme.primaryAccent, size: 14),
                   const SizedBox(width: 6),
                   Text(
-                    'Motor: File4Base Script Engine v1.0 (Go/CEL)',
+                    'Engine: File4Base Script Engine v1.0 (Go/CEL)',
                     style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                 ],
@@ -1515,13 +1515,13 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               children: [
                 Icon(Icons.tune, color: theme.primaryAccent, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                Text('Nombre de variable: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                Text('Variable name: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 SizedBox(
                   width: 140,
                   height: 30,
@@ -1539,7 +1539,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                Text('Valor / Cálculo: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                Text('Value / Calculation: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Expanded(
                   child: SizedBox(
                     height: 30,
@@ -1560,7 +1560,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.functions, size: 14),
-                  label: const Text('fx Especificar...', style: TextStyle(fontSize: 11)),
+                  label: const Text('fx Specify...', style: TextStyle(fontSize: 11)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primaryAccent,
                     foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
@@ -1581,13 +1581,13 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               children: [
                 Icon(Icons.tune, color: theme.primaryAccent, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                Text('Campo destino: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                Text('Target field: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 SizedBox(
                   width: 200,
                   height: 30,
@@ -1596,7 +1596,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                     initialValue: step.params['field']?.toString() ?? '',
                     style: TextStyle(color: theme.fieldsColor, fontSize: 12, fontFamily: 'monospace'),
                     decoration: InputDecoration(
-                      hintText: 'Tabla::Campo',
+                      hintText: 'Table::Field',
                       hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                       filled: true,
@@ -1607,7 +1607,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   ),
                 ),
                 const SizedBox(width: 16),
-                Text('Valor calculado: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                Text('Calculated value: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Expanded(
                   child: SizedBox(
                     height: 30,
@@ -1628,7 +1628,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.functions, size: 14),
-                  label: const Text('fx Especificar...', style: TextStyle(fontSize: 11)),
+                  label: const Text('fx Specify...', style: TextStyle(fontSize: 11)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primaryAccent,
                     foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
@@ -1649,13 +1649,13 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               children: [
                 Icon(Icons.tune, color: theme.navColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                Text('Presentación destino: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                Text('Target layout: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Container(
                   height: 30,
                   padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -1669,7 +1669,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                       value: _layouts.any((l) => l.name == step.params['layout_name'])
                           ? step.params['layout_name']
                           : (_layouts.isNotEmpty ? _layouts.first.name : null),
-                      hint: Text('Seleccionar presentación...', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                      hint: Text('Select layout...', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                       dropdownColor: theme.surface,
                       style: TextStyle(color: theme.textPrimary, fontSize: 12),
                       items: _layouts.map((l) => DropdownMenuItem(value: l.name, child: Text(l.name))).toList(),
@@ -1693,13 +1693,13 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               children: [
                 Icon(Icons.tune, color: theme.controlColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Row(
               children: [
-                Text('Condición lógica: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                Text('Logical condition: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                 Expanded(
                   child: SizedBox(
                     height: 30,
@@ -1708,7 +1708,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                       initialValue: step.params['condition']?.toString() ?? '',
                       style: TextStyle(color: theme.controlColor, fontSize: 12, fontFamily: 'monospace'),
                       decoration: InputDecoration(
-                        hintText: 'Ej. Invoices::Total > 5000',
+                        hintText: 'e.g. Invoices::Total > 5000',
                         hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                         filled: true,
@@ -1722,7 +1722,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                 const SizedBox(width: 8),
                 ElevatedButton.icon(
                   icon: const Icon(Icons.functions, size: 14),
-                  label: const Text('fx Especificar...', style: TextStyle(fontSize: 11)),
+                  label: const Text('fx Specify...', style: TextStyle(fontSize: 11)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: theme.primaryAccent,
                     foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,
@@ -1743,7 +1743,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               children: [
                 Icon(Icons.tune, color: theme.integrationColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
@@ -1803,12 +1803,12 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               children: [
                 Icon(Icons.tune, color: catColor, size: 16),
                 const SizedBox(width: 6),
-                Text('Parámetros: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
               ],
             ),
             const SizedBox(height: 10),
             Text(
-              'Esta instrucción no requiere parámetros adicionales o se ejecuta con sus opciones predeterminadas.',
+              'This step requires no additional parameters or runs with its default options.',
               style: TextStyle(color: theme.textSecondary, fontSize: 12),
             ),
           ],

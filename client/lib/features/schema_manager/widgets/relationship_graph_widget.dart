@@ -119,7 +119,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error al crear ocurrencia de tabla: $e'), backgroundColor: Colors.red),
+            SnackBar(content: Text('Error creating table occurrence: $e'), backgroundColor: Colors.red),
           );
         }
       }
@@ -134,7 +134,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
   }) async {
     if (_occurrences.length < 2 && leftOccId == null && rightOccId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Debe existir al menos 2 ocurrencias para crear una relación.')),
+        const SnackBar(content: Text('At least two table occurrences are required to create a relationship.')),
       );
       return;
     }
@@ -171,7 +171,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error al crear relación: $e'), backgroundColor: Colors.red),
+            SnackBar(content: Text('Error creating relationship: $e'), backgroundColor: Colors.red),
           );
         }
       }
@@ -212,7 +212,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error al actualizar relación: $e'), backgroundColor: Colors.red),
+            SnackBar(content: Text('Error updating relationship: $e'), backgroundColor: Colors.red),
           );
         }
       }
@@ -224,14 +224,14 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar ocurrencia de tabla'),
-        content: Text('¿Seguro que desea eliminar la ocurrencia "${occ.name}" del gráfico? Se eliminarán también las relaciones conectadas a ella.'),
+        title: const Text('Delete table occurrence'),
+        content: Text('Delete the occurrence "${occ.name}" from the graph? Relationships connected to it will also be deleted.'),
         actions: [
-          OutlinedButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
+          OutlinedButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-            child: const Text('Eliminar'),
+            child: const Text('Delete'),
           ),
         ],
       ),
@@ -249,7 +249,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error al eliminar ocurrencia: $e'), backgroundColor: Colors.red),
+            SnackBar(content: Text('Error deleting occurrence: $e'), backgroundColor: Colors.red),
           );
         }
       }
@@ -267,7 +267,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al eliminar relación: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Error deleting relationship: $e'), backgroundColor: Colors.red),
         );
       }
     }
@@ -319,7 +319,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
               ElevatedButton.icon(
                 onPressed: _showAddOccurrenceDialog,
                 icon: const Icon(Icons.add, size: 16),
-                label: const Text('Tabla...'),
+                label: const Text('Table...'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
@@ -331,7 +331,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
               OutlinedButton.icon(
                 onPressed: _occurrences.length >= 2 ? () => _showAddRelationshipDialog() : null,
                 icon: const Icon(Icons.add_link, size: 16),
-                label: const Text('Relación...'),
+                label: const Text('Relationship...'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   textStyle: const TextStyle(fontSize: 12.5),
@@ -343,8 +343,8 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
               IconButton(
                 icon: const Icon(Icons.delete_outline, size: 18),
                 tooltip: _selectedOccurrenceId != null
-                    ? 'Eliminar ocurrencia seleccionada'
-                    : (_selectedRelationshipId != null ? 'Eliminar relación seleccionada' : 'Eliminar selección'),
+                    ? 'Delete selected occurrence'
+                    : (_selectedRelationshipId != null ? 'Delete selected relationship' : 'Delete selection'),
                 onPressed: _selectedOccurrenceId != null
                     ? () => _deleteOccurrence(_selectedOccurrenceId!)
                     : (_selectedRelationshipId != null ? () => _deleteRelationship(_selectedRelationshipId!) : null),
@@ -354,7 +354,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
               // Center / Reset View
               IconButton(
                 icon: const Icon(Icons.center_focus_strong_outlined, size: 18),
-                tooltip: 'Centrar vista',
+                tooltip: 'Center view',
                 onPressed: _resetView,
               ),
 
@@ -362,7 +362,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
 
               // Information Chip
               Text(
-                '${_occurrences.length} ocurrencias  •  ${_relationships.length} relaciones',
+                '${_occurrences.length} occurrences  •  ${_relationships.length} relationships',
                 style: TextStyle(fontSize: 12, color: theme.textTheme.bodySmall?.color ?? Colors.grey[600]),
               ),
             ],
@@ -628,7 +628,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                   Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Text(
-                      'Sin campos',
+                      'No fields',
                       style: TextStyle(fontSize: 11, color: Colors.grey[500]),
                     ),
                   )

@@ -103,8 +103,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // Top title and search bar
-      expect(find.text('Gestionar temas (Manage Themes)'), findsOneWidget);
-      expect(find.text('Filtrar temas...'), findsOneWidget);
+      expect(find.text('Manage Themes'), findsOneWidget);
+      expect(find.text('Filter themes...'), findsOneWidget);
 
       // Verify theme cards appear
       expect(find.text('Light (Clean Slate)'), findsWidgets);
@@ -114,10 +114,10 @@ void main() {
       expect(find.text('Nordic Frost (Nord)'), findsOneWidget);
 
       // Verify Live Preview panel elements
-      expect(find.text('Vista previa:'), findsOneWidget);
-      expect(find.text('✔ ACTIVO'), findsOneWidget);
-      expect(find.text('Aceptar y Aplicar'), findsOneWidget);
-      expect(find.text('Cerrar'), findsWidgets);
+      expect(find.text('Preview:'), findsOneWidget);
+      expect(find.text('✔ ACTIVE'), findsOneWidget);
+      expect(find.text('Apply and Close'), findsOneWidget);
+      expect(find.text('Close'), findsWidgets);
     });
 
     testWidgets('filtering themes updates the list of available cards', (tester) async {
@@ -174,8 +174,8 @@ void main() {
       await tester.tap(monokaiFinder);
       await tester.pumpAndSettle();
 
-      // Tap "Aplicar este tema" in the preview panel
-      final applyButton = find.text('Aplicar este tema');
+      // Tap "Apply this theme" in the preview panel
+      final applyButton = find.text('Apply this theme');
       expect(applyButton, findsOneWidget);
       await tester.tap(applyButton);
       await tester.pumpAndSettle();
