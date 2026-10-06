@@ -12,14 +12,14 @@ set -euo pipefail
 #   ./scripts/publish_images.sh     # build and push both images
 #
 # Environment overrides:
-#   FILE4BASE_REGISTRY  Docker Hub namespace (default: marioezquerro)
+#   FILE4BASE_REGISTRY  Docker Hub namespace (default: cloudresources)
 #   PLATFORMS           Target platforms (default: linux/amd64,linux/arm64,linux/arm/v7)
 #   NO_LATEST=1         Do not move the `latest` tag (e.g. for a hotfix of an older release)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(tr -d '[:space:]' < "${ROOT_DIR}/VERSION")"
-REGISTRY="${FILE4BASE_REGISTRY:-marioezquerro}"
+REGISTRY="${FILE4BASE_REGISTRY:-cloudresources}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64,linux/arm/v7}"
 BUILDER="file4base-builder"
 

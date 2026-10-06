@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Docker images moved to the `cloudresources` Docker Hub organization: `cloudresources/file4base-api` and `cloudresources/file4base-web` (all published versions were copied). `docker-compose.yml` and `scripts/publish_images.sh` use it by default; `FILE4BASE_REGISTRY` still overrides it.
+
 ## [0.7.1] - 2026-10-06
 
 ### Fixed
