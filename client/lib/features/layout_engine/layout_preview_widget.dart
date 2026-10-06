@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -319,12 +321,15 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         ? _records[_currentRecordIndex]
         : <String, dynamic>{};
 
-    double maxObjY = 300.0;
+    double maxObjY = 0.0;
     for (final obj in widget.layout.objects) {
       final bottom = obj.y + obj.height;
       if (bottom > maxObjY) maxObjY = bottom;
     }
-    final canvasHeight = maxObjY + 40.0;
+    // The layout ends at the bottom of its footer (or of a lower object).
+    final canvasHeight = widget.layout.height > 0
+        ? math.max(widget.layout.height, maxObjY)
+        : math.max(maxObjY, 300.0) + 40.0;
     final canvasWidth = widget.layout.width;
 
     // A layout wider than the printable width is scaled down to fit the sheet
@@ -335,6 +340,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       child: Container(
         width: canvasWidth,
         height: canvasHeight,
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(4),
@@ -343,6 +349,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
+            Positioned.fill(child: LayoutBackgroundView(layout: widget.layout)),
             ...widget.layout.objects.map((obj) {
               return Positioned(
                 left: obj.x,

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Layout mode: with no object selected, the inspector shows the layout's own properties: width and height (and the header, body and footer heights), background color, background picture (fill, fit, stretch or tile), OnLayoutEnter / OnLayoutExit script triggers and a transition effect (fade, slide or zoom). New layouts get them too. Browse mode paints the background, plays the transition when a layout is shown and runs the triggers: OnLayoutEnter when the layout is shown, OnLayoutExit then OnLayoutEnter when going to another layout. Preview mode paints the background as well.
+- Layout mode: select several objects with Shift-click or by dragging a selection rectangle on the empty canvas. Selected groups can be dragged, nudged with the arrow keys, duplicated and deleted together.
+
+### Fixed
+- Layout mode: the canvas kept a blank area below the footer that could not be removed (it was always at least 600 pt tall). The layout now ends at the bottom of the footer, or of the lowest object. Browse and Preview modes also use the layout's width and height instead of a minimum size.
+- Layout mode: the resize handles of a selected object did not resize it, and Shift-click did not add to the selection. A mouse press held longer than 100 ms made the canvas deselect everything even when the click landed on an object or a handle; the canvas now only deselects on a click on empty space. The handles are also larger and fully clickable (half of each one sat outside the object's hit-test area).
+
 ### Changed
 - Docker images moved to the `cloudresources` Docker Hub organization: `cloudresources/file4base-api` and `cloudresources/file4base-web` (all published versions were copied). `docker-compose.yml` and `scripts/publish_images.sh` use it by default; `FILE4BASE_REGISTRY` still overrides it.
 

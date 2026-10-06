@@ -345,3 +345,105 @@ Widget? buildDrawnLayoutObject(
   }
   return null;
 }
+
+/// Background of a whole layout: its color (white by default) and its
+/// background picture. Fills the canvas behind every object.
+class LayoutBackgroundView extends StatelessWidget {
+  final LayoutDefinitionModel layout;
+
+  const LayoutBackgroundView({super.key, required this.layout});
+
+  static final Map<String, Uint8List> _decoded = {};
+
+  static Uint8List? _bytes(LayoutMediaModel media) {
+    final data = media.data;
+    if (data == null || data.isEmpty) return null;
+    final key = '${data.length}:${data.hashCode}';
+    return _decoded.putIfAbsent(key, () {
+      if (_decoded.length > 16) _decoded.clear();
+      try {
+        return base64Decode(data);
+      } catch (_) {
+        return Uint8List(0);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final image = layout.backgroundImage;
+    final bytes = image != null && image.isImage ? _bytes(image) : null;
+    ImageProvider? provider;
+    if (bytes != null && bytes.isNotEmpty) {
+      provider = MemoryImage(bytes);
+    } else if (image?.url != null && image!.isImage) {
+      provider = NetworkImage(image.url!);
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: parseLayoutColor(layout.backgroundColor) ?? Colors.white,
+        image: provider == null
+            ? null
+            : DecorationImage(
+                image: provider,
+                fit: switch (image!.fit) {
+                  'contain' => BoxFit.contain,
+                  'fill' => BoxFit.fill,
+                  'tile' => BoxFit.none,
+                  _ => BoxFit.cover,
+                },
+                alignment: image.fit == 'tile' ? Alignment.topLeft : Alignment.center,
+                repeat: image.fit == 'tile' ? ImageRepeat.repeat : ImageRepeat.noRepeat,
+              ),
+      ),
+      child: const SizedBox.expand(),
+    );
+  }
+}
+
+/// Plays a layout's [effect] (a key of [kLayoutTransitions]) once when it is
+/// first shown. Give it a key per layout so switching layouts replays it.
+class LayoutEntryTransition extends StatefulWidget {
+  final String effect;
+  final Widget child;
+
+  const LayoutEntryTransition({super.key, required this.effect, required this.child});
+
+  @override
+  State<LayoutEntryTransition> createState() => _LayoutEntryTransitionState();
+}
+
+class _LayoutEntryTransitionState extends State<LayoutEntryTransition> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 350),
+    value: widget.effect == 'none' ? 1.0 : 0.0,
+  )..forward();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final curve = CurvedAnimation(parent: _ctrl, curve: Curves.easeOutCubic);
+    return switch (widget.effect) {
+      'fade' => FadeTransition(opacity: curve, child: widget.child),
+      'slide_left' => SlideTransition(
+          position: Tween(begin: const Offset(0.25, 0), end: Offset.zero).animate(curve),
+          child: FadeTransition(opacity: curve, child: widget.child),
+        ),
+      'slide_up' => SlideTransition(
+          position: Tween(begin: const Offset(0, 0.15), end: Offset.zero).animate(curve),
+          child: FadeTransition(opacity: curve, child: widget.child),
+        ),
+      'zoom' => ScaleTransition(
+          scale: Tween(begin: 0.92, end: 1.0).animate(curve),
+          child: FadeTransition(opacity: curve, child: widget.child),
+        ),
+      _ => widget.child,
+    };
+  }
+}

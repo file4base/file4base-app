@@ -87,10 +87,49 @@ class LayoutDesignerWidget extends StatefulWidget {
 }
 
 class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
+  /// Extra hit-testable margin around each object for its resize handles.
+  static const double _handlePad = 8.0;
+
   late LayoutDefinitionModel _layout;
   late LayoutTool _activeTool;
   late TableModel _currentTable;
-  String? _selectedObjectId;
+  String? _primarySelectedId;
+  // Ids of every selected object while more than one is selected (Shift-click
+  // or marquee). Empty for a single selection.
+  Set<String> _multiIds = {};
+  String? get _selectedObjectId => _primarySelectedId;
+  set _selectedObjectId(String? id) {
+    _primarySelectedId = id;
+    _multiIds = {};
+  }
+
+  /// Every selected object id (the single selection or the multi-selection).
+  Set<String> get _selectedIds =>
+      _multiIds.isNotEmpty ? _multiIds : {if (_primarySelectedId != null) _primarySelectedId!};
+
+  bool get _isShiftHeld => HardwareKeyboard.instance.isShiftPressed;
+
+  void _setSelection(Set<String> ids) {
+    setState(() {
+      if (ids.length > 1) {
+        _primarySelectedId = ids.last;
+        _multiIds = ids;
+      } else {
+        _selectedObjectId = ids.isEmpty ? null : ids.first;
+      }
+    });
+  }
+
+  void _toggleInSelection(String id) {
+    final ids = {..._selectedIds};
+    if (!ids.remove(id)) ids.add(id);
+    _setSelection(ids);
+  }
+
+  // Marquee (rubber band) selection on the empty canvas
+  Offset? _marqueeStart;
+  Rect? _marqueeRect;
+  Set<String> _marqueeBase = {};
   bool _snapToGrid = true;
   bool _showGrid = true;
   bool _isSaving = false;
@@ -243,6 +282,44 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   LayoutPartModel get _footerPart =>
       _layout.parts.firstWhere((p) => p.type == 'footer', orElse: () => const LayoutPartModel(id: 'f', type: 'footer', height: 40));
 
+  /// The canvas ends at the bottom of the footer, or lower when an object
+  /// sits below it (so that object stays reachable).
+  double get _canvasHeight {
+    final partsHeight = _headerPart.height + _bodyPart.height + _footerPart.height;
+    final lowest = _layout.objects.fold<double>(0.0, (m, o) => math.max(m, o.y + o.height));
+    return math.max(partsHeight, lowest);
+  }
+
+  /// Sets the total layout height by resizing the body part.
+  void _setLayoutHeight(double total) {
+    final body = (total - _headerPart.height - _footerPart.height).clamp(40.0, 3000.0);
+    _setPartHeight('body', body);
+  }
+
+  void _setPartHeight(String type, double height) {
+    final h = switch (type) {
+      'header' => height.clamp(20.0, 800.0),
+      'footer' => height.clamp(20.0, 600.0),
+      _ => height.clamp(40.0, 3000.0),
+    };
+    _pushUndoState();
+    setState(() {
+      _layout = _layout.copyWith(
+        parts: _layout.parts.map((p) => p.type == type ? p.copyWith(height: h.toDouble()) : p).toList(),
+      );
+    });
+    _markLayoutDirty();
+  }
+
+  /// Applies a change to the layout's own properties (background, scripts...).
+  void _editLayout(LayoutDefinitionModel Function(LayoutDefinitionModel current) change) {
+    _pushUndoState();
+    setState(() => _layout = change(_layout));
+    _markLayoutDirty();
+  }
+
+  Future<List<ScriptModel>>? _scriptsFuture;
+
   LayoutObjectModel? get _selectedObject {
     if (_selectedObjectId == null) return null;
     try {
@@ -269,7 +346,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     final previous = _undoStack.removeLast();
     setState(() {
       _layout = previous;
-      if (_selectedObjectId != null && !_layout.objects.any((o) => o.id == _selectedObjectId)) {
+      if (_selectedIds.any((id) => !_layout.objects.any((o) => o.id == id))) {
         _selectedObjectId = null;
       }
     });
@@ -727,11 +804,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   void _deleteSelectedObject() {
-    if (_selectedObjectId == null) return;
+    final ids = _selectedIds;
+    if (ids.isEmpty) return;
     _pushUndoState();
     setState(() {
       _layout = _layout.copyWith(
-        objects: _layout.objects.where((o) => o.id != _selectedObjectId).toList(),
+        objects: _layout.objects.where((o) => !ids.contains(o.id)).toList(),
       );
       _selectedObjectId = null;
     });
@@ -739,19 +817,23 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   void _duplicateSelectedObject() {
-    final sel = _selectedObject;
-    if (sel == null) return;
+    final ids = _selectedIds;
+    final sources = _layout.objects.where((o) => ids.contains(o.id)).toList();
+    if (sources.isEmpty) return;
     _pushUndoState();
-    final dupId = 'obj_${DateTime.now().millisecondsSinceEpoch}';
-    final dup = sel.copyWith(
-      id: dupId,
-      x: _snap(sel.x + 16),
-      y: _snap(sel.y + 16),
-    );
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final dups = [
+      for (var i = 0; i < sources.length; i++)
+        sources[i].copyWith(
+          id: 'obj_${stamp}_$i',
+          x: _snap(sources[i].x + 16),
+          y: _snap(sources[i].y + 16),
+        ),
+    ];
     setState(() {
-      _layout = _layout.copyWith(objects: [..._layout.objects, dup]);
-      _selectedObjectId = dupId;
+      _layout = _layout.copyWith(objects: [..._layout.objects, ...dups]);
     });
+    _setSelection(dups.map((o) => o.id).toSet());
     _markLayoutDirty();
   }
 
@@ -814,6 +896,24 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   void _nudgeSelected(Offset delta, {required bool pushUndo}) {
+    final ids = _selectedIds;
+    if (ids.length > 1) {
+      if (pushUndo) _pushUndoState();
+      setState(() {
+        _layout = _layout.copyWith(
+          objects: _layout.objects
+              .map((o) => ids.contains(o.id) && !o.isLocked
+                  ? o.copyWith(
+                      x: (o.x + delta.dx).clamp(0.0, math.max(0.0, _layout.width - o.width)),
+                      y: math.max(0.0, o.y + delta.dy),
+                    )
+                  : o)
+              .toList(),
+        );
+      });
+      _markLayoutDirty();
+      return;
+    }
     final sel = _selectedObject;
     if (sel == null || sel.isLocked) return;
     if (pushUndo) _pushUndoState();
@@ -855,6 +955,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // ─── Drag-to-draw (line, rectangle, rounded rectangle, oval) ──────────────
 
   void _onCanvasPanStart(DragStartDetails d) {
+    if (_activeTool == LayoutTool.pointer && !_isTabOrderMode && _editingTextObjectId == null) {
+      _canvasFocus.requestFocus();
+      setState(() {
+        _marqueeStart = d.localPosition;
+        _marqueeRect = Rect.fromPoints(d.localPosition, d.localPosition);
+        _marqueeBase = _isShiftHeld ? {..._selectedIds} : {};
+        if (!_isShiftHeld) _selectedObjectId = null;
+      });
+      return;
+    }
     if (!_isDrawingTool(_activeTool)) return;
     setState(() {
       _drawStart = d.localPosition;
@@ -863,11 +973,27 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   void _onCanvasPanUpdate(DragUpdateDetails d) {
+    if (_marqueeStart != null) {
+      final rect = Rect.fromPoints(_marqueeStart!, d.localPosition);
+      final hit = _layout.objects
+          .where((o) => rect.overlaps(Rect.fromLTWH(o.x, o.y, o.width, o.height)))
+          .map((o) => o.id);
+      _setSelection({..._marqueeBase, ...hit});
+      setState(() => _marqueeRect = rect);
+      return;
+    }
     if (_drawStart == null) return;
     setState(() => _drawRect = Rect.fromPoints(_drawStart!, d.localPosition));
   }
 
   void _onCanvasPanEnd(DragEndDetails _) {
+    if (_marqueeStart != null) {
+      setState(() {
+        _marqueeStart = null;
+        _marqueeRect = null;
+      });
+      return;
+    }
     final rect = _drawRect;
     final start = _drawStart;
     setState(() {
@@ -943,6 +1069,15 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _lastTapObjectId = obj.id;
     _lastTapTime = now;
     if (_editingTextObjectId != null && _editingTextObjectId != obj.id) _commitInlineEdit();
+    if (_isShiftHeld) {
+      _toggleInSelection(obj.id);
+      return;
+    }
+    if (_selectedIds.length > 1 && _selectedIds.contains(obj.id) && !isDoubleClick) {
+      // A plain click inside a group narrows the selection to that object.
+      setState(() => _selectedObjectId = obj.id);
+      return;
+    }
     setState(() => _selectedObjectId = obj.id);
     if (isDoubleClick) {
       if (_isButton(obj)) {
@@ -2454,7 +2589,6 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         ? SystemMouseCursors.basic
         : SystemMouseCursors.precise;
 
-    final totalHeight = _headerPart.height + _bodyPart.height + _footerPart.height;
 
     final canvas = MouseRegion(
       cursor: cursorForTool,
@@ -2496,12 +2630,18 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                             _activeTool != LayoutTool.format &&
                             _activeTool != LayoutTool.rotate) {
                           _placeObjectFromTool(details.localPosition);
-                        } else {
-                          setState(() => _selectedObjectId = null);
                         }
                       },
                       onTapUp: (details) {
-                        if (_isDrawingTool(_activeTool)) _placeObjectFromTool(details.localPosition);
+                        if (_isDrawingTool(_activeTool)) {
+                          _placeObjectFromTool(details.localPosition);
+                        } else if (!_isTabOrderMode && !_isShiftHeld) {
+                          // Deselect here, not in onTapDown: onTapDown also fires
+                          // (after the press deadline) when the click lands on an
+                          // object or a resize handle, which would drop the
+                          // selection mid-click and kill a handle drag.
+                          setState(() => _selectedObjectId = null);
+                        }
                       },
                       // Draw from the pointer-down point, not from where the drag slop was passed.
                       dragStartBehavior: DragStartBehavior.down,
@@ -2510,9 +2650,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                       onPanEnd: _onCanvasPanEnd,
                       child: Container(
                         width: _layout.width,
-                        height: math.max(600.0, totalHeight),
+                        height: _canvasHeight,
                         decoration: BoxDecoration(
-                          color: Colors.white,
                           border: Border.all(color: Colors.black38),
                           boxShadow: const [
                             BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4)),
@@ -2521,15 +2660,28 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
+                            Positioned.fill(child: LayoutBackgroundView(layout: _layout)),
                             if (_showGrid)
                               CustomPaint(
-                                size: Size(_layout.width, totalHeight),
+                                size: Size(_layout.width, _canvasHeight),
                                 painter: _GridPainter(isDark: false),
                               ),
                             // Part Boundaries & Draggable Dividers
                             ..._buildPartDividers(),
                             // Layout Objects
                             ..._layout.objects.map((obj) => _buildCanvasObject(context, obj)),
+                            if (_marqueeRect != null)
+                              Positioned.fromRect(
+                                rect: _marqueeRect!,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: const Color(0x141E88E5),
+                                      border: Border.all(color: const Color(0xFF1E88E5), width: 1),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             // Shape being drawn
                             if (_drawRect != null)
                               Positioned.fromRect(
@@ -2806,14 +2958,36 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // ─── Interactive Canvas Object with 8-Handle Resizing ──────────────────────
 
   Widget _buildCanvasObject(BuildContext context, LayoutObjectModel obj) {
-    final isSelected = obj.id == _selectedObjectId;
+    final selectedIds = _selectedIds;
+    final isSelected = selectedIds.contains(obj.id);
+    final showHandles = selectedIds.length == 1 && isSelected && !_isTabOrderMode && _editingTextObjectId != obj.id;
+    const pad = _handlePad;
 
+    // The outer box is larger than the object so the resize handles, which
+    // straddle its edge, stay inside the hit-testable area.
     return Positioned(
-      left: obj.x,
-      top: obj.y,
-      width: obj.width,
-      height: obj.height,
-      child: GestureDetector(
+      left: obj.x - pad,
+      top: obj.y - pad,
+      width: obj.width + 2 * pad,
+      height: obj.height + 2 * pad,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            left: pad,
+            top: pad,
+            width: obj.width,
+            height: obj.height,
+            child: _buildCanvasObjectBody(context, obj, isSelected),
+          ),
+          if (showHandles) ..._buildEightResizeHandles(obj),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCanvasObjectBody(BuildContext context, LayoutObjectModel obj, bool isSelected) {
+    return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _onObjectTap(obj),
         onSecondaryTapDown: (d) => _showObjectContextMenu(obj, d.globalPosition),
@@ -2821,26 +2995,32 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           if (_activeTool != LayoutTool.pointer || _editingTextObjectId == obj.id) return;
           _pushUndoState();
           _dragStart[obj.id] = details.globalPosition;
-          _objStartPos[obj.id] = Offset(obj.x, obj.y);
-          setState(() => _selectedObjectId = obj.id);
+          _objStartPos.clear();
+          if (!_selectedIds.contains(obj.id)) setState(() => _selectedObjectId = obj.id);
+          for (final o in _layout.objects.where((o) => _selectedIds.contains(o.id) && !o.isLocked)) {
+            _objStartPos[o.id] = Offset(o.x, o.y);
+          }
         },
         onPanUpdate: (details) {
           if (_activeTool != LayoutTool.pointer || _editingTextObjectId == obj.id) return;
           final start = _dragStart[obj.id];
-          final startPos = _objStartPos[obj.id];
-          if (start == null || startPos == null) return;
+          if (start == null || _objStartPos.isEmpty) return;
           final delta = details.globalPosition - start;
-          final newX = _snap((startPos.dx + delta.dx).clamp(0.0, _layout.width - obj.width));
-          final newY = _snap((startPos.dy + delta.dy).clamp(0.0, 3000.0));
           setState(() {
             _layout = _layout.copyWith(
-              objects: _layout.objects.map((o) => o.id == obj.id ? o.copyWith(x: newX, y: newY) : o).toList(),
+              objects: _layout.objects.map((o) {
+                final startPos = _objStartPos[o.id];
+                if (startPos == null) return o;
+                final newX = _snap((startPos.dx + delta.dx).clamp(0.0, math.max(0.0, _layout.width - o.width)));
+                final newY = _snap((startPos.dy + delta.dy).clamp(0.0, 3000.0));
+                return o.copyWith(x: newX, y: newY);
+              }).toList(),
             );
           });
         },
         onPanEnd: (_) {
           if (_dragStart.remove(obj.id) == null) return;
-          _objStartPos.remove(obj.id);
+          _objStartPos.clear();
           _markLayoutDirty();
         },
         child: Stack(
@@ -2898,11 +3078,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               ),
             // Tab order badge
             if (_isTabOrderMode && obj.isTabStop) _buildTabOrderBadge(obj),
-            // 8 Resize Handles when selected
-            if (isSelected && !_isTabOrderMode && _editingTextObjectId != obj.id) ..._buildEightResizeHandles(obj),
           ],
         ),
-      ),
     );
   }
 
@@ -2987,43 +3164,44 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   List<Widget> _buildEightResizeHandles(LayoutObjectModel obj) {
-    const handleSize = 8.0;
+    const handleSize = 10.0;
     const half = handleSize / 2;
+    const pad = _handlePad;
 
     Widget handle(_ResizeHandle handleType, Alignment alignment, MouseCursor cursor) {
       double? left, right, top, bottom;
       switch (handleType) {
         case _ResizeHandle.topLeft:
-          left = -half;
-          top = -half;
+          left = pad - half;
+          top = pad - half;
           break;
         case _ResizeHandle.topCenter:
-          left = obj.width / 2 - half;
-          top = -half;
+          left = pad + obj.width / 2 - half;
+          top = pad - half;
           break;
         case _ResizeHandle.topRight:
-          right = -half;
-          top = -half;
+          right = pad - half;
+          top = pad - half;
           break;
         case _ResizeHandle.middleRight:
-          right = -half;
-          top = obj.height / 2 - half;
+          right = pad - half;
+          top = pad + obj.height / 2 - half;
           break;
         case _ResizeHandle.bottomRight:
-          right = -half;
-          bottom = -half;
+          right = pad - half;
+          bottom = pad - half;
           break;
         case _ResizeHandle.bottomCenter:
-          left = obj.width / 2 - half;
-          bottom = -half;
+          left = pad + obj.width / 2 - half;
+          bottom = pad - half;
           break;
         case _ResizeHandle.bottomLeft:
-          left = -half;
-          bottom = -half;
+          left = pad - half;
+          bottom = pad - half;
           break;
         case _ResizeHandle.middleLeft:
-          left = -half;
-          top = obj.height / 2 - half;
+          left = pad - half;
+          top = pad + obj.height / 2 - half;
           break;
       }
 
@@ -3381,7 +3559,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
           Expanded(
             child: sel == null
-                ? _buildEmptyInspector(context)
+                ? _buildLayoutInspector(context, isDark)
                 : _buildActiveInspectorTab(context, sel, isDark),
           ),
         ],
@@ -3415,59 +3593,211 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     );
   }
 
-  Widget _buildEmptyInspector(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+  /// Shown in the inspector when no object is selected: the properties of
+  /// the layout itself.
+  Widget _buildLayoutInspector(BuildContext context, bool isDark) {
+    final bgImage = _layout.backgroundImage;
+    return ListView(
+      padding: const EdgeInsets.all(12),
+      children: [
+        Row(
           children: [
-            const Icon(Icons.touch_app_outlined, size: 36, color: Colors.grey),
-            const SizedBox(height: 12),
-            const Text('No Object Selected', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-            const SizedBox(height: 6),
-            const Text(
-              'Click any element on the canvas to inspect its geometry, styling, data binding, and typography.\n\nOr drag parts divider lines to adjust Header, Body, and Footer sizes.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 11),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E88E5).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text('LAYOUT',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Color(0xFF1E88E5))),
             ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.aspect_ratio, size: 14),
-              label: const Text('Layout Width Setup', style: TextStyle(fontSize: 11)),
-              onPressed: () => _showLayoutWidthDialog(context),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(_layout.name,
+                  overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 6),
+        const Text('Click an object on the canvas to inspect it instead.',
+            style: TextStyle(color: Colors.grey, fontSize: 10)),
+        const Divider(height: 24),
+
+        _inspectorSectionTitle('LAYOUT SIZE'),
+        Row(
+          children: [
+            _numField('Width', _layout.width, (v) {
+              if (v < 200) return;
+              _editLayout((l) => l.copyWith(width: v.roundToDouble()));
+            }, objectId: 'layout'),
+            const SizedBox(width: 8),
+            _numField('Height', _layout.height, (v) => _setLayoutHeight(v.roundToDouble()), objectId: 'layout'),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            _numField('Header', _headerPart.height, (v) => _setPartHeight('header', v), objectId: 'layout'),
+            const SizedBox(width: 8),
+            _numField('Body', _bodyPart.height, (v) => _setPartHeight('body', v), objectId: 'layout'),
+            const SizedBox(width: 8),
+            _numField('Footer', _footerPart.height, (v) => _setPartHeight('footer', v), objectId: 'layout'),
+          ],
+        ),
+        const SizedBox(height: 4),
+        const Text('The layout ends at the bottom of the footer. Height changes the body.',
+            style: TextStyle(color: Colors.grey, fontSize: 10)),
+
+        const Divider(height: 24),
+        _inspectorSectionTitle('BACKGROUND COLOR'),
+        _colorPicker(
+          key: 'layout-bg',
+          ownerId: _layout.id,
+          current: _layout.backgroundColor,
+          allowNone: true,
+          onPick: (c) => _editLayout(
+              (l) => c == null ? l.copyWith(clearBackgroundColor: true) : l.copyWith(backgroundColor: c)),
+        ),
+
+        const Divider(height: 24),
+        _inspectorSectionTitle('BACKGROUND PICTURE'),
+        if (bgImage != null) ...[
+          Row(
+            children: [
+              const Icon(Icons.image_outlined, size: 14, color: Colors.grey),
+              const SizedBox(width: 6),
+              Expanded(child: Text(bgImage.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11))),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _inspectorDropdown<String>(
+            label: 'Fit',
+            value: const {'cover', 'contain', 'fill', 'tile'}.contains(bgImage.fit) ? bgImage.fit : 'cover',
+            items: const {'cover': 'Fill the layout (crop)', 'contain': 'Fit inside', 'fill': 'Stretch', 'tile': 'Tile'},
+            onChanged: (v) => _editLayout((l) => l.copyWith(backgroundImage: l.backgroundImage?.copyWith(fit: v))),
+          ),
+          const SizedBox(height: 8),
+        ],
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            _actionBtn(Icons.image_outlined, bgImage == null ? 'Choose Picture...' : 'Replace...', _pickBackgroundImage),
+            if (bgImage != null)
+              _actionBtn(Icons.delete_outline, 'Remove', () => _editLayout((l) => l.copyWith(clearBackgroundImage: true))),
+          ],
+        ),
+
+        const Divider(height: 24),
+        _inspectorSectionTitle('SCRIPT TRIGGERS'),
+        FutureBuilder<List<ScriptModel>>(
+          future: _scriptsFuture ??= widget.apiClient.listScripts().catchError((_) => <ScriptModel>[]),
+          builder: (context, snap) {
+            final scripts = snap.data ?? const <ScriptModel>[];
+            Widget trigger(String label, ButtonActionModel? current, void Function(ScriptModel?) onPick) {
+              final ids = scripts.map((s) => s.id).toSet();
+              final value = current?.scriptId != null && ids.contains(current!.scriptId) ? current.scriptId! : '';
+              return _inspectorDropdown<String>(
+                label: label,
+                value: value,
+                items: {
+                  '': snap.connectionState == ConnectionState.waiting ? 'Loading scripts...' : '(None)',
+                  for (final sc in scripts) sc.id: sc.name,
+                  if (current?.scriptId != null && !ids.contains(current!.scriptId) && snap.hasData)
+                    current.scriptId!: '${current.scriptName ?? current.scriptId} (missing)',
+                },
+                onChanged: (id) => onPick(scripts.where((sc) => sc.id == id).firstOrNull),
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                trigger(
+                  'OnLayoutEnter',
+                  _layout.onLayoutEnter,
+                  (sc) => _editLayout((l) => sc == null
+                      ? l.copyWith(clearOnLayoutEnter: true)
+                      : l.copyWith(onLayoutEnter: ButtonActionModel.performScript(id: sc.id, name: sc.name))),
+                ),
+                const SizedBox(height: 8),
+                trigger(
+                  'OnLayoutExit',
+                  _layout.onLayoutExit,
+                  (sc) => _editLayout((l) => sc == null
+                      ? l.copyWith(clearOnLayoutExit: true)
+                      : l.copyWith(onLayoutExit: ButtonActionModel.performScript(id: sc.id, name: sc.name))),
+                ),
+                const SizedBox(height: 4),
+                const Text('Run in Browse mode when this layout is shown, and when you go to another layout.',
+                    style: TextStyle(color: Colors.grey, fontSize: 10)),
+              ],
+            );
+          },
+        ),
+
+        const Divider(height: 24),
+        _inspectorSectionTitle('TRANSITION EFFECT'),
+        _inspectorDropdown<String>(
+          label: 'When the layout is shown',
+          value: kLayoutTransitions.containsKey(_layout.transition) ? _layout.transition : 'none',
+          items: kLayoutTransitions,
+          onChanged: (v) => _editLayout((l) => l.copyWith(transition: v)),
+        ),
+      ],
     );
   }
 
-  Future<void> _showLayoutWidthDialog(BuildContext context) async {
-    final wCtrl = TextEditingController(text: _layout.width.round().toString());
-    final res = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Canvas Width Setup'),
-        content: TextField(
-          controller: wCtrl,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Width (pt)', border: OutlineInputBorder(), isDense: true),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Save')),
-        ],
+  Widget _inspectorDropdown<T>({
+    required String label,
+    required T value,
+    required Map<T, String> items,
+    required ValueChanged<T> onChanged,
+  }) {
+    return DropdownButtonFormField<T>(
+      key: ValueKey('${_layout.id}-dd-$label-$value'),
+      initialValue: value,
+      isDense: true,
+      isExpanded: true,
+      style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface),
+      decoration: InputDecoration(
+        labelText: label,
+        isDense: true,
+        border: const OutlineInputBorder(),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       ),
+      items: [
+        for (final e in items.entries)
+          DropdownMenuItem<T>(value: e.key, child: Text(e.value, overflow: TextOverflow.ellipsis)),
+      ],
+      onChanged: (v) {
+        if (v != null && v != value) onChanged(v);
+      },
     );
-    if (res == true) {
-      final w = double.tryParse(wCtrl.text);
-      if (w != null && w > 200) {
-        _pushUndoState();
-        setState(() => _layout = _layout.copyWith(width: w));
-        _markLayoutDirty();
-      }
+  }
+
+  /// Picks the picture drawn behind the whole layout.
+  Future<void> _pickBackgroundImage() async {
+    final picked = await SolutionStorageService.pickFile(allowedExtensions: _mediaExtensions['image']!);
+    if (picked == null || !mounted) return;
+    if (picked.bytes.length > LayoutDesignerWidget.maxMediaBytes) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('"${picked.name}" is ${(picked.bytes.length / 1048576).toStringAsFixed(1)} MB. '
+            'The limit for pictures embedded in a layout is ${LayoutDesignerWidget.maxMediaBytes ~/ 1048576} MB.'),
+        backgroundColor: Colors.red,
+      ));
+      return;
     }
+    final ext = picked.name.contains('.') ? picked.name.split('.').last.toLowerCase() : '';
+    _editLayout((l) => l.copyWith(
+          backgroundImage: LayoutMediaModel(
+            kind: 'image',
+            name: picked.name,
+            mimeType: _mimeFor(ext),
+            data: base64Encode(picked.bytes),
+            fit: l.backgroundImage?.fit ?? 'cover',
+          ),
+        ));
   }
 
   Widget _buildActiveInspectorTab(BuildContext context, LayoutObjectModel sel, bool isDark) {
@@ -3648,7 +3978,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           _inspectorSectionTitle('FILL COLOR'),
           _colorPicker(
             key: 'fill',
-            sel: sel,
+            ownerId: sel.id,
             current: sel.style.fillColor,
             allowNone: true,
             onPick: (c) => _editSelected((sel) => sel.copyWith(
@@ -3660,7 +3990,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         _inspectorSectionTitle(isLine ? 'LINE COLOR' : 'LINE (BORDER) COLOR'),
         _colorPicker(
           key: 'border',
-          sel: sel,
+          ownerId: sel.id,
           current: sel.style.borderColor,
           allowNone: !isLine,
           onPick: (c) => _editSelected((sel) => sel.copyWith(
@@ -3759,7 +4089,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   /// for "none" when [allowNone] is set.
   Widget _colorPicker({
     required String key,
-    required LayoutObjectModel sel,
+    required String ownerId,
     required String? current,
     required ValueChanged<String?> onPick,
     bool allowNone = false,
@@ -3802,7 +4132,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         ),
         const SizedBox(height: 8),
         _InspectorTextField(
-          key: ValueKey('${sel.id}-$key-hex'),
+          key: ValueKey('$ownerId-$key-hex'),
           value: current ?? '',
           label: 'Hex (#RRGGBB)',
           onSubmitted: (v) {
@@ -4076,7 +4406,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         _inspectorSectionTitle('TEXT COLOR'),
         _colorPicker(
           key: 'text',
-          sel: sel,
+          ownerId: sel.id,
           current: sel.style.textColor,
           allowNone: true,
           onPick: (c) => _editSelected((sel) => sel.copyWith(

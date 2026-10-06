@@ -397,6 +397,15 @@ class LayoutObjectModel {
   }
 }
 
+/// Effects played when a layout is shown in Browse mode.
+const kLayoutTransitions = <String, String>{
+  'none': 'None',
+  'fade': 'Fade in',
+  'slide_left': 'Slide from right',
+  'slide_up': 'Slide from bottom',
+  'zoom': 'Zoom in',
+};
+
 class LayoutDefinitionModel {
   final String id;
   final String name;
@@ -407,6 +416,21 @@ class LayoutDefinitionModel {
   final List<LayoutPartModel> parts;
   final List<LayoutObjectModel> objects;
 
+  /// Layout background (#RRGGBB); null = white.
+  final String? backgroundColor;
+
+  /// Picture drawn behind every object; its `fit` is `cover`, `contain`,
+  /// `fill` or `tile`.
+  final LayoutMediaModel? backgroundImage;
+
+  /// Script triggers: Perform Script actions run in Browse mode when the
+  /// layout is shown (OnLayoutEnter) or left for another layout (OnLayoutExit).
+  final ButtonActionModel? onLayoutEnter;
+  final ButtonActionModel? onLayoutExit;
+
+  /// Effect played when the layout is shown, a key of [kLayoutTransitions].
+  final String transition;
+
   const LayoutDefinitionModel({
     required this.id,
     required this.name,
@@ -416,7 +440,15 @@ class LayoutDefinitionModel {
     this.defaultView = 'form',
     this.parts = const [],
     this.objects = const [],
+    this.backgroundColor,
+    this.backgroundImage,
+    this.onLayoutEnter,
+    this.onLayoutExit,
+    this.transition = 'none',
   });
+
+  /// Total height of the layout: the sum of its parts (the footer ends it).
+  double get height => parts.fold<double>(0.0, (acc, p) => acc + p.height);
 
   factory LayoutDefinitionModel.defaultForTable(String toName, List<String> fieldNames) {
     final parts = [
@@ -488,6 +520,17 @@ class LayoutDefinitionModel {
       defaultView: json['default_view'] as String? ?? 'form',
       parts: rawParts.map((p) => LayoutPartModel.fromJson(p as Map<String, dynamic>)).toList(),
       objects: rawObjs.map((o) => LayoutObjectModel.fromJson(o as Map<String, dynamic>)).toList(),
+      backgroundColor: json['background_color'] as String?,
+      backgroundImage: json['background_image'] is Map
+          ? LayoutMediaModel.fromJson(Map<String, dynamic>.from(json['background_image'] as Map))
+          : null,
+      onLayoutEnter: json['on_layout_enter'] is Map
+          ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_enter'] as Map))
+          : null,
+      onLayoutExit: json['on_layout_exit'] is Map
+          ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_exit'] as Map))
+          : null,
+      transition: json['transition'] as String? ?? 'none',
     );
   }
 
@@ -500,6 +543,11 @@ class LayoutDefinitionModel {
         'default_view': defaultView,
         'parts': parts.map((p) => p.toJson()).toList(),
         'objects': objects.map((o) => o.toJson()).toList(),
+        if (backgroundColor != null) 'background_color': backgroundColor,
+        if (backgroundImage != null) 'background_image': backgroundImage!.toJson(),
+        if (onLayoutEnter != null) 'on_layout_enter': onLayoutEnter!.toJson(),
+        if (onLayoutExit != null) 'on_layout_exit': onLayoutExit!.toJson(),
+        if (transition != 'none') 'transition': transition,
       };
 
   LayoutDefinitionModel copyWith({
@@ -511,6 +559,15 @@ class LayoutDefinitionModel {
     String? defaultView,
     List<LayoutPartModel>? parts,
     List<LayoutObjectModel>? objects,
+    String? backgroundColor,
+    bool clearBackgroundColor = false,
+    LayoutMediaModel? backgroundImage,
+    bool clearBackgroundImage = false,
+    ButtonActionModel? onLayoutEnter,
+    bool clearOnLayoutEnter = false,
+    ButtonActionModel? onLayoutExit,
+    bool clearOnLayoutExit = false,
+    String? transition,
   }) {
     return LayoutDefinitionModel(
       id: id ?? this.id,
@@ -521,6 +578,11 @@ class LayoutDefinitionModel {
       defaultView: defaultView ?? this.defaultView,
       parts: parts ?? this.parts,
       objects: objects ?? this.objects,
+      backgroundColor: clearBackgroundColor ? null : (backgroundColor ?? this.backgroundColor),
+      backgroundImage: clearBackgroundImage ? null : (backgroundImage ?? this.backgroundImage),
+      onLayoutEnter: clearOnLayoutEnter ? null : (onLayoutEnter ?? this.onLayoutEnter),
+      onLayoutExit: clearOnLayoutExit ? null : (onLayoutExit ?? this.onLayoutExit),
+      transition: transition ?? this.transition,
     );
   }
 }

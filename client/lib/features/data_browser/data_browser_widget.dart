@@ -211,8 +211,30 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   void initState() {
     super.initState();
     _initFindControllers();
-    _fetchRecords();
+    _fetchRecords().then((_) {
+      if (mounted && widget.mode == OperationalMode.browse) _runLayoutTrigger(widget.layout?.onLayoutEnter);
+    });
     HardwareKeyboard.instance.addHandler(_handleRecordShortcut);
+  }
+
+  bool _runningLayoutTrigger = false;
+
+  /// Runs an OnLayoutEnter / OnLayoutExit script. A trigger started while
+  /// another one runs (e.g. the script itself goes to another layout) is
+  /// skipped, so layouts that switch to each other cannot loop forever.
+  Future<void> _runLayoutTrigger(ButtonActionModel? action) async {
+    if (action == null || _runningLayoutTrigger) return;
+    _runningLayoutTrigger = true;
+    try {
+      final result = await LayoutActionRunner(apiClient: widget.apiClient, host: this).run(action);
+      if (!result.completed && mounted && result.message != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.message!), backgroundColor: Colors.orange.shade800),
+        );
+      }
+    } finally {
+      _runningLayoutTrigger = false;
+    }
   }
 
   /// Cmd/Ctrl + Up / Down moves to the previous / next record in Browse
@@ -242,6 +264,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         oldWidget.layout?.id != widget.layout?.id ||
         oldWidget.layout?.objects.length != widget.layout?.objects.length ||
         oldWidget.mode != widget.mode;
+    if (oldWidget.layout?.id != widget.layout?.id && widget.mode == OperationalMode.browse) {
+      final exit = oldWidget.layout?.onLayoutExit;
+      final enter = widget.layout?.onLayoutEnter;
+      if (exit != null || enter != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) async {
+          await _runLayoutTrigger(exit);
+          if (mounted) await _runLayoutTrigger(enter);
+        });
+      }
+    }
     if (oldWidget.table.id != widget.table.id || columnsChanged || layoutChanged) {
       _initFindControllers();
       _rebuildFieldControllers();
@@ -1022,20 +1054,25 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         ? _records[_currentIndex]
         : <String, dynamic>{};
 
-    // Calculate canvas dimensions
-    double maxObjY = 300.0;
+    // The canvas has the layout's size: it ends at the bottom of the footer
+    // (or of an object placed below it). Layouts without parts fit their objects.
+    double maxObjY = 0.0;
     for (final obj in layout.objects) {
       final bottom = obj.y + obj.height;
       if (bottom > maxObjY) maxObjY = bottom;
     }
-    final totalPartsHeight = layout.parts.fold<double>(0.0, (acc, p) => acc + p.height);
-    final canvasHeight = math.max(math.max(totalPartsHeight, maxObjY + 60.0), 520.0);
-    final canvasWidth = math.max(layout.width, 760.0);
+    final canvasHeight =
+        layout.height > 0 ? math.max(layout.height, maxObjY) : math.max(maxObjY + 60.0, 520.0);
+    final canvasWidth = layout.width;
+    final hasCustomBackground = layout.backgroundColor != null || layout.backgroundImage != null;
     final tabRank = {
       for (final (i, o) in sortLayoutTabStops(layout.objects.where((o) => o.isTabStop)).indexed) o.id: i + 1,
     };
 
-    return SingleChildScrollView(
+    return LayoutEntryTransition(
+      key: ValueKey('layout-entry-${layout.id}'),
+      effect: layout.transition,
+      child: SingleChildScrollView(
       scrollDirection: Axis.vertical,
       padding: const EdgeInsets.all(20),
       child: Center(
@@ -1127,6 +1164,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               Container(
                 width: canvasWidth,
                 height: canvasHeight,
+                clipBehavior: hasCustomBackground ? Clip.antiAlias : Clip.none,
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF161B22) : Colors.white,
                   borderRadius: BorderRadius.circular(8),
@@ -1147,6 +1185,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
+                      if (hasCustomBackground) Positioned.fill(child: LayoutBackgroundView(layout: layout)),
                       // Subtle part boundaries
                       ..._buildPartDividers(layout, canvasWidth, isDark),
 
@@ -1172,6 +1211,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             ],
           ),
         ),
+      ),
       ),
     );
   }

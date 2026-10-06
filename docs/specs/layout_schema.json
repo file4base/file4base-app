@@ -31,9 +31,52 @@
       "enum": ["form", "list", "table"],
       "default": "form"
     },
+    "background_color": {
+      "type": "string",
+      "description": "Layout background as #RRGGBB. Absent = white."
+    },
+    "background_image": {
+      "type": "object",
+      "description": "Picture drawn behind every object of the layout. Stored inline as base64 (max 2 MB) or referenced by URL.",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["image"] },
+        "name": { "type": "string" },
+        "mime_type": { "type": "string" },
+        "data": { "type": "string", "contentEncoding": "base64" },
+        "url": { "type": "string" },
+        "fit": { "type": "string", "enum": ["cover", "contain", "fill", "tile"], "default": "cover" }
+      }
+    },
+    "on_layout_enter": {
+      "type": "object",
+      "description": "Script trigger run in Browse mode when the layout is shown. Same shape as a button action with type perform_script.",
+      "properties": {
+        "type": { "type": "string", "enum": ["perform_script"] },
+        "script_id": { "type": "string" },
+        "script_name": { "type": "string" },
+        "parameter": { "type": "string" }
+      }
+    },
+    "on_layout_exit": {
+      "type": "object",
+      "description": "Script trigger run in Browse mode when another layout replaces this one. Same shape as on_layout_enter.",
+      "properties": {
+        "type": { "type": "string", "enum": ["perform_script"] },
+        "script_id": { "type": "string" },
+        "script_name": { "type": "string" },
+        "parameter": { "type": "string" }
+      }
+    },
+    "transition": {
+      "type": "string",
+      "description": "Effect played when the layout is shown in Browse mode.",
+      "enum": ["none", "fade", "slide_left", "slide_up", "zoom"],
+      "default": "none"
+    },
     "parts": {
       "type": "array",
-      "description": "List of structural layout parts dividing the canvas vertically.",
+      "description": "List of structural layout parts dividing the canvas vertically. The layout height is the sum of the part heights: the layout ends at the bottom of the footer.",
       "items": {
         "type": "object",
         "required": ["id", "type", "height"],
