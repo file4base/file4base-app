@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-06
+
 ### Changed
 - Browse mode creates a new record on the server when it is committed (leaving it, New Record again, Commit Records), like FileMaker, instead of storing an empty record at once: validation rules apply to the record as a whole, fields left empty get their auto-enter values, and a rejected record stays open with the reason. Reverting or deleting an uncommitted new record discards it.
 - Solution files follow a versioned format shared by the server and the client ([docs/specs/solution_bundle_format.md](docs/specs/solution_bundle_format.md), version 2.0), checked by golden files that each side writes and the other reads ([#5](https://github.com/file4base/file4base-app/issues/5)). File > Save, Save As and Save a Copy now ask the server for the file (`POST /api/v1/solutions/export`), so a saved file is always one that File > Open restores; before, the client wrote its own format, which the server could not import. Files written by the 1.0 client and solution files exported by 1.0 servers are still read.
