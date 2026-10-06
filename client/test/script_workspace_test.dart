@@ -294,16 +294,16 @@ void main() {
       final posted = <String>[];
       await openWorkspace(tester, ApiClient(baseUrl: 'http://localhost', httpClient: fakeServer(stored, posted)));
 
-      await tester.tap(find.text('Guión').first); // new script
+      await tester.tap(find.text('Script').first); // new script
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Guardar'));
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       final createdFirstSave = posted.length;
       expect(createdFirstSave, greaterThan(0));
 
-      await tester.tap(find.text('Guión').first); // one more script
+      await tester.tap(find.text('Script').first); // one more script
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Guardar'));
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect(posted.length, createdFirstSave + 1, reason: 'only the new script is created on the second save');
       expect(stored.length, posted.length);
@@ -314,13 +314,13 @@ void main() {
       final posted = <String>[];
       await openWorkspace(tester, ApiClient(baseUrl: 'http://localhost', httpClient: fakeServer(stored, posted)));
 
-      await tester.tap(find.text('Guión').first);
+      await tester.tap(find.text('Script').first);
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Cerrar ventana'));
+      await tester.tap(find.byTooltip('Close window'));
       await tester.pumpAndSettle();
       expect(find.text('Unsaved scripts'), findsOneWidget);
 
-      await tester.tap(find.text('Save'));
+      await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('Save')));
       await tester.pumpAndSettle();
       expect(posted, isNotEmpty);
       expect(find.byType(ScriptWorkspaceDialog), findsNothing);

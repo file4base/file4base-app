@@ -141,6 +141,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   bool _isToolbarVisible = true;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
   final GlobalKey<LayoutDesignerWidgetState> _layoutDesignerKey = GlobalKey<LayoutDesignerWidgetState>();
+  LayoutPreviewWidgetState? _previewState;
   int _currentRecordIndex = 0;
   int _totalRecords = 0;
   bool _isFindOmit = false;
@@ -1196,11 +1197,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
   }
 
-  void _handlePrint() {
+  /// File > Print: prints the page shown in Preview mode (switching to it
+  /// first), as a PDF of the Page Setup paper size.
+  Future<void> _handlePrint() async {
     if (ref.read(operationalModeProvider) != OperationalMode.preview) {
       _changeMode(OperationalMode.preview);
     }
-    SolutionStorageService.triggerPrint();
+    // Wait for the preview to load its records and lay out the sheet.
+    for (var i = 0; i < 50 && (_previewState == null || !_previewState!.isReady); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    await _previewState?.printPages(allRecords: false);
   }
 
   Future<void> _handleQuit() async {
@@ -1976,6 +1983,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           pageSetup: _pageSetup,
           onPageSetup: _handlePageSetup,
           currentUserName: _currentUser?.username,
+          onAttach: (state) => _previewState = state,
         );
     }
   }

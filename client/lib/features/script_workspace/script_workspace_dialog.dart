@@ -923,7 +923,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   const SizedBox(width: 12),
                   IconButton(
                     icon: Icon(Icons.close, color: theme.textSecondary, size: 20),
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: _close,
                     tooltip: 'Close window',
                     splashRadius: 18,
                   ),

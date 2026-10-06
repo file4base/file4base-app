@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/page_setup_model.dart';
-import '../../core/services/solution_storage.dart';
 import 'layout_object_visuals.dart';
+import 'layout_print_service.dart';
 import 'models/layout_definition.dart';
 
 class LayoutPreviewWidget extends StatefulWidget {
@@ -13,6 +15,10 @@ class LayoutPreviewWidget extends StatefulWidget {
   final VoidCallback? onPageSetup;
   final String? currentUserName;
 
+  /// Receives this preview's state while it is on screen (null when it
+  /// goes away), so File > Print can print the previewed page.
+  final ValueChanged<LayoutPreviewWidgetState?>? onAttach;
+
   const LayoutPreviewWidget({
     super.key,
     required this.table,
@@ -21,13 +27,20 @@ class LayoutPreviewWidget extends StatefulWidget {
     this.pageSetup = const PageSetupModel(),
     this.onPageSetup,
     this.currentUserName,
+    this.onAttach,
   });
 
   @override
-  State<LayoutPreviewWidget> createState() => _LayoutPreviewWidgetState();
+  State<LayoutPreviewWidget> createState() => LayoutPreviewWidgetState();
 }
 
-class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
+class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
+  /// The printable sheet (paper with margins), captured for printing.
+  final GlobalKey _sheetKey = GlobalKey();
+  bool _isPrinting = false;
+
+  /// Whether the records are loaded and the sheet can be printed.
+  bool get isReady => !_isLoading && _sheetKey.currentContext != null;
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
   int _currentRecordIndex = 0;
@@ -35,7 +48,14 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
   @override
   void initState() {
     super.initState();
+    widget.onAttach?.call(this);
     _fetchRecords();
+  }
+
+  @override
+  void dispose() {
+    widget.onAttach?.call(null);
+    super.dispose();
   }
 
   @override
@@ -60,6 +80,55 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Prints (or saves as PDF) the previewed sheet: the current record, or
+  /// every record when [allRecords] is set. Each record starts a new sheet
+  /// of the Page Setup paper size.
+  Future<void> printPages({required bool allRecords, bool saveAsPdf = false}) async {
+    if (_isPrinting) return;
+    setState(() => _isPrinting = true);
+    final startIndex = _currentRecordIndex;
+    try {
+      final doc = pw.Document(title: widget.layout.name, creator: 'File4Base');
+      final indexes = allRecords && _records.isNotEmpty
+          ? List<int>.generate(_records.length, (i) => i)
+          : [_currentRecordIndex];
+      for (final i in indexes) {
+        if (i != _currentRecordIndex) {
+          setState(() => _currentRecordIndex = i);
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        final sheet = await LayoutPrintService.capture(_sheetKey);
+        await LayoutPrintService.addSheet(doc, sheet, widget.pageSetup);
+        sheet.dispose();
+      }
+      final bytes = await doc.save();
+      final name = '${widget.layout.name}${allRecords ? '' : ' - record ${startIndex + 1}'}'
+          .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      if (saveAsPdf) {
+        await Printing.sharePdf(bytes: bytes, filename: '$name.pdf');
+      } else {
+        await Printing.layoutPdf(
+          name: name,
+          format: LayoutPrintService.pageFormat(widget.pageSetup),
+          onLayout: (_) async => bytes,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not print: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _currentRecordIndex = startIndex.clamp(0, _records.isEmpty ? 0 : _records.length - 1);
+          _isPrinting = false;
+        });
+      }
     }
   }
 
@@ -133,13 +202,44 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                   onPressed: widget.onPageSetup,
                 ),
                 const SizedBox(width: 8),
-                FilledButton.tonalIcon(
-                  icon: const Icon(Icons.picture_as_pdf, size: 16),
-                  label: const Text('Export PDF / Print', style: TextStyle(fontSize: 12)),
-                  onPressed: () {
-                    SolutionStorageService.triggerPrint();
-                  },
-                ),
+                if (_isPrinting)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                else
+                  MenuAnchor(
+                    builder: (context, controller, _) => FilledButton.tonalIcon(
+                      icon: const Icon(Icons.print, size: 16),
+                      label: const Text('Print / Export PDF', style: TextStyle(fontSize: 12)),
+                      onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+                    ),
+                    menuChildren: [
+                      MenuItemButton(
+                        leadingIcon: const Icon(Icons.print, size: 16),
+                        onPressed: () => printPages(allRecords: false),
+                        child: const Text('Print this page...'),
+                      ),
+                      if (_records.length > 1)
+                        MenuItemButton(
+                          leadingIcon: const Icon(Icons.library_books_outlined, size: 16),
+                          onPressed: () => printPages(allRecords: true),
+                          child: Text('Print all ${_records.length} records...'),
+                        ),
+                      const Divider(height: 1),
+                      MenuItemButton(
+                        leadingIcon: const Icon(Icons.picture_as_pdf, size: 16),
+                        onPressed: () => printPages(allRecords: false, saveAsPdf: true),
+                        child: const Text('Save this page as PDF'),
+                      ),
+                      if (_records.length > 1)
+                        MenuItemButton(
+                          leadingIcon: const Icon(Icons.picture_as_pdf_outlined, size: 16),
+                          onPressed: () => printPages(allRecords: true, saveAsPdf: true),
+                          child: Text('Save all ${_records.length} records as PDF'),
+                        ),
+                    ],
+                  ),
               ],
             ),
           ),
@@ -163,6 +263,15 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                       BoxShadow(color: Colors.black26, blurRadius: 16, offset: Offset(0, 6)),
                     ],
                     border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  // Only this sheet is printed: the boundary excludes the shadow,
+                  // the border and the rest of the window.
+                  child: RepaintBoundary(
+                  key: _sheetKey,
+                  child: Container(
+                  color: Colors.white,
+                  constraints: BoxConstraints(
+                    minHeight: widget.pageSetup.totalHeightPt.clamp(600.0, 1600.0) - 2,
                   ),
                   padding: EdgeInsets.fromLTRB(
                     widget.pageSetup.marginLeftPt.clamp(10.0, 100.0),
@@ -194,6 +303,8 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                       _buildFooter(context),
                     ],
                   ),
+                  ),
+                  ),
                 ),
               ),
             ),
@@ -216,8 +327,11 @@ class _LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     final canvasHeight = maxObjY + 40.0;
     final canvasWidth = widget.layout.width;
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    // A layout wider than the printable width is scaled down to fit the sheet
+    // (fit to page width), so nothing is cut off on screen or on paper.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.topLeft,
       child: Container(
         width: canvasWidth,
         height: canvasHeight,
