@@ -129,7 +129,7 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
           if (widget.mode == OperationalMode.browse)
             const SizedBox.shrink()
           else if (widget.mode == OperationalMode.find)
-            _buildFindNavigator(context, isDark)
+            _buildFindNavigator(context, isDark, borderColor)
           else if (widget.mode == OperationalMode.layout)
             _buildLayoutToolbox(context, isDark, borderColor)
           else
@@ -143,8 +143,15 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
 
   // ─── Top Layout Selector ───────────────────────────────────────────────────
 
-  Widget _buildLayoutSelector(
-      BuildContext context, bool isDark, Color borderColor) {
+  /// A panel of the sidebar: the same card every mode uses, so the sections
+  /// line up whatever mode is active.
+  Widget _sidebarCard({
+    required bool isDark,
+    required Color borderColor,
+    required IconData icon,
+    required String title,
+    required List<Widget> children,
+  }) {
     return Container(
       margin: const EdgeInsets.fromLTRB(6, 6, 6, 0),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -167,14 +174,14 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
           Row(
             children: [
               Icon(
-                Icons.view_quilt,
+                icon,
                 size: 13,
                 color: isDark ? const Color(0xFF90CAF9) : const Color(0xFF1E88E5),
               ),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
-                  'LAYOUT',
+                  title,
                   style: TextStyle(
                     fontSize: 9,
                     fontWeight: FontWeight.bold,
@@ -186,6 +193,20 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
             ],
           ),
           const SizedBox(height: 2),
+          ...children,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLayoutSelector(
+      BuildContext context, bool isDark, Color borderColor) {
+    return _sidebarCard(
+      isDark: isDark,
+      borderColor: borderColor,
+      icon: Icons.view_quilt,
+      title: 'LAYOUT',
+      children: [
           DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: widget.selectedLayout != null &&
@@ -288,81 +309,88 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
               },
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 
   // ─── Find Mode ───────────────────────────────────────────────────────────────
 
-  Widget _buildFindNavigator(BuildContext context, bool isDark) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          CustomPaint(
-            size: const Size(64, 48),
-            painter:
-                _File4BaseBookPainter(isDark: isDark, hasBookmark: true),
+  Widget _buildFindNavigator(
+      BuildContext context, bool isDark, Color borderColor) {
+    return _sidebarCard(
+      isDark: isDark,
+      borderColor: borderColor,
+      icon: Icons.manage_search,
+      title: 'FIND',
+      children: [
+        Text(
+          'Type what to match in each field.',
+          style: TextStyle(
+            fontSize: 9,
+            height: 1.25,
+            color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
           ),
-          const SizedBox(height: 6),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Text('Requests:',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-          ),
-          const Align(
-            alignment: Alignment.centerLeft,
-            child: Text('1',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              SizedBox(
-                height: 20,
-                width: 20,
-                child: Checkbox(
-                  value: widget.isFindOmit,
-                  onChanged: (val) =>
-                      widget.onToggleOmit?.call(val ?? false),
-                ),
+        ),
+        const SizedBox(height: 8),
+        // Omit: find the records that do NOT match the criteria
+        Tooltip(
+          message: 'Find the records that do not match the criteria',
+          child: InkWell(
+            onTap: widget.onToggleOmit == null
+                ? null
+                : () => widget.onToggleOmit!(!widget.isFindOmit),
+            borderRadius: BorderRadius.circular(3),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  SizedBox(
+                    height: 18,
+                    width: 18,
+                    child: Checkbox(
+                      value: widget.isFindOmit,
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onChanged: widget.onToggleOmit == null
+                          ? null
+                          : (val) => widget.onToggleOmit!(val ?? false),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Omit', style: TextStyle(fontSize: 11)),
+                  ),
+                ],
               ),
-              const SizedBox(width: 6),
-              const Text('Omit', style: TextStyle(fontSize: 11)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                backgroundColor: const Color(0xFF1E88E5),
-              ),
-              onPressed: widget.onPerformFind,
-              child: const Text('Find',
-                  style:
-                      TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             ),
           ),
-          const SizedBox(height: 6),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(vertical: 6),
-              ),
-              onPressed: widget.onShowAllRecords,
-              child:
-                  const Text('Cancel', style: TextStyle(fontSize: 11)),
-            ),
+        ),
+        const SizedBox(height: 8),
+        FilledButton(
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            backgroundColor: const Color(0xFF1E88E5),
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
           ),
-        ],
-      ),
+          onPressed: widget.onPerformFind,
+          child: const Text('Perform Find',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(height: 4),
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            side: BorderSide(color: borderColor),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+          ),
+          onPressed: widget.onShowAllRecords,
+          child: const Text('Cancel Find', style: TextStyle(fontSize: 11)),
+        ),
+        const SizedBox(height: 2),
+      ],
     );
   }
 
@@ -691,7 +719,6 @@ class _ToolDef {
 
 // ─── Painters ─────────────────────────────────────────────────────────────────
 
-/// Classic File4Base spiral-bound notebook / flip-book painter
 class _File4BaseBookPainter extends CustomPainter {
   final bool isDark;
   final bool hasBookmark;

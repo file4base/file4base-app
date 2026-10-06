@@ -1,0 +1,100 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart';
+import 'package:file4base_client/main.dart' show OperationalMode;
+
+final _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: const []);
+final _layouts = [
+  LayoutModel(id: 'l1', name: 'Contacts Form', tableOccurrenceId: 'o1', definition: const {}),
+];
+
+Future<_Probe> _pumpSidebar(WidgetTester tester, {bool omit = false}) async {
+  tester.view.physicalSize = const Size(900, 700);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  final probe = _Probe();
+  await tester.pumpWidget(MaterialApp(
+    home: Scaffold(
+      body: Row(children: [
+        File4BaseStatusSidebar(
+          layouts: _layouts,
+          selectedLayout: _layouts.first,
+          onLayoutSelected: (_) {},
+          tables: [_table],
+          selectedTable: _table,
+          onTableSelected: (_) {},
+          mode: OperationalMode.find,
+          currentRecordIndex: 0,
+          totalRecords: 3,
+          onPreviousRecord: () {},
+          onNextRecord: () {},
+          onGoToRecord: (_) {},
+          onManageDatabase: () {},
+          isFindOmit: omit,
+          onToggleOmit: (v) => probe.omitToggles.add(v),
+          onPerformFind: () => probe.finds++,
+          onShowAllRecords: () => probe.cancels++,
+        ),
+        const Expanded(child: SizedBox()),
+      ]),
+    ),
+  ));
+  await tester.pumpAndSettle();
+  return probe;
+}
+
+class _Probe {
+  final omitToggles = <bool>[];
+  int finds = 0;
+  int cancels = 0;
+}
+
+void main() {
+  testWidgets('the Find sidebar is a titled card aligned with the Layout card', (tester) async {
+    await _pumpSidebar(tester);
+    expect(tester.takeException(), isNull);
+
+    expect(find.text('FIND'), findsOneWidget);
+    // The Find panel uses the same card and margins as the Layout selector
+    final layoutCard = tester.getRect(find.ancestor(of: find.text('LAYOUT'), matching: find.byType(Container)).first);
+    final findCard = tester.getRect(find.ancestor(of: find.text('FIND'), matching: find.byType(Container)).first);
+    expect(findCard.left, layoutCard.left);
+    expect(findCard.right, layoutCard.right);
+    expect(findCard.top, greaterThan(layoutCard.bottom - 1));
+
+    // Every control sits inside the card
+    for (final label in ['Omit', 'Perform Find', 'Cancel Find']) {
+      final r = tester.getRect(find.text(label));
+      expect(findCard.contains(r.topLeft), isTrue, reason: '$label starts inside the card');
+      expect(findCard.contains(r.bottomRight), isTrue, reason: '$label ends inside the card');
+    }
+
+    // No fabricated request counter (there is only ever one find request)
+    expect(find.text('Requests:'), findsNothing);
+    expect(find.text('1'), findsNothing);
+  });
+
+  testWidgets('Omit toggles from the checkbox and from its label', (tester) async {
+    final probe = await _pumpSidebar(tester);
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Omit'));
+    await tester.pumpAndSettle();
+    expect(probe.omitToggles, [true, true], reason: 'the whole row is clickable');
+
+    final checked = await _pumpSidebar(tester, omit: true);
+    await tester.tap(find.text('Omit'));
+    await tester.pumpAndSettle();
+    expect(checked.omitToggles, [false]);
+  });
+
+  testWidgets('Perform Find and Cancel Find run their actions', (tester) async {
+    final probe = await _pumpSidebar(tester);
+    await tester.tap(find.text('Perform Find'));
+    await tester.tap(find.text('Cancel Find'));
+    await tester.pumpAndSettle();
+    expect(probe.finds, 1);
+    expect(probe.cancels, 1);
+  });
+}
