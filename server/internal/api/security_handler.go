@@ -106,7 +106,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName)
+	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName, user.Stamp)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, errors.New("failed creating session"))
 		return
@@ -264,6 +264,12 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			keep = auth.TokenFromContext(r.Context())
 		}
 		h.sessions.RevokeUser(sess.Database, id, keep)
+		if keep != "" {
+			// The session the user changed their password from stays valid.
+			if stamp, err := svc.CurrentAccountStamp(r.Context(), id); err == nil {
+				h.sessions.Restamp(keep, stamp)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

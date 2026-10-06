@@ -46,7 +46,7 @@ Every endpoint requires a session, except the health probes, Swagger UI, `POST /
 
 **A session is bound to one user and one database.** All schema, data, security and solution endpoints operate on the database the session signed in to. The server has no global "active database": two clients signed in to different databases never affect each other. A request that names another database (`?database=` or `X-Database-Name`) is rejected with `403`.
 
-Sessions live in server memory, expire after `SESSION_TTL` of inactivity (default `12h`) and do not survive a server restart. Changing a user's password or role, deactivating or deleting the user, or dropping the database revokes the affected sessions immediately.
+Sessions live in server memory, expire after `SESSION_TTL` of inactivity (default `12h`) and do not survive a server restart. Changing a user's password or role, deactivating or deleting the user, or dropping the database revokes the affected sessions immediately. Every request also checks that the account is still in the state it signed in with (same password, role and active state, and not deleted), so a session opened by a sign-in that was still in progress during such a change is rejected too. The session used to change one's own password stays valid.
 
 | Status | Meaning |
 |---|---|
@@ -425,6 +425,8 @@ To read every row, page with `limit=1000` and `sort_by=id` (a stable order), adv
 
 ### `POST /api/v1/data/{table}`
 Dynamically inserts a row into any table. Generates a UUID `id` if not provided.
+
+The fields' validation rules (`validation_rules`, set in the Fields dialog) are enforced on `POST` (every ruled field) and `PUT` (the fields being changed): not empty, unique, existing value, strict type (`Numeric Only`, `Date`, `4-Digit Year`, `Time of Day`, `Text Only`), range and maximum length, with the custom message when one is set. A broken rule answers `422 Unprocessable Entity` naming the field and the rule in `invalid_params`, and nothing is written. Unique rules are backed by a unique index on PostgreSQL, so concurrent duplicates cannot both succeed; a unique rule cannot be enabled while records already share a value. Data import applies the rules whose timing is "Always", not those for "Only during data entry"; malformed rules are rejected with `422` when saved.
 
 #### Request Body
 ```json

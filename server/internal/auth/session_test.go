@@ -12,7 +12,7 @@ import (
 func TestStore_CreateGetRevoke(t *testing.T) {
 	store := NewStore(time.Hour)
 
-	token, sess, err := store.Create("u1", "alice", RoleAdmin, "sales")
+	token, sess, err := store.Create("u1", "alice", RoleAdmin, "sales", "stamp")
 	require.NoError(t, err)
 	assert.Len(t, token, 64)
 	assert.Equal(t, "sales", sess.Database)
@@ -35,9 +35,9 @@ func TestStore_CreateGetRevoke(t *testing.T) {
 
 func TestStore_TokensAreUniqueAndNotStoredInClear(t *testing.T) {
 	store := NewStore(time.Hour)
-	t1, _, err := store.Create("u1", "alice", RoleUser, "db")
+	t1, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp")
 	require.NoError(t, err)
-	t2, _, err := store.Create("u1", "alice", RoleUser, "db")
+	t2, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp")
 	require.NoError(t, err)
 	assert.NotEqual(t, t1, t2)
 
@@ -52,7 +52,7 @@ func TestStore_ExpiryIsSliding(t *testing.T) {
 	current := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return current }
 
-	token, _, err := store.Create("u1", "alice", RoleUser, "db")
+	token, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp")
 	require.NoError(t, err)
 
 	current = current.Add(9 * time.Minute)
@@ -71,10 +71,10 @@ func TestStore_ExpiryIsSliding(t *testing.T) {
 
 func TestStore_RevokeUserAndDatabase(t *testing.T) {
 	store := NewStore(time.Hour)
-	a1, _, _ := store.Create("u1", "alice", RoleUser, "db1")
-	a2, _, _ := store.Create("u1", "alice", RoleUser, "db1")
-	b1, _, _ := store.Create("u2", "bob", RoleUser, "db1")
-	c1, _, _ := store.Create("u1", "alice", RoleUser, "db2")
+	a1, _, _ := store.Create("u1", "alice", RoleUser, "db1", "stamp")
+	a2, _, _ := store.Create("u1", "alice", RoleUser, "db1", "stamp")
+	b1, _, _ := store.Create("u2", "bob", RoleUser, "db1", "stamp")
+	c1, _, _ := store.Create("u1", "alice", RoleUser, "db2", "stamp")
 
 	store.RevokeUser("db1", "u1", a2)
 	_, ok := store.Get(a1)
@@ -106,4 +106,21 @@ func TestContextHelpers(t *testing.T) {
 	require.True(t, ok)
 	assert.True(t, sess.IsOwner())
 	assert.Equal(t, "tok", TokenFromContext(ctx))
+}
+
+func TestStore_KeepsAndRestampsTheAccountStamp(t *testing.T) {
+	store := NewStore(time.Hour)
+	token, sess, err := store.Create("u1", "alice", RoleUser, "db", "stamp-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Stamp != "stamp-1" {
+		t.Fatalf("stamp = %q", sess.Stamp)
+	}
+	store.Restamp(token, "stamp-2")
+	got, ok := store.Get(token)
+	if !ok || got.Stamp != "stamp-2" {
+		t.Fatalf("after Restamp: ok=%v stamp=%q", ok, got.Stamp)
+	}
+	store.Restamp("unknown-token", "x") // no effect, no panic
 }

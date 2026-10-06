@@ -2,7 +2,9 @@ package schema
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -37,6 +39,39 @@ type AuthUser struct {
 	Role        string                 `json:"role"`
 	IsActive    bool                   `json:"is_active"`
 	Permissions []UserLayoutPermission `json:"permissions"`
+	// Stamp identifies the account state the user signed in with (see
+	// AccountStamp); it is stored in the session, never sent to clients.
+	Stamp string `json:"-"`
+}
+
+// ErrAccountNotFound is returned when an account does not exist (any more).
+var ErrAccountNotFound = errors.New("account not found")
+
+// AccountStamp summarizes the security state of an account: its password
+// hash, role and active flag. Any change to them (password rotation, role
+// change, deactivation) changes the stamp, which invalidates the sessions
+// opened before the change.
+func AccountStamp(passwordHash, role string, isActive bool) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%t", passwordHash, role, isActive)))
+	return hex.EncodeToString(sum[:])
+}
+
+// CurrentAccountStamp returns the AccountStamp of an account as stored now,
+// or ErrAccountNotFound when it was deleted.
+func (s *Service) CurrentAccountStamp(ctx context.Context, userID string) (string, error) {
+	q := `SELECT password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE id = $1`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE id = ?`
+	}
+	var hash, role string
+	var active bool
+	if err := s.driver.DB().QueryRowContext(ctx, q, userID).Scan(&hash, &role, &active); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrAccountNotFound
+		}
+		return "", err
+	}
+	return AccountStamp(hash, role, active), nil
 }
 
 // Access levels a user can hold on a layout.
@@ -118,6 +153,7 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 		Role:        role,
 		IsActive:    isActive,
 		Permissions: perms,
+		Stamp:       AccountStamp(hash, role, isActive),
 	}, nil
 }
 

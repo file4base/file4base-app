@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -62,6 +63,20 @@ func (m *AuthMiddleware) attach(w http.ResponseWriter, r *http.Request) (*http.R
 		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Database Unavailable",
 			"the database bound to this session is not reachable")
 		return r, false, true
+	}
+
+	// The account must still be in the state the session was opened with:
+	// this rejects sessions of deleted, disabled, demoted or re-passworded
+	// accounts, including one created by a sign-in that raced a revocation.
+	stamp, err := schema.NewService(driver).CurrentAccountStamp(r.Context(), sess.UserID)
+	if err != nil && !errors.Is(err, schema.ErrAccountNotFound) {
+		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Database Unavailable",
+			"the account of this session could not be checked")
+		return r, false, true
+	}
+	if err != nil || stamp != sess.Stamp {
+		m.sessions.Revoke(token)
+		return r, false, false
 	}
 
 	ctx := auth.WithSession(r.Context(), sess)

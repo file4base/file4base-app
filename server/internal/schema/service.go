@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -368,6 +369,10 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 	if err := ValidateFieldOptions(col.DefaultValue); err != nil {
 		return nil, err
 	}
+	rules, err := validation.Parse(col.ValidationRules)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
+	}
 
 	// Retrieve target table name
 	db := s.driver.DB()
@@ -419,12 +424,61 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt); err != nil {
 		return nil, fmt.Errorf("failed registering column in sys_columns: %w", err)
 	}
+	if err := s.syncUniqueIndex(ctx, tx, tableName, col.Name, col.FieldType, rules); err != nil {
+		return nil, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
 	return &col, nil
+}
+
+// syncUniqueIndex creates or drops the unique index that backs a field's
+// "unique" validation rule, so two concurrent writes cannot both store the
+// same value (#15). Null and blank values are not indexed: an empty field is
+// only rejected by "not empty". PostgreSQL only; on other engines the rule
+// is checked by the data service alone.
+func (s *Service) syncUniqueIndex(ctx context.Context, db interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}, table, field string, fieldType dbal.AgnosticFieldType, rules *validation.Rules) error {
+	dialect := s.driver.Dialect()
+	if dialect.Engine() != dbal.EnginePostgres {
+		return nil
+	}
+	index := dialect.QuoteIdentifier(validation.UniqueIndexName(table, field))
+	if rules == nil || !rules.Unique {
+		_, err := db.ExecContext(ctx, "DROP INDEX IF EXISTS "+index)
+		return err
+	}
+	where := dialect.QuoteIdentifier(field) + " IS NOT NULL"
+	switch fieldType {
+	case dbal.FieldTypeNumber, dbal.FieldTypeDate, dbal.FieldTypeTimestamp, dbal.FieldTypeBoolean, dbal.FieldTypeContainer:
+	default:
+		where += " AND " + dialect.QuoteIdentifier(field) + " <> ''"
+	}
+	q := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (%s) WHERE %s",
+		index, dialect.QuoteIdentifier(table), dialect.QuoteIdentifier(field), where)
+	if _, err := db.ExecContext(ctx, q); err != nil {
+		return fmt.Errorf("%w: field %s cannot be unique: some records already share a value (%v)", ErrInvalidFieldOptions, field, err)
+	}
+	return nil
+}
+
+func (s *Service) syncUniqueIndexByColumnID(ctx context.Context, tableID, columnID string, rules *validation.Rules) error {
+	q := `SELECT t.name, c.name, c.field_type FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE c.id = $1 AND t.id = $2`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT t.name, c.name, c.field_type FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE c.id = ? AND t.id = ?`
+	}
+	var table, field, fieldType string
+	if err := s.driver.DB().QueryRowContext(ctx, q, columnID, tableID).Scan(&table, &field, &fieldType); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("column not found: %s", columnID)
+		}
+		return err
+	}
+	return s.syncUniqueIndex(ctx, s.driver.DB(), table, field, dbal.AgnosticFieldType(fieldType), rules)
 }
 
 // DeleteColumn removes a column from metadata and drops it from the physical table
@@ -498,6 +552,15 @@ type UpdateColumnOptions struct {
 func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID string, opts UpdateColumnOptions) (*ColumnMetadata, error) {
 	if opts.UpdateDefaultValue {
 		if err := ValidateFieldOptions(opts.DefaultValue); err != nil {
+			return nil, err
+		}
+	}
+	if opts.UpdateValidation {
+		rules, err := validation.Parse(opts.ValidationRules)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
+		}
+		if err := s.syncUniqueIndexByColumnID(ctx, tableID, columnID, rules); err != nil {
 			return nil, err
 		}
 	}

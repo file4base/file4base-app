@@ -7,11 +7,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 )
 
@@ -101,6 +103,15 @@ func (s *Service) tableFields(ctx context.Context, tableName string) (fieldSet, 
 	return fields, nil
 }
 
+// checker returns the validation rules of a table's fields.
+func (s *Service) checker(ctx context.Context, tableName string) (*validation.Checker, error) {
+	fields, err := validation.LoadFields(ctx, s.driver.DB(), s.driver.Dialect(), tableName)
+	if err != nil {
+		return nil, err
+	}
+	return &validation.Checker{Dialect: s.driver.Dialect(), DB: s.driver.DB(), Table: tableName, Fields: fields}, nil
+}
+
 // autoEnterConstants returns the constant auto-enter value of each field of
 // the table whose options (sys_columns.default_value) enable one.
 func (s *Service) autoEnterConstants(ctx context.Context, tableName string) (map[string]interface{}, error) {
@@ -153,6 +164,22 @@ func decodeContainerValues(fields fieldSet, tableName string, record map[string]
 	return nil
 }
 
+// selectList names the registered fields explicitly instead of SELECT *: only
+// catalog fields are returned, and a statement prepared before a field was
+// added is never reused with a different result shape (PostgreSQL rejects
+// that with "cached plan must not change result type").
+func selectList(dialect dbal.Dialect, fields fieldSet) string {
+	names := make([]string, 0, len(fields))
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for i, n := range names {
+		names[i] = dialect.QuoteIdentifier(n)
+	}
+	return strings.Join(names, ", ")
+}
+
 func checkField(fields fieldSet, tableName, fieldName string) error {
 	if _, ok := fields[fieldName]; !ok {
 		return fmt.Errorf("%w: %s.%s", ErrUnknownField, tableName, fieldName)
@@ -196,6 +223,15 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 		record["id"] = uuid.NewString()
 	}
 
+	// Validation rules of the Fields dialog (#15)
+	checker, err := s.checker(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	if err := checker.Check(ctx, fmt.Sprint(record["id"]), record, nil, true); err != nil {
+		return nil, err
+	}
+
 	dialect := s.driver.Dialect()
 	columns := make([]string, 0, len(record))
 	placeholders := make([]string, 0, len(record))
@@ -218,6 +254,9 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 
 	db := s.driver.DB()
 	if _, err := db.ExecContext(ctx, sqlQuery, values...); err != nil {
+		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {
+			return nil, validation.UniqueViolation(tableName, f)
+		}
 		return nil, fmt.Errorf("failed inserting into %s: %w", tableName, err)
 	}
 
@@ -232,7 +271,8 @@ func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[
 	}
 	dialect := s.driver.Dialect()
 	sqlQuery := fmt.Sprintf(
-		"SELECT * FROM %s WHERE %s = %s LIMIT 1",
+		"SELECT %s FROM %s WHERE %s = %s LIMIT 1",
+		selectList(dialect, fields),
 		dialect.QuoteIdentifier(tableName),
 		dialect.QuoteIdentifier("id"),
 		dialect.Placeholder(1),
@@ -273,6 +313,18 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	if err := decodeContainerValues(fields, tableName, updates); err != nil {
 		return nil, err
 	}
+	// The rules of the fields being changed apply to their new values (#15)
+	checker, err := s.checker(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	changed := make(map[string]bool, len(updates))
+	for col := range updates {
+		changed[col] = true
+	}
+	if err := checker.Check(ctx, id, updates, changed, true); err != nil {
+		return nil, err
+	}
 
 	dialect := s.driver.Dialect()
 	setClauses := make([]string, 0, len(updates))
@@ -297,6 +349,9 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	db := s.driver.DB()
 	res, err := db.ExecContext(ctx, sqlQuery, values...)
 	if err != nil {
+		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {
+			return nil, validation.UniqueViolation(tableName, f)
+		}
 		return nil, fmt.Errorf("failed updating %s: %w", tableName, err)
 	}
 
@@ -368,7 +423,8 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 	}
 
 	sqlQuery := fmt.Sprintf(
-		"SELECT * FROM %s %s LIMIT %d OFFSET %d",
+		"SELECT %s FROM %s %s LIMIT %d OFFSET %d",
+		selectList(dialect, fields),
 		dialect.QuoteIdentifier(tableName),
 		orderClause,
 		limit,
@@ -600,7 +656,8 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 
 	sqlQuery := fmt.Sprintf(
-		"SELECT * FROM %s %s LIMIT %d OFFSET %d",
+		"SELECT %s FROM %s %s LIMIT %d OFFSET %d",
+		selectList(dialect, fields),
 		dialect.QuoteIdentifier(tableName),
 		whereClause,
 		limit,

@@ -91,6 +91,14 @@ only `docker compose down -v` or `docker volume rm` delete it.
 ./scripts/backup_postgres.sh restore backups/<file>.sql.gz
 ```
 
+A restore checks the archive before stopping anything and stops at the first
+SQL error. Its exit status says what happened: `0` restored (the API is
+started again if it was running), `1` nothing was changed, `2` the restore
+failed part-way (the databases may be partially restored; the API is left
+stopped until a backup is restored again), `3` restored but the API could not
+be started. `RESTORE_CONFIRM=restore` skips the confirmation prompt;
+`scripts/tests/backup_postgres_test.sh` tests these outcomes.
+
 ### 2. Standalone Desktop Client (macOS / Windows / Linux)
 The native desktop client runs locally on developer workstations (including Apple Silicon M-series Macs, Windows, and Linux):
 - Connects through configurable port (default: `http://localhost:8080`), with interactive Host & Port Settings dialog (accessible by clicking the server status pill in the AppBar).

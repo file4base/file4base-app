@@ -13,6 +13,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/msgpackguard"
+	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -953,7 +954,12 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 		for _, c := range tbl.Columns {
 			types[c.Name] = c.FieldType
 		}
-		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT * FROM %s`, dialect.QuoteIdentifier(tbl.Name)))
+		names := make([]string, 0, len(tbl.Columns))
+		for _, c := range tbl.Columns {
+			names = append(names, dialect.QuoteIdentifier(c.Name))
+		}
+		// Registered fields only, named explicitly (see data.selectList)
+		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s`, strings.Join(names, ", "), dialect.QuoteIdentifier(tbl.Name)))
 		if err != nil {
 			return nil, fmt.Errorf("failed reading table %s: %w", tbl.Name, err)
 		}
@@ -1066,9 +1072,18 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	defer tx.Rollback()
 
 	for _, tableName := range tableNames {
+		// Validation rules whose timing is "always" apply to imports (#15)
+		fields, err := validation.LoadFields(ctx, tx, dialect, tableName)
+		if err != nil {
+			return nil, err
+		}
+		checker := &validation.Checker{Dialect: dialect, DB: tx, Table: tableName, Fields: fields}
 		for i, row := range bundle.TablesData[tableName] {
 			if id, ok := row["id"]; !ok || id == nil || id == "" {
 				row["id"] = uuid.NewString()
+			}
+			if err := checker.Check(ctx, fmt.Sprint(row["id"]), row, nil, false); err != nil {
+				return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
 			}
 			colNames := make([]string, 0, len(row))
 			placeholders := make([]string, 0, len(row))
@@ -1089,6 +1104,9 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			}
 			res, err := tx.ExecContext(ctx, insert, vals...)
 			if err != nil {
+				if f, ok := validation.IsUniqueIndexViolation(err, tableName, fields); ok {
+					err = validation.UniqueViolation(tableName, f)
+				}
 				return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
 			}
 			if n, _ := res.RowsAffected(); n > 0 {

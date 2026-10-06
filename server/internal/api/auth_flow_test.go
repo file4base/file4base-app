@@ -26,8 +26,9 @@ import (
 // a real PostgreSQL server, exactly as cmd/server wires it.
 type apiHarness struct {
 	t      *testing.T
-	router *chi.Mux
-	mgr    *dbal.MultiDatabaseManager
+	router   *chi.Mux
+	mgr      *dbal.MultiDatabaseManager
+	sessions *auth.Store
 }
 
 func newAPIHarness(t *testing.T, opts api.Options) *apiHarness {
@@ -44,8 +45,9 @@ func newAPIHarness(t *testing.T, opts api.Options) *apiHarness {
 	t.Cleanup(func() { _ = mgr.Close() })
 
 	r := chi.NewRouter()
-	api.Mount(r, mgr, auth.NewStore(time.Hour), opts)
-	return &apiHarness{t: t, router: r, mgr: mgr}
+	sessions := auth.NewStore(time.Hour)
+	api.Mount(r, mgr, sessions, opts)
+	return &apiHarness{t: t, router: r, mgr: mgr, sessions: sessions}
 }
 
 // do performs a request and decodes a JSON object/array response into out (when non-nil).
@@ -940,4 +942,81 @@ func TestAPI_ImportsRejectOversizedMessagePackDeclarations(t *testing.T) {
 	rec := h.do(http.MethodGet, "/api/v1/schemas/tables", token, nil, &tables)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Empty(t, tables, "a rejected import changes nothing")
+}
+
+// A sign-in that read the account before a security change and creates its
+// session after the change was applied (and the user's sessions revoked)
+// must not yield a usable session (#12). The interleaving is reproduced
+// step by step: read the account state, change it, then create the session
+// with the state read before.
+func TestAPI_SessionsFromBeforeAnAccountChangeAreRejected(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_stale")
+	h.createDatabase(db, "olivia", "olivia-secret")
+	owner := h.login(db, "olivia", "olivia-secret")
+	ctx := context.Background()
+	driver, err := h.mgr.DriverFor(ctx, db)
+	require.NoError(t, err)
+	svc := schema.NewService(driver)
+
+	newUser := func(name, role string) string {
+		var u idOnly
+		rec := h.do(http.MethodPost, "/api/v1/security/users", owner, map[string]interface{}{"username": name, "password": name + "-secret", "role": role}, &u)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		return u.ID
+	}
+	// staleSession simulates the in-flight sign-in: it captured the stamp
+	// before the change and registers its session after it.
+	staleSession := func(userID, name, role string, change func()) string {
+		before, err := svc.CurrentAccountStamp(ctx, userID)
+		require.NoError(t, err)
+		change()
+		token, _, err := h.sessions.Create(userID, name, role, db, before)
+		require.NoError(t, err)
+		return token
+	}
+	usable := func(token string) bool {
+		return h.do(http.MethodGet, "/api/v1/schemas/tables", token, nil, nil).Code == http.StatusOK
+	}
+
+	cases := []struct {
+		name, role string
+		change     func(id string)
+	}{
+		{"rotated", "admin", func(id string) {
+			require.Equal(t, http.StatusOK, h.do(http.MethodPut, "/api/v1/security/users/"+id, owner, map[string]string{"password": "brand-new-secret"}, nil).Code)
+		}},
+		{"demoted", "admin", func(id string) {
+			require.Equal(t, http.StatusOK, h.do(http.MethodPut, "/api/v1/security/users/"+id, owner, map[string]string{"role": "user"}, nil).Code)
+		}},
+		{"disabled", "user", func(id string) {
+			require.Equal(t, http.StatusOK, h.do(http.MethodPut, "/api/v1/security/users/"+id, owner, map[string]interface{}{"role": "user", "is_active": false}, nil).Code)
+		}},
+		{"deleted", "user", func(id string) {
+			require.Equal(t, http.StatusNoContent, h.do(http.MethodDelete, "/api/v1/security/users/"+id, owner, nil, nil).Code)
+		}},
+	}
+	for _, c := range cases {
+		id := newUser(c.name, c.role)
+		normal := h.login(db, c.name, c.name+"-secret")
+		require.True(t, usable(normal), c.name)
+		stale := staleSession(id, c.name, c.role, func() { c.change(id) })
+		assert.False(t, usable(stale), "%s: the session created after the change is rejected", c.name)
+		assert.False(t, usable(normal), "%s: the session opened before the change is rejected", c.name)
+		assert.False(t, usable(stale), "%s: and stays rejected", c.name)
+	}
+
+	// Changing your own password keeps the session you changed it from,
+	// and only that one.
+	id := newUser("selfie", "user")
+	current := h.login(db, "selfie", "selfie-secret")
+	other := h.login(db, "selfie", "selfie-secret")
+	rec := h.do(http.MethodPut, "/api/v1/security/users/"+id, current, map[string]string{"password": "selfie-new-secret"}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.True(t, usable(current), "the session used for the change stays valid")
+	assert.False(t, usable(other), "other sessions of the account are closed")
+	h.login(db, "selfie", "selfie-new-secret")
+
+	// The owner's own session is unaffected throughout
+	assert.True(t, usable(owner))
 }

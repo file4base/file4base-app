@@ -10,6 +10,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
+	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -70,6 +71,10 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
 	case errors.Is(err, data.ErrUnknownField):
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Unknown Field", err.Error())
+	case errors.Is(err, validation.ErrValidation):
+		var ve *validation.Error
+		errors.As(err, &ve)
+		telemetry.WriteValidationProblem(w, r, ve.Message, []telemetry.InvalidParam{{Name: ve.Field, Reason: ve.Rule}})
 	case errors.Is(err, data.ErrInvalidValue):
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Value", err.Error())
 	default:

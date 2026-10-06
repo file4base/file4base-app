@@ -33,6 +33,11 @@ type Session struct {
 	Database  string
 	CreatedAt time.Time
 	ExpiresAt time.Time
+	// Stamp is the account state the session was opened with. Requests are
+	// rejected once the account's current stamp differs (password, role or
+	// active state changed, account deleted), even for a session created
+	// after a revocation by a sign-in that was already in flight.
+	Stamp string
 }
 
 // IsOwner reports whether the session belongs to a database owner.
@@ -71,7 +76,7 @@ func digest(token string) string {
 }
 
 // Create registers a new session and returns its bearer token.
-func (s *Store) Create(userID, username, role, database string) (string, Session, error) {
+func (s *Store) Create(userID, username, role, database, stamp string) (string, Session, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", Session{}, err
@@ -89,6 +94,7 @@ func (s *Store) Create(userID, username, role, database string) (string, Session
 		Username:  username,
 		Role:      role,
 		Database:  database,
+		Stamp:     stamp,
 		CreatedAt: now,
 		ExpiresAt: now.Add(s.ttl),
 	}
@@ -117,6 +123,19 @@ func (s *Store) Get(token string) (Session, bool) {
 	}
 	sess.ExpiresAt = now.Add(s.ttl)
 	return *sess, true
+}
+
+// Restamp records a new account stamp for one session, used when a user
+// changes their own password and keeps the session they changed it from.
+func (s *Store) Restamp(token, stamp string) {
+	if token == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[digest(token)]; ok {
+		sess.Stamp = stamp
+	}
 }
 
 // Revoke invalidates a single token.

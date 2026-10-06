@@ -75,8 +75,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void previousRecord() {
     if (_records.isNotEmpty && _currentIndex > 0) {
-      _saveCurrentRecord().then((_) {
-        if (!mounted) return;
+      _saveCurrentRecord().then((saved) {
+        if (!saved || !mounted) return;
         setState(() => _currentIndex--);
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
@@ -86,8 +86,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void nextRecord() {
     if (_records.isNotEmpty && _currentIndex < _records.length - 1) {
-      _saveCurrentRecord().then((_) {
-        if (!mounted) return;
+      _saveCurrentRecord().then((saved) {
+        if (!saved || !mounted) return;
         setState(() => _currentIndex++);
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
@@ -97,8 +97,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void goToRecord(int index) {
     if (_records.isNotEmpty && index >= 0 && index < _records.length) {
-      _saveCurrentRecord().then((_) {
-        if (!mounted) return;
+      _saveCurrentRecord().then((saved) {
+        if (!saved || !mounted) return;
         setState(() => _currentIndex = index);
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
@@ -162,6 +162,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<void> _saveField(String colName, String newVal) async {
     if (_records.isEmpty) return;
     final record = _records[_currentIndex];
+    if (record[_draftKey] == true) {
+      // A new record is sent as a whole when it is committed
+      record[colName] = newVal;
+      return;
+    }
     final id = record['id']?.toString();
     if (id == null) return;
 
@@ -192,7 +197,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
   }
 
-  Future<void> _saveCurrentRecord() async {
+  /// Marks a new record that exists only here until it is committed.
+  static const _draftKey = '__f4b_draft';
+
+  bool get _onDraft => _records.isNotEmpty && _records[_currentIndex][_draftKey] == true;
+
+  /// Commits the current record: pending field edits, or the whole new
+  /// record. Returns false when the server rejected it (for example a field
+  /// validation rule); the user stays on the record and sees why.
+  Future<bool> _saveCurrentRecord() async {
     for (final col in widget.table.columns) {
       if (col.isPrimaryKey) continue;
       final ctrl = _fieldControllers[col.name];
@@ -205,6 +218,39 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         await _saveField(col.name, ctrl.text);
       }
     }
+    if (_onDraft) return _commitDraft();
+    return true;
+  }
+
+  /// Creates the new record on the server, like FileMaker commits a new
+  /// record: validation rules apply to the record as a whole, and fields the
+  /// user left empty are not sent, so their auto-enter values apply.
+  Future<bool> _commitDraft() async {
+    final draft = _records[_currentIndex];
+    final values = <String, dynamic>{
+      for (final col in widget.table.columns)
+        if (!col.isPrimaryKey && (draft[col.name]?.toString() ?? '').isNotEmpty) col.name: draft[col.name],
+    };
+    try {
+      final created = await widget.apiClient.insertRow(widget.table.name, values);
+      if (mounted) setState(() => _records[_currentIndex] = created);
+      return true;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('The new record was not saved: $e'), backgroundColor: Colors.red),
+        );
+      }
+      return false;
+    }
+  }
+
+  void _discardDraft() {
+    _records.removeAt(_currentIndex);
+    if (_currentIndex >= _records.length) _currentIndex = _records.length - 1;
+    if (_currentIndex < 0) _currentIndex = 0;
+    _rebuildFieldControllers();
+    widget.onRecordChanged?.call(_currentIndex, _records.length);
   }
 
   @override
@@ -341,39 +387,26 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
   }
 
+  /// New Record: an empty record shown at the end of the found set. It is
+  /// created on the server when committed (see [_commitDraft]).
   Future<void> _createNewRecord() async {
-    await _saveCurrentRecord();
-    try {
-      final newRecord = <String, dynamic>{};
-      for (var col in widget.table.columns) {
-        if (!col.isPrimaryKey) {
-          newRecord[col.name] = col.fieldType == 'NUMBER'
-              ? 0
-              : col.fieldType == 'BOOLEAN'
-                  ? false
-                  : '';
-        }
-      }
-      await widget.apiClient.insertRow(widget.table.name, newRecord);
-      await _fetchRecords();
-      if (_records.isNotEmpty) {
-        setState(() => _currentIndex = _records.length - 1);
-        _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error creating record: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
+    if (!await _saveCurrentRecord() || !mounted) return;
+    setState(() {
+      _records.add(<String, dynamic>{_draftKey: true});
+      _currentIndex = _records.length - 1;
+    });
+    _rebuildFieldControllers();
+    widget.onRecordChanged?.call(_currentIndex, _records.length);
   }
 
   Future<void> _deleteCurrentRecord() async {
     if (_records.isEmpty) return;
     for (final t in _fieldDebounceTimers.values) {
       t?.cancel();
+    }
+    if (_onDraft) {
+      setState(_discardDraft);
+      return;
     }
     final id = _records[_currentIndex]['id']?.toString();
     if (id == null) return;
@@ -1507,7 +1540,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   @override
   Future<void> actionDuplicateRecord() async {
     if (_records.isEmpty) return;
-    await _saveCurrentRecord();
+    if (!await _saveCurrentRecord()) return;
     final source = _records[_currentIndex];
     final copy = <String, dynamic>{
       for (final col in widget.table.columns)
@@ -1563,7 +1596,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   @override
   Future<void> actionRevertRecord() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    if (mounted) setState(_rebuildFieldControllers);
+    if (!mounted) return;
+    // Reverting a new record that was never committed discards it
+    setState(_onDraft ? _discardDraft : _rebuildFieldControllers);
   }
 
   @override
