@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../api/api_client.dart';
+import '../models/page_setup_model.dart';
 import '../../main.dart';
 
 // ─── Layout Tool Enum ─────────────────────────────────────────────────────────
@@ -64,6 +65,10 @@ class File4BaseStatusSidebar extends StatefulWidget {
   final double strokeWidth;
   final ValueChanged<double>? onStrokeWidthChanged;
 
+  /// Paper of the active solution, shown in Preview mode.
+  final PageSetupModel pageSetup;
+  final VoidCallback? onPageSetup;
+
   const File4BaseStatusSidebar({
     super.key,
     this.layouts = const [],
@@ -96,6 +101,8 @@ class File4BaseStatusSidebar extends StatefulWidget {
     this.onToolSelected,
     this.strokeWidth = 1.0,
     this.onStrokeWidthChanged,
+    this.pageSetup = const PageSetupModel(),
+    this.onPageSetup,
   });
 
   @override
@@ -133,7 +140,7 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
           else if (widget.mode == OperationalMode.layout)
             _buildLayoutToolbox(context, isDark, borderColor)
           else
-            _buildPreviewNavigator(context, isDark),
+            _buildPreviewNavigator(context, isDark, borderColor),
           const Spacer(),
           _buildManageDatabaseButton(context, isDark),
         ],
@@ -642,24 +649,54 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
 
   // ─── Preview Mode ─────────────────────────────────────────────────────────────
 
-  Widget _buildPreviewNavigator(BuildContext context, bool isDark) {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('Preview Mode',
-              style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E88E5))),
-          SizedBox(height: 6),
-          Text('Page: 1 of 1', style: TextStyle(fontSize: 11)),
-          SizedBox(height: 8),
-          Text('Margins: 0.5 in',
-              style: TextStyle(fontSize: 10, color: Colors.grey)),
-        ],
-      ),
+  Widget _buildPreviewNavigator(
+      BuildContext context, bool isDark, Color borderColor) {
+    final setup = widget.pageSetup;
+    final labelStyle = TextStyle(
+      fontSize: 9,
+      color: isDark ? Colors.grey.shade400 : Colors.grey.shade600,
+    );
+    const valueStyle = TextStyle(fontSize: 10, fontWeight: FontWeight.w600);
+
+    String mm(double v) => v == v.roundToDouble() ? '${v.round()}' : v.toStringAsFixed(1);
+    Widget line(String label, String value) => Padding(
+          padding: const EdgeInsets.only(bottom: 3),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: labelStyle),
+              Text(value, style: valueStyle),
+            ],
+          ),
+        );
+
+    // Everything here comes from Page Setup; the preview's own toolbar
+    // reports which record is shown.
+    return _sidebarCard(
+      isDark: isDark,
+      borderColor: borderColor,
+      icon: Icons.print_outlined,
+      title: 'PAPER',
+      children: [
+        line('Size', '${setup.paperSizeName} · ${setup.isLandscape ? "Landscape" : "Portrait"}'),
+        line('Printable area',
+            '${mm(setup.printableWidthMm)} × ${mm(setup.printableHeightMm)} mm'),
+        line('Margins (mm)',
+            'T ${mm(setup.marginTopMm)}  B ${mm(setup.marginBottomMm)}\n'
+            'L ${mm(setup.marginLeftMm)}  R ${mm(setup.marginRightMm)}'),
+        const SizedBox(height: 4),
+        OutlinedButton(
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            side: BorderSide(color: borderColor),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+          ),
+          onPressed: widget.onPageSetup,
+          child: const Text('Page Setup...', style: TextStyle(fontSize: 10)),
+        ),
+        const SizedBox(height: 2),
+      ],
     );
   }
 

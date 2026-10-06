@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart';
 import 'package:file4base_client/main.dart' show OperationalMode;
 
@@ -96,5 +97,60 @@ void main() {
     await tester.pumpAndSettle();
     expect(probe.finds, 1);
     expect(probe.cancels, 1);
+  });
+
+  testWidgets('the Preview sidebar reports the real paper, not fixed numbers', (tester) async {
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    var setupOpened = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Row(children: [
+          File4BaseStatusSidebar(
+            layouts: _layouts,
+            selectedLayout: _layouts.first,
+            onLayoutSelected: (_) {},
+            tables: [_table],
+            selectedTable: _table,
+            onTableSelected: (_) {},
+            mode: OperationalMode.preview,
+            currentRecordIndex: 0,
+            totalRecords: 3,
+            onPreviousRecord: () {},
+            onNextRecord: () {},
+            onGoToRecord: (_) {},
+            onManageDatabase: () {},
+            pageSetup: const PageSetupModel(
+              paperSizeName: 'US Letter',
+              paperWidthMm: 215.9,
+              paperHeightMm: 279.4,
+              isLandscape: true,
+              marginTopMm: 12.7,
+              marginBottomMm: 12.7,
+              marginLeftMm: 20,
+              marginRightMm: 20,
+            ),
+            onPageSetup: () => setupOpened++,
+          ),
+          const Expanded(child: SizedBox()),
+        ]),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // Values follow Page Setup: landscape US Letter minus its margins
+    expect(find.text('US Letter · Landscape'), findsOneWidget);
+    expect(find.text('239.4 × 190.5 mm'), findsOneWidget);
+    expect(find.text('T 12.7  B 12.7\nL 20  R 20'), findsOneWidget);
+
+    // The fixed values the panel used to show are gone
+    expect(find.text('Page: 1 of 1'), findsNothing);
+    expect(find.text('Margins: 0.5 in'), findsNothing);
+
+    await tester.tap(find.text('Page Setup...'));
+    await tester.pumpAndSettle();
+    expect(setupOpened, 1);
   });
 }

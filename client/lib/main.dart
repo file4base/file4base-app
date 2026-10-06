@@ -1437,6 +1437,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           selectedTool: _activeLayoutTool,
                           onToolSelected: (tool) => setState(() => _activeLayoutTool = tool),
                           strokeWidth: _layoutStrokeWidth,
+                          pageSetup: _pageSetup,
+                          onPageSetup: _handlePageSetup,
                           onStrokeWidthChanged: (w) {
                             setState(() => _layoutStrokeWidth = w);
                             _layoutDesignerKey.currentState?.applyStrokeWidth(w);
