@@ -57,7 +57,7 @@ File4Base enforces the exact 4-mode operational paradigm:
 4. **Preview Mode (`Ctrl+U` / `Cmd+U`)**:
    - Printable page simulation with exact margins, pagination breaks, and multi-column printing flow.
    - Evaluates and renders subsummary aggregations (subtotals grouped by break field).
-   - Export to PDF / Print dialog.
+   - Export to PDF / Print dialog: "Print / Export PDF" prints or saves as PDF the previewed sheet only (this record, or all records with one sheet per record) at the Page Setup paper size; File > Print prints the previewed page.
 
 ---
 
