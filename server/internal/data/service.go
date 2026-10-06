@@ -2,9 +2,9 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -37,10 +37,10 @@ type FindRequest struct {
 
 // QueryOptions controls sorting and pagination
 type QueryOptions struct {
-	Limit   int      `json:"limit"`
-	Offset  int      `json:"offset"`
-	SortBy  string   `json:"sort_by,omitempty"`
-	SortAsc bool     `json:"sort_asc"`
+	Limit   int    `json:"limit"`
+	Offset  int    `json:"offset"`
+	SortBy  string `json:"sort_by,omitempty"`
+	SortAsc bool   `json:"sort_asc"`
 }
 
 // Service handles dynamic generic table CRUD and query translation
@@ -565,10 +565,10 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 
 			switch crit.Operator {
 			case "IS_EMPTY":
-				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR CAST(%s AS TEXT) = '')", colIdent, colIdent))
+				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR %s = '')", colIdent, dialect.CastToText(colIdent)))
 
 			case "IS_NOT_EMPTY":
-				andClauses = append(andClauses, fmt.Sprintf("(%s IS NOT NULL AND CAST(%s AS TEXT) <> '')", colIdent, colIdent))
+				andClauses = append(andClauses, fmt.Sprintf("(%s IS NOT NULL AND %s <> '')", colIdent, dialect.CastToText(colIdent)))
 
 			case "RANGE":
 				valStr := fmt.Sprintf("%v", crit.Value)
@@ -577,35 +577,34 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 				num2, err2 := strconv.ParseFloat(valToStr, 64)
 				if err1 == nil && err2 == nil {
 					// Numeric range query with safe regex check so non-numeric column rows don't crash
-					andClauses = append(andClauses, fmt.Sprintf(
-						"(CASE WHEN CAST(%s AS TEXT) ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN CAST(CAST(%s AS TEXT) AS NUMERIC) ELSE NULL END) BETWEEN %s AND %s",
-						colIdent, colIdent, dialect.Placeholder(idx), dialect.Placeholder(idx+1),
-					))
+					andClauses = append(andClauses, fmt.Sprintf("%s BETWEEN %s AND %s",
+						dialect.NumericValue(colIdent), dialect.Placeholder(idx), dialect.Placeholder(idx+1)))
 					values = append(values, num1, num2)
 				} else {
 					// Text or date range query
-					andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) BETWEEN %s AND %s", colIdent, dialect.Placeholder(idx), dialect.Placeholder(idx+1)))
+					andClauses = append(andClauses, fmt.Sprintf("%s BETWEEN %s AND %s",
+						dialect.CastToText(colIdent), dialect.Placeholder(idx), dialect.Placeholder(idx+1)))
 					values = append(values, valStr, valToStr)
 				}
 				idx += 2
 
 			case "LIKE":
 				valStr := fmt.Sprintf("%v", crit.Value)
-				// Use CAST to TEXT so it works on any column type (numeric, date, text, uuid, etc.)
-				andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) ILIKE %s", colIdent, dialect.Placeholder(idx)))
+				// Compared as text so it works on any column type
+				andClauses = append(andClauses, dialect.CaseInsensitiveLike(colIdent, dialect.Placeholder(idx)))
 				values = append(values, valStr)
 				idx++
 
 			case "=", "==":
 				valStr := fmt.Sprintf("%v", crit.Value)
 				// Case-insensitive exact match
-				andClauses = append(andClauses, fmt.Sprintf("LOWER(CAST(%s AS TEXT)) = LOWER(%s)", colIdent, dialect.Placeholder(idx)))
+				andClauses = append(andClauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)", dialect.CastToText(colIdent), dialect.Placeholder(idx)))
 				values = append(values, valStr)
 				idx++
 
 			case "!=":
 				valStr := fmt.Sprintf("%v", crit.Value)
-				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR LOWER(CAST(%s AS TEXT)) <> LOWER(%s))", colIdent, colIdent, dialect.Placeholder(idx)))
+				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR LOWER(%s) <> LOWER(%s))", colIdent, dialect.CastToText(colIdent), dialect.Placeholder(idx)))
 				values = append(values, valStr)
 				idx++
 
@@ -613,21 +612,19 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 				valStr := fmt.Sprintf("%v", crit.Value)
 				if num, err := strconv.ParseFloat(valStr, 64); err == nil {
 					// Numeric comparison
-					andClauses = append(andClauses, fmt.Sprintf(
-						"(CASE WHEN CAST(%s AS TEXT) ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN CAST(CAST(%s AS TEXT) AS NUMERIC) ELSE NULL END) %s %s",
-						colIdent, colIdent, crit.Operator, dialect.Placeholder(idx),
-					))
+					andClauses = append(andClauses, fmt.Sprintf("%s %s %s",
+						dialect.NumericValue(colIdent), crit.Operator, dialect.Placeholder(idx)))
 					values = append(values, num)
 				} else {
 					// Text comparison
-					andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) %s %s", colIdent, crit.Operator, dialect.Placeholder(idx)))
+					andClauses = append(andClauses, fmt.Sprintf("%s %s %s", dialect.CastToText(colIdent), crit.Operator, dialect.Placeholder(idx)))
 					values = append(values, valStr)
 				}
 				idx++
 
 			default:
 				valStr := fmt.Sprintf("%v", crit.Value)
-				andClauses = append(andClauses, fmt.Sprintf("CAST(%s AS TEXT) ILIKE %s", colIdent, dialect.Placeholder(idx)))
+				andClauses = append(andClauses, dialect.CaseInsensitiveLike(colIdent, dialect.Placeholder(idx)))
 				values = append(values, "%"+valStr+"%")
 				idx++
 			}
@@ -698,11 +695,16 @@ func rowsToMaps(rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, erro
 		for i, colName := range cols {
 			val := colValues[i]
 			if b, ok := val.([]byte); ok {
-				if fields[colName] == dbal.FieldTypeContainer {
+				switch fields[colName] {
+				case dbal.FieldTypeContainer:
 					rowMap[colName] = base64.StdEncoding.EncodeToString(b)
-				} else {
+				case dbal.FieldTypeNumber:
+					rowMap[colName] = dbal.TrimNumericText(string(b))
+				default:
 					rowMap[colName] = string(b)
 				}
+			} else if fields[colName] == dbal.FieldTypeBoolean {
+				rowMap[colName] = dbal.NormalizeBool(val)
 			} else {
 				rowMap[colName] = val
 			}

@@ -1,0 +1,93 @@
+# File4Base on MariaDB instead of PostgreSQL.
+#
+#   docker compose -f docker-compose.mariadb.yml up -d
+#
+# This is a complete stack, not an override of docker-compose.yml: the API is
+# wired to MariaDB (engine, DSN and health dependency), so the two stacks never
+# half-mix. They use different volumes and can be run one at a time (both bind
+# the same host ports).
+services:
+  mariadb:
+    image: mariadb:11-jammy
+    container_name: file4base-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: file4base_dev
+      MARIADB_USER: file4base
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-dev_password}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root_password}
+    ports:
+      # Published on the loopback interface only by default
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:3306:3306"
+    volumes:
+      # Persistent named volume `file4base-mariadb-data`: survives
+      # `docker compose down` (only `down -v` deletes it).
+      - mariadb_data:/var/lib/mysql
+      # Grants the API account the privileges it needs (runs once, on an
+      # empty data volume)
+      - ./deploy/mariadb/init.sql:/docker-entrypoint-initdb.d/10-file4base.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - file4base-net
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.9.1}
+    container_name: file4base-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DB_ENGINE: "mariadb"
+      # MariaDB uses the MySQL driver's own DSN grammar, not a URL. `mysql` is
+      # the administrative database: solution databases are created beside it.
+      DATABASE_URL: "file4base:${MARIADB_PASSWORD:-dev_password}@tcp(mariadb:3306)/mysql"
+      SERVER_PORT: ":8080"
+      SESSION_TTL: "${SESSION_TTL:-12h}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-*}"
+      ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-true}"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/healthz/readiness || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      file4base-net:
+        aliases:
+          - api
+          - server
+          - file4base-api
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.9.1}
+    container_name: file4base-web
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - file4base-net
+
+volumes:
+  mariadb_data:
+    name: file4base-mariadb-data
+
+networks:
+  file4base-net:
+    name: file4base-net
+    driver: bridge

@@ -981,8 +981,12 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 			}
 			row := make(map[string]interface{}, len(cols))
 			for i, name := range cols {
-				if b, ok := vals[i].([]byte); ok && types[name] != dbal.FieldTypeContainer {
+				if b, ok := vals[i].([]byte); ok && types[name] == dbal.FieldTypeNumber {
+					row[name] = dbal.TrimNumericText(string(b))
+				} else if b, ok := vals[i].([]byte); ok && types[name] != dbal.FieldTypeContainer {
 					row[name] = string(b) // text the driver returned as bytes
+				} else if types[name] == dbal.FieldTypeBoolean {
+					row[name] = dbal.NormalizeBool(vals[i])
 				} else {
 					row[name] = vals[i]
 				}
@@ -1098,12 +1102,18 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			insert := fmt.Sprintf(`INSERT INTO %s (%s) VALUES (%s)`,
 				dialect.QuoteIdentifier(tableName), strings.Join(colNames, ", "), strings.Join(placeholders, ", "))
 			if dialect.Engine() == dbal.EnginePostgres {
+				// A record whose id is already there is skipped, not replaced.
 				insert += ` ON CONFLICT (id) DO NOTHING`
-			} else {
-				insert += fmt.Sprintf(` ON DUPLICATE KEY UPDATE %s = %s`, dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier("id"))
 			}
 			res, err := tx.ExecContext(ctx, insert, vals...)
 			if err != nil {
+				// MariaDB has no ON CONFLICT: an existing id comes back as a
+				// duplicate key, which is this record being skipped. Any other
+				// error still fails the whole import.
+				if dialect.Engine() != dbal.EnginePostgres && dbal.IsDuplicateKey(err) {
+					report.RecordsSkipped++
+					continue
+				}
 				if f, ok := validation.IsUniqueIndexViolation(err, tableName, fields); ok {
 					err = validation.UniqueViolation(tableName, f)
 				}

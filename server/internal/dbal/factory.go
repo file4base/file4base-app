@@ -2,10 +2,12 @@ package dbal
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -49,7 +51,12 @@ func Connect(cfg DriverConfig) (DatabaseDriver, error) {
 		return nil, fmt.Errorf("no standard SQL driver available for engine: %s", cfg.EngineType)
 	}
 
-	db, err := sql.Open(driverName, cfg.DSN)
+	dsn, err := NormalizeDSN(cfg.EngineType, cfg.DSN)
+	if err != nil {
+		return nil, err
+	}
+
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
@@ -69,4 +76,21 @@ func ParseEngineType(val string) (EngineType, error) {
 	default:
 		return "", fmt.Errorf("unknown database engine: %s", val)
 	}
+}
+
+// IsDuplicateKey reports whether err is the engine's unique/primary key
+// violation.
+func IsDuplicateKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	var my *mysql.MySQLError
+	if errors.As(err, &my) {
+		return my.Number == 1062
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "23505"
+	}
+	return false
 }

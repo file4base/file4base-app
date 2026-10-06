@@ -45,6 +45,49 @@ jobs:
         # Packages share one PostgreSQL instance, so they run one at a time
         run: go test -p 1 -count=1 ./...
 
+  test-server-mariadb:
+    name: Test Go Server (MariaDB engine)
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11-jammy
+        env:
+          MARIADB_ROOT_PASSWORD: root_password
+          MARIADB_DATABASE: file4base_dev
+          MARIADB_USER: file4base
+          MARIADB_PASSWORD: dev_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      # The API creates one database per solution, as deploy/mariadb/init.sql
+      # does for the Compose stack.
+      - name: Grant server-level privileges to the API account
+        run: |
+          mariadb -h 127.0.0.1 -uroot -proot_password \
+            -e "GRANT ALL PRIVILEGES ON *.* TO 'file4base'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+
+      - name: Run the same Go tests against MariaDB
+        working-directory: server
+        env:
+          F4B_TEST_ENGINE: mariadb
+          F4B_TEST_ADMIN_DSN: "file4base:dev_password@tcp(127.0.0.1:3306)/mysql"
+          F4B_TEST_DEV_DSN: "file4base:dev_password@tcp(127.0.0.1:3306)/file4base_dev"
+        run: go test -p 1 -count=1 ./...
+
   build-macos:
     name: Build macOS Desktop (Universal / Apple Silicon & Intel)
     runs-on: macos-latest
@@ -160,7 +203,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    needs: [test-server, build-macos, build-linux, build-windows]
+    needs: [test-server, test-server-mariadb, build-macos, build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -61,30 +60,40 @@ type MultiDatabaseManager struct {
 	baseDSN       string
 	defaultDBName string
 	drivers       map[string]DatabaseDriver
-	parsedURL     *url.URL
+	dsn           dsnTemplate
 }
 
 // NewMultiDatabaseManager initializes a MultiDatabaseManager with a base DSN
 func NewMultiDatabaseManager(engine EngineType, baseDSN string) (*MultiDatabaseManager, error) {
-	u, err := url.Parse(baseDSN)
+	parsed, err := parseDSN(engine, baseDSN)
 	if err != nil {
-		return nil, fmt.Errorf("invalid base DSN: %w", err)
+		return nil, err
 	}
 
-	initialDB := strings.TrimPrefix(u.Path, "/")
+	// The administrative database carries server-level operations (listing,
+	// creating and dropping databases). It is an engine-internal database, so
+	// it can never be used as a solution database nor dropped.
+	initialDB := parsed.database()
 	if initialDB == "" {
-		initialDB = "postgres"
+		initialDB = defaultAdminDatabase(engine)
 	}
 
-	mgr := &MultiDatabaseManager{
+	return &MultiDatabaseManager{
 		baseEngine:    engine,
 		baseDSN:       baseDSN,
 		defaultDBName: initialDB,
 		drivers:       make(map[string]DatabaseDriver),
-		parsedURL:     u,
-	}
+		dsn:           parsed,
+	}, nil
+}
 
-	return mgr, nil
+// defaultAdminDatabase is the administrative database of an engine, used when
+// the base DSN names none.
+func defaultAdminDatabase(engine EngineType) string {
+	if engine == EngineMariaDB {
+		return "mysql"
+	}
+	return "postgres"
 }
 
 // BuildDSN constructs a connection string for a specific database name
@@ -92,13 +101,7 @@ func (m *MultiDatabaseManager) BuildDSN(dbName string) string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.parsedURL == nil {
-		return m.baseDSN
-	}
-
-	uCopy := *m.parsedURL
-	uCopy.Path = "/" + dbName
-	return uCopy.String()
+	return m.buildDSNLocked(dbName)
 }
 
 // DefaultDatabase returns the administrative database named in the base DSN.
@@ -199,12 +202,10 @@ func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (Da
 }
 
 func (m *MultiDatabaseManager) buildDSNLocked(dbName string) string {
-	if m.parsedURL == nil {
+	if m.dsn == nil {
 		return m.baseDSN
 	}
-	uCopy := *m.parsedURL
-	uCopy.Path = "/" + dbName
-	return uCopy.String()
+	return m.dsn.forDatabase(dbName)
 }
 
 // DriverFor returns the DatabaseDriver of a solution database after validating

@@ -8,20 +8,16 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
-	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func init() {
-	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
-}
-
 func TestDataService_CRUDAndFindMode(t *testing.T) {
-	dsn := "postgres://file4base:dev_password@localhost:5432/file4base_dev?sslmode=disable"
+	dsn := testdb.DevDSN()
 	driver, err := dbal.Connect(dbal.DriverConfig{
-		EngineType: dbal.EnginePostgres,
+		EngineType: testdb.Engine(),
 		DSN:        dsn,
 	})
 	if err != nil {

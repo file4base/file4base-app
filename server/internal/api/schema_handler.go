@@ -651,10 +651,10 @@ func (h *SchemaHandler) GetScript(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateScriptRequest struct {
-	Name         string                     `json:"name"`
-	ContextTable string                     `json:"context_table,omitempty"`
-	FolderID     *string                    `json:"folder_id,omitempty"`
-	IsActive     *bool                      `json:"is_active,omitempty"`
+	Name         string                      `json:"name"`
+	ContextTable string                      `json:"context_table,omitempty"`
+	FolderID     *string                     `json:"folder_id,omitempty"`
+	IsActive     *bool                       `json:"is_active,omitempty"`
 	Steps        []schema.ScriptStepMetadata `json:"steps,omitempty"`
 }
 
@@ -683,10 +683,10 @@ func (h *SchemaHandler) CreateScript(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateScriptRequest struct {
-	Name         string                     `json:"name"`
-	ContextTable string                     `json:"context_table,omitempty"`
-	FolderID     *string                    `json:"folder_id,omitempty"`
-	IsActive     *bool                      `json:"is_active,omitempty"`
+	Name         string                      `json:"name"`
+	ContextTable string                      `json:"context_table,omitempty"`
+	FolderID     *string                     `json:"folder_id,omitempty"`
+	IsActive     *bool                       `json:"is_active,omitempty"`
 	Steps        []schema.ScriptStepMetadata `json:"steps,omitempty"`
 }
 
@@ -734,4 +734,3 @@ func (h *SchemaHandler) DuplicateScript(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(script)
 }
-

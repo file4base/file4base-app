@@ -36,28 +36,8 @@ services:
     networks:
       - file4base-net
 
-  # Alternative Engine Profile: MariaDB (start with: docker compose --profile mariadb up)
-  mariadb:
-    image: mariadb:11-jammy
-    container_name: file4base-mariadb
-    restart: unless-stopped
-    profiles: ["mariadb"]
-    environment:
-      MARIADB_DATABASE: mysql
-      MARIADB_USER: file4base
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD:-dev_password}
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:-root_password}
-    ports:
-      - "${DB_BIND_ADDRESS:-127.0.0.1}:3306:3306"
-    volumes:
-      - mariadb_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-    networks:
-      - file4base-net
+  # MariaDB is a complete separate stack, see docker-compose.mariadb.yml:
+  #   docker compose -f docker-compose.mariadb.yml up -d
 
   # Go Backend Core API Service (file4base-api)
   api:
@@ -115,8 +95,6 @@ services:
 volumes:
   postgres_data:
     name: file4base-postgres-data
-  mariadb_data:
-    name: file4base-mariadb-data
 
 networks:
   file4base-net:

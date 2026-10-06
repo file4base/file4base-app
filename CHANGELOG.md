@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- MariaDB mode could not start a usable application ([#19](https://github.com/file4base/file4base-app/issues/19)). The `mariadb` Compose profile left the API wired to PostgreSQL; MariaDB connection strings were parsed as URLs (`first path segment in URL cannot contain colon`); the system catalog was created with PostgreSQL-only types; and find queries used `CAST(... AS TEXT)`, `ILIKE` and `~`. MariaDB DSNs are now parsed with the MySQL driver's own grammar, the catalog and the find queries are generated per dialect, and `docker-compose.mariadb.yml` runs the whole stack on MariaDB 11 (with `deploy/mariadb/init.sql` granting the API the privileges it needs). The same Go test suite runs against both engines, in CI too.
+- Other defects this uncovered on MariaDB: a text primary key could not be created (`BLOB/TEXT column used in key specification`); `DROP TABLE`/`DELETE FROM` quoted identifiers the PostgreSQL way, so deleting a table failed; timestamps came back unparsed; an update that stored the same value reported "record not found"; re-importing a data file counted skipped records as inserted; unique validation rules had no database constraint, so concurrent duplicates both succeeded; and NUMBER and BOOLEAN values read back as `1500.0000000000` and `0` instead of `1500` and `false`.
+
 ## [0.9.1] - 2026-10-06
 
 ### Fixed

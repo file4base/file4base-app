@@ -56,7 +56,7 @@ func (m *MariaDBDialect) BuildCreateTableSQL(def dbal.TableDefinition) (string, 
 
 	colDefs := make([]string, 0, len(def.Columns))
 	for _, col := range def.Columns {
-		clause := fmt.Sprintf("%s %s", m.QuoteIdentifier(col.Name), m.MapType(col.Type))
+		clause := fmt.Sprintf("%s %s", m.QuoteIdentifier(col.Name), m.columnType(col))
 		if col.IsPrimaryKey {
 			clause += " PRIMARY KEY"
 		}
@@ -72,16 +72,47 @@ func (m *MariaDBDialect) BuildCreateTableSQL(def dbal.TableDefinition) (string, 
 	), nil
 }
 
+// columnType is the physical type of a column. A key column cannot be a BLOB
+// or TEXT type here without a key length ("BLOB/TEXT column used in key
+// specification without a key length"), so an indexed text column becomes a
+// VARCHAR long enough for the ids File4Base generates.
+func (m *MariaDBDialect) columnType(col dbal.ColumnDefinition) string {
+	if col.IsPrimaryKey && m.MapType(col.Type) == "LONGTEXT" {
+		return fmt.Sprintf("VARCHAR(%d)", dbal.MaxIdentifierLength*4)
+	}
+	return m.MapType(col.Type)
+}
+
 func (m *MariaDBDialect) BuildAddColumnSQL(tableName string, col dbal.ColumnDefinition) (string, error) {
 	clause := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s",
 		m.QuoteIdentifier(tableName),
 		m.QuoteIdentifier(col.Name),
-		m.MapType(col.Type),
+		m.columnType(col),
 	)
 	if !col.IsNullable {
 		clause += " NOT NULL"
 	}
 	return clause + ";", nil
+}
+
+func (m *MariaDBDialect) TimestampColumn() string {
+	// The precision of the default has to match the column's.
+	return "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)"
+}
+
+func (m *MariaDBDialect) CastToText(expr string) string {
+	return fmt.Sprintf("CAST(%s AS CHAR)", expr)
+}
+
+func (m *MariaDBDialect) CaseInsensitiveLike(expr, placeholder string) string {
+	// LIKE is case-insensitive under the usual collations, but not under a
+	// binary one, so both sides are lower-cased explicitly.
+	return fmt.Sprintf("LOWER(%s) LIKE LOWER(%s)", m.CastToText(expr), placeholder)
+}
+
+func (m *MariaDBDialect) NumericValue(expr string) string {
+	text := m.CastToText(expr)
+	return fmt.Sprintf("(CASE WHEN %s REGEXP '%s' THEN CAST(%s AS DECIMAL(65,10)) ELSE NULL END)", text, dbal.NumericPattern, text)
 }
 
 func (m *MariaDBDialect) BuildDropColumnSQL(tableName string, columnName string) (string, error) {

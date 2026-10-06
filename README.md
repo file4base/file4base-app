@@ -33,7 +33,7 @@ Details: [REST API Reference - Authentication & Authorization](docs/api/API_REFE
 
 ### 1. Server Deployment (Docker Compose)
 When launched via Docker Compose, File4Base acts as a full multi-user application server:
-- **PostgreSQL 16**: Port `5432`, published on `127.0.0.1` only by default (or MariaDB via `--profile mariadb`)
+- **PostgreSQL 16**: Port `5432`, published on `127.0.0.1` only by default (MariaDB: see below)
 - **Backend Core API (Go)**: Port `8080` (`/healthz`, `/api/v1/schemas`, `/api/v1/data`)
 - **WebDirect Web Client (Nginx)**: Port `3000` (browser-accessible client)
 
@@ -90,6 +90,21 @@ only `docker compose down -v` or `docker volume rm` delete it.
 ./scripts/backup_postgres.sh list
 ./scripts/backup_postgres.sh restore backups/<file>.sql.gz
 ```
+
+#### MariaDB instead of PostgreSQL
+`docker-compose.mariadb.yml` is the same stack on MariaDB 11: the API runs with
+`DB_ENGINE=mariadb` and a MySQL-format DSN, and `deploy/mariadb/init.sql` grants
+the API account the privileges it needs to create one database per solution.
+
+```bash
+docker compose -f docker-compose.mariadb.yml up -d
+```
+
+It is a separate stack, not an overlay: run one engine at a time (both bind the
+same host ports), and note that solutions do not move between engines by
+copying volumes — export a solution and its data and import them into the other
+stack. The Go test suite runs against both engines in CI
+(`F4B_TEST_ENGINE=mariadb`).
 
 A restore checks the archive before stopping anything and stops at the first
 SQL error. Its exit status says what happened: `0` restored (the API is

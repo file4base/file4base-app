@@ -16,6 +16,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +26,7 @@ import (
 // apiHarness drives the fully mounted API (public + protected routes) against
 // a real PostgreSQL server, exactly as cmd/server wires it.
 type apiHarness struct {
-	t      *testing.T
+	t        *testing.T
 	router   *chi.Mux
 	mgr      *dbal.MultiDatabaseManager
 	sessions *auth.Store
@@ -33,8 +34,7 @@ type apiHarness struct {
 
 func newAPIHarness(t *testing.T, opts api.Options) *apiHarness {
 	t.Helper()
-	dsn := "postgres://file4base:dev_password@localhost:5432/postgres?sslmode=disable"
-	mgr, err := dbal.NewMultiDatabaseManager(dbal.EnginePostgres, dsn)
+	mgr, err := dbal.NewMultiDatabaseManager(testdb.Engine(), testdb.AdminDSN())
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -92,6 +92,17 @@ func (h *apiHarness) login(database, user, password string) string {
 	require.Equal(h.t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotEmpty(h.t, res.Token)
 	return res.Token
+}
+
+// rebind turns $1-style placeholders into the engine's own.
+func (h *apiHarness) rebind(q string) string {
+	if testdb.Engine() == dbal.EnginePostgres {
+		return q
+	}
+	for i := 9; i >= 1; i-- {
+		q = strings.ReplaceAll(q, fmt.Sprintf("$%d", i), "?")
+	}
+	return q
 }
 
 func uniqueDB(prefix string) string {
@@ -613,8 +624,16 @@ func TestAPI_ListRowsLimitIsClampedAndPagesCoverAllRows(t *testing.T) {
 
 	driver, err := h.mgr.DriverFor(context.Background(), db)
 	require.NoError(t, err)
-	_, err = driver.DB().ExecContext(context.Background(),
-		`INSERT INTO items (id) SELECT 'r' || lpad(g::text, 5, '0') FROM generate_series(1, 1005) AS g`)
+	// Seeded directly, in one multi-row INSERT that every engine accepts
+	var b strings.Builder
+	b.WriteString("INSERT INTO items (id) VALUES ")
+	for i := 1; i <= 1005; i++ {
+		if i > 1 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, "('r%05d')", i)
+	}
+	_, err = driver.DB().ExecContext(context.Background(), b.String())
 	require.NoError(t, err)
 
 	var rows []map[string]interface{}
@@ -653,6 +672,7 @@ func TestAPI_JSONNumbersKeepTheirPrecision(t *testing.T) {
 	for _, col := range []map[string]interface{}{
 		{"name": "amount", "display_name": "Amount", "field_type": "NUMBER", "is_nullable": true},
 		{"name": "note", "display_name": "Note", "field_type": "TEXT", "is_nullable": true},
+		{"name": "flag", "display_name": "Flag", "field_type": "BOOLEAN", "is_nullable": true},
 	} {
 		rec = h.do(http.MethodPost, "/api/v1/schemas/tables/"+table.ID+"/columns", token, col, nil)
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -696,6 +716,12 @@ func TestAPI_JSONNumbersKeepTheirPrecision(t *testing.T) {
 	assert.Equal(t, "9007199254740995", got["dec"])
 	assert.Equal(t, "1500", got["exp"])
 	assert.Equal(t, "42", got["txt"])
+
+	// A BOOLEAN reads back as a JSON boolean on every engine
+	post("bool", `{"id":"bool","flag":true}`)
+	var one map[string]interface{}
+	require.Equal(t, http.StatusOK, h.do(http.MethodGet, "/api/v1/data/typed/bool", token, nil, &one).Code)
+	assert.Equal(t, true, one["flag"])
 }
 
 // default_value holds field options (a JSON object). It is never placed in
@@ -717,7 +743,11 @@ func TestAPI_FieldOptionsAreMetadataNotSQL(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
 	physicalColumns := func(tbl string) map[string]sql.NullString {
-		rows, err := driver.DB().QueryContext(ctx, `SELECT column_name, column_default FROM information_schema.columns WHERE table_name = $1`, tbl)
+		q := `SELECT column_name, column_default FROM information_schema.columns WHERE table_name = $1`
+		if driver.Dialect().Engine() != dbal.EnginePostgres {
+			q = `SELECT column_name, column_default FROM information_schema.columns WHERE table_name = ? AND table_schema = DATABASE()`
+		}
+		rows, err := driver.DB().QueryContext(ctx, q, tbl)
 		require.NoError(t, err)
 		defer rows.Close()
 		cols := map[string]sql.NullString{}
@@ -759,7 +789,9 @@ func TestAPI_FieldOptionsAreMetadataNotSQL(t *testing.T) {
 	assert.Equal(t, tricky, col.DefaultValue)
 	cols := physicalColumns("configured")
 	require.Contains(t, cols, "label")
-	assert.False(t, cols["label"].Valid, "no physical DEFAULT is created from options")
+	// MariaDB reports the literal "NULL" for a nullable column with no default
+	assert.True(t, !cols["label"].Valid || cols["label"].String == "NULL",
+		"no physical DEFAULT is created from options, got %q", cols["label"].String)
 
 	// Updating options validates them the same way
 	rec = h.do(http.MethodPut, "/api/v1/schemas/tables/"+table.ID+"/columns/"+col.ID, token, map[string]interface{}{
@@ -886,7 +918,13 @@ func TestAPI_ReservedAndCollidingTableNames(t *testing.T) {
 	assert.True(t, strings.HasSuffix(dup.Name, "_copy"), dup.Name)
 
 	// A physical table outside the catalog is not adopted and keeps its data
-	_, err = driver.DB().ExecContext(ctx, `CREATE TABLE legacy (id TEXT PRIMARY KEY, secret TEXT); INSERT INTO legacy VALUES ('k', 'v')`)
+	legacyDDL := `CREATE TABLE legacy (id TEXT PRIMARY KEY, secret TEXT)`
+	if driver.Dialect().Engine() != dbal.EnginePostgres {
+		legacyDDL = "CREATE TABLE legacy (id VARCHAR(64) PRIMARY KEY, secret TEXT)"
+	}
+	_, err = driver.DB().ExecContext(ctx, legacyDDL)
+	require.NoError(t, err)
+	_, err = driver.DB().ExecContext(ctx, `INSERT INTO legacy VALUES ('k', 'v')`)
 	require.NoError(t, err)
 	rec = h.do(http.MethodPost, "/api/v1/schemas/tables", token, map[string]string{"display_name": "Legacy", "custom_name": "legacy"}, nil)
 	assert.GreaterOrEqual(t, rec.Code, 400, rec.Body.String())
@@ -897,8 +935,14 @@ func TestAPI_ReservedAndCollidingTableNames(t *testing.T) {
 	assert.Equal(t, "v", secret)
 
 	// Even a forged catalog row cannot expose an internal table
-	_, err = driver.DB().ExecContext(ctx, `INSERT INTO sys_tables (id, name, display_name, created_at, updated_at) VALUES ('forged', 'sys_users', 'Users', now(), now());
-		INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, created_at) VALUES ('forged-id', 'forged', 'id', 'ID', 'TEXT', false, true, now())`)
+	now := time.Now().UTC()
+	_, err = driver.DB().ExecContext(ctx,
+		h.rebind(`INSERT INTO sys_tables (id, name, display_name, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`),
+		"forged", "sys_users", "Users", now, now)
+	require.NoError(t, err)
+	_, err = driver.DB().ExecContext(ctx,
+		h.rebind(`INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`),
+		"forged-id", "forged", "id", "ID", "TEXT", false, true, now)
 	require.NoError(t, err)
 	rec = h.do(http.MethodGet, "/api/v1/data/sys_users", token, nil, nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code)

@@ -15,7 +15,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-
 // ErrTableExists is returned when a table name is already registered.
 var ErrTableExists = errors.New("table already exists")
 
@@ -88,16 +87,16 @@ type ColumnMetadata struct {
 
 // RelationshipMetadata represents an occurrence join in sys_relationships
 type RelationshipMetadata struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	LeftOccurrenceID  string `json:"left_occurrence_id"`
-	LeftColumnID      string `json:"left_column_id"`
-	RightOccurrenceID string `json:"right_occurrence_id"`
-	RightColumnID     string `json:"right_column_id"`
-	Operator          string `json:"operator"`
-	AllowCreation     bool   `json:"allow_creation"`
-	CascadeDelete     bool   `json:"cascade_delete"`
-	SortRelated       string `json:"sort_related,omitempty"`
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	LeftOccurrenceID  string    `json:"left_occurrence_id"`
+	LeftColumnID      string    `json:"left_column_id"`
+	RightOccurrenceID string    `json:"right_occurrence_id"`
+	RightColumnID     string    `json:"right_column_id"`
+	Operator          string    `json:"operator"`
+	AllowCreation     bool      `json:"allow_creation"`
+	CascadeDelete     bool      `json:"cascade_delete"`
+	SortRelated       string    `json:"sort_related,omitempty"`
 	CreatedAt         time.Time `json:"created_at"`
 }
 
@@ -121,14 +120,17 @@ func (s *Service) EnsureSystemTables(ctx context.Context) error {
 // a username and a password are supplied, the initial owner account. There are
 // no built-in default credentials.
 func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initialOwnerUser, initialOwnerPassword string) error {
+	// The catalog is the same on every engine except its timestamp columns,
+	// whose type and default differ (TIMESTAMPTZ / DATETIME(6)).
+	ts := s.driver.Dialect().TimestampColumn()
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS sys_tables (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(64) NOT NULL UNIQUE,
 			display_name VARCHAR(128) NOT NULL,
 			description TEXT,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			created_at ` + ts + `,
+			updated_at ` + ts + `
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_columns (
 			id VARCHAR(36) PRIMARY KEY,
@@ -141,7 +143,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			default_value TEXT,
 			calculation_formula TEXT,
 			validation_rules TEXT,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+			created_at ` + ts + `,
 			CONSTRAINT uq_table_column UNIQUE (table_id, name)
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_table_occurrences (
@@ -150,7 +152,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			name VARCHAR(64) NOT NULL UNIQUE,
 			x_pos DOUBLE PRECISION DEFAULT 100,
 			y_pos DOUBLE PRECISION DEFAULT 100,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			created_at ` + ts + `
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_relationships (
 			id VARCHAR(36) PRIMARY KEY,
@@ -163,15 +165,15 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			allow_creation BOOLEAN DEFAULT FALSE,
 			cascade_delete BOOLEAN DEFAULT FALSE,
 			sort_related TEXT,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			created_at ` + ts + `
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_layouts (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
 			table_occurrence_id VARCHAR(36) NOT NULL REFERENCES sys_table_occurrences(id) ON DELETE CASCADE,
 			definition TEXT NOT NULL,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			created_at ` + ts + `,
+			updated_at ` + ts + `
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_users (
 			id VARCHAR(36) PRIMARY KEY,
@@ -179,8 +181,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			password_hash VARCHAR(256) NOT NULL,
 			role VARCHAR(32) NOT NULL DEFAULT 'user',
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			created_at ` + ts + `,
+			updated_at ` + ts + `
 		);`,
 		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;`,
 		`CREATE TABLE IF NOT EXISTS sys_user_permissions (
@@ -188,7 +190,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			user_id VARCHAR(36) NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
 			layout_id VARCHAR(36) NOT NULL REFERENCES sys_layouts(id) ON DELETE CASCADE,
 			access_level VARCHAR(16) NOT NULL DEFAULT 'read_write',
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+			created_at ` + ts + `,
 			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_scripts (
@@ -197,8 +199,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			context_table VARCHAR(128) DEFAULT '',
 			folder_id VARCHAR(36),
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			created_at ` + ts + `,
+			updated_at ` + ts + `
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_script_steps (
 			id VARCHAR(36) PRIMARY KEY,
@@ -208,7 +210,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			params TEXT NOT NULL DEFAULT '{}',
 			is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
 			parent_step_id VARCHAR(36),
-			created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			created_at ` + ts + `
 		);`,
 	}
 
@@ -435,31 +437,59 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 	return &col, nil
 }
 
-// syncUniqueIndex creates or drops the unique index that backs a field's
-// "unique" validation rule, so two concurrent writes cannot both store the
-// same value (#15). Null and blank values are not indexed: an empty field is
-// only rejected by "not empty". PostgreSQL only; on other engines the rule
-// is checked by the data service alone.
+// syncUniqueIndex creates or drops the database constraint that backs a
+// field's "unique" validation rule, so two concurrent writes cannot both
+// store the same value (#15). Null and blank values are not constrained: an
+// empty field is only rejected by "not empty".
+//
+// PostgreSQL uses a partial unique index. MariaDB has none, and cannot index
+// a LONGTEXT column without a key length, so it indexes a generated column
+// holding the SHA-256 of the value, which is NULL when the value is empty
+// (MariaDB allows repeated NULLs in a unique index).
 func (s *Service) syncUniqueIndex(ctx context.Context, db interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 }, table, field string, fieldType dbal.AgnosticFieldType, rules *validation.Rules) error {
 	dialect := s.driver.Dialect()
-	if dialect.Engine() != dbal.EnginePostgres {
+	name := validation.UniqueIndexName(table, field)
+	index := dialect.QuoteIdentifier(name)
+	qTable, qField := dialect.QuoteIdentifier(table), dialect.QuoteIdentifier(field)
+	wanted := rules != nil && rules.Unique
+
+	// Text fields treat an empty value as no value; other types only skip NULL.
+	blankIsEmpty := true
+	switch fieldType {
+	case dbal.FieldTypeNumber, dbal.FieldTypeDate, dbal.FieldTypeTimestamp, dbal.FieldTypeBoolean, dbal.FieldTypeContainer:
+		blankIsEmpty = false
+	}
+
+	if dialect.Engine() == dbal.EngineMariaDB {
+		if !wanted {
+			// The index goes with its generated column; neither may exist yet.
+			_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", qTable, index))
+			_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", qTable, index))
+			return nil
+		}
+		value := fmt.Sprintf("CAST(%s AS CHAR)", qField)
+		if blankIsEmpty {
+			value = fmt.Sprintf("NULLIF(%s, '')", value)
+		}
+		q := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s CHAR(64) AS (SHA2(%s, 256)) VIRTUAL, ADD UNIQUE INDEX %s (%s)",
+			qTable, index, value, index, index)
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			return fmt.Errorf("%w: field %s cannot be unique: some records already share a value (%v)", ErrInvalidFieldOptions, field, err)
+		}
 		return nil
 	}
-	index := dialect.QuoteIdentifier(validation.UniqueIndexName(table, field))
-	if rules == nil || !rules.Unique {
+
+	if !wanted {
 		_, err := db.ExecContext(ctx, "DROP INDEX IF EXISTS "+index)
 		return err
 	}
-	where := dialect.QuoteIdentifier(field) + " IS NOT NULL"
-	switch fieldType {
-	case dbal.FieldTypeNumber, dbal.FieldTypeDate, dbal.FieldTypeTimestamp, dbal.FieldTypeBoolean, dbal.FieldTypeContainer:
-	default:
-		where += " AND " + dialect.QuoteIdentifier(field) + " <> ''"
+	where := qField + " IS NOT NULL"
+	if blankIsEmpty {
+		where += " AND " + qField + " <> ''"
 	}
-	q := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (%s) WHERE %s",
-		index, dialect.QuoteIdentifier(table), dialect.QuoteIdentifier(field), where)
+	q := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (%s) WHERE %s", index, qTable, qField, where)
 	if _, err := db.ExecContext(ctx, q); err != nil {
 		return fmt.Errorf("%w: field %s cannot be unique: some records already share a value (%v)", ErrInvalidFieldOptions, field, err)
 	}
@@ -698,7 +728,7 @@ func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
 	defer tx.Rollback()
 
 	// 2. Drop physical table
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %q", tableName)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", dialect.QuoteIdentifier(tableName))); err != nil {
 		return fmt.Errorf("failed dropping physical table %s: %w", tableName, err)
 	}
 
@@ -780,8 +810,8 @@ func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMet
 	defer cRows.Close()
 
 	type srcCol struct {
-		name, displayName, fieldType string
-		isNullable, isPrimaryKey     bool
+		name, displayName, fieldType               string
+		isNullable, isPrimaryKey                   bool
 		defaultValue, calcFormula, validationRules *string
 	}
 	var cols []srcCol
@@ -856,7 +886,7 @@ func (s *Service) TruncateTable(ctx context.Context, tableID string) error {
 	}
 
 	// Use DELETE instead of TRUNCATE to avoid DDL-in-transaction issues on some drivers
-	if _, err := db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %q", tableName)); err != nil {
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", dialect.QuoteIdentifier(tableName))); err != nil {
 		return fmt.Errorf("failed truncating table %s: %w", tableName, err)
 	}
 	return nil

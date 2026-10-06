@@ -84,6 +84,23 @@ func (p *PostgresDialect) BuildAddColumnSQL(tableName string, col dbal.ColumnDef
 	return clause + ";", nil
 }
 
+func (p *PostgresDialect) TimestampColumn() string {
+	return "TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP"
+}
+
+func (p *PostgresDialect) CastToText(expr string) string {
+	return fmt.Sprintf("CAST(%s AS TEXT)", expr)
+}
+
+func (p *PostgresDialect) CaseInsensitiveLike(expr, placeholder string) string {
+	return fmt.Sprintf("%s ILIKE %s", p.CastToText(expr), placeholder)
+}
+
+func (p *PostgresDialect) NumericValue(expr string) string {
+	text := p.CastToText(expr)
+	return fmt.Sprintf("(CASE WHEN %s ~ '%s' THEN CAST(%s AS NUMERIC) ELSE NULL END)", text, dbal.NumericPattern, text)
+}
+
 func (p *PostgresDialect) BuildDropColumnSQL(tableName string, columnName string) (string, error) {
 	return fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s;",
 		p.QuoteIdentifier(tableName),

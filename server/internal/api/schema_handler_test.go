@@ -13,16 +13,12 @@ import (
 	"github.com/file4base/file4base-app/server/internal/api"
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/dbal"
-	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func init() {
-	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
-}
 
 // asSession emulates AuthMiddleware.Authenticate for handler tests: it binds
 // every request to the given session and database driver.
@@ -54,9 +50,9 @@ func TestSchemaHandler_RejectsRequestsWithoutSession(t *testing.T) {
 }
 
 func setupTestRouter(t *testing.T) (*chi.Mux, *schema.Service) {
-	dsn := "postgres://file4base:dev_password@localhost:5432/file4base_dev?sslmode=disable"
+	dsn := testdb.DevDSN()
 	driver, err := dbal.Connect(dbal.DriverConfig{
-		EngineType: dbal.EnginePostgres,
+		EngineType: testdb.Engine(),
 		DSN:        dsn,
 	})
 	if err != nil {

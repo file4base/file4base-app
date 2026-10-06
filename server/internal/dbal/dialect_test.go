@@ -46,7 +46,8 @@ func TestMariaDBDialect_BuildCreateTableSQL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, sql, "CREATE TABLE `customers` (")
 	assert.NotContains(t, sql, "IF NOT EXISTS")
-	assert.Contains(t, sql, "`id` LONGTEXT PRIMARY KEY")
+	// A key column cannot be LONGTEXT in MariaDB without a key length
+	assert.Contains(t, sql, "`id` VARCHAR(252) PRIMARY KEY")
 	assert.Contains(t, sql, "`first_name` LONGTEXT NOT NULL")
 	assert.Contains(t, sql, "`balance` DECIMAL(65, 10)")
 	assert.Contains(t, sql, "`status` LONGTEXT NOT NULL")

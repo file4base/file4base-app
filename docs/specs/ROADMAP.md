@@ -1,7 +1,7 @@
 # File4Base Implementation Roadmap
 
 ## Phase 1: Environment, DBAL Scaffolding & Foundation
-- [x] Create root `docker-compose.yml` supporting both PostgreSQL 16 and optional MariaDB profiles.
+- [x] Create root `docker-compose.yml` (PostgreSQL 16) and `docker-compose.mariadb.yml` (MariaDB 11); the Go test suite runs against both engines in CI.
 - [x] Initialize Go server module (`server/go.mod`) with clean package structure.
 - [x] Implement DBAL interface (`internal/dbal`):
   - [x] Agnostic types (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, `BOOLEAN`, `CONTAINER`, `CALCULATION`).
