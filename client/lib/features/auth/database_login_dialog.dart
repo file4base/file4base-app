@@ -104,6 +104,9 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
     }
   }
 
+  /// Solution file chosen with "Load from disk", reported with the sign-in.
+  ({String fileName, String solutionName, String database})? _loadedSolution;
+
   Future<void> _handleLoadFromDisk() async {
     try {
       final picked = await SolutionStorageService.pickFile();
@@ -116,75 +119,27 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
 
       final pkg = SolutionPackage.fromMsgPack(picked.bytes);
       final targetDb = pkg.databaseConnection.database;
+      _loadedSolution = (fileName: picked.name, solutionName: pkg.solutionName, database: targetDb);
+      await _loadDatabases();
+      if (!mounted) return;
 
-      // Ensure database exists or create it (creation provisions the packaged owner account)
-      try {
-        await widget.apiClient.switchDatabase(targetDb);
-      } catch (_) {
-        try {
-          await widget.apiClient.createDatabase(
-            targetDb,
-            user: pkg.databaseConnection.user,
-            password: pkg.databaseConnection.password,
-          );
-        } catch (_) {}
-      }
-
-      // Authenticate with solution package credentials
-      AuthResult? auth;
-      try {
-        auth = await widget.apiClient.login(
-          username: pkg.databaseConnection.user.isNotEmpty ? pkg.databaseConnection.user : 'admin',
-          password: pkg.databaseConnection.password,
-          database: targetDb,
-        );
-      } catch (_) {
-        // If password is required from user, prepare the form with targetDb preselected
-        setState(() {
-          _isLoggingIn = false;
-          if (!_databases.contains(targetDb)) {
-            _databases.add(targetDb);
-          }
+      // Solution files carry no password: select the file's database and
+      // account, and let the user sign in. Restoring a file into a database
+      // that does not exist yet is File > Open Solution.
+      setState(() {
+        _isLoggingIn = false;
+        _passwordController.clear();
+        if (pkg.databaseConnection.user.isNotEmpty) {
+          _usernameController.text = pkg.databaseConnection.user;
+        }
+        if (_databases.contains(targetDb)) {
           _selectedDatabase = targetDb;
-          _usernameController.text = pkg.databaseConnection.user.isNotEmpty ? pkg.databaseConnection.user : 'admin';
-          _passwordController.clear();
-          _errorMessage = 'Solution "${pkg.solutionName}" loaded. Please enter the password for database "$targetDb".';
-        });
-        return;
-      }
-
-      // Synchronize solution users into the database if packaged. Managing
-      // accounts requires a signed-in owner or admin, so this runs after login.
-      if (pkg.users.isNotEmpty && auth.user.isAdmin) {
-        try {
-          final currentUsers = await widget.apiClient.listUsers(database: targetDb);
-          for (final u in pkg.users) {
-            final uname = u['username']?.toString() ?? '';
-            if (uname.isNotEmpty && !currentUsers.any((cu) => cu.username.toLowerCase() == uname.toLowerCase())) {
-              var role = u['role']?.toString() ?? 'user';
-              if (role == 'owner' && !auth.user.isOwner) {
-                role = 'admin';
-              }
-              try {
-                await widget.apiClient.createUser(
-                  username: uname,
-                  password: pkg.databaseConnection.password,
-                  role: role,
-                  database: targetDb,
-                );
-              } catch (_) {}
-            }
-          }
-        } catch (_) {}
-      }
-
-      if (mounted) {
-        final authWithSolution = auth.copyWith(
-          fileName: picked.name,
-          solutionName: pkg.solutionName,
-        );
-        Navigator.of(context).pop(authWithSolution);
-      }
+          _errorMessage = 'Solution "${pkg.solutionName}" loaded. Enter the password to open database "$targetDb".';
+        } else {
+          _errorMessage = 'Database "$targetDb" of solution "${pkg.solutionName}" does not exist on this server. '
+              'Use File > Open Solution to create it from this file.';
+        }
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -222,7 +177,10 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       );
 
       if (mounted) {
-        Navigator.of(context).pop(auth);
+        final loaded = _loadedSolution;
+        Navigator.of(context).pop(loaded != null && loaded.database == auth.database
+            ? auth.copyWith(fileName: loaded.fileName, solutionName: loaded.solutionName)
+            : auth);
       }
     } catch (e) {
       if (mounted) {

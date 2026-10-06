@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"database/sql"
 	"errors"
@@ -58,17 +59,24 @@ var ErrTableNotFound = errors.New("table not found")
 // registered for the table in the system catalog (sys_columns).
 var ErrUnknownField = errors.New("unknown field")
 
-// tableFields returns the registered field names of a user table.
+// ErrInvalidValue is returned when a field value cannot be stored in its
+// field, such as a CONTAINER value that is not base64.
+var ErrInvalidValue = errors.New("invalid field value")
+
+// fieldSet maps the registered field names of a table to their types.
+type fieldSet map[string]dbal.AgnosticFieldType
+
+// tableFields returns the registered fields of a user table and their types.
 // Every user table owns at least its primary key column, so an empty result
 // means the table is not part of the catalog.
-func (s *Service) tableFields(ctx context.Context, tableName string) (map[string]struct{}, error) {
+func (s *Service) tableFields(ctx context.Context, tableName string) (fieldSet, error) {
 	// Internal tables are never user data, even if a catalog row names one.
 	if dbal.IsReservedTableName(tableName) {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
-	q := `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
+	q := `SELECT c.name, c.field_type FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
+		q = `SELECT c.name, c.field_type FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
 	}
 	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
 	if err != nil {
@@ -76,13 +84,13 @@ func (s *Service) tableFields(ctx context.Context, tableName string) (map[string
 	}
 	defer rows.Close()
 
-	fields := make(map[string]struct{})
+	fields := make(fieldSet)
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var name, fieldType string
+		if err := rows.Scan(&name, &fieldType); err != nil {
 			return nil, err
 		}
-		fields[name] = struct{}{}
+		fields[name] = dbal.AgnosticFieldType(fieldType)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -124,7 +132,28 @@ func (s *Service) autoEnterConstants(ctx context.Context, tableName string) (map
 	return constants, rows.Err()
 }
 
-func checkField(fields map[string]struct{}, tableName, fieldName string) error {
+// decodeContainerValues turns the base64 text of CONTAINER fields into the
+// bytes to store. JSON has no binary type, so the data API exchanges
+// CONTAINER values as standard base64 (see rowsToMaps).
+func decodeContainerValues(fields fieldSet, tableName string, record map[string]interface{}) error {
+	for col, val := range record {
+		if fields[col] != dbal.FieldTypeContainer {
+			continue
+		}
+		text, ok := val.(string)
+		if !ok {
+			continue // nil, or bytes from an internal caller
+		}
+		b, err := base64.StdEncoding.DecodeString(text)
+		if err != nil {
+			return fmt.Errorf("%w: %s.%s must be base64-encoded binary data", ErrInvalidValue, tableName, col)
+		}
+		record[col] = b
+	}
+	return nil
+}
+
+func checkField(fields fieldSet, tableName, fieldName string) error {
 	if _, ok := fields[fieldName]; !ok {
 		return fmt.Errorf("%w: %s.%s", ErrUnknownField, tableName, fieldName)
 	}
@@ -157,6 +186,9 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 		if _, given := record[col]; !given {
 			record[col] = val
 		}
+	}
+	if err := decodeContainerValues(fields, tableName, record); err != nil {
+		return nil, err
 	}
 
 	// Ensure id exists
@@ -194,7 +226,8 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 
 // GetRow retrieves a single record by primary key id
 func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[string]interface{}, error) {
-	if _, err := s.tableFields(ctx, tableName); err != nil {
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
 		return nil, err
 	}
 	dialect := s.driver.Dialect()
@@ -212,7 +245,7 @@ func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[
 	}
 	defer rows.Close()
 
-	results, err := rowsToMaps(rows)
+	results, err := rowsToMaps(rows, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -236,6 +269,9 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
+	}
+	if err := decodeContainerValues(fields, tableName, updates); err != nil {
+		return nil, err
 	}
 
 	dialect := s.driver.Dialect()
@@ -346,7 +382,7 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 	}
 	defer rows.Close()
 
-	return rowsToMaps(rows)
+	return rowsToMaps(rows, fields)
 }
 
 // ParseFile4BaseFindCriteria translates File4Base operators (*, ..., =, ==, !, !=, <, >, <=, >=, //, @) to SQL AST
@@ -578,10 +614,12 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 	defer rows.Close()
 
-	return rowsToMaps(rows)
+	return rowsToMaps(rows, fields)
 }
 
-func rowsToMaps(rows *sql.Rows) ([]map[string]interface{}, error) {
+// rowsToMaps reads rows for the JSON API: CONTAINER values become base64
+// text, other byte values (text the driver returns as bytes) become strings.
+func rowsToMaps(rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, err
@@ -603,7 +641,11 @@ func rowsToMaps(rows *sql.Rows) ([]map[string]interface{}, error) {
 		for i, colName := range cols {
 			val := colValues[i]
 			if b, ok := val.([]byte); ok {
-				rowMap[colName] = string(b)
+				if fields[colName] == dbal.FieldTypeContainer {
+					rowMap[colName] = base64.StdEncoding.EncodeToString(b)
+				} else {
+					rowMap[colName] = string(b)
+				}
 			} else {
 				rowMap[colName] = val
 			}

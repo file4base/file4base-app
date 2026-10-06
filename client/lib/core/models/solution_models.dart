@@ -1,21 +1,25 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
-import '../api/api_client.dart';
 import 'file_options_model.dart';
 import 'page_setup_model.dart';
 
-/// DatabaseConnectionConfig represents DB connection settings stored inside the MessagePack .f4b file.
-/// Credentials (user, password) are encoded and never stored in cleartext.
-class DatabaseConnectionConfig {
-  static const String _secretKey = 'file4base_secure_credentials_key_v1';
+/// Solution files (.f4p) follow docs/specs/solution_bundle_format.md, the
+/// contract shared with the Go server. The server writes them (File > Save);
+/// the client reads them and writes the initial file of a new database.
+const kSolutionFormat = 'file4base_solution';
+const kSolutionVersion = '2.0';
 
+/// The database a solution belongs to. It never carries a password: files are
+/// portable and anyone holding one could read it.
+class DatabaseConnectionConfig {
   final String engine;
   final String host;
   final int port;
   final String database;
+
+  /// Account that saved the file, used to prefill sign-in.
   final String user;
-  final String password;
   final String sslMode;
 
   const DatabaseConnectionConfig({
@@ -23,70 +27,48 @@ class DatabaseConnectionConfig {
     this.host = 'localhost',
     this.port = 5432,
     required this.database,
-    this.user = 'file4base',
-    this.password = '',
+    this.user = '',
     this.sslMode = 'disable',
   });
 
-  /// Encodes a plain credential string into an obfuscated token with prefix 'enc:'
-  static String encodeCredential(String plain) {
-    if (plain.isEmpty) return '';
-    final keyBytes = utf8.encode(_secretKey);
-    final dataBytes = utf8.encode(plain);
-    final out = Uint8List(dataBytes.length);
-    for (int i = 0; i < dataBytes.length; i++) {
-      out[i] = dataBytes[i] ^ keyBytes[i % keyBytes.length];
-    }
-    return 'enc:${base64.encode(out)}';
-  }
+  Map<String, dynamic> toMap() => {
+        'engine': engine,
+        'host': host,
+        'port': port,
+        'database': database,
+        'user': user,
+        'ssl_mode': sslMode,
+      };
 
-  /// Decodes an obfuscated credential token back to plain text
-  static String decodeCredential(String encoded) {
-    if (encoded.isEmpty) return '';
-    if (!encoded.startsWith('enc:')) return encoded;
-    try {
-      final raw = base64.decode(encoded.substring(4));
-      final keyBytes = utf8.encode(_secretKey);
-      final out = Uint8List(raw.length);
-      for (int i = 0; i < raw.length; i++) {
-        out[i] = raw[i] ^ keyBytes[i % keyBytes.length];
-      }
-      return utf8.decode(out);
-    } catch (_) {
-      return encoded;
-    }
-  }
-
-  Map<String, dynamic> toMap({bool encodeCredentials = true}) {
-    return {
-      'engine': engine,
-      'host': host,
-      'port': port,
-      'database': database,
-      'user': encodeCredentials ? encodeCredential(user) : user,
-      'password': encodeCredentials ? encodeCredential(password) : password,
-      'ssl_mode': sslMode,
-    };
-  }
-
+  /// Reads the connection of a file. A password in an old (1.0) file is
+  /// ignored.
   factory DatabaseConnectionConfig.fromMap(Map<dynamic, dynamic> map) {
-    final rawUser = map['user']?.toString() ?? 'file4base';
-    final rawPassword = map['password']?.toString() ?? '';
-
     return DatabaseConnectionConfig(
       engine: map['engine']?.toString() ?? 'postgres',
       host: map['host']?.toString() ?? 'localhost',
       port: (map['port'] is num) ? (map['port'] as num).toInt() : 5432,
       database: map['database']?.toString() ?? '',
-      user: decodeCredential(rawUser),
-      password: decodeCredential(rawPassword),
+      user: _legacyDecode(map['user']?.toString() ?? ''),
       sslMode: map['ssl_mode']?.toString() ?? 'disable',
     );
   }
+
+  /// 1.0 files obfuscated the username with a fixed key ("enc:" prefix).
+  static String _legacyDecode(String value) {
+    if (!value.startsWith('enc:')) return value;
+    try {
+      final raw = base64.decode(value.substring(4));
+      final key = utf8.encode('file4base_secure_credentials_key_v1');
+      return utf8.decode([for (var i = 0; i < raw.length; i++) raw[i] ^ key[i % key.length]]);
+    } catch (_) {
+      return '';
+    }
+  }
 }
 
-/// SolutionPackage holds all frontend layouts, schemas, table definitions, users,
-/// and database connection parameters in a single portable MessagePack bundle (.f4b).
+/// A solution file: the design of a database (tables, occurrences,
+/// relationships, layouts, scripts, accounts without passwords) plus the
+/// client settings (File Options, Page Setup).
 class SolutionPackage {
   final String format;
   final String version;
@@ -94,152 +76,117 @@ class SolutionPackage {
   final DatabaseConnectionConfig databaseConnection;
   final List<Map<String, dynamic>> tables;
   final List<Map<String, dynamic>> tableOccurrences;
+  final List<Map<String, dynamic>> relationships;
   final List<Map<String, dynamic>> layouts;
-  final List<Map<String, dynamic>> users;
   final List<Map<String, dynamic>> scripts;
+  final List<Map<String, dynamic>> users;
   final FileOptionsModel fileOptions;
   final PageSetupModel pageSetup;
-  final String createdAt;
-  final String updatedAt;
+  final String exportedAt;
 
   SolutionPackage({
-    this.format = 'file4base_solution',
-    this.version = '1.0',
+    this.format = kSolutionFormat,
+    this.version = kSolutionVersion,
     required this.solutionName,
     required this.databaseConnection,
     this.tables = const [],
     this.tableOccurrences = const [],
+    this.relationships = const [],
     this.layouts = const [],
-    this.users = const [],
     this.scripts = const [],
+    this.users = const [],
     this.fileOptions = const FileOptionsModel(),
     this.pageSetup = const PageSetupModel(),
-    String? createdAt,
-    String? updatedAt,
-  })  : createdAt = createdAt ?? DateTime.now().toUtc().toIso8601String(),
-        updatedAt = updatedAt ?? DateTime.now().toUtc().toIso8601String();
+    String? exportedAt,
+  }) : exportedAt = exportedAt ?? DateTime.now().toUtc().toIso8601String();
 
   Map<String, dynamic> toMap() {
     return {
       'format': format,
       'version': version,
       'solution_name': solutionName,
+      'exported_at': exportedAt,
       'database_connection': databaseConnection.toMap(),
       'tables': tables,
       'table_occurrences': tableOccurrences,
+      'relationships': relationships,
       'layouts': layouts,
-      'users': users,
       'scripts': scripts,
+      'users': users,
       'file_options': fileOptions.toJson(),
       'page_setup': pageSetup.toJson(),
-      'created_at': createdAt,
-      'updated_at': updatedAt,
     };
   }
 
   factory SolutionPackage.fromMap(Map<dynamic, dynamic> map) {
-    var rawDb = map['database_connection'];
-    var dbConfig = rawDb is Map
-        ? DatabaseConnectionConfig.fromMap(rawDb)
-        : const DatabaseConnectionConfig(database: '');
-
+    final format = map['format']?.toString() ?? '';
+    if (format != kSolutionFormat) {
+      throw FormatException('Not a File4Base solution file (format "$format")');
+    }
+    final rawDb = map['database_connection'];
     List<Map<String, dynamic>> parseList(dynamic raw) {
       if (raw is List) {
-        return raw.map((item) => item is Map ? Map<String, dynamic>.from(item) : <String, dynamic>{}).toList();
+        return raw.whereType<Map>().map((item) => _stringKeyed(item)).toList();
       }
       return [];
     }
 
     return SolutionPackage(
-      format: map['format']?.toString() ?? 'file4base_solution',
+      format: format,
       version: map['version']?.toString() ?? '1.0',
       solutionName: map['solution_name']?.toString() ?? 'Untitled Solution',
-      databaseConnection: dbConfig,
+      databaseConnection:
+          rawDb is Map ? DatabaseConnectionConfig.fromMap(rawDb) : const DatabaseConnectionConfig(database: ''),
       tables: parseList(map['tables']),
       tableOccurrences: parseList(map['table_occurrences']),
+      relationships: parseList(map['relationships']),
       layouts: parseList(map['layouts']),
-      users: parseList(map['users']),
       scripts: parseList(map['scripts']),
+      users: parseList(map['users']),
       fileOptions: map['file_options'] is Map
-          ? FileOptionsModel.fromJson(Map<String, dynamic>.from(map['file_options']))
+          ? FileOptionsModel.fromJson(_stringKeyed(map['file_options'] as Map))
           : const FileOptionsModel(),
       pageSetup: map['page_setup'] is Map
-          ? PageSetupModel.fromJson(Map<String, dynamic>.from(map['page_setup']))
+          ? PageSetupModel.fromJson(_stringKeyed(map['page_setup'] as Map))
           : const PageSetupModel(),
-      createdAt: map['created_at']?.toString(),
-      updatedAt: map['updated_at']?.toString(),
+      exportedAt: (map['exported_at'] ?? map['updated_at'] ?? map['created_at'])?.toString(),
     );
   }
 
-  /// Serializes this solution to MessagePack binary (.f4b)
-  Uint8List toMsgPack() {
-    return msgpack.serialize(toMap());
+  /// Nested maps decoded from MessagePack have dynamic keys.
+  static Map<String, dynamic> _stringKeyed(Map<dynamic, dynamic> m) => {
+        for (final e in m.entries) e.key.toString(): _normalize(e.value),
+      };
+
+  static dynamic _normalize(dynamic v) {
+    if (v is Map) return _stringKeyed(v);
+    if (v is List) return v.map(_normalize).toList();
+    return v;
   }
 
-  /// Deserializes a solution from MessagePack binary (.f4b)
+  Uint8List toMsgPack() => msgpack.serialize(toMap());
+
   static SolutionPackage fromMsgPack(Uint8List bytes) {
     final decoded = msgpack.deserialize(bytes);
     if (decoded is Map) {
       return SolutionPackage.fromMap(decoded);
     }
-    throw FormatException('Invalid MessagePack solution payload');
+    throw const FormatException('Invalid MessagePack solution payload');
   }
 
-  /// Factory from live UI data
-  factory SolutionPackage.fromLiveData({
+  /// The initial file of a new database: no tables yet, and its first owner
+  /// account (enabled, without a password; the server never restores one).
+  factory SolutionPackage.newDatabase({
     required String solutionName,
-    required DatabaseConnectionConfig dbConfig,
-    required List<TableModel> tables,
-    required List<TableOccurrenceModel> occurrences,
-    required List<LayoutModel> layouts,
-    List<Map<String, dynamic>> users = const [],
-    List<ScriptModel> scripts = const [],
-    FileOptionsModel fileOptions = const FileOptionsModel(),
-    PageSetupModel pageSetup = const PageSetupModel(),
+    required DatabaseConnectionConfig connection,
+    required String ownerUsername,
   }) {
-    final tablesMap = tables.map((t) => {
-      'id': t.id,
-      'name': t.name,
-      'display_name': t.displayName,
-      'description': t.description ?? '',
-      'columns': t.columns.map((c) => {
-        'id': c.id,
-        'table_id': c.tableId,
-        'name': c.name,
-        'display_name': c.displayName,
-        'field_type': c.fieldType,
-        'is_nullable': c.isNullable,
-        'is_primary_key': c.isPrimaryKey,
-      }).toList(),
-    }).toList();
-
-    final occMap = occurrences.map((o) => {
-      'id': o.id,
-      'base_table_id': o.baseTableId,
-      'name': o.name,
-      'x_pos': o.xPos,
-      'y_pos': o.yPos,
-    }).toList();
-
-    final layMap = layouts.map((l) => {
-      'id': l.id,
-      'name': l.name,
-      'table_occurrence_id': l.tableOccurrenceId,
-      'definition': l.definition,
-    }).toList();
-
-    final scriptMap = scripts.map((s) => s.toJson()).toList();
-
     return SolutionPackage(
       solutionName: solutionName,
-      databaseConnection: dbConfig,
-      tables: tablesMap,
-      tableOccurrences: occMap,
-      layouts: layMap,
-      scripts: scriptMap,
-      fileOptions: fileOptions,
-      pageSetup: pageSetup,
-      users: users,
+      databaseConnection: connection,
+      users: [
+        {'id': 'owner', 'username': ownerUsername, 'role': 'owner', 'is_active': true, 'permissions': <dynamic>[]},
+      ],
     );
   }
 }

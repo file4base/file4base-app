@@ -62,7 +62,10 @@ void main() {
       expect(parsed.autoLoginEnabled, isTrue);
       expect(parsed.isGuestLogin, isFalse);
       expect(parsed.defaultUsername, 'poweruser');
-      expect(parsed.defaultPassword, 'secretpassword');
+      // The remembered password stays in memory: it is never serialized (#10)
+      expect(json.containsKey('default_password'), isFalse);
+      expect(json.values, isNot(contains('secretpassword')));
+      expect(parsed.defaultPassword, isEmpty);
       expect(parsed.switchLayoutOnOpen, isTrue);
       expect(parsed.startupLayoutId, 'lay-2');
       expect(parsed.startupLayoutName, 'Invoices');

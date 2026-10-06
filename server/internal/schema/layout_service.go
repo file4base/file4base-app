@@ -53,6 +53,11 @@ func (s *Service) ListTableOccurrences(ctx context.Context) ([]TableOccurrence, 
 }
 
 // CreateLayout persists a new visual layout
+
+// ErrUnknownTableOccurrence is returned when a layout refers to a table
+// occurrence (or table) that does not exist.
+var ErrUnknownTableOccurrence = errors.New("unknown table occurrence")
+
 func (s *Service) CreateLayout(ctx context.Context, name string, toID string, definition json.RawMessage) (*LayoutMetadata, error) {
 	if name == "" {
 		return nil, errors.New("layout name cannot be empty")
@@ -101,8 +106,13 @@ func (s *Service) CreateLayout(ctx context.Context, name string, toID string, de
 		}
 	}
 
+	if resolvedTOID == "" && toID != "" {
+		// An explicit reference that matches nothing is an error: binding the
+		// layout to some other table would succeed silently but wrongly (#3).
+		return nil, fmt.Errorf("%w: '%s'", ErrUnknownTableOccurrence, toID)
+	}
 	if resolvedTOID == "" {
-		// Fallback to first available table occurrence
+		// No table given: use the first table occurrence
 		var firstTOID string
 		err := db.QueryRowContext(ctx, `SELECT id FROM sys_table_occurrences LIMIT 1`).Scan(&firstTOID)
 		if err != nil {

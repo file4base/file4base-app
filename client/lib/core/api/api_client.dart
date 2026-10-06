@@ -1016,16 +1016,24 @@ class ApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-  Future<Uint8List> exportSolution({String? name, String? host, int? port, String? user, String? password}) async {
-    final queryParams = <String, String>{};
-    if (name != null) queryParams['name'] = name;
-    if (host != null) queryParams['host'] = host;
-    if (port != null) queryParams['port'] = port.toString();
-    if (user != null) queryParams['user'] = user;
-    if (password != null) queryParams['password'] = password;
-
-    final uri = Uri.parse('$baseUrl/api/v1/solutions/export').replace(queryParameters: queryParams.isEmpty ? null : queryParams);
-    final response = await _httpClient.get(uri, headers: _headers());
+  /// The solution file (.f4p) of the signed-in database, written by the
+  /// server (docs/specs/solution_bundle_format.md). [fileOptions] and
+  /// [pageSetup] are client settings stored in the file; passwords are never
+  /// included.
+  Future<Uint8List> exportSolution({
+    required String solutionName,
+    Map<String, dynamic>? fileOptions,
+    Map<String, dynamic>? pageSetup,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/export'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'solution_name': solutionName,
+        if (fileOptions != null) 'file_options': fileOptions,
+        if (pageSetup != null) 'page_setup': pageSetup,
+      }),
+    );
     _checkResponse(response);
     return response.bodyBytes;
   }

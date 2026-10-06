@@ -126,29 +126,17 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
         await widget.apiClient.switchDatabase(dbName);
       }
 
-      // 2. Build connection configuration (credentials encoded when serialized)
-      final dbConfig = DatabaseConnectionConfig(
-        engine: 'postgres',
-        host: host,
-        port: port,
-        database: dbName,
-        user: user,
-        password: password,
-      );
-
-      // 3. Create initial solution package in MessagePack format
-      final pkg = SolutionPackage(
+      // 2. Initial solution file: connection and owner, never the password
+      final pkg = SolutionPackage.newDatabase(
         solutionName: solutionName,
-        databaseConnection: dbConfig,
-        tables: const [],
-        tableOccurrences: const [],
-        layouts: const [],
-        users: [
-          {
-            'username': user,
-            'role': 'owner',
-          }
-        ],
+        connection: DatabaseConnectionConfig(
+          engine: 'postgres',
+          host: host,
+          port: port,
+          database: dbName,
+          user: user,
+        ),
+        ownerUsername: user,
       );
 
       final f4pBytes = pkg.toMsgPack();
@@ -311,7 +299,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Base File Name (.f4b & .f4data)',
                     hintText: 'e.g. invoices.f4b',
-                    helperText: 'Creates <name>.f4b (layouts & encoded credentials) and <name>.f4data (active database rows)',
+                    helperText: 'Creates <name>.f4p with the solution design. Passwords are never stored in it.',
                     border: OutlineInputBorder(),
                     isDense: true,
                     prefixIcon: Icon(Icons.file_present_outlined, size: 20),

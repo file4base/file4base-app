@@ -377,7 +377,7 @@ Deletes a relationship definition.
 Retrieves all visual layout definitions.
 
 ### `POST /api/v1/schemas/layouts`
-Creates a visual layout.
+Creates a visual layout. `table_occurrence_id` may be a table occurrence ID, a table ID or a table name; one that matches nothing answers `400` (the layout is never bound to another table). Without it, the first table occurrence is used.
 
 #### Request Body
 ```json
@@ -416,6 +416,8 @@ Queries rows with optional pagination and sorting.
 - `offset` (integer, default `0`)
 - `sort_by` (string, optional)
 - `sort_asc` (boolean, default `true`)
+
+CONTAINER fields are returned as base64 strings (standard alphabet, with padding); `POST` and `PUT` accept base64 strings for them and store the decoded bytes, and a value that is not valid base64 answers `400 Invalid Value`.
 
 To read every row, page with `limit=1000` and `sort_by=id` (a stable order), advancing `offset` by the number of rows received, until a page returns fewer than `limit` rows.
 
@@ -569,26 +571,37 @@ Drops a database and revokes every session bound to it. The caller must prove ow
 
 ## 6. MessagePack Solutions & Database Data Persistence
 
-### `GET /api/v1/solutions/export`
-Packages the active solution (layouts, schemas, table occurrences, relationships, users, and DB connection parameters) into a binary MessagePack solution file (`.f4b`).
+### `GET /api/v1/solutions/export` and `POST /api/v1/solutions/export`
+Packages the design of the session's database into a solution file (`.f4p`, MessagePack): tables with their field options, table occurrences, relationships, layouts, scripts with their steps, and accounts with their role, active state and layout permissions. The format is specified in [`docs/specs/solution_bundle_format.md`](../specs/solution_bundle_format.md).
 
-#### Query Parameters
-- `name` (string, optional, default: `file4base_solution`)
-- `host` (string, optional, default: `localhost`)
-- `port` (integer, optional, default: `5432`, or `3306` on MariaDB)
-- `user` (string, optional, default: empty)
-- `password` (string, optional, default: empty)
+**No password is ever written**: no account password or hash, no connection password, no remembered sign-in password. The connection part names the database and the account that exported it.
 
-Requires the `owner` or `admin` role. The connection parameters are only stored inside the exported file; nothing is filled in by default.
+`GET` takes the solution name in `?name=`. `POST` takes a JSON body with client settings that are stored in the file as they are (keys containing `password` are dropped):
+
+```json
+{
+  "solution_name": "Invoices Pro",
+  "file_options": { "auto_login_enabled": false, "startup_layout_name": "Invoices" },
+  "page_setup": { "paper": "A4" }
+}
+```
+
+Requires the `owner` or `admin` role.
 
 #### Response `200 OK`
 - `Content-Type: application/x-msgpack`
-- Binary MessagePack payload (.f4b)
+- Binary MessagePack payload (`.f4p`)
 
 ---
 
 ### `POST /api/v1/solutions/import`
-Restores a complete solution from a MessagePack `.f4b` binary payload. Re-creates missing tables, adds columns, and persists layouts.
+Merges a solution file into the session's database (owner only). Version `2.0` files, files written by the 1.0 client and solution files exported by 1.0 servers are accepted.
+
+1. The whole file is validated first (structure, names, field options and every internal reference); a file with a dangling reference answers `400` and changes nothing.
+2. Existing objects are matched by name (tables, fields, occurrences, layouts and scripts, accounts by username) and every reference is rewritten to the database's own IDs, including the `script_id` of buttons and script triggers in layout definitions.
+3. Missing objects are created; matching layouts and scripts are updated; existing tables, fields and accounts are left unchanged. Importing the same file twice creates nothing new.
+4. Missing accounts are created **disabled**, with a random password nobody knows, keeping their role and layout permissions: an owner enables them and sets their password in Manage Security.
+5. If a write fails, everything the import created is removed and every updated layout or script gets its previous version back; the response is `400` with the reason.
 
 Before decoding, the payload's structure is checked: a collection or string declaring more elements or bytes than the payload holds, nesting deeper than 32 levels or more than 5,000,000 collection entries in total answers `400 Bad Request` and changes nothing (also for `import-data`).
 
@@ -600,7 +613,17 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 {
   "status": "imported",
   "solution_name": "Invoices Pro",
-  "tables_count": 3,
+  "tables_created": 2,
+  "columns_created": 5,
+  "occurrences_created": 1,
+  "relationships_created": 1,
+  "layouts_created": 2,
+  "layouts_updated": 0,
+  "scripts_created": 1,
+  "scripts_updated": 0,
+  "accounts_created": 1,
+  "accounts_pending_password": ["bob"],
+  "tables_count": 2,
   "layouts_count": 2
 }
 ```
@@ -617,9 +640,11 @@ Dumps all records and table rows from the active database into a binary MessageP
 ---
 
 ### `POST /api/v1/solutions/import-data`
-Restores physical records into the active database from a MessagePack `.f4data` payload.
+Restores records into the session's database from a MessagePack `.f4data` payload, in **one transaction**.
 
-Only catalog tables receive rows (internal `sys_*` tables never do, even if a catalog row names one), and every field of every record must be a field of its table: otherwise the request answers `400 Bad Request` before any row is written.
+Only catalog tables receive rows (internal `sys_*` tables never do, even if a catalog row names one), and every field of every record must be a field of its table: otherwise the request answers `400 Bad Request` before any row is written. The first record the database rejects (for example, text in a NUMBER field) rolls back the whole import and is reported with its table and position. A record whose `id` already exists is skipped, not overwritten. Tables of the file that the database does not have are listed in `skipped_tables`.
+
+CONTAINER fields are MessagePack binary values in `.f4data` files, so they are restored byte for byte.
 
 #### Request Body
 Binary MessagePack payload (`Content-Type: application/x-msgpack`).
@@ -630,9 +655,13 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
   "status": "restored",
   "database": "invoices_db",
   "tables_restored": 3,
-  "records_count": 142
+  "records_inserted": 140,
+  "records_skipped": 2,
+  "records_count": 140,
+  "skipped_tables": []
 }
 ```
+`records_count` equals `records_inserted`.
 
 ---
 

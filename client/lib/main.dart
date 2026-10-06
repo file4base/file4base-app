@@ -767,60 +767,16 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  /// The solution file of the open database, written by the server so that
+  /// it always matches what File > Open restores (scripts, relationships,
+  /// field options and accounts included; never passwords).
   Future<Uint8List> _exportCurrentSolutionBytes() async {
     final client = ref.read(apiClientProvider);
-    List<TableOccurrenceModel> occurrences = [];
-    List<LayoutModel> layouts = [];
-    List<Map<String, dynamic>> usersList = [];
-
-    try {
-      occurrences = await client.listOccurrences();
-    } catch (_) {}
-    try {
-      layouts = await client.listLayouts();
-    } catch (_) {}
-    try {
-      final users = await client.listUsers(database: _activeDatabaseName);
-      for (final u in users) {
-        List<UserLayoutPermissionModel> perms = [];
-        try {
-          perms = await client.getUserPermissions(u.id, database: _activeDatabaseName);
-        } catch (_) {}
-        usersList.add({
-          'id': u.id,
-          'username': u.username,
-          'role': u.role,
-          'is_active': u.isActive,
-          'permissions': perms.map((p) => {
-            'layout_id': p.layoutId,
-            'layout_name': p.layoutName,
-            'access_level': p.accessLevel,
-          }).toList(),
-        });
-      }
-    } catch (_) {}
-
-    final dbConfig = DatabaseConnectionConfig(
-      database: _activeDatabaseName,
-      engine: 'postgres',
-      host: 'localhost',
-      port: 5432,
-      user: _currentUser?.username ?? 'admin',
-      password: '',
-    );
-
-    final pkg = SolutionPackage.fromLiveData(
+    return client.exportSolution(
       solutionName: _activeSolutionName,
-      dbConfig: dbConfig,
-      tables: _tables,
-      occurrences: occurrences,
-      layouts: layouts,
-      users: usersList,
-      fileOptions: _fileOptions,
-      pageSetup: _pageSetup,
+      fileOptions: _fileOptions.toJson(),
+      pageSetup: _pageSetup.toJson(),
     );
-
-    return pkg.toMsgPack();
   }
 
   /// Explicit Save (Cmd+S): flushes auto-save immediately and shows a

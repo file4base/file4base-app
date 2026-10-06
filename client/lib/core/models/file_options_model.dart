@@ -5,6 +5,7 @@ class FileOptionsModel {
   final bool autoLoginEnabled;
   final bool isGuestLogin;
   final String defaultUsername;
+  /// Kept in memory for the session only: never written to a solution file.
   final String defaultPassword;
   final bool switchLayoutOnOpen;
   final String startupLayoutId;
@@ -114,7 +115,6 @@ class FileOptionsModel {
     'auto_login_enabled': autoLoginEnabled,
     'is_guest_login': isGuestLogin,
     'default_username': defaultUsername,
-    'default_password': defaultPassword,
     'switch_layout_on_open': switchLayoutOnOpen,
     'startup_layout_id': startupLayoutId,
     'startup_layout_name': startupLayoutName,
@@ -141,7 +141,7 @@ class FileOptionsModel {
       autoLoginEnabled: json['auto_login_enabled'] as bool? ?? false,
       isGuestLogin: json['is_guest_login'] as bool? ?? false,
       defaultUsername: json['default_username']?.toString() ?? 'admin',
-      defaultPassword: json['default_password']?.toString() ?? '',
+      // A remembered password is never read from a file (#10).
       switchLayoutOnOpen: json['switch_layout_on_open'] as bool? ?? false,
       startupLayoutId: json['startup_layout_id']?.toString() ?? '',
       startupLayoutName: json['startup_layout_name']?.toString() ?? '',

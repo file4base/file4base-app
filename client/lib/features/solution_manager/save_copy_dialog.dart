@@ -262,7 +262,7 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text('Both Files (.f4p + .f4data) - Recommended', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            Text('Exports both solution structure (layouts, schemas, encoded credentials) and PostgreSQL database records.', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                            Text('Exports both solution structure (layouts, schemas, scripts and accounts, without passwords) and PostgreSQL database records.', style: TextStyle(fontSize: 11, color: Colors.grey)),
                           ],
                         ),
                       ),

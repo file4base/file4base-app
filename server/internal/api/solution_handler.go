@@ -62,6 +62,7 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/solutions", func(r chi.Router) {
 		r.Use(RequireSession)
 		r.With(RequireAdmin).Get("/export", h.ExportSolution)
+		r.With(RequireAdmin).Post("/export", h.ExportSolution)
 		r.With(RequireOwner).Post("/import", h.ImportSolution)
 		r.With(RequireAdmin).Get("/export-data", h.ExportDatabaseData)
 		r.With(RequireAdmin).Post("/import-data", h.ImportDatabaseData)
@@ -301,47 +302,62 @@ func (h *SolutionHandler) DeleteDatabase(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// ExportSolution packages layouts, schemas, TOs, users, and DB config of the
-// session's database into MessagePack (.f4b)
+// ExportSolutionRequest is the optional JSON body of POST /solutions/export:
+// client settings stored in the file as they are.
+type ExportSolutionRequest struct {
+	SolutionName string                 `json:"solution_name"`
+	FileOptions  map[string]interface{} `json:"file_options"`
+	PageSetup    map[string]interface{} `json:"page_setup"`
+}
+
+// ExportSolution packages the design of the session's database (tables, field
+// options, occurrences, relationships, layouts, scripts and accounts, never
+// passwords) into a MessagePack solution file. GET takes the solution name in
+// ?name=; POST takes ExportSolutionRequest.
 func (h *SolutionHandler) ExportSolution(w http.ResponseWriter, r *http.Request) {
-	solutionName := r.URL.Query().Get("name")
+	var req ExportSolutionRequest
+	if r.Method == http.MethodPost && r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+			return
+		}
+	}
+	solutionName := req.SolutionName
+	if solutionName == "" {
+		solutionName = r.URL.Query().Get("name")
+	}
 	if solutionName == "" {
 		solutionName = "file4base_solution"
 	}
 
 	sess := currentSession(r)
-	host := r.URL.Query().Get("host")
-	if host == "" {
-		host = "localhost"
-	}
-	portStr := r.URL.Query().Get("port")
 	port := 5432
 	if h.dbMgr.Engine() == dbal.EngineMariaDB {
 		port = 3306
 	}
-	if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
-		port = p
+	opts := schema.ExportOptions{
+		SolutionName: solutionName,
+		Connection: schema.BundleConnection{
+			Engine:   string(h.dbMgr.Engine()),
+			Host:     "localhost",
+			Port:     port,
+			Database: sess.Database,
+			User:     sess.Username,
+			SSLMode:  "disable",
+		},
+		FileOptions: req.FileOptions,
+		PageSetup:   req.PageSetup,
 	}
 
-	dbConfig := schema.DatabaseConnectionConfig{
-		Engine:   string(h.dbMgr.Engine()),
-		Host:     host,
-		Port:     port,
-		Database: sess.Database,
-		User:     r.URL.Query().Get("user"),
-		Password: r.URL.Query().Get("password"),
-		SSLMode:  "disable",
-	}
-
-	bytes, err := schemaService(r).ExportSolution(r.Context(), solutionName, dbConfig)
+	bytes, err := schemaService(r).ExportSolution(r.Context(), opts)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, fmt.Errorf("failed exporting solution: %w", err))
 		return
 	}
 
 	cleanFileName := sanitizeFileName(solutionName)
-	if !strings.HasSuffix(cleanFileName, ".f4b") {
-		cleanFileName += ".f4b"
+	if !strings.HasSuffix(cleanFileName, ".f4p") {
+		cleanFileName += ".f4p"
 	}
 
 	w.Header().Set("Content-Type", "application/x-msgpack")
@@ -375,19 +391,17 @@ func (h *SolutionHandler) ImportSolution(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	bundle, err := schemaService(r).ImportSolution(r.Context(), body)
+	report, err := schemaService(r).ImportSolution(r.Context(), body)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Solution Import Error", err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":        "imported",
-		"solution_name": bundle.SolutionName,
-		"tables_count":  len(bundle.Tables),
-		"layouts_count": len(bundle.Layouts),
-	})
+	_ = json.NewEncoder(w).Encode(struct {
+		Status string `json:"status"`
+		*schema.ImportReport
+	}{"imported", report})
 }
 
 // ExportDatabaseData exports all rows from all user tables of the session's database into MessagePack (.f4data)
@@ -414,23 +428,16 @@ func (h *SolutionHandler) ImportDatabaseData(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	bundle, err := schemaService(r).ImportDatabaseData(r.Context(), body)
+	report, err := schemaService(r).ImportDatabaseData(r.Context(), body)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Data Import Error", err.Error())
 		return
 	}
 
-	tablesRestored := len(bundle.TablesData)
-	totalRecords := 0
-	for _, rows := range bundle.TablesData {
-		totalRecords += len(rows)
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":          "restored",
-		"database":        bundle.DatabaseName,
-		"tables_restored": tablesRestored,
-		"records_count":   totalRecords,
-	})
+	_ = json.NewEncoder(w).Encode(struct {
+		Status       string `json:"status"`
+		RecordsCount int    `json:"records_count"`
+		*schema.DataImportReport
+	}{"restored", report.RecordsInserted, report})
 }

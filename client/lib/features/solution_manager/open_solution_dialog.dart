@@ -192,15 +192,12 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
         _pickedFile = file;
         _parsedPkg = pkg;
 
-        // Pre-fill decoded credentials if available in the file package
+        // Solution files never carry a password: only the username is prefilled.
         final pkgUser = pkg.databaseConnection.user;
-        final pkgPass = DatabaseConnectionConfig.decodeCredential(pkg.databaseConnection.password);
         if (pkgUser.isNotEmpty) {
           _fileUserCtrl.text = pkgUser;
         }
-        if (pkgPass.isNotEmpty) {
-          _filePassCtrl.text = pkgPass;
-        }
+        _filePassCtrl.clear();
       });
     } catch (e) {
       setState(() {

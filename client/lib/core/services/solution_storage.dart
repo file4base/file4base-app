@@ -33,7 +33,7 @@ class SolutionStorageService {
     );
   }
 
-  /// Saves BOTH .f4p (solution definition & encoded credentials) and
+  /// Saves BOTH .f4p (solution definition, without passwords) and
   /// .f4data (database records) into the given directory or prompts the user.
   /// NOTE: Prefer [saveSolutionFile] for structure-only auto-saves.
   static Future<bool> saveDualSolutionFiles({

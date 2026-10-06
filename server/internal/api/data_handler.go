@@ -70,6 +70,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
 	case errors.Is(err, data.ErrUnknownField):
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Unknown Field", err.Error())
+	case errors.Is(err, data.ErrInvalidValue):
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Value", err.Error())
 	default:
 		telemetry.WriteProblem(w, r, fallbackStatus, title, err.Error())
 	}
