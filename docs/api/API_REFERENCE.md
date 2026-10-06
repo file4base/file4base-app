@@ -204,6 +204,8 @@ Retrieves all registered user database tables and their column definitions.
 ### `POST /api/v1/schemas/tables`
 Creates a new physical table and registers it in `sys_tables` and `sys_table_occurrences`.
 
+The name (`custom_name`, or `display_name` with spaces turned into underscores) is lower-cased and must start with a letter, contain only letters, digits and underscores, and be at most 63 characters long (the same rule applies to column names). Names starting with `sys_` or `pg_`, and `information_schema`, `mysql`, `performance_schema` and `sys`, are reserved. A name already in use is never reused, whether it is a catalog table or another physical table.
+
 #### Request Body
 ```json
 {
@@ -214,6 +216,11 @@ Creates a new physical table and registers it in `sys_tables` and `sys_table_occ
 
 #### Response `201 Created`
 Returns created `TableMetadata`.
+
+#### Errors
+- `409 Conflict`: a table with that name is already registered.
+- `422 Unprocessable Entity`: invalid or reserved name, or a name longer than 63 characters.
+- `400 Bad Request`: the database refused the table (for example, a physical table outside the catalog already has that name).
 
 ---
 
@@ -240,7 +247,7 @@ Returns updated `TableMetadata`.
 ---
 
 ### `POST /api/v1/schemas/tables/{id}/duplicate`
-Duplicates a table structure (columns and options, without row data) with an auto-generated unique name.
+Duplicates a table structure (columns and options, without row data) with an auto-generated unique name (`<name>_copy`, shortened to fit 63 characters). If a column cannot be copied, the incomplete copy is removed and the request fails.
 
 #### Response `201 Created`
 Returns duplicated `TableMetadata`.
@@ -274,6 +281,8 @@ Returns created `ColumnMetadata`.
 
 ### `PUT /api/v1/schemas/tables/{id}/columns/{columnId}`
 Updates column metadata and options (display name, auto-enter rules, default values, calculation formulas, and validation rules).
+
+`default_value` holds the field's auto-enter and storage options as a JSON object (written by the Fields dialog), or `null`. It is metadata only: it is never placed in SQL, so the physical column has no `DEFAULT`. Any other value, including SQL expressions, answers `422 Unprocessable Entity`; the same applies to `default_value` when adding a column. When `data_enabled` is `true`, `data_value` is the constant entered in that field by `POST /api/v1/data/{table}` when the request does not include the field.
 
 #### Request Body
 ```json
@@ -581,6 +590,8 @@ Requires the `owner` or `admin` role. The connection parameters are only stored 
 ### `POST /api/v1/solutions/import`
 Restores a complete solution from a MessagePack `.f4b` binary payload. Re-creates missing tables, adds columns, and persists layouts.
 
+Before decoding, the payload's structure is checked: a collection or string declaring more elements or bytes than the payload holds, nesting deeper than 32 levels or more than 5,000,000 collection entries in total answers `400 Bad Request` and changes nothing (also for `import-data`).
+
 #### Request Body
 Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 
@@ -607,6 +618,8 @@ Dumps all records and table rows from the active database into a binary MessageP
 
 ### `POST /api/v1/solutions/import-data`
 Restores physical records into the active database from a MessagePack `.f4data` payload.
+
+Only catalog tables receive rows (internal `sys_*` tables never do, even if a catalog row names one), and every field of every record must be a field of its table: otherwise the request answers `400 Bad Request` before any row is written.
 
 #### Request Body
 Binary MessagePack payload (`Content-Type: application/x-msgpack`).

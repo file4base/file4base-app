@@ -35,7 +35,9 @@ type ColumnDefinition struct {
 	Type         AgnosticFieldType
 	IsNullable   bool
 	IsPrimaryKey bool
-	DefaultValue *string
+	// There is deliberately no default value: physical DEFAULT clauses are
+	// never built from caller input (auto-enter options live in sys_columns
+	// and are applied by the data service).
 }
 
 // TableDefinition defines an agnostic table schema

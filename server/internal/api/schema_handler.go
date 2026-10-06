@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -141,7 +142,7 @@ func (h *SchemaHandler) CreateTable(w http.ResponseWriter, r *http.Request) {
 
 	tbl, err := schemaService(r).CreateTable(r.Context(), req.DisplayName, req.CustomName)
 	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		writeSchemaError(w, r, err)
 		return
 	}
 
@@ -199,7 +200,7 @@ func (h *SchemaHandler) DuplicateTable(w http.ResponseWriter, r *http.Request) {
 	}
 	tbl, err := schemaService(r).DuplicateTable(r.Context(), tableID)
 	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		writeSchemaError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -258,13 +259,30 @@ func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 		ValidationRules:    req.ValidationRules,
 	})
 	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		writeSchemaError(w, r, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(col)
+}
+
+// writeSchemaError answers 422 for invalid names or field options, 409 for a
+// table name already in use and 400 otherwise.
+func writeSchemaError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, schema.ErrInvalidFieldOptions):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Field Options", err.Error())
+		return
+	case errors.Is(err, dbal.ErrInvalidIdentifier):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Name", err.Error())
+		return
+	case errors.Is(err, schema.ErrTableExists):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Table Already Exists", err.Error())
+		return
+	}
+	telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 }
 
 type UpdateColumnRequest struct {
@@ -318,7 +336,7 @@ func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
 
 	col, err := schemaService(r).UpdateColumn(r.Context(), tableID, columnID, opts)
 	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
+		writeSchemaError(w, r, err)
 		return
 	}
 

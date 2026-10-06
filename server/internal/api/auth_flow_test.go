@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -693,4 +694,250 @@ func TestAPI_JSONNumbersKeepTheirPrecision(t *testing.T) {
 	assert.Equal(t, "9007199254740995", got["dec"])
 	assert.Equal(t, "1500", got["exp"])
 	assert.Equal(t, "42", got["txt"])
+}
+
+// default_value holds field options (a JSON object). It is never placed in
+// DDL, so SQL in it cannot run (#1); options survive table duplication and
+// a constant auto-enter value fills new records (#16).
+func TestAPI_FieldOptionsAreMetadataNotSQL(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_opts")
+	h.createDatabase(db, "alice", "alice-secret")
+	token := h.login(db, "alice", "alice-secret")
+	ctx := context.Background()
+	driver, err := h.mgr.DriverFor(ctx, db)
+	require.NoError(t, err)
+
+	var table struct {
+		ID string `json:"id"`
+	}
+	rec := h.do(http.MethodPost, "/api/v1/schemas/tables", token, map[string]string{"display_name": "Configured", "custom_name": "configured"}, &table)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	physicalColumns := func(tbl string) map[string]sql.NullString {
+		rows, err := driver.DB().QueryContext(ctx, `SELECT column_name, column_default FROM information_schema.columns WHERE table_name = $1`, tbl)
+		require.NoError(t, err)
+		defer rows.Close()
+		cols := map[string]sql.NullString{}
+		for rows.Next() {
+			var name string
+			var def sql.NullString
+			require.NoError(t, rows.Scan(&name, &def))
+			cols[name] = def
+		}
+		return cols
+	}
+
+	// SQL expressions and other non-JSON values are rejected before any DDL
+	for _, payload := range []string{
+		`'x'`,
+		`now()`,
+		`'a'); DROP TABLE configured; --`,
+		`(SELECT current_user)`,
+		`[1,2]`,
+	} {
+		rec = h.do(http.MethodPost, "/api/v1/schemas/tables/"+table.ID+"/columns", token, map[string]interface{}{
+			"name": "evil", "display_name": "Evil", "field_type": "TEXT", "is_nullable": true, "default_value": payload,
+		}, nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, payload)
+	}
+	_, exists := physicalColumns("configured")["evil"]
+	assert.False(t, exists, "a rejected column is not created")
+
+	// Options with quotes, semicolons and comment markers stay literal text
+	tricky := `{"data_enabled":true,"data_value":"Pending '; DROP TABLE configured; --","serial_enabled":false}`
+	var col struct {
+		ID           string `json:"id"`
+		DefaultValue string `json:"default_value"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/schemas/tables/"+table.ID+"/columns", token, map[string]interface{}{
+		"name": "label", "display_name": "Label", "field_type": "TEXT", "is_nullable": true, "default_value": tricky,
+	}, &col)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, tricky, col.DefaultValue)
+	cols := physicalColumns("configured")
+	require.Contains(t, cols, "label")
+	assert.False(t, cols["label"].Valid, "no physical DEFAULT is created from options")
+
+	// Updating options validates them the same way
+	rec = h.do(http.MethodPut, "/api/v1/schemas/tables/"+table.ID+"/columns/"+col.ID, token, map[string]interface{}{
+		"display_name": "Label", "default_value": `now()`,
+	}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	rec = h.do(http.MethodPut, "/api/v1/schemas/tables/"+table.ID+"/columns/"+col.ID, token, map[string]interface{}{
+		"display_name": "Label", "default_value": `{"data_enabled":true,"data_value":"Pending","serial_enabled":false}`,
+	}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// The constant auto-enter value fills records that do not supply the field
+	var row map[string]interface{}
+	rec = h.do(http.MethodPost, "/api/v1/data/configured", token, map[string]string{"id": "auto"}, &row)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodGet, "/api/v1/data/configured/auto", token, nil, &row)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "Pending", row["label"])
+	rec = h.do(http.MethodPost, "/api/v1/data/configured", token, map[string]string{"id": "explicit", "label": "Given"}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodGet, "/api/v1/data/configured/explicit", token, nil, &row)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "Given", row["label"], "an explicit value wins over the auto-enter constant")
+
+	// Duplication copies the column and its options
+	var dup struct {
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Columns []struct {
+			Name         string `json:"name"`
+			DefaultValue string `json:"default_value"`
+		} `json:"columns"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/schemas/tables/"+table.ID+"/duplicate", token, nil, &dup)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var tables []struct {
+		ID      string `json:"id"`
+		Columns []struct {
+			Name         string `json:"name"`
+			DefaultValue string `json:"default_value"`
+		} `json:"columns"`
+	}
+	rec = h.do(http.MethodGet, "/api/v1/schemas/tables", token, nil, &tables)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var copied map[string]string
+	for _, tb := range tables {
+		if tb.ID == dup.ID {
+			copied = map[string]string{}
+			for _, c := range tb.Columns {
+				copied[c.Name] = c.DefaultValue
+			}
+		}
+	}
+	require.NotNil(t, copied, "the copy is listed")
+	assert.Contains(t, copied, "id")
+	assert.JSONEq(t, `{"data_enabled":true,"data_value":"Pending","serial_enabled":false}`, copied["label"])
+}
+
+// Internal tables cannot be registered as user tables, names longer than the
+// engine's identifier limit are rejected instead of colliding, and an existing
+// physical table is never adopted (#2).
+func TestAPI_ReservedAndCollidingTableNames(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_names")
+	h.createDatabase(db, "alice", "alice-secret")
+	token := h.login(db, "alice", "alice-secret")
+	ctx := context.Background()
+	driver, err := h.mgr.DriverFor(ctx, db)
+	require.NoError(t, err)
+
+	countUsers := func() int {
+		var n int
+		require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users`).Scan(&n))
+		return n
+	}
+	usersBefore := countUsers()
+
+	for _, body := range []map[string]string{
+		{"display_name": "Users", "custom_name": "sys_users"},
+		{"display_name": "Users", "custom_name": "  SYS_Users "},
+		{"display_name": "sys users"}, // name derived from the display name
+		{"display_name": "Perms", "custom_name": "sys_user_permissions"},
+		{"display_name": "Layouts", "custom_name": "sys_layouts"},
+		{"display_name": "Catalog", "custom_name": "pg_user"},
+		{"display_name": "Long", "custom_name": strings.Repeat("a", 64)},
+	} {
+		rec := h.do(http.MethodPost, "/api/v1/schemas/tables", token, body, nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "%v: %s", body, rec.Body.String())
+	}
+	var tables []struct {
+		Name string `json:"name"`
+	}
+	rec := h.do(http.MethodGet, "/api/v1/schemas/tables", token, nil, &tables)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, tables, "no rejected name reached the catalog")
+	assert.Equal(t, usersBefore, countUsers())
+
+	// 63 characters is the limit; the same name twice is a conflict
+	long := strings.Repeat("a", 63)
+	rec = h.do(http.MethodPost, "/api/v1/schemas/tables", token, map[string]string{"display_name": "Long", "custom_name": long}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodPost, "/api/v1/schemas/tables", token, map[string]string{"display_name": "Long 2", "custom_name": long}, nil)
+	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	// Duplicating a 63-character table keeps the copy's name within the limit
+	var listed []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	h.do(http.MethodGet, "/api/v1/schemas/tables", token, nil, &listed)
+	longID := ""
+	for _, tb := range listed {
+		if tb.Name == long {
+			longID = tb.ID
+		}
+	}
+	require.NotEmpty(t, longID)
+	var dup struct {
+		Name string `json:"name"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/schemas/tables/"+longID+"/duplicate", token, nil, &dup)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.LessOrEqual(t, len(dup.Name), 63)
+	assert.True(t, strings.HasSuffix(dup.Name, "_copy"), dup.Name)
+
+	// A physical table outside the catalog is not adopted and keeps its data
+	_, err = driver.DB().ExecContext(ctx, `CREATE TABLE legacy (id TEXT PRIMARY KEY, secret TEXT); INSERT INTO legacy VALUES ('k', 'v')`)
+	require.NoError(t, err)
+	rec = h.do(http.MethodPost, "/api/v1/schemas/tables", token, map[string]string{"display_name": "Legacy", "custom_name": "legacy"}, nil)
+	assert.GreaterOrEqual(t, rec.Code, 400, rec.Body.String())
+	rec = h.do(http.MethodGet, "/api/v1/data/legacy", token, nil, nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "the existing table did not join the catalog")
+	var secret string
+	require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT secret FROM legacy WHERE id = 'k'`).Scan(&secret))
+	assert.Equal(t, "v", secret)
+
+	// Even a forged catalog row cannot expose an internal table
+	_, err = driver.DB().ExecContext(ctx, `INSERT INTO sys_tables (id, name, display_name, created_at, updated_at) VALUES ('forged', 'sys_users', 'Users', now(), now());
+		INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, created_at) VALUES ('forged-id', 'forged', 'id', 'ID', 'TEXT', false, true, now())`)
+	require.NoError(t, err)
+	rec = h.do(http.MethodGet, "/api/v1/data/sys_users", token, nil, nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	rec = h.do(http.MethodPost, "/api/v1/data/sys_users", token, map[string]string{"id": "x", "username": "mallory"}, nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	forged, err := msgpack.Marshal(schema.DatabaseDataBundle{
+		Format: "file4base_data", Version: "1.0", DatabaseName: db,
+		TablesData: map[string][]map[string]interface{}{
+			"sys_users": {{"id": "forged-owner", "username": "mallory", "password_hash": "x", "role": "owner"}},
+		},
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/solutions/import-data", bytes.NewReader(forged))
+	req.Header.Set("Authorization", "Bearer "+token)
+	h.router.ServeHTTP(httptest.NewRecorder(), req)
+	assert.Equal(t, usersBefore, countUsers(), "the import did not write into sys_users")
+}
+
+// Import files that declare collections larger than their bytes are rejected
+// before the MessagePack decoder allocates from those sizes (#13).
+func TestAPI_ImportsRejectOversizedMessagePackDeclarations(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_mpk")
+	h.createDatabase(db, "alice", "alice-secret")
+	token := h.login(db, "alice", "alice-secret")
+
+	// {"tables": <array32 declaring 2^31-1 elements>} in 13 bytes
+	bomb := []byte{0x81, 0xa6, 't', 'a', 'b', 'l', 'e', 's', 0xdd, 0x7f, 0xff, 0xff, 0xff}
+	for _, path := range []string{"/api/v1/solutions/import", "/api/v1/solutions/import-data"} {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(bomb))
+		req.Header.Set("Content-Type", "application/x-msgpack")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.router.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusBadRequest, rec.Code, "%s: %s", path, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "invalid MessagePack", path)
+	}
+
+	var tables []interface{}
+	rec := h.do(http.MethodGet, "/api/v1/schemas/tables", token, nil, &tables)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, tables, "a rejected import changes nothing")
 }

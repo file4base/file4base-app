@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -61,6 +62,10 @@ var ErrUnknownField = errors.New("unknown field")
 // Every user table owns at least its primary key column, so an empty result
 // means the table is not part of the catalog.
 func (s *Service) tableFields(ctx context.Context, tableName string) (map[string]struct{}, error) {
+	// Internal tables are never user data, even if a catalog row names one.
+	if dbal.IsReservedTableName(tableName) {
+		return nil, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
+	}
 	q := `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
 		q = `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
@@ -88,6 +93,37 @@ func (s *Service) tableFields(ctx context.Context, tableName string) (map[string
 	return fields, nil
 }
 
+// autoEnterConstants returns the constant auto-enter value of each field of
+// the table whose options (sys_columns.default_value) enable one.
+func (s *Service) autoEnterConstants(ctx context.Context, tableName string) (map[string]interface{}, error) {
+	q := `SELECT c.name, c.default_value FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1 AND c.default_value IS NOT NULL`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT c.name, c.default_value FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ? AND c.default_value IS NOT NULL`
+	}
+	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading field options of %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	constants := make(map[string]interface{})
+	for rows.Next() {
+		var name, raw string
+		if err := rows.Scan(&name, &raw); err != nil {
+			return nil, err
+		}
+		var opts struct {
+			DataEnabled bool    `json:"data_enabled"`
+			DataValue   *string `json:"data_value"`
+		}
+		// Options that are not a JSON object (legacy values) enable nothing.
+		if json.Unmarshal([]byte(raw), &opts) == nil && opts.DataEnabled && opts.DataValue != nil && *opts.DataValue != "" {
+			constants[name] = *opts.DataValue
+		}
+	}
+	return constants, rows.Err()
+}
+
 func checkField(fields map[string]struct{}, tableName, fieldName string) error {
 	if _, ok := fields[fieldName]; !ok {
 		return fmt.Errorf("%w: %s.%s", ErrUnknownField, tableName, fieldName)
@@ -108,6 +144,18 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 	for col := range record {
 		if err := checkField(fields, tableName, col); err != nil {
 			return nil, err
+		}
+	}
+
+	// Auto-enter constant values (Fields dialog: "Data") for fields the
+	// caller did not supply. An explicit value, even empty, wins.
+	constants, err := s.autoEnterConstants(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	for col, val := range constants {
+		if _, given := record[col]; !given {
+			record[col] = val
 		}
 	}
 

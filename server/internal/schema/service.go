@@ -3,8 +3,9 @@ package schema
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -13,7 +14,50 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var validIdentifier = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]*$`)
+
+// ErrTableExists is returned when a table name is already registered.
+var ErrTableExists = errors.New("table already exists")
+
+// tableNameTaken reports whether a table with this name is in the catalog.
+// A physical table outside the catalog makes CREATE TABLE itself fail.
+func (s *Service) tableNameTaken(ctx context.Context, name string) (bool, error) {
+	q := `SELECT COUNT(*) FROM sys_tables WHERE name = $1`
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		q = `SELECT COUNT(*) FROM sys_tables WHERE name = ?`
+	}
+	var n int
+	if err := s.driver.DB().QueryRowContext(ctx, q, name).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// copyName builds "<base><suffix>" within the identifier length limit by
+// shortening the base.
+func copyName(base, suffix string) string {
+	if over := len(base) + len(suffix) - dbal.MaxIdentifierLength; over > 0 {
+		base = strings.TrimRight(base[:len(base)-over], "_")
+	}
+	return base + suffix
+}
+
+// ErrInvalidFieldOptions is returned when a column's default_value is not a
+// JSON object of field options.
+var ErrInvalidFieldOptions = errors.New("invalid field options")
+
+// ValidateFieldOptions checks a column's default_value. It holds the field's
+// auto-enter and storage options as a JSON object (see the Fields dialog), or
+// nothing. It is metadata only: it is never placed in SQL.
+func ValidateFieldOptions(options *string) error {
+	if options == nil || strings.TrimSpace(*options) == "" {
+		return nil
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal([]byte(*options), &obj); err != nil || obj == nil {
+		return fmt.Errorf("%w: default_value must be a JSON object of field options", ErrInvalidFieldOptions)
+	}
+	return nil
+}
 
 // TableMetadata represents a user database table entry in sys_tables
 type TableMetadata struct {
@@ -215,13 +259,17 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 
 // CreateTable registers metadata and dynamically generates the physical table via DBAL
 func (s *Service) CreateTable(ctx context.Context, displayName, customName string) (*TableMetadata, error) {
-	name := strings.ToLower(strings.TrimSpace(customName))
+	name := dbal.NormalizeIdentifier(customName)
 	if name == "" {
-		name = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(displayName), " ", "_"))
+		name = dbal.NormalizeIdentifier(strings.ReplaceAll(strings.TrimSpace(displayName), " ", "_"))
 	}
-
-	if !validIdentifier.MatchString(name) {
-		return nil, fmt.Errorf("invalid table name '%s'; must start with a letter and contain only alphanumeric/underscore characters", name)
+	if err := dbal.CheckUserTableName(name); err != nil {
+		return nil, err
+	}
+	if taken, err := s.tableNameTaken(ctx, name); err != nil {
+		return nil, err
+	} else if taken {
+		return nil, fmt.Errorf("%w: '%s'", ErrTableExists, name)
 	}
 
 	tableID := uuid.NewString()
@@ -313,9 +361,12 @@ func (s *Service) CreateTable(ctx context.Context, displayName, customName strin
 
 // AddColumn adds a new column to metadata and alters the physical table
 func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetadata) (*ColumnMetadata, error) {
-	name := strings.ToLower(strings.TrimSpace(col.Name))
-	if !validIdentifier.MatchString(name) {
-		return nil, fmt.Errorf("invalid column name '%s'", name)
+	name := dbal.NormalizeIdentifier(col.Name)
+	if err := dbal.CheckIdentifier("column", name); err != nil {
+		return nil, err
+	}
+	if err := ValidateFieldOptions(col.DefaultValue); err != nil {
+		return nil, err
 	}
 
 	// Retrieve target table name
@@ -344,7 +395,6 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 		Type:         col.FieldType,
 		IsNullable:   col.IsNullable,
 		IsPrimaryKey: false,
-		DefaultValue: col.DefaultValue,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed generating ALTER TABLE DDL: %w", err)
@@ -446,6 +496,11 @@ type UpdateColumnOptions struct {
 
 // UpdateColumn updates a column's metadata (e.g. display name, options)
 func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID string, opts UpdateColumnOptions) (*ColumnMetadata, error) {
+	if opts.UpdateDefaultValue {
+		if err := ValidateFieldOptions(opts.DefaultValue); err != nil {
+			return nil, err
+		}
+	}
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
@@ -679,14 +734,14 @@ func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMet
 	cRows.Close()
 
 	// 3. Generate a unique new name
-	newName := origName + "_copy"
+	newName := copyName(origName, "_copy")
 	newDisplayName := origDisplayName + " (Copy)"
 
 	// Create the duplicate table using CreateTable (which adds the PK column)
 	newTbl, err := s.CreateTable(ctx, newDisplayName, newName)
 	if err != nil {
 		// If name conflict, append timestamp
-		newName = fmt.Sprintf("%s_copy_%d", origName, time.Now().UnixMilli())
+		newName = copyName(origName, fmt.Sprintf("_copy_%d", time.Now().UnixMilli()))
 		newDisplayName = fmt.Sprintf("%s (Copy %d)", origDisplayName, time.Now().UnixMilli())
 		newTbl, err = s.CreateTable(ctx, newDisplayName, newName)
 		if err != nil {
@@ -694,7 +749,8 @@ func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMet
 		}
 	}
 
-	// 4. Add non-PK columns to the duplicate
+	// 4. Add non-PK columns to the duplicate. A failure removes the copy, so
+	// no incomplete table is left behind.
 	for _, c := range cols {
 		if c.isPrimaryKey {
 			continue
@@ -709,6 +765,9 @@ func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMet
 			ValidationRules:    c.validationRules,
 		})
 		if err != nil {
+			if delErr := s.DeleteTable(ctx, newTbl.ID); delErr != nil {
+				return nil, fmt.Errorf("failed copying column %s: %w (and removing the incomplete copy failed: %v)", c.name, err, delErr)
+			}
 			return nil, fmt.Errorf("failed copying column %s: %w", c.name, err)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/msgpackguard"
 	"github.com/google/uuid"
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -158,6 +159,10 @@ func (s *Service) ExportSolution(ctx context.Context, solutionName string, dbCon
 // ImportSolution imports a solution bundle from MessagePack bytes into the active database
 func (s *Service) ImportSolution(ctx context.Context, data []byte) (*SolutionBundle, error) {
 	var bundle SolutionBundle
+	// Check declared sizes before the decoder allocates from them (#13).
+	if err := msgpackguard.Check(data, msgpackguard.Limits{}); err != nil {
+		return nil, fmt.Errorf("invalid MessagePack solution bundle: %w", err)
+	}
 	if err := msgpack.Unmarshal(data, &bundle); err != nil {
 		return nil, fmt.Errorf("invalid MessagePack solution bundle: %w", err)
 	}
@@ -353,6 +358,10 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 // ImportDatabaseData restores records from a MessagePack data file into the active database
 func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DatabaseDataBundle, error) {
 	var bundle DatabaseDataBundle
+	// Check declared sizes before the decoder allocates from them (#13).
+	if err := msgpackguard.Check(data, msgpackguard.Limits{}); err != nil {
+		return nil, fmt.Errorf("invalid MessagePack database data file: %w", err)
+	}
 	if err := msgpack.Unmarshal(data, &bundle); err != nil {
 		return nil, fmt.Errorf("invalid MessagePack database data file: %w", err)
 	}
@@ -366,9 +375,32 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*Databas
 	if err != nil {
 		return nil, fmt.Errorf("failed listing tables: %w", err)
 	}
-	userTables := make(map[string]struct{}, len(registered))
+	// Internal tables are excluded even if a catalog row names one, and only
+	// registered columns may be written. Everything is checked before the
+	// first row is inserted.
+	userTables := make(map[string]map[string]bool, len(registered))
 	for _, t := range registered {
-		userTables[t.Name] = struct{}{}
+		if dbal.IsReservedTableName(t.Name) {
+			continue
+		}
+		cols := make(map[string]bool, len(t.Columns))
+		for _, c := range t.Columns {
+			cols[c.Name] = true
+		}
+		userTables[t.Name] = cols
+	}
+	for tableName, rows := range bundle.TablesData {
+		cols, ok := userTables[tableName]
+		if !ok {
+			continue
+		}
+		for i, row := range rows {
+			for k := range row {
+				if !cols[k] {
+					return nil, fmt.Errorf("record %d of table %s has field '%s', which is not a field of that table", i+1, tableName, k)
+				}
+			}
+		}
 	}
 
 	for tableName, rows := range bundle.TablesData {

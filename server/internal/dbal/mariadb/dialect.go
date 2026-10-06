@@ -47,6 +47,8 @@ func (m *MariaDBDialect) MapType(field dbal.AgnosticFieldType) string {
 	}
 }
 
+// BuildCreateTableSQL creates a user table. There is no IF NOT EXISTS: a name
+// that is already taken must fail instead of registering an existing table.
 func (m *MariaDBDialect) BuildCreateTableSQL(def dbal.TableDefinition) (string, error) {
 	if def.Name == "" {
 		return "", fmt.Errorf("table name cannot be empty")
@@ -61,13 +63,10 @@ func (m *MariaDBDialect) BuildCreateTableSQL(def dbal.TableDefinition) (string, 
 		if !col.IsNullable && !col.IsPrimaryKey {
 			clause += " NOT NULL"
 		}
-		if col.DefaultValue != nil {
-			clause += fmt.Sprintf(" DEFAULT %s", *col.DefaultValue)
-		}
 		colDefs = append(colDefs, clause)
 	}
 
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
+	return fmt.Sprintf("CREATE TABLE %s (\n  %s\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
 		m.QuoteIdentifier(def.Name),
 		strings.Join(colDefs, ",\n  "),
 	), nil
@@ -81,9 +80,6 @@ func (m *MariaDBDialect) BuildAddColumnSQL(tableName string, col dbal.ColumnDefi
 	)
 	if !col.IsNullable {
 		clause += " NOT NULL"
-	}
-	if col.DefaultValue != nil {
-		clause += fmt.Sprintf(" DEFAULT %s", *col.DefaultValue)
 	}
 	return clause + ";", nil
 }
