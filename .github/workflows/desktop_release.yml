@@ -76,8 +76,10 @@ jobs:
       # The API creates one database per solution, as deploy/mariadb/init.sql
       # does for the Compose stack.
       - name: Grant server-level privileges to the API account
+        # Run from the MariaDB image: the runner has no MariaDB client.
         run: |
-          mariadb -h 127.0.0.1 -uroot -proot_password \
+          docker run --rm --network host mariadb:11-jammy \
+            mariadb -h 127.0.0.1 -uroot -proot_password \
             -e "GRANT ALL PRIVILEGES ON *.* TO 'file4base'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
 
       - name: Run the same Go tests against MariaDB
