@@ -109,8 +109,8 @@ func (h *DataHandler) InsertRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var record map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&record); err != nil {
+	record, err := decodeRecord(r)
+	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
@@ -152,8 +152,8 @@ func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var updates map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	updates, err := decodeRecord(r)
+	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
 		return
 	}
@@ -210,4 +210,22 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(results)
+}
+
+// decodeRecord decodes a record body keeping every JSON number exactly as
+// written: numbers are passed to the database as their decimal text, never
+// through float64, so NUMBER fields do not lose precision (issue #18).
+func decodeRecord(r *http.Request) (map[string]interface{}, error) {
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+	var record map[string]interface{}
+	if err := dec.Decode(&record); err != nil {
+		return nil, err
+	}
+	for k, v := range record {
+		if n, ok := v.(json.Number); ok {
+			record[k] = n.String()
+		}
+	}
+	return record, nil
 }

@@ -193,7 +193,10 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
     });
 
     try {
-      final rows = await widget.apiClient.listRows(_selectedTable!.name, limit: 10000);
+      // Every page must arrive before anything is saved (issue #6).
+      final rows = await widget.apiClient.listAllRows(_selectedTable!.name, onProgress: (n) {
+        if (mounted) setState(() => _statusMessage = 'Fetching records from server... $n');
+      });
       
       if (!mounted) return;
 

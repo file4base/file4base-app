@@ -3,6 +3,26 @@ import '../../core/api/api_client.dart';
 import '../../core/models/solution_models.dart';
 import '../../core/services/solution_storage.dart';
 
+/// Shortest password accepted for the first owner of a new database (the
+/// server enforces the same rule).
+const kMinOwnerPasswordLength = 8;
+
+/// Why [password] cannot protect the first owner account, or null when it is
+/// acceptable. Database names are listed publicly and the username is often
+/// a default, so neither may be reused as the password.
+String? ownerPasswordProblem(String password, {required String user, required String database}) {
+  final p = password.trim();
+  if (p.isEmpty) return 'Choose a password for the owner account';
+  if (p.characters.length < kMinOwnerPasswordLength) {
+    return 'Use at least $kMinOwnerPasswordLength characters';
+  }
+  final lower = p.toLowerCase();
+  if (lower == user.trim().toLowerCase() || lower == database.trim().toLowerCase()) {
+    return 'The password cannot be the username or the database name';
+  }
+  return null;
+}
+
 class NewDatabaseDialogResult {
   final String fileName;
   final String databaseName;
@@ -46,7 +66,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   final _hostController = TextEditingController(text: 'localhost');
   final _portController = TextEditingController(text: '5432');
   final _userController = TextEditingController(text: 'admin');
-  final _passwordController = TextEditingController(text: 'admin');
+  final _passwordController = TextEditingController();
   StorageDirectoryRef? _selectedDirectory;
   bool _autoCreateDb = true;
   bool _isCreating = false;
@@ -96,8 +116,8 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
       final dbName = _dbNameController.text.trim().toLowerCase();
       final host = _hostController.text.trim();
       final port = int.tryParse(_portController.text.trim()) ?? 5432;
-      final user = _userController.text.trim().isNotEmpty ? _userController.text.trim() : dbName;
-      final password = _passwordController.text.trim().isNotEmpty ? _passwordController.text.trim() : dbName;
+      final user = _userController.text.trim();
+      final password = _passwordController.text.trim();
 
       // 1. Create database in PostgreSQL if requested
       if (_autoCreateDb) {
@@ -362,6 +382,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                     Expanded(
                       child: TextFormField(
                         controller: _userController,
+                        validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter the owner username' : null,
                         decoration: const InputDecoration(
                           labelText: 'User',
                           hintText: 'admin',
@@ -376,10 +397,15 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                       child: TextFormField(
                         controller: _passwordController,
                         obscureText: _obscurePassword,
+                        validator: (v) => ownerPasswordProblem(
+                          v ?? '',
+                          user: _userController.text,
+                          database: _dbNameController.text,
+                        ),
                         decoration: InputDecoration(
                           labelText: 'Password',
-                          hintText: '••••••',
-                          helperText: 'Account password',
+                          hintText: 'At least $kMinOwnerPasswordLength characters',
+                          helperText: 'Owner account password',
                           border: const OutlineInputBorder(),
                           isDense: true,
                           suffixIcon: IconButton(

@@ -13,6 +13,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// MaxPageSize is the largest number of rows a list or find request returns;
+// larger limits are clamped to it.
+const MaxPageSize = 1000
+
 // FindCriterion represents a single field search condition
 type FindCriterion struct {
 	FieldName string      `json:"field_name"`
@@ -262,8 +266,12 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 	}
 	dialect := s.driver.Dialect()
 	limit := opts.Limit
-	if limit <= 0 || limit > 1000 {
+	if limit <= 0 {
 		limit = 100
+	} else if limit > MaxPageSize {
+		// Clamp, do not fall back to the default: a caller asking for more
+		// than the maximum must still get a full page and keep paging.
+		limit = MaxPageSize
 	}
 
 	orderClause := ""
@@ -501,8 +509,10 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 
 	limit := opts.Limit
-	if limit <= 0 || limit > 1000 {
+	if limit <= 0 {
 		limit = 500
+	} else if limit > MaxPageSize {
+		limit = MaxPageSize
 	}
 
 	sqlQuery := fmt.Sprintf(

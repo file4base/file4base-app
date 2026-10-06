@@ -21,14 +21,18 @@ RUN go mod download
 COPY . .
 ENV GOTOOLCHAIN=auto
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v} go build -ldflags="-w -s" -o /app/server ./cmd/server
+# License notices of every Go module linked into the binary (and of Go itself)
+RUN sh tools/third_party_notices.sh /app/server /app/THIRD_PARTY_NOTICES
 
 # Minimal production image
 FROM alpine:3.20
+LABEL org.opencontainers.image.documentation="Third-party license notices: /usr/share/doc/file4base/THIRD_PARTY_NOTICES"
 
 WORKDIR /app
 RUN apk --no-cache add ca-certificates tzdata curl
 
 COPY --from=builder /app/server /app/server
+COPY --from=builder /app/THIRD_PARTY_NOTICES /usr/share/doc/file4base/THIRD_PARTY_NOTICES
 
 EXPOSE 8080
 

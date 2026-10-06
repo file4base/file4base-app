@@ -210,8 +210,25 @@ void main() {
       expect(find.text('Script Workspace'), findsOneWidget);
       expect(find.text('Database: test_db'), findsOneWidget);
       expect(find.text('Run'), findsOneWidget);
-      expect(find.text('Debug'), findsOneWidget);
+      expect(find.text('Step Preview'), findsOneWidget);
       expect(find.text('Save'), findsOneWidget);
+
+      // Run/Debug must not fake an execution (#24): Run is disabled and the
+      // step preview says that nothing is executed.
+      final run = tester.widget<ButtonStyleButton>(
+          find.ancestor(of: find.text('Run'), matching: find.byWidgetPredicate((w) => w is ButtonStyleButton)));
+      expect(run.onPressed, isNull);
+      await tester.tap(find.text('Step Preview'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Preview only: no step is executed'), findsOneWidget);
+      expect(find.textContaining('SUCCESS'), findsNothing);
+      while (tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Next step')).onPressed != null) {
+        await tester.tap(find.text('Next step'));
+        await tester.pumpAndSettle();
+      }
+      expect(find.text('End of script (preview, nothing was executed).'), findsOneWidget);
+      await tester.tap(find.text('Close').last);
+      await tester.pumpAndSettle();
 
       // Left panel
       expect(find.text('Scripts'), findsOneWidget);

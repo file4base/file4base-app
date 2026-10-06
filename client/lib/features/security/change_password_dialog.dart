@@ -6,11 +6,15 @@ class ChangePasswordDialog extends StatefulWidget {
   final UserModel currentUser;
   final String? databaseName;
 
+  /// Called with the new password once the server has accepted it.
+  final ValueChanged<String>? onPasswordChanged;
+
   const ChangePasswordDialog({
     super.key,
     required this.apiClient,
     required this.currentUser,
     this.databaseName,
+    this.onPasswordChanged,
   });
 
   static Future<bool?> show(
@@ -18,6 +22,7 @@ class ChangePasswordDialog extends StatefulWidget {
     required ApiClient apiClient,
     required UserModel currentUser,
     String? databaseName,
+    ValueChanged<String>? onPasswordChanged,
   }) {
     return showDialog<bool>(
       context: context,
@@ -26,6 +31,7 @@ class ChangePasswordDialog extends StatefulWidget {
         apiClient: apiClient,
         currentUser: currentUser,
         databaseName: databaseName,
+        onPasswordChanged: onPasswordChanged,
       ),
     );
   }
@@ -65,6 +71,7 @@ class _ChangePasswordDialogState extends State<ChangePasswordDialog> {
         role: widget.currentUser.role,
         database: widget.databaseName,
       );
+      widget.onPasswordChanged?.call(_newPasswordController.text);
 
       if (mounted) {
         Navigator.of(context).pop(true);

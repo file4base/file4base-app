@@ -730,6 +730,22 @@ class ApiClient {
     return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
   }
 
+  /// Largest page the server returns for [listRows] (`limit` is clamped to it).
+  static const maxPageSize = 1000;
+
+  /// Every row of [table], fetched page by page in a stable order (by `id`).
+  /// Throws if any page fails, so callers never get a silently partial set.
+  /// [onProgress] receives the number of rows fetched so far.
+  Future<List<Map<String, dynamic>>> listAllRows(String table, {void Function(int fetched)? onProgress}) async {
+    final all = <Map<String, dynamic>>[];
+    while (true) {
+      final page = await listRows(table, limit: maxPageSize, offset: all.length, sortBy: 'id', sortAsc: true);
+      all.addAll(page);
+      onProgress?.call(all.length);
+      if (page.length < maxPageSize) return all;
+    }
+  }
+
   Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table'),

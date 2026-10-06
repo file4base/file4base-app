@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- New Database no longer provisions predictable owner credentials ([#9](https://github.com/file4base/file4base-app/issues/9)): the password field starts empty, an empty username or password is no longer replaced by the database name, and the server rejects owner passwords shorter than 8 characters or equal to the username or the database name. Databases created earlier with `admin`/`admin` or with the database name as password keep working: change that password from the account's Change Password dialog.
+- File Options no longer reports a password change as successful when the server rejected it, could not be reached, or the new password was blank ([#20](https://github.com/file4base/file4base-app/issues/20)). It now uses the shared Change Password dialog, and the remembered sign-in password changes only after the server accepted the new one.
+
+### Fixed
+- Export Records saved only the first 100 records ([#6](https://github.com/file4base/file4base-app/issues/6)): it asked for 10,000 rows, which the server silently replaced by its 100-row default. Exports now read every record page by page (in `id` order) and save the file only when all pages arrived. The data API clamps `limit` to its 1,000-row maximum instead of falling back to 100.
+- JSON numbers sent to the data API kept only float64 precision ([#18](https://github.com/file4base/file4base-app/issues/18)): `9007199254740993` was stored as `9007199254740992`. Numbers now reach the database exactly as written, on create and update.
+- Creating a database from the sign-in dialog filled the username with the database name ([#23](https://github.com/file4base/file4base-app/issues/23)); it now fills the owner username.
+- Script Workspace Run and Debug showed a successful execution with invented results without running anything ([#24](https://github.com/file4base/file4base-app/issues/24)). Run is disabled until the workspace can run scripts (scripts run from layout buttons in Browse mode), and Debug is now Step Preview, labelled as a preview that executes nothing. The footer no longer names a script engine that does not exist.
+
+### Legal
+- The vendored Swagger UI 5.33.0 ships with its Apache-2.0 `LICENSE` and `NOTICE` and the license files referenced by its script banners, served next to the scripts; `VENDOR.md` records the version and checksums ([#7](https://github.com/file4base/file4base-app/issues/7)).
+- The API image contains `/usr/share/doc/file4base/THIRD_PARTY_NOTICES` with the license texts of Go and of every Go module linked into the server, generated at build time from the binary (`server/tools/third_party_notices.sh`); the build fails if a module has no license file ([#22](https://github.com/file4base/file4base-app/issues/22)).
+
 ## [0.8.0] - 2026-10-06
 
 ### Added

@@ -403,10 +403,12 @@ Deletes a layout.
 Queries rows with optional pagination and sorting.
 
 #### Query Parameters
-- `limit` (integer, default `100`)
+- `limit` (integer, default `100`, maximum `1000`; larger values are clamped to `1000`)
 - `offset` (integer, default `0`)
 - `sort_by` (string, optional)
 - `sort_asc` (boolean, default `true`)
+
+To read every row, page with `limit=1000` and `sort_by=id` (a stable order), advancing `offset` by the number of rows received, until a page returns fewer than `limit` rows.
 
 ---
 
@@ -480,7 +482,7 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`.
 ---
 
 ### `POST /api/v1/databases`
-Creates a new physical database, initializes the system catalog tables (`sys_*`) and provisions its first `owner` account with the credentials in the request. There are no default accounts: `user` and `password` are mandatory.
+Creates a new physical database, initializes the system catalog tables (`sys_*`) and provisions its first `owner` account with the credentials in the request. There are no default accounts: `user` and `password` are mandatory. The owner password must have at least 8 characters and cannot be the username or the database name (database names are listed publicly).
 
 *Public* while `ALLOW_PUBLIC_DATABASE_CREATION=true` (default, needed by the desktop "New Database" flow, which runs before sign-in). With `false`, it requires an `owner` session.
 
@@ -507,7 +509,7 @@ An existing database is never modified: if the name is taken the response is `40
 
 #### Errors
 - `409 Conflict`: a database with that name already exists.
-- `422 Unprocessable Entity`: missing database name, owner user or owner password.
+- `422 Unprocessable Entity`: missing database name or owner user, or an owner password that is missing, shorter than 8 characters, or equal to the username or the database name.
 
 ---
 

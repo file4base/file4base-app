@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/api"
@@ -61,4 +62,42 @@ func TestSwaggerHandler(t *testing.T) {
 		assert.Equal(t, http.StatusMovedPermanently, recDocs.Code)
 		assert.Equal(t, "/swagger/", recDocs.Header().Get("Location"))
 	})
+}
+
+// The vendored Swagger UI ships with its legal files (#7): every license file
+// named in a script banner is served next to the script, and so are the
+// Apache-2.0 LICENSE and NOTICE.
+func TestSwaggerHandler_ServesThirdPartyLicenses(t *testing.T) {
+	handler, err := api.NewSwaggerHandler()
+	require.NoError(t, err)
+	r := chi.NewRouter()
+	handler.RegisterRoutes(r)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		return rec
+	}
+
+	banner := regexp.MustCompile(`see ([\w.-]+\.LICENSE\.txt)`)
+	for _, script := range []string{"swagger-ui-bundle.js", "swagger-ui-standalone-preset.js"} {
+		rec := get("/swagger/" + script)
+		require.Equal(t, http.StatusOK, rec.Code, script)
+		head := rec.Body.String()
+		if len(head) > 200 {
+			head = head[:200]
+		}
+		m := banner.FindStringSubmatch(head)
+		require.NotNil(t, m, "%s has no license banner", script)
+		notice := get("/swagger/" + m[1])
+		assert.Equal(t, http.StatusOK, notice.Code, m[1])
+		assert.Contains(t, notice.Body.String(), "@license", m[1])
+	}
+
+	license := get("/swagger/LICENSE")
+	assert.Equal(t, http.StatusOK, license.Code)
+	assert.Contains(t, license.Body.String(), "Apache License")
+	notice := get("/swagger/NOTICE")
+	assert.Equal(t, http.StatusOK, notice.Code)
+	assert.Contains(t, notice.Body.String(), "swagger-ui")
 }

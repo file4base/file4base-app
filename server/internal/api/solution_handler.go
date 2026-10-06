@@ -129,8 +129,8 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 	if ownerUser == "" {
 		invalid = append(invalid, telemetry.InvalidParam{Name: "user", Reason: "an owner username is required"})
 	}
-	if strings.TrimSpace(req.Password) == "" {
-		invalid = append(invalid, telemetry.InvalidParam{Name: "password", Reason: "an owner password is required"})
+	if reason := ownerPasswordProblem(req.Password, ownerUser, dbName); reason != "" {
+		invalid = append(invalid, telemetry.InvalidParam{Name: "password", Reason: reason})
 	}
 	if len(invalid) > 0 {
 		telemetry.WriteValidationProblem(w, r, "A database name and the credentials of its first owner are required", invalid)
@@ -174,6 +174,27 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		"active":     sessionDatabase(r),
 		"owner_user": ownerUser,
 	})
+}
+
+// MinOwnerPasswordLength is the shortest password accepted for the first
+// owner of a new database.
+const MinOwnerPasswordLength = 8
+
+// ownerPasswordProblem returns why password cannot protect the first owner
+// account of database dbName, or "" when it is acceptable. Database names are
+// listed publicly, and the owner username is often a default, so neither may
+// be reused as the password.
+func ownerPasswordProblem(password, user, dbName string) string {
+	p := strings.TrimSpace(password)
+	switch {
+	case p == "":
+		return "an owner password is required"
+	case len([]rune(p)) < MinOwnerPasswordLength:
+		return fmt.Sprintf("the owner password must be at least %d characters long", MinOwnerPasswordLength)
+	case strings.EqualFold(p, user) || strings.EqualFold(p, dbName):
+		return "the owner password cannot be the username or the database name"
+	}
+	return ""
 }
 
 type SwitchDatabaseRequest struct {

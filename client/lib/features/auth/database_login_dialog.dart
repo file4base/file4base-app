@@ -98,7 +98,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       await _loadDatabases();
       setState(() {
         _selectedDatabase = result.databaseName;
-        _usernameController.text = result.databaseName;
+        _usernameController.text = result.user;
         _passwordController.text = result.databasePassword;
       });
     }

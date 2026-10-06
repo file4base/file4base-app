@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/file_options_model.dart';
+import '../security/change_password_dialog.dart';
 
 class FileOptionsDialog extends StatefulWidget {
   final FileOptionsModel initialOptions;
@@ -134,100 +135,32 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
     super.dispose();
   }
 
-  void _handleChangePassword() {
-    final newPasswordCtrl = TextEditingController();
-    final confirmPasswordCtrl = TextEditingController();
-    bool obscure = true;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Row(
-            children: const [
-              Icon(Icons.password, color: Color(0xFF1E88E5), size: 22),
-              SizedBox(width: 8),
-              Text('Change Password', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            ],
-          ),
-          content: SizedBox(
-            width: 380,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Active user: ${widget.currentUser?.username ?? _usernameController.text}',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: newPasswordCtrl,
-                  obscureText: obscure,
-                  decoration: InputDecoration(
-                    labelText: 'New password',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility, size: 18),
-                      onPressed: () => setDialogState(() => obscure = !obscure),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: confirmPasswordCtrl,
-                  obscureText: obscure,
-                  decoration: InputDecoration(
-                    labelText: 'Confirm password',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility, size: 18),
-                      onPressed: () => setDialogState(() => obscure = !obscure),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final newPass = newPasswordCtrl.text;
-                if (newPass != confirmPasswordCtrl.text) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Passwords do not match'), backgroundColor: Colors.red),
-                  );
-                  return;
-                }
-                if (widget.apiClient != null && widget.currentUser != null) {
-                  try {
-                    await widget.apiClient!.updateUser(
-                      widget.currentUser!.id,
-                      password: newPass,
-                      role: widget.currentUser!.role,
-                    );
-                  } catch (_) {}
-                }
-                _passwordController.text = newPass;
-                if (ctx.mounted) Navigator.of(ctx).pop();
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Password updated successfully.')),
-                  );
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
+  /// Changes the signed-in account's password. Uses the shared Change
+  /// Password dialog, which reports success only after the server accepted
+  /// the new password; the remembered password follows only then.
+  Future<void> _handleChangePassword() async {
+    final api = widget.apiClient;
+    final user = widget.currentUser;
+    if (api == null || user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sign in to the database to change the password.'),
+          backgroundColor: Colors.red,
         ),
-      ),
+      );
+      return;
+    }
+    final changed = await ChangePasswordDialog.show(
+      context,
+      apiClient: api,
+      currentUser: user,
+      onPasswordChanged: (p) => _passwordController.text = p,
     );
+    if (changed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password updated successfully.')),
+      );
+    }
   }
 
   void _onSave() {

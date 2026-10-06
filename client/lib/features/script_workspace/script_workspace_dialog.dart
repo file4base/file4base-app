@@ -586,87 +586,16 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  void _runActiveScript() {
-    final script = _activeScript;
-    if (script == null) return;
-    final theme = ref.read(appThemeProvider);
-
-    // Show simulated execution results dialog
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: theme.surface,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: BorderSide(color: theme.successColor),
-        ),
-        title: Row(
-          children: [
-            Icon(Icons.play_circle_fill, color: theme.successColor, size: 24),
-            const SizedBox(width: 10),
-            Text('Execution: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
-          ],
-        ),
-        content: SizedBox(
-          width: 500,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: theme.surfaceContainer,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: theme.border),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Status: SUCCESS (0 errors)', style: TextStyle(color: theme.successColor, fontWeight: FontWeight.bold, fontSize: 13)),
-                    const SizedBox(height: 6),
-                    Text('Steps executed: ${script.steps.where((s) => s.isEnabled).length} of ${script.steps.length}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
-                    Text('Table context: ${script.contextTable.isEmpty ? "Default" : script.contextTable}', style: TextStyle(color: theme.textSecondary, fontSize: 12)),
-                    Divider(color: theme.border, height: 16),
-                    Text('File4Base engine execution trace:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 4),
-                    ...script.steps.where((s) => s.isEnabled).take(5).map((s) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Text('✔ ${s.sequenceIdx.toString().padLeft(2, "0")} ${s.displayName} ${s.previewText}',
-                        style: TextStyle(color: theme.textPrimary, fontSize: 11, fontFamily: 'monospace'),
-                      ),
-                    )),
-                    if (script.steps.where((s) => s.isEnabled).length > 5)
-                      Text('... (remaining steps completed)', style: TextStyle(color: theme.textSecondary, fontSize: 10, fontStyle: FontStyle.italic)),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: theme.successColor, foregroundColor: Colors.white),
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _debugActiveScript() {
+  /// Steps through the enabled steps of the script for review. Nothing is
+  /// executed: there is no record or layout context in the Script Workspace.
+  /// Scripts run from layout buttons (Perform Script) in Browse mode.
+  void _previewActiveScript() {
     final script = _activeScript;
     if (script == null) return;
     final theme = ref.read(appThemeProvider);
 
     int debugStep = 0;
     final activeSteps = script.steps.where((s) => s.isEnabled).toList();
-    final Map<String, String> debugVariables = {
-      r'$subtotal': '5240.00',
-      r'$counter': '1',
-      'Get(LastError)': '0',
-    };
 
     showDialog(
       context: context,
@@ -682,9 +611,9 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
             ),
             title: Row(
               children: [
-                Icon(Icons.bug_report, color: theme.primaryAccent, size: 24),
+                Icon(Icons.visibility_outlined, color: theme.primaryAccent, size: 24),
                 const SizedBox(width: 10),
-                Text('Script debugger: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
+                Text('Step preview: ${script.name}', style: TextStyle(color: theme.textPrimary, fontSize: 16)),
               ],
             ),
             content: SizedBox(
@@ -692,6 +621,21 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               height: 380,
               child: Column(
                 children: [
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: theme.warningColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: theme.warningColor),
+                    ),
+                    child: Text(
+                      'Preview only: no step is executed and no data changes. '
+                      'To run this script, attach it to a button (Button Setup > Perform Script) and click it in Browse mode.',
+                      style: TextStyle(color: theme.textPrimary, fontSize: 11),
+                    ),
+                  ),
                   // Step progression
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -745,19 +689,8 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                               ],
                             )
                           else
-                            Text('Script execution finished.', style: TextStyle(color: theme.successColor, fontSize: 14, fontWeight: FontWeight.bold)),
-                          Divider(color: theme.border, height: 20),
-                          Text('Variables and inspection:', style: TextStyle(color: theme.primaryAccent, fontSize: 11, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 6),
-                          ...debugVariables.entries.map((e) => Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Row(
-                              children: [
-                                Text('${e.key}: ', style: TextStyle(color: theme.controlColor, fontFamily: 'monospace', fontSize: 12)),
-                                Text(e.value, style: TextStyle(color: theme.textPrimary, fontFamily: 'monospace', fontSize: 12)),
-                              ],
-                            ),
-                          )),
+                            Text('End of script (preview, nothing was executed).',
+                                style: TextStyle(color: theme.textSecondary, fontSize: 14, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
@@ -773,16 +706,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   foregroundColor: theme.primaryAccent,
                   side: BorderSide(color: theme.primaryAccent),
                 ),
-                onPressed: currentStep != null ? () {
-                  setDbgState(() {
-                    debugStep++;
-                    if (currentStep.stepType == 'set_variable') {
-                      final v = currentStep.params['variable']?.toString() ?? r'$var';
-                      final c = currentStep.params['calc']?.toString() ?? '1';
-                      debugVariables[v] = c;
-                    }
-                  });
-                } : null,
+                onPressed: currentStep != null ? () => setDbgState(() => debugStep++) : null,
               ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: theme.primaryAccent, foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white),
@@ -882,30 +806,35 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                     ),
                   ],
                   const Spacer(),
-                  // Run Button
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.play_arrow, size: 16),
-                    label: const Text('Run', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: theme.successColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      minimumSize: Size.zero,
+                  // Run: not available here (no record/layout context). Scripts
+                  // run from layout buttons in Browse mode.
+                  Tooltip(
+                    message: 'Running scripts from the Script Workspace is not available yet.\n'
+                        'Attach the script to a button (Button Setup > Perform Script) and click it in Browse mode.',
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.play_arrow, size: 16),
+                      label: const Text('Run', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: theme.successColor,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        minimumSize: Size.zero,
+                      ),
+                      onPressed: null,
                     ),
-                    onPressed: script != null ? _runActiveScript : null,
                   ),
                   const SizedBox(width: 8),
-                  // Debug Button
+                  // Step preview (does not execute anything)
                   ElevatedButton.icon(
-                    icon: const Icon(Icons.bug_report, size: 16),
-                    label: const Text('Debug', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                    icon: const Icon(Icons.visibility_outlined, size: 16),
+                    label: const Text('Step Preview', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.secondaryAccent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                       minimumSize: Size.zero,
                     ),
-                    onPressed: script != null ? _debugActiveScript : null,
+                    onPressed: script != null ? _previewActiveScript : null,
                   ),
                   const SizedBox(width: 8),
                   // Save Button
@@ -1489,10 +1418,10 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                     style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                   const Spacer(),
-                  Icon(Icons.bolt, color: theme.primaryAccent, size: 14),
+                  Icon(Icons.info_outline, color: theme.primaryAccent, size: 14),
                   const SizedBox(width: 6),
                   Text(
-                    'Engine: File4Base Script Engine v1.0 (Go/CEL)',
+                    'Scripts run from layout buttons in Browse mode',
                     style: TextStyle(color: theme.textSecondary, fontSize: 11),
                   ),
                 ],

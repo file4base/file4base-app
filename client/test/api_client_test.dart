@@ -253,4 +253,32 @@ void main() {
       expect(decoded['password'], 'secret-b');
     });
   });
+
+  group('ApiClient.listAllRows (#6)', () {
+    /// Serves [total] rows the way the server does: pages of at most 1000.
+    MockClient server(int total, {int? failAtOffset, List<Uri>? log}) => MockClient((request) async {
+          log?.add(request.url);
+          final offset = int.parse(request.url.queryParameters['offset']!);
+          if (offset == failAtOffset) return http.Response('{"title":"boom"}', 500);
+          final limit = int.parse(request.url.queryParameters['limit']!).clamp(1, 1000);
+          final end = (offset + limit).clamp(0, total);
+          final rows = [for (var i = offset; i < end; i++) {'id': 'r${i.toString().padLeft(5, '0')}'}];
+          return http.Response(jsonEncode(rows), 200, headers: {'content-type': 'application/json'});
+        });
+
+    for (final total in [0, 100, 101, 1000, 1001, 2500]) {
+      test('returns all $total rows', () async {
+        final log = <Uri>[];
+        final api = ApiClient(baseUrl: 'http://x', httpClient: server(total, log: log));
+        final rows = await api.listAllRows('items');
+        expect(rows.map((r) => r['id']).toSet().length, total);
+        expect(log.every((u) => u.queryParameters['sort_by'] == 'id'), isTrue, reason: 'stable order on every page');
+      });
+    }
+
+    test('a failing later page fails the whole read', () async {
+      final api = ApiClient(baseUrl: 'http://x', httpClient: server(2500, failAtOffset: 1000));
+      expect(api.listAllRows('items'), throwsA(isA<Exception>()));
+    });
+  });
 }

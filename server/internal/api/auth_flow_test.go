@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,13 +141,21 @@ func TestAPI_DatabaseCreationAndLogin(t *testing.T) {
 	// Owner credentials are mandatory: there are no default accounts
 	rec := h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": db}, nil)
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
-	rec = h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": "postgres", "user": "a", "password": "b"}, nil)
+	rec = h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": "postgres", "user": "a", "password": "b-password"}, nil)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	// The first owner's password must be chosen deliberately (issue #9)
+	for _, weak := range []string{"   ", "short", "alice", db, strings.ToUpper(db)} {
+		rec = h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": db, "user": "alice", "password": weak}, nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "password %q", weak)
+	}
+	rec = h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": db, "user": "alicealice", "password": "AliceAlice"}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "password equal to the username")
 
 	h.createDatabase(db, "alice", "alice-secret")
 
 	// Re-creating an existing database must not add another owner to it
-	rec = h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": db, "user": "mallory", "password": "x"}, nil)
+	rec = h.do(http.MethodPost, "/api/v1/databases", "", map[string]string{"database": db, "user": "mallory", "password": "mallory-secret"}, nil)
 	assert.Equal(t, http.StatusConflict, rec.Code)
 	rec = h.do(http.MethodPost, "/api/v1/auth/login", "", map[string]string{"database": db, "username": "mallory", "password": "x"}, nil)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -203,7 +212,7 @@ func TestAPI_PublicDatabaseCreationCanBeDisabled(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 
 	ownerToken := locked.login(db, "alice", "alice-secret")
-	rec = locked.do(http.MethodPost, "/api/v1/databases", ownerToken, map[string]string{"database": other, "user": "x", "password": "y"}, nil)
+	rec = locked.do(http.MethodPost, "/api/v1/databases", ownerToken, map[string]string{"database": other, "user": "x", "password": "x-owner-secret"}, nil)
 	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	t.Cleanup(func() { _ = locked.mgr.DropDatabase(context.Background(), other) })
 }
@@ -583,4 +592,105 @@ func TestAPI_DataImportCannotWriteSystemTables(t *testing.T) {
 	rec = h.do(http.MethodGet, "/api/v1/data/notes", token, nil, &rows)
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Len(t, rows, 1)
+}
+
+// A limit above the maximum page size is clamped to it instead of falling
+// back to the 100-row default, and pages by offset cover every row (#6).
+func TestAPI_ListRowsLimitIsClampedAndPagesCoverAllRows(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_page")
+	h.createDatabase(db, "alice", "alice-secret")
+	token := h.login(db, "alice", "alice-secret")
+
+	var table struct {
+		ID string `json:"id"`
+	}
+	rec := h.do(http.MethodPost, "/api/v1/schemas/tables", token, map[string]string{"display_name": "Items", "custom_name": "items"}, &table)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	driver, err := h.mgr.DriverFor(context.Background(), db)
+	require.NoError(t, err)
+	_, err = driver.DB().ExecContext(context.Background(),
+		`INSERT INTO items (id) SELECT 'r' || lpad(g::text, 5, '0') FROM generate_series(1, 1005) AS g`)
+	require.NoError(t, err)
+
+	var rows []map[string]interface{}
+	rec = h.do(http.MethodGet, "/api/v1/data/items?limit=10000", token, nil, &rows)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Len(t, rows, 1000, "an oversized limit returns a full page, not the 100-row default")
+
+	seen := map[string]bool{}
+	for offset := 0; ; {
+		rows = nil
+		rec = h.do(http.MethodGet, fmt.Sprintf("/api/v1/data/items?limit=1000&offset=%d&sort_by=id", offset), token, nil, &rows)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		for _, r := range rows {
+			seen[r["id"].(string)] = true
+		}
+		offset += len(rows)
+		if len(rows) < 1000 {
+			break
+		}
+	}
+	assert.Len(t, seen, 1005)
+}
+
+// JSON numbers reach NUMBER fields exactly, without a float64 round trip (#18).
+func TestAPI_JSONNumbersKeepTheirPrecision(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_num")
+	h.createDatabase(db, "alice", "alice-secret")
+	token := h.login(db, "alice", "alice-secret")
+
+	var table struct {
+		ID string `json:"id"`
+	}
+	rec := h.do(http.MethodPost, "/api/v1/schemas/tables", token, map[string]string{"display_name": "Typed", "custom_name": "typed"}, &table)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	for _, col := range []map[string]interface{}{
+		{"name": "amount", "display_name": "Amount", "field_type": "NUMBER", "is_nullable": true},
+		{"name": "note", "display_name": "Note", "field_type": "TEXT", "is_nullable": true},
+	} {
+		rec = h.do(http.MethodPost, "/api/v1/schemas/tables/"+table.ID+"/columns", token, col, nil)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	}
+
+	post := func(id, rawJSON string) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/data/typed", strings.NewReader(rawJSON))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		h.router.ServeHTTP(rr, req)
+		require.Equal(t, http.StatusCreated, rr.Code, "%s: %s", id, rr.Body.String())
+	}
+	post("big", `{"id":"big","amount":9007199254740993}`)
+	post("neg", `{"id":"neg","amount":-9007199254740993}`)
+	post("dec", `{"id":"dec","amount":12345678901234.123456789}`)
+	post("exp", `{"id":"exp","amount":1.5e3}`)
+	post("txt", `{"id":"txt","note":42}`)
+
+	// The PUT path decodes the same way
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/data/typed/dec", strings.NewReader(`{"amount":9007199254740995}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var rows []map[string]interface{}
+	rec = h.do(http.MethodGet, "/api/v1/data/typed?sort_by=id", token, nil, &rows)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	got := map[string]interface{}{}
+	for _, r := range rows {
+		if r["amount"] != nil {
+			got[r["id"].(string)] = fmt.Sprint(r["amount"])
+		} else {
+			got[r["id"].(string)] = fmt.Sprint(r["note"])
+		}
+	}
+	assert.Equal(t, "9007199254740993", got["big"])
+	assert.Equal(t, "-9007199254740993", got["neg"])
+	assert.Equal(t, "9007199254740995", got["dec"])
+	assert.Equal(t, "1500", got["exp"])
+	assert.Equal(t, "42", got["txt"])
 }
