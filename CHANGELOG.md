@@ -16,7 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sorting, layouts, preview, a relationship, scripts, accounts and backups. Every
   step was carried out in the application and every figure it quotes is one
   File4Base produced. It ends with the list of things a FileMaker user will look
-  for and not find yet. The defects below were all found while writing it.
+  for and not find yet, each linked to its issue ([#30](https://github.com/file4base/file4base-app/issues/30)
+  calculations, [#31](https://github.com/file4base/file4base-app/issues/31) value lists,
+  [#32](https://github.com/file4base/file4base-app/issues/32) grouped reports,
+  [#33](https://github.com/file4base/file4base-app/issues/33) layout assistant and merge fields,
+  [#34](https://github.com/file4base/file4base-app/issues/34) OR searches and saved finds,
+  [#35](https://github.com/file4base/file4base-app/issues/35) multi-field sort,
+  [#36](https://github.com/file4base/file4base-app/issues/36) portals,
+  [#37](https://github.com/file4base/file4base-app/issues/37) charts,
+  [#38](https://github.com/file4base/file4base-app/issues/38) importing foreign files,
+  [#39](https://github.com/file4base/file4base-app/issues/39) extended privileges).
+  The defects below were all found while writing it.
 
 ### Fixed
 - 62 menu commands showed a message saying they had run and did nothing: "Omit

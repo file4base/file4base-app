@@ -625,42 +625,42 @@ All names, companies and addresses are fictitious.
 ## What is not here yet
 
 These are things a FileMaker user will look for and not find in File4Base 0.9.2.
-They are listed so you do not go looking.
+They are listed so you do not go looking, and each one has an issue.
 
-**No calculation engine.** Calculation and Summary fields can be created and a
+**No calculation engine** ([#30](https://github.com/file4base/file4base-app/issues/30))**.** Calculation and Summary fields can be created and a
 formula can be written, but nothing evaluates it. There is no *Annual Fee*
 computed from the customer type, and no summary field totalling a column.
 
-**No value lists.** A field cannot be presented as a pop-up, a checkbox set or a
+**No value lists** ([#31](https://github.com/file4base/file4base-app/issues/31))**.** A field cannot be presented as a pop-up, a checkbox set or a
 radio button set from a list of allowed values. *File > Manage > Value Lists* is
 a roadmap item and says so.
 
-**No report assistant.** *New Layout / Report* only asks for a name and a table.
+**No report assistant** ([#32](https://github.com/file4base/file4base-app/issues/32), [#33](https://github.com/file4base/file4base-app/issues/33))**.** *New Layout / Report* only asks for a name and a table.
 There are no list, labels, report or blank layout types, no field picker, no
 theme chooser, no sub-summary parts, no break fields and no grand totals.
 
-**No merge fields in text.** Form letters and mailing labels, which depend on
+**No merge fields in text** ([#33](https://github.com/file4base/file4base-app/issues/33))**.** Form letters and mailing labels, which depend on
 merge fields that collapse when empty, cannot be built.
 
-**No OR searches.** Find mode has a single request. *Requests > New Request* is
+**No OR searches** ([#34](https://github.com/file4base/file4base-app/issues/34))**.** Find mode has a single request. *Requests > New Request* is
 not implemented, so "New York **or** London" has to be two separate finds.
 
-**No saved finds.**
+**No saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34))**.**
 
-**No multi-field sort.** The Sort dialog takes one field.
+**No multi-field sort** ([#35](https://github.com/file4base/file4base-app/issues/35))**.** The Sort dialog takes one field.
 
-**No portals.** A layout cannot show a list of the related records of another
+**No portals** ([#36](https://github.com/file4base/file4base-app/issues/36))**.** A layout cannot show a list of the related records of another
 table. The relationship itself works; displaying related records on a layout
 does not.
 
-**No charts.** The chart tool is in the layout toolbar but there is no chart
+**No charts** ([#37](https://github.com/file4base/file4base-app/issues/37))**.** The chart tool is in the layout toolbar but there is no chart
 setup.
 
-**No import of foreign files.** *File > Import Records* (file, folder, XML,
+**No import of foreign files** ([#38](https://github.com/file4base/file4base-app/issues/38))**.** *File > Import Records* (file, folder, XML,
 ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
 data files.
 
-**Extended privileges are not enforced.** See lesson 13.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 13.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a
