@@ -47,8 +47,8 @@ void main() {
     final passwordFieldFinder = find.widgetWithText(TextFormField, 'Password');
     expect(passwordFieldFinder, findsOneWidget);
 
-    // Click Conectar y Entrar without entering password
-    await tester.tap(find.text('Conectar y Entrar'));
+    // Click Connect & Sign In without entering a password
+    await tester.tap(find.text('Connect & Sign In'));
     await tester.pumpAndSettle();
 
     // Verify password validation error is shown

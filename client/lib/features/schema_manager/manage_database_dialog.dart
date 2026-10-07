@@ -38,10 +38,14 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
   String? _errorMessage;
   String _tableSearchFilter = '';
 
+  // Tab order of the dialog: Databases, Tables, Fields, Relationships Graph.
+  static const int _tabCount = 4;
+  static const int _fieldsTabIndex = 2;
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: _tabCount, vsync: this);
     _loadAll();
   }
 
@@ -402,6 +406,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     final nameController = TextEditingController();
     final dispController = TextEditingController();
     String selectedType = 'TEXT';
+    String? fieldError;
 
     await showDialog(
       context: context,
@@ -451,6 +456,37 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   }
                 },
               ),
+              if (selectedType == 'CALCULATION' || selectedType == 'SUMMARY')
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: Colors.orange.shade800),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Formulas are stored but not evaluated yet: the field is created as a '
+                          'plain text column you fill in yourself.',
+                          style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (fieldError != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, size: 16, color: Colors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(fieldError!,
+                            style: const TextStyle(fontSize: 12, color: Colors.red)),
+                      ),
+                    ],
+                  ),
+                ),
             ],
           ),
           actions: [
@@ -459,7 +495,15 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
               onPressed: () async {
                 final name = nameController.text.trim();
                 final disp = dispController.text.trim();
-                if (name.isEmpty || disp.isEmpty) return;
+                if (name.isEmpty || disp.isEmpty) {
+                  // Say why the click did nothing instead of ignoring it.
+                  setDialogState(() => fieldError = name.isEmpty && disp.isEmpty
+                      ? 'Enter a field label.'
+                      : disp.isEmpty
+                          ? 'Enter a field label.'
+                          : 'Enter a column name.');
+                  return;
+                }
                 Navigator.pop(ctx);
                 try {
                   final client = ref.read(apiClientProvider);
@@ -1053,7 +1097,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     );
 
     if (selected == 'fields') {
-      _tabController.animateTo(1);
+      _tabController.animateTo(_fieldsTabIndex);
     } else if (selected == 'rename') {
       _showRenameTableDialog(tbl);
     } else if (selected == 'duplicate') {
@@ -1196,7 +1240,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                     border: Border.all(color: Colors.grey.shade300),
                   ),
                   child: Text(
-                    '${_tables.length} tables in database',
+                    '${_tables.length} ${_tables.length == 1 ? 'table' : 'tables'} in database',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
                   ),
                 ),
@@ -1308,7 +1352,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                               ],
                             ],
                           ),
-                          subtitle: Text('SQL Table: ${tbl.name} • ${tbl.columns.length} fields'),
+                          subtitle: Text('SQL Table: ${tbl.name} • ${tbl.columns.length} ${tbl.columns.length == 1 ? 'field' : 'fields'}'),
                           onTap: () {
                             setState(() {
                               _selectedTable = tbl;
@@ -1330,7 +1374,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                                 ),
                                 onPressed: () {
                                   setState(() => _selectedTable = tbl);
-                                  _tabController.animateTo(1);
+                                  _tabController.animateTo(_fieldsTabIndex);
                                 },
                               ),
                               const SizedBox(width: 6),
@@ -1485,7 +1529,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   icon: const Icon(Icons.view_column_outlined, size: 16),
                   label: const Text('Manage Fields ->'),
                   onPressed: _selectedTable != null
-                      ? () => _tabController.animateTo(1)
+                      ? () => _tabController.animateTo(_fieldsTabIndex)
                       : null,
                 ),
               ],

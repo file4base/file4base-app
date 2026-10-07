@@ -50,12 +50,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   String _searchQuery = '';
   String _statusFilter = 'all'; // 'all', 'active', 'inactive'
 
-  // Extended privileges mockup state
-  final Map<String, bool> _extPrivWebDirect = {'owner': true, 'admin': true, 'user': true};
-  final Map<String, bool> _extPrivRest = {'owner': true, 'admin': true, 'user': false};
-  final Map<String, bool> _extPrivDesktop = {'owner': true, 'admin': true, 'user': true};
-  final Map<String, bool> _extPrivExport = {'owner': true, 'admin': true, 'user': false};
-
   @override
   void initState() {
     super.initState();
@@ -1580,8 +1574,32 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
           ),
           const SizedBox(height: 6),
           const Text(
-            'Control the data access methods and remote clients allowed for each privilege set.',
+            'Which access methods each privilege set may use.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.warning_amber_outlined, size: 18, color: Colors.orange.shade800),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Not enforced yet. The server does not restrict access by method, so every '
+                    'account that can sign in can use all of them. This list is the planned set; '
+                    'use account roles and layout privileges to restrict access today.',
+                    style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
 
@@ -1593,28 +1611,24 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   title: 'Access via File4Base Desktop',
                   description: 'Allow database access through the native desktop client (macOS / Linux / Windows).',
                   icon: Icons.desktop_windows_outlined,
-                  states: _extPrivDesktop,
                 ),
                 _buildExtPrivCard(
                   code: 'f4bwebdirect',
                   title: 'Access via File4Base WebDirect',
                   description: 'Allow database access through modern web browsers via Nginx.',
                   icon: Icons.language_outlined,
-                  states: _extPrivWebDirect,
                 ),
                 _buildExtPrivCard(
                   code: 'f4brest',
                   title: 'Access via REST API / Data API',
                   description: 'Allow JSON queries, record ingestion, and backend automation through secure REST endpoints.',
                   icon: Icons.api_outlined,
-                  states: _extPrivRest,
                 ),
                 _buildExtPrivCard(
                   code: 'f4bexport',
                   title: 'Bulk record export',
                   description: 'Allow data export to Excel, CSV, JSON, and packaged .f4b solution files.',
                   icon: Icons.file_download_outlined,
-                  states: _extPrivExport,
                 ),
               ],
             ),
@@ -1629,7 +1643,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     required String title,
     required String description,
     required IconData icon,
-    required Map<String, bool> states,
   }) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1658,16 +1671,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                   ),
                   const SizedBox(height: 4),
                   Text(description, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      _buildExtToggle('Owner', states['owner'] ?? true, (val) => setState(() => states['owner'] = val)),
-                      const SizedBox(width: 16),
-                      _buildExtToggle('Admin', states['admin'] ?? true, (val) => setState(() => states['admin'] = val)),
-                      const SizedBox(width: 16),
-                      _buildExtToggle('User', states['user'] ?? false, (val) => setState(() => states['user'] = val)),
-                    ],
-                  ),
                 ],
               ),
             ),
@@ -1677,18 +1680,4 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     );
   }
 
-  Widget _buildExtToggle(String roleName, bool value, ValueChanged<bool> onChanged) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(roleName, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-        const SizedBox(width: 4),
-        Switch(
-          value: value,
-          activeColor: const Color(0xFF1E88E5),
-          onChanged: onChanged,
-        ),
-      ],
-    );
-  }
 }

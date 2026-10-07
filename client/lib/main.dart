@@ -371,7 +371,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           if (!hasLayout) {
             final defaultDef = LayoutDefinitionModel.defaultForTable(
               table.displayName,
-              table.columns.map((c) => c.name).toList(),
+              table.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
             );
             try {
               final created = await client.createLayout(
@@ -406,7 +406,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             _selectedTable = tables.first;
             _activeLayout = LayoutDefinitionModel.defaultForTable(
               _selectedTable!.displayName,
-              _selectedTable!.columns.map((c) => c.name).toList(),
+              _selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
             );
           } else {
             _selectedTable = null;
@@ -449,7 +449,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       if (matchTable != null) {
         _activeLayout = LayoutDefinitionModel.defaultForTable(
           matchTable.displayName,
-          matchTable.columns.map((c) => c.name).toList(),
+          matchTable.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
         ).copyWith(id: layoutModel.id, name: layoutModel.name);
       }
     }
@@ -539,7 +539,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       final client = ref.read(apiClientProvider);
       final def = LayoutDefinitionModel.defaultForTable(
         selectedTable!.displayName,
-        selectedTable!.columns.map((c) => c.name).toList(),
+        selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
       ).copyWith(name: name);
 
       try {
@@ -1350,6 +1350,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDuplicateRecord: () => _dataBrowserKey.currentState?.duplicateRecord(),
                   onSortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.sortRecords() : null,
+                  onUnsortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.unsort() : null,
+                  onCommitRecord: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.commitRecord() : null,
+                  onRevertRecord: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.revertRecord() : null,
+                  onGoToRecord: mode == OperationalMode.browse
+                      ? (target) => _dataBrowserKey.currentState?.goToRecordNamed(target)
+                      : null,
                   onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
                   onShowAllRecords: () {
                     _changeMode(OperationalMode.browse);
@@ -1405,7 +1411,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                                 } else {
                                   _activeLayout = LayoutDefinitionModel.defaultForTable(
                                     newTable.displayName,
-                                    newTable.columns.map((c) => c.name).toList(),
+                                    newTable.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
                                   );
                                 }
                               });
@@ -1870,7 +1876,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           initialLayout: _activeLayout ??
               LayoutDefinitionModel.defaultForTable(
                 _selectedTable!.displayName,
-                _selectedTable!.columns.map((c) => c.name).toList(),
+                _selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
               ),
           layouts: _serverLayouts,
           onLayoutSelected: (layout) => _selectLayout(layout),
@@ -1936,7 +1942,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           layout: _activeLayout ??
               LayoutDefinitionModel.defaultForTable(
                 _selectedTable!.displayName,
-                _selectedTable!.columns.map((c) => c.name).toList(),
+                _selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
               ),
           pageSetup: _pageSetup,
           onPageSetup: _handlePageSetup,
@@ -2161,7 +2167,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   const SizedBox(height: 14),
                   TextButton.icon(
                     icon: const Icon(Icons.cloud_outlined, size: 16),
-                    label: const Text('Conectar a Servidor Remoto...'),
+                    label: const Text('Connect to Remote Server...'),
                     onPressed: () {
                       final currentUrl = ref.read(serverUrlProvider);
                       ServerConnectionDialog.show(

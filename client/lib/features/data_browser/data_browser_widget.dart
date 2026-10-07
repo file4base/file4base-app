@@ -108,6 +108,23 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void toggleOmit(bool val) => setState(() => _omit = val);
 
+  /// Writes the current record to the server: pending field edits, and a new
+  /// record that has not been created yet.
+  Future<void> commitRecord() => actionCommitRecord();
+
+  /// Discards uncommitted changes; a new record that was never committed is
+  /// thrown away.
+  Future<void> revertRecord() => actionRevertRecord();
+
+  /// `first`, `previous`, `next`, `last`, or a 1-based record number.
+  Future<void> goToRecordNamed(String target) => actionGoToRecord(target);
+
+  /// Restores the order the records are stored in.
+  void unsort() => _applySort(null, true);
+
+  /// True while the current record is a new one that has not been committed.
+  bool get hasUncommittedRecord => _onDraft;
+
   // ─── Find mode ────────────────────────────────────────────────────────────
   final Map<String, TextEditingController> _findControllers = {};
   bool _omit = false;
@@ -118,6 +135,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   final Map<String, Timer?> _fieldDebounceTimers = {};
   // null = idle/saved, true = saving, false = error
   final Map<String, bool?> _fieldSaving = {};
+
+  /// What a stored value looks like in a field box. A DATE column comes back
+  /// from the API as a full RFC3339 timestamp ("2011-01-15T00:00:00Z"); the
+  /// user entered a date and must see and edit a date.
+  static String fieldText(ColumnModel col, Object? raw) {
+    final text = raw?.toString() ?? '';
+    if (col.fieldType == 'DATE' && text.length > 10 && text[10] == 'T') {
+      return text.substring(0, 10);
+    }
+    return text;
+  }
+
+  String _columnText(String colName, Object? raw) {
+    final col = widget.table.columns.where((c) => c.name == colName).firstOrNull;
+    return col == null ? (raw?.toString() ?? '') : fieldText(col, raw);
+  }
 
   void _rebuildFieldControllers() {
     for (final c in _fieldControllers.values) c.dispose();
@@ -133,7 +166,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
     for (final col in widget.table.columns) {
       if (col.isPrimaryKey) continue;
-      final val = record[col.name]?.toString() ?? '';
+      final val = fieldText(col, record[col.name]);
       final ctrl = TextEditingController(text: val);
       final fn = FocusNode();
 
@@ -212,7 +245,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       if (ctrl == null) continue;
       _fieldDebounceTimers[col.name]?.cancel();
       final cached = _records.isNotEmpty
-          ? (_records[_currentIndex][col.name]?.toString() ?? '')
+          ? fieldText(col, _records[_currentIndex][col.name])
           : '';
       if (ctrl.text != cached) {
         await _saveField(col.name, ctrl.text);
@@ -664,6 +697,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     if (_fieldSaving.values.any((v) => v == true)) {
       return (icon: Icons.sync, color: Colors.blue, label: 'Saving...');
     }
+    // A new record exists only here until it is committed; saying "Saved"
+    // would invite the user to close the window and lose it.
+    if (_onDraft) {
+      return (icon: Icons.fiber_new_outlined, color: Colors.orange.shade800, label: 'Not committed');
+    }
     return (icon: Icons.check_circle_outline, color: Colors.green.shade700, label: 'Saved');
   }
 
@@ -921,7 +959,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (ctx, i) {
         final r = _records[i];
-        final values = cols.map((c) => r[c.name]?.toString() ?? '').where((v) => v.isNotEmpty).toList();
+        final values = cols.map((c) => fieldText(c, r[c.name])).where((v) => v.isNotEmpty).toList();
         final title = values.isNotEmpty ? values.first : '(empty record)';
         final subtitle = values.skip(1).take(4).join(' · ');
         return ListTile(
@@ -999,7 +1037,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                                 width: colWidth,
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 alignment: Alignment.centerLeft,
-                                child: Text(r[c.name]?.toString() ?? '',
+                                child: Text(_columnText(c.name, r[c.name]),
                                     style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
                               )),
                         ]),
@@ -1821,7 +1859,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             ),
                             Expanded(
                               child: TextFormField(
-                                initialValue: record[col.name]?.toString() ?? '',
+                                initialValue: fieldText(col, record[col.name]),
                                 readOnly: true,
                                 decoration: const InputDecoration(
                                   border: OutlineInputBorder(),

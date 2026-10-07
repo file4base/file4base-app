@@ -156,3 +156,49 @@ func TestRelationshipService_CRUD(t *testing.T) {
 	err = svc.DeleteTableOccurrence(ctx, toCustom.ID)
 	require.NoError(t, err)
 }
+
+// Two tables created one after the other must not land on the same spot of the
+// relationships graph: they used to take the column default (100, 100), so the
+// second card was hidden exactly under the first.
+func TestNewTablesDoNotShareAGraphPosition(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{
+		EngineType: testdb.Engine(),
+		DSN:        testdb.DevDSN(),
+	})
+	if err != nil {
+		t.Skip("database not available:", err)
+		return
+	}
+	defer driver.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+		return
+	}
+
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+
+	ts := time.Now().UnixNano() % 1000000
+	first, err := svc.CreateTable(ctx, "Graph A", fmt.Sprintf("graph_a_%d", ts))
+	require.NoError(t, err)
+	defer func() { _ = svc.DeleteTable(ctx, first.ID) }()
+
+	second, err := svc.CreateTable(ctx, "Graph B", fmt.Sprintf("graph_b_%d", ts))
+	require.NoError(t, err)
+	defer func() { _ = svc.DeleteTable(ctx, second.ID) }()
+
+	occurrences, err := svc.ListTableOccurrences(ctx)
+	require.NoError(t, err)
+
+	positions := map[[2]float64]string{}
+	for _, occ := range occurrences {
+		key := [2]float64{occ.XPos, occ.YPos}
+		previous, clash := positions[key]
+		assert.False(t, clash, "%q and %q are both at (%v, %v)", previous, occ.Name, occ.XPos, occ.YPos)
+		positions[key] = occ.Name
+	}
+}

@@ -30,6 +30,12 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onDuplicateRecord;
   final VoidCallback? onDeleteRecord;
   final VoidCallback? onSortRecords;
+  final VoidCallback? onUnsortRecords;
+  final VoidCallback? onCommitRecord;
+  final VoidCallback? onRevertRecord;
+
+  /// `first`, `previous`, `next`, `last`, or a 1-based record number.
+  final ValueChanged<String>? onGoToRecord;
   final VoidCallback? onShowAllRecords;
   final VoidCallback? onPerformFind;
   final VoidCallback? onSaveLayout;
@@ -84,6 +90,10 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onDuplicateRecord,
     this.onDeleteRecord,
     this.onSortRecords,
+    this.onUnsortRecords,
+    this.onCommitRecord,
+    this.onRevertRecord,
+    this.onGoToRecord,
     this.onShowAllRecords,
     this.onPerformFind,
     this.onSaveLayout,
@@ -102,6 +112,32 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onInsertMergeField,
     this.currentUserName,
   });
+
+  /// Asks for a record number and goes there.
+  Future<void> _promptGoToRecord(BuildContext context) async {
+    final controller = TextEditingController();
+    final target = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Go to Record'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(labelText: 'Record number'),
+          onSubmitted: (value) => Navigator.pop(ctx, value.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Go'),
+          ),
+        ],
+      ),
+    );
+    if (target != null && target.isNotEmpty) onGoToRecord?.call(target);
+  }
 
   void _showNotice(BuildContext context, String title, String message) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -236,12 +272,12 @@ class File4BaseMenuBar extends StatelessWidget {
           const Divider(height: 1),
         ],
         MenuItemButton(
-          onPressed: onNewDatabase ?? () => _showNotice(context, 'New Database', 'Create a new table in Manage > Database.'),
+          onPressed: onNewDatabase,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
           child: const Text('New Database...'),
         ),
         MenuItemButton(
-          onPressed: onOpenSolution ?? () => _showNotice(context, 'Open', 'Select a local File4Base solution (.f4p).'),
+          onPressed: onOpenSolution,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true),
           child: const Text('Open...'),
         ),
@@ -254,34 +290,34 @@ class File4BaseMenuBar extends StatelessWidget {
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
-              : (onSave ?? () => _showNotice(context, 'Save', 'Solution saved.')),
+              : (onSave),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
           child: const Text('Save'),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
-              : (onSaveAs ?? () => _showNotice(context, 'Save As', 'Save solution with a new name.')),
+              : (onSaveAs),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
           child: const Text('Save As...'),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save a copy.')
-              : (onSaveCopyAs ?? () => _showNotice(context, 'Save a Copy As', 'Full copy or database data file.')),
+              : (onSaveCopyAs),
           child: const Text('Save a Copy As...'),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export database data.')
-              : (onExportData ?? () => _showNotice(context, 'Export Data', 'Saves a .f4data snapshot of all database rows.')),
+              : (onExportData),
           child: const Text('Export Data...'),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Open Favorite', 'Local Server (http://localhost:8080)'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Local Host (localhost:8080)'),
             ),
           ],
@@ -290,7 +326,7 @@ class File4BaseMenuBar extends StatelessWidget {
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Open Recent', 'default_workspace'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('default_workspace (PostgreSQL)'),
             ),
           ],
@@ -357,13 +393,13 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Manage'),
         ),
         MenuItemButton(
-          onPressed: onFileOptions ?? () => _showNotice(context, 'File Options', 'Startup script, default credentials, and encryption.'),
+          onPressed: onFileOptions,
           child: const Text('File Options...'),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to change password.')
-              : (onChangePassword ?? () => _showNotice(context, 'Change Password', 'Update account password.')),
+              : (onChangePassword),
           child: const Text('Change Password...'),
         ),
         const Divider(height: 1),
@@ -406,7 +442,7 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Export Records...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Recover', 'Check database consistency and index integrity.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Recover...'),
         ),
         const Divider(height: 1),
@@ -431,37 +467,37 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Undo', 'Revert last action.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyZ, meta: true),
           child: const Text('Undo'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Redo', 'Reapply undone action.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true),
           child: const Text('Redo'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Cut', 'Selection cut to clipboard.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyX, meta: true),
           child: const Text('Cut'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Copy', 'Selection copied to clipboard.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyC, meta: true),
           child: const Text('Copy'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Paste', 'Clipboard pasted.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyV, meta: true),
           child: const Text('Paste'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Clear', 'Selection cleared.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Clear'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Select All', 'All elements selected.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyA, meta: true),
           child: const Text('Select All'),
         ),
@@ -473,11 +509,11 @@ class File4BaseMenuBar extends StatelessWidget {
               child: const Text('Find/Replace...'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Find Next', 'Searching next occurrence.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Find Next'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Find Previous', 'Searching previous occurrence.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Find Previous'),
             ),
           ],
@@ -486,27 +522,27 @@ class File4BaseMenuBar extends StatelessWidget {
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Check Selection', 'Spell check active selection.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Check Selection...'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Check Record', 'Spell check active record fields.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Check Record...'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Correct Word', 'Suggested spelling correction.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Correct Word...'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Dictionaries', 'Manage installed language dictionaries.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Dictionaries...'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Edit User Dictionary', 'Custom vocabulary words.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Edit User Dictionary...'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Spelling Options', 'Case sensitivity and auto-correction rules.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Options...'),
             ),
           ],
@@ -564,7 +600,7 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Page Margins', 'Toggle paper boundary margins.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Page Margins'),
         ),
         MenuItemButton(
@@ -573,11 +609,11 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Status Toolbar'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Formatting Bar', 'Toggle typography format bar.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Formatting Bar'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Text Ruler', 'Toggle coordinate rulers.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Text Ruler'),
         ),
         const Divider(height: 1),
@@ -616,7 +652,8 @@ class File4BaseMenuBar extends StatelessWidget {
 
   // 4. Insert Menu
   // In Layout mode the items insert into the layout (handlers supplied by the
-  // host); in the other modes they keep their informational notices.
+  // host); in the other modes there is nothing to insert into, so they are
+  // disabled rather than reporting an insertion that did not happen.
   Widget _buildInsertMenu(BuildContext context) {
     final media = onInsertMedia;
     final symbol = onInsertSymbol;
@@ -626,53 +663,53 @@ class File4BaseMenuBar extends StatelessWidget {
           leadingIcon: const Icon(Icons.image_outlined, size: 16),
           onPressed: media != null
               ? () => media('image')
-              : () => _showNotice(context, 'Insert Picture', 'Select image file (PNG, JPG, WebP) to insert into field.'),
+              : null, // only available in Layout mode
           child: const Text('Picture...'),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.movie_outlined, size: 16),
           onPressed: media != null
               ? () => media('video')
-              : () => _showNotice(context, 'Insert Audio/Video', 'Select multimedia stream or file.'),
+              : null, // only available in Layout mode
           child: const Text('Audio/Video...'),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.picture_as_pdf_outlined, size: 16),
           onPressed: media != null
               ? () => media('pdf')
-              : () => _showNotice(context, 'Insert PDF', 'Attach PDF document.'),
+              : null, // only available in Layout mode
           child: const Text('PDF...'),
         ),
         MenuItemButton(
           onPressed: media != null
               ? () => media('video')
-              : () => _showNotice(context, 'Insert QuickTime', 'Embed QuickTime compatible stream.'),
+              : null, // only available in Layout mode
           child: const Text('QuickTime...'),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.attach_file, size: 16),
           onPressed: media != null
               ? () => media('file')
-              : () => _showNotice(context, 'Insert File', 'Store raw binary attachment.'),
+              : null, // only available in Layout mode
           child: const Text('File...'),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: symbol != null
               ? () => symbol(LayoutMergeSymbols.currentDate)
-              : () => _showNotice(context, 'Current Date', DateTime.now().toIso8601String().split('T').first),
+              : null, // only available in Layout mode
           child: const Text('Current Date'),
         ),
         MenuItemButton(
           onPressed: symbol != null
               ? () => symbol(LayoutMergeSymbols.currentTime)
-              : () => _showNotice(context, 'Current Time', TimeOfDay.now().format(context)),
+              : null, // only available in Layout mode
           child: const Text('Current Time'),
         ),
         MenuItemButton(
           onPressed: symbol != null
               ? () => symbol(LayoutMergeSymbols.currentUser)
-              : () => _showNotice(context, 'Current User Name', currentUserName ?? '(not signed in)'),
+              : null, // only available in Layout mode
           child: const Text('Current User Name'),
         ),
         if (symbol != null)
@@ -682,20 +719,19 @@ class File4BaseMenuBar extends StatelessWidget {
           ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'From Index', 'Select value from indexed column values.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('From Index...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'From Last Visited Record', 'Duplicate field value from previous record.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('From Last Visited Record'),
         ),
         MenuItemButton(
-          onPressed: onInsertMergeField ??
-              () => _showNotice(context, 'Merge Field', 'Insert dynamic {{Field}} merge marker.'),
+          onPressed: onInsertMergeField,
           child: const Text('Merge Field...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Merge Variable', 'Insert dynamic \$\$Variable marker.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Merge Variable...'),
         ),
       ],
@@ -708,41 +744,41 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Font', 'System fonts: Inter, Roboto, SF Pro, Segoe UI.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Font'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Size', 'Select typography font size.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Size'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Style', 'Bold, Italic, Underline, Strikethrough.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Style'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Align Text', 'Left, Center, Right, Justify.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Align Text'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Line Spacing', 'Single, 1.5 lines, Double.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Line Spacing'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Text Color', 'Choose theme typography swatch.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Text Color'),
         ),
         if (activeMode == OperationalMode.layout) ...[
           const Divider(height: 1),
           MenuItemButton(
-            onPressed: () => _showNotice(context, 'Align Object', 'Align selected components to canvas grid.'),
+            onPressed: null, // not implemented: shown disabled
             child: const Text('Align Object (Layout Mode)'),
           ),
           MenuItemButton(
-            onPressed: () => _showNotice(context, 'Distribute', 'Equalize spacing across components.'),
+            onPressed: null, // not implemented: shown disabled
             child: const Text('Distribute (Layout Mode)'),
           ),
           MenuItemButton(
-            onPressed: () => _showNotice(context, 'Resize', 'Equalize width and height across components.'),
+            onPressed: null, // not implemented: shown disabled
             child: const Text('Resize (Layout Mode)'),
           ),
         ],
@@ -756,45 +792,54 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: onNewRecord ?? () => _showNotice(context, 'New Record', 'Insert new record into active table.'),
+          onPressed: onNewRecord,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
           child: const Text('New Record'),
         ),
         MenuItemButton(
-          onPressed: onDuplicateRecord ?? () => _showNotice(context, 'Duplicate Record', 'Clone active record.'),
+          onPressed: onDuplicateRecord,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyD, meta: true),
           child: const Text('Duplicate Record'),
         ),
         MenuItemButton(
-          onPressed: onDeleteRecord ?? () => _showNotice(context, 'Delete Record', 'Delete current record.'),
+          onPressed: onDeleteRecord,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyE, meta: true),
           child: const Text('Delete Record...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Delete All Records', 'Truncate active found set.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Delete All Records...'),
+        ),
+        const Divider(height: 1),
+        MenuItemButton(
+          onPressed: onCommitRecord,
+          child: const Text('Commit Record'),
+        ),
+        MenuItemButton(
+          onPressed: onRevertRecord,
+          child: const Text('Revert Record'),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Record', 'First record.'),
+              onPressed: onGoToRecord == null ? null : () => onGoToRecord!('first'),
               child: const Text('First'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Record', 'Previous record.'),
+              onPressed: onGoToRecord == null ? null : () => onGoToRecord!('previous'),
               child: const Text('Previous'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Record', 'Next record.'),
+              onPressed: onGoToRecord == null ? null : () => onGoToRecord!('next'),
               child: const Text('Next'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Record', 'Last record.'),
+              onPressed: onGoToRecord == null ? null : () => onGoToRecord!('last'),
               child: const Text('Last'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Record', 'Jump to record number.'),
+              onPressed: onGoToRecord == null ? null : () => _promptGoToRecord(context),
               child: const Text('By Number...'),
             ),
           ],
@@ -802,31 +847,31 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: onShowAllRecords ?? () => _showNotice(context, 'Show All Records', 'Clear active find criteria.'),
+          onPressed: onShowAllRecords,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
           child: const Text('Show All Records'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Show Omitted Only', 'Invert found set.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Show Omitted Only'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Omit Record', 'Temporarily hide current row from found set.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyM, meta: true),
           child: const Text('Omit Record'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Omit Multiple', 'Omit N consecutive records.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Omit Multiple...'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: onSortRecords ?? () => _showNotice(context, 'Sort Records', 'Define multi-column ordering.'),
+          onPressed: onSortRecords,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
           child: const Text('Sort Records...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Unsort', 'Restore natural creation index order.'),
+          onPressed: onUnsortRecords,
           child: const Text('Unsort'),
         ),
         const Divider(height: 1),
@@ -836,12 +881,8 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Replace Field Contents...'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Relookup Field Contents', 'Re-trigger lookup values based on relationship.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Relookup Field Contents'),
-        ),
-        MenuItemButton(
-          onPressed: () => _showNotice(context, 'Revert Record', 'Discard uncommitted row modifications.'),
-          child: const Text('Revert Record'),
         ),
       ],
       child: const Text('Records', style: TextStyle(fontSize: 13)),
@@ -853,51 +894,51 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: onPerformFind ?? () => _showNotice(context, 'Perform Find', 'Executing SQL query from find criteria.'),
+          onPressed: onPerformFind,
           shortcut: const SingleActivator(LogicalKeyboardKey.enter),
           child: const Text('Perform Find'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'New Request', 'Adding disjunctive (OR) find request criteria.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
           child: const Text('New Request'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Duplicate Request', 'Cloning current find criteria.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyD, meta: true),
           child: const Text('Duplicate Request'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Delete Request', 'Removing active find request.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyE, meta: true),
           child: const Text('Delete Request'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Delete All Requests', 'Clearing all criteria.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Delete All Requests'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Include / Omit', 'Toggle matching vs omission filter.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Include / Omit'),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Request', 'First request.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('First'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Request', 'Previous request.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Previous'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Request', 'Next request.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Next'),
             ),
             MenuItemButton(
-              onPressed: () => _showNotice(context, 'Go to Request', 'Last request.'),
+              onPressed: null, // not implemented: shown disabled
               child: const Text('Last'),
             ),
           ],
@@ -933,7 +974,7 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'User Scripts', 'Custom user scripts will appear in this menu.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('[Custom User Scripts List]'),
         ),
       ],
@@ -980,34 +1021,34 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Minimize', 'Window minimized to taskbar/dock.'),
+          onPressed: null, // not implemented: shown disabled
           shortcut: const SingleActivator(LogicalKeyboardKey.keyM, meta: true),
           child: const Text('Minimize'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Zoom', 'Window maximized to screen bounds.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Zoom'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Tile Horizontally', 'Arranging active windows horizontally.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Tile Horizontally'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Tile Vertically', 'Arranging active windows vertically.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Tile Vertically'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Cascade', 'Stacking active windows in cascade.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Cascade'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'New Window', 'Opening secondary workspace instance.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('New Window'),
         ),
         MenuItemButton(
-          onPressed: () => _showNotice(context, 'Show Window', 'Focusing primary File4Base window.'),
+          onPressed: null, // not implemented: shown disabled
           child: const Text('Show Window'),
         ),
         const Divider(height: 1),

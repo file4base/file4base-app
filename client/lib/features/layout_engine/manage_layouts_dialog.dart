@@ -207,7 +207,7 @@ class _ManageLayoutsDialogState extends ConsumerState<ManageLayoutsDialog> {
 
       final def = LayoutDefinitionModel.defaultForTable(
         selectedTable!.displayName,
-        selectedTable!.columns.map((c) => c.name).toList(),
+        selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
       ).copyWith(name: name, defaultView: layoutType);
 
       try {

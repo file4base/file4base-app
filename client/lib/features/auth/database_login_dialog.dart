@@ -413,7 +413,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                             : const Icon(Icons.login, size: 20),
                         label: Text(
-                          _isLoggingIn ? 'Authenticating...' : 'Conectar y Entrar',
+                          _isLoggingIn ? 'Authenticating...' : 'Connect & Sign In',
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                       ),

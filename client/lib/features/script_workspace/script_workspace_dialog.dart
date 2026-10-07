@@ -80,11 +80,6 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
       final tablesList = results[1] as List<TableModel>;
       final layoutsList = results[2] as List<LayoutModel>;
 
-      // If no scripts exist on server yet, populate canonical demo scripts
-      if (scriptsList.isEmpty) {
-        scriptsList = _generateDefaultDemoScripts();
-      }
-
       setState(() {
         _scripts = scriptsList;
         _tables = tablesList;
@@ -102,7 +97,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
     } catch (e) {
       setState(() {
         _errorMessage = e.toString();
-        _scripts = _generateDefaultDemoScripts();
+        _scripts = <ScriptModel>[];
         _isLoading = false;
         if (_scripts.isNotEmpty) {
           _openScriptIds.add(_scripts.first.id);
@@ -113,133 +108,6 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
         }
       });
     }
-  }
-
-  List<ScriptModel> _generateDefaultDemoScripts() {
-    return [
-      ScriptModel(
-        id: 'script-invoice-001',
-        name: 'on_invoice_created',
-        contextTable: 'Invoices',
-        isActive: true,
-        steps: [
-          const ScriptStepModel(
-            id: 's1',
-            sequenceIdx: 1,
-            stepType: 'go_to_layout',
-            params: {'layout_name': 'Invoices_Detail'},
-          ),
-          const ScriptStepModel(
-            id: 's2',
-            sequenceIdx: 2,
-            stepType: 'set_variable',
-            params: {'variable': r'$subtotal', 'calc': 'Sum(Items.price)'},
-          ),
-          const ScriptStepModel(
-            id: 's3',
-            sequenceIdx: 3,
-            stepType: 'if',
-            params: {'condition': 'Invoices::Total > 5000'},
-          ),
-          const ScriptStepModel(
-            id: 's4',
-            sequenceIdx: 4,
-            stepType: 'set_field',
-            params: {'field': 'Invoices::RequiresApproval', 'value': 'TRUE'},
-          ),
-          const ScriptStepModel(
-            id: 's5',
-            sequenceIdx: 5,
-            stepType: 'perform_rest_api',
-            params: {'method': 'POST', 'url': 'https://api.erp.internal/notifications', 'body': '{"alert": "High value invoice"}'},
-          ),
-          const ScriptStepModel(
-            id: 's6',
-            sequenceIdx: 6,
-            stepType: 'else',
-          ),
-          const ScriptStepModel(
-            id: 's7',
-            sequenceIdx: 7,
-            stepType: 'set_field',
-            params: {'field': 'Invoices::RequiresApproval', 'value': 'FALSE'},
-          ),
-          const ScriptStepModel(
-            id: 's8',
-            sequenceIdx: 8,
-            stepType: 'end_if',
-          ),
-          const ScriptStepModel(
-            id: 's9',
-            sequenceIdx: 9,
-            stepType: 'commit_records',
-            params: {'validate': true},
-          ),
-        ],
-      ),
-      ScriptModel(
-        id: 'script-nav-002',
-        name: 'navigate_to_client_record',
-        contextTable: 'Customers',
-        isActive: true,
-        steps: [
-          const ScriptStepModel(
-            id: 's10',
-            sequenceIdx: 1,
-            stepType: 'enter_find_mode',
-            params: {'pause': false},
-          ),
-          const ScriptStepModel(
-            id: 's11',
-            sequenceIdx: 2,
-            stepType: 'set_field',
-            params: {'field': 'Customers::Status', 'value': '"Active"'},
-          ),
-          const ScriptStepModel(
-            id: 's12',
-            sequenceIdx: 3,
-            stepType: 'go_to_record',
-            params: {'target': 'Next'},
-          ),
-          const ScriptStepModel(
-            id: 's13',
-            sequenceIdx: 4,
-            stepType: 'show_dialog',
-            params: {'title': 'Customer loaded', 'message': 'Customer record is ready to view.', 'button_ok': 'OK'},
-          ),
-        ],
-      ),
-      ScriptModel(
-        id: 'script-export-003',
-        name: 'batch_update_products',
-        contextTable: 'Products',
-        isActive: false,
-        steps: [
-          const ScriptStepModel(
-            id: 's20',
-            sequenceIdx: 1,
-            stepType: 'loop',
-          ),
-          const ScriptStepModel(
-            id: 's21',
-            sequenceIdx: 2,
-            stepType: 'set_variable',
-            params: {'variable': r'$counter', 'calc': r'$counter + 1'},
-          ),
-          const ScriptStepModel(
-            id: 's22',
-            sequenceIdx: 3,
-            stepType: 'exit_loop_if',
-            params: {'condition': r'$counter >= 100'},
-          ),
-          const ScriptStepModel(
-            id: 's23',
-            sequenceIdx: 4,
-            stepType: 'end_loop',
-          ),
-        ],
-      ),
-    ];
   }
 
   ScriptModel? get _activeScript {
@@ -956,6 +824,20 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                         ),
 
                         // Scripts List
+                        if (_scripts.isEmpty)
+                          Expanded(
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Text(
+                                  'This database has no scripts yet.\nUse + Script to write one.',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 12, color: theme.textSecondary),
+                                ),
+                              ),
+                            ),
+                          )
+                        else
                         Expanded(
                           child: ListView(
                             padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1133,6 +1015,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                           width: 160,
                                           height: 28,
                                           child: TextFormField(
+                                            key: ValueKey('script-name-${script.id}'),
                                             initialValue: script.name,
                                             style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold),
                                             decoration: InputDecoration(

@@ -1,4 +1,4 @@
-
+import 'dart:math' as math;
 class LayoutPartModel {
   final String id;
   final String type; // 'top_navigation', 'title_header', 'header', 'body', 'subsummary', 'footer'
@@ -450,11 +450,28 @@ class LayoutDefinitionModel {
   /// Total height of the layout: the sum of its parts (the footer ends it).
   double get height => parts.fold<double>(0.0, (acc, p) => acc + p.height);
 
-  factory LayoutDefinitionModel.defaultForTable(String toName, List<String> fieldNames) {
+  /// First layout of a table: one row per field, labelled with the field's
+  /// label (what the user typed in New Field), not its SQL column name.
+  ///
+  /// [fields] carries both, so the layout shows "Home Address 1" while it binds
+  /// to `home_address_1`. The body is sized to the rows it has to hold, so the
+  /// fields of a wide table do not spill into the footer.
+  factory LayoutDefinitionModel.defaultForTable(
+    String toName,
+    List<({String name, String label})> fields,
+  ) {
+    const headerHeight = 60.0;
+    const footerHeight = 40.0;
+    const firstRowY = 20.0;
+    const rowHeight = 48.0;
+
+    final rows = fields.where((f) => f.name != 'id').toList();
+    final bodyHeight = math.max(120.0, firstRowY * 2 + rows.length * rowHeight);
+
     final parts = [
-      const LayoutPartModel(id: 'header_part', type: 'header', height: 60.0),
-      const LayoutPartModel(id: 'body_part', type: 'body', height: 400.0),
-      const LayoutPartModel(id: 'footer_part', type: 'footer', height: 40.0),
+      const LayoutPartModel(id: 'header_part', type: 'header', height: headerHeight),
+      LayoutPartModel(id: 'body_part', type: 'body', height: bodyHeight),
+      const LayoutPartModel(id: 'footer_part', type: 'footer', height: footerHeight),
     ];
 
     final objects = <LayoutObjectModel>[
@@ -470,31 +487,28 @@ class LayoutDefinitionModel {
       ),
     ];
 
-    double currentY = 80;
-    for (var fName in fieldNames) {
-      if (fName == 'id') continue;
-      // Label
+    double currentY = headerHeight + firstRowY;
+    for (final field in rows) {
       objects.add(LayoutObjectModel(
-        id: 'lbl_$fName',
+        id: 'lbl_${field.name}',
         type: 'label',
         x: 40,
         y: currentY + 6,
         width: 140,
         height: 24,
-        text: fName,
+        text: field.label,
         style: const LayoutObjectStyle(fontSize: 13, fontWeight: 'bold', textAlign: 'right'),
       ));
-      // Field Input
       objects.add(LayoutObjectModel(
-        id: 'fld_$fName',
+        id: 'fld_${field.name}',
         type: 'field',
         x: 190,
         y: currentY,
         width: 280,
         height: 36,
-        fieldBinding: FieldBindingModel(fieldName: fName),
+        fieldBinding: FieldBindingModel(fieldName: field.name),
       ));
-      currentY += 48;
+      currentY += rowHeight;
     }
 
     return LayoutDefinitionModel(

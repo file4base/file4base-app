@@ -261,6 +261,22 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 }
 
 // CreateTable registers metadata and dynamically generates the physical table via DBAL
+// occurrencePosition lays out table occurrences on the relationships graph in
+// rows of four, so a new one never lands on top of an existing card. The
+// spacing matches the card size the client draws.
+func occurrencePosition(index int) (float64, float64) {
+	const (
+		originX = 100.0
+		originY = 100.0
+		stepX   = 320.0
+		stepY   = 420.0
+		perRow  = 4
+	)
+	col := index % perRow
+	row := index / perRow
+	return originX + float64(col)*stepX, originY + float64(row)*stepY
+}
+
 func (s *Service) CreateTable(ctx context.Context, displayName, customName string) (*TableMetadata, error) {
 	name := dbal.NormalizeIdentifier(customName)
 	if name == "" {
@@ -339,12 +355,21 @@ func (s *Service) CreateTable(ctx context.Context, displayName, customName strin
 		return nil, fmt.Errorf("failed registering primary key column: %w", err)
 	}
 
-	// Insert default Table Occurrence
-	insertOccSQL := `INSERT INTO sys_table_occurrences (id, base_table_id, name, created_at) VALUES ($1, $2, $3, $4)`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		insertOccSQL = `INSERT INTO sys_table_occurrences (id, base_table_id, name, created_at) VALUES (?, ?, ?, ?)`
+	// Insert default Table Occurrence. Its position is staggered: every
+	// occurrence used to be created at the column default (100, 100), so in a
+	// database with more than one table the cards sat exactly on top of each
+	// other and the graph looked as if it held a single table.
+	var placed int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_table_occurrences`).Scan(&placed); err != nil {
+		return nil, fmt.Errorf("failed counting table occurrences: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, insertOccSQL, occID, tableID, name, now); err != nil {
+	xPos, yPos := occurrencePosition(placed)
+
+	insertOccSQL := `INSERT INTO sys_table_occurrences (id, base_table_id, name, x_pos, y_pos, created_at) VALUES ($1, $2, $3, $4, $5, $6)`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		insertOccSQL = `INSERT INTO sys_table_occurrences (id, base_table_id, name, x_pos, y_pos, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	}
+	if _, err := tx.ExecContext(ctx, insertOccSQL, occID, tableID, name, xPos, yPos, now); err != nil {
 		return nil, fmt.Errorf("failed creating default table occurrence: %w", err)
 	}
 

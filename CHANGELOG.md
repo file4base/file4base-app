@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- A hands-on tutorial that builds a complete database from nothing,
+  [docs/tutorials/favorite_bakery.md](docs/tutorials/favorite_bakery.md): the
+  Favorite Bakery customer list, with its tables and fields, data entry, finds,
+  sorting, layouts, preview, a relationship, scripts, accounts and backups. Every
+  step was carried out in the application and every figure it quotes is one
+  File4Base produced. It ends with the list of things a FileMaker user will look
+  for and not find yet. The defects below were all found while writing it.
+
+### Fixed
+- 62 menu commands showed a message saying they had run and did nothing: "Omit
+  Record: Temporarily hide current row from found set." appeared while the found
+  set stayed exactly as it was, and the same for Unsort, Show Omitted Only,
+  Delete All Records, Go to Record, Revert Record, the whole Requests menu, Undo,
+  Redo, Cut, Copy, Paste, Select All, the Format menu, the Window menu and
+  others. Commands that are implemented are now wired up — Go to Record
+  (First/Previous/Next/Last/By Number), Revert Record and Unsort already existed
+  in Browse mode but the menu never called them — and the rest are shown
+  disabled, so a greyed item now means the command does not exist yet. (The
+  fourteen items that opened a "Roadmap Phase N" dialog were already honest and
+  are unchanged.)
+- Browse mode had no way to commit a record, and called an uncommitted one
+  "Saved". A record created with New exists only in the window until it is
+  committed, yet the status badge showed a green "Saved" and no menu or toolbar
+  item committed it: clicking outside the field does not commit (it does in
+  FileMaker), and the only ways out were clicking New again, moving to another
+  record, sorting, or a script step. Typing the first record of a new database
+  and reloading lost it. There is now **Records > Commit Record**, the badge
+  reads "Not committed" until the record reaches the server, and Revert Record
+  discards it.
+- The first layout of a table labelled every field with its SQL column name:
+  New Field asks for a "Field Label" and stores it, but the layout showed
+  `home_address_1` instead of "Home Address 1" (Table view showed the label, so
+  the same field had two names). The layout now uses the label and still binds to
+  the column.
+- The first layout of a table always had a 400 pt body, whatever the table held.
+  With more than about seven fields the lower fields fell inside the footer part
+  and below the end of the layout. The body is now sized to the rows it holds.
+- The three "Fields" shortcuts in Manage Database (the chip on a table's row, the
+  row menu and the "Manage Fields ->" button) switched to the Tables tab instead
+  of the Fields tab, so they looked dead.
+- "Add Field" did nothing, silently, when the label or the column name was empty:
+  the dialog stayed open, no request was sent and nothing said why. It now says
+  what is missing.
+- DATE fields were shown and edited as RFC3339 timestamps: a date entered as
+  11/11/2011 came back as `2011-11-11T00:00:00Z`, in Browse, List and Table view.
+- The Script Workspace invented three scripts for every database that had none —
+  `on_invoice_created`, `navigate_to_client_record` and `batch_update_products` —
+  presented as the user's own and bound to tables (Invoices, Items, Clients,
+  Products) and a layout that did not exist; saving would have written them into
+  the database. An empty database now says it has no scripts.
+- The Script Workspace name box kept showing the previously selected script's
+  name: creating a script opened a tab called "New_Script_4" whose name read
+  `on_invoice_created`.
+- Every table occurrence was created at the same point of the relationships
+  graph, so in a database with more than one table the cards sat exactly on top
+  of each other: the graph read "2 occurrences" and showed one, with the
+  relationship line hidden in the gap between them. New occurrences are now laid
+  out in rows.
+- Two Spanish strings in the English interface: the sign-in button ("Conectar y
+  Entrar") and "Conectar a Servidor Remoto...".
+- "1 tables in database" and "1 fields".
+
+### Changed
+- The "Extended privileges" tab of Manage Security no longer offers switches that
+  do nothing. The four toggles (desktop, WebDirect, REST API, bulk export) wrote
+  to local variables, were never sent to the server and were lost when the dialog
+  closed, while the tab said it controlled the access methods allowed for each
+  privilege set — an owner could switch REST access off and believe access was
+  restricted. The tab now lists the planned methods and states that they are not
+  enforced yet.
+- The New Field dialog warns that Calculation and Summary formulas are stored but
+  not evaluated: the field is created as a plain text column that the user fills
+  in. A calculation engine is still to be written.
+
 ## [0.9.2] - 2026-10-07
 
 ### Fixed
