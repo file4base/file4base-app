@@ -38,6 +38,14 @@ class File4BaseMenuBar extends StatelessWidget {
   final ValueChanged<String>? onGoToRecord;
   final VoidCallback? onShowAllRecords;
   final VoidCallback? onPerformFind;
+  final VoidCallback? onNewFindRequest;
+  final VoidCallback? onDuplicateFindRequest;
+  final VoidCallback? onDeleteFindRequest;
+  final VoidCallback? onDeleteAllFindRequests;
+  final VoidCallback? onToggleFindOmit;
+
+  /// `first`, `previous`, `next`, `last`, or a 1-based request number.
+  final ValueChanged<String>? onGoToFindRequest;
   final VoidCallback? onSaveLayout;
   final bool isToolbarVisible;
   final ValueChanged<bool> onToggleToolbar;
@@ -96,6 +104,12 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onGoToRecord,
     this.onShowAllRecords,
     this.onPerformFind,
+    this.onNewFindRequest,
+    this.onDuplicateFindRequest,
+    this.onDeleteFindRequest,
+    this.onDeleteAllFindRequests,
+    this.onToggleFindOmit,
+    this.onGoToFindRequest,
     this.onSaveLayout,
     required this.isToolbarVisible,
     required this.onToggleToolbar,
@@ -890,7 +904,11 @@ class File4BaseMenuBar extends StatelessWidget {
   }
 
   // 6b. Requests Menu (Find Mode)
+  //
+  // Find mode holds several requests: the records that match any of them,
+  // minus the records matched by a request marked Omit.
   Widget _buildRequestsMenu(BuildContext context) {
+    final goTo = onGoToFindRequest;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
@@ -899,46 +917,46 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Perform Find'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: onNewFindRequest,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
           child: const Text('New Request'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: onDuplicateFindRequest,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyD, meta: true),
           child: const Text('Duplicate Request'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: onDeleteFindRequest,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyE, meta: true),
           child: const Text('Delete Request'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: onDeleteAllFindRequests,
           child: const Text('Delete All Requests'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: onToggleFindOmit,
           child: const Text('Include / Omit'),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
+              onPressed: goTo == null ? null : () => goTo('first'),
               child: const Text('First'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
+              onPressed: goTo == null ? null : () => goTo('previous'),
               child: const Text('Previous'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
+              onPressed: goTo == null ? null : () => goTo('next'),
               child: const Text('Next'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
+              onPressed: goTo == null ? null : () => goTo('last'),
               child: const Text('Last'),
             ),
           ],

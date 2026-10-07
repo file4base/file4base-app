@@ -114,6 +114,7 @@ void main() {
   });
 
   sortOrderTests();
+  findRequestTests();
 
   group('the Records menu', () {
     Future<void> pumpMenu(
@@ -259,6 +260,161 @@ void sortOrderTests() {
         'ABC Company/Smith',
         'DEF Ltd./Johnson',
       ]);
+    });
+  });
+}
+
+// #34 — Find mode had a single request, so "New York or London" could not be
+// expressed, and the Requests menu items did nothing.
+void findRequestTests() {
+  group('find criteria', () {
+    test('a plain word becomes a contains search', () {
+      final criteria = DataBrowserWidgetState.criteriaFor({'city': 'New York'});
+      expect(criteria, [
+        {'field_name': 'city', 'operator': 'LIKE', 'value': '%New York%'}
+      ]);
+    });
+
+    test('the operators the toolbar offers are recognised', () {
+      expect(DataBrowserWidgetState.criteriaFor({'fee': '>=200'}).single['operator'], '>=');
+      expect(DataBrowserWidgetState.criteriaFor({'fee': '<10'}).single['operator'], '<');
+      expect(DataBrowserWidgetState.criteriaFor({'name': '=Smith'}).single['operator'], '=');
+      expect(DataBrowserWidgetState.criteriaFor({'name': '==Smith'}).single['operator'], '==');
+      expect(DataBrowserWidgetState.criteriaFor({'name': '!Smith'}).single['operator'], '!=');
+      expect(DataBrowserWidgetState.criteriaFor({'city': ''}).isEmpty, isTrue);
+    });
+
+    test('a wildcard becomes a LIKE pattern', () {
+      final criteria = DataBrowserWidgetState.criteriaFor({'last_name': 'Sm*'});
+      expect(criteria.single['operator'], 'LIKE');
+      expect(criteria.single['value'], 'Sm%');
+    });
+
+    test('a range keeps both ends', () {
+      final criteria = DataBrowserWidgetState.criteriaFor(
+          {'date_paid': '2011-01-01...2011-06-30'}).single;
+      expect(criteria['operator'], 'RANGE');
+      expect(criteria['value'], '2011-01-01');
+      expect(criteria['value_to'], '2011-06-30');
+    });
+
+    test('criteria in several fields go into the same request', () {
+      final criteria =
+          DataBrowserWidgetState.criteriaFor({'city': 'New York', 'customer_type': 'Continuing'});
+      expect(criteria.length, 2);
+    });
+  });
+
+  group('a find request', () {
+    test('is empty until something is typed into it', () {
+      final request = FindRequestDraft();
+      expect(request.isEmpty, isTrue);
+      request.values['city'] = '  ';
+      expect(request.isEmpty, isTrue);
+      request.values['city'] = 'London';
+      expect(request.isEmpty, isFalse);
+    });
+
+    test('a copy does not share its values with the original', () {
+      final original = FindRequestDraft(values: {'city': 'London'}, omit: true);
+      final copy = original.copy();
+      copy.values['city'] = 'Paris';
+      copy.omit = false;
+
+      expect(original.values['city'], 'London');
+      expect(original.omit, isTrue);
+      expect(copy.values['city'], 'Paris');
+    });
+  });
+
+  group('the Requests menu', () {
+    Future<void> pumpMenu(
+      WidgetTester tester, {
+      VoidCallback? onNewFindRequest,
+      VoidCallback? onDuplicateFindRequest,
+      VoidCallback? onDeleteFindRequest,
+      VoidCallback? onDeleteAllFindRequests,
+      VoidCallback? onToggleFindOmit,
+      ValueChanged<String>? onGoToFindRequest,
+    }) async {
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: File4BaseMenuBar(
+            activeMode: OperationalMode.find,
+            onModeChanged: (_) {},
+            onManageDatabase: () {},
+            onOpenRemote: () {},
+            onAbout: () {},
+            isToolbarVisible: true,
+            onToggleToolbar: (_) {},
+            onNewFindRequest: onNewFindRequest,
+            onDuplicateFindRequest: onDuplicateFindRequest,
+            onDeleteFindRequest: onDeleteFindRequest,
+            onDeleteAllFindRequests: onDeleteAllFindRequests,
+            onToggleFindOmit: onToggleFindOmit,
+            onGoToFindRequest: onGoToFindRequest,
+          ),
+        ),
+      ));
+      await tester.pump();
+      await tester.tap(find.text('Requests'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('New Request and Duplicate Request run their actions', (tester) async {
+      var created = false;
+      var duplicated = false;
+      await pumpMenu(tester,
+          onNewFindRequest: () => created = true,
+          onDuplicateFindRequest: () => duplicated = true);
+
+      await tester.tap(find.text('New Request'));
+      await tester.pumpAndSettle();
+      expect(created, isTrue);
+
+      await tester.tap(find.text('Requests'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Duplicate Request'));
+      await tester.pumpAndSettle();
+      expect(duplicated, isTrue);
+    });
+
+    testWidgets('Go to Request moves to the named request', (tester) async {
+      final targets = <String>[];
+      await pumpMenu(tester, onGoToFindRequest: targets.add);
+
+      await tester.tap(find.text('Go to Request'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Last'));
+      await tester.pumpAndSettle();
+
+      expect(targets, ['last']);
+    });
+
+    testWidgets('Include / Omit toggles the current request', (tester) async {
+      var toggled = false;
+      await pumpMenu(tester, onToggleFindOmit: () => toggled = true);
+
+      await tester.tap(find.text('Include / Omit'));
+      await tester.pumpAndSettle();
+      expect(toggled, isTrue);
+    });
+
+    testWidgets('without a host the items are disabled, not fake', (tester) async {
+      await pumpMenu(tester);
+
+      for (final label in ['New Request', 'Duplicate Request', 'Delete Request',
+        'Delete All Requests', 'Include / Omit']) {
+        final button = tester.widget<MenuItemButton>(
+          find.ancestor(of: find.text(label), matching: find.byType(MenuItemButton)).first,
+        );
+        expect(button.onPressed, isNull, reason: '"$label" should be disabled');
+      }
+      expect(find.byType(SnackBar), findsNothing);
     });
   });
 }

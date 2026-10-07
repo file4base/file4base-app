@@ -568,6 +568,24 @@ func ParseFile4BaseFindCriteria(fieldName, rawCriteria string) FindCriterion {
 	return FindCriterion{FieldName: fieldName, Operator: "LIKE", Value: "%" + trimmed + "%"}
 }
 
+// buildFindWhere combines the find requests: the records that match any
+// including request, minus the records that match any omitting request. With
+// only omitting requests the starting point is every record, so a lone
+// "omit city = New York" finds everyone who does not live there.
+func buildFindWhere(include, omit []string) string {
+	var parts []string
+	if len(include) > 0 {
+		parts = append(parts, "("+strings.Join(include, " OR ")+")")
+	}
+	if len(omit) > 0 {
+		parts = append(parts, "NOT ("+strings.Join(omit, " OR ")+")")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "WHERE " + strings.Join(parts, " AND ")
+}
+
 // ExecuteFind performs a File4Base Find Mode multi-request query
 func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []FindRequest, opts QueryOptions) ([]map[string]interface{}, error) {
 	if len(requests) == 0 {
@@ -583,7 +601,11 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 
 	dialect := s.driver.Dialect()
-	var orClauses []string
+	// Requests that match are unioned; requests marked Omit subtract from what
+	// they found. (OR-ing an omitting request in, as this used to do, made
+	// "2011 except March" mean "2011 OR not March", which is almost every
+	// record.)
+	var includeClauses, omitClauses []string
 	var values []interface{}
 	idx := 1
 
@@ -681,19 +703,16 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 		}
 
 		if len(andClauses) > 0 {
-			joined := strings.Join(andClauses, " AND ")
+			joined := fmt.Sprintf("(%s)", strings.Join(andClauses, " AND "))
 			if req.Omit {
-				orClauses = append(orClauses, fmt.Sprintf("NOT (%s)", joined))
+				omitClauses = append(omitClauses, joined)
 			} else {
-				orClauses = append(orClauses, fmt.Sprintf("(%s)", joined))
+				includeClauses = append(includeClauses, joined)
 			}
 		}
 	}
 
-	whereClause := ""
-	if len(orClauses) > 0 {
-		whereClause = "WHERE " + strings.Join(orClauses, " OR ")
-	}
+	whereClause := buildFindWhere(includeClauses, omitClauses)
 
 	orderClause, err := orderByClause(dialect, fields, tableName, opts.SortOrder())
 	if err != nil {

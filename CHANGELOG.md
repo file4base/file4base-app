@@ -40,7 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the table's registered fields, so an unknown one answers `400` instead
   of reaching the SQL.
 
+- Find mode holds several requests ([#34](https://github.com/file4base/file4base-app/issues/34)).
+  The records that match any request are found together, so "in New York **or** in
+  London" is one find; a request marked Omit subtracts what it matches from what
+  the others found, so "paid in 2011, except in March" is another. The toolbar
+  shows "Request n of N" with its own navigation, and the Requests menu — New,
+  Duplicate, Delete, Delete All, Include / Omit and Go to Request — now acts on
+  that list instead of being disabled. Saved finds are still to come.
+
 ### Fixed
+- An omitting find request was OR-ed into the result rather than subtracting from
+  it, so "paid in 2011, except in March" meant "paid in 2011 OR not in March",
+  which is almost every record. The requests that match are unioned and the
+  omitting ones subtract; with only omitting requests the starting point is every
+  record.
 - A found set came back in whatever order the engine chose: `ExecuteFind` built
   no `ORDER BY` at all, so the sort options were silently dropped after a find.
 - 62 menu commands showed a message saying they had run and did nothing: "Omit

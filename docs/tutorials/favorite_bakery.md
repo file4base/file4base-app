@@ -305,10 +305,39 @@ form its type expects:
 | `= (empty)` | The field is empty | |
 | `* (non-empty)` | The field has something | |
 
+### Several requests
+
+One request finds the records that match **all** its criteria. For records that
+match one thing **or** another, use a second request.
+
+To find the customers in New York or in London:
+
+1. In Find mode, type `New York` in **City**.
+2. Click **+** in the request navigator (or choose **Requests > New Request**).
+   The toolbar now reads `Request 2 of 2`.
+3. Type `London` in **City**.
+4. Click **Perform Find**. The found set has 6 records.
+
+Move between requests with the arrows in the navigator or with
+**Requests > Go to Request**. **Duplicate Request** copies the one you are on,
+which saves retyping the criteria that stay the same.
+
 ### Omitting
 
-Tick **Omit** in the sidebar (or click **Omit (NOT)**) and the find returns the
-records that do **not** match. It applies to the whole request.
+Tick **Omit** in the sidebar (or click **Omit (NOT)**, or choose
+**Requests > Include / Omit**) and the request *subtracts* what it matches from
+what the other requests found, instead of adding to it.
+
+To find the customers who paid in 2011 except those who paid in March:
+
+1. Type `2011-01-01...2011-12-31` in **Date Paid**.
+2. Add a second request, tick **Omit**, and type `2011-03-01...2011-03-31` in
+   **Date Paid**.
+3. Click **Perform Find**.
+
+A find made only of omitting requests starts from every record, so a single
+omitting request with `New York` in **City** finds everyone who does not live
+there.
 
 ### What a find in this database gives you
 
@@ -322,6 +351,8 @@ records that do **not** match. It applies to the whole request.
 | Customer Type = `Continuing` | 10 |
 | Fee Paid `>=200` | 6 |
 | Last Name `Sm*` | 2 |
+| City `New York` or City `London` (two requests) | 6 |
+| City `New York` or `London`, omitting Customer Type `New` | 5 |
 
 ---
 
@@ -642,10 +673,8 @@ theme chooser, no sub-summary parts, no break fields and no grand totals.
 **No merge fields in text** ([#33](https://github.com/file4base/file4base-app/issues/33))**.** Form letters and mailing labels, which depend on
 merge fields that collapse when empty, cannot be built.
 
-**No OR searches** ([#34](https://github.com/file4base/file4base-app/issues/34))**.** Find mode has a single request. *Requests > New Request* is
-not implemented, so "New York **or** London" has to be two separate finds.
-
 **No saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34))**.**
+A find cannot be named and run again later.
 
 **No multi-field sort** ([#35](https://github.com/file4base/file4base-app/issues/35))**.** The Sort dialog takes one field.
 

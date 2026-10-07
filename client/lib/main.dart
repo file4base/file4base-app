@@ -1362,6 +1362,30 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     _dataBrowserKey.currentState?.fetchRecords();
                   },
                   onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
+                  onNewFindRequest: mode == OperationalMode.find
+                      ? () => _dataBrowserKey.currentState?.newFindRequest()
+                      : null,
+                  onDuplicateFindRequest: mode == OperationalMode.find
+                      ? () => _dataBrowserKey.currentState?.duplicateFindRequest()
+                      : null,
+                  onDeleteFindRequest: mode == OperationalMode.find
+                      ? () => _dataBrowserKey.currentState?.deleteFindRequest()
+                      : null,
+                  onDeleteAllFindRequests: mode == OperationalMode.find
+                      ? () => _dataBrowserKey.currentState?.deleteAllFindRequests()
+                      : null,
+                  onToggleFindOmit: mode == OperationalMode.find
+                      ? () {
+                          final browser = _dataBrowserKey.currentState;
+                          if (browser == null) return;
+                          final next = !browser.isOmit;
+                          setState(() => _isFindOmit = next);
+                          browser.toggleOmit(next);
+                        }
+                      : null,
+                  onGoToFindRequest: mode == OperationalMode.find
+                      ? (target) => _dataBrowserKey.currentState?.goToFindRequest(target)
+                      : null,
                   isToolbarVisible: _isToolbarVisible,
                   onToggleToolbar: (visible) => setState(() => _isToolbarVisible = visible),
                   onZoomIn: () => ref.read(zoomProvider.notifier).zoomIn(),

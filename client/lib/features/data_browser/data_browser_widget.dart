@@ -67,6 +67,21 @@ class SortLevel {
   String toString() => queryValue;
 }
 
+/// One find request: what was typed into each field, and whether the request
+/// omits what it matches instead of finding it.
+class FindRequestDraft {
+  final Map<String, String> values;
+  bool omit;
+
+  FindRequestDraft({Map<String, String>? values, this.omit = false})
+      : values = values ?? <String, String>{};
+
+  FindRequestDraft copy() =>
+      FindRequestDraft(values: Map<String, String>.from(values), omit: omit);
+
+  bool get isEmpty => values.values.every((v) => v.trim().isEmpty);
+}
+
 class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost {
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
@@ -99,6 +114,77 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   void sortRecords() => _showSortDialog();
   void deleteCurrentRecord() => _deleteCurrentRecord();
   void performFind() => _performFind();
+
+  // ─── Find requests (Requests menu) ─────────────────────────────────────────
+
+  /// Adds an empty request after the current one and moves to it.
+  void newFindRequest() {
+    _captureCurrentFindRequest();
+    setState(() {
+      _findRequests.insert(_findRequestIndex + 1, FindRequestDraft());
+      _findRequestIndex += 1;
+    });
+    _applyCurrentFindRequestToControllers();
+  }
+
+  /// Copies the current request and moves to the copy.
+  void duplicateFindRequest() {
+    _captureCurrentFindRequest();
+    setState(() {
+      _findRequests.insert(_findRequestIndex + 1, _currentFindRequest.copy());
+      _findRequestIndex += 1;
+    });
+    _applyCurrentFindRequestToControllers();
+  }
+
+  /// Removes the current request. The last one is emptied instead, so Find
+  /// mode always has a request to type into.
+  void deleteFindRequest() {
+    setState(() {
+      if (_findRequests.length == 1) {
+        _findRequests[0] = FindRequestDraft();
+      } else {
+        _findRequests.removeAt(_findRequestIndex);
+        if (_findRequestIndex >= _findRequests.length) {
+          _findRequestIndex = _findRequests.length - 1;
+        }
+      }
+    });
+    _applyCurrentFindRequestToControllers();
+  }
+
+  void deleteAllFindRequests() {
+    setState(() {
+      _findRequests
+        ..clear()
+        ..add(FindRequestDraft());
+      _findRequestIndex = 0;
+    });
+    _applyCurrentFindRequestToControllers();
+  }
+
+  /// `first`, `previous`, `next`, `last`, or a 1-based request number.
+  void goToFindRequest(String target) {
+    if (_findRequests.isEmpty) return;
+    final t = target.trim().toLowerCase();
+    final index = switch (t) {
+      'first' => 0,
+      'previous' || 'prev' => _findRequestIndex - 1,
+      'next' => _findRequestIndex + 1,
+      'last' => _findRequests.length - 1,
+      _ => (int.tryParse(t) ?? (_findRequestIndex + 1)) - 1,
+    };
+    _loadFindRequest(index.clamp(0, _findRequests.length - 1));
+  }
+
+  void _applyCurrentFindRequestToControllers() {
+    final request = _currentFindRequest;
+    _findControllers.forEach((field, controller) {
+      controller.text = request.values[field] ?? '';
+    });
+    if (mounted) setState(() {});
+  }
+
   void fetchRecords() => _fetchRecords();
 
   void previousRecord() {
@@ -134,7 +220,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
   }
 
-  void toggleOmit(bool val) => setState(() => _omit = val);
+  void toggleOmit(bool val) => setState(() => _currentFindRequest.omit = val);
 
   /// Writes the current record to the server: pending field edits, and a new
   /// record that has not been created yet.
@@ -155,7 +241,38 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   // ─── Find mode ────────────────────────────────────────────────────────────
   final Map<String, TextEditingController> _findControllers = {};
-  bool _omit = false;
+
+  /// Find mode holds several requests. The controllers above edit the one at
+  /// [_findRequestIndex]; the others keep their values here.
+  final List<FindRequestDraft> _findRequests = [FindRequestDraft()];
+  int _findRequestIndex = 0;
+
+  FindRequestDraft get _currentFindRequest => _findRequests[_findRequestIndex];
+  bool get _omit => _currentFindRequest.omit;
+
+  int get findRequestCount => _findRequests.length;
+  int get findRequestNumber => _findRequestIndex + 1;
+
+  /// Copies what is in the field boxes into the request being edited.
+  void _captureCurrentFindRequest() {
+    final values = _currentFindRequest.values;
+    values.clear();
+    _findControllers.forEach((field, controller) {
+      final text = controller.text.trim();
+      if (text.isNotEmpty) values[field] = controller.text;
+    });
+  }
+
+  /// Puts a request's values into the field boxes.
+  void _loadFindRequest(int index) {
+    if (index < 0 || index >= _findRequests.length) return;
+    _captureCurrentFindRequest();
+    final request = _findRequests[index];
+    _findControllers.forEach((field, controller) {
+      controller.text = request.values[field] ?? '';
+    });
+    setState(() => _findRequestIndex = index);
+  }
 
   // ─── Per-field edit state ─────────────────────────────────────────────────
   final Map<String, TextEditingController> _fieldControllers = {};
@@ -405,6 +522,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     for (var col in widget.table.columns) {
       _findControllers[col.name] = TextEditingController();
     }
+    // A new table means the previous requests no longer refer to anything.
+    _findRequests
+      ..clear()
+      ..add(FindRequestDraft());
+    _findRequestIndex = 0;
   }
 
   @override
@@ -483,10 +605,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
   }
 
-  Future<void> _performFind() async {
+  /// Translates what the user typed into one find request's criteria. The
+  /// operators are the ones the Find mode toolbar offers.
+  static List<Map<String, dynamic>> criteriaFor(Map<String, String> values) {
     final criteria = <Map<String, dynamic>>[];
-    _findControllers.forEach((fieldName, controller) {
-      String text = controller.text.trim();
+    values.forEach((fieldName, raw) {
+      String text = raw.trim();
       if (text.isEmpty) return;
 
       // Standard today's date formula: // -> current ISO date
@@ -529,12 +653,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': '%$text%'});
       }
     });
+    return criteria;
+  }
+
+  /// Every request that has something in it, in the order they were created.
+  /// An omitting request subtracts from what the others found.
+  List<Map<String, dynamic>> _findRequestPayload() {
+    _captureCurrentFindRequest();
+    final payload = <Map<String, dynamic>>[];
+    for (final request in _findRequests) {
+      final criteria = criteriaFor(request.values);
+      if (criteria.isEmpty) continue;
+      payload.add({'criteria': criteria, 'omit': request.omit});
+    }
+    return payload;
+  }
+
+  Future<void> _performFind() async {
+    final requests = _findRequestPayload();
 
     setState(() { _isLoading = true; _error = null; });
     try {
-      final results = await widget.apiClient.executeFind(widget.table.name, [
-        {'criteria': criteria, 'omit': _omit}
-      ]);
+      final results = await widget.apiClient.executeFind(widget.table.name, requests);
       if (!mounted) return;
 
       if (results.isEmpty) {
@@ -667,46 +807,97 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     );
   }
 
+  /// Moving between find requests, and adding or removing one. Several
+  /// requests are OR-ed together; a request marked Omit subtracts.
+  Widget _buildRequestNavigator() {
+    final single = _findRequests.length == 1;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          tooltip: 'Previous request',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.chevron_left, size: 18),
+          onPressed: _findRequestIndex == 0 ? null : () => _loadFindRequest(_findRequestIndex - 1),
+        ),
+        Text(
+          'Request $findRequestNumber of $findRequestCount',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        IconButton(
+          tooltip: 'Next request',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.chevron_right, size: 18),
+          onPressed: _findRequestIndex == _findRequests.length - 1
+              ? null
+              : () => _loadFindRequest(_findRequestIndex + 1),
+        ),
+        IconButton(
+          tooltip: 'New request',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.add, size: 18),
+          onPressed: newFindRequest,
+        ),
+        IconButton(
+          tooltip: 'Delete this request',
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.remove, size: 18),
+          onPressed: single ? null : deleteFindRequest,
+        ),
+      ],
+    );
+  }
+
   Widget _buildRecordToolbar() {
     if (widget.mode == OperationalMode.browse) return _buildBrowseRecordBar();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
       color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      child: Row(
-        children: [
-          if (widget.mode == OperationalMode.find) ...[
-            FilledButton.icon(
-              icon: const Icon(Icons.search, size: 18),
-              label: const Text('Perform Find (Enter)'),
-              onPressed: _performFind,
-            ),
-            const SizedBox(width: 12),
-            FilterChip(
-              label: const Text('Omit (NOT)'),
-              selected: _omit,
-              onSelected: (val) => setState(() => _omit = val),
-            ),
-            const SizedBox(width: 8),
-            _buildOperatorsMenu(),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.clear_all, size: 16),
-              label: const Text('Clear Criteria'),
-              onPressed: () {
-                for (var c in _findControllers.values) c.clear();
-              },
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.close, size: 16),
-              label: const Text('Cancel Find'),
-              onPressed: () {
-                widget.onModeChanged?.call(OperationalMode.browse);
-                _fetchRecords();
-              },
-            ),
+      // The find controls are wider than a narrow window, so they scroll
+      // sideways instead of overflowing.
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            if (widget.mode == OperationalMode.find) ...[
+              FilledButton.icon(
+                icon: const Icon(Icons.search, size: 18),
+                label: const Text('Perform Find (Enter)'),
+                onPressed: _performFind,
+              ),
+              const SizedBox(width: 12),
+              FilterChip(
+                label: const Text('Omit (NOT)'),
+                selected: _omit,
+                onSelected: (val) => setState(() => _currentFindRequest.omit = val),
+              ),
+              const SizedBox(width: 8),
+              _buildRequestNavigator(),
+              const SizedBox(width: 8),
+              _buildOperatorsMenu(),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.clear_all, size: 16),
+                label: const Text('Clear Criteria'),
+                onPressed: () {
+                  for (var c in _findControllers.values) c.clear();
+                  _captureCurrentFindRequest();
+                  setState(() {});
+                },
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.close, size: 16),
+                label: const Text('Cancel Find'),
+                onPressed: () {
+                  deleteAllFindRequests();
+                  widget.onModeChanged?.call(OperationalMode.browse);
+                  _fetchRecords();
+                },
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -2269,6 +2460,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         icon: const Icon(Icons.close, size: 16),
                         label: const Text('Cancel Find'),
                         onPressed: () {
+                          deleteAllFindRequests();
                           widget.onModeChanged?.call(OperationalMode.browse);
                           _fetchRecords();
                         },
@@ -2279,6 +2471,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         label: const Text('Clear Criteria'),
                         onPressed: () {
                           for (var c in _findControllers.values) c.clear();
+                          _captureCurrentFindRequest();
                           setState(() {});
                         },
                       ),
