@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>File4Base Documentation · Rapid Application Database Engine</title>
-  <meta name="description" content="Comprehensive documentation for File4Base, the modern open-source rapid application database platform for macOS, Windows, Linux, and WebDirect.">
+  <meta name="description" content="Comprehensive documentation for File4Base, the modern open-source rapid application database platform for macOS, Windows, Linux, and web browsers.">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231e88e5'><path d='M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z'/></svg>">
   <style>
     :root {
@@ -516,7 +516,7 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base is a modern, open-source rapid application database platform for rapid development. Built with Go (Clean Architecture, DBAL) on the backend and Flutter (Desktop & WebDirect) on the frontend.
+          File4Base is a modern, open-source rapid application database platform for rapid development. Built with Go (Clean Architecture, DBAL) on the backend and Flutter (Desktop & Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
@@ -527,7 +527,7 @@
           </div>
           <div class="card">
             <div class="card-icon">🎨</div>
-            <div class="card-title">FileMaker-Style Studio</div>
+            <div class="card-title">Visual Database Studio</div>
             <p>Full-screen visual layout designer with 16 drawing tools, 8-handle resizing, inspector palette, and draggable parts.</p>
           </div>
           <div class="card">
@@ -552,7 +552,7 @@
 git clone https://github.com/file4base/file4base-app.git
 cd file4base-app
 
-# 2. Launch database, backend API, and WebDirect client
+# 2. Launch database, backend API, and File4Base Web Client
 docker compose up -d
 
 # 3. Access web client
@@ -560,7 +560,7 @@ open http://localhost:3000</code></pre>
 
         <p>The stack exposes:</p>
         <ul>
-          <li><strong>WebDirect Client</strong>: <code>http://localhost:3000</code> (served via Nginx)</li>
+          <li><strong>File4Base Web Client</strong>: <code>http://localhost:3000</code> (served via Nginx)</li>
           <li><strong>Backend Core API</strong>: <code>http://localhost:8080</code> (REST & WebSockets)</li>
           <li><strong>OpenAPI / Swagger UI</strong>: <code>http://localhost:8080/swagger</code></li>
           <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code> (database: <code>file4base_dev</code>)</li>
@@ -579,7 +579,7 @@ open http://localhost:3000</code></pre>
         <p>Enter search criteria directly into form fields. Supports operators like <code>=</code>, <code>&gt;</code>, <code>&lt;</code>, <code>...</code> (range), and text searches to filter the active found set.</p>
 
         <h3 id="layout-studio">3. Layout Mode Studio (Cmd/Ctrl + L)</h3>
-        <p>FileMaker Pro-style studio workspace featuring:</p>
+        <p>The File4Base studio workspace includes:</p>
         <ul>
           <li><strong>Top Ribbon Palette</strong>: Selection pointer, Text tool, Line, Rectangle, Rounded Rectangle, Oval, Field tool, Button, Popover Button, Button Bar, Tab Control, Portal, Chart, Web Viewer, and Part tool.</li>
           <li><strong>Left Fields & Objects Pane</strong>: Drag & drop database columns straight onto the canvas, filter fields, customize placement orientation and control types.</li>
@@ -662,7 +662,7 @@ FirstName & " " & LastName</code></pre>
               <td><code>file4base-web</code></td>
               <td><code>file4base-web</code></td>
               <td><code>3000:80</code></td>
-              <td>Nginx WebDirect Static Proxy</td>
+              <td>Nginx Web Client Static Proxy</td>
             </tr>
             <tr>
               <td><code>file4base-postgres</code></td>
@@ -729,6 +729,8 @@ FirstName & " " & LastName</code></pre>
   <!-- Footer -->
   <footer class="site-footer">
     <p>© 2024-2026 File4Base Project · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go & Flutter</p>
+    <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
+    <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>
 
   <script>

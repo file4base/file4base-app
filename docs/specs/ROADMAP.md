@@ -59,7 +59,7 @@
   - [x] Button actions (single step or Perform Script) and Set Tab Order for Browse/Find keyboard navigation.
   - [x] Parts (Top Navigation, Header, Body, Footer).
   - [x] Layout backend REST persistence (`/api/v1/schemas/layouts`).
-  - [x] Official branding integration across macOS, Windows, Linux, and WebDirect.
+  - [x] Official branding integration across macOS, Windows, Linux, and Web Client.
 
 ## Security & Multi-User Foundations (prerequisite for Phase 6)
 - [x] Session-based API authentication (`POST /api/v1/auth/login` bearer tokens, logout, session introspection).

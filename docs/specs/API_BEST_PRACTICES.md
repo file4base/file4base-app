@@ -398,7 +398,7 @@ File4Base adopts **RFC 9457 (Problem Details for HTTP APIs)** as the universal e
 
 ### 7.1 Authentication & Authorization
 - **Bearer Token**: `Authorization: Bearer <JWT>` for stateless, horizontally scalable API authentication.
-- **Session Tokens**: Handled via standard HTTP-only, secure, `SameSite=Strict` cookies or explicit `X-Session-Token` headers for WebDirect sessions.
+- **Session Tokens**: Handled via standard HTTP-only, secure, `SameSite=Strict` cookies or explicit `X-Session-Token` headers for Web Client sessions.
 - **Role-Based Access Control (RBAC)**: Privilege sets (`[Full Access]`, `[Data Entry]`, `[Read Only]`) enforced at the DBAL and handler layers before any SQL generation occurs.
 
 ### 7.2 Defensive Security Headers

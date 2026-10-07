@@ -77,7 +77,7 @@ file4base-app/
 ├── AGENTS.md                         # Root agent guidelines
 ├── CHANGELOG.md
 ├── VERSION                           # Single source of truth for the version
-├── docker-compose.yml                # PostgreSQL + API + WebDirect services
+├── docker-compose.yml                # PostgreSQL + API + Web Client services
 ├── docker-compose.mariadb.yml        # the same stack on MariaDB
 ├── .env.example                      # Template for docker-compose configuration
 ├── docs/
@@ -148,7 +148,7 @@ To guarantee predictable container orchestration, monitoring, and avoid namespac
 | Resource Type | Service / Target | Name / Identifier | Host Port | Purpose |
 |---|---|---|---|---|
 | **Container & Image** | Go API Server | `file4base-api` | `8080:8080` | Core Go REST engine |
-| **Container & Image** | WebDirect Client | `file4base-web` | `3000:80` | Nginx reverse proxy & Flutter Web |
+| **Container & Image** | File4Base Web Client | `file4base-web` | `3000:80` | Nginx reverse proxy & Flutter Web |
 | **Container & Image** | PostgreSQL DB | `file4base-postgres` | `5432:5432` | Primary relational database engine |
 | **Container & Image** | MariaDB DB | `file4base-mariadb` | `3306:3306` | Alternative engine (`docker-compose.mariadb.yml`) |
 | **Bridge Network** | System Network | `file4base-net` | N/A | Isolated inter-container communications |
