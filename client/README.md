@@ -1,7 +1,7 @@
 # File4Base Flutter Client
 
 The Flutter client provides the File4Base desktop application for macOS,
-Windows, and Linux, plus the WebDirect interface served by Nginx. The client
+Windows, and Linux, plus the Web Client interface served by Nginx. The client
 uses the Go REST API described in the repository's [API reference](../docs/api/API_REFERENCE.md).
 
 ## Run the client

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 The Script Workspace is a visual script development canvas inspired by canonical visual low-code script workspaces.
-- **Frontend Target**: Flutter Desktop (macOS, Linux, Windows) with keyboard shortcut support, panel resizing, and WebDirect support.
+- **Frontend Target**: Flutter Desktop (macOS, Linux, Windows) with keyboard shortcut support, panel resizing, and Web Client support.
 - **Theme & Palette**: Dark mode styling:
   - Main background: `#0b1120`
   - Panel surface: `#111827`

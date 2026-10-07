@@ -2,6 +2,12 @@
 
 File4Base is an open-source, modern alternative to database and layout editors, built with a decoupled Go backend and Flutter desktop frontend.
 
+File4Base is an independent project. References to Claris products do not imply
+affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker
+WebDirect are trademarks of Claris International Inc. See the
+[license and reference-material guidance](docs/LEGAL.md) and
+[contribution guidelines](CONTRIBUTING.md).
+
 ## Architecture Highlights
 - **Backend (Go 1.26+)**: REST API with per-database sessions and role-based authorization, Clean Architecture, `pgx/v5`, PostgreSQL 16. Real-time WebSocket sync is planned (Roadmap Phase 6).
 - **Frontend (Flutter Desktop)**: Native desktop application targeting macOS (Apple Silicon M-series & Intel), Windows, and Linux.
@@ -35,7 +41,7 @@ Details: [REST API Reference - Authentication & Authorization](docs/api/API_REFE
 When launched via Docker Compose, File4Base acts as a full multi-user application server:
 - **PostgreSQL 16**: Port `5432`, published on `127.0.0.1` only by default (MariaDB: see below)
 - **Backend Core API (Go)**: Port `8080` (`/healthz`, `/api/v1/schemas`, `/api/v1/data`)
-- **WebDirect Web Client (Nginx)**: Port `3000` (browser-accessible client)
+- **File4Base Web Client (Nginx)**: Port `3000` (browser-accessible client)
 
 ```bash
 # Optional: set your own database password and server options

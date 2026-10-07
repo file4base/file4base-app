@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Contribution and legal guidance for reference/asset provenance, independent
+  UI and tutorial development, and final-artifact license review. These practices
+  support the open [IP audit actions](https://github.com/file4base/file4base-app/issues/44);
+  they do not constitute legal clearance or resolve historical provenance.
+- Trademark attribution and independent-project notices in the README and
+  documentation website. Active documentation calls the browser component
+  File4Base Web Client; application display labels remain tracked in
+  [#8](https://github.com/file4base/file4base-app/issues/8).
 - A hands-on tutorial that builds a complete database from nothing,
   [docs/tutorials/favorite_bakery.md](docs/tutorials/favorite_bakery.md): the
   Favorite Bakery customer list, with its tables and fields, data entry, finds,

@@ -56,8 +56,8 @@ curl -s localhost:8080/healthz
 
 It answers with `"status":"pass"` and the engine it is using.
 
-Then open **http://localhost:3000** in a browser. That is WebDirect, the web
-client. The desktop builds (macOS, Linux, Windows) look and behave the same;
+Then open **http://localhost:3000** in a browser to use File4Base Web Client.
+The desktop builds (macOS, Linux, Windows) look and behave the same;
 everything in this tutorial applies to both.
 
 To run the whole thing on MariaDB instead of PostgreSQL, use
@@ -113,7 +113,7 @@ menus. If a menu item is black, it does something.
 6. Leave **Create physical database in PostgreSQL if it does not exist** ticked.
 7. Click **Create & Save Solution**.
 
-   **Save location on hard drive** is optional. In WebDirect the browser cannot
+   **Save location on hard drive** is optional. In the web client the browser cannot
    choose a folder, so leave it empty: the database is created on the server
    either way and you can write the `.f4p` file later with **File > Save As**.
 
@@ -700,7 +700,9 @@ Grants an account access to specific layouts rather than all of them.
 
 ### Extended privileges
 
-Lists the access methods — desktop client, WebDirect, REST API, bulk export.
+Lists the access methods — desktop client, web client, REST API, bulk export.
+The web-client row currently reads **Access via File4Base WebDirect**; its
+display-name change is tracked in [#8](https://github.com/file4base/file4base-app/issues/8).
 **They are not enforced yet**, and the tab says so: the server does not restrict
 access by method, so any account that can sign in can use all of them. Use
 account roles and layout privileges to restrict access today.
