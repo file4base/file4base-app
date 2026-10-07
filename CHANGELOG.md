@@ -7,32 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
-### Added
-- Contribution and legal guidance for reference/asset provenance, independent
-  UI and tutorial development, and final-artifact license review. These practices
-  support the open [IP audit actions](https://github.com/file4base/file4base-app/issues/44);
-  they do not constitute legal clearance or resolve historical provenance.
-- Trademark attribution and independent-project notices in the README and
-  documentation website. Active documentation calls the browser component
-  File4Base Web Client; application display labels remain tracked in
-  [#8](https://github.com/file4base/file4base-app/issues/8).
-- A hands-on tutorial that builds a complete database from nothing,
-  [docs/tutorials/favorite_bakery.md](docs/tutorials/favorite_bakery.md): the
-  Favorite Bakery customer list, with its tables and fields, data entry, finds,
-  sorting, layouts, preview, a relationship, scripts, accounts and backups. Every
-  step was carried out in the application and every figure it quotes is one
-  File4Base produced. It ends with the list of things a FileMaker user will look
-  for and not find yet, each linked to its issue ([#30](https://github.com/file4base/file4base-app/issues/30)
-  calculations, [#31](https://github.com/file4base/file4base-app/issues/31) value lists,
-  [#32](https://github.com/file4base/file4base-app/issues/32) grouped reports,
-  [#33](https://github.com/file4base/file4base-app/issues/33) layout assistant and merge fields,
-  [#34](https://github.com/file4base/file4base-app/issues/34) saved finds,
-  [#37](https://github.com/file4base/file4base-app/issues/37) charts,
-  [#38](https://github.com/file4base/file4base-app/issues/38) importing foreign files,
-  [#39](https://github.com/file4base/file4base-app/issues/39) extended privileges).
-  The defects below were all found while writing it.
+## [0.9.3] - 2026-10-07
 
 ### Added
 - **Related fields and portals** ([#36](https://github.com/file4base/file4base-app/issues/36)).
@@ -66,26 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Portals and related fields survive export and import: a layout's
     `relationship_id` is rewritten to the id the relationship has in the
     destination, including when the import matched one that was already there.
-
-### Changed
-- The three options of **Specify Relationship** now name both tables instead of
-  saying "this table", which said nothing in a dialog showing two. They act on
-  the side the relationship points at — the right-hand one — and that is now
-  written down ([#36](https://github.com/file4base/file4base-app/issues/36)).
-- Lesson 7 of the tutorial describes the Sort dialog as it is, with levels and
-  a tie-break, rather than the single-field dialog it replaced in
-  [#35](https://github.com/file4base/file4base-app/issues/35).
-
-### Fixed
-- A new table took the place on the relationship graph numbered after however
-  many occurrences existed, so after a table was deleted the next one was
-  created exactly on top of a card that was still there. It now takes the first
-  free place ([#36](https://github.com/file4base/file4base-app/issues/36)).
-- Toggling **Allow Browse mode entry** or **Allow Find mode entry** in the
-  layout inspector rebuilt the field's binding from scratch and silently dropped
-  its value list ([#31](https://github.com/file4base/file4base-app/issues/31)).
-
-### Added
 - **Value lists** ([#31](https://github.com/file4base/file4base-app/issues/31)).
   A field can be filled from a named set of values instead of being typed into.
   **File > Manage > Value Lists...**, which used to be a roadmap dialog, now
@@ -137,6 +92,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Summary fields are a different problem — an aggregate over the found set —
     and are still not computed; the New Field dialog now says so for that type
     alone ([#32](https://github.com/file4base/file4base-app/issues/32)).
+- A hands-on tutorial that builds a complete database from nothing,
+  [docs/tutorials/favorite_bakery.md](docs/tutorials/favorite_bakery.md): the
+  Favorite Bakery customer list, with its tables and fields, data entry, finds,
+  sorting, layouts, preview, a relationship, scripts, accounts and backups. Every
+  step was carried out in the application and every figure it quotes is one
+  File4Base produced. It ends with the list of things a FileMaker user will look
+  for and not find yet, each linked to its issue ([#30](https://github.com/file4base/file4base-app/issues/30)
+  calculations, [#31](https://github.com/file4base/file4base-app/issues/31) value lists,
+  [#32](https://github.com/file4base/file4base-app/issues/32) grouped reports,
+  [#33](https://github.com/file4base/file4base-app/issues/33) layout assistant and merge fields,
+  [#34](https://github.com/file4base/file4base-app/issues/34) saved finds,
+  [#37](https://github.com/file4base/file4base-app/issues/37) charts,
+  [#38](https://github.com/file4base/file4base-app/issues/38) importing foreign files,
+  [#39](https://github.com/file4base/file4base-app/issues/39) extended privileges).
+  The defects below were all found while writing it.
+- Contribution and legal guidance for reference/asset provenance, independent
+  UI and tutorial development, and final-artifact license review. These practices
+  support the open [IP audit actions](https://github.com/file4base/file4base-app/issues/44);
+  they do not constitute legal clearance or resolve historical provenance.
+- Trademark attribution and independent-project notices in the README and
+  documentation website. Active documentation calls the browser component
+  File4Base Web Client; application display labels remain tracked in
+  [#8](https://github.com/file4base/file4base-app/issues/8).
 
 ### Changed
 - Records can be sorted by more than one field ([#35](https://github.com/file4base/file4base-app/issues/35)).
@@ -149,7 +127,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   callers that only sort by one field. Every field in the order is checked
   against the table's registered fields, so an unknown one answers `400` instead
   of reaching the SQL.
-
 - Find mode holds several requests ([#34](https://github.com/file4base/file4base-app/issues/34)).
   The records that match any request are found together, so "in New York **or** in
   London" is one find; a request marked Omit subtracts what it matches from what
@@ -157,6 +134,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shows "Request n of N" with its own navigation, and the Requests menu — New,
   Duplicate, Delete, Delete All, Include / Omit and Go to Request — now acts on
   that list instead of being disabled. Saved finds are still to come.
+- The three options of **Specify Relationship** now name both tables instead of
+  saying "this table", which said nothing in a dialog showing two. They act on
+  the side the relationship points at — the right-hand one — and that is now
+  written down ([#36](https://github.com/file4base/file4base-app/issues/36)).
+- The "Extended privileges" tab of Manage Security no longer offers switches that
+  do nothing. The four toggles (desktop, WebDirect, REST API, bulk export) wrote
+  to local variables, were never sent to the server and were lost when the dialog
+  closed, while the tab said it controlled the access methods allowed for each
+  privilege set — an owner could switch REST access off and believe access was
+  restricted. The tab now lists the planned methods and states that they are not
+  enforced yet.
+- Lesson 7 of the tutorial describes the Sort dialog as it is, with levels and
+  a tie-break, rather than the single-field dialog it replaced in
+  [#35](https://github.com/file4base/file4base-app/issues/35).
 
 ### Fixed
 - An omitting find request was OR-ed into the result rather than subtracting from
@@ -214,22 +205,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   graph, so in a database with more than one table the cards sat exactly on top
   of each other: the graph read "2 occurrences" and showed one, with the
   relationship line hidden in the gap between them. New occurrences are now laid
-  out in rows.
+  out in rows, each taking the first free place, so a table created after
+  another was deleted no longer lands on a card that is still there
+  ([#36](https://github.com/file4base/file4base-app/issues/36)).
+- Toggling **Allow Browse mode entry** or **Allow Find mode entry** in the
+  layout inspector rebuilt the field's binding from scratch and silently dropped
+  its value list ([#31](https://github.com/file4base/file4base-app/issues/31)).
 - Two Spanish strings in the English interface: the sign-in button ("Conectar y
   Entrar") and "Conectar a Servidor Remoto...".
 - "1 tables in database" and "1 fields".
 
-### Changed
-- The "Extended privileges" tab of Manage Security no longer offers switches that
-  do nothing. The four toggles (desktop, WebDirect, REST API, bulk export) wrote
-  to local variables, were never sent to the server and were lost when the dialog
-  closed, while the tab said it controlled the access methods allowed for each
-  privilege set — an owner could switch REST access off and believe access was
-  restricted. The tab now lists the planned methods and states that they are not
-  enforced yet.
-- The New Field dialog warns that Calculation and Summary formulas are stored but
-  not evaluated: the field is created as a plain text column that the user fills
-  in. A calculation engine is still to be written.
+---
 
 ## [0.9.2] - 2026-10-07
 

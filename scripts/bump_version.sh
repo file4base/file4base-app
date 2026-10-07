@@ -8,8 +8,10 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION_FILE="${ROOT_DIR}/VERSION"
 SERVER_MAIN="${ROOT_DIR}/server/cmd/server/main.go"
 CLIENT_PUBSPEC="${ROOT_DIR}/client/pubspec.yaml"
-WIN_RC="${ROOT_DIR}/client/windows/runner/Runner.rc"
 ABOUT_DIALOG="${ROOT_DIR}/client/lib/features/about/about_dialog.dart"
+# client/windows/runner/Runner.rc is not listed: it takes FLUTTER_VERSION from
+# the build, which Flutter derives from pubspec.yaml, so bumping pubspec.yaml
+# is what sets the Windows file and product version.
 OPENAPI_SPEC="${ROOT_DIR}/server/internal/api/swagger/ui/openapi.json"
 COMPOSE_FILES=("${ROOT_DIR}/docker-compose.yml" "${ROOT_DIR}/docker-compose.mariadb.yml")
 
