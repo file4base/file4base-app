@@ -9,6 +9,8 @@ import '../../main.dart';
 import '../layout_engine/layout_action_runner.dart';
 import '../layout_engine/layout_object_visuals.dart';
 import '../layout_engine/models/layout_definition.dart';
+import '../layout_engine/models/chart_definition.dart';
+import '../layout_engine/chart_view.dart';
 import 'related_records.dart';
 import 'report_view.dart';
 
@@ -363,6 +365,76 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       if (!required.contains(level.field)) order.add(level);
     }
     _applySortOrder(order);
+  }
+
+  // ─── Charts (#37) ──────────────────────────────────────────────────────────
+
+  /// The figures each chart draws, by the id of its object. A chart groups by
+  /// its own category field, which need not be what the layout groups by.
+  final Map<String, SummaryResultModel> _chartFigures = {};
+
+  List<LayoutObjectModel> get _chartObjects =>
+      widget.layout?.objects.where((o) => o.type == 'chart').toList() ?? const [];
+
+  /// Reads the figures of every chart on the layout, over the found set.
+  Future<void> _loadChartFigures() async {
+    final charts = _chartObjects.where((o) => o.chart.isBound).toList();
+    if (charts.isEmpty) return;
+    final requests = _isFoundSet ? _findRequestPayload() : const <Map<String, dynamic>>[];
+
+    for (final object in charts) {
+      final config = object.chart;
+      // A scatter plots the records themselves, so it needs no figures.
+      if (!ChartType.isGrouped(config.chartType)) continue;
+      try {
+        final figures = await widget.apiClient.summarize(
+          widget.table.name,
+          requests: requests,
+          fields: [for (final s in config.drawnSeries) s.field],
+          groupBy: [config.categoryField!],
+        );
+        if (!mounted) return;
+        setState(() => _chartFigures[object.id] = figures);
+      } catch (_) {
+        // The chart draws its notice; the rest of the layout is unaffected.
+        if (mounted) setState(() => _chartFigures.remove(object.id));
+      }
+    }
+  }
+
+  /// Draws one chart object.
+  Widget _buildChart(LayoutObjectModel object, bool isDark) {
+    final config = object.chart;
+    if (!config.isBound) {
+      return ChartView(
+        config: config,
+        data: const ChartData(),
+        isDark: isDark,
+        notice: 'Chart: choose a field and a series in Chart Setup',
+      );
+    }
+
+    // A series must name a summary field for a grouped chart; a plain field
+    // has no figure over a group.
+    final data = ChartType.isGrouped(config.chartType)
+        ? chartDataFromSummary(
+            config,
+            _chartFigures[object.id],
+            formatCategory: _mergeFieldText,
+          )
+        : chartDataFromRecords(
+            config,
+            _records.where((r) => r[_draftKey] != true).toList(),
+          );
+
+    return ChartView(
+      config: config,
+      data: data,
+      isDark: isDark,
+      notice: data.isEmpty && _chartFigures[object.id] == null
+          ? 'Reading the figures…'
+          : null,
+    );
   }
 
   // ─── Relationships (#36) ───────────────────────────────────────────────────
@@ -814,6 +886,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     if (layoutChanged && _layoutUsesRelationships && _relationships.isEmpty) {
       unawaited(_loadRelationshipGraph());
     }
+    // A new layout brings its own charts and its own grouping, and neither is
+    // read by fetching records — which switching layouts does not do anyway
+    // (#32, #37).
+    if (layoutChanged && oldWidget.layout?.id != widget.layout?.id) {
+      _chartFigures.clear();
+      unawaited(_loadChartFigures());
+      if (_layoutIsReport) {
+        _reportFigures = const {};
+        unawaited(_loadReportFigures());
+      }
+    }
   }
 
   bool _sameColumns(List<ColumnModel> a, List<ColumnModel> b) {
@@ -878,6 +961,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
         if (_layoutIsReport) unawaited(_loadReportFigures());
+        unawaited(_loadChartFigures());
         widget.onFoundSetChanged?.call(const []);
       }
     } catch (e) {
@@ -1041,6 +1125,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         // A report totals the found set, so its figures are read again for
         // the set the find just returned (#32).
         if (_layoutIsReport) unawaited(_loadReportFigures());
+        unawaited(_loadChartFigures());
         widget.onFoundSetChanged?.call(requests);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2244,6 +2329,30 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             ),
             overflow: TextOverflow.ellipsis,
           ),
+        );
+
+      case 'chart':
+        // A chart draws the figures worked out over the found set (#37).
+        if (isFindMode) {
+          return relatedNotice('A chart shows nothing in Find mode', isDark: isDark,
+              radius: obj.style.cornerRadius);
+        }
+        return Container(
+          key: ValueKey('chart-${obj.id}'),
+          decoration: BoxDecoration(
+            color: obj.style.fillColor != null
+                ? _parseColor(obj.style.fillColor!)
+                : (isDark ? const Color(0xFF1B2029) : Colors.white),
+            border: Border.all(
+              color: obj.style.borderColor != null
+                  ? _parseColor(obj.style.borderColor!)
+                  : (isDark ? const Color(0xFF38404B) : const Color(0xFFD7DCE3)),
+              width: obj.style.borderWidth,
+            ),
+            borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: _buildChart(obj, isDark),
         );
 
       case 'portal':

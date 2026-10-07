@@ -4,8 +4,8 @@ This tutorial builds a working database from nothing: the customer list of a
 fictitious business called **Favorite Bakery**, which lets customers pay an
 annual fee in exchange for a discount. By the end you will have two tables, a
 relationship between them, several layouts, a found set, a sorted list, a
-report that subtotals, a sheet of mailing labels, a portal, a printable sheet
-and a second account.
+report that subtotals, a chart, a sheet of mailing labels, a portal, a
+printable sheet and a second account.
 
 It takes about an hour.
 
@@ -31,13 +31,14 @@ this tutorial says so instead of describing it — see
 - [Lesson 10 — A calculated field](#lesson-10--a-calculated-field)
 - [Lesson 11 — A value list](#lesson-11--a-value-list)
 - [Lesson 12 — A summary report](#lesson-12--a-summary-report)
-- [Lesson 13 — Labels and a letter](#lesson-13--labels-and-a-letter)
-- [Lesson 14 — Preview and print](#lesson-14--preview-and-print)
-- [Lesson 15 — A second table and a relationship](#lesson-15--a-second-table-and-a-relationship)
-- [Lesson 16 — Show related records](#lesson-16--show-related-records)
-- [Lesson 17 — Scripts](#lesson-17--scripts)
-- [Lesson 18 — Accounts and privileges](#lesson-18--accounts-and-privileges)
-- [Lesson 19 — Backups](#lesson-19--backups)
+- [Lesson 13 — A chart](#lesson-13--a-chart)
+- [Lesson 14 — Labels and a letter](#lesson-14--labels-and-a-letter)
+- [Lesson 15 — Preview and print](#lesson-15--preview-and-print)
+- [Lesson 16 — A second table and a relationship](#lesson-16--a-second-table-and-a-relationship)
+- [Lesson 17 — Show related records](#lesson-17--show-related-records)
+- [Lesson 18 — Scripts](#lesson-18--scripts)
+- [Lesson 19 — Accounts and privileges](#lesson-19--accounts-and-privileges)
+- [Lesson 20 — Backups](#lesson-20--backups)
 - [Reference: the sample data](#reference-the-sample-data)
 - [What is not here yet](#what-is-not-here-yet)
 
@@ -474,7 +475,7 @@ fields you do not want, arrange the rest, and use it from the **Layout** list in
 the top left.
 
 > The button is labelled *New Layout / Report* and it makes both, along with
-> lists, labels and blank layouts — lesson 13 uses the assistant. This lesson
+> lists, labels and blank layouts — lesson 14 uses the assistant. This lesson
 > builds a layout by hand, which is the other way.
 
 ---
@@ -742,11 +743,81 @@ record, because a report is drawn once over the found set. A report wider than
 the paper is scaled down so its right-hand column prints instead of falling off
 the sheet.
 
-**Print / Export PDF** prints what you see. Lesson 14 covers Page Setup.
+**Print / Export PDF** prints what you see. Lesson 15 covers Page Setup.
 
 ---
 
-## Lesson 13 — Labels and a letter
+## Lesson 13 — A chart
+
+Lesson 12 subtotalled the fees. A chart draws those same figures.
+
+1. Go into **Layout Mode** and click **+ New Layout / Report**. Choose **Blank
+   layout**, name it `Fee Dashboard`, and click **Create Layout**.
+2. Choose the **Chart Tool** from the toolbar and drag a rectangle in the body.
+3. Double-click it. **Chart Setup** opens.
+
+| | |
+| --- | --- |
+| **Chart type** | Column |
+| **Title** | `Fees by customer type` |
+| **Group the records by** | Customer Type |
+| **Series** | Total Annual Fees, Customers |
+
+On the right is a preview drawn with made-up figures — it shows the shape, not
+your data.
+
+4. Click **Apply**, save, and go back to **Browse Mode**.
+
+The chart draws:
+
+| | |
+| --- | --- |
+| Continuing | **900** |
+| New | **1400** |
+
+the same subtotals lesson 12 printed, with a second, shorter bar beside each
+for the nine and seven customers, and a legend underneath.
+
+> The **Series** list only offers **Summary** fields. A chart draws a figure
+> worked out over a group of records, and a plain field has no such figure —
+> Fee Paid is a number, but "the Fee Paid of the Continuing customers" is only
+> a number once you say *total*, *average* or *count*.
+
+### A pie
+
+Add a second chart and set it up as **Pie**, titled `Share of fees`, grouped by
+**Customer Type**, with **Total Annual Fees** as its one series. Tick **Show
+each slice as a percentage**.
+
+Two slices: **900 (39%)** and **1400 (61%)**, and a legend naming them.
+
+A pie draws one series — choosing a second replaces the first, because a pie
+divides one quantity into shares.
+
+### The chart follows the found set
+
+Click **Find**, type `=Paris` in **City**, and **Perform Find**.
+
+Five records are found and the charts redraw over them: New **800**,
+Continuing **100**. **Show All** brings back 1400 and 900.
+
+### The other kinds
+
+Changing the type in Chart Setup redraws the same figures:
+
+- **Bar** — the same columns lying on their side, for long category names.
+- **Line** and **Area** — for a figure read across a sequence.
+- **Scatter** — the odd one out. It plots **two numbers per record** rather
+  than a figure per group, so its series offers plain number fields instead of
+  summary ones. A record missing either number is left out rather than drawn
+  at zero.
+
+**View > Preview Mode** puts the charts on paper, and **Print / Export PDF**
+prints them.
+
+---
+
+## Lesson 14 — Labels and a letter
 
 Every layout so far was built by hand. There is an assistant, and there are two
 things it makes that cannot reasonably be built any other way: a sheet of
@@ -880,7 +951,7 @@ work the same way. A field name you mistype stays on the page as
 
 ---
 
-## Lesson 14 — Preview and print
+## Lesson 15 — Preview and print
 
 Choose **View > Preview Mode**.
 
@@ -901,7 +972,7 @@ Choose **View > Browse Mode** to come back.
 
 ---
 
-## Lesson 15 — A second table and a relationship
+## Lesson 16 — A second table and a relationship
 
 Customers work for companies, and several customers work for the same one. That
 is a second table.
@@ -937,7 +1008,7 @@ Then enter three records in Browse mode:
    on the left, `customers` on the right — then click the **Company** field in
    each list.
 4. Tick **Allow records to be created in "customers" through this
-   relationship**. Lesson 16 uses it to add a customer from the company's own
+   relationship**. Lesson 17 uses it to add a customer from the company's own
    layout.
 
    The options name both tables, because they act on one side: the side the
@@ -949,7 +1020,7 @@ Then enter three records in Browse mode:
      comes back to it.
    - *Sort the related records of "customers" by their match field* — that
      would order them by company, which is the same for all of them. A portal
-     sorts its own rows, which lesson 16 does instead.
+     sorts its own rows, which lesson 17 does instead.
 5. Click **OK**.
 
 A line now joins the two cards, anchored on the two **Company** fields, with an
@@ -958,9 +1029,9 @@ reads `2 occurrences · 1 relationships`.
 
 ---
 
-## Lesson 16 — Show related records
+## Lesson 17 — Show related records
 
-The relationship from lesson 15 is drawn, but nothing uses it yet. A layout can
+The relationship from lesson 16 is drawn, but nothing uses it yet. A layout can
 read the other side of it in two ways: **one field** of the related record, and
 a **portal**, which is the list of them.
 
@@ -1057,7 +1128,7 @@ Step to the next company and the rows change with it: **DEF Ltd.** has 5 and
   never type the company name — the relationship owns that field, and a value
   sent for it would be overwritten.
 
-  This needs *Allow records to be created…* on the relationship, which lesson 15
+  This needs *Allow records to be created…* on the relationship, which lesson 16
   ticked. Without it the row is still offered but the server refuses, and the
   Portal Setup panel warns you.
 - **Remove.** The button at the right of each row deletes that customer record.
@@ -1094,7 +1165,7 @@ wrong one for customers, who outlive the company they happen to work for.
 
 ---
 
-## Lesson 17 — Scripts
+## Lesson 18 — Scripts
 
 Choose **Scripts > Script Workspace...**
 
@@ -1121,7 +1192,7 @@ without executing them.
 
 ---
 
-## Lesson 18 — Accounts and privileges
+## Lesson 19 — Accounts and privileges
 
 Choose **File > Manage > Security...**
 
@@ -1155,7 +1226,7 @@ account roles and layout privileges to restrict access today.
 
 ---
 
-## Lesson 19 — Backups
+## Lesson 20 — Backups
 
 The database lives in PostgreSQL (or MariaDB), so backing it up means backing up
 the engine's data.
@@ -1227,7 +1298,7 @@ These are things a FileMaker user will look for and not find in File4Base 0.9.3.
 They are listed so you do not go looking, and each one has an issue.
 
 **No merge variables** ([#33](https://github.com/file4base/file4base-app/issues/33))**.**
-*Insert > Merge Variable...* is greyed out. Merge *fields* work — lesson 13
+*Insert > Merge Variable...* is greyed out. Merge *fields* work — lesson 14
 builds labels and a letter with them.
 
 **A report does not start each group on a new page** ([#32](https://github.com/file4base/file4base-app/issues/32))**.**
@@ -1243,16 +1314,13 @@ A find cannot be named and run again later.
 **No find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46))**.**
 Find mode takes criteria on the record's own fields. A related field says so in
 Find mode rather than offering a box that would do nothing. Portals and related
-fields themselves do work — see lesson 16.
-
-**No charts** ([#37](https://github.com/file4base/file4base-app/issues/37))**.** The chart tool is in the layout toolbar but there is no chart
-setup.
+fields themselves do work — see lesson 17.
 
 **No import of foreign files** ([#38](https://github.com/file4base/file4base-app/issues/38))**.** *File > Import Records* (file, folder, XML,
 ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
 data files.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 18.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 19.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

@@ -82,6 +82,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is shown, so a DATE reads as a date rather than the full timestamp the API
   returns.
 
+- **Charts** ([#37](https://github.com/file4base/file4base-app/issues/37)).
+  The Chart Tool was in the layout toolbar and drew nothing: no chart object,
+  no setup, no renderer. A chart now draws the figures
+  [#32](https://github.com/file4base/file4base-app/issues/32) works out, on a
+  layout, in Preview and in print. Lesson 13 of the tutorial is new;
+  [docs/specs/charts.md](docs/specs/charts.md) is the specification.
+  - **Six kinds**: column, bar, line, area, pie and scatter. A grouped chart
+    asks for its own grouping over the found set, so narrowing with a find
+    redraws it; its series name summary fields, because a plain field has no
+    figure over a group. A **scatter** is the exception — it plots two numbers
+    per record and reads the records themselves, leaving out any record missing
+    either number rather than drawing it at zero.
+  - **Chart Setup**, from a double click on the canvas or the inspector, with a
+    preview drawn from made-up figures beside it so the shape can be judged
+    without leaving Layout mode. A pie draws one series, so choosing a second
+    replaces the first.
+  - A chart object is never silently blank: it says whether it has no setup,
+    is still reading, has nothing to draw, or is in Find mode. Dragged small it
+    drops its title and legend rather than overflowing.
+  - `docs/specs/layout_schema.json` gained `chart_config`, and was brought up to
+    date with the `portal_config` and `field_binding` of
+    [#36](https://github.com/file4base/file4base-app/issues/36), the leading
+    grand summary part of [#32](https://github.com/file4base/file4base-app/issues/32)
+    and the layout themes and label stock of
+    [#33](https://github.com/file4base/file4base-app/issues/33).
+
 ### Changed
 - Preview prints the **found set**, not the whole table. It had always read
   every record regardless of the find, which only became visible once a report
@@ -96,6 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A report over records that were not in its order crashed instead of drawing
   with its warning: a group that opened twice gave two bands the same key
   ([#32](https://github.com/file4base/file4base-app/issues/32)).
+- Switching to a layout carrying charts never read their figures, so they sat
+  on "Reading the figures…" for good: nothing but fetching records loaded them,
+  and switching layouts does not fetch records
+  ([#37](https://github.com/file4base/file4base-app/issues/37)).
 - The layout inspector's part-height boxes named the three standard bands and
   edited nothing, so a report's sub-summary could not be resized there and a
   sheet of labels was shown as having a header and a footer it does not have.

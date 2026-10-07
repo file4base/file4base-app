@@ -9,6 +9,8 @@ import 'layout_object_visuals.dart';
 import 'layout_print_service.dart';
 import 'models/layout_definition.dart';
 import 'models/layout_blueprint.dart';
+import 'models/chart_definition.dart';
+import 'chart_view.dart';
 import 'label_sheet_view.dart';
 import '../data_browser/report_view.dart';
 import '../data_browser/data_browser_widget.dart';
@@ -133,6 +135,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
           _isLoading = false;
         });
         if (_isReport) await _fetchReportFigures();
+        await _fetchChartFigures();
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
@@ -152,6 +155,27 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       return 0;
     });
     return sorted;
+  }
+
+  /// The figures each chart on the sheet draws, by object id (#37).
+  final Map<String, SummaryResultModel> _chartFigures = {};
+
+  Future<void> _fetchChartFigures() async {
+    for (final object in widget.layout.objects.where((o) => o.type == 'chart')) {
+      final config = object.chart;
+      if (!config.isBound || !ChartType.isGrouped(config.chartType)) continue;
+      try {
+        final figures = await widget.apiClient.summarize(
+          widget.table.name,
+          requests: widget.findRequests,
+          fields: [for (final s in config.drawnSeries) s.field],
+          groupBy: [config.categoryField!],
+        );
+        if (mounted) setState(() => _chartFigures[object.id] = figures);
+      } catch (_) {
+        // The sheet still prints; that chart draws its notice.
+      }
+    }
   }
 
   Future<void> _fetchReportFigures() async {
@@ -529,6 +553,19 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
 
   Widget _buildPreviewLayoutObject(LayoutObjectModel obj, Map<String, dynamic> record) {
     switch (obj.type) {
+      case 'chart':
+        // A chart on a printed sheet draws the same figures it does in Browse
+        // mode, over the found set (#37).
+        final config = obj.chart;
+        if (!config.isBound) return const SizedBox.shrink();
+        return ChartView(
+          config: config,
+          data: ChartType.isGrouped(config.chartType)
+              ? chartDataFromSummary(config, _chartFigures[obj.id],
+                  formatCategory: _mergeFieldText)
+              : chartDataFromRecords(config, _records),
+        );
+
       case 'label':
         return Container(
           alignment: _parseAlignment(obj.style.textAlign),

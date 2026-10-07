@@ -14,6 +14,8 @@ import '../schema_manager/manage_database_dialog.dart';
 import '../theme_manager/manage_themes_dialog.dart';
 import 'manage_layouts_dialog.dart';
 import 'models/layout_definition.dart';
+import 'models/chart_definition.dart';
+import 'chart_view.dart';
 import '../data_browser/related_records.dart';
 
 enum _ResizeHandle {
@@ -955,7 +957,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       case LayoutTool.chart:
         newObj = LayoutObjectModel(
           id: newId, type: 'chart', x: x, y: y, width: 320, height: 200,
-          text: 'Chart Preview',
+          text: 'Chart',
+          // A new chart draws nothing until Chart Setup names a field and a
+          // series; the defaults are there so the panel has values (#37).
+          chartConfig: const ChartConfigModel().toJson(),
           style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#B0BEC5', cornerRadius: 6),
         );
         break;
@@ -1354,6 +1359,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     if (isDoubleClick) {
       if (_isButton(obj)) {
         _openButtonSetup(obj);
+      } else if (obj.type == 'chart') {
+        unawaited(_showChartSetup(obj));
+      } else if (obj.type == 'portal') {
+        unawaited(_showPortalSetupFromObject(obj));
       } else {
         _startInlineEdit(obj);
       }
@@ -3088,6 +3097,268 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     );
   }
 
+  /// Double-clicking a portal opens its setup, which is the same panel the
+  /// inspector shows (#36).
+  Future<void> _showPortalSetupFromObject(LayoutObjectModel portal) async {
+    // Portal Setup lives in the inspector's Data tab, so a double click puts
+    // the reader there rather than opening a second copy of it.
+    setState(() {
+      _selectedObjectId = portal.id;
+      _inspectorTab = 2;
+    });
+  }
+
+  /// Stand-in figures so a chart has a shape on the canvas. They are plainly
+  /// made up — the real ones arrive in Browse mode.
+  ChartData _sampleChartData(ChartConfigModel config) {
+    final series = config.drawnSeries;
+    if (series.isEmpty) return const ChartData();
+    const sample = [
+      ('First', [3.0, 2.0]),
+      ('Second', [5.0, 3.0]),
+      ('Third', [2.0, 4.0]),
+    ];
+    return ChartData(
+      seriesLabels: [for (final s in series) s.label.isEmpty ? s.field : s.label],
+      points: [
+        for (final (name, values) in sample)
+          ChartPoint(
+            category: name,
+            values: [for (var i = 0; i < series.length; i++) values[i % values.length]],
+          ),
+      ],
+    );
+  }
+
+  /// Chart Setup: what the chart draws and how (#37).
+  Future<void> _showChartSetup(LayoutObjectModel object) async {
+    final columns = _currentTable.columns.where((c) => !c.isPrimaryKey).toList();
+    final summaryColumns = columns.where((c) => c.fieldType == 'SUMMARY').toList();
+    final numberColumns =
+        columns.where((c) => c.storageType == 'NUMBER' && c.fieldType != 'SUMMARY').toList();
+
+    var config = object.chart;
+    final titleCtrl = TextEditingController(text: config.title);
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final grouped = ChartType.isGrouped(config.chartType);
+          // A grouped chart plots summary fields over groups; a scatter plots
+          // two plain numbers per record.
+          final seriesChoices = grouped ? summaryColumns : numberColumns;
+          final categoryChoices = grouped ? columns : numberColumns;
+
+          void edit(ChartConfigModel Function(ChartConfigModel) change) =>
+              setDialogState(() => config = change(config));
+
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.bar_chart, color: Color(0xFF1E88E5)),
+                SizedBox(width: 8),
+                Text('Chart Setup'),
+              ],
+            ),
+            content: SizedBox(
+              width: 560,
+              height: 460,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: 300,
+                    child: ListView(
+                      children: [
+                        const Text('Chart type:',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 5,
+                          runSpacing: 4,
+                          children: [
+                            for (final type in ChartType.all)
+                              ChoiceChip(
+                                key: ValueKey('chart-type-$type'),
+                                label: Text(ChartType.label(type),
+                                    style: const TextStyle(fontSize: 11)),
+                                selected: config.chartType == type,
+                                onSelected: (_) => edit((c) => c.copyWith(chartType: type)),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          key: const ValueKey('chart-title'),
+                          controller: titleCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Title',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          style: const TextStyle(fontSize: 12),
+                          onChanged: (v) => edit((c) => c.copyWith(title: v)),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(grouped ? 'Group the records by:' : 'Across the bottom:',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        const SizedBox(height: 4),
+                        DropdownButtonFormField<String>(
+                          key: const ValueKey('chart-category'),
+                          isExpanded: true,
+                          value: categoryChoices.any((c) => c.name == config.categoryField)
+                              ? config.categoryField
+                              : null,
+                          decoration:
+                              const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                          hint: const Text('Choose a field', style: TextStyle(fontSize: 12)),
+                          items: [
+                            for (final col in categoryChoices)
+                              DropdownMenuItem(
+                                value: col.name,
+                                child: Text('${col.displayName} (${col.fieldType})',
+                                    style: const TextStyle(fontSize: 12)),
+                              ),
+                          ],
+                          onChanged: (v) => edit((c) => c.copyWith(categoryField: v)),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          grouped
+                              ? (ChartType.isSingleSeries(config.chartType)
+                                  ? 'Slice sizes from:'
+                                  : 'Series:')
+                              : 'Up the side:',
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                        if (seriesChoices.isEmpty)
+                          Text(
+                            grouped
+                                ? 'This table has no summary fields. A chart draws figures worked '
+                                    'out over groups, so add a Summary field in Manage Database.'
+                                : 'This table has no number fields to plot.',
+                            style: TextStyle(fontSize: 10.5, color: Colors.orange.shade800),
+                          )
+                        else
+                          Wrap(
+                            spacing: 5,
+                            runSpacing: 4,
+                            children: [
+                              for (final col in seriesChoices)
+                                FilterChip(
+                                  key: ValueKey('chart-series-${col.name}'),
+                                  label: Text(col.displayName,
+                                      style: const TextStyle(fontSize: 11)),
+                                  selected: config.series.any((s) => s.field == col.name),
+                                  onSelected: (on) => edit((c) {
+                                    final series = List.of(c.series);
+                                    if (on) {
+                                      // A pie draws one series, so choosing a
+                                      // second replaces the first.
+                                      if (ChartType.isSingleSeries(c.chartType) ||
+                                          !grouped) {
+                                        series.clear();
+                                      }
+                                      series.add(ChartSeriesModel(
+                                          field: col.name, label: col.displayName));
+                                    } else {
+                                      series.removeWhere((s) => s.field == col.name);
+                                    }
+                                    return c.copyWith(series: series);
+                                  }),
+                                ),
+                            ],
+                          ),
+                        const Divider(height: 24),
+                        CheckboxListTile(
+                          key: const ValueKey('chart-show-values'),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Show the figures', style: TextStyle(fontSize: 11.5)),
+                          value: config.showValues,
+                          onChanged: (v) => edit((c) => c.copyWith(showValues: v ?? true)),
+                        ),
+                        CheckboxListTile(
+                          key: const ValueKey('chart-show-legend'),
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Show the legend', style: TextStyle(fontSize: 11.5)),
+                          value: config.showLegend,
+                          onChanged: (v) => edit((c) => c.copyWith(showLegend: v ?? true)),
+                        ),
+                        if (config.chartType == ChartType.pie)
+                          CheckboxListTile(
+                            key: const ValueKey('chart-show-percentages'),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text('Show each slice as a percentage',
+                                style: TextStyle(fontSize: 11.5)),
+                            value: config.showPercentages,
+                            onChanged: (v) =>
+                                edit((c) => c.copyWith(showPercentages: v ?? false)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const VerticalDivider(width: 20),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        const Text('Preview (made-up figures)',
+                            style: TextStyle(fontSize: 10.5, color: Colors.grey)),
+                        const SizedBox(height: 4),
+                        Expanded(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey.shade400),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: ChartView(
+                              key: const ValueKey('chart-setup-preview'),
+                              config: config,
+                              data: _sampleChartData(config),
+                              notice: config.isBound
+                                  ? null
+                                  : 'Choose a field and a series to see the chart',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+              FilledButton(
+                key: const ValueKey('chart-apply'),
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Apply'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    if (saved != true || !mounted) return;
+    _pushUndoState();
+    setState(() {
+      _layout = _layout.copyWith(
+        objects: [
+          for (final o in _layout.objects)
+            if (o.id == object.id) o.copyWith(chartConfig: config.toJson()) else o,
+        ],
+      );
+    });
+    _markLayoutDirty();
+  }
+
   /// The layout's parts, three to a row, for the inspector's size boxes.
   List<List<LayoutPartModel>> _partRows() {
     final rows = <List<LayoutPartModel>>[];
@@ -3781,16 +4052,29 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         );
 
       case 'chart':
-        return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.bar_chart, size: 28, color: Colors.indigo),
-              const SizedBox(height: 4),
-              Text(obj.text.isNotEmpty ? obj.text : 'Chart Object',
-                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-            ],
-          ),
+        final chart = obj.chart;
+        if (!chart.isBound) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.bar_chart, size: 26, color: Colors.indigo),
+                  SizedBox(height: 4),
+                  Text('Choose a field and a series in Chart Setup',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 9.5, color: Colors.grey)),
+                ],
+              ),
+            ),
+          );
+        }
+        // On the canvas a chart is drawn with made-up figures, so its shape
+        // and its labels can be judged without leaving Layout mode (#37).
+        return ChartView(
+          config: chart,
+          data: _sampleChartData(chart),
         );
 
       case 'web_viewer':
@@ -4876,6 +5160,39 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     ];
   }
 
+  /// The inspector's way in to Chart Setup, with what the chart draws now.
+  List<Widget> _chartSetupSection(LayoutObjectModel sel) {
+    final chart = sel.chart;
+    final category = _currentTable.columns.where((c) => c.name == chart.categoryField).firstOrNull;
+
+    return [
+      _inspectorSectionTitle('CHART'),
+      Text(
+        chart.isBound
+            ? '${ChartType.label(chart.chartType)} chart of '
+                '${chart.drawnSeries.map((s) => s.label.isEmpty ? s.field : s.label).join(', ')} '
+                'by ${category?.displayName ?? chart.categoryField}'
+            : 'This chart draws nothing yet.',
+        style: const TextStyle(fontSize: 11.5),
+      ),
+      const SizedBox(height: 8),
+      FilledButton.tonalIcon(
+        key: const ValueKey('inspector-chart-setup'),
+        icon: const Icon(Icons.tune, size: 16),
+        label: const Text('Chart Setup...', style: TextStyle(fontSize: 12)),
+        onPressed: () => unawaited(_showChartSetup(sel)),
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 6),
+        child: Text(
+          'A chart draws figures worked out over the found set, grouped by the field you '
+          'choose. Double-click the chart on the canvas to set it up.',
+          style: TextStyle(fontSize: 10.5, color: Colors.grey),
+        ),
+      ),
+    ];
+  }
+
   Widget _buildDataTab(LayoutObjectModel sel, bool isDark) {
     final isButton = sel.type == 'button' || sel.type == 'popover_button';
     return ListView(
@@ -4883,6 +5200,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       children: [
         if (sel.type == 'field') ..._fieldBindingSection(sel, isDark),
         if (sel.type == 'portal') ..._portalSetupSection(sel, isDark),
+        if (sel.type == 'chart') ..._chartSetupSection(sel),
         if (isButton) ..._buttonActionSection(sel, isDark),
         if (sel.isTabStop) ...[
           const Divider(height: 24),

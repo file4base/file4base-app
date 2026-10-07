@@ -23,8 +23,27 @@
     },
     "theme": {
       "type": "string",
-      "enum": ["Enlightened", "Enlightened Touch", "Enlightened Print", "Minimalist"],
+      "description": "The layout's theme: how a generated layout looks (#33). Not the application theme in Manage Themes, which colours the window.",
+      "enum": ["Enlightened", "Cool Grey", "Classic", "Minimal"],
       "default": "Enlightened"
+    },
+    "label_stock": {
+      "type": "object",
+      "description": "Present only on a labels layout, which is one label repeated across and down a sheet (#33).",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "page_width_mm": { "type": "number" },
+        "page_height_mm": { "type": "number" },
+        "label_width_mm": { "type": "number" },
+        "label_height_mm": { "type": "number" },
+        "across": { "type": "integer" },
+        "down": { "type": "integer" },
+        "margin_left_mm": { "type": "number" },
+        "margin_top_mm": { "type": "number" },
+        "gutter_x_mm": { "type": "number" },
+        "gutter_y_mm": { "type": "number" }
+      }
     },
     "default_view": {
       "type": "string",
@@ -88,6 +107,7 @@
               "top_navigation",
               "title_header",
               "header",
+              "leading_grand_summary",
               "body",
               "subsummary",
               "trailing_grand_summary",
@@ -197,7 +217,14 @@
         "field_binding": {
           "type": "object",
           "properties": {
-            "table_occurrence": { "type": "string" },
+            "table_occurrence": {
+              "type": "string",
+              "description": "Occurrence the field is read from. Another occurrence makes this a related field, read through relationship_id (#36)."
+            },
+            "relationship_id": {
+              "type": "string",
+              "description": "Relationship followed to reach table_occurrence. The same two tables can be joined more than once, so the occurrence alone does not identify the join."
+            },
             "field_name": { "type": "string" },
             "control_style": {
               "type": "string",
@@ -210,12 +237,57 @@
         },
         "portal_config": {
           "type": "object",
+          "description": "Objects of type 'portal': the related records the rows show (#36).",
           "properties": {
             "relationship_id": { "type": "string" },
-            "target_table_occurrence": { "type": "string" },
+            "occurrence": {
+              "type": "string",
+              "description": "Occurrence whose records the rows show, by name. It tells the two ends apart when a relationship joins a table to itself."
+            },
+            "initial_row": { "type": "integer", "default": 1 },
+            "row_count": { "type": "integer", "default": 5 },
             "row_height": { "type": "number" },
-            "allow_delete_row": { "type": "boolean" },
-            "initial_row_count": { "type": "integer" }
+            "show_scroll_bar": { "type": "boolean", "default": true },
+            "allow_creation": { "type": "boolean", "default": false },
+            "allow_deletion": { "type": "boolean", "default": false },
+            "sort": {
+              "type": "string",
+              "description": "Row order, as the data API takes it: 'last_name,-fee_paid'. Empty uses the relationship's own sort."
+            }
+          }
+        },
+        "chart_config": {
+          "type": "object",
+          "description": "Objects of type 'chart': what it draws (#37).",
+          "properties": {
+            "chart_type": {
+              "type": "string",
+              "enum": ["column", "bar", "line", "area", "pie", "scatter"],
+              "default": "column"
+            },
+            "title": { "type": "string" },
+            "category_field": {
+              "type": "string",
+              "description": "Grouped charts: the field whose values are the categories. Scatter: the number field along the bottom."
+            },
+            "series": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "description": "Grouped charts: a summary field. Scatter: the number field up the side."
+                  },
+                  "label": { "type": "string" },
+                  "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+                },
+                "required": ["field"]
+              }
+            },
+            "show_values": { "type": "boolean", "default": true },
+            "show_legend": { "type": "boolean", "default": true },
+            "show_percentages": { "type": "boolean", "default": false }
           }
         },
         "style": {

@@ -1,4 +1,6 @@
 import 'dart:math' as math;
+
+import 'chart_definition.dart';
 /// The kinds of band a layout is divided into (#32).
 ///
 /// A report is these parts in order: the header, a leading grand summary, then
@@ -534,6 +536,9 @@ class LayoutObjectModel {
   final Map<String, bool>? anchors; // top, bottom, left, right
   final bool isLocked;
   final Map<String, dynamic>? portalConfig;
+
+  /// For an object of type `chart`, what it draws (#37).
+  final Map<String, dynamic>? chartConfig;
   final ButtonActionModel? action; // buttons: what a click runs in Browse mode
   final int? tabOrder; // position in the Tab key sequence (1-based); null = reading order
   final LayoutMediaModel? media; // picture / document shown inside the object
@@ -553,6 +558,7 @@ class LayoutObjectModel {
     this.anchors,
     this.isLocked = false,
     this.portalConfig,
+    this.chartConfig,
     this.action,
     this.tabOrder,
     this.media,
@@ -563,6 +569,9 @@ class LayoutObjectModel {
 
   /// The portal's setup, for an object of type `portal` (#36).
   PortalConfigModel get portal => PortalConfigModel.fromJson(portalConfig ?? const {});
+
+  /// The chart's setup, for an object of type `chart` (#37).
+  ChartConfigModel get chart => ChartConfigModel.fromJson(chartConfig ?? const {});
 
   double get right => x + width;
   double get bottom => y + height;
@@ -604,6 +613,9 @@ class LayoutObjectModel {
       ),
       isLocked: json['is_locked'] as bool? ?? false,
       portalConfig: json['portal_config'] as Map<String, dynamic>?,
+      chartConfig: json['chart_config'] is Map
+          ? Map<String, dynamic>.from(json['chart_config'] as Map)
+          : null,
       action: json['action'] is Map
           ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['action'] as Map))
           : null,
@@ -629,6 +641,7 @@ class LayoutObjectModel {
         if (anchors != null) 'anchors': anchors,
         if (isLocked) 'is_locked': true,
         if (portalConfig != null) 'portal_config': portalConfig,
+        if (chartConfig != null) 'chart_config': chartConfig,
         if (action != null) 'action': action!.toJson(),
         if (tabOrder != null) 'tab_order': tabOrder,
         if (media != null) 'media': media!.toJson(),
@@ -651,6 +664,7 @@ class LayoutObjectModel {
     Map<String, bool>? anchors,
     bool? isLocked,
     Map<String, dynamic>? portalConfig,
+    Map<String, dynamic>? chartConfig,
     ButtonActionModel? action,
     int? tabOrder,
     LayoutMediaModel? media,
@@ -674,6 +688,7 @@ class LayoutObjectModel {
       anchors: anchors ?? this.anchors,
       isLocked: isLocked ?? this.isLocked,
       portalConfig: clearPortalConfig ? null : (portalConfig ?? this.portalConfig),
+      chartConfig: chartConfig ?? this.chartConfig,
       action: clearAction ? null : (action ?? this.action),
       tabOrder: clearTabOrder ? null : (tabOrder ?? this.tabOrder),
       media: clearMedia ? null : (media ?? this.media),
