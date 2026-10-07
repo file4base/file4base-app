@@ -141,6 +141,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   bool _isLoadingTables = false;
   bool _isToolbarVisible = true;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
+
+  /// The find requests that define the found set, remembered while the data
+  /// browser is not on screen so Preview can print the same records (#32).
+  List<Map<String, dynamic>> _foundSetRequests = const [];
   final GlobalKey<LayoutDesignerWidgetState> _layoutDesignerKey = GlobalKey<LayoutDesignerWidgetState>();
   LayoutPreviewWidgetState? _previewState;
   int _currentRecordIndex = 0;
@@ -1886,6 +1890,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             if (match != null) _selectLayout(match);
             return match != null;
           },
+          onFoundSetChanged: (requests) => _foundSetRequests = requests,
           onRecordChanged: (idx, total) {
             if (mounted) {
               setState(() {
@@ -1975,6 +1980,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           pageSetup: _pageSetup,
           onPageSetup: _handlePageSetup,
           currentUserName: _currentUser?.username,
+          // The sheet is the found set, not the whole table (#32).
+          findRequests: _foundSetRequests,
           onAttach: (state) => _previewState = state,
         );
     }

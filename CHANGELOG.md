@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Summary fields and reports** ([#32](https://github.com/file4base/file4base-app/issues/32)).
+  File4Base could show records and sort them, but not group them, total them or
+  produce a report. `SUMMARY` was a field type that mapped to a plain column and
+  was never computed, and a layout part could call itself a sub-summary but
+  nothing created one, sorted by it or drew it. Lesson 12 of the tutorial is new
+  and builds the Annual Fee Report;
+  [docs/specs/summary_fields_and_reports.md](docs/specs/summary_fields_and_reports.md)
+  is the specification.
+  - **Seven kinds of summary**: total, average, count, minimum, maximum,
+    standard deviation and fraction of total, with a running-total option. They
+    are worked out in SQL over the found set, which is given as the same find
+    requests a find takes, so a report totals the records the find returned.
+  - **A summary has no value in a record**, so its column is never written and a
+    value sent for one is dropped. The same field shows the group's figure in a
+    sub-summary and the whole found set's in a grand summary: the field says
+    what to total, the band says over what.
+  - **Sub-summary and grand summary parts.** A sub-summary names the field it
+    breaks on and is drawn once per group; leading or trailing is decided by
+    where it sits, as in FileMaker. Several of them nest, opening outermost
+    first and closing innermost first.
+  - **The designer handles parts properly**: they are addressed by id rather
+    than by type, so a report can have more than one sub-summary. The Part tool
+    adds them, Part Setup sets the height and the break field, and adding or
+    removing a band moves the objects below it so each stays in the band it was
+    drawn in.
+  - **A layout with summary parts lists its records as a report.** When the
+    found set is not in the order the report needs, it says so and offers to
+    sort rather than printing nonsense — the found set stays the reader's.
+  - Preview draws the report and the printed sheet is that report, **once** over
+    the found set rather than once per record, scaled down when the layout is
+    wider than the paper so its right-hand columns do not fall off the sheet.
+  - A new endpoint, `POST /api/v1/data/{table}/summary`, documented in
+    [docs/api/API_REFERENCE.md](docs/api/API_REFERENCE.md).
+  - A summary field defined before this release, when the Field Options dialog
+    saved a SQL aggregate name, is **read** rather than ignored, so it works
+    without being set up again.
+
+### Changed
+- Preview prints the **found set**, not the whole table. It had always read
+  every record regardless of the find, which only became visible once a report
+  could be printed ([#32](https://github.com/file4base/file4base-app/issues/32)).
+
+### Fixed
+- A summary could not be taken over a **calculation field whose result is a
+  number**, because the check read the field's declared type rather than what
+  its column stores — so the tutorial's own Annual Fee could not be totalled
+  ([#30](https://github.com/file4base/file4base-app/issues/30),
+  [#32](https://github.com/file4base/file4base-app/issues/32)).
+- A report over records that were not in its order crashed instead of drawing
+  with its warning: a group that opened twice gave two bands the same key
+  ([#32](https://github.com/file4base/file4base-app/issues/32)).
+
+---
+
 ## [0.9.3] - 2026-10-07
 
 ### Added

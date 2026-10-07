@@ -91,7 +91,8 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   final TextEditingController _calculationFormulaController = TextEditingController();
   String _calculationResultType = 'Text';
 
-  String _summaryOperation = 'SUM';
+  /// One of [SummaryType] (#32).
+  String _summaryOperation = SummaryType.total;
   String? _summaryTargetColumn;
   bool _summaryRunningTotal = false;
 
@@ -169,8 +170,14 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     if (widget.column.calculationFormula != null && widget.column.calculationFormula!.isNotEmpty) {
       try {
         final Map<String, dynamic> calc = jsonDecode(widget.column.calculationFormula!);
-        if (calc.containsKey('operation')) {
-          _summaryOperation = calc['operation'] as String? ?? 'SUM';
+        // A summary's definition, in either the shape saved now or the one
+        // saved before they were computed (#32).
+        final summary = SummarySpecModel.tryParse(widget.column.calculationFormula);
+        if (summary != null && widget.column.fieldType == 'SUMMARY') {
+          _summaryOperation = summary.summaryType;
+          _summaryTargetColumn = summary.field;
+          _summaryRunningTotal = summary.running;
+        } else if (calc.containsKey('operation')) {
           _summaryTargetColumn = calc['target_column'] as String?;
           _summaryRunningTotal = calc['running_total'] as bool? ?? false;
         } else {
@@ -263,11 +270,11 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
       // 3. Pack Calculation / Summary JSON
       String? calculationFormulaStr;
       if (widget.column.fieldType == 'SUMMARY') {
-        calculationFormulaStr = jsonEncode({
-          'operation': _summaryOperation,
-          'target_column': _summaryTargetColumn,
-          'running_total': _summaryRunningTotal,
-        });
+        calculationFormulaStr = jsonEncode(SummarySpecModel(
+          summaryType: _summaryOperation,
+          field: _summaryTargetColumn ?? '',
+          running: _summaryRunningTotal,
+        ).toJson());
       } else if (widget.column.fieldType == 'CALCULATION' || _calculationFormulaController.text.isNotEmpty) {
         calculationFormulaStr = jsonEncode({
           'formula': _calculationFormulaController.text.trim(),
@@ -1117,6 +1124,13 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   // ==========================================
   // TAB 4: CALCULATION & SUMMARY
   // ==========================================
+  /// The fields this summary can be taken over: not itself, never another
+  /// summary, and only numbers when the kind needs them (#32).
+  List<ColumnModel> get _summarizableColumns => widget.table.columns
+      .where((c) => c.name != widget.column.name && c.fieldType != 'SUMMARY')
+      .where((c) => !SummaryType.needsNumber(_summaryOperation) || c.storageType == 'NUMBER')
+      .toList();
+
   Widget _buildCalculationTab(ThemeData theme, bool isDark) {
     final resultTypes = ['Text', 'Number', 'Date', 'Time', 'Timestamp'];
     final isCalculation = widget.column.fieldType == 'CALCULATION';
@@ -1243,14 +1257,26 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     border: OutlineInputBorder(),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 'SUM', child: Text('Total of (Sum)', style: TextStyle(fontSize: 12))),
-                    DropdownMenuItem(value: 'AVG', child: Text('Average of', style: TextStyle(fontSize: 12))),
-                    DropdownMenuItem(value: 'COUNT', child: Text('Count of', style: TextStyle(fontSize: 12))),
-                    DropdownMenuItem(value: 'MIN', child: Text('Minimum of', style: TextStyle(fontSize: 12))),
-                    DropdownMenuItem(value: 'MAX', child: Text('Maximum of', style: TextStyle(fontSize: 12))),
+                  items: [
+                    for (final entry in SummaryType.labels.entries)
+                      DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value, style: const TextStyle(fontSize: 12)),
+                      ),
                   ],
-                  onChanged: (v) => setState(() => _summaryOperation = v!),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() {
+                      _summaryOperation = v;
+                      // Totalling text is refused by the server, so a field
+                      // the new kind cannot be taken over is let go of here
+                      // rather than saved and bounced back.
+                      if (SummaryType.needsNumber(v) &&
+                          !_summarizableColumns.any((c) => c.name == _summaryTargetColumn)) {
+                        _summaryTargetColumn = null;
+                      }
+                    });
+                  },
                 ),
               ),
               const SizedBox(width: 16),
@@ -1266,8 +1292,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                       contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       border: OutlineInputBorder(),
                     ),
-                    items: widget.table.columns
-                        .where((c) => c.name != widget.column.name)
+                    items: _summarizableColumns
                         .map((c) => DropdownMenuItem(value: c.name, child: Text('${c.displayName} (${c.fieldType})', style: const TextStyle(fontSize: 12))))
                         .toList(),
                     onChanged: (v) => setState(() => _summaryTargetColumn = v),
@@ -1284,9 +1309,25 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 value: _summaryRunningTotal,
                 onChanged: (v) => setState(() => _summaryRunningTotal = v ?? false),
               ),
-              const Text('Running total', style: TextStyle(fontSize: 12)),
+              const Expanded(
+                child: Text(
+                  'Running total — adds up down the records as they are drawn, '
+                  'rather than giving one figure per group',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ),
             ],
           ),
+          if (isSummary)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                'A summary has no value in a record: it is worked out over the found set '
+                'when a report is drawn. Put it in a sub-summary part to total each group, '
+                'or in a grand summary part to total the lot.',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            ),
         ],
       ),
     );

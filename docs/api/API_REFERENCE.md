@@ -499,6 +499,63 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`, `IS_EMPTY
 
 ---
 
+### `POST /api/v1/data/{table}/summary`
+
+Works out the figures of a report: what each summary field comes to over the found set, and over each group of it (#32). See [docs/specs/summary_fields_and_reports.md](../specs/summary_fields_and_reports.md).
+
+#### Request Body
+```json
+{
+  "requests": [
+    {"criteria": [{"field_name": "city", "operator": "=", "value": "Paris"}], "omit": false}
+  ],
+  "fields": ["fee_total", "fee_count"],
+  "group_by": ["customer_type"]
+}
+```
+
+- `requests` — the found set, in the same form `POST .../find` takes, so a report totals the records the find returned. Empty summarizes every record of the table.
+- `fields` — the summary fields wanted. Empty returns every summary field the table has.
+- `group_by` — the break fields, outermost first. Empty returns the grand totals alone. A report asks once per break level, because a sub-summary needs the group at its own level.
+
+#### Response `200 OK`
+```json
+{
+  "count": 16,
+  "grand": {"fee_total": "2300", "fee_count": "16"},
+  "group_by": ["customer_type"],
+  "groups": [
+    {"values": {"customer_type": "Continuing"}, "count": 9, "summaries": {"fee_total": "900", "fee_count": "9"}},
+    {"values": {"customer_type": "New"}, "count": 7, "summaries": {"fee_total": "1400", "fee_count": "7"}}
+  ],
+  "summaries": {"fee_total": {"summary_type": "total", "field": "annual_fee", "running": false}}
+}
+```
+
+Groups come back in the order their break fields sort, so a report reads top to bottom. Figures are decimal text rather than numbers, so nothing is lost through a float (#18); `fraction_of_total` is a share between 0 and 1.
+
+#### Errors
+- `422 Invalid Summary Field` — a field named in `fields` is not a summary field, or its definition cannot be used.
+- `400 Unknown Field` — a `group_by` field the table does not have.
+
+---
+
+### Summary fields
+
+A **summary field** (`field_type: "SUMMARY"`) works out a figure over a set of records rather than holding a value per record. Its definition goes in `calculation_formula`:
+
+```json
+{"summary_type": "total", "field": "annual_fee", "running": false}
+```
+
+`summary_type` is one of `total`, `average`, `count`, `minimum`, `maximum`, `standard_deviation`, `fraction_of_total`. The first two and the last two need a field that **stores** numbers — a calculation whose result type is Number counts. A summary over another summary, or over itself, is refused with `422`.
+
+The older shape, `{"operation": "SUM", "target_column": "annual_fee"}`, is read as well, so a field defined before summaries were computed works without being set up again.
+
+**A summary field's column is never written.** It has no value in a record, so a value sent for one in `POST` or `PUT` is dropped; an update of summary fields alone changes nothing and answers the record unchanged.
+
+---
+
 ### Related records and portals
 
 A layout can show the other side of a relationship: a **related field** (`Companies::company_address` on a Customers layout) and a **portal**, which is the list of related records. Both read these two endpoints. See [docs/specs/relationships_and_portals.md](../specs/relationships_and_portals.md).

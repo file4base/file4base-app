@@ -33,6 +33,7 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/", h.ListRows)
 		r.Post("/", h.InsertRow)
 		r.Post("/find", h.FindRows)
+		r.Post("/summary", h.SummarizeRows)
 		r.Get("/{id}", h.GetRow)
 		r.Get("/{id}/related", h.ListRelatedRows)
 		r.Post("/{id}/related", h.CreateRelatedRow)
@@ -72,6 +73,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 	switch {
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
+	case errors.Is(err, data.ErrInvalidSummary):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Summary Field", err.Error())
 	case errors.Is(err, data.ErrRelationshipNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Relationship Not Found", err.Error())
 	case errors.Is(err, data.ErrCreationNotAllowed):
@@ -244,6 +247,37 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(results)
+}
+
+// SummarizeRows works out the figures of a report: what each summary field
+// comes to over the found set, and over each group of it (#32).
+//
+//	POST /api/v1/data/{table}/summary
+//
+// The found set is given as find requests, exactly as `POST .../find` takes
+// them, so a report totals the records the find returned. An empty `requests`
+// summarizes every record of the table.
+func (h *DataHandler) SummarizeRows(w http.ResponseWriter, r *http.Request) {
+	table := chi.URLParam(r, "table")
+	svc, ok := h.authorize(w, r, table, false)
+	if !ok {
+		return
+	}
+
+	var body data.SummaryRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	result, err := svc.Summarize(r.Context(), table, body)
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Summary Error", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
 }
 
 // ListRelatedRows returns the records of a related table that match the record

@@ -1,8 +1,62 @@
 import 'dart:math' as math;
+/// The kinds of band a layout is divided into (#32).
+///
+/// A report is these parts in order: the header, a leading grand summary, then
+/// for each group a leading sub-summary, its body rows and a trailing
+/// sub-summary, then a trailing grand summary and the footer.
+///
+/// Whether a sub-summary is leading or trailing is decided by **where it sits**
+/// — above the body or below it — as it is in FileMaker, rather than by two
+/// separate part types.
+class LayoutPartType {
+  static const String header = 'header';
+  static const String leadingGrandSummary = 'leading_grand_summary';
+  static const String subSummary = 'subsummary';
+  static const String body = 'body';
+  static const String trailingGrandSummary = 'trailing_grand_summary';
+  static const String footer = 'footer';
+
+  /// What each part is called in the designer's gutter and menus.
+  static const Map<String, String> labels = {
+    header: 'Header',
+    leadingGrandSummary: 'Leading Grand Summary',
+    subSummary: 'Sub-summary',
+    body: 'Body',
+    trailingGrandSummary: 'Trailing Grand Summary',
+    footer: 'Footer',
+  };
+
+  /// The parts a layout has exactly one of, in the order they must appear.
+  static const List<String> fixedOrder = [
+    header,
+    leadingGrandSummary,
+    subSummary,
+    body,
+    subSummary,
+    trailingGrandSummary,
+    footer,
+  ];
+
+  static bool isGrandSummary(String type) =>
+      type == leadingGrandSummary || type == trailingGrandSummary;
+
+  /// A part whose content is a summary rather than a record.
+  static bool isSummaryPart(String type) => type == subSummary || isGrandSummary(type);
+
+  static String label(String type) => labels[type] ?? type;
+}
+
 class LayoutPartModel {
   final String id;
-  final String type; // 'top_navigation', 'title_header', 'header', 'body', 'subsummary', 'footer'
+
+  /// One of [LayoutPartType]. Older layouts may also hold `top_navigation` or
+  /// `title_header`, which render as a header.
+  final String type;
+
   final double height;
+
+  /// For a sub-summary, the field whose change starts a new group. A
+  /// sub-summary without one summarizes nothing and says so.
   final String? breakField;
 
   const LayoutPartModel({
@@ -28,14 +82,25 @@ class LayoutPartModel {
         if (breakField != null) 'break_field': breakField,
       };
 
-  LayoutPartModel copyWith({String? id, String? type, double? height, String? breakField}) {
+  LayoutPartModel copyWith({
+    String? id,
+    String? type,
+    double? height,
+    String? breakField,
+    bool clearBreakField = false,
+  }) {
     return LayoutPartModel(
       id: id ?? this.id,
       type: type ?? this.type,
       height: height ?? this.height,
-      breakField: breakField ?? this.breakField,
+      breakField: clearBreakField ? null : (breakField ?? this.breakField),
     );
   }
+
+  bool get isSubSummary => type == LayoutPartType.subSummary;
+  bool get isGrandSummary => LayoutPartType.isGrandSummary(type);
+  bool get isSummaryPart => LayoutPartType.isSummaryPart(type);
+  bool get isBody => type == LayoutPartType.body;
 }
 
 /// How a field is presented on a layout. Everything but [editBox] is filled
@@ -668,6 +733,95 @@ class LayoutDefinitionModel {
 
   /// Total height of the layout: the sum of its parts (the footer ends it).
   double get height => parts.fold<double>(0.0, (acc, p) => acc + p.height);
+
+  // ─── Report structure (#32) ──────────────────────────────────────────────
+
+  /// Where the body sits among the parts. A layout without one reports -1,
+  /// and nothing above or below it counts as leading or trailing.
+  int get bodyIndex => parts.indexWhere((p) => p.isBody);
+
+  /// The y coordinate the given part starts at, which is what places the
+  /// objects drawn inside it.
+  double partTop(String partId) {
+    double top = 0;
+    for (final part in parts) {
+      if (part.id == partId) return top;
+      top += part.height;
+    }
+    return top;
+  }
+
+  /// The part an object is drawn in, decided by where its top edge falls, the
+  /// way the designer's bands read.
+  LayoutPartModel? partAt(double y) {
+    double top = 0;
+    for (final part in parts) {
+      if (y < top + part.height) return part;
+      top += part.height;
+    }
+    return parts.isEmpty ? null : parts.last;
+  }
+
+  /// The objects drawn inside one part, in layout coordinates.
+  List<LayoutObjectModel> objectsIn(LayoutPartModel part) {
+    final top = partTop(part.id);
+    final bottom = top + part.height;
+    return objects.where((o) => o.y >= top && o.y < bottom).toList();
+  }
+
+  /// The sub-summary parts above the body, outermost first: the ones printed
+  /// before the records of a group.
+  List<LayoutPartModel> get leadingSubSummaries {
+    final body = bodyIndex;
+    if (body < 0) return const [];
+    return parts.sublist(0, body).where((p) => p.isSubSummary).toList();
+  }
+
+  /// The sub-summary parts below the body, innermost first: the ones printed
+  /// after the records of a group.
+  List<LayoutPartModel> get trailingSubSummaries {
+    final body = bodyIndex;
+    if (body < 0) return const [];
+    return parts.sublist(body + 1).where((p) => p.isSubSummary).toList();
+  }
+
+  LayoutPartModel? get leadingGrandSummary =>
+      parts.where((p) => p.type == LayoutPartType.leadingGrandSummary).firstOrNull;
+
+  LayoutPartModel? get trailingGrandSummary =>
+      parts.where((p) => p.type == LayoutPartType.trailingGrandSummary).firstOrNull;
+
+  /// True when this layout is a report: it groups or totals rather than just
+  /// listing records.
+  bool get isReport => parts.any((p) => p.isSummaryPart);
+
+  /// The break fields this report groups by, outermost first.
+  ///
+  /// A leading sub-summary groups from the outside in, reading down the parts;
+  /// a trailing one groups from the inside out, reading up. A field used by
+  /// both appears once.
+  List<String> get breakFields {
+    final fields = <String>[];
+    void add(String? field) {
+      if (field == null || field.isEmpty || fields.contains(field)) return;
+      fields.add(field);
+    }
+
+    for (final part in leadingSubSummaries) {
+      add(part.breakField);
+    }
+    for (final part in trailingSubSummaries.reversed) {
+      add(part.breakField);
+    }
+    return fields;
+  }
+
+  /// The sort order the found set must be in for this report to read
+  /// correctly: by every break field, outermost first.
+  ///
+  /// A report over records sorted any other way interleaves groups, so the
+  /// renderer checks this rather than printing nonsense.
+  List<String> get requiredSortOrder => breakFields;
 
   /// First layout of a table: one row per field, labelled with the field's
   /// label (what the user typed in New Field), not its SQL column name.

@@ -8,6 +8,8 @@ import '../../core/models/page_setup_model.dart';
 import 'layout_object_visuals.dart';
 import 'layout_print_service.dart';
 import 'models/layout_definition.dart';
+import '../data_browser/report_view.dart';
+import '../data_browser/data_browser_widget.dart';
 
 class LayoutPreviewWidget extends StatefulWidget {
   final TableModel table;
@@ -16,6 +18,10 @@ class LayoutPreviewWidget extends StatefulWidget {
   final PageSetupModel pageSetup;
   final VoidCallback? onPageSetup;
   final String? currentUserName;
+
+  /// The find requests that define the found set. Empty prints every record.
+  /// A report prints the records that were found, not the whole table (#32).
+  final List<Map<String, dynamic>> findRequests;
 
   /// Receives this preview's state while it is on screen (null when it
   /// goes away), so File > Print can print the previewed page.
@@ -29,6 +35,7 @@ class LayoutPreviewWidget extends StatefulWidget {
     this.pageSetup = const PageSetupModel(),
     this.onPageSetup,
     this.currentUserName,
+    this.findRequests = const [],
     this.onAttach,
   });
 
@@ -68,20 +75,77 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     }
   }
 
+  /// The figures of the report, one grouping per break level (#32).
+  ReportFigures _reportFigures = const {};
+
+  /// True when the previewed layout groups or totals: the sheet is then the
+  /// report, not one record.
+  bool get _isReport => widget.layout.isReport;
+
+  Map<String, SummarySpecModel> get _summarySpecs => {
+        for (final col in widget.table.columns)
+          if (col.fieldType == 'SUMMARY')
+            if (SummarySpecModel.tryParse(col.calculationFormula) case final spec?) col.name: spec,
+      };
+
   Future<void> _fetchRecords() async {
     try {
-      final rows = await widget.apiClient.listRows(widget.table.name);
+      // A report is over the whole found set, sorted the way its parts need,
+      // so it reads as one group after another rather than interleaved.
+      final found = widget.findRequests.isNotEmpty;
+      final rows = _isReport
+          ? (found
+              ? await widget.apiClient.executeFindAll(widget.table.name, widget.findRequests)
+              : await widget.apiClient.listAllRows(widget.table.name))
+          : (found
+              ? await widget.apiClient.executeFind(widget.table.name, widget.findRequests)
+              : await widget.apiClient.listRows(widget.table.name));
       if (mounted) {
         setState(() {
-          _records = rows;
+          _records = _isReport ? _sortedForReport(rows) : rows;
           if (_currentRecordIndex >= rows.length && rows.isNotEmpty) {
             _currentRecordIndex = rows.length - 1;
           }
           _isLoading = false;
         });
+        if (_isReport) await _fetchReportFigures();
       }
     } catch (_) {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Puts the records in the order the report's parts need.
+  List<Map<String, dynamic>> _sortedForReport(List<Map<String, dynamic>> rows) {
+    final breaks = widget.layout.breakFields;
+    if (breaks.isEmpty) return rows;
+    final sorted = List<Map<String, dynamic>>.from(rows);
+    sorted.sort((a, b) {
+      for (final field in breaks) {
+        final cmp = (a[field]?.toString() ?? '').compareTo(b[field]?.toString() ?? '');
+        if (cmp != 0) return cmp;
+      }
+      return 0;
+    });
+    return sorted;
+  }
+
+  Future<void> _fetchReportFigures() async {
+    final breaks = widget.layout.breakFields;
+    final fields = _summarySpecs.keys.toList();
+    try {
+      final figures = <int, SummaryResultModel>{};
+      for (var level = 0; level <= breaks.length; level++) {
+        figures[level] = await widget.apiClient.summarize(
+          widget.table.name,
+          requests: widget.findRequests,
+          fields: fields,
+          groupBy: breaks.take(level).toList(),
+        );
+      }
+      if (mounted) setState(() => _reportFigures = figures);
+    } catch (_) {
+      // The sheet still draws; the figures are simply blank.
     }
   }
 
@@ -94,7 +158,9 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     final startIndex = _currentRecordIndex;
     try {
       final doc = pw.Document(title: widget.layout.name, creator: 'File4Base');
-      final indexes = allRecords && _records.isNotEmpty
+      // A report is drawn once, over the whole found set: printing it "for
+      // every record" would print the same report once per record (#32).
+      final indexes = allRecords && _records.isNotEmpty && !_isReport
           ? List<int>.generate(_records.length, (i) => i)
           : [_currentRecordIndex];
       for (final i in indexes) {
@@ -107,7 +173,8 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         sheet.dispose();
       }
       final bytes = await doc.save();
-      final name = '${widget.layout.name}${allRecords ? '' : ' - record ${startIndex + 1}'}'
+      final name = '${widget.layout.name}'
+              '${_isReport || allRecords ? '' : ' - record ${startIndex + 1}'}'
           .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
       if (saveAsPdf) {
         await Printing.sharePdf(bytes: bytes, filename: '$name.pdf');
@@ -160,10 +227,17 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                 ),
                 const SizedBox(width: 16),
                 Chip(
-                  label: Text('${_records.length} Records to Print', style: const TextStyle(fontSize: 11)),
+                  // A report is one sheet over the found set, not one sheet
+                  // per record (#32).
+                  label: Text(
+                    _isReport
+                        ? 'One report over ${_records.length} record(s)'
+                        : '${_records.length} Records to Print',
+                    style: const TextStyle(fontSize: 11),
+                  ),
                   padding: EdgeInsets.zero,
                 ),
-                if (_records.length > 1) ...[
+                if (!_isReport && _records.length > 1) ...[
                   const SizedBox(width: 8),
                   IconButton(
                     icon: const Icon(Icons.navigate_before, size: 18),
@@ -289,8 +363,22 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                       const SizedBox(height: 16),
                       const Divider(thickness: 1.5),
                       const SizedBox(height: 16),
-                      // Records body: Render exact layout if objects exist, else fallback to tabular
-                      if (widget.layout.objects.isNotEmpty)
+                      // Records body: a report draws every record through the
+                      // layout's parts (#32); otherwise the exact layout for
+                      // the record in hand, or a plain table.
+                      if (_isReport)
+                        ReportView(
+                          key: const ValueKey('preview-report'),
+                          layout: widget.layout,
+                          table: widget.table,
+                          records: _records,
+                          figures: _reportFigures,
+                          specs: _summarySpecs,
+                          formatValue: DataBrowserWidgetState.fieldText,
+                          forPrint: true,
+                          fitWidth: widget.pageSetup.printableWidthPt,
+                        )
+                      else if (widget.layout.objects.isNotEmpty)
                         _buildLayoutPreviewCanvas(context)
                       else if (_records.isEmpty)
                         const Padding(

@@ -478,13 +478,14 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   padding: const EdgeInsets.only(top: 12),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.orange.shade800),
+                      Icon(Icons.info_outline, size: 16, color: Colors.blue.shade800),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Summary fields are not computed yet: a total across the found set '
-                          'is still to come, so the field stays empty.',
-                          style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                          'A summary has no value in a record: it is worked out over the found '
+                          'set when a report is drawn. Say what it totals in Field Options, '
+                          'then put it in a sub-summary or grand summary part of a layout.',
+                          style: TextStyle(fontSize: 12, color: Colors.blue.shade800),
                         ),
                       ),
                     ],

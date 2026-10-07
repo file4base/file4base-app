@@ -152,7 +152,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   bool _dragPreferencesExpanded = false;
 
   // Part resizing state
-  String? _resizingPartType; // 'header', 'body', 'footer'
+  /// The part being dragged taller or shorter, by id (#32).
+  String? _resizingPartId;
   double _partResizeStartY = 0;
   double _partResizeStartHeight = 0;
   double _partResizeCurrentHeight = 0;
@@ -347,30 +348,132 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   LayoutPartModel get _footerPart =>
       _layout.parts.firstWhere((p) => p.type == 'footer', orElse: () => const LayoutPartModel(id: 'f', type: 'footer', height: 40));
 
-  /// The canvas ends at the bottom of the footer, or lower when an object
+  /// The canvas ends at the bottom of the last part, or lower when an object
   /// sits below it (so that object stays reachable).
   double get _canvasHeight {
-    final partsHeight = _headerPart.height + _bodyPart.height + _footerPart.height;
+    final partsHeight = _layout.parts.fold<double>(0.0, (acc, p) => acc + p.height);
     final lowest = _layout.objects.fold<double>(0.0, (m, o) => math.max(m, o.y + o.height));
     return math.max(partsHeight, lowest);
   }
 
-  /// Sets the total layout height by resizing the body part.
-  void _setLayoutHeight(double total) {
-    final body = (total - _headerPart.height - _footerPart.height).clamp(40.0, 3000.0);
-    _setPartHeight('body', body);
+  // ─── Parts (#32) ───────────────────────────────────────────────────────────
+
+  /// A part is addressed by its id, not by its type: a report has more than
+  /// one sub-summary, so a type no longer identifies one.
+  LayoutPartModel? _partById(String id) =>
+      _layout.parts.where((p) => p.id == id).firstOrNull;
+
+  /// Where a part starts down the canvas.
+  double _partTop(String id) => _layout.partTop(id);
+
+  /// How tall a part may be.
+  double _clampPartHeight(String type, double height) => switch (type) {
+        LayoutPartType.header => height.clamp(20.0, 800.0),
+        LayoutPartType.footer => height.clamp(20.0, 600.0),
+        LayoutPartType.body => height.clamp(40.0, 3000.0),
+        _ => height.clamp(16.0, 600.0),
+      };
+
+  /// Adds a part, pushing the objects below it down so each one stays in the
+  /// band it was drawn in.
+  void _insertPart(String type, {String? breakField}) {
+    _pushUndoState();
+    const newHeight = 40.0;
+    final parts = List<LayoutPartModel>.from(_layout.parts);
+    final at = _insertionIndexFor(type, parts);
+    final top = parts.take(at).fold<double>(0.0, (acc, p) => acc + p.height);
+
+    parts.insert(
+      at,
+      LayoutPartModel(
+        id: 'part_${DateTime.now().microsecondsSinceEpoch}',
+        type: type,
+        height: newHeight,
+        breakField: breakField,
+      ),
+    );
+
+    setState(() {
+      _layout = _layout.copyWith(
+        parts: parts,
+        objects: [
+          for (final o in _layout.objects)
+            if (o.y >= top) o.copyWith(y: o.y + newHeight) else o,
+        ],
+      );
+    });
+    _markLayoutDirty();
   }
 
-  void _setPartHeight(String type, double height) {
-    final h = switch (type) {
-      'header' => height.clamp(20.0, 800.0),
-      'footer' => height.clamp(20.0, 600.0),
-      _ => height.clamp(40.0, 3000.0),
-    };
+  /// Where a new part belongs, so the bands stay in the order a report reads:
+  /// header, leading grand summary, leading sub-summaries, body, trailing
+  /// sub-summaries, trailing grand summary, footer.
+  int _insertionIndexFor(String type, List<LayoutPartModel> parts) {
+    final body = parts.indexWhere((p) => p.isBody);
+    switch (type) {
+      case LayoutPartType.leadingGrandSummary:
+        final header = parts.indexWhere((p) => p.type == LayoutPartType.header);
+        return header < 0 ? 0 : header + 1;
+      case LayoutPartType.trailingGrandSummary:
+        final footer = parts.indexWhere((p) => p.type == LayoutPartType.footer);
+        return footer < 0 ? parts.length : footer;
+      case LayoutPartType.subSummary:
+        // A new sub-summary goes just above the body, which is where a report
+        // most often wants one; it can be dragged below afterwards.
+        return body < 0 ? parts.length : body;
+      default:
+        return body < 0 ? parts.length : body;
+    }
+  }
+
+  /// Removes a part, with the objects drawn in it, and pulls everything below
+  /// it back up.
+  void _deletePart(String id) {
+    final part = _partById(id);
+    if (part == null) return;
+    // The three standard bands are what a layout is made of; only the summary
+    // parts a report adds can be taken away again.
+    if (!part.isSummaryPart) return;
+
+    _pushUndoState();
+    final top = _partTop(id);
+    final bottom = top + part.height;
+
+    setState(() {
+      _layout = _layout.copyWith(
+        parts: _layout.parts.where((p) => p.id != id).toList(),
+        objects: [
+          for (final o in _layout.objects)
+            if (o.y < top)
+              o
+            else if (o.y >= bottom)
+              o.copyWith(y: o.y - part.height),
+        ],
+      );
+      if (_primarySelectedId != null && _partById(_primarySelectedId!) == null) {
+        _selectedIds.removeWhere((objId) => _layout.objects.every((o) => o.id != objId));
+      }
+    });
+    _markLayoutDirty();
+  }
+
+  /// Sets the total layout height by resizing the body part, which is the one
+  /// that grows.
+  void _setLayoutHeight(double total) {
+    final others = _layout.parts
+        .where((p) => !p.isBody)
+        .fold<double>(0.0, (acc, p) => acc + p.height);
+    _setPartHeight(_bodyPart.id, (total - others).clamp(40.0, 3000.0));
+  }
+
+  void _setPartHeight(String id, double height) {
+    final part = _partById(id);
+    if (part == null) return;
+    final h = _clampPartHeight(part.type, height);
     _pushUndoState();
     setState(() {
       _layout = _layout.copyWith(
-        parts: _layout.parts.map((p) => p.type == type ? p.copyWith(height: h.toDouble()) : p).toList(),
+        parts: _layout.parts.map((p) => p.id == id ? p.copyWith(height: h) : p).toList(),
       );
     });
     _markLayoutDirty();
@@ -519,120 +622,218 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   // ─── Part Resizing Logic ───────────────────────────────────────────────────
 
-  void _onPartResizeStart(String partType, DragStartDetails details) {
+  void _onPartResizeStart(String partId, DragStartDetails details) {
+    final part = _partById(partId);
+    if (part == null) return;
     _pushUndoState();
-    final currentH = switch (partType) {
-      'header' => _headerPart.height,
-      'body' => _bodyPart.height,
-      'footer' => _footerPart.height,
-      _ => 60.0,
-    };
     setState(() {
-      _resizingPartType = partType;
+      _resizingPartId = partId;
       _partResizeStartY = details.globalPosition.dy;
-      _partResizeStartHeight = currentH;
-      _partResizeCurrentHeight = currentH;
+      _partResizeStartHeight = part.height;
+      _partResizeCurrentHeight = part.height;
     });
   }
 
   void _onPartResizeUpdate(DragUpdateDetails details) {
-    if (_resizingPartType == null) return;
+    final id = _resizingPartId;
+    if (id == null) return;
+    final part = _partById(id);
+    if (part == null) return;
+
     final delta = details.globalPosition.dy - _partResizeStartY;
-    double newHeight = _partResizeStartHeight + delta;
-
-    switch (_resizingPartType) {
-      case 'header':
-        newHeight = newHeight.clamp(20.0, 800.0);
-        break;
-      case 'body':
-        newHeight = newHeight.clamp(40.0, 3000.0);
-        break;
-      case 'footer':
-        newHeight = newHeight.clamp(20.0, 600.0);
-        break;
-    }
-
+    double newHeight = _clampPartHeight(part.type, _partResizeStartHeight + delta);
     if (_snapToGrid) {
       newHeight = (newHeight / 8.0).roundToDouble() * 8.0;
     }
 
     setState(() {
       _partResizeCurrentHeight = newHeight;
-      final updatedParts = _layout.parts.map((p) {
-        if (p.type == _resizingPartType) {
-          return p.copyWith(height: newHeight);
-        }
-        return p;
-      }).toList();
-      _layout = _layout.copyWith(parts: updatedParts);
+      _layout = _layout.copyWith(
+        parts: _layout.parts.map((p) => p.id == id ? p.copyWith(height: newHeight) : p).toList(),
+      );
     });
   }
 
   void _onPartResizeEnd(DragEndDetails details) {
-    if (_resizingPartType == null) return;
+    if (_resizingPartId == null) return;
     setState(() {
-      _resizingPartType = null;
+      _resizingPartId = null;
     });
     _markLayoutDirty();
   }
 
-  Future<void> _showPartSetupDialog(String partType) async {
-    final currentPart = _layout.parts.firstWhere((p) => p.type == partType,
-        orElse: () => LayoutPartModel(id: partType, type: partType, height: 60));
-    final heightCtrl = TextEditingController(text: currentPart.height.round().toString());
+  /// Part Setup: how tall a band is, what a sub-summary groups by, and —
+  /// for the parts a report adds — removing it again (#32).
+  Future<void> _showPartSetupDialog(String partId) async {
+    final part = _partById(partId);
+    if (part == null) return;
 
-    final confirmed = await showDialog<bool>(
+    final heightCtrl = TextEditingController(text: part.height.round().toString());
+    String? breakField = part.breakField;
+    final breakable = _currentTable.columns.where((c) => !c.isPrimaryKey).toList();
+
+    final result = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.table_rows, color: Color(0xFF1E88E5)),
-            const SizedBox(width: 8),
-            Text('${partType.toUpperCase()} Part Setup'),
-          ],
-        ),
-        content: SizedBox(
-          width: 320,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Row(
             children: [
-              Text('Adjust the height for the $partType part in points (pt):',
-                  style: const TextStyle(fontSize: 13)),
-              const SizedBox(height: 12),
-              TextField(
-                controller: heightCtrl,
-                keyboardType: TextInputType.number,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Part Height (pt)',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-              ),
+              Icon(part.isSummaryPart ? Icons.summarize_outlined : Icons.table_rows,
+                  color: const Color(0xFF1E88E5)),
+              const SizedBox(width: 8),
+              Expanded(child: Text('${_partLabel(part)} Setup')),
             ],
           ),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  key: const ValueKey('part-height'),
+                  controller: heightCtrl,
+                  keyboardType: TextInputType.number,
+                  autofocus: !part.isSubSummary,
+                  decoration: const InputDecoration(
+                    labelText: 'Part height (pt)',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                if (part.isSubSummary) ...[
+                  const SizedBox(height: 16),
+                  const Text('When sorted by:',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  DropdownButtonFormField<String>(
+                    key: const ValueKey('part-break-field'),
+                    value: breakable.any((c) => c.name == breakField) ? breakField : null,
+                    decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                    hint: const Text('Choose a field', style: TextStyle(fontSize: 12)),
+                    items: [
+                      for (final col in breakable)
+                        DropdownMenuItem(
+                          value: col.name,
+                          child: Text('${col.displayName} (${col.fieldType})',
+                              style: const TextStyle(fontSize: 12)),
+                        ),
+                    ],
+                    onChanged: (v) => setDialogState(() => breakField = v),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 6),
+                    child: Text(
+                      'This band is drawn once for each group of records that share this '
+                      'field. The found set has to be sorted by it, outermost field first, '
+                      'or the groups come out split up.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ),
+                ],
+                if (part.isGrandSummary)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: Text(
+                      'This band is drawn once, over the whole found set.',
+                      style: TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            if (part.isSummaryPart)
+              TextButton(
+                key: const ValueKey('part-delete'),
+                onPressed: () => Navigator.of(ctx).pop('delete'),
+                style: TextButton.styleFrom(foregroundColor: Colors.red),
+                child: const Text('Delete part'),
+              ),
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop('apply'), child: const Text('Apply')),
+          ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Apply')),
+      ),
+    );
+
+    if (!mounted) return;
+    if (result == 'delete') {
+      _deletePart(partId);
+      return;
+    }
+    if (result != 'apply') return;
+
+    final h = double.tryParse(heightCtrl.text.trim());
+    _pushUndoState();
+    setState(() {
+      _layout = _layout.copyWith(
+        parts: _layout.parts.map((p) {
+          if (p.id != partId) return p;
+          var updated = p;
+          if (h != null && h > 10) updated = updated.copyWith(height: _clampPartHeight(p.type, h));
+          if (p.isSubSummary) {
+            updated = breakField == null
+                ? updated.copyWith(clearBreakField: true)
+                : updated.copyWith(breakField: breakField);
+          }
+          return updated;
+        }).toList(),
+      );
+    });
+    _markLayoutDirty();
+  }
+
+  /// The Part tool: which band to add.
+  Future<void> _showAddPartDialog() async {
+    final type = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Add a part'),
+        children: [
+          for (final entry in const {
+            LayoutPartType.subSummary: (
+              Icons.segment,
+              'Sub-summary',
+              'Drawn once per group of records, for a report that subtotals.',
+            ),
+            LayoutPartType.leadingGrandSummary: (
+              Icons.vertical_align_top,
+              'Leading grand summary',
+              'Drawn once, before the records, over the whole found set.',
+            ),
+            LayoutPartType.trailingGrandSummary: (
+              Icons.vertical_align_bottom,
+              'Trailing grand summary',
+              'Drawn once, after the records, over the whole found set.',
+            ),
+          }.entries)
+            ListTile(
+              key: ValueKey('add-part-${entry.key}'),
+              leading: Icon(entry.value.$1, color: const Color(0xFF1E88E5)),
+              title: Text(entry.value.$2, style: const TextStyle(fontSize: 13)),
+              subtitle: Text(entry.value.$3, style: const TextStyle(fontSize: 11)),
+              enabled: entry.key == LayoutPartType.subSummary ||
+                  !_layout.parts.any((p) => p.type == entry.key),
+              onTap: () => Navigator.of(ctx).pop(entry.key),
+            ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.close, size: 18),
+            title: const Text('Cancel', style: TextStyle(fontSize: 13)),
+            onTap: () => Navigator.of(ctx).pop(),
+          ),
         ],
       ),
     );
 
-    if (confirmed == true) {
-      final h = double.tryParse(heightCtrl.text);
-      if (h != null && h > 10) {
-        _pushUndoState();
-        setState(() {
-          final updatedParts = _layout.parts.map((p) {
-            if (p.type == partType) return p.copyWith(height: h);
-            return p;
-          }).toList();
-          _layout = _layout.copyWith(parts: updatedParts);
-        });
-        _markLayoutDirty();
-      }
+    if (!mounted || type == null) return;
+    _insertPart(type);
+    // A sub-summary is useless until it knows what it groups by, so its setup
+    // opens straight away.
+    if (type == LayoutPartType.subSummary) {
+      final added = _layout.parts.lastWhere((p) => p.isSubSummary);
+      await _showPartSetupDialog(added.id);
     }
   }
 
@@ -647,7 +848,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     }
 
     if (_activeTool == LayoutTool.part) {
-      _showPartSetupDialog('body');
+      unawaited(_showAddPartDialog());
       _setTool(LayoutTool.pointer);
       return;
     }
@@ -2789,14 +2990,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                                 ),
                               ),
                             // Live Drag Tooltip
-                            if (_resizingPartType != null)
+                            if (_resizingPartId != null)
                               Positioned(
                                 left: 16,
-                                top: switch (_resizingPartType) {
-                                  'header' => _headerPart.height + 4,
-                                  'body' => _headerPart.height + _bodyPart.height + 4,
-                                  _ => _headerPart.height + _bodyPart.height + _footerPart.height + 4,
-                                },
+                                top: _partTop(_resizingPartId!) + _partResizeCurrentHeight + 4,
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                   decoration: BoxDecoration(
@@ -2807,7 +3004,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                                     ],
                                   ),
                                   child: Text(
-                                    '${_resizingPartType!.toUpperCase()}: ${_partResizeCurrentHeight.round()} pt',
+                                    '${_partLabel(_partById(_resizingPartId!)).toUpperCase()}: '
+                                    '${_partResizeCurrentHeight.round()} pt',
                                     style: const TextStyle(
                                         color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
                                   ),
@@ -2883,39 +3081,59 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   Widget _buildPartLabelsGutter(bool isDark) {
     return Column(
       children: [
-        _partTabWidget('header', _headerPart.height, 'Header'),
-        _partTabWidget('body', _bodyPart.height, 'Body'),
-        _partTabWidget('footer', _footerPart.height, 'Footer'),
+        for (final part in _layout.parts) _partTabWidget(part),
       ],
     );
   }
 
-  Widget _partTabWidget(String partType, double height, String label) {
-    final isResizing = _resizingPartType == partType;
+  /// What a part's tab reads. A sub-summary names the field it breaks on,
+  /// which is how a report says what it groups by (#32).
+  String _partLabel(LayoutPartModel? part) {
+    if (part == null) return '';
+    if (!part.isSubSummary) return LayoutPartType.label(part.type);
+    final field = part.breakField;
+    if (field == null || field.isEmpty) return 'Sub-summary (no field)';
+    final column = _currentTable.columns.where((c) => c.name == field).firstOrNull;
+    return 'Sub-summary by ${column?.displayName ?? field}';
+  }
+
+  Widget _partTabWidget(LayoutPartModel part) {
+    final isResizing = _resizingPartId == part.id;
+    final label = _partLabel(part);
+    final isSummary = part.isSummaryPart;
 
     return GestureDetector(
-      onDoubleTap: () => _showPartSetupDialog(partType),
-      child: Container(
-        width: 32,
-        height: height,
-        decoration: BoxDecoration(
-          color: isResizing ? const Color(0xFFBBDEFB) : const Color(0xFFE0E0E0),
-          border: Border(
-            top: const BorderSide(color: Colors.black26),
-            left: const BorderSide(color: Colors.black26),
-            bottom: const BorderSide(color: Colors.black38, width: 1.5),
+      key: ValueKey('part-tab-${part.id}'),
+      onDoubleTap: () => _showPartSetupDialog(part.id),
+      child: Tooltip(
+        message: '$label — double-click to set it up',
+        child: Container(
+          width: 32,
+          height: part.height,
+          decoration: BoxDecoration(
+            color: isResizing
+                ? const Color(0xFFBBDEFB)
+                : (isSummary ? const Color(0xFFD7E3F4) : const Color(0xFFE0E0E0)),
+            border: Border(
+              top: const BorderSide(color: Colors.black26),
+              left: const BorderSide(color: Colors.black26),
+              bottom: const BorderSide(color: Colors.black38, width: 1.5),
+            ),
           ),
-        ),
-        child: Center(
-          child: RotatedBox(
-            quarterTurns: 3,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: isResizing ? const Color(0xFF0D47A1) : Colors.black87,
-                letterSpacing: 0.8,
+          child: Center(
+            child: RotatedBox(
+              quarterTurns: 3,
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: isResizing
+                      ? const Color(0xFF0D47A1)
+                      : (isSummary ? const Color(0xFF1A3A63) : Colors.black87),
+                  letterSpacing: 0.8,
+                ),
               ),
             ),
           ),
@@ -2927,37 +3145,22 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // ─── Draggable Part Dividers ───────────────────────────────────────────────
 
   List<Widget> _buildPartDividers() {
-    final headerH = _headerPart.height;
-    final bodyH = _bodyPart.height;
-    final footerH = _footerPart.height;
-
-    return [
-      // 1. Header/Body Divider Line
-      _dividerLine(
-        partType: 'header',
-        yOffset: headerH,
-        label: 'Header',
-      ),
-      // 2. Body/Footer Divider Line
-      _dividerLine(
-        partType: 'body',
-        yOffset: headerH + bodyH,
-        label: 'Body',
-      ),
-      // 3. Bottom of Footer Divider Line
-      _dividerLine(
-        partType: 'footer',
-        yOffset: headerH + bodyH + footerH,
-        label: 'Footer',
-      ),
-    ];
+    final dividers = <Widget>[];
+    double bottom = 0;
+    for (final part in _layout.parts) {
+      bottom += part.height;
+      dividers.add(_dividerLine(part: part, yOffset: bottom));
+    }
+    return dividers;
   }
 
   Widget _dividerLine({
-    required String partType,
+    required LayoutPartModel part,
     required double yOffset,
-    required String label,
   }) {
+    final partId = part.id;
+    final label = _partLabel(part);
+    final isResizing = _resizingPartId == partId;
     return Positioned(
       left: 0,
       right: 0,
@@ -2967,10 +3170,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         cursor: SystemMouseCursors.resizeUpDown,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onPanStart: (details) => _onPartResizeStart(partType, details),
+          onPanStart: (details) => _onPartResizeStart(partId, details),
           onPanUpdate: _onPartResizeUpdate,
           onPanEnd: _onPartResizeEnd,
-          onDoubleTap: () => _showPartSetupDialog(partType),
+          onDoubleTap: () => _showPartSetupDialog(partId),
           child: Stack(
             clipBehavior: Clip.none,
             alignment: Alignment.centerLeft,
@@ -2982,7 +3185,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 top: 6,
                 child: Container(
                   height: 1.5,
-                  color: _resizingPartType == partType
+                  color: isResizing
                       ? const Color(0xFF1E88E5)
                       : const Color(0xFF64B5F6).withOpacity(0.8),
                 ),
@@ -2994,7 +3197,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                   decoration: BoxDecoration(
-                    color: _resizingPartType == partType ? const Color(0xFF1E88E5) : const Color(0xFFBBDEFB),
+                    color: isResizing ? const Color(0xFF1E88E5) : const Color(0xFFBBDEFB),
                     borderRadius: BorderRadius.circular(3),
                     border: Border.all(color: const Color(0xFF1976D2), width: 1),
                   ),
@@ -3003,14 +3206,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                     children: [
                       Icon(Icons.drag_handle,
                           size: 10,
-                          color: _resizingPartType == partType ? Colors.white : const Color(0xFF0D47A1)),
+                          color: isResizing ? Colors.white : const Color(0xFF0D47A1)),
                       const SizedBox(width: 3),
                       Text(
                         label.toUpperCase(),
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
-                          color: _resizingPartType == partType ? Colors.white : const Color(0xFF0D47A1),
+                          color: isResizing ? Colors.white : const Color(0xFF0D47A1),
                         ),
                       ),
                     ],

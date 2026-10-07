@@ -155,6 +155,27 @@ class ColumnModel {
     this.validationRules,
   });
 
+  /// What the column physically stores, which is its own type except for a
+  /// calculation, held as whatever its formula produces. A numeric
+  /// calculation sorts, compares and totals like a number (#30, #32).
+  String get storageType {
+    if (fieldType != 'CALCULATION' || calculationFormula == null) return fieldType;
+    try {
+      final raw = jsonDecode(calculationFormula!);
+      if (raw is! Map) return 'TEXT';
+      final result = (raw['result_type'] as String? ?? 'Text').toLowerCase();
+      return switch (result) {
+        'number' => 'NUMBER',
+        'date' => 'DATE',
+        'time' || 'timestamp' => 'TIMESTAMP',
+        'boolean' => 'BOOLEAN',
+        _ => 'TEXT',
+      };
+    } catch (_) {
+      return 'TEXT';
+    }
+  }
+
   factory ColumnModel.fromJson(Map<String, dynamic> json) {
     return ColumnModel(
       id: json['id'] as String,
@@ -569,6 +590,148 @@ class AuthResult {
   }
 }
 
+/// What a summary field works out over the found set (#32).
+class SummaryType {
+  static const String total = 'total';
+  static const String average = 'average';
+  static const String count = 'count';
+  static const String minimum = 'minimum';
+  static const String maximum = 'maximum';
+  static const String standardDeviation = 'standard_deviation';
+  static const String fractionOfTotal = 'fraction_of_total';
+
+  /// The kinds offered, with the label each one shows.
+  static const Map<String, String> labels = {
+    total: 'Total of',
+    average: 'Average of',
+    count: 'Count of',
+    minimum: 'Minimum of',
+    maximum: 'Maximum of',
+    standardDeviation: 'Standard deviation of',
+    fractionOfTotal: 'Fraction of total of',
+  };
+
+  /// Kinds that can only be taken over a field holding numbers.
+  static bool needsNumber(String type) =>
+      type == total || type == average || type == standardDeviation || type == fractionOfTotal;
+
+  static String label(String type) => labels[type] ?? type;
+}
+
+/// A summary field's definition, as it is stored in the field's formula.
+class SummarySpecModel {
+  final String summaryType;
+  final String field;
+  final bool running;
+
+  const SummarySpecModel({
+    required this.summaryType,
+    required this.field,
+    this.running = false,
+  });
+
+  /// Reads a stored definition, or null when there is none to read.
+  ///
+  /// The shape saved before summary fields were computed named a SQL aggregate
+  /// and a target column; it is read rather than ignored, so a field defined
+  /// then works now.
+  static SummarySpecModel? tryParse(String? stored) {
+    if (stored == null || stored.trim().isEmpty) return null;
+    try {
+      final raw = jsonDecode(stored);
+      if (raw is! Map) return null;
+      final map = Map<String, dynamic>.from(raw);
+      const legacy = {
+        'SUM': SummaryType.total,
+        'AVG': SummaryType.average,
+        'COUNT': SummaryType.count,
+        'MIN': SummaryType.minimum,
+        'MAX': SummaryType.maximum,
+        'STDDEV': SummaryType.standardDeviation,
+      };
+      final type = (map['summary_type'] as String?)?.toLowerCase() ??
+          legacy[(map['operation'] as String?)?.toUpperCase()];
+      final field = (map['field'] as String?) ?? (map['target_column'] as String?);
+      if (type == null || field == null || field.isEmpty) return null;
+      return SummarySpecModel(
+        summaryType: type,
+        field: field,
+        running: (map['running'] as bool?) ?? (map['running_total'] as bool?) ?? false,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Map<String, dynamic> toJson() => {
+        'summary_type': summaryType,
+        'field': field,
+        'running': running,
+      };
+}
+
+/// One group of a report: the values its break fields hold, how many records
+/// are in it, and what each summary field comes to over them.
+class SummaryGroupModel {
+  final Map<String, dynamic> values;
+  final int count;
+  final Map<String, dynamic> summaries;
+
+  const SummaryGroupModel({
+    required this.values,
+    required this.count,
+    required this.summaries,
+  });
+
+  factory SummaryGroupModel.fromJson(Map<String, dynamic> json) => SummaryGroupModel(
+        values: Map<String, dynamic>.from(json['values'] as Map? ?? const {}),
+        count: (json['count'] as num?)?.toInt() ?? 0,
+        summaries: Map<String, dynamic>.from(json['summaries'] as Map? ?? const {}),
+      );
+}
+
+/// The figures of a report: one per summary field over the whole found set,
+/// and one per group.
+class SummaryResultModel {
+  final int count;
+  final Map<String, dynamic> grand;
+  final List<String> groupBy;
+  final List<SummaryGroupModel> groups;
+
+  const SummaryResultModel({
+    this.count = 0,
+    this.grand = const {},
+    this.groupBy = const [],
+    this.groups = const [],
+  });
+
+  factory SummaryResultModel.fromJson(Map<String, dynamic> json) => SummaryResultModel(
+        count: (json['count'] as num?)?.toInt() ?? 0,
+        grand: Map<String, dynamic>.from(json['grand'] as Map? ?? const {}),
+        groupBy: [for (final f in (json['group_by'] as List? ?? const [])) f as String],
+        groups: [
+          for (final g in (json['groups'] as List? ?? const []))
+            SummaryGroupModel.fromJson(Map<String, dynamic>.from(g as Map)),
+        ],
+      );
+
+  /// The key that identifies a group among the records: its break values in
+  /// the order the report groups by.
+  static String groupKey(Map<String, dynamic> values, List<String> groupBy) =>
+      groupBy.map((f) => values[f]?.toString() ?? '').join('\u0000');
+
+  /// The group a record belongs to, or null when the report is not grouped or
+  /// the record falls outside it.
+  SummaryGroupModel? groupOf(Map<String, dynamic> record) {
+    if (groupBy.isEmpty) return null;
+    final key = groupKey(record, groupBy);
+    for (final group in groups) {
+      if (groupKey(group.values, groupBy) == key) return group;
+    }
+    return null;
+  }
+}
+
 class ApiClient {
   final String baseUrl;
   final http.Client _httpClient;
@@ -859,18 +1022,48 @@ class ApiClient {
     _checkResponse(response);
   }
 
-  Future<List<Map<String, dynamic>>> executeFind(String table, List<Map<String, dynamic>> requests) async {
+  Future<List<Map<String, dynamic>>> executeFind(
+    String table,
+    List<Map<String, dynamic>> requests, {
+    int limit = 500,
+    int offset = 0,
+    String? sortBy,
+  }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/find'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'requests': requests,
-        'options': {'limit': 500, 'offset': 0},
+        'options': {
+          'limit': limit,
+          'offset': offset,
+          if (sortBy != null) 'sort_by': sortBy,
+          'sort_asc': true,
+        },
       }),
     );
     _checkResponse(response);
     final list = jsonDecode(response.body) as List<dynamic>;
     return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  /// Every record a find returns, fetched page by page in a stable order.
+  ///
+  /// A report has to cover the whole found set, not the first page of it, or
+  /// its totals would not match the rows under them (#32).
+  Future<List<Map<String, dynamic>>> executeFindAll(
+    String table,
+    List<Map<String, dynamic>> requests,
+  ) async {
+    final all = <Map<String, dynamic>>[];
+    while (true) {
+      // Paged in a stable order, so a record is neither skipped nor read
+      // twice as the pages advance.
+      final page = await executeFind(table, requests,
+          limit: maxPageSize, offset: all.length, sortBy: 'id');
+      all.addAll(page);
+      if (page.length < maxPageSize) return all;
+    }
   }
 
   // ─── Value lists (#31) ─────────────────────────────────────────────────────
@@ -923,6 +1116,31 @@ class ApiClient {
       headers: _headers(),
     );
     _checkResponse(response);
+  }
+
+  /// Works out the figures of a report over a found set (#32).
+  ///
+  /// [requests] is the found set in the same form a find takes, so a report
+  /// totals the records the find returned; empty means every record.
+  /// [fields] are the summary fields wanted, empty meaning all of them, and
+  /// [groupBy] the break fields, outermost first.
+  Future<SummaryResultModel> summarize(
+    String table, {
+    List<Map<String, dynamic>> requests = const [],
+    List<String> fields = const [],
+    List<String> groupBy = const [],
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/summary'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'requests': requests,
+        'fields': fields,
+        'group_by': groupBy,
+      }),
+    );
+    _checkResponse(response);
+    return SummaryResultModel.fromJson(Map<String, dynamic>.from(jsonDecode(response.body) as Map));
   }
 
   /// The records of a related table that match [id] in [table]: what a portal

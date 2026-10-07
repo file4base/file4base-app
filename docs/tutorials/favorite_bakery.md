@@ -4,7 +4,7 @@ This tutorial builds a working database from nothing: the customer list of a
 fictitious business called **Favorite Bakery**, which lets customers pay an
 annual fee in exchange for a discount. By the end you will have two tables, a
 relationship between them, several layouts, a found set, a sorted list, a
-portal, a printable sheet and a second account.
+report that subtotals, a portal, a printable sheet and a second account.
 
 It takes about an hour.
 
@@ -29,12 +29,13 @@ this tutorial says so instead of describing it — see
 - [Lesson 9 — Layout properties and a second layout](#lesson-9--layout-properties-and-a-second-layout)
 - [Lesson 10 — A calculated field](#lesson-10--a-calculated-field)
 - [Lesson 11 — A value list](#lesson-11--a-value-list)
-- [Lesson 12 — Preview and print](#lesson-12--preview-and-print)
-- [Lesson 13 — A second table and a relationship](#lesson-13--a-second-table-and-a-relationship)
-- [Lesson 14 — Show related records](#lesson-14--show-related-records)
-- [Lesson 15 — Scripts](#lesson-15--scripts)
-- [Lesson 16 — Accounts and privileges](#lesson-16--accounts-and-privileges)
-- [Lesson 17 — Backups](#lesson-17--backups)
+- [Lesson 12 — A summary report](#lesson-12--a-summary-report)
+- [Lesson 13 — Preview and print](#lesson-13--preview-and-print)
+- [Lesson 14 — A second table and a relationship](#lesson-14--a-second-table-and-a-relationship)
+- [Lesson 15 — Show related records](#lesson-15--show-related-records)
+- [Lesson 16 — Scripts](#lesson-16--scripts)
+- [Lesson 17 — Accounts and privileges](#lesson-17--accounts-and-privileges)
+- [Lesson 18 — Backups](#lesson-18--backups)
 - [Reference: the sample data](#reference-the-sample-data)
 - [What is not here yet](#what-is-not-here-yet)
 
@@ -186,8 +187,8 @@ The field types File4Base offers are:
 | Summary | *See the note below* |
 
 > **Calculation** fields are filled in by a formula — lesson 10 builds one.
-> **Summary** fields, which total a column across the found set, are not
-> computed yet; the New Field dialog says so when you pick that type.
+> **Summary** fields total a column across the found set rather than holding a
+> value per record — lesson 12 builds a report with them.
 
 Close **Manage Database**. File4Base has already built a first layout for the
 table — **Customers Form** — with one row per field, each labelled with the
@@ -471,8 +472,9 @@ fields you do not want, arrange the rest, and use it from the **Layout** list in
 the top left.
 
 > The button is labelled *New Layout / Report*, but there is no report
-> assistant: no list/labels/report/blank types, no field picker, no themes
-> chooser and no sub-summary parts. You build the layout by hand.
+> assistant: no list/labels/report/blank types, no field picker and no themes
+> chooser. You build the layout by hand — including a report's sub-summary and
+> grand summary parts, which lesson 12 adds with the Part tool.
 
 ---
 
@@ -596,7 +598,154 @@ boxes. No record data changes.
 
 ---
 
-## Lesson 12 — Preview and print
+## Lesson 12 — A summary report
+
+Lesson 10 gave each customer an **Annual Fee**. This lesson answers the question
+that fee is for: *how much do we take, and from whom?*
+
+That needs two things: a field that totals over a set of records, and a layout
+that groups them.
+
+### Make the summary fields
+
+Open **Manage Database > Fields** on **Customers** and add these, choosing
+**Summary** as the field type:
+
+| Field Label | Column Name |
+| --- | --- |
+| Total Annual Fees | `fee_total` |
+| Customers | `fee_count` |
+
+A summary field has no value of its own yet — it needs to know what it totals.
+Click the row's **Options...** and go to the last tab:
+
+- For **Total Annual Fees**: *Total of* → **Annual Fee**.
+- For **Customers**: *Count of* → **Last Name**.
+
+The list of fields only offers what the kind of summary can be taken over.
+*Total of* needs numbers, so it offers Fee Paid and Annual Fee — Annual Fee is
+a calculation, but one whose result is a number, so it totals like any other.
+*Count of* counts records that hold a value, so it offers everything.
+
+> **A summary has no value in a record.** Look at a customer in Browse mode and
+> Total Annual Fees is empty, and stays empty. It is not a thing each customer
+> has; it is worked out over whatever set of records you are looking at. That
+> is why it only means something on a report.
+
+### Build the report layout
+
+Choose **New Layout...**, name it `Annual Fee Report`, and go into **Layout
+Mode**.
+
+A layout is a stack of bands, shown as tabs down the left: **Header**, **Body**,
+**Footer**. A report adds more.
+
+1. Choose the **Part Tool** and click on the canvas. Pick **Sub-summary**.
+2. Its setup opens. Under **When sorted by**, choose **Customer Type**, and set
+   the height to about 34 pt.
+
+   A sub-summary is drawn once for each group of records that share that field.
+3. Choose the **Part Tool** again and pick **Trailing grand summary**. That band
+   is drawn once, after all the records.
+
+The gutter now reads: Header, **Sub-summary by Customer Type**, Body,
+**Trailing Grand Summary**, Footer.
+
+4. Put the fields in. What a field shows depends on the band it is drawn in, so
+   where you put it is the point:
+
+   | Band | Put in it |
+   | --- | --- |
+   | Header | A title, and column headings: `Customer`, `City`, `Annual Fee` |
+   | Sub-summary | **Customer Type**, **Customers**, **Total Annual Fees** |
+   | Body | **Last Name**, **City**, **Annual Fee** |
+   | Trailing grand summary | A label `Total, all customers`, and **Total Annual Fees** again |
+
+   The same field, Total Annual Fees, appears twice. In the sub-summary it is
+   the group's total; in the grand summary it is the whole found set's. The
+   field says *what* to total; the band says *over what*.
+
+5. Save and go back to Browse mode.
+
+### Read the report
+
+The view switcher now offers **Report** where it used to say List — a layout
+with summary bands lists its records as a report. Click it.
+
+The first thing you see is a warning:
+
+> This report groups by Customer Type. The records are not in that order, so the
+> groups below are split up rather than totalled once each.
+
+That is true: the records are in the order they were entered, so **Continuing**
+opens, closes and opens again further down. File4Base does not quietly re-sort
+your found set; it tells you and offers to.
+
+Click **Sort for this report**. The report comes together:
+
+| | | |
+| --- | --- | --- |
+| **Continuing** | 9 | **900** |
+| Common | Toronto | 100 |
+| Murphy | Dublin | 100 |
+| Nguyen | New York | 100 |
+| Smith | New York | 100 |
+| Smith | San Francisco | 100 |
+| Alvarez | New York | 100 |
+| Williams | New York | 100 |
+| Durand | Paris | 100 |
+| Wilson | Melbourne | 100 |
+| **New** | 7 | **1400** |
+| LeFranc | Paris | 200 |
+| Durand | Paris | 200 |
+| Tang | Hong Kong | 200 |
+| Johnson | London | 200 |
+| Ogawa | Tokyo | 200 |
+| Cannon | Paris | 200 |
+| Lee | Paris | 200 |
+| **Total, all customers** | | **2300** |
+
+Nine continuing customers at 100 and seven new ones at 200: **2300**. The
+toolbar reads `16 records · Sorted by Customer Type ↑`.
+
+### A report is over the found set
+
+Click **Find**, type `=Paris` in **City**, and **Perform Find**.
+
+Five records are found, and the report follows them: **New** 4 = 800,
+**Continuing** 1 = 100, total **900**. The figures are worked out over the
+records the find returned, not over the table.
+
+**Show All** brings back 2300.
+
+### Other kinds of summary
+
+In Field Options the **Operation** list offers more than a total:
+
+| Kind | Over the bakery's 16 customers |
+| --- | --- |
+| Total of | 2300 |
+| Average of | 143.75 |
+| Count of | 16 |
+| Minimum of, Maximum of | 100 and 200 |
+| Standard deviation of | the spread of the fees |
+| Fraction of total of | Continuing 39.1%, New 60.9% |
+
+**Running total** is different: instead of one figure per group it adds up down
+the records as they are drawn, so a body row shows the total *so far*.
+
+### Print it
+
+**View > Preview Mode** shows the report on paper — one sheet, not one per
+record, because a report is drawn once over the found set. A report wider than
+the paper is scaled down so its right-hand column prints instead of falling off
+the sheet.
+
+**Print / Export PDF** prints what you see. Lesson 13 covers Page Setup.
+
+---
+
+## Lesson 13 — Preview and print
 
 Choose **View > Preview Mode**.
 
@@ -617,7 +766,7 @@ Choose **View > Browse Mode** to come back.
 
 ---
 
-## Lesson 13 — A second table and a relationship
+## Lesson 14 — A second table and a relationship
 
 Customers work for companies, and several customers work for the same one. That
 is a second table.
@@ -665,7 +814,7 @@ Then enter three records in Browse mode:
      comes back to it.
    - *Sort the related records of "customers" by their match field* — that
      would order them by company, which is the same for all of them. A portal
-     sorts its own rows, which lesson 14 does instead.
+     sorts its own rows, which lesson 15 does instead.
 5. Click **OK**.
 
 A line now joins the two cards, anchored on the two **Company** fields, with an
@@ -674,9 +823,9 @@ reads `2 occurrences · 1 relationships`.
 
 ---
 
-## Lesson 14 — Show related records
+## Lesson 15 — Show related records
 
-The relationship from lesson 13 is drawn, but nothing uses it yet. A layout can
+The relationship from lesson 14 is drawn, but nothing uses it yet. A layout can
 read the other side of it in two ways: **one field** of the related record, and
 a **portal**, which is the list of them.
 
@@ -773,7 +922,7 @@ Step to the next company and the rows change with it: **DEF Ltd.** has 5 and
   never type the company name — the relationship owns that field, and a value
   sent for it would be overwritten.
 
-  This needs *Allow records to be created…* on the relationship, which lesson 13
+  This needs *Allow records to be created…* on the relationship, which lesson 14
   ticked. Without it the row is still offered but the server refuses, and the
   Portal Setup panel warns you.
 - **Remove.** The button at the right of each row deletes that customer record.
@@ -810,7 +959,7 @@ wrong one for customers, who outlive the company they happen to work for.
 
 ---
 
-## Lesson 15 — Scripts
+## Lesson 16 — Scripts
 
 Choose **Scripts > Script Workspace...**
 
@@ -837,7 +986,7 @@ without executing them.
 
 ---
 
-## Lesson 16 — Accounts and privileges
+## Lesson 17 — Accounts and privileges
 
 Choose **File > Manage > Security...**
 
@@ -871,7 +1020,7 @@ account roles and layout privileges to restrict access today.
 
 ---
 
-## Lesson 17 — Backups
+## Lesson 18 — Backups
 
 The database lives in PostgreSQL (or MariaDB), so backing it up means backing up
 the engine's data.
@@ -942,14 +1091,14 @@ All names, companies and addresses are fictitious.
 These are things a FileMaker user will look for and not find in File4Base 0.9.3.
 They are listed so you do not go looking, and each one has an issue.
 
-**No summary fields** ([#32](https://github.com/file4base/file4base-app/issues/32))**.**
-A field that totals, counts or averages a column across the found set is not
-computed yet. Calculation fields, which work out a value from the record, do
-work — see lesson 10.
+**No report assistant** ([#33](https://github.com/file4base/file4base-app/issues/33))**.**
+*New Layout / Report* only asks for a name and a table: there are no list,
+labels, report or blank layout types, no field picker and no theme chooser. The
+parts a report is made of do work — lesson 12 adds them by hand.
 
-**No report assistant** ([#32](https://github.com/file4base/file4base-app/issues/32), [#33](https://github.com/file4base/file4base-app/issues/33))**.** *New Layout / Report* only asks for a name and a table.
-There are no list, labels, report or blank layout types, no field picker, no
-theme chooser, no sub-summary parts, no break fields and no grand totals.
+**A report does not start each group on a new page** ([#32](https://github.com/file4base/file4base-app/issues/32))**.**
+It flows continuously and is cut wherever the page ends, and the header is not
+repeated at the top of each printed page.
 
 **No merge fields in text** ([#33](https://github.com/file4base/file4base-app/issues/33))**.** Form letters and mailing labels, which depend on
 merge fields that collapse when empty, cannot be built.
@@ -960,7 +1109,7 @@ A find cannot be named and run again later.
 **No find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46))**.**
 Find mode takes criteria on the record's own fields. A related field says so in
 Find mode rather than offering a box that would do nothing. Portals and related
-fields themselves do work — see lesson 14.
+fields themselves do work — see lesson 15.
 
 **No charts** ([#37](https://github.com/file4base/file4base-app/issues/37))**.** The chart tool is in the layout toolbar but there is no chart
 setup.
@@ -969,7 +1118,7 @@ setup.
 ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
 data files.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 16.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 17.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

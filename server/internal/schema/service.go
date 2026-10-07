@@ -469,6 +469,11 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 	if err := s.checkCalculation(ctx, tableID, col.ID, col.Name, col.FieldType, col.CalculationFormula); err != nil {
 		return nil, err
 	}
+	// A summary field's definition must name a kind of summary and a field it
+	// can be taken over (#32).
+	if err := s.checkSummary(ctx, tableID, col.ID, col.Name, col.FieldType, col.CalculationFormula); err != nil {
+		return nil, err
+	}
 
 	// 1. Build ALTER TABLE ADD COLUMN SQL. A calculation is stored as whatever
 	// its formula produces, so a numeric result sorts as a number.
@@ -677,6 +682,9 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 	if opts.UpdateCalculation {
 		var err error
 		if retype, err = s.prepareCalculationChange(ctx, tableID, columnID, opts.CalculationFormula); err != nil {
+			return nil, err
+		}
+		if err := s.prepareSummaryChange(ctx, tableID, columnID, opts.CalculationFormula); err != nil {
 			return nil, err
 		}
 	}

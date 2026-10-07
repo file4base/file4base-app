@@ -10,6 +10,7 @@ import '../layout_engine/layout_action_runner.dart';
 import '../layout_engine/layout_object_visuals.dart';
 import '../layout_engine/models/layout_definition.dart';
 import 'related_records.dart';
+import 'report_view.dart';
 
 class DataBrowserWidget extends StatefulWidget {
   final TableModel table;
@@ -27,6 +28,11 @@ class DataBrowserWidget extends StatefulWidget {
   /// Returns false when there is no such layout.
   final bool Function(String layoutName)? onGoToLayout;
 
+  /// Reports the find requests that define the current found set, empty when
+  /// every record is showing. Preview needs them so the printed sheet is the
+  /// found set rather than the whole table (#32).
+  final ValueChanged<List<Map<String, dynamic>>>? onFoundSetChanged;
+
   const DataBrowserWidget({
     super.key,
     required this.table,
@@ -38,6 +44,7 @@ class DataBrowserWidget extends StatefulWidget {
     this.onTableModified,
     this.currentUserName,
     this.onGoToLayout,
+    this.onFoundSetChanged,
   });
 
   @override
@@ -281,6 +288,82 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   final Map<String, Timer?> _fieldDebounceTimers = {};
   // null = idle/saved, true = saving, false = error
   final Map<String, bool?> _fieldSaving = {};
+
+  // ─── Reports (#32) ─────────────────────────────────────────────────────────
+
+  /// True when the layout in hand groups or totals rather than just listing
+  /// records, which is what makes List view draw a report.
+  bool get _layoutIsReport => widget.layout?.isReport ?? false;
+
+  /// The summary fields of this table, by name.
+  Map<String, SummarySpecModel> get _summarySpecs => {
+        for (final col in widget.table.columns)
+          if (col.fieldType == 'SUMMARY')
+            if (SummarySpecModel.tryParse(col.calculationFormula) case final spec?) col.name: spec,
+      };
+
+  /// The figures of the report: one grouping per break level, level 0 being
+  /// the grand totals.
+  ReportFigures _reportFigures = const {};
+  bool _loadingReport = false;
+  String? _reportError;
+
+  /// Reads the figures of the report from the server, which works them out
+  /// over the same found set the find returned.
+  ///
+  /// One request per break level: level `n` is grouped by the first `n` break
+  /// fields, and a sub-summary needs the group at its own level.
+  Future<void> _loadReportFigures() async {
+    final layout = widget.layout;
+    if (layout == null || !layout.isReport) return;
+
+    final fields = _summarySpecs.keys.toList();
+    final breaks = layout.breakFields;
+    final requests = _isFoundSet ? _findRequestPayload() : const <Map<String, dynamic>>[];
+
+    setState(() {
+      _loadingReport = true;
+      _reportError = null;
+    });
+    try {
+      final figures = <int, SummaryResultModel>{};
+      for (var level = 0; level <= breaks.length; level++) {
+        figures[level] = await widget.apiClient.summarize(
+          widget.table.name,
+          requests: requests,
+          fields: fields,
+          groupBy: breaks.take(level).toList(),
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _reportFigures = figures;
+        _loadingReport = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _reportFigures = const {};
+        _loadingReport = false;
+        _reportError = e.toString();
+      });
+    }
+  }
+
+  /// Puts the found set in the order this report needs: by its break fields,
+  /// outermost first, keeping any further levels the reader had set.
+  void _sortForReport() {
+    final layout = widget.layout;
+    if (layout == null) return;
+    final required = layout.requiredSortOrder;
+    if (required.isEmpty) return;
+
+    final order = [for (final field in required) SortLevel(field, true)];
+    for (final level in _sortOrder) {
+      if (!required.contains(level.field)) order.add(level);
+    }
+    _applySortOrder(order);
+  }
 
   // ─── Relationships (#36) ───────────────────────────────────────────────────
 
@@ -778,7 +861,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<void> _fetchRecords() async {
     setState(() { _isLoading = true; _error = null; _isFoundSet = false; });
     try {
-      final rows = await widget.apiClient.listRows(widget.table.name);
+      // A report covers the whole found set: its totals would not match the
+      // rows under them if it only read the first page (#32).
+      final rows = _layoutIsReport
+          ? await widget.apiClient.listAllRows(widget.table.name)
+          : await widget.apiClient.listRows(widget.table.name);
       if (mounted) {
         setState(() {
           _records = rows;
@@ -790,6 +877,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         });
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
+        if (_layoutIsReport) unawaited(_loadReportFigures());
+        widget.onFoundSetChanged?.call(const []);
       }
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
@@ -900,7 +989,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
     setState(() { _isLoading = true; _error = null; });
     try {
-      final results = await widget.apiClient.executeFind(widget.table.name, requests);
+      final results = _layoutIsReport
+          ? await widget.apiClient.executeFindAll(widget.table.name, requests)
+          : await widget.apiClient.executeFind(widget.table.name, requests);
       if (!mounted) return;
 
       if (results.isEmpty) {
@@ -947,6 +1038,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
         widget.onModeChanged?.call(OperationalMode.browse);
+        // A report totals the found set, so its figures are read again for
+        // the set the find just returned (#32).
+        if (_layoutIsReport) unawaited(_loadReportFigures());
+        widget.onFoundSetChanged?.call(requests);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -1280,13 +1375,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               _barButton(Icons.list_alt, 'Show All', _fetchRecords),
               const Spacer(),
               SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'form', icon: Icon(Icons.dashboard_outlined, size: 14), label: Text('Form', style: TextStyle(fontSize: 11))),
-                  ButtonSegment(value: 'list', icon: Icon(Icons.view_list_outlined, size: 14), label: Text('List', style: TextStyle(fontSize: 11))),
-                  ButtonSegment(value: 'table', icon: Icon(Icons.table_chart_outlined, size: 14), label: Text('Table', style: TextStyle(fontSize: 11))),
+                segments: [
+                  const ButtonSegment(value: 'form', icon: Icon(Icons.dashboard_outlined, size: 14), label: Text('Form', style: TextStyle(fontSize: 11))),
+                  // A layout with summary parts lists its records as a report,
+                  // so the segment says what it will show (#32).
+                  ButtonSegment(
+                    value: 'list',
+                    icon: Icon(_layoutIsReport ? Icons.summarize_outlined : Icons.view_list_outlined, size: 14),
+                    label: Text(_layoutIsReport ? 'Report' : 'List', style: const TextStyle(fontSize: 11)),
+                  ),
+                  const ButtonSegment(value: 'table', icon: Icon(Icons.table_chart_outlined, size: 14), label: Text('Table', style: TextStyle(fontSize: 11))),
                 ],
                 selected: {_viewMode},
-                onSelectionChanged: (val) => setState(() => _viewMode = val.first),
+                onSelectionChanged: (val) {
+                  setState(() => _viewMode = val.first);
+                  if (val.first == 'list' && _layoutIsReport && _reportFigures.isEmpty) {
+                    unawaited(_loadReportFigures());
+                  }
+                },
                 style: SegmentedButton.styleFrom(
                   visualDensity: VisualDensity.compact,
                   padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -1486,6 +1592,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   Widget _buildListView() {
+    // A layout with summary parts is a report: its records are drawn through
+    // its parts, grouped and totalled, rather than listed (#32).
+    if (_layoutIsReport) return _buildReportView();
+
     final cols = _visibleColumns;
     final theme = Theme.of(context);
     return ListView.separated(
@@ -1507,6 +1617,52 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           onTap: () => _openRecordInForm(i),
         );
       },
+    );
+  }
+
+  /// The found set drawn through the layout's parts (#32).
+  Widget _buildReportView() {
+    final layout = widget.layout!;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (_reportError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.summarize_outlined, size: 40, color: Colors.orange),
+              const SizedBox(height: 10),
+              Text('The report could not be totalled: $_reportError',
+                  textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('Try again'),
+                onPressed: () => unawaited(_loadReportFigures()),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_loadingReport && _reportFigures.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return ReportView(
+      key: const ValueKey('report-view'),
+      layout: layout,
+      table: widget.table,
+      records: _records.where((r) => r[_draftKey] != true).toList(),
+      figures: _reportFigures,
+      specs: _summarySpecs,
+      formatValue: fieldText,
+      sortedBy: [for (final level in _sortOrder) level.field],
+      onSortForReport: _sortForReport,
+      isDark: isDark,
     );
   }
 

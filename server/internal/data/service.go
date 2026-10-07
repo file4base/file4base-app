@@ -291,6 +291,11 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 	// Calculation fields are filled from their formulas (#30). They are
 	// computed before the validation rules run, so a rule can check what the
 	// formula produced.
+	// A summary has no value in a record; anything sent for one is dropped
+	// rather than stored where nothing would read it (#32).
+	if err := s.dropSummaryValues(ctx, tableName, record); err != nil {
+		return nil, err
+	}
 	if err := s.applyCalculations(ctx, tableName, record); err != nil {
 		return nil, err
 	}
@@ -378,6 +383,13 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 		if err := checkField(fields, tableName, col); err != nil {
 			return nil, err
 		}
+	}
+	// A summary has no value in a record, so anything sent for one is dropped
+	// before the update is built. It happens here, not further down, so that
+	// an update of summary fields alone is an update of nothing rather than a
+	// statement with no columns to set (#32).
+	if err := s.dropSummaryValues(ctx, tableName, updates); err != nil {
+		return nil, err
 	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
@@ -632,21 +644,15 @@ func buildFindWhere(include, omit []string) string {
 	return "WHERE " + strings.Join(parts, " AND ")
 }
 
-// ExecuteFind performs a File4Base Find Mode multi-request query
-func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []FindRequest, opts QueryOptions) ([]map[string]interface{}, error) {
-	if len(requests) == 0 {
-		return s.ListRows(ctx, tableName, opts)
-	}
-
-	fields, err := s.tableFields(ctx, tableName)
-	if err != nil {
-		return nil, err
-	}
-	if opts.Offset < 0 {
-		opts.Offset = 0
-	}
-
-	dialect := s.driver.Dialect()
+// buildFindClauses turns the find requests into the WHERE clause that defines
+// the found set, and the values its placeholders take.
+//
+// It is shared by ExecuteFind and by Summarize, so a report totals exactly the
+// records the find returned rather than a set built a second, slightly
+// different way.
+func buildFindClauses(
+	dialect dbal.Dialect, fields fieldSet, tableName string, requests []FindRequest,
+) (string, []interface{}, error) {
 	// Requests that match are unioned; requests marked Omit subtract from what
 	// they found. (OR-ing an omitting request in, as this used to do, made
 	// "2011 except March" mean "2011 OR not March", which is almost every
@@ -677,7 +683,7 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 			}
 
 			if err := checkField(fields, tableName, crit.FieldName); err != nil {
-				return nil, err
+				return "", nil, err
 			}
 			colIdent := dialect.QuoteIdentifier(crit.FieldName)
 
@@ -758,7 +764,28 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 		}
 	}
 
-	whereClause := buildFindWhere(includeClauses, omitClauses)
+	return buildFindWhere(includeClauses, omitClauses), values, nil
+}
+
+// ExecuteFind performs a File4Base Find Mode multi-request query
+func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []FindRequest, opts QueryOptions) ([]map[string]interface{}, error) {
+	if len(requests) == 0 {
+		return s.ListRows(ctx, tableName, opts)
+	}
+
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	if opts.Offset < 0 {
+		opts.Offset = 0
+	}
+
+	dialect := s.driver.Dialect()
+	whereClause, values, err := buildFindClauses(dialect, fields, tableName, requests)
+	if err != nil {
+		return nil, err
+	}
 
 	orderClause, err := orderByClause(dialect, fields, tableName, opts.SortOrder())
 	if err != nil {
