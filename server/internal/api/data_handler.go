@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -82,6 +83,39 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 	}
 }
 
+// parseSortOrder reads the `sort` query parameter, which may be repeated or
+// comma-separated and orders by each field in turn. A leading "-" sorts that
+// field descending:
+//
+//	?sort=company&sort=-fee_paid
+//	?sort=company,-fee_paid
+//
+// It supersedes sort_by/sort_asc, which stay for callers that only ever sort by
+// one field.
+func parseSortOrder(values []string) []data.SortField {
+	var order []data.SortField
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			field := strings.TrimSpace(part)
+			if field == "" {
+				continue
+			}
+			descending := false
+			switch field[0] {
+			case '-':
+				descending, field = true, strings.TrimSpace(field[1:])
+			case '+':
+				field = strings.TrimSpace(field[1:])
+			}
+			if field == "" {
+				continue
+			}
+			order = append(order, data.SortField{Field: field, Descending: descending})
+		}
+	}
+	return order
+}
+
 func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 	svc, ok := h.authorize(w, r, table, false)
@@ -99,6 +133,7 @@ func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
 		Offset:  offset,
 		SortBy:  sortBy,
 		SortAsc: sortAsc,
+		Sort:    parseSortOrder(r.URL.Query()["sort"]),
 	})
 	if err != nil {
 		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)

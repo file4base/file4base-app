@@ -28,7 +28,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#39](https://github.com/file4base/file4base-app/issues/39) extended privileges).
   The defects below were all found while writing it.
 
+### Changed
+- Records can be sorted by more than one field ([#35](https://github.com/file4base/file4base-app/issues/35)).
+  The Sort dialog now builds a sort order: fields are added, reordered, given a
+  direction of their own and removed, and the found-set summary names the whole
+  order. Ties on the first field are broken by the next one, so "by Company, then
+  by Last Name within each company" can be expressed. The data API takes the
+  order in a `sort` parameter, repeatable or comma-separated, with a leading `-`
+  for descending (`?sort=company,-fee_paid`); `sort_by`/`sort_asc` still work for
+  callers that only sort by one field. Every field in the order is checked
+  against the table's registered fields, so an unknown one answers `400` instead
+  of reaching the SQL.
+
 ### Fixed
+- A found set came back in whatever order the engine chose: `ExecuteFind` built
+  no `ORDER BY` at all, so the sort options were silently dropped after a find.
 - 62 menu commands showed a message saying they had run and did nothing: "Omit
   Record: Temporarily hide current row from found set." appeared while the found
   set stayed exactly as it was, and the same for Unsort, Show Omitted Only,

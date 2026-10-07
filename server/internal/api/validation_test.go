@@ -162,3 +162,30 @@ func TestAPI_ValidationTimingOnImport(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	_ = context.Background()
 }
+
+// The data API could only order by one field (#35). `sort` may be repeated or
+// comma-separated and a leading "-" sorts that field descending.
+func TestParseSortOrderReadsEveryLevel(t *testing.T) {
+	order := api.ParseSortOrderForTest([]string{"company,-fee_paid", " last_name "})
+	if len(order) != 3 {
+		t.Fatalf("got %d levels, want 3: %+v", len(order), order)
+	}
+	if order[0].Field != "company" || order[0].Descending {
+		t.Errorf("level 1 = %+v, want company ascending", order[0])
+	}
+	if order[1].Field != "fee_paid" || !order[1].Descending {
+		t.Errorf("level 2 = %+v, want fee_paid descending", order[1])
+	}
+	if order[2].Field != "last_name" || order[2].Descending {
+		t.Errorf("level 3 = %+v, want last_name ascending", order[2])
+	}
+}
+
+func TestParseSortOrderIgnoresEmptyEntries(t *testing.T) {
+	if got := api.ParseSortOrderForTest([]string{"", " , ", "-"}); len(got) != 0 {
+		t.Fatalf("got %+v, want nothing", got)
+	}
+	if got := api.ParseSortOrderForTest(nil); len(got) != 0 {
+		t.Fatalf("got %+v, want nothing", got)
+	}
+}

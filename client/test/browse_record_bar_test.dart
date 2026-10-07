@@ -15,7 +15,7 @@ class _RowsApi extends ApiClient {
 
   @override
   Future<List<Map<String, dynamic>>> listRows(String table,
-          {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true}) async => [
+          {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true, List<String>? sort}) async => [
         {'id': '1', 'first_name': 'Carla', 'city': 'Bilbao'},
         {'id': '2', 'first_name': 'Ana', 'city': 'Madrid'},
         {'id': '3', 'first_name': 'Bea', 'city': 'Cádiz'},

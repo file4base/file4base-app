@@ -113,6 +113,8 @@ void main() {
     });
   });
 
+  sortOrderTests();
+
   group('the Records menu', () {
     Future<void> pumpMenu(
       WidgetTester tester, {
@@ -217,6 +219,46 @@ void main() {
 
       expect(find.textContaining('Temporarily hide'), findsNothing);
       expect(find.byType(SnackBar), findsNothing);
+    });
+  });
+}
+
+// #35 — sorting took a single field, so "by Company, then by Last Name within
+// each company" could not be expressed.
+void sortOrderTests() {
+  group('a sort order', () {
+    test('a level knows the form the data API takes', () {
+      expect(const SortLevel('last_name', true).queryValue, 'last_name');
+      expect(const SortLevel('fee_paid', false).queryValue, '-fee_paid');
+      expect(const SortLevel('city', true).flipped, const SortLevel('city', false));
+    });
+
+    test('breaks ties with the next level', () {
+      final records = [
+        {'company': 'ABC Company', 'last_name': 'Smith'},
+        {'company': 'DEF Ltd.', 'last_name': 'Johnson'},
+        {'company': 'ABC Company', 'last_name': 'Lee'},
+        {'company': 'ABC Company', 'last_name': 'Murphy'},
+      ];
+
+      const order = [SortLevel('company', true), SortLevel('last_name', true)];
+      final sorted = List.of(records)
+        ..sort((a, b) {
+          for (final level in order) {
+            final cmp = level.ascending
+                ? (a[level.field] as String).compareTo(b[level.field] as String)
+                : (b[level.field] as String).compareTo(a[level.field] as String);
+            if (cmp != 0) return cmp;
+          }
+          return 0;
+        });
+
+      expect(sorted.map((r) => '${r['company']}/${r['last_name']}').toList(), [
+        'ABC Company/Lee',
+        'ABC Company/Murphy',
+        'ABC Company/Smith',
+        'DEF Ltd./Johnson',
+      ]);
     });
   });
 }

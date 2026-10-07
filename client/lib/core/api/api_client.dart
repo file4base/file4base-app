@@ -716,12 +716,18 @@ class ApiClient {
     _checkResponse(response);
   }
 
-  Future<List<Map<String, dynamic>>> listRows(String table, {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true}) async {
+  /// Lists rows. [sort] orders by each entry in turn, outermost first, in the
+  /// form the data API takes: `last_name` ascending, `-fee_paid` descending.
+  /// [sortBy]/[sortAsc] are the single-field form and are ignored when [sort]
+  /// is given.
+  Future<List<Map<String, dynamic>>> listRows(String table,
+      {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true, List<String>? sort}) async {
     final uri = Uri.parse('$baseUrl/api/v1/data/$table').replace(queryParameters: {
       'limit': limit.toString(),
       'offset': offset.toString(),
       if (sortBy != null) 'sort_by': sortBy,
       'sort_asc': sortAsc.toString(),
+      if (sort != null && sort.isNotEmpty) 'sort': sort.join(','),
     });
 
     final response = await _httpClient.get(uri, headers: _headers());

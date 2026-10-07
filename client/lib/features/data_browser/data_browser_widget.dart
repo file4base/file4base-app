@@ -43,6 +43,30 @@ class DataBrowserWidget extends StatefulWidget {
   State<DataBrowserWidget> createState() => DataBrowserWidgetState();
 }
 
+/// One level of a sort order: a field and its direction.
+class SortLevel {
+  final String field;
+  final bool ascending;
+
+  const SortLevel(this.field, this.ascending);
+
+  SortLevel get flipped => SortLevel(field, !ascending);
+
+  /// The form the data API takes in its `sort` parameter: a leading "-" sorts
+  /// the field descending.
+  String get queryValue => ascending ? field : '-$field';
+
+  @override
+  bool operator ==(Object other) =>
+      other is SortLevel && other.field == field && other.ascending == ascending;
+
+  @override
+  int get hashCode => Object.hash(field, ascending);
+
+  @override
+  String toString() => queryValue;
+}
+
 class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost {
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
@@ -55,8 +79,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   // Found set bookkeeping for the record bar
   int _totalInTable = 0;
   List<Map<String, dynamic>> _unsortedRecords = [];
-  String? _sortField;
-  bool _sortAscending = true;
+  /// The sort order, outermost field first. Empty means the records are in
+  /// the order they are stored in.
+  List<SortLevel> _sortOrder = const [];
+
+  String? get _sortField => _sortOrder.isEmpty ? null : _sortOrder.first.field;
+  bool get _sortAscending => _sortOrder.isEmpty ? true : _sortOrder.first.ascending;
   final TextEditingController _recordNumberCtrl = TextEditingController();
   final FocusNode _recordNumberFocus = FocusNode();
   double? _sliderDragValue; // record shown by the slider while it is dragged
@@ -408,7 +436,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           _records = rows;
           _unsortedRecords = List.of(rows);
           _totalInTable = rows.length;
-          _sortField = null;
+          _sortOrder = const [];
           _currentIndex = 0;
           _isLoading = false;
         });
@@ -545,7 +573,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         setState(() {
           _records = results;
           _unsortedRecords = List.of(results);
-          _sortField = null;
+          _sortOrder = const [];
           _currentIndex = 0;
           _isFoundSet = true;
           _isLoading = false;
@@ -707,7 +735,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   String get _foundSetSummary {
     final n = _records.length;
-    final sort = _sortField == null ? 'Unsorted' : 'Sorted by ${_displayName(_sortField!)} ${_sortAscending ? '↑' : '↓'}';
+    final sort = _sortOrder.isEmpty
+        ? 'Unsorted'
+        : 'Sorted by ${_sortOrder.map((l) => '${_displayName(l.field)} ${l.ascending ? '↑' : '↓'}').join(', ')}';
     if (_isFoundSet) return '$n found of $_totalInTable · $sort';
     return '$n ${n == 1 ? 'record' : 'records'} · $sort';
   }
@@ -877,16 +907,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   /// Sorts the found set by [field] (null restores the original order),
   /// keeping the current record selected.
-  void _applySort(String? field, bool ascending) {
+  void _applySort(String? field, bool ascending) =>
+      _applySortOrder(field == null ? const [] : [SortLevel(field, ascending)]);
+
+  /// Orders the found set by every level in turn: ties on the first field are
+  /// broken by the second, and so on.
+  void _applySortOrder(List<SortLevel> order) {
     final currentId = _records.isNotEmpty ? _records[_currentIndex]['id'] : null;
     final sorted = List.of(_unsortedRecords);
-    if (field != null) {
-      sorted.sort((a, b) => ascending ? _compareValues(a[field], b[field]) : _compareValues(b[field], a[field]));
+    if (order.isNotEmpty) {
+      sorted.sort((a, b) {
+        for (final level in order) {
+          final cmp = level.ascending
+              ? _compareValues(a[level.field], b[level.field])
+              : _compareValues(b[level.field], a[level.field]);
+          if (cmp != 0) return cmp;
+        }
+        return 0;
+      });
     }
     setState(() {
       _records = sorted;
-      _sortField = field;
-      _sortAscending = ascending;
+      _sortOrder = List.unmodifiable(order);
       final idx = _records.indexWhere((r) => r['id'] == currentId);
       _currentIndex = idx < 0 ? 0 : idx;
     });
@@ -897,48 +939,124 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<void> _showSortDialog() async {
     await _saveCurrentRecord();
     if (!mounted) return;
-    final cols = widget.table.columns;
-    String? field = _sortField ?? (cols.where((c) => !c.isPrimaryKey).firstOrNull?.name);
-    bool ascending = _sortAscending;
+    final cols = widget.table.columns.where((c) => !c.isPrimaryKey).toList();
+    if (cols.isEmpty) return;
+
+    var order = List.of(_sortOrder);
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) => AlertDialog(
-          title: const Text('Sort Records'),
-          content: SizedBox(
-            width: 320,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                DropdownButtonFormField<String>(
-                  initialValue: field,
-                  decoration: const InputDecoration(labelText: 'Sort by', border: OutlineInputBorder(), isDense: true),
-                  items: cols.map((c) => DropdownMenuItem(value: c.name, child: Text(c.displayName))).toList(),
-                  onChanged: (v) => setDlg(() => field = v),
-                ),
-                const SizedBox(height: 12),
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: true, icon: Icon(Icons.arrow_upward, size: 14), label: Text('Ascending')),
-                    ButtonSegment(value: false, icon: Icon(Icons.arrow_downward, size: 14), label: Text('Descending')),
-                  ],
-                  selected: {ascending},
-                  onSelectionChanged: (v) => setDlg(() => ascending = v.first),
-                ),
-              ],
+        builder: (ctx, setDlg) {
+          final available = cols.where((c) => !order.any((l) => l.field == c.name)).toList();
+          return AlertDialog(
+            title: const Text('Sort Records'),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Records are ordered by the first field; ties are broken by the next one.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  if (order.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Text('No sort order yet. Add a field below.',
+                          style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    )
+                  else
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: order.length,
+                        itemBuilder: (_, i) {
+                          final level = order[i];
+                          return ListTile(
+                            key: ValueKey('sort-level-${level.field}'),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            leading: Text('${i + 1}.'),
+                            title: Text(_displayName(level.field)),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: level.ascending ? 'Ascending' : 'Descending',
+                                  icon: Icon(level.ascending ? Icons.arrow_upward : Icons.arrow_downward, size: 16),
+                                  onPressed: () => setDlg(() => order[i] = level.flipped),
+                                ),
+                                IconButton(
+                                  tooltip: 'Move up',
+                                  icon: const Icon(Icons.keyboard_arrow_up, size: 18),
+                                  onPressed: i == 0
+                                      ? null
+                                      : () => setDlg(() => order.insert(i - 1, order.removeAt(i))),
+                                ),
+                                IconButton(
+                                  tooltip: 'Move down',
+                                  icon: const Icon(Icons.keyboard_arrow_down, size: 18),
+                                  onPressed: i == order.length - 1
+                                      ? null
+                                      : () => setDlg(() => order.insert(i + 1, order.removeAt(i))),
+                                ),
+                                IconButton(
+                                  tooltip: 'Remove from the sort order',
+                                  icon: const Icon(Icons.close, size: 16),
+                                  onPressed: () => setDlg(() => order.removeAt(i)),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  const Divider(),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          key: const ValueKey('sort-add-field'),
+                          initialValue: null,
+                          decoration: const InputDecoration(
+                              labelText: 'Add a field', border: OutlineInputBorder(), isDense: true),
+                          items: available
+                              .map((c) => DropdownMenuItem(value: c.name, child: Text(c.displayName)))
+                              .toList(),
+                          onChanged: available.isEmpty
+                              ? null
+                              : (v) {
+                                  if (v != null) setDlg(() => order.add(SortLevel(v, true)));
+                                },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton(
+                        onPressed: order.isEmpty ? null : () => setDlg(order.clear),
+                        child: const Text('Clear All'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop('unsort'), child: const Text('Unsort')),
-            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.of(ctx).pop('sort'), child: const Text('Sort')),
-          ],
-        ),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(ctx).pop('unsort'), child: const Text('Unsort')),
+              TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: order.isEmpty ? null : () => Navigator.of(ctx).pop('sort'),
+                child: const Text('Sort'),
+              ),
+            ],
+          );
+        },
       ),
     );
-    if (result == 'sort' && field != null) _applySort(field, ascending);
-    if (result == 'unsort') _applySort(null, true);
+    if (result == 'sort') _applySortOrder(order);
+    if (result == 'unsort') _applySortOrder(const []);
   }
 
   // ─── List and Table views ──────────────────────────────────────────────────

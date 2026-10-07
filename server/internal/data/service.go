@@ -35,12 +35,72 @@ type FindRequest struct {
 	Omit     bool            `json:"omit"` // NOT condition
 }
 
+// SortField is one level of a sort order: records are ordered by the first
+// field, ties are broken by the second, and so on.
+type SortField struct {
+	Field      string `json:"field"`
+	Descending bool   `json:"descending"`
+}
+
 // QueryOptions controls sorting and pagination
 type QueryOptions struct {
-	Limit   int    `json:"limit"`
-	Offset  int    `json:"offset"`
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+
+	// SortBy and SortAsc are the single-field form, kept so existing callers
+	// keep working. Sort supersedes them when it is given.
 	SortBy  string `json:"sort_by,omitempty"`
 	SortAsc bool   `json:"sort_asc"`
+
+	Sort []SortField `json:"sort,omitempty"`
+}
+
+// SortOrder is the effective order: Sort when the caller gave one, otherwise
+// the single SortBy/SortAsc pair, otherwise nothing.
+func (o QueryOptions) SortOrder() []SortField {
+	if len(o.Sort) > 0 {
+		order := make([]SortField, 0, len(o.Sort))
+		for _, level := range o.Sort {
+			if strings.TrimSpace(level.Field) != "" {
+				order = append(order, level)
+			}
+		}
+		return order
+	}
+	if o.SortBy != "" {
+		return []SortField{{Field: o.SortBy, Descending: !o.SortAsc}}
+	}
+	return nil
+}
+
+// orderByClause builds the ORDER BY for a sort order, checking every field
+// against the table's registered fields so a caller cannot name a column that
+// is not there (or inject one).
+func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, order []SortField) (string, error) {
+	if len(order) == 0 {
+		return "", nil
+	}
+	parts := make([]string, 0, len(order))
+	seen := make(map[string]struct{}, len(order))
+	for _, level := range order {
+		if err := checkField(fields, tableName, level.Field); err != nil {
+			return "", err
+		}
+		if _, repeated := seen[level.Field]; repeated {
+			// A field twice in the order changes nothing after the first time.
+			continue
+		}
+		seen[level.Field] = struct{}{}
+		dir := "ASC"
+		if level.Descending {
+			dir = "DESC"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s", dialect.QuoteIdentifier(level.Field), dir))
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return "ORDER BY " + strings.Join(parts, ", "), nil
 }
 
 // Service handles dynamic generic table CRUD and query translation
@@ -395,15 +455,14 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 	if err != nil {
 		return nil, err
 	}
-	if opts.SortBy != "" {
-		if err := checkField(fields, tableName, opts.SortBy); err != nil {
-			return nil, err
-		}
-	}
 	if opts.Offset < 0 {
 		opts.Offset = 0
 	}
 	dialect := s.driver.Dialect()
+	orderClause, err := orderByClause(dialect, fields, tableName, opts.SortOrder())
+	if err != nil {
+		return nil, err
+	}
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 100
@@ -411,15 +470,6 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 		// Clamp, do not fall back to the default: a caller asking for more
 		// than the maximum must still get a full page and keep paging.
 		limit = MaxPageSize
-	}
-
-	orderClause := ""
-	if opts.SortBy != "" {
-		dir := "ASC"
-		if !opts.SortAsc {
-			dir = "DESC"
-		}
-		orderClause = fmt.Sprintf("ORDER BY %s %s", dialect.QuoteIdentifier(opts.SortBy), dir)
 	}
 
 	sqlQuery := fmt.Sprintf(
@@ -645,6 +695,11 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 		whereClause = "WHERE " + strings.Join(orClauses, " OR ")
 	}
 
+	orderClause, err := orderByClause(dialect, fields, tableName, opts.SortOrder())
+	if err != nil {
+		return nil, err
+	}
+
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 500
@@ -653,10 +708,11 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 
 	sqlQuery := fmt.Sprintf(
-		"SELECT %s FROM %s %s LIMIT %d OFFSET %d",
+		"SELECT %s FROM %s %s %s LIMIT %d OFFSET %d",
 		selectList(dialect, fields),
 		dialect.QuoteIdentifier(tableName),
 		whereClause,
+		orderClause,
 		limit,
 		opts.Offset,
 	)
