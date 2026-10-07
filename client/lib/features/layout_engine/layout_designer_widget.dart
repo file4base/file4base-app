@@ -211,6 +211,20 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _activeTool = widget.activeTool;
     _currentTable = widget.table;
     _isPersisted = !_layout.id.startsWith('layout_');
+    _loadValueLists();
+  }
+
+  /// The database's value lists, so a field object can be bound to one (#31).
+  List<ValueListModel> _valueLists = const [];
+
+  Future<void> _loadValueLists() async {
+    try {
+      final lists = await widget.apiClient.listValueLists();
+      if (mounted) setState(() => _valueLists = lists);
+    } catch (_) {
+      // Designing a layout does not depend on them; the picker says there
+      // are none.
+    }
   }
 
   @override
@@ -4155,6 +4169,59 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   // Tab 2: Data — field binding (fields), action (buttons), tab order (tab stops)
+  /// Which value list fills the control, shown only for a style that needs
+  /// one (#31). A style with no list falls back to an edit box in Browse mode,
+  /// so the inspector says so rather than letting it look configured.
+  List<Widget> _valueListPicker(LayoutObjectModel sel) {
+    final binding = sel.fieldBinding;
+    if (binding == null || !FieldControlStyle.needsValueList(binding.controlStyle)) {
+      return const [];
+    }
+
+    final selected = binding.valueListId;
+    final known = _valueLists.any((l) => l.id == selected);
+    return [
+      const SizedBox(height: 12),
+      const Text('Values from:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 4),
+      DropdownButtonFormField<String>(
+        key: const ValueKey('inspector-value-list'),
+        value: known ? selected : null,
+        decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+        hint: const Text('Choose a value list', style: TextStyle(fontSize: 11)),
+        items: [
+          for (final list in _valueLists)
+            DropdownMenuItem(
+              value: list.id,
+              child: Text(list.name, style: const TextStyle(fontSize: 11)),
+            ),
+        ],
+        onChanged: (id) {
+          if (id == null) return;
+          _editSelected((sel) => sel.copyWith(
+                fieldBinding: sel.fieldBinding!.copyWith(valueListId: id),
+              ));
+        },
+      ),
+      if (_valueLists.isEmpty)
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Text(
+            'No value lists yet. Make one in File > Manage > Value Lists.',
+            style: TextStyle(fontSize: 10, color: Colors.orange),
+          ),
+        )
+      else if (!known)
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Text(
+            'Until a list is chosen this field is a plain edit box in Browse mode.',
+            style: TextStyle(fontSize: 10, color: Colors.orange),
+          ),
+        ),
+    ];
+  }
+
   List<Widget> _fieldBindingSection(LayoutObjectModel sel, bool isDark) {
     final cols = _currentTable.columns;
 
@@ -4188,12 +4255,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             if (f != null) {
               final existing = sel.fieldBinding ?? const FieldBindingModel(fieldName: '');
               _editSelected((sel) => sel.copyWith(
-                fieldBinding: FieldBindingModel(
+                fieldBinding: existing.copyWith(
                   tableOccurrence: _currentTable.name,
                   fieldName: f,
-                  controlStyle: existing.controlStyle,
-                  allowBrowseEntry: existing.allowBrowseEntry,
-                  allowFindEntry: existing.allowFindEntry,
                 ),
               ));
             }
@@ -4203,30 +4267,24 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const Divider(height: 24),
         _inspectorSectionTitle('CONTROL STYLE'),
         DropdownButtonFormField<String>(
-          value: sel.fieldBinding?.controlStyle ?? 'edit_box',
+          value: sel.fieldBinding?.controlStyle ?? FieldControlStyle.editBox,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
-          items: const [
-            DropdownMenuItem(value: 'edit_box', child: Text('Edit Box')),
-            DropdownMenuItem(value: 'drop_down_list', child: Text('Drop-down List')),
-            DropdownMenuItem(value: 'pop_up_menu', child: Text('Pop-up Menu')),
-            DropdownMenuItem(value: 'checkbox_set', child: Text('Checkbox Set')),
-            DropdownMenuItem(value: 'radio_button_set', child: Text('Radio Button Set')),
-            DropdownMenuItem(value: 'drop_down_calendar', child: Text('Drop-down Calendar')),
+          items: [
+            for (final entry in FieldControlStyle.labels.entries)
+              DropdownMenuItem(value: entry.key, child: Text(entry.value)),
           ],
           onChanged: (style) {
             if (style != null && sel.fieldBinding != null) {
               _editSelected((sel) => sel.copyWith(
-                fieldBinding: FieldBindingModel(
-                  tableOccurrence: sel.fieldBinding!.tableOccurrence,
-                  fieldName: sel.fieldBinding!.fieldName,
+                fieldBinding: sel.fieldBinding!.copyWith(
                   controlStyle: style,
-                  allowBrowseEntry: sel.fieldBinding!.allowBrowseEntry,
-                  allowFindEntry: sel.fieldBinding!.allowFindEntry,
+                  clearValueList: !FieldControlStyle.needsValueList(style),
                 ),
               ));
             }
           },
         ),
+        ..._valueListPicker(sel),
 
         const Divider(height: 24),
         _inspectorSectionTitle('BEHAVIOR & ENTRY OPTIONS'),

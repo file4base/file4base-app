@@ -28,11 +28,12 @@ this tutorial says so instead of describing it — see
 - [Lesson 8 — Customize a layout](#lesson-8--customize-a-layout)
 - [Lesson 9 — Layout properties and a second layout](#lesson-9--layout-properties-and-a-second-layout)
 - [Lesson 10 — A calculated field](#lesson-10--a-calculated-field)
-- [Lesson 11 — Preview and print](#lesson-11--preview-and-print)
-- [Lesson 12 — A second table and a relationship](#lesson-12--a-second-table-and-a-relationship)
-- [Lesson 13 — Scripts](#lesson-13--scripts)
-- [Lesson 14 — Accounts and privileges](#lesson-14--accounts-and-privileges)
-- [Lesson 15 — Backups](#lesson-15--backups)
+- [Lesson 11 — A value list](#lesson-11--a-value-list)
+- [Lesson 12 — Preview and print](#lesson-12--preview-and-print)
+- [Lesson 13 — A second table and a relationship](#lesson-13--a-second-table-and-a-relationship)
+- [Lesson 14 — Scripts](#lesson-14--scripts)
+- [Lesson 15 — Accounts and privileges](#lesson-15--accounts-and-privileges)
+- [Lesson 16 — Backups](#lesson-16--backups)
 - [Reference: the sample data](#reference-the-sample-data)
 - [What is not here yet](#what-is-not-here-yet)
 
@@ -522,7 +523,64 @@ returns the 6 new customers.
 
 ---
 
-## Lesson 11 — Preview and print
+## Lesson 11 — A value list
+
+`Customer Type` is either `New` or `Continuing`, and typing it by hand invites
+typos. A **value list** turns the field into a set of radio buttons.
+
+### Make the list
+
+1. Choose **File > Manage > Value Lists...**
+2. Click **New Value List...**
+3. For the name, type `Customer Types`. Leave **Custom values** selected.
+4. In the box, type the values one per line:
+
+   ```
+   New
+   Continuing
+   ```
+
+5. Click **Save**, then **Close**.
+
+### Put it on the layout
+
+1. Switch to **Layout mode** and select the **Customer Type** field.
+2. In the inspector, under **CONTROL STYLE**, choose **Radio button set**.
+3. A **Values from** box appears. Choose **Customer Types**.
+4. Click **Exit Layout**.
+
+In Browse mode the field is now two radio buttons. Choosing one writes it to
+the record; the field can no longer be mistyped.
+
+The other control styles are **Drop-down list**, **Pop-up menu** and
+**Checkbox set**. A checkbox set lets a record hold more than one of the
+values; they are kept in the field one per line.
+
+### A list that grows with the data
+
+The second kind of list takes its values from a field instead of being typed:
+
+1. **File > Manage > Value Lists... > New Value List...**
+2. Name it `Cities In Use` and choose **From a field**.
+3. Pick the **Customers** table and the **City** field.
+4. Save.
+
+That list offers every city your records already contain, so it grows as you
+add customers. Bind it to **City** as a drop-down and new records can be filled
+from the cities you already use, while still accepting a new one typed in.
+
+> **A value list offers values; it does not enforce them.** A record can still
+> end up holding something that is not on the list — through the data API, or
+> from before the list existed. To refuse anything else, add an **existing
+> value** rule in **Field Options > Validation**. Keeping the two separate is
+> deliberate, and it is what FileMaker does.
+
+If you delete a value list, fields that used it go back to being plain edit
+boxes. No record data changes.
+
+---
+
+## Lesson 12 — Preview and print
 
 Choose **View > Preview Mode**.
 
@@ -543,7 +601,7 @@ Choose **View > Browse Mode** to come back.
 
 ---
 
-## Lesson 12 — A second table and a relationship
+## Lesson 13 — A second table and a relationship
 
 Customers work for companies, and several customers work for the same one. That
 is a second table.
@@ -590,7 +648,7 @@ reads `2 occurrences · 1 relationships`.
 
 ---
 
-## Lesson 13 — Scripts
+## Lesson 14 — Scripts
 
 Choose **Scripts > Script Workspace...**
 
@@ -617,7 +675,7 @@ without executing them.
 
 ---
 
-## Lesson 14 — Accounts and privileges
+## Lesson 15 — Accounts and privileges
 
 Choose **File > Manage > Security...**
 
@@ -649,7 +707,7 @@ account roles and layout privileges to restrict access today.
 
 ---
 
-## Lesson 15 — Backups
+## Lesson 16 — Backups
 
 The database lives in PostgreSQL (or MariaDB), so backing it up means backing up
 the engine's data.
@@ -725,10 +783,6 @@ A field that totals, counts or averages a column across the found set is not
 computed yet. Calculation fields, which work out a value from the record, do
 work — see lesson 10.
 
-**No value lists** ([#31](https://github.com/file4base/file4base-app/issues/31))**.** A field cannot be presented as a pop-up, a checkbox set or a
-radio button set from a list of allowed values. *File > Manage > Value Lists* is
-a roadmap item and says so.
-
 **No report assistant** ([#32](https://github.com/file4base/file4base-app/issues/32), [#33](https://github.com/file4base/file4base-app/issues/33))**.** *New Layout / Report* only asks for a name and a table.
 There are no list, labels, report or blank layout types, no field picker, no
 theme chooser, no sub-summary parts, no break fields and no grand totals.
@@ -752,7 +806,7 @@ setup.
 ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
 data files.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 14.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 15.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

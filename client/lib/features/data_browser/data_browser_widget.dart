@@ -281,6 +281,157 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   // null = idle/saved, true = saving, false = error
   final Map<String, bool?> _fieldSaving = {};
 
+  // ─── Value lists (#31) ─────────────────────────────────────────────────────
+
+  /// The value lists of this database, by id, loaded once.
+  Map<String, ValueListModel> _valueLists = const {};
+
+  /// The values each list offers, resolved on demand. A list taken from a
+  /// field is resolved by the server, so it reflects the data as it is now.
+  final Map<String, List<String>> _valueListValues = {};
+
+  Future<void> _loadValueLists() async {
+    try {
+      final lists = await widget.apiClient.listValueLists();
+      if (!mounted) return;
+      setState(() => _valueLists = {for (final list in lists) list.id: list});
+      for (final list in lists) {
+        unawaited(_resolveValueList(list));
+      }
+    } catch (_) {
+      // A database whose value lists cannot be read still browses: every
+      // control falls back to an edit box.
+    }
+  }
+
+  Future<void> _resolveValueList(ValueListModel list) async {
+    if (!list.isFromField) {
+      if (mounted) setState(() => _valueListValues[list.id] = list.customValueList);
+      return;
+    }
+    try {
+      final values = await widget.apiClient.valueListValues(list.id);
+      if (mounted) setState(() => _valueListValues[list.id] = values);
+    } catch (_) {
+      if (mounted) setState(() => _valueListValues[list.id] = const []);
+    }
+  }
+
+  /// The values a field object offers, or null when it is a plain edit box.
+  List<String>? _valuesFor(FieldBindingModel binding) {
+    final id = binding.valueListId;
+    if (id == null || !FieldControlStyle.needsValueList(binding.controlStyle)) return null;
+    final values = _valueListValues[id];
+    if (values == null || values.isEmpty) return null;
+    return values;
+  }
+
+  /// Draws the control a value list fills: a drop-down, a pop-up menu, a set
+  /// of radio buttons or a set of checkboxes.
+  ///
+  /// A checkbox set holds several values; they are kept in the field as a
+  /// newline-separated list, which is how FileMaker stores them too.
+  Widget _buildValueListControl({
+    required String style,
+    required List<String> values,
+    required String current,
+    required ValueChanged<String> onChanged,
+  }) {
+    switch (style) {
+      case FieldControlStyle.checkboxSet:
+        final chosen = current
+            .split('\n')
+            .map((v) => v.trim())
+            .where((v) => v.isNotEmpty)
+            .toSet();
+        return SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final value in values)
+                InkWell(
+                  key: ValueKey('checkbox-$value'),
+                  onTap: () {
+                    final next = Set<String>.from(chosen);
+                    next.contains(value) ? next.remove(value) : next.add(value);
+                    onChanged(values.where(next.contains).join('\n'));
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        value: chosen.contains(value),
+                        onChanged: (_) {
+                          final next = Set<String>.from(chosen);
+                          next.contains(value) ? next.remove(value) : next.add(value);
+                          onChanged(values.where(next.contains).join('\n'));
+                        },
+                      ),
+                      Flexible(child: Text(value, style: const TextStyle(fontSize: 13))),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+
+      case FieldControlStyle.radioButtonSet:
+        return SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final value in values)
+                InkWell(
+                  key: ValueKey('radio-$value'),
+                  onTap: () => onChanged(value),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Radio<String>(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        value: value,
+                        groupValue: current.trim(),
+                        onChanged: (v) => onChanged(v ?? ''),
+                      ),
+                      Flexible(child: Text(value, style: const TextStyle(fontSize: 13))),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+
+      default:
+        // Drop-down list and pop-up menu are the same control; the record may
+        // hold a value the list no longer offers, so it is kept selectable.
+        final items = List<String>.from(values);
+        final value = current.trim();
+        if (value.isNotEmpty && !items.contains(value)) items.insert(0, value);
+        return DropdownButtonFormField<String>(
+          key: const ValueKey('value-list-control'),
+          isExpanded: true,
+          initialValue: value.isEmpty ? null : value,
+          decoration: const InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            border: OutlineInputBorder(),
+          ),
+          hint: const Text('—', style: TextStyle(fontSize: 13)),
+          items: [
+            const DropdownMenuItem<String>(value: '', child: Text('—', style: TextStyle(fontSize: 13))),
+            for (final v in items)
+              DropdownMenuItem<String>(value: v, child: Text(v, style: const TextStyle(fontSize: 13))),
+          ],
+          onChanged: (v) => onChanged(v ?? ''),
+        );
+    }
+  }
+
   /// A calculation field is filled by its formula, so it cannot be typed into
   /// (#30). The column is still shown, with its computed value.
   bool _isComputed(String fieldName) {
@@ -442,6 +593,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   void initState() {
     super.initState();
     _initFindControllers();
+    unawaited(_loadValueLists());
     _fetchRecords().then((_) {
       if (mounted && widget.mode == OperationalMode.browse) _runLayoutTrigger(widget.layout?.onLayoutEnter);
     });
@@ -1730,6 +1882,21 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         final fn = _fieldFocusNodes[col.name];
         final saving = _fieldSaving[col.name];
         final computed = _isComputed(col.name);
+
+        // A field bound to a value list is filled from a control rather than
+        // typed into (#31).
+        final offered = computed ? null : _valuesFor(obj.fieldBinding!);
+        if (offered != null) {
+          return _buildValueListControl(
+            style: obj.fieldBinding!.effectiveControlStyle(hasValueList: true),
+            values: offered,
+            current: ctrl?.text ?? '',
+            onChanged: (value) {
+              ctrl?.text = value;
+              _onFieldChanged(col.name, value);
+            },
+          );
+        }
 
         return TextField(
           controller: ctrl,

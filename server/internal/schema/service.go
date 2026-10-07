@@ -175,6 +175,16 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
+		`CREATE TABLE IF NOT EXISTS sys_value_lists (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL UNIQUE,
+			kind VARCHAR(16) NOT NULL DEFAULT 'custom',
+			custom_values TEXT,
+			source_table_id VARCHAR(36) REFERENCES sys_tables(id) ON DELETE CASCADE,
+			source_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
+			created_at ` + ts + `,
+			updated_at ` + ts + `
+		);`,
 		`CREATE TABLE IF NOT EXISTS sys_users (
 			id VARCHAR(36) PRIMARY KEY,
 			username VARCHAR(64) NOT NULL UNIQUE,

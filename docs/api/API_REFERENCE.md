@@ -483,6 +483,58 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`, `IS_EMPTY
 
 ---
 
+### Value lists
+
+A **value list** is a named set of values a field can be filled from. It decides what a field *offers*; it does not restrict what may be stored — that is the `existing_value` validation rule, so the two choices stay separate.
+
+A list is either `custom` (values typed in, one per line in `custom_values`) or `field` (the distinct values `source_column_id` already holds, which makes the list grow with the data). A field list is capped at 500 values.
+
+| Method and path | Role | Does |
+| --- | --- | --- |
+| `GET /api/v1/value-lists` | any session | Lists the value lists, by name. |
+| `GET /api/v1/value-lists/{id}/values` | any session | Resolves a list to the values it offers right now: `{"values": ["New", "Continuing"]}`. For a `field` list this reads the table, so the answer reflects the data as it is. |
+| `POST /api/v1/value-lists` | admin | Creates one. |
+| `PUT /api/v1/value-lists/{id}` | admin | Replaces its definition. |
+| `DELETE /api/v1/value-lists/{id}` | admin | Removes it. Layout fields that pointed at it fall back to a plain edit box; no record data changes. |
+
+The same routes are also mounted under `/api/v1/schemas/value-lists`.
+
+#### Request body
+```json
+{
+  "name": "Customer Types",
+  "kind": "custom",
+  "custom_values": "New\nContinuing"
+}
+```
+or
+```json
+{
+  "name": "Cities In Use",
+  "kind": "field",
+  "source_table_id": "…",
+  "source_column_id": "…"
+}
+```
+
+A list with no name, a `custom` list with no values, or a `field` list without its table and field answers `422 Invalid Field Options`. Two lists cannot share a name (`409 Value List Already Exists`). An id that is not there answers `404 Value List Not Found`.
+
+Value lists are carried in the solution file and matched by name on import, so re-importing the same file updates them instead of making copies; a `field` list has its table and column rewritten to the destination's ids.
+
+A layout's field object says which control it uses and which list fills it:
+
+```json
+{
+  "field_name": "customer_type",
+  "control_style": "radio_button_set",
+  "value_list_id": "…"
+}
+```
+
+`control_style` is `edit_box`, `drop_down_list`, `pop_up_menu`, `checkbox_set` or `radio_button_set`. Everything but `edit_box` needs a value list; without one the field is drawn as an edit box. A `checkbox_set` keeps the chosen values in the field as a newline-separated list.
+
+---
+
 ## 5. Multi-Database Management
 
 ### `GET /api/v1/databases`

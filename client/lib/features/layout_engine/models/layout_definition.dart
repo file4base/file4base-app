@@ -38,26 +38,86 @@ class LayoutPartModel {
   }
 }
 
+/// How a field is presented on a layout. Everything but [editBox] is filled
+/// from a value list (#31).
+class FieldControlStyle {
+  static const String editBox = 'edit_box';
+  static const String dropDownList = 'drop_down_list';
+  static const String popUpMenu = 'pop_up_menu';
+  static const String checkboxSet = 'checkbox_set';
+  static const String radioButtonSet = 'radio_button_set';
+
+  /// The styles offered in the inspector, with the label each one shows.
+  static const Map<String, String> labels = {
+    editBox: 'Edit box',
+    dropDownList: 'Drop-down list',
+    popUpMenu: 'Pop-up menu',
+    checkboxSet: 'Checkbox set',
+    radioButtonSet: 'Radio button set',
+  };
+
+  /// True when the style needs a value list to show anything.
+  static bool needsValueList(String style) => style != editBox;
+
+  /// A style that lets the record hold more than one of the values.
+  static bool isMultiValue(String style) => style == checkboxSet;
+}
+
 class FieldBindingModel {
   final String? tableOccurrence;
   final String fieldName;
-  final String controlStyle; // 'edit_box', 'drop_down_list', 'checkbox_set', 'drop_down_calendar'
+
+  /// One of [FieldControlStyle].
+  final String controlStyle;
+
+  /// The value list that fills the control, when the style needs one.
+  final String? valueListId;
+
   final bool allowBrowseEntry;
   final bool allowFindEntry;
 
   const FieldBindingModel({
     this.tableOccurrence,
     required this.fieldName,
-    this.controlStyle = 'edit_box',
+    this.controlStyle = FieldControlStyle.editBox,
+    this.valueListId,
     this.allowBrowseEntry = true,
     this.allowFindEntry = true,
   });
+
+  /// The style actually used: a control that needs a value list but has none
+  /// falls back to an edit box, so deleting a list cannot break a layout.
+  String effectiveControlStyle({required bool hasValueList}) {
+    if (FieldControlStyle.needsValueList(controlStyle) && !hasValueList) {
+      return FieldControlStyle.editBox;
+    }
+    return controlStyle;
+  }
+
+  FieldBindingModel copyWith({
+    String? tableOccurrence,
+    String? fieldName,
+    String? controlStyle,
+    String? valueListId,
+    bool clearValueList = false,
+    bool? allowBrowseEntry,
+    bool? allowFindEntry,
+  }) =>
+      FieldBindingModel(
+        tableOccurrence: tableOccurrence ?? this.tableOccurrence,
+        fieldName: fieldName ?? this.fieldName,
+        controlStyle: controlStyle ?? this.controlStyle,
+        valueListId: clearValueList ? null : (valueListId ?? this.valueListId),
+        allowBrowseEntry: allowBrowseEntry ?? this.allowBrowseEntry,
+        allowFindEntry: allowFindEntry ?? this.allowFindEntry,
+      );
 
   factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
     return FieldBindingModel(
       tableOccurrence: json['table_occurrence'] as String?,
       fieldName: json['field_name'] as String? ?? '',
-      controlStyle: json['control_style'] as String? ?? 'edit_box',
+      controlStyle: json['control_style'] as String? ?? FieldControlStyle.editBox,
+      valueListId: json['value_list_id'] as String?,
       allowBrowseEntry: json['allow_browse_entry'] as bool? ?? true,
       allowFindEntry: json['allow_find_entry'] as bool? ?? true,
     );
@@ -67,6 +127,7 @@ class FieldBindingModel {
         if (tableOccurrence != null) 'table_occurrence': tableOccurrence,
         'field_name': fieldName,
         'control_style': controlStyle,
+        if (valueListId != null) 'value_list_id': valueListId,
         'allow_browse_entry': allowBrowseEntry,
         'allow_find_entry': allowFindEntry,
       };

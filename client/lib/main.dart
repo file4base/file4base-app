@@ -25,6 +25,7 @@ import 'core/theme/theme_model.dart';
 import 'core/theme/theme_provider.dart';
 import 'features/preflight/preflight_dialog.dart';
 import 'features/schema_manager/manage_database_dialog.dart';
+import 'features/schema_manager/manage_value_lists_dialog.dart';
 import 'features/script_workspace/script_workspace_dialog.dart';
 import 'features/security/change_password_dialog.dart';
 import 'features/security/manage_security_dialog.dart';
@@ -1361,6 +1362,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     _changeMode(OperationalMode.browse);
                     _dataBrowserKey.currentState?.fetchRecords();
                   },
+                  onManageValueLists: _currentUser == null
+                      ? null
+                      : () => ManageValueListsDialog.show(context),
                   onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
                   onNewFindRequest: mode == OperationalMode.find
                       ? () => _dataBrowserKey.currentState?.newFindRequest()

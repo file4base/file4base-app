@@ -29,6 +29,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The defects below were all found while writing it.
 
 ### Added
+- **Value lists** ([#31](https://github.com/file4base/file4base-app/issues/31)).
+  A field can be filled from a named set of values instead of being typed into.
+  **File > Manage > Value Lists...**, which used to be a roadmap dialog, now
+  manages them, and lesson 11 of the tutorial turns Customer Type into a pair of
+  radio buttons with one.
+  - Two kinds: **custom values**, typed one per line, and **from a field**,
+    which offers the distinct values a field already holds so the list grows
+    with the data (capped at 500).
+  - A layout's field object chooses its control — edit box, drop-down list,
+    pop-up menu, checkbox set or radio button set — and which list fills it. A
+    control whose list is missing or was deleted falls back to an edit box, so a
+    layout cannot break. A checkbox set keeps the chosen values in the field one
+    per line.
+  - Value lists go into the solution file and are matched by name on import, so
+    re-importing the same file updates them instead of making copies; a list
+    taken from a field has its table and column rewritten to the destination's
+    ids.
+  - A list offers values; it does not restrict what may be stored. Refusing
+    anything else is the "existing value" validation rule, so the two choices
+    stay separate as they do in FileMaker. Both the dialog and the tutorial say
+    so.
 - **Calculation fields are computed** ([#30](https://github.com/file4base/file4base-app/issues/30)).
   The field type and its formula editor existed, but nothing ever evaluated a
   formula: the column was created as plain text and stayed empty. A formula is

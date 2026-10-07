@@ -86,6 +86,17 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		}
 	}
 
+	valueLists := func(prefix string) func(r chi.Router) {
+		root := rootPath(prefix)
+		return func(r chi.Router) {
+			r.Get(root, h.ListValueLists)
+			r.Get(prefix+"/{id}/values", h.ResolveValueList)
+			r.With(RequireAdmin).Post(root, h.CreateValueList)
+			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateValueList)
+			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteValueList)
+		}
+	}
+
 	r.Route("/api/v1/schemas", func(r chi.Router) {
 		r.Use(RequireSession)
 		tables(r)
@@ -93,6 +104,12 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		relationships("/relationships")(r)
 		layouts("/layouts")(r)
 		scripts("/scripts")(r)
+		valueLists("/value-lists")(r)
+	})
+
+	r.Route("/api/v1/value-lists", func(r chi.Router) {
+		r.Use(RequireSession)
+		valueLists("")(r)
 	})
 
 	// Top-level aliases kept for backwards compatibility
@@ -748,4 +765,78 @@ func (h *SchemaHandler) DuplicateScript(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(script)
+}
+
+// ─── Value lists (#31) ───────────────────────────────────────────────────────
+
+func (h *SchemaHandler) ListValueLists(w http.ResponseWriter, r *http.Request) {
+	lists, err := schemaService(r).ListValueLists(r.Context())
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(lists)
+}
+
+// ResolveValueList answers the values the list offers right now: the lines of
+// a custom list, or the distinct values the field it reads holds.
+func (h *SchemaHandler) ResolveValueList(w http.ResponseWriter, r *http.Request) {
+	values, err := schemaService(r).ValueListValues(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeValueListError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"values": values})
+}
+
+func (h *SchemaHandler) CreateValueList(w http.ResponseWriter, r *http.Request) {
+	var in schema.ValueListInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	list, err := schemaService(r).CreateValueList(r.Context(), in)
+	if err != nil {
+		writeValueListError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(list)
+}
+
+func (h *SchemaHandler) UpdateValueList(w http.ResponseWriter, r *http.Request) {
+	var in schema.ValueListInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	list, err := schemaService(r).UpdateValueList(r.Context(), chi.URLParam(r, "id"), in)
+	if err != nil {
+		writeValueListError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(list)
+}
+
+func (h *SchemaHandler) DeleteValueList(w http.ResponseWriter, r *http.Request) {
+	if err := schemaService(r).DeleteValueList(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeValueListError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeValueListError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, schema.ErrValueListNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Value List Not Found", err.Error())
+	case errors.Is(err, schema.ErrValueListExists):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Value List Already Exists", err.Error())
+	default:
+		writeSchemaError(w, r, err)
+	}
 }

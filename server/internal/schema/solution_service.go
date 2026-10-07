@@ -121,6 +121,18 @@ type BundleAccount struct {
 }
 
 // SolutionBundle is the content of a .f4p solution file.
+// BundleValueList carries a value list (#31). A list taken from a field keeps
+// the source table and column ids so they can be remapped on import, like
+// every other reference in the bundle.
+type BundleValueList struct {
+	ID             string  `msgpack:"id"`
+	Name           string  `msgpack:"name"`
+	Kind           string  `msgpack:"kind"`
+	CustomValues   string  `msgpack:"custom_values,omitempty"`
+	SourceTableID  *string `msgpack:"source_table_id,omitempty"`
+	SourceColumnID *string `msgpack:"source_column_id,omitempty"`
+}
+
 type SolutionBundle struct {
 	Format             string                 `msgpack:"format"`
 	Version            string                 `msgpack:"version"`
@@ -132,6 +144,7 @@ type SolutionBundle struct {
 	Relationships      []BundleRelationship   `msgpack:"relationships"`
 	Layouts            []BundleLayout         `msgpack:"layouts"`
 	Scripts            []BundleScript         `msgpack:"scripts"`
+	ValueLists         []BundleValueList      `msgpack:"value_lists,omitempty"`
 	Users              []BundleAccount        `msgpack:"users"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
@@ -189,6 +202,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("failed listing scripts: %w", err)
 	}
+	valueLists, err := s.ListValueLists(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing value lists: %w", err)
+	}
 	users, err := s.ListUsers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing accounts: %w", err)
@@ -209,6 +226,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		Relationships:      make([]BundleRelationship, 0, len(relationships)),
 		Layouts:            make([]BundleLayout, 0, len(layouts)),
 		Scripts:            make([]BundleScript, 0, len(scripts)),
+		ValueLists:         make([]BundleValueList, 0, len(valueLists)),
 		Users:              make([]BundleAccount, 0, len(users)),
 		FileOptions:        withoutSecrets(opts.FileOptions),
 		PageSetup:          opts.PageSetup,
@@ -252,6 +270,12 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			bs.Steps = append(bs.Steps, BundleStep{ID: st.ID, SequenceIdx: st.SequenceIdx, StepType: st.StepType, Params: params, IsEnabled: st.IsEnabled, ParentStepID: st.ParentStepID})
 		}
 		b.Scripts = append(b.Scripts, bs)
+	}
+	for _, vl := range valueLists {
+		b.ValueLists = append(b.ValueLists, BundleValueList{
+			ID: vl.ID, Name: vl.Name, Kind: vl.Kind, CustomValues: vl.CustomValues,
+			SourceTableID: vl.SourceTableID, SourceColumnID: vl.SourceColumnID,
+		})
 	}
 	for _, u := range users {
 		perms, err := s.GetUserPermissions(ctx, u.ID)
@@ -335,6 +359,8 @@ type ImportReport struct {
 	LayoutsUpdated          int      `json:"layouts_updated"`
 	ScriptsCreated          int      `json:"scripts_created"`
 	ScriptsUpdated          int      `json:"scripts_updated"`
+	ValueListsCreated       int      `json:"value_lists_created"`
+	ValueListsUpdated       int      `json:"value_lists_updated"`
 	AccountsCreated         int      `json:"accounts_created"`
 	AccountsPendingPassword []string `json:"accounts_pending_password"`
 	// Totals in the bundle, kept for older clients.
@@ -584,6 +610,47 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		layoutIDs[l.ID] = created.ID
 	}
 
+	// 5b. Value lists (#31). A list is matched by name, so importing the same
+	// file twice does not make a second copy; a list taken from a field has
+	// its table and column rewritten to the destination's ids.
+	for _, vl := range b.ValueLists {
+		in := ValueListInput{Name: vl.Name, Kind: vl.Kind, CustomValues: vl.CustomValues}
+		if vl.Kind == ValueListFromField {
+			srcTable, srcColumn := "", ""
+			if vl.SourceTableID != nil {
+				srcTable = tableIDs[*vl.SourceTableID]
+			}
+			if vl.SourceColumnID != nil {
+				srcColumn = columnIDs[*vl.SourceColumnID]
+			}
+			if srcTable == "" || srcColumn == "" {
+				return nil, rollback(fmt.Errorf("value list %q reads a field that is not in this file", vl.Name))
+			}
+			in.SourceTableID, in.SourceColumnID = &srcTable, &srcColumn
+		}
+
+		if prev := plan.valueLists[strings.ToLower(strings.TrimSpace(vl.Name))]; prev != nil {
+			if _, err := s.UpdateValueList(ctx, prev.ID, in); err != nil {
+				return nil, rollback(fmt.Errorf("updating value list %q: %w", vl.Name, err))
+			}
+			p := *prev
+			undo = append(undo, func() {
+				_, _ = s.UpdateValueList(bg, p.ID, ValueListInput{
+					Name: p.Name, Kind: p.Kind, CustomValues: p.CustomValues,
+					SourceTableID: p.SourceTableID, SourceColumnID: p.SourceColumnID,
+				})
+			})
+			report.ValueListsUpdated++
+			continue
+		}
+		created, err := s.CreateValueList(ctx, in)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("creating value list %q: %w", vl.Name, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteValueList(bg, created.ID) })
+		report.ValueListsCreated++
+	}
+
 	// 6. Accounts: missing ones are created disabled, without a usable
 	// password, with their role and layout permissions. Existing accounts are
 	// never changed.
@@ -619,7 +686,8 @@ type importPlan struct {
 	layoutsByName map[string]*LayoutMetadata
 	scriptsByID   map[string]*ScriptMetadata
 	scriptsByName map[string]*ScriptMetadata
-	users         map[string]bool // lower-case usernames
+	valueLists    map[string]*ValueList // by lower-case name
+	users         map[string]bool       // lower-case usernames
 }
 
 func (p *importPlan) layoutFor(l BundleLayout) *LayoutMetadata {
@@ -750,8 +818,39 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 	// Destination state
 	plan := &importPlan{
 		tables: map[string]*TableMetadata{}, layoutsByID: map[string]*LayoutMetadata{}, layoutsByName: map[string]*LayoutMetadata{},
-		scriptsByID: map[string]*ScriptMetadata{}, scriptsByName: map[string]*ScriptMetadata{}, users: map[string]bool{},
+		scriptsByID: map[string]*ScriptMetadata{}, scriptsByName: map[string]*ScriptMetadata{},
+		valueLists: map[string]*ValueList{}, users: map[string]bool{},
 	}
+	existingValueLists, err := s.ListValueLists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range existingValueLists {
+		plan.valueLists[strings.ToLower(strings.TrimSpace(existingValueLists[i].Name))] = &existingValueLists[i]
+	}
+
+	// Value lists in the file: named, unique, and a field list must read a
+	// field the file carries.
+	seenValueLists := map[string]bool{}
+	for _, vl := range b.ValueLists {
+		key := strings.ToLower(strings.TrimSpace(vl.Name))
+		if key == "" {
+			return nil, invalid("a value list in the file has no name")
+		}
+		if seenValueLists[key] {
+			return nil, invalid("value list %q appears twice", vl.Name)
+		}
+		seenValueLists[key] = true
+		if vl.Kind == ValueListFromField {
+			if vl.SourceColumnID == nil || columnTable[*vl.SourceColumnID] == "" {
+				return nil, invalid("value list %q reads a field that is not in the file", vl.Name)
+			}
+			if vl.SourceTableID == nil || columnTable[*vl.SourceColumnID] != *vl.SourceTableID {
+				return nil, invalid("value list %q reads a field that is not in its own table", vl.Name)
+			}
+		}
+	}
+
 	tables, err := s.ListTables(ctx)
 	if err != nil {
 		return nil, err

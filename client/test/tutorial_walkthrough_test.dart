@@ -116,6 +116,7 @@ void main() {
   sortOrderTests();
   findRequestTests();
   calculationFieldTests();
+  valueListTests();
 
   group('the Records menu', () {
     Future<void> pumpMenu(
@@ -441,6 +442,114 @@ void calculationFieldTests() {
       expect(computed('fee_total'), isTrue);
       expect(computed('customer_type'), isFalse);
       expect(computed('id'), isFalse);
+    });
+  });
+}
+
+// #31 — a field can be filled from a named set of values instead of being
+// typed into.
+void valueListTests() {
+  group('a value list', () {
+    test('a custom list drops blanks and repeats, and keeps its order', () {
+      const list = ValueListModel(
+        id: 'v1',
+        name: 'Customer Types',
+        customValues: 'New\nContinuing\n\n  Lapsed  \nNew',
+      );
+      expect(list.customValueList, ['New', 'Continuing', 'Lapsed']);
+    });
+
+    test('a list taken from a field is told apart from a custom one', () {
+      const custom = ValueListModel(id: 'v1', name: 'Types', customValues: 'New');
+      const fromField = ValueListModel(
+        id: 'v2',
+        name: 'Cities',
+        kind: ValueListModel.kindFromField,
+        sourceTableId: 't1',
+        sourceColumnId: 'c1',
+      );
+      expect(custom.isFromField, isFalse);
+      expect(fromField.isFromField, isTrue);
+    });
+
+    test('it round-trips through JSON', () {
+      const original = ValueListModel(
+        id: 'v2',
+        name: 'Cities',
+        kind: ValueListModel.kindFromField,
+        sourceTableId: 't1',
+        sourceColumnId: 'c1',
+      );
+      final back = ValueListModel.fromJson({'id': 'v2', ...original.toJson()});
+      expect(back.name, 'Cities');
+      expect(back.kind, ValueListModel.kindFromField);
+      expect(back.sourceColumnId, 'c1');
+    });
+  });
+
+  group('a field control style', () {
+    test('only an edit box works without a value list', () {
+      expect(FieldControlStyle.needsValueList(FieldControlStyle.editBox), isFalse);
+      for (final style in [
+        FieldControlStyle.dropDownList,
+        FieldControlStyle.popUpMenu,
+        FieldControlStyle.checkboxSet,
+        FieldControlStyle.radioButtonSet,
+      ]) {
+        expect(FieldControlStyle.needsValueList(style), isTrue, reason: style);
+      }
+    });
+
+    test('a control with no list falls back to an edit box', () {
+      const binding = FieldBindingModel(
+        fieldName: 'customer_type',
+        controlStyle: FieldControlStyle.radioButtonSet,
+      );
+      expect(binding.effectiveControlStyle(hasValueList: false), FieldControlStyle.editBox);
+      expect(binding.effectiveControlStyle(hasValueList: true), FieldControlStyle.radioButtonSet);
+    });
+
+    test('only a checkbox set holds more than one value', () {
+      expect(FieldControlStyle.isMultiValue(FieldControlStyle.checkboxSet), isTrue);
+      expect(FieldControlStyle.isMultiValue(FieldControlStyle.radioButtonSet), isFalse);
+      expect(FieldControlStyle.isMultiValue(FieldControlStyle.dropDownList), isFalse);
+    });
+
+    test('the binding carries the value list through JSON', () {
+      const binding = FieldBindingModel(
+        fieldName: 'customer_type',
+        controlStyle: FieldControlStyle.radioButtonSet,
+        valueListId: 'v1',
+      );
+      final back = FieldBindingModel.fromJson(binding.toJson());
+      expect(back.controlStyle, FieldControlStyle.radioButtonSet);
+      expect(back.valueListId, 'v1');
+    });
+
+    test('choosing an edit box lets the value list go', () {
+      const binding = FieldBindingModel(
+        fieldName: 'customer_type',
+        controlStyle: FieldControlStyle.radioButtonSet,
+        valueListId: 'v1',
+      );
+      final plain = binding.copyWith(
+        controlStyle: FieldControlStyle.editBox,
+        clearValueList: true,
+      );
+      expect(plain.valueListId, isNull);
+      expect(binding.valueListId, 'v1', reason: 'copyWith must not change the original');
+    });
+
+    test('rebinding to another column keeps the control and its list', () {
+      const binding = FieldBindingModel(
+        fieldName: 'customer_type',
+        controlStyle: FieldControlStyle.popUpMenu,
+        valueListId: 'v1',
+      );
+      final moved = binding.copyWith(fieldName: 'country');
+      expect(moved.fieldName, 'country');
+      expect(moved.controlStyle, FieldControlStyle.popUpMenu);
+      expect(moved.valueListId, 'v1');
     });
   });
 }

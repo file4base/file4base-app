@@ -197,6 +197,85 @@ class ColumnModel {
   }
 }
 
+/// A named set of values a field can be filled from (#31).
+///
+/// A value list only decides what a field *offers*. It does not restrict what
+/// can be stored: that is the "existing value" validation rule.
+class ValueListModel {
+  /// A fixed list the designer typed.
+  static const String kindCustom = 'custom';
+
+  /// The values a field already holds, so the list grows with the data.
+  static const String kindFromField = 'field';
+
+  final String id;
+  final String name;
+  final String kind;
+
+  /// One value per line, for a custom list.
+  final String customValues;
+
+  final String? sourceTableId;
+  final String? sourceColumnId;
+
+  const ValueListModel({
+    required this.id,
+    required this.name,
+    this.kind = kindCustom,
+    this.customValues = '',
+    this.sourceTableId,
+    this.sourceColumnId,
+  });
+
+  bool get isFromField => kind == kindFromField;
+
+  /// The values of a custom list, in order, without blanks or repeats. A list
+  /// taken from a field is resolved by the server instead.
+  List<String> get customValueList {
+    final seen = <String>{};
+    final values = <String>[];
+    for (final line in customValues.replaceAll('\r\n', '\n').split('\n')) {
+      final value = line.trim();
+      if (value.isEmpty || !seen.add(value)) continue;
+      values.add(value);
+    }
+    return values;
+  }
+
+  factory ValueListModel.fromJson(Map<String, dynamic> json) => ValueListModel(
+        id: json['id'] as String,
+        name: json['name'] as String? ?? '',
+        kind: json['kind'] as String? ?? kindCustom,
+        customValues: json['custom_values'] as String? ?? '',
+        sourceTableId: json['source_table_id'] as String?,
+        sourceColumnId: json['source_column_id'] as String?,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'kind': kind,
+        'custom_values': customValues,
+        'source_table_id': sourceTableId,
+        'source_column_id': sourceColumnId,
+      };
+
+  ValueListModel copyWith({
+    String? name,
+    String? kind,
+    String? customValues,
+    String? sourceTableId,
+    String? sourceColumnId,
+  }) =>
+      ValueListModel(
+        id: id,
+        name: name ?? this.name,
+        kind: kind ?? this.kind,
+        customValues: customValues ?? this.customValues,
+        sourceTableId: sourceTableId ?? this.sourceTableId,
+        sourceColumnId: sourceColumnId ?? this.sourceColumnId,
+      );
+}
+
 class TableOccurrenceModel {
   final String id;
   final String baseTableId;
@@ -792,6 +871,58 @@ class ApiClient {
     _checkResponse(response);
     final list = jsonDecode(response.body) as List<dynamic>;
     return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  // ─── Value lists (#31) ─────────────────────────────────────────────────────
+
+  Future<List<ValueListModel>> listValueLists() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/value-lists'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => ValueListModel.fromJson(item as Map<String, dynamic>)).toList();
+  }
+
+  /// The values a list offers right now: the lines of a custom list, or the
+  /// distinct values the field it reads holds.
+  Future<List<String>> valueListValues(String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/value-lists/$id/values'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['values'] as List<dynamic>? ?? []).map((v) => v.toString()).toList();
+  }
+
+  Future<ValueListModel> createValueList(ValueListModel list) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/value-lists'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(list.toJson()),
+    );
+    _checkResponse(response);
+    return ValueListModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<ValueListModel> updateValueList(ValueListModel list) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/value-lists/${list.id}'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(list.toJson()),
+    );
+    _checkResponse(response);
+    return ValueListModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteValueList(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/value-lists/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
   }
 
   Future<List<TableOccurrenceModel>> listOccurrences() async {
