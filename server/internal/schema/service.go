@@ -274,6 +274,36 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 // occurrencePosition lays out table occurrences on the relationships graph in
 // rows of four, so a new one never lands on top of an existing card. The
 // spacing matches the card size the client draws.
+// occupiedPositions reads where the occurrences of the graph already sit, so a
+// new one can be put somewhere else.
+func occupiedPositions(ctx context.Context, tx *sql.Tx) (map[[2]float64]struct{}, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT x_pos, y_pos FROM sys_table_occurrences`)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading table occurrence positions: %w", err)
+	}
+	defer rows.Close()
+
+	taken := make(map[[2]float64]struct{})
+	for rows.Next() {
+		var x, y float64
+		if err := rows.Scan(&x, &y); err != nil {
+			return nil, err
+		}
+		taken[[2]float64{x, y}] = struct{}{}
+	}
+	return taken, rows.Err()
+}
+
+// firstFreePosition is the earliest slot of the grid that nothing sits on.
+func firstFreePosition(taken map[[2]float64]struct{}) (float64, float64) {
+	for index := 0; ; index++ {
+		x, y := occurrencePosition(index)
+		if _, clash := taken[[2]float64{x, y}]; !clash {
+			return x, y
+		}
+	}
+}
+
 func occurrencePosition(index int) (float64, float64) {
 	const (
 		originX = 100.0
@@ -369,11 +399,15 @@ func (s *Service) CreateTable(ctx context.Context, displayName, customName strin
 	// occurrence used to be created at the column default (100, 100), so in a
 	// database with more than one table the cards sat exactly on top of each
 	// other and the graph looked as if it held a single table.
-	var placed int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_table_occurrences`).Scan(&placed); err != nil {
-		return nil, fmt.Errorf("failed counting table occurrences: %w", err)
+	//
+	// The slot is the first free one, not the number of occurrences there are:
+	// after a table is deleted its place on the graph is free again, and
+	// counting would put the next table on top of a card that is still there.
+	taken, err := occupiedPositions(ctx, tx)
+	if err != nil {
+		return nil, err
 	}
-	xPos, yPos := occurrencePosition(placed)
+	xPos, yPos := firstFreePosition(taken)
 
 	insertOccSQL := `INSERT INTO sys_table_occurrences (id, base_table_id, name, x_pos, y_pos, created_at) VALUES ($1, $2, $3, $4, $5, $6)`
 	if dialect.Engine() == dbal.EngineMariaDB {

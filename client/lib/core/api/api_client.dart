@@ -925,6 +925,62 @@ class ApiClient {
     _checkResponse(response);
   }
 
+  /// The records of a related table that match [id] in [table]: what a portal
+  /// shows and what a related field on a layout reads (#36).
+  ///
+  /// [occurrence] names the side whose records are wanted. It may be left out
+  /// unless the relationship joins a table to itself, where there is no other
+  /// side to infer. [sort] takes the same form as in [listRows]; without it the
+  /// relationship's own "Sort related records" applies.
+  Future<List<Map<String, dynamic>>> listRelatedRows(
+    String table,
+    String id, {
+    required String relationshipId,
+    String? occurrence,
+    List<String>? sort,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/v1/data/$table/$id/related').replace(queryParameters: {
+      'relationship': relationshipId,
+      if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+      'limit': limit.toString(),
+      'offset': offset.toString(),
+      if (sort != null && sort.isNotEmpty) 'sort': sort.join(','),
+    });
+
+    final response = await _httpClient.get(uri, headers: _headers());
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => Map<String, dynamic>.from(item as Map)).toList();
+  }
+
+  /// Creates a record on the other side of a relationship, with its match
+  /// field filled from [id] so the new record belongs to it (#36).
+  ///
+  /// The server refuses this unless the relationship allows records to be
+  /// created through it.
+  Future<Map<String, dynamic>> createRelatedRow(
+    String table,
+    String id, {
+    required String relationshipId,
+    String? occurrence,
+    Map<String, dynamic> values = const {},
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/v1/data/$table/$id/related').replace(queryParameters: {
+      'relationship': relationshipId,
+      if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+    });
+
+    final response = await _httpClient.post(
+      uri,
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(values),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
   Future<List<TableOccurrenceModel>> listOccurrences() async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/schemas/occurrences'),

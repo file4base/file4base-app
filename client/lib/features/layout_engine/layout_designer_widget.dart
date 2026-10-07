@@ -14,6 +14,7 @@ import '../schema_manager/manage_database_dialog.dart';
 import '../theme_manager/manage_themes_dialog.dart';
 import 'manage_layouts_dialog.dart';
 import 'models/layout_definition.dart';
+import '../data_browser/related_records.dart';
 
 enum _ResizeHandle {
   topLeft,
@@ -212,10 +213,60 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _currentTable = widget.table;
     _isPersisted = !_layout.id.startsWith('layout_');
     _loadValueLists();
+    _loadRelationshipGraph();
   }
 
   /// The database's value lists, so a field object can be bound to one (#31).
   List<ValueListModel> _valueLists = const [];
+
+  // ─── Relationships (#36) ───────────────────────────────────────────────────
+
+  List<RelationshipModel> _relationships = const [];
+  Map<String, TableOccurrenceModel> _occurrences = const {};
+
+  Future<void> _loadRelationshipGraph() async {
+    try {
+      final results = await Future.wait([
+        widget.apiClient.listRelationships(),
+        widget.apiClient.listOccurrences(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _relationships = results[0] as List<RelationshipModel>;
+        _occurrences = {
+          for (final o in results[1] as List<TableOccurrenceModel>) o.id: o,
+        };
+      });
+    } catch (_) {
+      // Designing a layout does not depend on them; the pickers say there are
+      // no relationships.
+    }
+  }
+
+  Map<String, TableModel> get _tablesById => {
+        for (final t in widget.tables) t.id: t,
+        widget.table.id: widget.table,
+      };
+
+  /// The occurrences this layout can show through one relationship.
+  List<RelatedTarget> get _relatedTargets => reachableTargets(
+        fromTable: _currentTable.name,
+        relationships: _relationships,
+        occurrencesById: _occurrences,
+        tablesById: _tablesById,
+      );
+
+  /// The occurrence a related binding names, or null when it is not a related
+  /// binding or the relationship it followed is gone.
+  RelatedTarget? _targetOf(String? relationshipId, String? occurrence) {
+    if (relationshipId == null || relationshipId.isEmpty) return null;
+    for (final t in _relatedTargets) {
+      if (t.relationship.id != relationshipId) continue;
+      if (occurrence == null || occurrence.isEmpty) return t;
+      if (occurrence == t.occurrence.id || occurrence == t.occurrence.name) return t;
+    }
+    return null;
+  }
 
   Future<void> _loadValueLists() async {
     try {
@@ -691,6 +742,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         newObj = LayoutObjectModel(
           id: newId, type: 'portal', x: x, y: y, width: 440, height: 180,
           text: 'Related Records Portal',
+          // A new portal shows nothing until Portal Setup names a
+          // relationship; the defaults are there so the panel has values to
+          // show (#36).
+          portalConfig: const PortalConfigModel(rowCount: 5).toJson(),
           style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#90CAF9', cornerRadius: 4),
         );
         break;
@@ -3376,12 +3431,19 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             children: [
               Expanded(
                 child: Text(
-                  ':: ${obj.fieldBinding?.fieldName ?? "field"}',
+                  ':: ${obj.fieldBinding?.qualifiedName ?? "field"}',
                   style: const TextStyle(
                       fontSize: 12, color: Colors.blueGrey, fontStyle: FontStyle.italic),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              // A field read through a relationship, rather than from the
+              // record in hand (#36).
+              if (obj.fieldBinding?.isRelated ?? false)
+                const Padding(
+                  padding: EdgeInsets.only(right: 2),
+                  child: Icon(Icons.link, size: 12, color: Colors.indigo),
+                ),
               if (cStyle == 'drop_down_list' || cStyle == 'pop_up_menu')
                 const Icon(Icons.arrow_drop_down, size: 16, color: Colors.grey)
               else if (cStyle == 'checkbox_set')
@@ -3462,6 +3524,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         );
 
       case 'portal':
+        final portal = obj.portal;
+        final target = _targetOf(portal.relationshipId, portal.occurrence);
+        final rowHeight = portal.effectiveRowHeight(obj.height);
         return Padding(
           padding: const EdgeInsets.all(6),
           child: Column(
@@ -3471,16 +3536,31 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 children: [
                   const Icon(Icons.table_rows, size: 13, color: Colors.indigo),
                   const SizedBox(width: 4),
-                  Text(obj.text.isNotEmpty ? obj.text : 'Related Portal',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.indigo)),
+                  Expanded(
+                    child: Text(
+                      target != null
+                          ? '${target.occurrence.name} · ${portal.rowCount} rows'
+                          : (obj.text.isNotEmpty ? obj.text : 'Related Portal'),
+                      style: const TextStyle(
+                          fontSize: 11, fontWeight: FontWeight.bold, color: Colors.indigo),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                 ],
               ),
               const Divider(height: 8),
-              const Expanded(
-                child: Center(
-                  child: Text('Portal rows (Relationship graph binding)',
-                      style: TextStyle(fontSize: 10, color: Colors.grey)),
-                ),
+              Expanded(
+                child: target == null
+                    ? const Center(
+                        child: Text('Choose a relationship in Portal Setup',
+                            style: TextStyle(fontSize: 10, color: Colors.grey)),
+                      )
+                    // The first row is the band the fields are drawn in; the
+                    // ones below it show how far the rows repeat.
+                    : CustomPaint(
+                        painter: _PortalRowsPainter(rowHeight: rowHeight),
+                        child: const SizedBox.expand(),
+                      ),
               ),
             ],
           ),
@@ -4222,28 +4302,104 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     ];
   }
 
+  /// Identifies one entry of the Table Occurrence picker. The layout's own
+  /// table is the empty string; a related occurrence is its relationship and
+  /// its occurrence, because the same two tables can be joined more than once.
+  static String _targetKey(RelatedTarget t) => '${t.relationship.id}|${t.occurrence.id}';
+
   List<Widget> _fieldBindingSection(LayoutObjectModel sel, bool isDark) {
-    final cols = _currentTable.columns;
+    final binding = sel.fieldBinding;
+    final targets = _relatedTargets;
+    final related = _targetOf(binding?.relationshipId, binding?.tableOccurrence);
+
+    // A field is read from the record in hand, or from a related record (#36),
+    // and that decides which table's fields it can be bound to.
+    final cols = related?.table.columns ?? _currentTable.columns;
+    final selectedTarget = related == null ? '' : _targetKey(related);
+    final danglingRelationship = (binding?.isRelated ?? false) && related == null;
 
     return [
         _inspectorSectionTitle('FIELD BINDING'),
         const Text('Table Occurrence:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF2C323D) : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text('${_currentTable.displayName} (${_currentTable.name})',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        DropdownButtonFormField<String>(
+          key: const ValueKey('inspector-field-occurrence'),
+          value: danglingRelationship ? null : selectedTarget,
+          decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+          hint: const Text('Choose an occurrence', style: TextStyle(fontSize: 11)),
+          items: [
+            DropdownMenuItem(
+              value: '',
+              child: Text('${_currentTable.displayName} (this layout)',
+                  style: const TextStyle(fontSize: 11)),
+            ),
+            for (final t in targets)
+              DropdownMenuItem(
+                value: _targetKey(t),
+                child: Text('${t.occurrence.name}  ·  through "${t.relationship.name}"',
+                    style: const TextStyle(fontSize: 11)),
+              ),
+          ],
+          onChanged: (key) {
+            if (key == null) return;
+            final existing = sel.fieldBinding ?? const FieldBindingModel(fieldName: '');
+            if (key.isEmpty) {
+              _editSelected((sel) => sel.copyWith(
+                fieldBinding: existing.copyWith(
+                  clearRelationship: true,
+                  tableOccurrence: _currentTable.name,
+                ),
+              ));
+              return;
+            }
+            final target = targets.where((t) => _targetKey(t) == key).firstOrNull;
+            if (target == null) return;
+            // The field it was bound to belongs to the table it came from, so
+            // it is re-pointed at the related table's first field.
+            final keepsField = target.table.columns.any((c) => c.name == existing.fieldName);
+            _editSelected((sel) => sel.copyWith(
+              fieldBinding: existing.copyWith(
+                relationshipId: target.relationship.id,
+                tableOccurrence: target.occurrence.name,
+                fieldName: keepsField
+                    ? existing.fieldName
+                    : (target.table.columns.firstOrNull?.name ?? existing.fieldName),
+              ),
+            ));
+          },
         ),
+        if (danglingRelationship)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'This field was read through a relationship that is no longer there. '
+              'Pick an occurrence again.',
+              style: TextStyle(fontSize: 10, color: Colors.orange.shade800),
+            ),
+          )
+        else if (related != null)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'A related field shows the first matching record. Put the field in a portal '
+              'to edit related records.',
+              style: TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          )
+        else if (targets.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'No relationships reach this table yet. Draw one in File > Manage > Database > Relationships.',
+              style: TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ),
         const SizedBox(height: 12),
 
         const Text('Bound Column:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         DropdownButtonFormField<String>(
-          value: sel.fieldBinding?.fieldName,
+          value: cols.any((c) => c.name == binding?.fieldName) ? binding?.fieldName : null,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           items: cols.map((c) {
             return DropdownMenuItem<String>(
@@ -4256,7 +4412,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               final existing = sel.fieldBinding ?? const FieldBindingModel(fieldName: '');
               _editSelected((sel) => sel.copyWith(
                 fieldBinding: existing.copyWith(
-                  tableOccurrence: _currentTable.name,
+                  tableOccurrence: related?.occurrence.name ?? _currentTable.name,
                   fieldName: f,
                 ),
               ));
@@ -4295,14 +4451,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           contentPadding: EdgeInsets.zero,
           onChanged: (v) {
             if (sel.fieldBinding != null) {
+              // copyWith, not a fresh binding: rebuilding it dropped the
+              // value list (#31) and the relationship (#36).
               _editSelected((sel) => sel.copyWith(
-                fieldBinding: FieldBindingModel(
-                  tableOccurrence: sel.fieldBinding!.tableOccurrence,
-                  fieldName: sel.fieldBinding!.fieldName,
-                  controlStyle: sel.fieldBinding!.controlStyle,
-                  allowBrowseEntry: v ?? true,
-                  allowFindEntry: sel.fieldBinding!.allowFindEntry,
-                ),
+                fieldBinding: sel.fieldBinding!.copyWith(allowBrowseEntry: v ?? true),
               ));
             }
           },
@@ -4315,17 +4467,179 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           onChanged: (v) {
             if (sel.fieldBinding != null) {
               _editSelected((sel) => sel.copyWith(
-                fieldBinding: FieldBindingModel(
-                  tableOccurrence: sel.fieldBinding!.tableOccurrence,
-                  fieldName: sel.fieldBinding!.fieldName,
-                  controlStyle: sel.fieldBinding!.controlStyle,
-                  allowBrowseEntry: sel.fieldBinding!.allowBrowseEntry,
-                  allowFindEntry: v ?? true,
-                ),
+                fieldBinding: sel.fieldBinding!.copyWith(allowFindEntry: v ?? true),
               ));
             }
           },
         ),
+    ];
+  }
+
+  /// Portal Setup (#36): which related records the rows show, how many rows,
+  /// and whether a row can be added or removed.
+  List<Widget> _portalSetupSection(LayoutObjectModel sel, bool isDark) {
+    final config = sel.portal;
+    final targets = _relatedTargets;
+    final target = _targetOf(config.relationshipId, config.occurrence);
+    final dangling = config.isBound && target == null;
+
+    void edit(PortalConfigModel Function(PortalConfigModel) change) {
+      _editSelected((sel) => sel.copyWith(portalConfig: change(sel.portal).toJson()));
+    }
+
+    return [
+      _inspectorSectionTitle('PORTAL SETUP'),
+      const Text('Show related records from:',
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 4),
+      DropdownButtonFormField<String>(
+        key: const ValueKey('inspector-portal-relationship'),
+        value: dangling || target == null ? null : _targetKey(target),
+        decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+        hint: const Text('Choose an occurrence', style: TextStyle(fontSize: 11)),
+        items: [
+          for (final t in targets)
+            DropdownMenuItem(
+              value: _targetKey(t),
+              child: Text('${t.occurrence.name}  ·  through "${t.relationship.name}"',
+                  style: const TextStyle(fontSize: 11)),
+            ),
+        ],
+        onChanged: (key) {
+          final picked = targets.where((t) => _targetKey(t) == key).firstOrNull;
+          if (picked == null) return;
+          edit((c) => c.copyWith(
+                relationshipId: picked.relationship.id,
+                occurrence: picked.occurrence.name,
+              ));
+        },
+      ),
+      if (dangling)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'This portal showed a relationship that is no longer there. Pick an occurrence again.',
+            style: TextStyle(fontSize: 10, color: Colors.orange.shade800),
+          ),
+        )
+      else if (targets.isEmpty)
+        const Padding(
+          padding: EdgeInsets.only(top: 6),
+          child: Text(
+            'No relationships reach this table yet. Draw one in File > Manage > Database > Relationships.',
+            style: TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        )
+      else if (target != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'Put fields of ${target.table.displayName} inside the portal: the first row is the '
+            'band they are drawn in, and every row repeats it.',
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ),
+
+      const Divider(height: 24),
+      Row(
+        children: [
+          Expanded(
+            child: TextFormField(
+              key: ValueKey('portal-initial-row-${sel.id}'),
+              initialValue: config.initialRow.toString(),
+              decoration: const InputDecoration(
+                labelText: 'Initial row',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 11),
+              keyboardType: TextInputType.number,
+              onChanged: (v) {
+                final n = int.tryParse(v.trim());
+                if (n != null && n >= 1) edit((c) => c.copyWith(initialRow: n));
+              },
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextFormField(
+              key: ValueKey('portal-row-count-${sel.id}'),
+              initialValue: config.rowCount.toString(),
+              decoration: const InputDecoration(
+                labelText: 'Rows',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 11),
+              keyboardType: TextInputType.number,
+              onChanged: (v) {
+                final n = int.tryParse(v.trim());
+                if (n != null && n >= 1) edit((c) => c.copyWith(rowCount: n));
+              },
+            ),
+          ),
+        ],
+      ),
+      const SizedBox(height: 10),
+      TextFormField(
+        key: ValueKey('portal-sort-${sel.id}'),
+        initialValue: config.sort,
+        decoration: const InputDecoration(
+          labelText: 'Sort rows by',
+          hintText: 'last_name, -fee_paid',
+          border: OutlineInputBorder(),
+          isDense: true,
+        ),
+        style: const TextStyle(fontSize: 11),
+        onChanged: (v) => edit((c) => c.copyWith(sort: v.trim())),
+      ),
+      const Padding(
+        padding: EdgeInsets.only(top: 4),
+        child: Text(
+          'Field names in the order they sort, "-" for descending. Empty uses the '
+          'relationship\'s own "Sort related records".',
+          style: TextStyle(fontSize: 10, color: Colors.grey),
+        ),
+      ),
+      const SizedBox(height: 4),
+      CheckboxListTile(
+        key: const ValueKey('portal-show-scroll-bar'),
+        title: const Text('Show vertical scroll bar', style: TextStyle(fontSize: 11)),
+        value: config.showScrollBar,
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        onChanged: (v) => edit((c) => c.copyWith(showScrollBar: v ?? true)),
+      ),
+      CheckboxListTile(
+        key: const ValueKey('portal-allow-creation'),
+        title: const Text('Allow creation of records in this portal',
+            style: TextStyle(fontSize: 11)),
+        subtitle: Text(
+          target != null && !target.relationship.allowCreation
+              ? 'The relationship "${target.relationship.name}" does not allow it yet, '
+                  'so the server will refuse. Turn it on in Specify Relationship.'
+              : 'An empty row at the end creates a related record.',
+          style: TextStyle(
+            fontSize: 10,
+            color: target != null && !target.relationship.allowCreation
+                ? Colors.orange.shade800
+                : Colors.grey,
+          ),
+        ),
+        value: config.allowCreation,
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        onChanged: (v) => edit((c) => c.copyWith(allowCreation: v ?? false)),
+      ),
+      CheckboxListTile(
+        key: const ValueKey('portal-allow-deletion'),
+        title: const Text('Allow deletion of records in this portal',
+            style: TextStyle(fontSize: 11)),
+        value: config.allowDeletion,
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        onChanged: (v) => edit((c) => c.copyWith(allowDeletion: v ?? false)),
+      ),
     ];
   }
 
@@ -4335,6 +4649,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       padding: const EdgeInsets.all(12),
       children: [
         if (sel.type == 'field') ..._fieldBindingSection(sel, isDark),
+        if (sel.type == 'portal') ..._portalSetupSection(sel, isDark),
         if (isButton) ..._buttonActionSection(sel, isDark),
         if (sel.isTabStop) ...[
           const Divider(height: 24),
@@ -4683,4 +4998,26 @@ class _InspectorTextFieldState extends State<_InspectorTextField> {
       onSubmitted: widget.onSubmitted,
     );
   }
+}
+
+/// Draws a portal's row boundaries on the layout canvas, so it is clear which
+/// band the fields inside it are drawn in (#36).
+class _PortalRowsPainter extends CustomPainter {
+  final double rowHeight;
+
+  const _PortalRowsPainter({required this.rowHeight});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (rowHeight <= 0) return;
+    final line = Paint()
+      ..color = Colors.indigo.withValues(alpha: 0.25)
+      ..strokeWidth = 1;
+    for (double y = rowHeight; y < size.height; y += rowHeight) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PortalRowsPainter old) => old.rowHeight != rowHeight;
 }

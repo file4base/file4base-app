@@ -533,9 +533,12 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		return nil, rollback(err)
 	}
 	relKey := func(lo, lc, ro, rc, op string) string { return strings.Join([]string{lo, lc, ro, rc, op}, "|") }
-	haveRel := map[string]bool{}
+	// The id each relationship of the file ends up with, so the portals and
+	// related fields of a layout can be pointed at it (#36).
+	relIDs := map[string]string{}
+	haveRel := map[string]string{}
 	for _, r := range currentRels {
-		haveRel[relKey(r.LeftOccurrenceID, r.LeftColumnID, r.RightOccurrenceID, r.RightColumnID, r.Operator)] = true
+		haveRel[relKey(r.LeftOccurrenceID, r.LeftColumnID, r.RightOccurrenceID, r.RightColumnID, r.Operator)] = r.ID
 	}
 	for _, r := range b.Relationships {
 		in := CreateRelationshipInput{
@@ -549,7 +552,10 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			in.SortRelated = &sort
 		}
 		key := relKey(in.LeftOccurrenceID, in.LeftColumnID, in.RightOccurrenceID, in.RightColumnID, in.Operator)
-		if haveRel[key] {
+		if existing := haveRel[key]; existing != "" {
+			// The same join is already there: a layout that points at the
+			// file's relationship is pointed at the one in the database.
+			relIDs[r.ID] = existing
 			continue
 		}
 		created, err := s.CreateRelationship(ctx, in)
@@ -557,7 +563,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			return nil, rollback(fmt.Errorf("creating relationship %q: %w", r.Name, err))
 		}
 		undo = append(undo, func() { _ = s.DeleteRelationship(bg, created.ID) })
-		haveRel[key] = true
+		haveRel[key] = created.ID
+		relIDs[r.ID] = created.ID
 		report.RelationshipsCreated++
 	}
 
@@ -587,7 +594,10 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	// 5. Layouts
 	layoutIDs := map[string]string{}
 	for _, l := range b.Layouts {
-		def, err := json.Marshal(rewriteScriptIDs(l.Definition, scriptIDs))
+		def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
+			"script_id":       scriptIDs,
+			"relationship_id": relIDs,
+		}))
 		if err != nil {
 			return nil, rollback(fmt.Errorf("layout %q: %w", l.Name, err))
 		}
@@ -947,13 +957,18 @@ func remapSteps(steps []BundleStep) []ScriptStepMetadata {
 	return out
 }
 
-// rewriteScriptIDs replaces the script_id of button actions and script
-// triggers with the destination's script IDs.
-func rewriteScriptIDs(v interface{}, ids map[string]string) interface{} {
+// rewriteRefs walks a layout or script definition and rewrites every id that
+// names something the import has just created or matched.
+//
+// byKey maps a JSON key — `script_id`, `relationship_id` — to the ids that
+// thing had in the file and the ids it has in this database. An id that is not
+// in the map is left as it is, so a definition that names something the file
+// does not carry is not silently changed.
+func rewriteRefs(v interface{}, byKey map[string]map[string]string) interface{} {
 	switch t := v.(type) {
 	case map[string]interface{}:
 		for k, x := range t {
-			if k == "script_id" {
+			if ids, interesting := byKey[k]; interesting {
 				if id, ok := x.(string); ok {
 					if dst, ok := ids[id]; ok {
 						t[k] = dst
@@ -961,12 +976,12 @@ func rewriteScriptIDs(v interface{}, ids map[string]string) interface{} {
 					}
 				}
 			}
-			t[k] = rewriteScriptIDs(x, ids)
+			t[k] = rewriteRefs(x, byKey)
 		}
 		return t
 	case []interface{}:
 		for i, x := range t {
-			t[i] = rewriteScriptIDs(x, ids)
+			t[i] = rewriteRefs(x, byKey)
 		}
 		return t
 	}

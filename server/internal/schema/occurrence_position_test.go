@@ -51,3 +51,40 @@ func TestOccurrencePositionLeavesRoomForTheCard(t *testing.T) {
 		t.Fatalf("columns are %v apart, which does not clear a %v-wide card", x1-x0, cardWidth)
 	}
 }
+
+// A table deleted from the graph frees its place, so the next table must take
+// the free slot rather than the slot numbered after however many are left.
+func TestFirstFreePosition(t *testing.T) {
+	taken := map[[2]float64]struct{}{}
+	place := func() (float64, float64) {
+		x, y := firstFreePosition(taken)
+		taken[[2]float64{x, y}] = struct{}{}
+		return x, y
+	}
+
+	var placed [][2]float64
+	for i := 0; i < 6; i++ {
+		x, y := place()
+		placed = append(placed, [2]float64{x, y})
+	}
+	for i, want := range placed {
+		x, y := occurrencePosition(i)
+		if want != [2]float64{x, y} {
+			t.Errorf("slot %d: got %v, want (%v, %v)", i, want, x, y)
+		}
+	}
+
+	// The third table is deleted; the next one takes its place back.
+	delete(taken, placed[2])
+	x, y := place()
+	if ([2]float64{x, y}) != placed[2] {
+		t.Errorf("after a deletion: got (%v, %v), want %v", x, y, placed[2])
+	}
+
+	// And with every slot of the grid full again, the next one is new.
+	x, y = place()
+	wantX, wantY := occurrencePosition(6)
+	if x != wantX || y != wantY {
+		t.Errorf("next free slot: got (%v, %v), want (%v, %v)", x, y, wantX, wantY)
+	}
+}

@@ -369,6 +369,20 @@ Updates a relationship definition.
 ### `DELETE /api/v1/schemas/relationships/{id}`
 Deletes a relationship definition.
 
+#### What the options mean
+
+A relationship is drawn from a **left** side to a **right** side, and File4Base reads that direction as parent to child. The three options therefore act on the right side when a record of the left side is the one in hand:
+
+| Option | Acts |
+| --- | --- |
+| `allow_creation` | `POST /api/v1/data/{table}/{id}/related` creates a record on the right side. Without it that request answers `403 Creation Not Allowed`. |
+| `cascade_delete` | `DELETE /api/v1/data/{table}/{id}` on a left-side record also deletes the right-side records that match it, down the whole chain. |
+| `sort_related` | The order the right side's records come back in when the caller asks for none. `asc` / `desc` mean the match field in that direction; anything else is read as a sort order (`last_name,-fee_paid`). Reading the relationship the other way round ignores it, since the fields it names are the right side's, and a field the side being read does not have is dropped rather than refused. |
+
+The Specify Relationship dialog names both tables in these labels, so which side an option acts on is visible rather than implied.
+
+Operators are stored as the mathematical signs the relationship graph writes — `=`, `≠`, `<`, `≤`, `>`, `≥` — and the plain spellings (`<>`, `!=`, `<=`, `>=`) are accepted too.
+
 ---
 
 ## 3. Visual Layouts
@@ -449,6 +463,8 @@ Updates an existing record by primary key ID.
 ### `DELETE /api/v1/data/{table}/{id}`
 Deletes a record by primary key ID.
 
+Every relationship of the table whose `cascade_delete` is set and whose **left** side this table is takes its matching records with it, and so on down the chain; a ring of such relationships deletes each record once rather than recursing forever. This is schema-defined integrity, so it applies whatever access level the caller has on the related table.
+
 ---
 
 ### `POST /api/v1/data/{table}/find`
@@ -480,6 +496,55 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`, `IS_EMPTY
 **How several requests combine.** A record is found when it matches **any** request whose `omit` is false, and is then dropped when it matches **any** request whose `omit` is true. So `[{city: "New York"}, {city: "London"}]` finds the records in either city, and adding `{customer_type: "New", omit: true}` drops the new customers from that set. A find made only of omitting requests starts from every record.
 
 `options` takes the same `limit`, `offset`, `sort_by`/`sort_asc` and `sort` as `GET /api/v1/data/{table}`; `sort` is the array form, `[{"field": "company"}, {"field": "fee_paid", "descending": true}]`.
+
+---
+
+### Related records and portals
+
+A layout can show the other side of a relationship: a **related field** (`Companies::company_address` on a Customers layout) and a **portal**, which is the list of related records. Both read these two endpoints. See [docs/specs/relationships_and_portals.md](../specs/relationships_and_portals.md).
+
+### `GET /api/v1/data/{table}/{id}/related`
+
+Returns the records of a related table that match record `{id}` of `{table}`.
+
+#### Query Parameters
+- `relationship` (string, **required**) — the relationship to follow. Missing answers `400 Missing Relationship`.
+- `occurrence` (string, optional) — the occurrence whose records are wanted, by id or by name. It may be left out unless the relationship joins a table to itself, where there is no other side to infer and leaving it out answers `400`.
+- `limit`, `offset`, `sort` — as in `GET /api/v1/data/{table}`. Without `sort` the relationship's own `sort_related` applies, but only when the side being read is the relationship's right side. A `sort` the caller gives is always checked: a field the related table does not have answers `400 Unknown Field`.
+
+The caller needs read access to **both** tables.
+
+An **empty match field relates to nothing**: a record with nothing in its match field answers `200 OK` with `[]`, rather than matching every related record whose own match field is also empty.
+
+#### Errors
+- `404 Relationship Not Found` — no such relationship, or it does not reach `{table}`, or the named `occurrence` is not one of its two sides.
+- `400 Unknown Field` — a `sort` field the related table does not have.
+
+#### Response `200 OK`
+```json
+[
+  {"id": "cu-1", "company": "Favorite Bakery", "last_name": "Soto"},
+  {"id": "cu-2", "company": "Favorite Bakery", "last_name": "Alvarez"}
+]
+```
+
+---
+
+### `POST /api/v1/data/{table}/{id}/related`
+
+Creates a record on the other side of a relationship and fills its match field from record `{id}`, which is what typing into the last row of a portal does. Takes the same `relationship` and `occurrence` query parameters.
+
+The match field belongs to the relationship: a value sent for it in the body is **overwritten** with the parent's, so a request cannot aim the new record at a different parent.
+
+The caller needs read access to `{table}` and write access to the related table.
+
+#### Errors
+- `403 Creation Not Allowed` — the relationship's `allow_creation` is off, or it matches with something other than `=`, in which case there is no single value to put in the new record's match field.
+- `422 No Match Value` — the parent's match field is empty, so a new record would have nothing to be matched by.
+- `404 Relationship Not Found` — as above.
+
+#### Response `201 Created`
+The created record, as `POST /api/v1/data/{table}` returns it.
 
 ---
 

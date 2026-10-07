@@ -64,7 +64,16 @@ class FieldControlStyle {
 }
 
 class FieldBindingModel {
+  /// The table occurrence the field is read from. Null, or the layout's own
+  /// occurrence, means the record in hand; any other occurrence makes this a
+  /// **related field**, read through [relationshipId] (#36).
   final String? tableOccurrence;
+
+  /// The relationship followed to reach [tableOccurrence]. A related field
+  /// needs one: the same two tables can be joined more than once, so the
+  /// occurrence alone does not say which join to follow.
+  final String? relationshipId;
+
   final String fieldName;
 
   /// One of [FieldControlStyle].
@@ -78,12 +87,22 @@ class FieldBindingModel {
 
   const FieldBindingModel({
     this.tableOccurrence,
+    this.relationshipId,
     required this.fieldName,
     this.controlStyle = FieldControlStyle.editBox,
     this.valueListId,
     this.allowBrowseEntry = true,
     this.allowFindEntry = true,
   });
+
+  /// True when the field is read through a relationship rather than from the
+  /// record in hand.
+  bool get isRelated => relationshipId != null && relationshipId!.isNotEmpty;
+
+  /// How the field is written on a layout: `Companies::company_address` for a
+  /// related field, the bare field name otherwise.
+  String get qualifiedName =>
+      isRelated && (tableOccurrence?.isNotEmpty ?? false) ? '$tableOccurrence::$fieldName' : fieldName;
 
   /// The style actually used: a control that needs a value list but has none
   /// falls back to an edit box, so deleting a list cannot break a layout.
@@ -96,6 +115,8 @@ class FieldBindingModel {
 
   FieldBindingModel copyWith({
     String? tableOccurrence,
+    String? relationshipId,
+    bool clearRelationship = false,
     String? fieldName,
     String? controlStyle,
     String? valueListId,
@@ -104,7 +125,8 @@ class FieldBindingModel {
     bool? allowFindEntry,
   }) =>
       FieldBindingModel(
-        tableOccurrence: tableOccurrence ?? this.tableOccurrence,
+        tableOccurrence: clearRelationship ? null : (tableOccurrence ?? this.tableOccurrence),
+        relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
         fieldName: fieldName ?? this.fieldName,
         controlStyle: controlStyle ?? this.controlStyle,
         valueListId: clearValueList ? null : (valueListId ?? this.valueListId),
@@ -115,6 +137,7 @@ class FieldBindingModel {
   factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
     return FieldBindingModel(
       tableOccurrence: json['table_occurrence'] as String?,
+      relationshipId: json['relationship_id'] as String?,
       fieldName: json['field_name'] as String? ?? '',
       controlStyle: json['control_style'] as String? ?? FieldControlStyle.editBox,
       valueListId: json['value_list_id'] as String?,
@@ -125,6 +148,7 @@ class FieldBindingModel {
 
   Map<String, dynamic> toJson() => {
         if (tableOccurrence != null) 'table_occurrence': tableOccurrence,
+        if (relationshipId != null) 'relationship_id': relationshipId,
         'field_name': fieldName,
         'control_style': controlStyle,
         if (valueListId != null) 'value_list_id': valueListId,
@@ -312,6 +336,124 @@ class LayoutMediaModel {
       );
 }
 
+/// A portal: the region of a layout that repeats, once per related record
+/// (#36).
+///
+/// The fields a row shows are the layout objects drawn **inside** the portal,
+/// as they are in FileMaker: the portal's first row is the band they are
+/// placed in, and each row redraws them against its own record.
+class PortalConfigModel {
+  /// The relationship followed to reach the records the rows show.
+  final String? relationshipId;
+
+  /// The occurrence whose records the rows show. It is what tells the two ends
+  /// apart when a relationship joins a table to itself.
+  final String? occurrence;
+
+  /// First related record shown, counting from 1, so a portal can start past
+  /// the first row.
+  final int initialRow;
+
+  /// How many rows the portal draws. The rest are reached by scrolling.
+  final int rowCount;
+
+  /// Height of one row. Null means the portal's own height divided by
+  /// [rowCount], which is what dragging the portal taller does.
+  final double? rowHeight;
+
+  final bool showScrollBar;
+
+  /// Offer an empty row at the end that creates a related record. It only does
+  /// anything when the relationship allows creation; the server refuses
+  /// otherwise.
+  final bool allowCreation;
+
+  /// Offer a button on each row that deletes its related record.
+  final bool allowDeletion;
+
+  /// Order of the rows, in the form the data API takes (`last_name`,
+  /// `-fee_paid`). Empty means the relationship's own "Sort related records".
+  final String sort;
+
+  const PortalConfigModel({
+    this.relationshipId,
+    this.occurrence,
+    this.initialRow = 1,
+    this.rowCount = 5,
+    this.rowHeight,
+    this.showScrollBar = true,
+    this.allowCreation = false,
+    this.allowDeletion = false,
+    this.sort = '',
+  });
+
+  /// True when the portal knows which records to show.
+  bool get isBound => relationshipId != null && relationshipId!.isNotEmpty;
+
+  /// The sort order to ask the server for, split into the fields it takes.
+  List<String> get sortFields =>
+      sort.split(',').map((f) => f.trim()).where((f) => f.isNotEmpty).toList();
+
+  /// Height of one row inside a portal [portalHeight] tall.
+  double effectiveRowHeight(double portalHeight) {
+    if (rowHeight != null && rowHeight! > 0) return rowHeight!;
+    final rows = rowCount > 0 ? rowCount : 1;
+    return math.max(24.0, portalHeight / rows);
+  }
+
+  factory PortalConfigModel.fromJson(Map<String, dynamic> json) {
+    return PortalConfigModel(
+      relationshipId: json['relationship_id'] as String?,
+      occurrence: json['occurrence'] as String?,
+      initialRow: (json['initial_row'] as num?)?.toInt() ?? 1,
+      rowCount: (json['row_count'] as num?)?.toInt() ?? 5,
+      rowHeight: (json['row_height'] as num?)?.toDouble(),
+      showScrollBar: json['show_scroll_bar'] as bool? ?? true,
+      allowCreation: json['allow_creation'] as bool? ?? false,
+      allowDeletion: json['allow_deletion'] as bool? ?? false,
+      sort: json['sort'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        if (relationshipId != null) 'relationship_id': relationshipId,
+        if (occurrence != null) 'occurrence': occurrence,
+        'initial_row': initialRow,
+        'row_count': rowCount,
+        if (rowHeight != null) 'row_height': rowHeight,
+        'show_scroll_bar': showScrollBar,
+        'allow_creation': allowCreation,
+        'allow_deletion': allowDeletion,
+        if (sort.isNotEmpty) 'sort': sort,
+      };
+
+  PortalConfigModel copyWith({
+    String? relationshipId,
+    String? occurrence,
+    bool clearRelationship = false,
+    int? initialRow,
+    int? rowCount,
+    double? rowHeight,
+    bool clearRowHeight = false,
+    bool? showScrollBar,
+    bool? allowCreation,
+    bool? allowDeletion,
+    String? sort,
+  }) {
+    return PortalConfigModel(
+      relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
+      occurrence: clearRelationship ? null : (occurrence ?? this.occurrence),
+      initialRow: initialRow ?? this.initialRow,
+      rowCount: rowCount ?? this.rowCount,
+      rowHeight: clearRowHeight ? null : (rowHeight ?? this.rowHeight),
+      showScrollBar: showScrollBar ?? this.showScrollBar,
+      allowCreation: allowCreation ?? this.allowCreation,
+      allowDeletion: allowDeletion ?? this.allowDeletion,
+      sort: sort ?? this.sort,
+    );
+  }
+}
+
 class LayoutObjectModel {
   final String id;
   final String type; // 'field', 'label', 'button', 'button_bar', 'portal', 'tab_control', 'slide_control', 'popover_button', 'chart', 'web_viewer', 'rect', 'rounded_rect', 'oval', 'line', 'media'
@@ -353,6 +495,21 @@ class LayoutObjectModel {
 
   /// Objects that take keyboard focus in Browse mode and so have a tab order.
   bool get isTabStop => type == 'field' || type == 'button' || type == 'popover_button';
+
+  /// The portal's setup, for an object of type `portal` (#36).
+  PortalConfigModel get portal => PortalConfigModel.fromJson(portalConfig ?? const {});
+
+  double get right => x + width;
+  double get bottom => y + height;
+
+  /// True when [other] is drawn inside this object, which is what puts a field
+  /// in a portal's row.
+  bool contains(LayoutObjectModel other) =>
+      other.id != id &&
+      other.x >= x &&
+      other.y >= y &&
+      other.right <= right &&
+      other.bottom <= bottom;
 
   /// Objects that display their `text` (labels, buttons and drawn shapes).
   bool get hasEditableText =>
@@ -435,6 +592,7 @@ class LayoutObjectModel {
     bool clearAction = false,
     bool clearTabOrder = false,
     bool clearMedia = false,
+    bool clearPortalConfig = false,
   }) {
     return LayoutObjectModel(
       id: id ?? this.id,
@@ -450,7 +608,7 @@ class LayoutObjectModel {
       style: style ?? this.style,
       anchors: anchors ?? this.anchors,
       isLocked: isLocked ?? this.isLocked,
-      portalConfig: portalConfig ?? this.portalConfig,
+      portalConfig: clearPortalConfig ? null : (portalConfig ?? this.portalConfig),
       action: clearAction ? null : (action ?? this.action),
       tabOrder: clearTabOrder ? null : (tabOrder ?? this.tabOrder),
       media: clearMedia ? null : (media ?? this.media),

@@ -4,7 +4,7 @@ This tutorial builds a working database from nothing: the customer list of a
 fictitious business called **Favorite Bakery**, which lets customers pay an
 annual fee in exchange for a discount. By the end you will have two tables, a
 relationship between them, several layouts, a found set, a sorted list, a
-printable sheet and a second account.
+portal, a printable sheet and a second account.
 
 It takes about an hour.
 
@@ -31,9 +31,10 @@ this tutorial says so instead of describing it — see
 - [Lesson 11 — A value list](#lesson-11--a-value-list)
 - [Lesson 12 — Preview and print](#lesson-12--preview-and-print)
 - [Lesson 13 — A second table and a relationship](#lesson-13--a-second-table-and-a-relationship)
-- [Lesson 14 — Scripts](#lesson-14--scripts)
-- [Lesson 15 — Accounts and privileges](#lesson-15--accounts-and-privileges)
-- [Lesson 16 — Backups](#lesson-16--backups)
+- [Lesson 14 — Show related records](#lesson-14--show-related-records)
+- [Lesson 15 — Scripts](#lesson-15--scripts)
+- [Lesson 16 — Accounts and privileges](#lesson-16--accounts-and-privileges)
+- [Lesson 17 — Backups](#lesson-17--backups)
 - [Reference: the sample data](#reference-the-sample-data)
 - [What is not here yet](#what-is-not-here-yet)
 
@@ -360,17 +361,32 @@ there.
 
 1. In Browse mode, switch to **Table** view so the order is easy to read.
 2. Click **Sort** in the toolbar.
-3. In **Sort by**, choose **Last Name**. Leave **Ascending** selected.
+
+   The dialog says *Records are ordered by the first field; ties are broken by
+   the next one*, and starts with *No sort order yet*.
+3. In **Add a field**, choose **Last Name**. It becomes the first level, with
+   an arrow showing it sorts ascending.
 4. Click **Sort**.
 
 The records are now in alphabetical order by last name, the summary reads
 `Sorted by Last Name ↑`, an arrow appears on the column heading, and the record
 you were on follows its data to its new position.
 
+### Break the ties with a second field
+
+Two customers share the last name **Smith**, and two share **Durand**. Add a
+second level to decide their order:
+
+1. Open **Sort** again. **Last Name** is still there.
+2. In **Add a field**, choose **First Name**. It joins below Last Name.
+3. Click **Sort**.
+
+The two Smiths are now **John** then **Mary**, and the two Durands **Jean**
+then **Marie**. Each level has buttons to move it up or down, flip it between
+ascending and descending, and remove it; **Clear All** empties the order.
+
 To get back to the stored order, choose **Records > Unsort**, or open the Sort
 dialog again and click **Unsort**.
-
-> File4Base sorts by **one** field. There is no multi-field sort order.
 
 ---
 
@@ -636,10 +652,20 @@ Then enter three records in Browse mode:
 3. In **Specify Relationship**, pick the occurrence on each side — `companies`
    on the left, `customers` on the right — then click the **Company** field in
    each list.
-4. Leave the three options unticked for now:
-   - *Allow records to be created in this table through this relationship*
-   - *Delete related records in this table when a record is deleted in the other table*
-   - *Sort related records*
+4. Tick **Allow records to be created in "customers" through this
+   relationship**. Lesson 14 uses it to add a customer from the company's own
+   layout.
+
+   The options name both tables, because they act on one side: the side the
+   relationship points at, which is the one on the right.
+
+   Leave the other two unticked:
+   - *Delete the matching records in "customers" when a record is deleted in
+     "companies"* — deleting a company would delete its customers. Lesson 14
+     comes back to it.
+   - *Sort the related records of "customers" by their match field* — that
+     would order them by company, which is the same for all of them. A portal
+     sorts its own rows, which lesson 14 does instead.
 5. Click **OK**.
 
 A line now joins the two cards, anchored on the two **Company** fields, with an
@@ -648,7 +674,143 @@ reads `2 occurrences · 1 relationships`.
 
 ---
 
-## Lesson 14 — Scripts
+## Lesson 14 — Show related records
+
+The relationship from lesson 13 is drawn, but nothing uses it yet. A layout can
+read the other side of it in two ways: **one field** of the related record, and
+a **portal**, which is the list of them.
+
+### Show the company's address on the customer layout
+
+A customer record holds the company's name, not its address. The address lives
+in Companies, and a related field reads it from there.
+
+1. Go to the **Customers Form** layout and choose **View > Layout Mode**.
+2. Drag a **Field** onto the layout, to the right of the **Company** box.
+3. In the inspector, on the **Data** tab, open **Table Occurrence**.
+
+   The list now has more than this layout's own table: every occurrence the
+   relationship reaches. Pick **customers · through "companies_to_customers"**
+   — that is Companies, named by the relationship followed to get there.
+4. In **Bound Column**, pick **Company Address**. The field on the canvas reads
+   `:: companies::company_address`, with a link badge.
+5. Add a **Text** label beside it reading `Company Address`.
+6. Save, and choose **View > Browse Mode**.
+
+The first record is **Marie Durand**, who works at **XYZ Inc.**, and the new
+field shows **42 Rue de la Paix**. Move to the next record — **Michelle
+Cannon**, **ABC Company** — and it changes to **1200 Industrial Way**. The
+address is never typed into a customer record; it is read from the one company
+record that holds it.
+
+A related field is **shown, not typed into**. A relationship can match several
+records, and it would not be clear which one an edit changed. The next section
+is where related records are edited.
+
+### Put a portal of customers on the company layout
+
+1. Go to the **Companies Form** layout and choose **View > Layout Mode**.
+2. Make the body taller — drag the **Footer** divider down — so there is room
+   under the four fields.
+3. Choose the **Portal Tool** from the toolbar and drag a rectangle about 600
+   wide and 180 tall under the fields.
+4. In the inspector, on the **Data** tab, **PORTAL SETUP** appears:
+
+   | Setting | Value |
+   | --- | --- |
+   | Show related records from | `customers · through "companies_to_customers"` |
+   | Initial row | `1` |
+   | Rows | `6` |
+   | Sort rows by | `last_name,first_name` |
+   | Show vertical scroll bar | ticked |
+   | Allow creation of records in this portal | ticked |
+   | Allow deletion of records in this portal | ticked |
+
+   **Sort rows by** takes field names in the order they sort, with `-` in front
+   of one to sort it descending. Leave it empty to use the relationship's own
+   *Sort related records*.
+5. Now put the fields **inside** the portal. Drag three **Field** objects into
+   its **top row** — that band is the row, and every row below repeats it:
+
+   | Field | Where |
+   | --- | --- |
+   | First Name | left of the row |
+   | Last Name | middle |
+   | Annual Fee | right |
+
+   Drawing them inside the portal is what puts them in it. A field that
+   overhangs its edge is not in the portal and stays on the layout.
+6. Add a **Text** label above the portal reading `Customers of this company`.
+7. Save, and choose **View > Browse Mode**.
+
+The first company, **ABC Company**, now lists its **6** customers, by last name:
+
+| First Name | Last Name | Annual Fee |
+| --- | --- | --- |
+| Michelle | Cannon | 200 |
+| John | Lee | 200 |
+| Patrick | Murphy | 100 |
+| John | Smith | 100 |
+| Mary | Smith | 100 |
+| Betty | Wilson | 100 |
+
+**Annual Fee** is the calculation field from lesson 10, computed for each
+related record. The two features work together: a portal shows whatever the
+related table holds, calculated fields included.
+
+Step to the next company and the rows change with it: **DEF Ltd.** has 5 and
+**XYZ Inc.** has 5.
+
+### Edit, add and remove through the portal
+
+- **Edit.** Click a cell and type. It is saved to that related record — the
+  customer's own record, not the company's. The row stays where it is until the
+  portal next reads; it does not jump to a new sorted position while you are
+  typing in it.
+- **Add.** The empty row at the end reads *Add a customers record…*. Type a
+  name and press **Enter**. A customer record is created and its **Company** is
+  filled from the company you are on, so it belongs to it straight away. You
+  never type the company name — the relationship owns that field, and a value
+  sent for it would be overwritten.
+
+  This needs *Allow records to be created…* on the relationship, which lesson 13
+  ticked. Without it the row is still offered but the server refuses, and the
+  Portal Setup panel warns you.
+- **Remove.** The button at the right of each row deletes that customer record.
+  It deletes the **related record**, not the row: there is no such thing as
+  removing a customer from a company without either deleting the customer or
+  clearing their Company field.
+
+### A company with no company name
+
+Create a company record and leave **Company** empty. Its portal is empty, and
+the *Add a customers record…* row refuses with *the record has no value in the
+match field*.
+
+That is deliberate. An empty match field relates to **nothing**, rather than to
+every customer whose Company is also empty — otherwise one blank record would
+appear to own every unattached one. And a record created against it would have
+nothing to be matched by.
+
+Delete that test company before going on.
+
+### Deleting a company
+
+By default, deleting a company leaves its customers alone. They keep the
+company name, and no portal shows them any more.
+
+Tick **Delete the matching records in "customers" when a record is deleted in
+"companies"** in Specify Relationship and it changes: deleting a company
+deletes its customers too, and anything that belongs to *those* records, all
+the way down.
+
+Leave it **unticked** for this tutorial. It is the right setting for records
+that cannot exist on their own — invoice lines without an invoice — and the
+wrong one for customers, who outlive the company they happen to work for.
+
+---
+
+## Lesson 15 — Scripts
 
 Choose **Scripts > Script Workspace...**
 
@@ -675,7 +837,7 @@ without executing them.
 
 ---
 
-## Lesson 15 — Accounts and privileges
+## Lesson 16 — Accounts and privileges
 
 Choose **File > Manage > Security...**
 
@@ -709,7 +871,7 @@ account roles and layout privileges to restrict access today.
 
 ---
 
-## Lesson 16 — Backups
+## Lesson 17 — Backups
 
 The database lives in PostgreSQL (or MariaDB), so backing it up means backing up
 the engine's data.
@@ -795,11 +957,10 @@ merge fields that collapse when empty, cannot be built.
 **No saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34))**.**
 A find cannot be named and run again later.
 
-**No multi-field sort** ([#35](https://github.com/file4base/file4base-app/issues/35))**.** The Sort dialog takes one field.
-
-**No portals** ([#36](https://github.com/file4base/file4base-app/issues/36))**.** A layout cannot show a list of the related records of another
-table. The relationship itself works; displaying related records on a layout
-does not.
+**No find on a related field** ([#36](https://github.com/file4base/file4base-app/issues/36))**.**
+Find mode takes criteria on the record's own fields. A related field says so in
+Find mode rather than offering a box that would do nothing. Portals and related
+fields themselves do work — see lesson 14.
 
 **No charts** ([#37](https://github.com/file4base/file4base-app/issues/37))**.** The chart tool is in the layout toolbar but there is no chart
 setup.
@@ -808,7 +969,7 @@ setup.
 ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
 data files.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 15.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 16.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

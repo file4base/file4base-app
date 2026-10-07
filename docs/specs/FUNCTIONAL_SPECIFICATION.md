@@ -67,13 +67,21 @@ File4Base enforces the exact 4-mode operational paradigm:
 - Visual node graph where each box represents a **Table Occurrence (TO)** (allowing multiple instances/aliases of the same underlying base table to prevent circular reference cycles).
 - Connectors between match fields support:
   - Equality (`=`)
-  - Comparative (`<`, `<=`, `>`, `>=`)
-  - Non-equality (`!=`)
-  - Cartesian product (`x`)
-- Relationship options:
-  - `allow_create_related`: Auto-creates child record on portal row entry.
-  - `cascade_delete`: Auto-deletes child records when master record is deleted.
-  - `sort_related`: Automatic sorting of portal records.
+  - Comparative (`<`, `≤`, `>`, `≥`)
+  - Non-equality (`≠`)
+
+  The graph stores the mathematical signs; the plain spellings (`<>`, `!=`,
+  `<=`, `>=`) are accepted too. The Cartesian product (`x`) is not implemented.
+- A relationship is drawn **left to right**, and that direction is read as
+  parent to child: all three options act on the right-hand side.
+  - `allow_creation`: a record may be created on the right-hand side through
+    this relationship, which is what the empty row at the end of a portal does.
+  - `cascade_delete`: deleting a left-hand record deletes the right-hand
+    records that match it, and theirs, down the whole chain.
+  - `sort_related`: the order the right-hand side's records come back in when
+    the caller asks for none. A portal's own sort order supersedes it.
+
+  See [relationships_and_portals.md](relationships_and_portals.md).
 
 ### 3.2 Calculation Fields & Virtual Formulas
 - Formulas can reference:

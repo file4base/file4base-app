@@ -34,6 +34,8 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/", h.InsertRow)
 		r.Post("/find", h.FindRows)
 		r.Get("/{id}", h.GetRow)
+		r.Get("/{id}/related", h.ListRelatedRows)
+		r.Post("/{id}/related", h.CreateRelatedRow)
 		r.Put("/{id}", h.UpdateRow)
 		r.Delete("/{id}", h.DeleteRow)
 	})
@@ -70,6 +72,12 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 	switch {
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
+	case errors.Is(err, data.ErrRelationshipNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Relationship Not Found", err.Error())
+	case errors.Is(err, data.ErrCreationNotAllowed):
+		telemetry.WriteProblem(w, r, http.StatusForbidden, "Creation Not Allowed", err.Error())
+	case errors.Is(err, data.ErrNoMatchValue):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "No Match Value", err.Error())
 	case errors.Is(err, data.ErrUnknownField):
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Unknown Field", err.Error())
 	case errors.Is(err, validation.ErrValidation):
@@ -95,23 +103,7 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 func parseSortOrder(values []string) []data.SortField {
 	var order []data.SortField
 	for _, value := range values {
-		for _, part := range strings.Split(value, ",") {
-			field := strings.TrimSpace(part)
-			if field == "" {
-				continue
-			}
-			descending := false
-			switch field[0] {
-			case '-':
-				descending, field = true, strings.TrimSpace(field[1:])
-			case '+':
-				field = strings.TrimSpace(field[1:])
-			}
-			if field == "" {
-				continue
-			}
-			order = append(order, data.SortField{Field: field, Descending: descending})
-		}
+		order = append(order, data.ParseSortSpec(value)...)
 	}
 	return order
 }
@@ -252,6 +244,119 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(results)
+}
+
+// ListRelatedRows returns the records of a related table that match the record
+// in hand: what a portal shows, and what a related field on a layout reads its
+// value from (#36).
+//
+//	GET /api/v1/data/{table}/{id}/related?relationship=<id>&occurrence=<id>
+//
+// `occurrence` names the side whose records are wanted. It may be left out
+// unless the relationship joins a table to itself, where there is no other
+// side to infer.
+func (h *DataHandler) ListRelatedRows(w http.ResponseWriter, r *http.Request) {
+	table := chi.URLParam(r, "table")
+	id := chi.URLParam(r, "id")
+	svc, ok := h.authorize(w, r, table, false)
+	if !ok {
+		return
+	}
+
+	relationship := r.URL.Query().Get("relationship")
+	if strings.TrimSpace(relationship) == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Missing Relationship",
+			"the relationship to follow must be given as ?relationship=<id>")
+		return
+	}
+	occurrence := r.URL.Query().Get("occurrence")
+
+	// The caller needs access to the table the records come from as well.
+	if !h.authorizeRelated(w, r, svc, table, relationship, occurrence, false) {
+		return
+	}
+
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+
+	rows, err := svc.RelatedRows(r.Context(), table, id, relationship, occurrence, data.QueryOptions{
+		Limit:  limit,
+		Offset: offset,
+		Sort:   parseSortOrder(r.URL.Query()["sort"]),
+	})
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(rows)
+}
+
+// CreateRelatedRow creates a record in a related table and fills its match
+// field, which is what typing into the last row of a portal does.
+//
+//	POST /api/v1/data/{table}/{id}/related?relationship=<id>&occurrence=<id>
+//
+// It is refused with 403 unless the relationship allows creation.
+func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
+	table := chi.URLParam(r, "table")
+	id := chi.URLParam(r, "id")
+	svc, ok := h.authorize(w, r, table, false)
+	if !ok {
+		return
+	}
+
+	relationship := r.URL.Query().Get("relationship")
+	if strings.TrimSpace(relationship) == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Missing Relationship",
+			"the relationship to follow must be given as ?relationship=<id>")
+		return
+	}
+	occurrence := r.URL.Query().Get("occurrence")
+
+	// The record is written to the related table, so that is where write
+	// access has to hold.
+	if !h.authorizeRelated(w, r, svc, table, relationship, occurrence, true) {
+		return
+	}
+
+	record, err := decodeRecord(r)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	inserted, err := svc.CreateRelatedRow(r.Context(), table, id, relationship, occurrence, record)
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Related Insert Error", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(inserted)
+}
+
+// authorizeRelated enforces the caller's access level on the table at the far
+// end of a relationship. It writes the error response itself and returns false
+// when the request must not proceed.
+func (h *DataHandler) authorizeRelated(
+	w http.ResponseWriter, r *http.Request, svc *data.Service,
+	table, relationship, occurrence string, write bool,
+) bool {
+	rel, err := svc.Relationship(r.Context(), relationship)
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
+		return false
+	}
+	_, target, err := rel.Sides(table, occurrence)
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
+		return false
+	}
+	_, ok := h.authorize(w, r, target.TableName, write)
+	return ok
 }
 
 // decodeRecord decodes a record body keeping every JSON number exactly as

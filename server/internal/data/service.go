@@ -445,10 +445,35 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 }
 
 // DeleteRow removes a record by primary key id
+// DeleteRow deletes a record, and with it the records that belong to it:
+// every relationship of the table whose "Delete related records" option is on
+// takes its matching records with it, down the whole chain (#36).
 func (s *Service) DeleteRow(ctx context.Context, tableName string, id string) error {
+	return s.deleteRow(ctx, tableName, id, map[string]struct{}{})
+}
+
+// seenKey identifies a record already on its way out, so a cascade that points
+// back at it does not try to delete it twice.
+func seenKey(tableName, id string) string { return tableName + "\x00" + id }
+
+// deleteRow is DeleteRow with the set of records already being deleted, which
+// is what stops a ring of cascading relationships from recursing forever.
+func (s *Service) deleteRow(ctx context.Context, tableName string, id string, seen map[string]struct{}) error {
 	if _, err := s.tableFields(ctx, tableName); err != nil {
 		return err
 	}
+	key := seenKey(tableName, id)
+	if _, already := seen[key]; already {
+		return nil
+	}
+	seen[key] = struct{}{}
+
+	// The children go first: once the parent is gone the match value it held
+	// is gone with it, and they could no longer be found.
+	if err := s.cascadeDelete(ctx, tableName, id, seen); err != nil {
+		return err
+	}
+
 	dialect := s.driver.Dialect()
 	sqlQuery := fmt.Sprintf(
 		"DELETE FROM %s WHERE %s = %s",

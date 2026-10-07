@@ -303,9 +303,21 @@ void main() {
       expect(find.text('CLIENTES'), findsWidgets);
       expect(find.text('clientes_FACTURAS'), findsWidgets);
       expect(find.text('='), findsWidgets);
-      expect(find.text('Allow records to be created in this table through this relationship'), findsOneWidget);
-      expect(find.text('Delete related records in this table when a record is deleted in the other table'), findsOneWidget);
-      expect(find.text('Sort related records'), findsOneWidget);
+      // The options act on one named side, not on an unspecified "this
+      // table" in a dialog that shows two (#36).
+      expect(
+        find.text('Allow records to be created in "clientes_FACTURAS" through this relationship'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+            'Delete the matching records in "clientes_FACTURAS" when a record is deleted in "CLIENTES"'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Sort the related records of "clientes_FACTURAS" by their match field'),
+        findsOneWidget,
+      );
     });
   });
 

@@ -9,6 +9,7 @@ import '../../main.dart';
 import '../layout_engine/layout_action_runner.dart';
 import '../layout_engine/layout_object_visuals.dart';
 import '../layout_engine/models/layout_definition.dart';
+import 'related_records.dart';
 
 class DataBrowserWidget extends StatefulWidget {
   final TableModel table;
@@ -280,6 +281,66 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   final Map<String, Timer?> _fieldDebounceTimers = {};
   // null = idle/saved, true = saving, false = error
   final Map<String, bool?> _fieldSaving = {};
+
+  // ─── Relationships (#36) ───────────────────────────────────────────────────
+
+  /// The relationship graph of this database, which is what a portal and a
+  /// related field follow to reach the other side.
+  Map<String, RelationshipModel> _relationships = const {};
+  Map<String, TableOccurrenceModel> _occurrences = const {};
+  Map<String, TableModel> _tablesById = const {};
+
+  /// Everything a portal or a related field on this layout needs. Null until
+  /// the catalog has been read, and whenever it could not be.
+  RelatedContext? get _relatedContext {
+    if (_relationships.isEmpty || _occurrences.isEmpty || _tablesById.isEmpty) return null;
+    return RelatedContext(
+      apiClient: widget.apiClient,
+      fromTable: widget.table.name,
+      recordId: _records.isEmpty || _currentIndex >= _records.length
+          ? null
+          : _records[_currentIndex]['id']?.toString(),
+      relationshipsById: _relationships,
+      occurrencesById: _occurrences,
+      tablesById: _tablesById,
+      formatValue: fieldText,
+    );
+  }
+
+  /// Reads the relationship graph once. A layout with no portal and no related
+  /// field never needs it, so a database whose graph cannot be read still
+  /// browses: those objects draw a notice instead.
+  Future<void> _loadRelationshipGraph() async {
+    try {
+      final results = await Future.wait([
+        widget.apiClient.listRelationships(),
+        widget.apiClient.listOccurrences(),
+        widget.apiClient.listTables(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _relationships = {
+          for (final r in results[0] as List<RelationshipModel>) r.id: r,
+        };
+        _occurrences = {
+          for (final o in results[1] as List<TableOccurrenceModel>) o.id: o,
+        };
+        _tablesById = {
+          for (final t in results[2] as List<TableModel>) t.id: t,
+        };
+      });
+    } catch (_) {
+      // Left empty on purpose: see _relatedContext.
+    }
+  }
+
+  /// True when this layout shows anything from the other side of a
+  /// relationship, which is the only reason to read the graph.
+  bool get _layoutUsesRelationships {
+    final objects = widget.layout?.objects;
+    if (objects == null) return false;
+    return objects.any((o) => o.type == 'portal' || (o.fieldBinding?.isRelated ?? false));
+  }
 
   // ─── Value lists (#31) ─────────────────────────────────────────────────────
 
@@ -594,6 +655,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     super.initState();
     _initFindControllers();
     unawaited(_loadValueLists());
+    if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
     _fetchRecords().then((_) {
       if (mounted && widget.mode == OperationalMode.browse) _runLayoutTrigger(widget.layout?.onLayoutEnter);
     });
@@ -663,6 +725,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       if (oldWidget.table.id != widget.table.id) {
         _fetchRecords();
       }
+    }
+    // Switching to a layout that shows the other side of a relationship for
+    // the first time: the graph has not been read yet (#36).
+    if (layoutChanged && _layoutUsesRelationships && _relationships.isEmpty) {
+      unawaited(_loadRelationshipGraph());
     }
   }
 
@@ -1608,6 +1675,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       for (final (i, o) in sortLayoutTabStops(layout.objects.where((o) => o.isTabStop)).indexed) o.id: i + 1,
     };
 
+    // The objects drawn inside a portal belong to its rows, where each row
+    // redraws them against its own related record (#36). They are not drawn a
+    // second time on the layout itself.
+    final portals = layout.objects.where((o) => o.type == 'portal').toList();
+    final portalContents = <String, List<LayoutObjectModel>>{
+      for (final portal in portals)
+        portal.id: layout.objects.where((o) => o.type != 'portal' && portal.contains(o)).toList(),
+    };
+    final insidePortal = {
+      for (final contents in portalContents.values)
+        for (final o in contents) o.id,
+    };
+    final topLevel = layout.objects.where((o) => !insidePortal.contains(o.id)).toList();
+
     return LayoutEntryTransition(
       key: ValueKey('layout-entry-${layout.id}'),
       effect: layout.transition,
@@ -1729,8 +1810,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       ..._buildPartDividers(layout, canvasWidth, isDark),
 
                       // Render layout objects
-                      ...layout.objects.map((obj) {
-                        Widget child = _buildLayoutObject(obj, record, isDark, isFindMode);
+                      ...topLevel.map((obj) {
+                        Widget child = _buildLayoutObject(obj, record, isDark, isFindMode,
+                            portalContents: portalContents[obj.id] ?? const []);
                         final rank = tabRank[obj.id];
                         if (rank != null) {
                           child = FocusTraversalOrder(order: NumericFocusOrder(rank.toDouble()), child: child);
@@ -1756,7 +1838,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   Widget _buildLayoutObject(
-      LayoutObjectModel obj, Map<String, dynamic> record, bool isDark, bool isFindMode) {
+      LayoutObjectModel obj, Map<String, dynamic> record, bool isDark, bool isFindMode,
+      {List<LayoutObjectModel> portalContents = const []}) {
     switch (obj.type) {
       case 'label':
         return Container(
@@ -1778,6 +1861,27 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         );
 
       case 'field':
+        // A field of a related record: `Companies::company_address` on a
+        // Customers layout (#36). It is read through the relationship, not
+        // from the record in hand, so none of what follows applies.
+        if (obj.fieldBinding?.isRelated ?? false) {
+          if (isFindMode) {
+            return relatedNotice('Find on ${obj.fieldBinding!.qualifiedName} is not supported yet',
+                isDark: isDark, radius: obj.style.cornerRadius);
+          }
+          final related = _relatedContext;
+          if (related == null) {
+            return relatedNotice('<${obj.fieldBinding!.qualifiedName}>',
+                isDark: isDark, radius: obj.style.cornerRadius);
+          }
+          return RelatedFieldView(
+            key: ValueKey('related-${obj.id}-${related.recordId}'),
+            object: obj,
+            related: related,
+            isDark: isDark,
+          );
+        }
+
         final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
         final col = widget.table.columns
             .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
@@ -1987,36 +2091,29 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         );
 
       case 'portal':
-        return Container(
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF272D37) : Colors.grey.shade50,
-            border: Border.all(
-                color: isDark ? const Color(0xFF38404B) : Colors.grey.shade300),
-            borderRadius: BorderRadius.circular(obj.style.cornerRadius),
-          ),
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.table_rows, size: 14, color: Color(0xFF1E88E5)),
-                  const SizedBox(width: 4),
-                  Text(
-                    obj.text.isEmpty ? 'Portal / Related Records' : obj.text,
-                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              const Divider(height: 12),
-              const Expanded(
-                child: Center(
-                  child: Text('No related records',
-                      style: TextStyle(fontSize: 10, color: Colors.grey)),
-                ),
-              ),
-            ],
-          ),
+        // A portal shows the related records of the record in hand, one row
+        // each, with the objects drawn inside it repeated per row (#36).
+        if (isFindMode) {
+          return relatedNotice('A portal shows nothing in Find mode', isDark: isDark,
+              radius: obj.style.cornerRadius);
+        }
+        final related = _relatedContext;
+        if (related == null) {
+          return relatedNotice(
+            obj.portal.isBound
+                ? 'Portal: the relationship graph could not be read'
+                : 'Portal: choose a relationship in Portal Setup',
+            isDark: isDark,
+            radius: obj.style.cornerRadius,
+          );
+        }
+        return PortalView(
+          key: ValueKey('portal-${obj.id}'),
+          object: obj,
+          contents: portalContents,
+          related: related,
+          isDark: isDark,
+          onChanged: () => unawaited(_fetchRecords()),
         );
 
       default:

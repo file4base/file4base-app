@@ -28,13 +28,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calculations, [#31](https://github.com/file4base/file4base-app/issues/31) value lists,
   [#32](https://github.com/file4base/file4base-app/issues/32) grouped reports,
   [#33](https://github.com/file4base/file4base-app/issues/33) layout assistant and merge fields,
-  [#34](https://github.com/file4base/file4base-app/issues/34) OR searches and saved finds,
-  [#35](https://github.com/file4base/file4base-app/issues/35) multi-field sort,
-  [#36](https://github.com/file4base/file4base-app/issues/36) portals,
+  [#34](https://github.com/file4base/file4base-app/issues/34) saved finds,
   [#37](https://github.com/file4base/file4base-app/issues/37) charts,
   [#38](https://github.com/file4base/file4base-app/issues/38) importing foreign files,
   [#39](https://github.com/file4base/file4base-app/issues/39) extended privileges).
   The defects below were all found while writing it.
+
+### Added
+- **Related fields and portals** ([#36](https://github.com/file4base/file4base-app/issues/36)).
+  A layout can show the other side of a relationship, which until now was stored
+  metadata the application never acted on. Lesson 14 of the tutorial is new and
+  builds both; [docs/specs/relationships_and_portals.md](docs/specs/relationships_and_portals.md)
+  is the specification.
+  - A **related field** shows a field of the first matching record —
+    `Companies::company_address` on a Customers layout. The inspector's **Table
+    Occurrence** picker offers every occurrence a relationship reaches, named by
+    the relationship followed to get there, and the Bound Column list follows it
+    to that table's fields.
+  - A **portal** shows the related records, one row each. The fields in a row
+    are the layout objects drawn **inside** the portal, as in FileMaker: its
+    first row is the band they are placed in, and every row repeats it. **Portal
+    Setup** holds the relationship, the initial row, the row count, the sort
+    order, the scroll bar, and whether rows may be added or removed.
+  - **Writing through a portal**: typing in a row saves to that related record;
+    the empty row at the end creates one with its match field filled from the
+    record in hand. The match field belongs to the relationship — a value sent
+    for it is overwritten — so a portal row cannot be aimed at another parent.
+    Creation is refused with `403` unless the relationship allows it, and Portal
+    Setup says so when it does not.
+  - **Cascading deletes** are honoured: deleting a record deletes the records
+    that belong to it through every relationship whose *Delete related records*
+    is set, down the whole chain, with a ring of them deleting each record once.
+  - **Sort related records** now means something: it is the order a portal falls
+    back to when it asks for none of its own.
+  - Two new endpoints, `GET` and `POST /api/v1/data/{table}/{id}/related`,
+    documented in [docs/api/API_REFERENCE.md](docs/api/API_REFERENCE.md).
+  - Portals and related fields survive export and import: a layout's
+    `relationship_id` is rewritten to the id the relationship has in the
+    destination, including when the import matched one that was already there.
+
+### Changed
+- The three options of **Specify Relationship** now name both tables instead of
+  saying "this table", which said nothing in a dialog showing two. They act on
+  the side the relationship points at — the right-hand one — and that is now
+  written down ([#36](https://github.com/file4base/file4base-app/issues/36)).
+- Lesson 7 of the tutorial describes the Sort dialog as it is, with levels and
+  a tie-break, rather than the single-field dialog it replaced in
+  [#35](https://github.com/file4base/file4base-app/issues/35).
+
+### Fixed
+- A new table took the place on the relationship graph numbered after however
+  many occurrences existed, so after a table was deleted the next one was
+  created exactly on top of a card that was still there. It now takes the first
+  free place ([#36](https://github.com/file4base/file4base-app/issues/36)).
+- Toggling **Allow Browse mode entry** or **Allow Find mode entry** in the
+  layout inspector rebuilt the field's binding from scratch and silently dropped
+  its value list ([#31](https://github.com/file4base/file4base-app/issues/31)).
 
 ### Added
 - **Value lists** ([#31](https://github.com/file4base/file4base-app/issues/31)).

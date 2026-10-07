@@ -57,6 +57,16 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   ColumnModel? _rightColumn;
 
   String _operator = '=';
+  /// How the two sides are named in the option labels, so they say which
+  /// table they act on instead of "this table" (#36).
+  String get _leftSideName => _occurrenceName(_leftOccurrence, 'the other table');
+  String get _rightSideName => _occurrenceName(_rightOccurrence, 'this table');
+
+  String _occurrenceName(TableOccurrenceModel? occurrence, String fallback) {
+    final name = occurrence?.name.trim() ?? '';
+    return name.isEmpty ? fallback : '"$name"';
+  }
+
   bool _allowCreation = false;
   bool _cascadeDelete = false;
   bool _sortRelated = false;
@@ -353,14 +363,22 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
             const SizedBox(height: 16),
             const Divider(),
             const SizedBox(height: 8),
-            // Options checkboxes matching FileMaker's relationship specification
+            // These options act on the right-hand occurrence: the
+            // relationship is drawn left to right, and File4Base reads that as
+            // parent to child (#36). They name the tables rather than saying
+            // "this table", which said nothing in a dialog showing two.
+            Text(
+              'These options act on $_rightSideName, the side this relationship points at.',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 4),
             CheckboxListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
               value: _allowCreation,
-              title: const Text(
-                'Allow records to be created in this table through this relationship',
-                style: TextStyle(fontSize: 12.5),
+              title: Text(
+                'Allow records to be created in $_rightSideName through this relationship',
+                style: const TextStyle(fontSize: 12.5),
               ),
               controlAffinity: ListTileControlAffinity.leading,
               onChanged: (val) => setState(() => _allowCreation = val ?? false),
@@ -369,9 +387,9 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               value: _cascadeDelete,
-              title: const Text(
-                'Delete related records in this table when a record is deleted in the other table',
-                style: TextStyle(fontSize: 12.5),
+              title: Text(
+                'Delete the matching records in $_rightSideName when a record is deleted in $_leftSideName',
+                style: const TextStyle(fontSize: 12.5),
               ),
               controlAffinity: ListTileControlAffinity.leading,
               onChanged: (val) => setState(() => _cascadeDelete = val ?? false),
@@ -380,9 +398,13 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               value: _sortRelated,
-              title: const Text(
-                'Sort related records',
-                style: TextStyle(fontSize: 12.5),
+              title: Text(
+                'Sort the related records of $_rightSideName by their match field',
+                style: const TextStyle(fontSize: 12.5),
+              ),
+              subtitle: const Text(
+                'A portal can override this with a sort order of its own, in Portal Setup.',
+                style: TextStyle(fontSize: 10.5, color: Colors.grey),
               ),
               controlAffinity: ListTileControlAffinity.leading,
               onChanged: (val) => setState(() => _sortRelated = val ?? false),
