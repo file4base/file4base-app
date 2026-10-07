@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
@@ -338,6 +339,20 @@ func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeSchemaError(w, r, err)
 		return
+	}
+
+	// A new formula changes what every existing record should show, so they
+	// are recomputed rather than keeping the old answer until each is edited
+	// (#30). A record the new formula cannot be computed for is reported.
+	if opts.UpdateCalculation && col.FieldType == dbal.FieldTypeCalculation {
+		driver, _ := dbal.DriverFromContext(r.Context())
+		tableName, nameErr := schemaService(r).TableNameByID(r.Context(), tableID)
+		if nameErr == nil && driver != nil {
+			if _, recalcErr := data.NewService(driver).RecalculateTable(r.Context(), tableName); recalcErr != nil {
+				writeDataError(w, r, http.StatusUnprocessableEntity, "Calculation Error", recalcErr)
+				return
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

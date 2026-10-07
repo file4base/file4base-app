@@ -84,6 +84,19 @@ func (p *PostgresDialect) BuildAddColumnSQL(tableName string, col dbal.ColumnDef
 	return clause + ";", nil
 }
 
+func (p *PostgresDialect) BuildAlterColumnTypeSQL(tableName, columnName string, newType dbal.AgnosticFieldType) (string, error) {
+	target := p.MapType(newType)
+	// USING makes PostgreSQL convert what is there instead of refusing the
+	// change; an empty string is not a number, so it becomes NULL.
+	return fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s USING NULLIF(%s::text, '')::%s;",
+		p.QuoteIdentifier(tableName),
+		p.QuoteIdentifier(columnName),
+		target,
+		p.QuoteIdentifier(columnName),
+		target,
+	), nil
+}
+
 func (p *PostgresDialect) TimestampColumn() string {
 	return "TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP"
 }

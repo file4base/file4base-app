@@ -95,6 +95,14 @@ func (m *MariaDBDialect) BuildAddColumnSQL(tableName string, col dbal.ColumnDefi
 	return clause + ";", nil
 }
 
+func (m *MariaDBDialect) BuildAlterColumnTypeSQL(tableName, columnName string, newType dbal.AgnosticFieldType) (string, error) {
+	return fmt.Sprintf("ALTER TABLE %s MODIFY %s %s;",
+		m.QuoteIdentifier(tableName),
+		m.QuoteIdentifier(columnName),
+		m.columnType(dbal.ColumnDefinition{Name: columnName, Type: newType, IsNullable: true}),
+	), nil
+}
+
 func (m *MariaDBDialect) TimestampColumn() string {
 	// The precision of the default has to match the column's.
 	return "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)"

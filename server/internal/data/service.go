@@ -136,9 +136,9 @@ func (s *Service) tableFields(ctx context.Context, tableName string) (fieldSet, 
 	if dbal.IsReservedTableName(tableName) {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
-	q := `SELECT c.name, c.field_type FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
+	q := `SELECT c.name, c.field_type, c.calculation_formula FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT c.name, c.field_type FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
+		q = `SELECT c.name, c.field_type, c.calculation_formula FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
 	}
 	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
 	if err != nil {
@@ -149,10 +149,15 @@ func (s *Service) tableFields(ctx context.Context, tableName string) (fieldSet, 
 	fields := make(fieldSet)
 	for rows.Next() {
 		var name, fieldType string
-		if err := rows.Scan(&name, &fieldType); err != nil {
+		var formula *string
+		if err := rows.Scan(&name, &fieldType, &formula); err != nil {
 			return nil, err
 		}
-		fields[name] = dbal.AgnosticFieldType(fieldType)
+		// A calculation is held in the column its formula's result needs, and
+		// every read and write path cares about what is actually stored: a
+		// numeric result has to be trimmed and compared like a number, which
+		// is not what the declared type CALCULATION would say.
+		fields[name] = StorageType(dbal.AgnosticFieldType(fieldType), formula)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -283,6 +288,13 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 		record["id"] = uuid.NewString()
 	}
 
+	// Calculation fields are filled from their formulas (#30). They are
+	// computed before the validation rules run, so a rule can check what the
+	// formula produced.
+	if err := s.applyCalculations(ctx, tableName, record); err != nil {
+		return nil, err
+	}
+
 	// Validation rules of the Fields dialog (#15)
 	checker, err := s.checker(ctx, tableName)
 	if err != nil {
@@ -373,6 +385,15 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	if err := decodeContainerValues(fields, tableName, updates); err != nil {
 		return nil, err
 	}
+
+	// Calculation fields are recomputed from the record as it will be after
+	// this update, so changing a field the formula reads updates the result
+	// (#30). The formula owns the value, so anything the caller sent for a
+	// calculation field is replaced.
+	if err := s.recalculateForUpdate(ctx, tableName, id, updates); err != nil {
+		return nil, err
+	}
+
 	// The rules of the fields being changed apply to their new values (#15)
 	checker, err := s.checker(ctx, tableName)
 	if err != nil {

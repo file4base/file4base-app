@@ -28,6 +28,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [#39](https://github.com/file4base/file4base-app/issues/39) extended privileges).
   The defects below were all found while writing it.
 
+### Added
+- **Calculation fields are computed** ([#30](https://github.com/file4base/file4base-app/issues/30)).
+  The field type and its formula editor existed, but nothing ever evaluated a
+  formula: the column was created as plain text and stayed empty. A formula is
+  now parsed and evaluated by the server when a record is written, and the
+  answer is stored in the field's own column, so a calculation field is sorted
+  and found on like any other field. The whole language — grammar, operators,
+  the 20 functions, how values are coerced and what is validated — is in
+  [docs/specs/calculation_formulas.md](docs/specs/calculation_formulas.md), and
+  lesson 10 of the tutorial builds the annual fee of the Favorite Bakery
+  example with it.
+  - Formulas are evaluated in Go, not translated to SQL, so they give the same
+    answer on PostgreSQL and on MariaDB; the suite runs against both.
+  - A calculation is stored in the column its result type needs, so a numeric
+    result sorts and compares as a number. Changing the result type re-types the
+    stored column.
+  - Changing a field a formula reads updates the result, and saving a new
+    formula recomputes the records already stored instead of leaving them with
+    the old answer.
+  - A formula may read another calculation field; File4Base works out the order
+    to compute them in.
+  - A formula that does not parse, calls an unknown function, reads a field the
+    table does not have, or would make two calculations depend on each other is
+    refused with `422` and the position of the problem. A ring of formulas names
+    the fields in it.
+  - Calculation fields are no longer typed into: Browse mode shows them filled
+    in and marked with a function sign, and a value sent for one through the API
+    is ignored.
+  - Summary fields are a different problem — an aggregate over the found set —
+    and are still not computed; the New Field dialog now says so for that type
+    alone ([#32](https://github.com/file4base/file4base-app/issues/32)).
+
 ### Changed
 - Records can be sorted by more than one field ([#35](https://github.com/file4base/file4base-app/issues/35)).
   The Sort dialog now builds a sort order: fields are added, reordered, given a

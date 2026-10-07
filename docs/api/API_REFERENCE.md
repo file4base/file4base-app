@@ -416,6 +416,7 @@ Queries rows with optional pagination and sorting.
 - `offset` (integer, default `0`)
 - `sort_by` (string, optional)
 - `sort_asc` (boolean, default `true`)
+- `sort` (string, optional, repeatable) — orders by several fields in turn. Comma-separated or repeated; a leading `-` sorts that field descending. `?sort=company,-fee_paid` orders by Company ascending and breaks ties by Fee Paid descending. It supersedes `sort_by`/`sort_asc`, which stay for callers that only sort by one field. Every field named must be registered for the table; an unknown one answers `400 Unknown Field`.
 
 CONTAINER fields are returned as base64 strings (standard alphabet, with padding); `POST` and `PUT` accept base64 strings for them and store the decoded bytes, and a value that is not valid base64 answers `400 Invalid Value`.
 
@@ -425,6 +426,8 @@ To read every row, page with `limit=1000` and `sort_by=id` (a stable order), adv
 
 ### `POST /api/v1/data/{table}`
 Dynamically inserts a row into any table. Generates a UUID `id` if not provided.
+
+CALCULATION fields are filled in by their formula and are not writable: a value sent for one is ignored. The formula is evaluated by the server when the record is written, and the answer is stored in the field's column, so a calculation field is sorted and found on like any other field. A `PUT` recomputes them from the record as it will be after the update, so changing a field a formula reads updates the result. A formula that cannot be computed for a record (dividing by zero, or text where a number is needed) answers `400 Invalid Value` and nothing is written. See [docs/specs/calculation_formulas.md](../specs/calculation_formulas.md).
 
 The fields' validation rules (`validation_rules`, set in the Fields dialog) are enforced on `POST` (every ruled field) and `PUT` (the fields being changed): not empty, unique, existing value, strict type (`Numeric Only`, `Date`, `4-Digit Year`, `Time of Day`, `Text Only`), range and maximum length, with the custom message when one is set. A broken rule answers `422 Unprocessable Entity` naming the field and the rule in `invalid_params`, and nothing is written. Unique rules are backed by a unique index on PostgreSQL, so concurrent duplicates cannot both succeed; a unique rule cannot be enabled while records already share a value. Data import applies the rules whose timing is "Always", not those for "Only during data entry"; malformed rules are rejected with `422` when saved.
 
@@ -472,7 +475,11 @@ Executes File4Base-style Find requests with operator translation.
   }
 }
 ```
-Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`.
+Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`, `IS_EMPTY`, `IS_NOT_EMPTY`.
+
+**How several requests combine.** A record is found when it matches **any** request whose `omit` is false, and is then dropped when it matches **any** request whose `omit` is true. So `[{city: "New York"}, {city: "London"}]` finds the records in either city, and adding `{customer_type: "New", omit: true}` drops the new customers from that set. A find made only of omitting requests starts from every record.
+
+`options` takes the same `limit`, `offset`, `sort_by`/`sort_asc` and `sort` as `GET /api/v1/data/{table}`; `sort` is the array form, `[{"field": "company"}, {"field": "fee_paid", "descending": true}]`.
 
 ---
 

@@ -57,6 +57,11 @@ type Dialect interface {
 	BuildAddColumnSQL(tableName string, col ColumnDefinition) (string, error)
 	BuildDropColumnSQL(tableName string, columnName string) (string, error)
 
+	// BuildAlterColumnTypeSQL changes an existing column's type, keeping the
+	// values it holds. A calculation field needs it when its result type
+	// changes, so a NUMBER result stops being sorted as text.
+	BuildAlterColumnTypeSQL(tableName string, columnName string, newType AgnosticFieldType) (string, error)
+
 	// TimestampColumn is the column type (with its default) used by the
 	// system catalog for creation and modification times.
 	TimestampColumn() string

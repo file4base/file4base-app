@@ -115,6 +115,7 @@ void main() {
 
   sortOrderTests();
   findRequestTests();
+  calculationFieldTests();
 
   group('the Records menu', () {
     Future<void> pumpMenu(
@@ -415,6 +416,31 @@ void findRequestTests() {
         expect(button.onPressed, isNull, reason: '"$label" should be disabled');
       }
       expect(find.byType(SnackBar), findsNothing);
+    });
+  });
+}
+
+// #30 — calculation fields are filled in by their formula, so they are not
+// typed into.
+void calculationFieldTests() {
+  group('a calculation field in Browse mode', () {
+    const table = TableModel(id: 't', name: 'customers', displayName: 'Customers', columns: [
+      ColumnModel(id: 'c0', tableId: 't', name: 'id', displayName: 'ID', fieldType: 'TEXT', isPrimaryKey: true),
+      ColumnModel(id: 'c1', tableId: 't', name: 'customer_type', displayName: 'Customer Type', fieldType: 'TEXT'),
+      ColumnModel(id: 'c2', tableId: 't', name: 'annual_fee', displayName: 'Annual Fee', fieldType: 'CALCULATION'),
+      ColumnModel(id: 'c3', tableId: 't', name: 'fee_total', displayName: 'Fee Total', fieldType: 'SUMMARY'),
+    ]);
+
+    test('a computed field is told apart from one the user fills in', () {
+      bool computed(String field) {
+        final col = table.columns.where((c) => c.name == field).firstOrNull;
+        return col != null && (col.fieldType == 'CALCULATION' || col.fieldType == 'SUMMARY');
+      }
+
+      expect(computed('annual_fee'), isTrue);
+      expect(computed('fee_total'), isTrue);
+      expect(computed('customer_type'), isFalse);
+      expect(computed('id'), isFalse);
     });
   });
 }

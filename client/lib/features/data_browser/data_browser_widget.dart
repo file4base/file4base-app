@@ -281,6 +281,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   // null = idle/saved, true = saving, false = error
   final Map<String, bool?> _fieldSaving = {};
 
+  /// A calculation field is filled by its formula, so it cannot be typed into
+  /// (#30). The column is still shown, with its computed value.
+  bool _isComputed(String fieldName) {
+    final col = widget.table.columns.where((c) => c.name == fieldName).firstOrNull;
+    return col != null && (col.fieldType == 'CALCULATION' || col.fieldType == 'SUMMARY');
+  }
+
   /// What a stored value looks like in a field box. A DATE column comes back
   /// from the API as a full RFC3339 timestamp ("2011-01-15T00:00:00Z"); the
   /// user entered a date and must see and edit a date.
@@ -1722,10 +1729,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         final ctrl = _fieldControllers[col.name];
         final fn = _fieldFocusNodes[col.name];
         final saving = _fieldSaving[col.name];
+        final computed = _isComputed(col.name);
 
         return TextField(
           controller: ctrl,
           focusNode: fn,
+          readOnly: computed,
           textAlign: _parseTextAlign(obj.style.textAlign),
           style: TextStyle(
             fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
@@ -1753,25 +1762,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 width: obj.style.borderWidth,
               ),
             ),
-            suffixIcon: saving == true
-                ? const Padding(
-                    padding: EdgeInsets.all(8),
-                    child: SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(strokeWidth: 1.5),
-                    ),
+            suffixIcon: computed
+                ? const Tooltip(
+                    message: 'Filled in by its formula',
+                    child: Icon(Icons.functions, size: 14, color: Colors.grey),
                   )
-                : saving == false
-                    ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
-                    : null,
+                : saving == true
+                    ? const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 1.5),
+                        ),
+                      )
+                    : saving == false
+                        ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
+                        : null,
           ),
-          onChanged: (v) => _onFieldChanged(col.name, v),
-          onEditingComplete: () {
-            _fieldDebounceTimers[col.name]?.cancel();
-            _saveField(col.name, ctrl?.text ?? '');
-            fn?.nextFocus();
-          },
+          onChanged: computed ? null : (v) => _onFieldChanged(col.name, v),
+          onEditingComplete: computed
+              ? null
+              : () {
+                  _fieldDebounceTimers[col.name]?.cancel();
+                  _saveField(col.name, ctrl?.text ?? '');
+                  fn?.nextFocus();
+                },
         );
 
       case 'button':

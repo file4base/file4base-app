@@ -27,11 +27,12 @@ this tutorial says so instead of describing it — see
 - [Lesson 7 — Sort records](#lesson-7--sort-records)
 - [Lesson 8 — Customize a layout](#lesson-8--customize-a-layout)
 - [Lesson 9 — Layout properties and a second layout](#lesson-9--layout-properties-and-a-second-layout)
-- [Lesson 10 — Preview and print](#lesson-10--preview-and-print)
-- [Lesson 11 — A second table and a relationship](#lesson-11--a-second-table-and-a-relationship)
-- [Lesson 12 — Scripts](#lesson-12--scripts)
-- [Lesson 13 — Accounts and privileges](#lesson-13--accounts-and-privileges)
-- [Lesson 14 — Backups](#lesson-14--backups)
+- [Lesson 10 — A calculated field](#lesson-10--a-calculated-field)
+- [Lesson 11 — Preview and print](#lesson-11--preview-and-print)
+- [Lesson 12 — A second table and a relationship](#lesson-12--a-second-table-and-a-relationship)
+- [Lesson 13 — Scripts](#lesson-13--scripts)
+- [Lesson 14 — Accounts and privileges](#lesson-14--accounts-and-privileges)
+- [Lesson 15 — Backups](#lesson-15--backups)
 - [Reference: the sample data](#reference-the-sample-data)
 - [What is not here yet](#what-is-not-here-yet)
 
@@ -182,11 +183,9 @@ The field types File4Base offers are:
 | Calculation | *See the note below* |
 | Summary | *See the note below* |
 
-> **Calculation and Summary are not computed yet.** You can create the field and
-> write a formula in its options, and the formula is stored, but nothing
-> evaluates it: the column behaves as plain text that you fill in yourself. The
-> New Field dialog says so when you pick one of these two types. Do not use them
-> for this tutorial.
+> **Calculation** fields are filled in by a formula — lesson 10 builds one.
+> **Summary** fields, which total a column across the found set, are not
+> computed yet; the New Field dialog says so when you pick that type.
 
 Close **Manage Database**. File4Base has already built a first layout for the
 table — **Customers Form** — with one row per field, each labelled with the
@@ -460,7 +459,70 @@ the top left.
 
 ---
 
-## Lesson 10 — Preview and print
+## Lesson 10 — A calculated field
+
+Customers of Favorite Bakery pay an annual fee: new customers pay 200,
+continuing ones pay 100. Rather than typing it into every record, let File4Base
+work it out.
+
+1. Open **Manage Database > Fields** for **Customers**.
+2. Click **New Field...**, type `Annual Fee` for the label, and choose
+   **Calculation** for the type. Click **Add Field**.
+3. On the new field's row, click **Options...** and open the
+   **Calculation & Summary** tab.
+4. In the formula box, type:
+
+   ```
+   IF(customer_type = "Continuing"; 100; 200)
+   ```
+
+5. Set **Calculation result is** to **Number**.
+6. Click **OK**.
+
+Every record is recomputed as soon as you save the formula. Go back to Browse
+mode: **Annual Fee** shows 100 for continuing customers and 200 for new ones,
+and the field cannot be typed into — it carries a function mark to say the
+formula fills it.
+
+Change a customer's **Customer Type** from `New` to `Continuing` and the
+**Annual Fee** follows.
+
+### What you can write
+
+Formulas read the record's own fields by their column name, and may use
+arithmetic, text joining with `&`, comparisons, `AND` / `OR` / `NOT`, and
+functions such as `IF`, `UPPER`, `ROUND`, `LEFT`, `COALESCE`, `TODAY` and
+`YEAR`. Arguments are separated by `;` or by `,`.
+
+A few that fit this database:
+
+```
+UPPER(last_name) & ", " & first_name
+```
+
+```
+IF(ISEMPTY(home_address_2); home_address_1; home_address_1 & ", " & home_address_2)
+```
+
+```
+YEAR(TODAY()) - YEAR(customer_since)
+```
+
+A formula may read another calculation field; File4Base works out the order to
+compute them in. A formula that does not parse, that reads a field the table
+does not have, or that would make two calculations depend on each other is
+refused when you save it, and the message says where the problem is.
+
+The whole language is in
+[docs/specs/calculation_formulas.md](../specs/calculation_formulas.md).
+
+Because the answer is stored in the field's own column, you can **find** and
+**sort** on a calculation field like any other: a find for `Annual Fee` `>=200`
+returns the 6 new customers.
+
+---
+
+## Lesson 11 — Preview and print
 
 Choose **View > Preview Mode**.
 
@@ -481,7 +543,7 @@ Choose **View > Browse Mode** to come back.
 
 ---
 
-## Lesson 11 — A second table and a relationship
+## Lesson 12 — A second table and a relationship
 
 Customers work for companies, and several customers work for the same one. That
 is a second table.
@@ -528,7 +590,7 @@ reads `2 occurrences · 1 relationships`.
 
 ---
 
-## Lesson 12 — Scripts
+## Lesson 13 — Scripts
 
 Choose **Scripts > Script Workspace...**
 
@@ -555,7 +617,7 @@ without executing them.
 
 ---
 
-## Lesson 13 — Accounts and privileges
+## Lesson 14 — Accounts and privileges
 
 Choose **File > Manage > Security...**
 
@@ -587,7 +649,7 @@ account roles and layout privileges to restrict access today.
 
 ---
 
-## Lesson 14 — Backups
+## Lesson 15 — Backups
 
 The database lives in PostgreSQL (or MariaDB), so backing it up means backing up
 the engine's data.
@@ -658,9 +720,10 @@ All names, companies and addresses are fictitious.
 These are things a FileMaker user will look for and not find in File4Base 0.9.2.
 They are listed so you do not go looking, and each one has an issue.
 
-**No calculation engine** ([#30](https://github.com/file4base/file4base-app/issues/30))**.** Calculation and Summary fields can be created and a
-formula can be written, but nothing evaluates it. There is no *Annual Fee*
-computed from the customer type, and no summary field totalling a column.
+**No summary fields** ([#32](https://github.com/file4base/file4base-app/issues/32))**.**
+A field that totals, counts or averages a column across the found set is not
+computed yet. Calculation fields, which work out a value from the record, do
+work — see lesson 10.
 
 **No value lists** ([#31](https://github.com/file4base/file4base-app/issues/31))**.** A field cannot be presented as a pop-up, a checkbox set or a
 radio button set from a list of allowed values. *File > Manage > Value Lists* is
@@ -689,7 +752,7 @@ setup.
 ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
 data files.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 13.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 14.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

@@ -456,7 +456,24 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   }
                 },
               ),
-              if (selectedType == 'CALCULATION' || selectedType == 'SUMMARY')
+              if (selectedType == 'CALCULATION')
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.functions, size: 16, color: Colors.blueGrey),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text(
+                          'Write the formula in Field Options once the field exists. '
+                          'The field is filled in from it and cannot be typed into.',
+                          style: TextStyle(fontSize: 12, color: Colors.blueGrey),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (selectedType == 'SUMMARY')
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Row(
@@ -465,8 +482,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Formulas are stored but not evaluated yet: the field is created as a '
-                          'plain text column you fill in yourself.',
+                          'Summary fields are not computed yet: a total across the found set '
+                          'is still to come, so the field stays empty.',
                           style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
                         ),
                       ),

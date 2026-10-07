@@ -420,11 +420,18 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 	col.Name = name
 	col.CreatedAt = time.Now().UTC()
 
-	// 1. Build ALTER TABLE ADD COLUMN SQL
+	// A calculation field's formula must parse, read only fields this table
+	// has, and not take part in a ring of calculations (#30).
+	if err := s.checkCalculation(ctx, tableID, col.ID, col.Name, col.FieldType, col.CalculationFormula); err != nil {
+		return nil, err
+	}
+
+	// 1. Build ALTER TABLE ADD COLUMN SQL. A calculation is stored as whatever
+	// its formula produces, so a numeric result sorts as a number.
 	dialect := s.driver.Dialect()
 	alterSQL, err := dialect.BuildAddColumnSQL(tableName, dbal.ColumnDefinition{
 		Name:         col.Name,
-		Type:         col.FieldType,
+		Type:         StorageType(col.FieldType, col.CalculationFormula),
 		IsNullable:   col.IsNullable,
 		IsPrimaryKey: false,
 	})
@@ -619,6 +626,17 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 			return nil, err
 		}
 	}
+
+	// A new formula must be valid before it replaces the old one, and if its
+	// result type changed the stored column is re-typed to match (#30).
+	var retype func(context.Context) error
+	if opts.UpdateCalculation {
+		var err error
+		if retype, err = s.prepareCalculationChange(ctx, tableID, columnID, opts.CalculationFormula); err != nil {
+			return nil, err
+		}
+	}
+
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
@@ -647,6 +665,11 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 		qGet := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at FROM sys_columns WHERE id = ?`
 		if err := db.QueryRowContext(ctx, qGet, columnID).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
 			return nil, err
+		}
+		if retype != nil {
+			if err := retype(ctx); err != nil {
+				return nil, err
+			}
 		}
 		return &col, nil
 	}
@@ -677,6 +700,11 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 	var col ColumnMetadata
 	if err := db.QueryRowContext(ctx, q, args...).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
 		return nil, err
+	}
+	if retype != nil {
+		if err := retype(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return &col, nil
 }
