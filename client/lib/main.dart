@@ -18,6 +18,7 @@ import 'features/data_browser/data_browser_widget.dart';
 import 'features/layout_engine/layout_designer_widget.dart';
 import 'features/layout_engine/layout_preview_widget.dart';
 import 'features/layout_engine/manage_layouts_dialog.dart';
+import 'features/layout_engine/new_layout_assistant.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'core/models/file_options_model.dart';
 import 'core/models/page_setup_model.dart';
@@ -488,87 +489,39 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       return;
     }
 
-    final nameCtrl = TextEditingController(text: '${_selectedTable?.displayName ?? "New"} Form');
-    TableModel? selectedTable = _selectedTable ?? _tables.first;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlgState) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.add_to_photos, color: Color(0xFF1E88E5)),
-              SizedBox(width: 8),
-              Text('New Layout / Presentation'),
-            ],
-          ),
-          content: SizedBox(
-            width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Layout Name:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: nameCtrl,
-                  autofocus: true,
-                  decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
-                ),
-                const SizedBox(height: 16),
-                const Text('Show records from table:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                const SizedBox(height: 6),
-                DropdownButtonFormField<String>(
-                  value: selectedTable?.id,
-                  decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
-                  items: _tables.map((t) => DropdownMenuItem(value: t.id, child: Text(t.displayName))).toList(),
-                  onChanged: (id) {
-                    if (id != null) {
-                      setDlgState(() => selectedTable = _tables.firstWhere((t) => t.id == id));
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Create Layout')),
-          ],
-        ),
-      ),
+    // The assistant asks what kind of layout, which fields and in which order,
+    // and builds that rather than another copy of the standard form (#33).
+    final chosen = await NewLayoutAssistant.show(
+      context,
+      tables: _tables,
+      initialTable: _selectedTable ?? _tables.first,
     );
+    if (chosen == null || !mounted) return;
 
-    if (confirmed == true && selectedTable != null) {
-      final name = nameCtrl.text.trim().isEmpty ? 'Untitled Layout' : nameCtrl.text.trim();
-      final client = ref.read(apiClientProvider);
-      final def = LayoutDefinitionModel.defaultForTable(
-        selectedTable!.displayName,
-        selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
-      ).copyWith(name: name);
+    final client = ref.read(apiClientProvider);
+    final def = chosen.blueprint.build();
 
-      try {
-        final created = await client.createLayout(
-          name,
-          toId: selectedTable!.id,
-          definition: def.toJson(),
+    try {
+      final created = await client.createLayout(
+        def.name,
+        toId: chosen.table.id,
+        definition: def.toJson(),
+      );
+      await _loadTables(targetLayoutId: created.id);
+      _changeMode(OperationalMode.layout);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Created layout "${created.name}" in Layout Mode'),
+            backgroundColor: Colors.green.shade700,
+          ),
         );
-        await _loadTables(targetLayoutId: created.id);
-        _changeMode(OperationalMode.layout);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Created layout "$name" in Layout Mode'),
-              backgroundColor: Colors.green.shade700,
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to create layout: $e'), backgroundColor: Colors.red),
-          );
-        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create layout: $e'), backgroundColor: Colors.red),
+        );
       }
     }
   }

@@ -2314,8 +2314,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Map<String, dynamic> get _currentRecord => _records.isNotEmpty ? _records[_currentIndex] : const {};
 
   @override
-  String actionResolveText(String text) =>
-      resolveLayoutMergeText(text, record: _currentRecord, userName: widget.currentUserName, pageNumber: 1);
+  String actionResolveText(String text) => resolveLayoutMergeText(
+        text,
+        record: _currentRecord,
+        userName: widget.currentUserName,
+        pageNumber: 1,
+        // A DATE comes back as a full timestamp; merge text must read the way
+        // the field reads (#33).
+        formatField: _mergeFieldText,
+        // A line whose fields are all empty takes its line with it, so a
+        // three-line address prints as two.
+        collapseEmptyLines: true,
+      );
+
+  /// What a field's value looks like inside merge text.
+  String _mergeFieldText(String fieldName, Object? value) {
+    final col = widget.table.columns.where((c) => c.name == fieldName).firstOrNull;
+    return col == null ? (value?.toString() ?? '') : fieldText(col, value);
+  }
 
   @override
   Future<void> actionNewRecord() => _createNewRecord();

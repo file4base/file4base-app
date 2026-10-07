@@ -8,6 +8,8 @@ import '../../core/models/page_setup_model.dart';
 import 'layout_object_visuals.dart';
 import 'layout_print_service.dart';
 import 'models/layout_definition.dart';
+import 'models/layout_blueprint.dart';
+import 'label_sheet_view.dart';
 import '../data_browser/report_view.dart';
 import '../data_browser/data_browser_widget.dart';
 
@@ -82,6 +84,26 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
   /// report, not one record.
   bool get _isReport => widget.layout.isReport;
 
+  /// A labels layout: the sheet is a grid of labels, one record each (#33).
+  LabelStock? get _stock => LabelStock.fromJson(widget.layout.labelStock);
+  bool get _isLabels => widget.layout.isLabels && _stock != null;
+
+  /// The records split into sheets of labels.
+  List<List<Map<String, dynamic>>> get _labelPages =>
+      _isLabels ? LabelSheetView.paginate(_records, _stock!) : const [];
+
+  /// Which sheet of labels is being previewed.
+  int _labelPage = 0;
+
+  /// What a field's value looks like inside merge text: a DATE comes back as
+  /// a full timestamp and must read as a date.
+  String _mergeFieldText(String fieldName, Object? value) {
+    final col = widget.table.columns.where((c) => c.name == fieldName).firstOrNull;
+    return col == null
+        ? (value?.toString() ?? '')
+        : DataBrowserWidgetState.fieldText(col, value);
+  }
+
   Map<String, SummarySpecModel> get _summarySpecs => {
         for (final col in widget.table.columns)
           if (col.fieldType == 'SUMMARY')
@@ -93,7 +115,8 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       // A report is over the whole found set, sorted the way its parts need,
       // so it reads as one group after another rather than interleaved.
       final found = widget.findRequests.isNotEmpty;
-      final rows = _isReport
+      final everyRecord = _isReport || _isLabels;
+      final rows = everyRecord
           ? (found
               ? await widget.apiClient.executeFindAll(widget.table.name, widget.findRequests)
               : await widget.apiClient.listAllRows(widget.table.name))
@@ -103,6 +126,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       if (mounted) {
         setState(() {
           _records = _isReport ? _sortedForReport(rows) : rows;
+          _labelPage = 0;
           if (_currentRecordIndex >= rows.length && rows.isNotEmpty) {
             _currentRecordIndex = rows.length - 1;
           }
@@ -158,11 +182,28 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     final startIndex = _currentRecordIndex;
     try {
       final doc = pw.Document(title: widget.layout.name, creator: 'File4Base');
-      // A report is drawn once, over the whole found set: printing it "for
-      // every record" would print the same report once per record (#32).
-      final indexes = allRecords && _records.isNotEmpty && !_isReport
-          ? List<int>.generate(_records.length, (i) => i)
-          : [_currentRecordIndex];
+      // Labels print one page per sheet, and a report is drawn once over the
+      // whole found set — printing either "for every record" would repeat it
+      // once per record (#32, #33).
+      if (_isLabels) {
+        final startSheet = _labelPage;
+        final sheets = allRecords
+            ? List<int>.generate(_labelPages.length, (i) => i)
+            : [_labelPage];
+        for (final page in sheets) {
+          if (page != _labelPage) setState(() => _labelPage = page);
+          await WidgetsBinding.instance.endOfFrame;
+          final sheet = await LayoutPrintService.capture(_sheetKey);
+          await LayoutPrintService.addSheet(doc, sheet, widget.pageSetup);
+          sheet.dispose();
+        }
+        if (mounted && _labelPage != startSheet) setState(() => _labelPage = startSheet);
+      }
+      final indexes = _isLabels
+          ? <int>[]
+          : (allRecords && _records.isNotEmpty && !_isReport
+              ? List<int>.generate(_records.length, (i) => i)
+              : [_currentRecordIndex]);
       for (final i in indexes) {
         if (i != _currentRecordIndex) {
           setState(() => _currentRecordIndex = i);
@@ -230,14 +271,35 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                   // A report is one sheet over the found set, not one sheet
                   // per record (#32).
                   label: Text(
-                    _isReport
-                        ? 'One report over ${_records.length} record(s)'
-                        : '${_records.length} Records to Print',
+                    _isLabels
+                        ? '${_records.length} label(s) on ${_labelPages.length} sheet(s)'
+                        : _isReport
+                            ? 'One report over ${_records.length} record(s)'
+                            : '${_records.length} Records to Print',
                     style: const TextStyle(fontSize: 11),
                   ),
                   padding: EdgeInsets.zero,
                 ),
-                if (!_isReport && _records.length > 1) ...[
+                if (_isLabels && _labelPages.length > 1) ...[
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.navigate_before, size: 18),
+                    tooltip: 'Previous sheet',
+                    onPressed: _labelPage > 0 ? () => setState(() => _labelPage--) : null,
+                  ),
+                  Text(
+                    'Sheet ${_labelPage + 1} of ${_labelPages.length}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.navigate_next, size: 18),
+                    tooltip: 'Next sheet',
+                    onPressed: _labelPage < _labelPages.length - 1
+                        ? () => setState(() => _labelPage++)
+                        : null,
+                  ),
+                ]
+                else if (!_isReport && !_isLabels && _records.length > 1) ...[
                   const SizedBox(width: 8),
                   IconButton(
                     icon: const Icon(Icons.navigate_before, size: 18),
@@ -366,7 +428,19 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
                       // Records body: a report draws every record through the
                       // layout's parts (#32); otherwise the exact layout for
                       // the record in hand, or a plain table.
-                      if (_isReport)
+                      if (_isLabels)
+                        Center(
+                          child: LabelSheetView(
+                            layout: widget.layout,
+                            stock: _stock!,
+                            records: _labelPage < _labelPages.length
+                                ? _labelPages[_labelPage]
+                                : const [],
+                            userName: widget.currentUserName,
+                            formatField: _mergeFieldText,
+                          ),
+                        )
+                      else if (_isReport)
                         ReportView(
                           key: const ValueKey('preview-report'),
                           layout: widget.layout,

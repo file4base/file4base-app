@@ -47,40 +47,93 @@ class LayoutMergeSymbols {
 
 final _mergePattern = RegExp(r'\{\{\s*([^{}]+?)\s*\}\}');
 
+/// True when a line holds nothing a reader would call content: no letters and
+/// no digits, so only spaces and the punctuation that joined the fields.
+final _hasContent = RegExp(r'[0-9\p{L}]', unicode: true);
+
 /// Replaces merge symbols in [text]: `{{CurrentDate}}`, `{{CurrentTime}}`,
 /// `{{CurrentUser}}`, `{{PageNumber}}` and `{{field_name}}` (value of that
 /// field in [record], matched case-insensitively). Unknown symbols are kept.
+///
+/// [formatField] decides how a field's stored value is written — a DATE comes
+/// back from the API as a full timestamp and must read as a date — and
+/// defaults to the value as it is.
+///
+/// With [collapseEmptyLines], a line that **held merge fields and came out
+/// with nothing in it** is removed rather than printed blank (#33). That is
+/// what lets a three-line address print as two when the second line is empty,
+/// which is the whole point of a mailing label. A line carrying words of its
+/// own is kept, because those words were meant to be there.
 String resolveLayoutMergeText(
   String text, {
   Map<String, dynamic>? record,
   String? userName,
   int? pageNumber,
   DateTime? now,
+  String Function(String fieldName, Object? value)? formatField,
+  bool collapseEmptyLines = false,
 }) {
   if (!text.contains('{{')) return text;
   final t = now ?? DateTime.now();
-  return text.replaceAllMapped(_mergePattern, (m) {
-    final key = m.group(1)!;
-    switch (key.toLowerCase()) {
-      case 'currentdate':
-        return '${t.year.toString().padLeft(4, '0')}-${t.month.toString().padLeft(2, '0')}-${t.day.toString().padLeft(2, '0')}';
-      case 'currenttime':
-        return '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-      case 'currentuser':
-        return userName ?? m.group(0)!;
-      case 'pagenumber':
-        return pageNumber?.toString() ?? m.group(0)!;
-    }
-    if (record != null) {
-      for (final entry in record.entries) {
-        if (entry.key.toLowerCase() == key.toLowerCase()) {
-          return entry.value?.toString() ?? '';
+
+  String resolveLine(String line) {
+    var sawMerge = false;
+    var sawValue = false;
+
+    final resolved = line.replaceAllMapped(_mergePattern, (m) {
+      final key = m.group(1)!;
+      String keep(String value) {
+        if (value.isNotEmpty) sawValue = true;
+        return value;
+      }
+
+      switch (key.toLowerCase()) {
+        case 'currentdate':
+          sawMerge = true;
+          return keep('${t.year.toString().padLeft(4, '0')}-'
+              '${t.month.toString().padLeft(2, '0')}-'
+              '${t.day.toString().padLeft(2, '0')}');
+        case 'currenttime':
+          sawMerge = true;
+          return keep('${t.hour.toString().padLeft(2, '0')}:'
+              '${t.minute.toString().padLeft(2, '0')}');
+        case 'currentuser':
+          sawMerge = true;
+          return userName == null ? m.group(0)! : keep(userName);
+        case 'pagenumber':
+          sawMerge = true;
+          return pageNumber == null ? m.group(0)! : keep(pageNumber.toString());
+      }
+      if (record != null) {
+        for (final entry in record.entries) {
+          if (entry.key.toLowerCase() == key.toLowerCase()) {
+            sawMerge = true;
+            final value = formatField == null
+                ? (entry.value?.toString() ?? '')
+                : formatField(entry.key, entry.value);
+            return keep(value);
+          }
         }
       }
-    }
-    return m.group(0)!;
-  });
+      // A symbol nothing answers is left as it is, so a mistyped field name is
+      // visible on the layout rather than silently blank.
+      return m.group(0)!;
+    });
+
+    if (!collapseEmptyLines || !sawMerge || sawValue) return resolved;
+    // Every merge field on this line came out empty: the line goes unless it
+    // carries words of its own.
+    return _hasContent.hasMatch(resolved) ? resolved : _collapsed;
+  }
+
+  final lines = text.split('\n').map(resolveLine).toList();
+  if (!collapseEmptyLines) return lines.join('\n');
+  return lines.where((l) => l != _collapsed).join('\n');
 }
+
+/// Marks a line that collapsed, so it can be told apart from a line that was
+/// legitimately empty in the text to begin with.
+const _collapsed = '\u0000collapsed';
 
 /// Orders tab stops (fields and buttons) the way the Tab key visits them in
 /// Browse and Find modes: objects with an explicit `tabOrder` first, by that
@@ -323,11 +376,20 @@ Widget? buildDrawnLayoutObject(
   Map<String, dynamic>? record,
   String? userName,
   int? pageNumber,
+  String Function(String fieldName, Object? value)? formatField,
 }) {
   if (obj.isShape) {
     return LayoutShapeView(
       obj: obj,
-      text: resolveLayoutMergeText(obj.text, record: record, userName: userName, pageNumber: pageNumber),
+      text: resolveLayoutMergeText(
+        obj.text,
+        record: record,
+        userName: userName,
+        pageNumber: pageNumber,
+        formatField: formatField,
+        // A line whose merge fields are all empty takes its line with it (#33).
+        collapseEmptyLines: true,
+      ),
     );
   }
   if (obj.type == 'line') return LayoutLineView(obj: obj);

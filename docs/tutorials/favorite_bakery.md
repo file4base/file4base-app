@@ -4,7 +4,8 @@ This tutorial builds a working database from nothing: the customer list of a
 fictitious business called **Favorite Bakery**, which lets customers pay an
 annual fee in exchange for a discount. By the end you will have two tables, a
 relationship between them, several layouts, a found set, a sorted list, a
-report that subtotals, a portal, a printable sheet and a second account.
+report that subtotals, a sheet of mailing labels, a portal, a printable sheet
+and a second account.
 
 It takes about an hour.
 
@@ -30,12 +31,13 @@ this tutorial says so instead of describing it — see
 - [Lesson 10 — A calculated field](#lesson-10--a-calculated-field)
 - [Lesson 11 — A value list](#lesson-11--a-value-list)
 - [Lesson 12 — A summary report](#lesson-12--a-summary-report)
-- [Lesson 13 — Preview and print](#lesson-13--preview-and-print)
-- [Lesson 14 — A second table and a relationship](#lesson-14--a-second-table-and-a-relationship)
-- [Lesson 15 — Show related records](#lesson-15--show-related-records)
-- [Lesson 16 — Scripts](#lesson-16--scripts)
-- [Lesson 17 — Accounts and privileges](#lesson-17--accounts-and-privileges)
-- [Lesson 18 — Backups](#lesson-18--backups)
+- [Lesson 13 — Labels and a letter](#lesson-13--labels-and-a-letter)
+- [Lesson 14 — Preview and print](#lesson-14--preview-and-print)
+- [Lesson 15 — A second table and a relationship](#lesson-15--a-second-table-and-a-relationship)
+- [Lesson 16 — Show related records](#lesson-16--show-related-records)
+- [Lesson 17 — Scripts](#lesson-17--scripts)
+- [Lesson 18 — Accounts and privileges](#lesson-18--accounts-and-privileges)
+- [Lesson 19 — Backups](#lesson-19--backups)
 - [Reference: the sample data](#reference-the-sample-data)
 - [What is not here yet](#what-is-not-here-yet)
 
@@ -471,10 +473,9 @@ The new layout starts as a copy of the standard form for the table. Delete the
 fields you do not want, arrange the rest, and use it from the **Layout** list in
 the top left.
 
-> The button is labelled *New Layout / Report*, but there is no report
-> assistant: no list/labels/report/blank types, no field picker and no themes
-> chooser. You build the layout by hand — including a report's sub-summary and
-> grand summary parts, which lesson 12 adds with the Part tool.
+> The button is labelled *New Layout / Report* and it makes both, along with
+> lists, labels and blank layouts — lesson 13 uses the assistant. This lesson
+> builds a layout by hand, which is the other way.
 
 ---
 
@@ -741,11 +742,145 @@ record, because a report is drawn once over the found set. A report wider than
 the paper is scaled down so its right-hand column prints instead of falling off
 the sheet.
 
-**Print / Export PDF** prints what you see. Lesson 13 covers Page Setup.
+**Print / Export PDF** prints what you see. Lesson 14 covers Page Setup.
 
 ---
 
-## Lesson 13 — Preview and print
+## Lesson 13 — Labels and a letter
+
+Every layout so far was built by hand. There is an assistant, and there are two
+things it makes that cannot reasonably be built any other way: a sheet of
+mailing labels, and a letter that takes its words from the record.
+
+### The assistant
+
+Go into **Layout Mode** and click **+ New Layout / Report**.
+
+The dialog asks four things:
+
+| | |
+| --- | --- |
+| **Kind of layout** | Form, List, Report with grouped data, Labels, or Blank |
+| **Fields on the layout** | which ones, dragged into the order they appear |
+| **Theme** | Enlightened, Cool Grey, Classic or Minimal |
+| and, for the kinds that need it | the field to group by, or the label stock |
+
+The field order *is* the layout: the column order of a list, the row order of a
+form, the line order of a label. Drag a row by its handle to move it, click the
+**⊖** to take a field off, and the chips underneath put it back.
+
+Two fields are never offered as columns: the **ID**, which is not something to
+put on a layout, and the **summary fields**, which belong in a report's own
+bands — a report asks for those separately.
+
+> The **Theme** list here is the *layout's* theme: how this layout looks. It is
+> not **Tools > Manage Themes**, which colours the File4Base window itself. Two
+> different things, unluckily sharing a word.
+
+### Mailing labels
+
+1. Click **+ New Layout / Report** and choose **Labels**. The name follows the
+   kind and reads `Customers Labels`.
+2. Under **Fields on the layout**, leave First Name and Last Name, take off
+   Company and Customer Type, and add **Home Address 1**, **Home Address 2**
+   and **City** — in that order.
+3. Under **Label stock**, leave **Avery L7160 (A4)**. Below it the assistant
+   says `63 × 38 mm · 3 across, 7 down — 21 to a sheet`.
+4. Click **Create Layout**.
+
+The layout that opens is **one label**, 180 × 108 points, and it has a **Body**
+and nothing else — no header, no footer, because a sheet of labels is nothing
+but labels. On it is a single block of text:
+
+```
+{{first_name}}
+{{last_name}}
+{{home_address_1}}
+{{home_address_2}}
+{{city}}
+```
+
+Those are **merge fields**. Each one is replaced by the record's value.
+
+5. Choose **View > Preview Mode**.
+
+The toolbar reads `16 label(s) on 1 sheet(s)`, and the A4 sheet is filled with
+labels, three across:
+
+```
+Andre                 Gerard                Jean
+Common                LeFranc               Durand
+87 Queen Street       28 Rue Saint-Honore   14 Avenue Foch
+Floor 3               Paris                 Paris
+Toronto
+```
+
+Look at the second and third labels. **Gerard LeFranc has no Home Address 2**,
+and his label is four lines with no gap in it — Paris sits straight under the
+street. Andre Common has `Floor 3`, so his is five.
+
+That is the point of a merge field. A line whose fields are all empty **takes
+its line with it**, so a short address does not print with a hole in the middle.
+A plain field object would have left a blank line there.
+
+**Print / Export PDF** prints one page per sheet of labels.
+
+### A line that keeps its words
+
+Collapsing only applies to a line that is *made of* merge fields. Type this on
+a layout:
+
+```
+Phone: {{phone}}
+```
+
+A customer with no phone number prints `Phone: ` — the word was yours, so it
+stays. Only `{{phone}}` on its own would have gone.
+
+A blank line you typed is spacing and stays too.
+
+### A form letter
+
+A letter is the same trick on a bigger layout.
+
+1. **+ New Layout / Report**, kind **Blank layout**, name it `Renewal Letter`,
+   theme **Minimal** so nothing is boxed.
+2. Choose the **Text Tool** and drag a block across the body.
+3. Type into it, using **Insert > Merge Field...** to put the fields in:
+
+```
+{{CurrentDate}}
+
+{{first_name}} {{last_name}}
+{{home_address_1}}
+{{home_address_2}}
+{{city}}, {{country}}
+
+Dear {{first_name}},
+
+Your Favorite Bakery membership is due for renewal. Your fee
+this year is {{annual_fee}}.
+
+Thank you for your custom.
+```
+
+4. Save, go to **Browse Mode**, and step through the records.
+
+The date, the address and the fee follow the record. **Annual Fee** is the
+calculation from lesson 10, so the letter quotes 100 to a continuing customer
+and 200 to a new one. Customers with no second address line get a four-line
+address, not a gap.
+
+`{{CurrentDate}}`, `{{CurrentTime}}`, `{{CurrentUser}}` and `{{PageNumber}}`
+work the same way. A field name you mistype stays on the page as
+`{{no_such_field}}` rather than going quietly blank, so you can see it.
+
+> **Insert > Merge Variable...** is greyed out. Merge variables are not
+> implemented.
+
+---
+
+## Lesson 14 — Preview and print
 
 Choose **View > Preview Mode**.
 
@@ -766,7 +901,7 @@ Choose **View > Browse Mode** to come back.
 
 ---
 
-## Lesson 14 — A second table and a relationship
+## Lesson 15 — A second table and a relationship
 
 Customers work for companies, and several customers work for the same one. That
 is a second table.
@@ -802,7 +937,7 @@ Then enter three records in Browse mode:
    on the left, `customers` on the right — then click the **Company** field in
    each list.
 4. Tick **Allow records to be created in "customers" through this
-   relationship**. Lesson 14 uses it to add a customer from the company's own
+   relationship**. Lesson 16 uses it to add a customer from the company's own
    layout.
 
    The options name both tables, because they act on one side: the side the
@@ -814,7 +949,7 @@ Then enter three records in Browse mode:
      comes back to it.
    - *Sort the related records of "customers" by their match field* — that
      would order them by company, which is the same for all of them. A portal
-     sorts its own rows, which lesson 15 does instead.
+     sorts its own rows, which lesson 16 does instead.
 5. Click **OK**.
 
 A line now joins the two cards, anchored on the two **Company** fields, with an
@@ -823,9 +958,9 @@ reads `2 occurrences · 1 relationships`.
 
 ---
 
-## Lesson 15 — Show related records
+## Lesson 16 — Show related records
 
-The relationship from lesson 14 is drawn, but nothing uses it yet. A layout can
+The relationship from lesson 15 is drawn, but nothing uses it yet. A layout can
 read the other side of it in two ways: **one field** of the related record, and
 a **portal**, which is the list of them.
 
@@ -922,7 +1057,7 @@ Step to the next company and the rows change with it: **DEF Ltd.** has 5 and
   never type the company name — the relationship owns that field, and a value
   sent for it would be overwritten.
 
-  This needs *Allow records to be created…* on the relationship, which lesson 14
+  This needs *Allow records to be created…* on the relationship, which lesson 15
   ticked. Without it the row is still offered but the server refuses, and the
   Portal Setup panel warns you.
 - **Remove.** The button at the right of each row deletes that customer record.
@@ -959,7 +1094,7 @@ wrong one for customers, who outlive the company they happen to work for.
 
 ---
 
-## Lesson 16 — Scripts
+## Lesson 17 — Scripts
 
 Choose **Scripts > Script Workspace...**
 
@@ -986,7 +1121,7 @@ without executing them.
 
 ---
 
-## Lesson 17 — Accounts and privileges
+## Lesson 18 — Accounts and privileges
 
 Choose **File > Manage > Security...**
 
@@ -1020,7 +1155,7 @@ account roles and layout privileges to restrict access today.
 
 ---
 
-## Lesson 18 — Backups
+## Lesson 19 — Backups
 
 The database lives in PostgreSQL (or MariaDB), so backing it up means backing up
 the engine's data.
@@ -1091,10 +1226,9 @@ All names, companies and addresses are fictitious.
 These are things a FileMaker user will look for and not find in File4Base 0.9.3.
 They are listed so you do not go looking, and each one has an issue.
 
-**No report assistant** ([#33](https://github.com/file4base/file4base-app/issues/33))**.**
-*New Layout / Report* only asks for a name and a table: there are no list,
-labels, report or blank layout types, no field picker and no theme chooser. The
-parts a report is made of do work — lesson 12 adds them by hand.
+**No merge variables** ([#33](https://github.com/file4base/file4base-app/issues/33))**.**
+*Insert > Merge Variable...* is greyed out. Merge *fields* work — lesson 13
+builds labels and a letter with them.
 
 **A report does not start each group on a new page** ([#32](https://github.com/file4base/file4base-app/issues/32))**.**
 It flows continuously and is cut wherever the page ends, and the header is not
@@ -1109,7 +1243,7 @@ A find cannot be named and run again later.
 **No find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46))**.**
 Find mode takes criteria on the record's own fields. A related field says so in
 Find mode rather than offering a box that would do nothing. Portals and related
-fields themselves do work — see lesson 15.
+fields themselves do work — see lesson 16.
 
 **No charts** ([#37](https://github.com/file4base/file4base-app/issues/37))**.** The chart tool is in the layout toolbar but there is no chart
 setup.
@@ -1118,7 +1252,7 @@ setup.
 ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
 data files.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 17.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 18.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

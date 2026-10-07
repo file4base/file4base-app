@@ -715,6 +715,11 @@ class LayoutDefinitionModel {
   /// Effect played when the layout is shown, a key of [kLayoutTransitions].
   final String transition;
 
+  /// For a labels layout, the sheet its labels are cut from: how big one is
+  /// and how many sit across and down the page (#33). Null for every other
+  /// kind of layout.
+  final Map<String, dynamic>? labelStock;
+
   const LayoutDefinitionModel({
     required this.id,
     required this.name,
@@ -729,7 +734,11 @@ class LayoutDefinitionModel {
     this.onLayoutEnter,
     this.onLayoutExit,
     this.transition = 'none',
+    this.labelStock,
   });
+
+  /// True when this layout is a sheet of labels rather than something browsed.
+  bool get isLabels => labelStock != null;
 
   /// Total height of the layout: the sum of its parts (the footer ends it).
   double get height => parts.fold<double>(0.0, (acc, p) => acc + p.height);
@@ -918,6 +927,9 @@ class LayoutDefinitionModel {
           ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_exit'] as Map))
           : null,
       transition: json['transition'] as String? ?? 'none',
+      labelStock: json['label_stock'] is Map
+          ? Map<String, dynamic>.from(json['label_stock'] as Map)
+          : null,
     );
   }
 
@@ -935,6 +947,7 @@ class LayoutDefinitionModel {
         if (onLayoutEnter != null) 'on_layout_enter': onLayoutEnter!.toJson(),
         if (onLayoutExit != null) 'on_layout_exit': onLayoutExit!.toJson(),
         if (transition != 'none') 'transition': transition,
+        if (labelStock != null) 'label_stock': labelStock,
       };
 
   LayoutDefinitionModel copyWith({
@@ -955,6 +968,8 @@ class LayoutDefinitionModel {
     ButtonActionModel? onLayoutExit,
     bool clearOnLayoutExit = false,
     String? transition,
+    Map<String, dynamic>? labelStock,
+    bool clearLabelStock = false,
   }) {
     return LayoutDefinitionModel(
       id: id ?? this.id,
@@ -970,6 +985,7 @@ class LayoutDefinitionModel {
       onLayoutEnter: clearOnLayoutEnter ? null : (onLayoutEnter ?? this.onLayoutEnter),
       onLayoutExit: clearOnLayoutExit ? null : (onLayoutExit ?? this.onLayoutExit),
       transition: transition ?? this.transition,
+      labelStock: clearLabelStock ? null : (labelStock ?? this.labelStock),
     );
   }
 }

@@ -47,6 +47,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     saved a SQL aggregate name, is **read** rather than ignored, so it works
     without being set up again.
 
+- **The layout assistant** ([#33](https://github.com/file4base/file4base-app/issues/33)).
+  **New Layout / Report** asked for a name and a table and then made a copy of
+  the standard form, whatever you picked — the button said one thing, the
+  dialog another, and it made neither. It now asks what kind of layout, which
+  fields and in which order, which theme, and the break field or the label
+  stock, and builds that. Lesson 13 of the tutorial is new;
+  [docs/specs/layout_assistant_and_merge_fields.md](docs/specs/layout_assistant_and_merge_fields.md)
+  is the specification.
+  - **Five kinds**: form, list, report with grouped data, labels and blank. A
+    report is built out of the parts [#32](https://github.com/file4base/file4base-app/issues/32)
+    added, with the subtotals placed under the columns they total.
+  - **A field picker** whose order is the layout's: the column order of a list,
+    the line order of a label. The primary key and the summary fields are not
+    offered as columns, because neither belongs in one.
+  - **Layout themes** — Enlightened, Cool Grey, Classic and Minimal — which
+    decide how the generated layout looks. These are the *layout's* themes, not
+    the application themes in Manage Themes, which colour the window; the two
+    are different things sharing a word. `theme` on a layout was a string
+    nothing read and now means something.
+  - **Labels**: Avery L7160, L7163, 5160 and 5163, or a custom size in
+    millimetres fitted to an A4 sheet. A labels layout **is one label** — a body
+    and no header or footer — and Preview lays them out across and down the
+    page, paging the found set into sheets. Printing prints one page per sheet.
+  - Both ways into a new layout — the Layout mode button and Manage Layouts —
+    used to carry their own copy of the same dialog. There is one assistant now.
+- **Merge fields collapse an empty line** ([#33](https://github.com/file4base/file4base-app/issues/33)).
+  `{{field}}` in layout text already took the record's value, but a line whose
+  fields were empty printed blank, which makes a mailing label or a form letter
+  unusable. A line that held merge fields and came out with nothing in it is now
+  removed, so a three-line address prints as two. A line carrying words of its
+  own is kept — `Phone: {{phone}}` is still `Phone: ` — and a blank line the
+  author typed is spacing and stays. A value is also written the way its field
+  is shown, so a DATE reads as a date rather than the full timestamp the API
+  returns.
+
 ### Changed
 - Preview prints the **found set**, not the whole table. It had always read
   every record regardless of the find, which only became visible once a report
@@ -61,6 +96,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A report over records that were not in its order crashed instead of drawing
   with its warning: a group that opened twice gave two bands the same key
   ([#32](https://github.com/file4base/file4base-app/issues/32)).
+- The layout inspector's part-height boxes named the three standard bands and
+  edited nothing, so a report's sub-summary could not be resized there and a
+  sheet of labels was shown as having a header and a footer it does not have.
+  They are now one box per band the layout actually has
+  ([#32](https://github.com/file4base/file4base-app/issues/32),
+  [#33](https://github.com/file4base/file4base-app/issues/33)).
 
 ---
 

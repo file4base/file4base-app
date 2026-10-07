@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
-import 'models/layout_definition.dart';
+import 'new_layout_assistant.dart';
 
 /// ManageLayoutsDialog allows users to view all layouts in the solution,
 /// create new layouts, rename existing layouts, duplicate layouts,
@@ -96,146 +96,35 @@ class _ManageLayoutsDialogState extends ConsumerState<ManageLayoutsDialog> {
   }
 
   Future<void> _handleNewLayout() async {
-    final nameCtrl = TextEditingController(text: 'New Layout');
-    TableModel? selectedTable = widget.tables.isNotEmpty ? widget.tables.first : null;
-    String layoutType = 'form'; // 'form' or 'list'
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlgState) {
-          return AlertDialog(
-            title: const Row(
-              children: [
-                Icon(Icons.add_to_photos, color: Color(0xFF1E88E5)),
-                SizedBox(width: 8),
-                Text('New Layout / Presentation'),
-              ],
-            ),
-            content: SizedBox(
-              width: 440,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Layout Name:',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                  const SizedBox(height: 6),
-                  TextField(
-                    controller: nameCtrl,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                      hintText: 'e.g. Customers Form, Invoice Details',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Show records from (Table Occurrence):',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                  const SizedBox(height: 6),
-                  DropdownButtonFormField<String>(
-                    value: selectedTable?.id,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: widget.tables.map((t) {
-                      return DropdownMenuItem<String>(
-                        value: t.id,
-                        child: Text('${t.displayName} (${t.name})'),
-                      );
-                    }).toList(),
-                    onChanged: (id) {
-                      if (id != null) {
-                        setDlgState(() {
-                          selectedTable =
-                              widget.tables.firstWhere((t) => t.id == id);
-                        });
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'Layout Style:',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                  const SizedBox(height: 6),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                        value: 'form',
-                        label: Text('Form View'),
-                        icon: Icon(Icons.dashboard_outlined),
-                      ),
-                      ButtonSegment(
-                        value: 'list',
-                        label: Text('List View'),
-                        icon: Icon(Icons.view_list_outlined),
-                      ),
-                    ],
-                    selected: {layoutType},
-                    onSelectionChanged: (val) {
-                      setDlgState(() => layoutType = val.first);
-                    },
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('Create Layout'),
-              ),
-            ],
-          );
-        },
-      ),
+    final chosen = await NewLayoutAssistant.show(
+      context,
+      tables: widget.tables,
+      initialTable: widget.tables.isNotEmpty ? widget.tables.first : null,
     );
+    if (chosen == null || !mounted) return;
 
-    if (confirmed == true && selectedTable != null) {
-      final name = nameCtrl.text.trim().isEmpty ? 'Untitled Layout' : nameCtrl.text.trim();
-      final client = ref.read(apiClientProvider);
+    final client = ref.read(apiClientProvider);
+    final def = chosen.blueprint.build();
 
-      final def = LayoutDefinitionModel.defaultForTable(
-        selectedTable!.displayName,
-        selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
-      ).copyWith(name: name, defaultView: layoutType);
-
-      try {
-        final created = await client.createLayout(
-          name,
-          toId: selectedTable!.id,
-          definition: def.toJson(),
-        );
-        await _refreshLayouts();
-        if (mounted) {
-          widget.onSelectLayout(created);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Created layout "$name" successfully!'),
-              backgroundColor: Colors.green.shade700,
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to create layout: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
+    try {
+      final created = await client.createLayout(
+        def.name,
+        toId: chosen.table.id,
+        definition: def.toJson(),
+      );
+      widget.onLayoutsChanged();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Created "${created.name}"'),
+          backgroundColor: const Color(0xFF2E7D32),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not create the layout: $e'), backgroundColor: Colors.red),
+      );
     }
   }
 

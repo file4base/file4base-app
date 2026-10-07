@@ -316,6 +316,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   LayoutDefinitionModel _ensureStandardParts(LayoutDefinitionModel def) {
+    // A sheet of labels is nothing but labels: it has a body and no header or
+    // footer, and giving it one would put a band on every label (#33).
+    if (def.isLabels && def.parts.any((p) => p.isBody)) return def;
+
     var parts = List<LayoutPartModel>.from(def.parts);
     if (parts.isEmpty) {
       parts = [
@@ -345,8 +349,6 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       _layout.parts.firstWhere((p) => p.type == 'header', orElse: () => const LayoutPartModel(id: 'h', type: 'header', height: 60));
   LayoutPartModel get _bodyPart =>
       _layout.parts.firstWhere((p) => p.type == 'body', orElse: () => const LayoutPartModel(id: 'b', type: 'body', height: 400));
-  LayoutPartModel get _footerPart =>
-      _layout.parts.firstWhere((p) => p.type == 'footer', orElse: () => const LayoutPartModel(id: 'f', type: 'footer', height: 40));
 
   /// The canvas ends at the bottom of the last part, or lower when an object
   /// sits below it (so that object stays reachable).
@@ -3086,6 +3088,15 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     );
   }
 
+  /// The layout's parts, three to a row, for the inspector's size boxes.
+  List<List<LayoutPartModel>> _partRows() {
+    final rows = <List<LayoutPartModel>>[];
+    for (var i = 0; i < _layout.parts.length; i += 3) {
+      rows.add(_layout.parts.sublist(i, math.min(i + 3, _layout.parts.length)));
+    }
+    return rows;
+  }
+
   /// What a part's tab reads. A sub-summary names the field it breaks on,
   /// which is how a report says what it groups by (#32).
   String _partLabel(LayoutPartModel? part) {
@@ -3932,18 +3943,37 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ],
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            _numField('Header', _headerPart.height, (v) => _setPartHeight('header', v), objectId: 'layout'),
-            const SizedBox(width: 8),
-            _numField('Body', _bodyPart.height, (v) => _setPartHeight('body', v), objectId: 'layout'),
-            const SizedBox(width: 8),
-            _numField('Footer', _footerPart.height, (v) => _setPartHeight('footer', v), objectId: 'layout'),
-          ],
-        ),
+        // One box per band the layout actually has, by id: a report has more
+        // than one sub-summary, and a sheet of labels has nothing but a body
+        // (#32, #33).
+        for (final row in _partRows())
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                for (final (i, part) in row.indexed) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  _numField(
+                    _partLabel(part),
+                    part.height,
+                    (v) => _setPartHeight(part.id, v),
+                    objectId: 'layout',
+                  ),
+                ],
+                for (var i = row.length; i < 3; i++) ...[
+                  const SizedBox(width: 8),
+                  const Expanded(child: SizedBox.shrink()),
+                ],
+              ],
+            ),
+          ),
         const SizedBox(height: 4),
-        const Text('The layout ends at the bottom of the footer. Height changes the body.',
-            style: TextStyle(color: Colors.grey, fontSize: 10)),
+        Text(
+          _layout.isLabels
+              ? 'A sheet of labels is nothing but labels: this is the size of one.'
+              : 'The layout ends at the bottom of the last part. Height changes the body.',
+          style: const TextStyle(color: Colors.grey, fontSize: 10),
+        ),
 
         const Divider(height: 24),
         _inspectorSectionTitle('BACKGROUND COLOR'),
