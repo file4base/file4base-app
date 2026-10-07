@@ -132,9 +132,9 @@ caller has on the related table — the same way a foreign key would.
 
 ## What is not here yet
 
-- **Finding on a related field.** Find mode takes criteria on the record's own
-  fields. A related field says so in Find mode rather than offering a box that
-  would do nothing.
+- **Finding on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46)).
+  Find mode takes criteria on the record's own fields. A related field says so
+  in Find mode rather than offering a box that would do nothing.
 - **Editing a related field in place.** Related records are edited in a portal.
 - **Creating the related record from a related field.** A related field with no
   matching record stays empty; it does not create one even when the

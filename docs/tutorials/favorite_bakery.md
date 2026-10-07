@@ -957,7 +957,7 @@ merge fields that collapse when empty, cannot be built.
 **No saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34))**.**
 A find cannot be named and run again later.
 
-**No find on a related field** ([#36](https://github.com/file4base/file4base-app/issues/36))**.**
+**No find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46))**.**
 Find mode takes criteria on the record's own fields. A related field says so in
 Find mode rather than offering a box that would do nothing. Portals and related
 fields themselves do work — see lesson 14.
