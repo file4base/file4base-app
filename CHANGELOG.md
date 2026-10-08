@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.11.0] - 2026-10-08
 
 ### Added
 - **Script Debugger** ([#51](https://github.com/file4base/file4base-app/issues/51)).
@@ -48,14 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     Variable*, *If* and *Loop* stop a script with a message today. An empty
     list would have read as "none are set".
 
-### Fixed
-- **A layout created without naming a table occurrence took an arbitrary
-  one.** The fallback read the first row of `sys_table_occurrences` with no
-  order, so which table a layout ended up bound to depended on the engine —
-  PostgreSQL and MariaDB disagreed. It is the first occurrence **by name**
-  now. Found while testing the Data Viewer against both engines; the client
-  always names the occurrence, so this only reached callers of the API that
-  left it out.
 - **The Tools menu is honest, and its first tool is real**
   ([#48](https://github.com/file4base/file4base-app/issues/48),
   [#49](https://github.com/file4base/file4base-app/issues/49)). Every item of
@@ -200,6 +192,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   these privileges — and why the method is not among them. Binding the method to
   the token at sign-in, with a secret shared with the Web Client's proxy, is
   what building it would take.
+
+### Fixed
+- **A layout created without naming a table occurrence took an arbitrary
+  one.** The fallback read the first row of `sys_table_occurrences` with no
+  order, so which table a layout ended up bound to depended on the engine —
+  PostgreSQL and MariaDB disagreed. It is the first occurrence **by name**
+  now. Found while testing the Data Viewer against both engines; the client
+  always names the occurrence, so this only reached callers of the API that
+  left it out.
 
 ---
 
