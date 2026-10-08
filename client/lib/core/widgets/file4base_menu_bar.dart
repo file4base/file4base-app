@@ -87,6 +87,9 @@ class File4BaseMenuBar extends StatelessWidget {
   /// Tools > Data Viewer — the fields of the record in hand and the
   /// expressions being watched (#50).
   final VoidCallback? onDataViewer;
+
+  /// Tools > Script Debugger — a script run one step at a time (#51).
+  final VoidCallback? onScriptDebugger;
   final VoidCallback? onPrint;
   final VoidCallback? onQuit;
   final bool isAuthenticated;
@@ -132,6 +135,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onDesignReport,
     this.onSaveDesignAsText,
     this.onDataViewer,
+    this.onScriptDebugger,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -1100,9 +1104,9 @@ class File4BaseMenuBar extends StatelessWidget {
     // tool were there (#48).
     return SubmenuButton(
       menuChildren: [
-        const MenuItemButton(
-          onPressed: null, // #51: not implemented, shown disabled
-          child: Text('Script Debugger'),
+        MenuItemButton(
+          onPressed: onScriptDebugger,
+          child: const Text('Script Debugger'),
         ),
         MenuItemButton(
           onPressed: onDataViewer,

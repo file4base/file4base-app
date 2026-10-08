@@ -23,6 +23,7 @@ import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/new_layout_assistant.dart';
 import 'features/data_io/import_records_dialog.dart';
 import 'features/data_io/manage_data_sources_dialog.dart';
+import 'features/script_workspace/script_debugger_dialog.dart';
 import 'features/tools/data_viewer_dialog.dart';
 import 'features/tools/design_report_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
@@ -1553,6 +1554,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ? (target) => _dataBrowserKey.currentState?.goToFindRequest(target)
                       : null,
                   onImportFromDataSource: _handleImportFromDataSource,
+                  onScriptDebugger: _currentUser == null
+                      ? null
+                      : () => ScriptDebuggerDialog.show(
+                            context,
+                            apiClient: ref.read(apiClientProvider),
+                            host: _dataBrowserKey.currentState,
+                          ),
                   onDataViewer: _currentUser == null || _selectedTable == null
                       ? null
                       : () => DataViewerDialog.show(

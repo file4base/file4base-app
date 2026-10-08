@@ -84,7 +84,7 @@
 ## Tools
 - [x] Database Design Report: what the solution is made of, as a page to read, and the design as XML or JSON for version control ([#49](https://github.com/file4base/file4base-app/issues/49), [design_report.md](design_report.md)).
 - [x] Data Viewer: the fields of the record in hand and expressions evaluated by the engine that fills the calculation fields ([#50](https://github.com/file4base/file4base-app/issues/50), [data_viewer.md](data_viewer.md)). Variables wait on the script runner.
-- [ ] Script Debugger: step through a script ([#51](https://github.com/file4base/file4base-app/issues/51)).
+- [x] Script Debugger: a script run one step at a time against the records on screen, with breakpoints, driving the same runner the layout buttons use ([#51](https://github.com/file4base/file4base-app/issues/51), [script_debugger.md](script_debugger.md)).
 - [ ] Custom menus defined by the solution ([#52](https://github.com/file4base/file4base-app/issues/52)).
 - [ ] Developer utilities: clone without records, rename, lock the design ([#53](https://github.com/file4base/file4base-app/issues/53)).
 - [ ] Copy and paste structure between solutions ([#54](https://github.com/file4base/file4base-app/issues/54)).
@@ -106,4 +106,5 @@
 - [ ] Implement drag-and-drop step reordering and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
 - [x] Formula calculation engine in Go: arithmetic, text joining, logical tests, comparisons and 20 functions, evaluated by the server so both engines agree. Written by hand rather than with Google CEL, whose grammar is not FileMaker's ([#30](https://github.com/file4base/file4base-app/issues/30), [docs/specs/calculation_formulas.md](calculation_formulas.md)).
 - [ ] Script step runner executing actions deterministically with step-by-step debugging.
+  - [x] Stepping through a script with breakpoints, over the client-side runner ([#51](https://github.com/file4base/file4base-app/issues/51)). A step the runner does not take stops the script and says so.
   - [x] Client-side runner for layout buttons: single step actions and Perform Script for record, navigation, Set Field, dialog and URL steps. Control flow (`If`, `Loop`), variables and integration steps stop the script with a message until the calculation engine and server runner exist.

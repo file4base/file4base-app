@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Script Debugger** ([#51](https://github.com/file4base/file4base-app/issues/51)).
+  A script that misbehaved could only be investigated by reading it. **Tools >
+  Script Debugger** runs one step at a time against the records on screen,
+  with Step, Continue, Stop, Start over and breakpoints on any step.
+  [docs/specs/script_debugger.md](docs/specs/script_debugger.md) is the
+  specification.
+  - **It drives the runner rather than imitating it.** Each step goes through
+    `LayoutActionRunner`, the one a layout button uses, so what the debugger
+    shows is what running the script does.
+  - **A step the runner does not take stops the script** and shows the
+    runner's own message, with that step marked — *Set Variable*, *If* and
+    *Loop* among them. A debugger that pretended to run what the runner
+    refuses would be worse than none.
+  - A disabled step is skipped and marked as skipped; *Halt Script* ends the
+    run where it is; the steps are listed in the order they run.
+  - Opened without a layout in Browse mode it says where to start it from,
+    rather than offering buttons that would do nothing.
 - **Data Viewer** ([#50](https://github.com/file4base/file4base-app/issues/50)).
   A formula was only ever visible through its field: finding out why a
   calculation came out wrong meant changing the formula, saving the field,
