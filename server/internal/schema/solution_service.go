@@ -133,6 +133,16 @@ type BundleValueList struct {
 	SourceColumnID *string `msgpack:"source_column_id,omitempty"`
 }
 
+// BundleSavedFind carries a named find (#34). It names the table by name, as
+// tables are matched by name on import, so there is no id to remap. The
+// account that saved it is not carried: a find is shared with everyone who
+// can search the table, and an imported find has no owner account.
+type BundleSavedFind struct {
+	Name      string             `msgpack:"name"`
+	TableName string             `msgpack:"table_name"`
+	Requests  []SavedFindRequest `msgpack:"requests"`
+}
+
 type SolutionBundle struct {
 	Format             string                 `msgpack:"format"`
 	Version            string                 `msgpack:"version"`
@@ -147,6 +157,7 @@ type SolutionBundle struct {
 	ValueLists         []BundleValueList      `msgpack:"value_lists,omitempty"`
 	Users              []BundleAccount        `msgpack:"users"`
 	Privileges         []RolePrivileges       `msgpack:"privileges,omitempty"`
+	SavedFinds         []BundleSavedFind      `msgpack:"saved_finds,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
 }
@@ -215,6 +226,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("failed listing role privileges: %w", err)
 	}
+	savedFinds, err := s.ListSavedFinds(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("failed listing saved finds: %w", err)
+	}
 
 	conn := opts.Connection
 	if conn.Engine == "" {
@@ -234,6 +249,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		ValueLists:         make([]BundleValueList, 0, len(valueLists)),
 		Users:              make([]BundleAccount, 0, len(users)),
 		Privileges:         privileges,
+		SavedFinds:         make([]BundleSavedFind, 0, len(savedFinds)),
 		FileOptions:        withoutSecrets(opts.FileOptions),
 		PageSetup:          opts.PageSetup,
 	}
@@ -281,6 +297,11 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		b.ValueLists = append(b.ValueLists, BundleValueList{
 			ID: vl.ID, Name: vl.Name, Kind: vl.Kind, CustomValues: vl.CustomValues,
 			SourceTableID: vl.SourceTableID, SourceColumnID: vl.SourceColumnID,
+		})
+	}
+	for _, f := range savedFinds {
+		b.SavedFinds = append(b.SavedFinds, BundleSavedFind{
+			Name: f.Name, TableName: f.TableName, Requests: f.Requests,
 		})
 	}
 	for _, u := range users {
@@ -369,6 +390,7 @@ type ImportReport struct {
 	ValueListsUpdated       int      `json:"value_lists_updated"`
 	AccountsCreated         int      `json:"accounts_created"`
 	PrivilegesUpdated       int      `json:"privileges_updated"`
+	SavedFindsCreated       int      `json:"saved_finds_created"`
 	AccountsPendingPassword []string `json:"accounts_pending_password"`
 	// Totals in the bundle, kept for older clients.
 	TablesCount  int `json:"tables_count"`
@@ -693,7 +715,37 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		report.AccountsPendingPassword = append(report.AccountsPendingPassword, created.Username)
 	}
 
-	// 7. Role privileges (#39). They are keyed by role, so there is nothing
+	// 7. Saved finds (#34). They are matched by table and name, so importing
+	// the same file twice does not make a second copy, and a find whose
+	// fields the destination does not have is reported rather than stored.
+	for _, f := range b.SavedFinds {
+		existing, err := s.ListSavedFinds(ctx, f.TableName)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("reading the saved finds of %q: %w", f.TableName, err))
+		}
+		known := false
+		for _, e := range existing {
+			if strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(f.Name)) {
+				known = true
+				break
+			}
+		}
+		if known {
+			continue
+		}
+		// An imported find has no owner account, so anyone who can search
+		// the table may rename or delete it.
+		created, err := s.CreateSavedFind(ctx, SavedFindInput{
+			Name: f.Name, TableName: f.TableName, Requests: f.Requests,
+		}, "")
+		if err != nil {
+			return nil, rollback(fmt.Errorf("restoring the saved find %q: %w", f.Name, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteSavedFind(bg, created.ID) })
+		report.SavedFindsCreated++
+	}
+
+	// 8. Role privileges (#39). They are keyed by role, so there is nothing
 	// to remap; a file written before they existed leaves them untouched.
 	if len(b.Privileges) > 0 {
 		previous, err := s.ListRolePrivileges(ctx)

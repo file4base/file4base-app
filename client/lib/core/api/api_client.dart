@@ -537,6 +537,70 @@ class UserModel {
   };
 }
 
+/// One request of a saved find: what was typed into each field, and whether
+/// the request omits what it matches (#34).
+class SavedFindRequestModel {
+  final Map<String, String> values;
+  final bool omit;
+
+  const SavedFindRequestModel({required this.values, this.omit = false});
+
+  factory SavedFindRequestModel.fromJson(Map<String, dynamic> json) {
+    final raw = json['values'] as Map<String, dynamic>? ?? const {};
+    return SavedFindRequestModel(
+      values: {for (final e in raw.entries) e.key: '${e.value}'},
+      omit: json['omit'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'values': values, 'omit': omit};
+}
+
+/// A named set of find requests on one table, stored in the database and
+/// carried in the solution file (#34).
+class SavedFindModel {
+  final String id;
+  final String name;
+  final String tableName;
+  final List<SavedFindRequestModel> requests;
+
+  /// The account that saved it; empty for a find that came from a solution
+  /// file. Only that account, or an admin, may rename or delete it.
+  final String createdBy;
+
+  const SavedFindModel({
+    required this.id,
+    required this.name,
+    required this.tableName,
+    required this.requests,
+    this.createdBy = '',
+  });
+
+  factory SavedFindModel.fromJson(Map<String, dynamic> json) {
+    final raw = json['requests'] as List<dynamic>? ?? const [];
+    return SavedFindModel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      tableName: json['table_name'] as String? ?? '',
+      requests: raw
+          .whereType<Map<String, dynamic>>()
+          .map(SavedFindRequestModel.fromJson)
+          .toList(),
+      createdBy: json['created_by'] as String? ?? '',
+    );
+  }
+
+  /// A one-line summary of what the find searches, for a menu or a list.
+  String get summary {
+    final parts = <String>[];
+    for (final request in requests) {
+      final criteria = request.values.entries.map((e) => '${e.key} ${e.value}').join(', ');
+      parts.add(request.omit ? 'omit $criteria' : criteria);
+    }
+    return parts.join('  •  ');
+  }
+}
+
 /// Capabilities an owner can grant to or withhold from an account role (#39).
 /// They are actions the server performs, so the server is what enforces them;
 /// a client only uses them to say what an account may do before it tries.
@@ -1879,6 +1943,64 @@ class ApiClient {
         'database': database ?? '',
         'permissions': permissions,
       }),
+    );
+    _checkResponse(response);
+  }
+
+  // ─── Saved finds (#34) ─────────────────────────────────────────────────────
+
+  /// Lists the saved finds of one table, or of every table the account can
+  /// reach when [table] is null.
+  Future<List<SavedFindModel>> listSavedFinds({String? table}) async {
+    final query = (table != null && table.isNotEmpty) ? '?table=${Uri.encodeComponent(table)}' : '';
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/saved-finds$query'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list.map((item) => SavedFindModel.fromJson(item as Map<String, dynamic>)).toList();
+  }
+
+  Future<SavedFindModel> createSavedFind({
+    required String name,
+    required String table,
+    required List<SavedFindRequestModel> requests,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/saved-finds'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'name': name,
+        'table_name': table,
+        'requests': requests.map((r) => r.toJson()).toList(),
+      }),
+    );
+    _checkResponse(response);
+    return SavedFindModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<SavedFindModel> updateSavedFind(
+    String id, {
+    required String name,
+    required List<SavedFindRequestModel> requests,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/saved-finds/$id'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'name': name,
+        'requests': requests.map((r) => r.toJson()).toList(),
+      }),
+    );
+    _checkResponse(response);
+    return SavedFindModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteSavedFind(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/saved-finds/$id'),
+      headers: _headers(),
     );
     _checkResponse(response);
   }

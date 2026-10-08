@@ -6,6 +6,7 @@ import '../../features/help/check_updates_dialog.dart';
 import '../../features/help/issues_guide_dialog.dart';
 import '../../main.dart';
 import '../../features/layout_engine/layout_object_visuals.dart' show LayoutMergeSymbols;
+import '../api/api_client.dart' show SavedFindModel;
 
 class File4BaseMenuBar extends StatelessWidget {
   final OperationalMode activeMode;
@@ -47,6 +48,14 @@ class File4BaseMenuBar extends StatelessWidget {
 
   /// `first`, `previous`, `next`, `last`, or a 1-based request number.
   final ValueChanged<String>? onGoToFindRequest;
+
+  /// Records > Saved Finds (#34): the finds saved on the table in hand, the
+  /// action that saves what Find mode holds now, and the one that opens the
+  /// list to rename or delete them.
+  final List<SavedFindModel> savedFinds;
+  final ValueChanged<SavedFindModel>? onRunSavedFind;
+  final VoidCallback? onSaveCurrentFind;
+  final VoidCallback? onManageSavedFinds;
   final VoidCallback? onSaveLayout;
   final bool isToolbarVisible;
   final ValueChanged<bool> onToggleToolbar;
@@ -117,6 +126,10 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onDeleteAllFindRequests,
     this.onToggleFindOmit,
     this.onGoToFindRequest,
+    this.savedFinds = const [],
+    this.onRunSavedFind,
+    this.onSaveCurrentFind,
+    this.onManageSavedFinds,
     this.onSaveLayout,
     required this.isToolbarVisible,
     required this.onToggleToolbar,
@@ -882,6 +895,7 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
           child: const Text('Show All Records'),
         ),
+        _buildSavedFindsMenu(),
         MenuItemButton(
           onPressed: null, // not implemented: shown disabled
           child: const Text('Show Omitted Only'),
@@ -917,6 +931,38 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
       ],
       child: const Text('Records', style: TextStyle(fontSize: 13)),
+    );
+  }
+
+  /// Records > Saved Finds (#34): save the requests in hand under a name,
+  /// run one of the finds saved on this table, or open the list to rename
+  /// and delete them.
+  Widget _buildSavedFindsMenu() {
+    final run = onRunSavedFind;
+    return SubmenuButton(
+      menuChildren: [
+        MenuItemButton(
+          onPressed: onSaveCurrentFind,
+          child: const Text('Save Current Find...'),
+        ),
+        MenuItemButton(
+          onPressed: savedFinds.isEmpty ? null : onManageSavedFinds,
+          child: const Text('Edit Saved Finds...'),
+        ),
+        const Divider(height: 1),
+        if (savedFinds.isEmpty)
+          const MenuItemButton(
+            onPressed: null,
+            child: Text('No saved finds for this table'),
+          )
+        else
+          for (final find in savedFinds)
+            MenuItemButton(
+              onPressed: run == null ? null : () => run(find),
+              child: Text(find.name),
+            ),
+      ],
+      child: const Text('Saved Finds'),
     );
   }
 
@@ -979,6 +1025,10 @@ class File4BaseMenuBar extends StatelessWidget {
           ],
           child: const Text('Go to Request'),
         ),
+        const Divider(height: 1),
+        // The same submenu as in Records, because the criteria to save are
+        // the ones being typed here (#34).
+        _buildSavedFindsMenu(),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: () {

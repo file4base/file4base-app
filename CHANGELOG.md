@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34)).
+  Several find requests with OR and omit landed in `2779dbe`; what was missing
+  was naming a find and running it again. A find is now saved on its table in a
+  new `sys_saved_finds` catalog table, listed in **Records > Saved Finds** and
+  in the same submenu of **Requests** while the criteria are being typed, and
+  run with one click.
+  - **The criteria are stored as they were typed** — `>100`, `=Paris`,
+    `2011-01-01...2011-06-30` — not as the operators they parse into, so a
+    saved find can be opened in Find mode, read and changed, and is parsed
+    again every time it runs.
+  - **Checked against the catalog before it is stored**, so a saved find cannot
+    fail with "unknown field" the first time someone runs it. An empty request
+    is dropped rather than stored, since it would find everything.
+  - **Saved on the table, not on the account**: everyone who can search the
+    table can run it, and whoever saved it — or an admin — can rename or delete
+    it. A find on a table an account cannot reach is not even listed to them.
+  - **They travel in the solution bundle** and are restored by table and name,
+    so importing the same file twice does not make a second copy.
+  - New endpoints: `GET`, `POST /api/v1/saved-finds`, `PUT` and `DELETE
+    /api/v1/saved-finds/{id}`, also mounted under `/api/v1/schemas/`.
 - **Extended privileges are real privileges now**
   ([#39](https://github.com/file4base/file4base-app/issues/39)). Manage Security
   listed four "access methods" — desktop, WebDirect, REST API, bulk export —

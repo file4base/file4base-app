@@ -203,6 +203,19 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
 		);`,
+		// A named set of find requests on one table (#34). The requests
+		// are stored as the criteria were typed, so a saved find can be
+		// opened, read and changed in Find mode.
+		`CREATE TABLE IF NOT EXISTS sys_saved_finds (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			table_name VARCHAR(64) NOT NULL,
+			requests TEXT NOT NULL,
+			created_by VARCHAR(36),
+			created_at ` + ts + `,
+			updated_at ` + ts + `,
+			CONSTRAINT uq_saved_find_name UNIQUE (table_name, name)
+		);`,
 		// Capabilities granted per account role (#39). A role without a
 		// row holds every capability, so a database created before this
 		// table existed keeps working unrestricted.

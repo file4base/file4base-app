@@ -31,6 +31,7 @@ Golden fixtures produced by each side are read by the other side's tests:
 | `scripts` | array of script | |
 | `value_lists` | array of value list | Optional. |
 | `users` | array of account | |
+| `saved_finds` | array of saved find | Optional. |
 | `privileges` | array of role privileges | Optional. Absent in files written before extended privileges existed, which leaves the destination's own grants untouched. |
 | `file_options` | map | Client settings (File Options), opaque to the server. Never contains `default_password`. |
 | `page_setup` | map | Client settings (Page Setup), opaque to the server. |
@@ -53,6 +54,8 @@ Golden fixtures produced by each side are read by the other side's tests:
 
 **value list**: `id`, `name`, `kind`, `custom_values` (optional), `source_table_id` and `source_column_id` (optional, remapped on import).
 
+**saved find**: `name`, `table_name`, `requests` (array of `{values, omit}`, `values` being field name to the criterion as typed). Matched by table and name on import; the account that saved it is not carried, so a restored find has no owner.
+
 **role privileges**: `role` (`owner`, `admin` or `user`), `bulk_export`, `bulk_import`. Keyed by role, so nothing is remapped. See [security_model.md](security_model.md).
 
 IDs only link objects inside the bundle. They are never assumed to exist in the destination database.
@@ -66,10 +69,11 @@ IDs only link objects inside the bundle. They are never assumed to exist in the 
 3. **Remapping.** Every reference is rewritten to the destination's IDs: occurrence base tables, relationship occurrences and columns, layout occurrences, step parents, permission layouts, and the `script_id` of button actions and script triggers inside layout definitions.
 4. **Writing.** Missing tables, columns, occurrences, relationships, scripts and accounts are created; matched layouts and scripts are updated with the bundle's version; existing tables, columns and accounts are left as they are.
 5. **Accounts.** A missing account is created **disabled**, with a random password nobody knows, with its role and its layout permissions. An owner enables it and sets its password in Manage Security. Existing accounts are never changed. Restoring never widens access: a disabled account stays disabled, and an `owner` account can only be restored by an owner.
-6. **Extended privileges.** The grants in `privileges` replace the destination's, by role; the owner's are always stored fully granted. A bundle without the key changes nothing.
-7. **Failure.** If any write fails, everything the import created is removed and every layout or script it updated gets its previous version back, and the request fails with the reason.
+6. **Saved finds.** A find is created when the destination's table has none with that name; the fields it searches must exist there. Existing finds are left as they are.
+7. **Extended privileges.** The grants in `privileges` replace the destination's, by role; the owner's are always stored fully granted. A bundle without the key changes nothing.
+8. **Failure.** If any write fails, everything the import created is removed and every layout or script it updated gets its previous version back, and the request fails with the reason.
 
-The response reports what happened: `tables_created`, `columns_created`, `occurrences_created`, `relationships_created`, `layouts_created`, `layouts_updated`, `scripts_created`, `scripts_updated`, `accounts_created`, `privileges_updated` and `accounts_pending_password` (usernames that need a password before they can sign in).
+The response reports what happened: `tables_created`, `columns_created`, `occurrences_created`, `relationships_created`, `layouts_created`, `layouts_updated`, `scripts_created`, `scripts_updated`, `accounts_created`, `saved_finds_created`, `privileges_updated` and `accounts_pending_password` (usernames that need a password before they can sign in).
 
 Legacy `1.0` bundles exported by older servers (PascalCase keys and MessagePack timestamps) are converted to this format before validation.
 

@@ -263,14 +263,51 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   int get findRequestCount => _findRequests.length;
   int get findRequestNumber => _findRequestIndex + 1;
 
-  /// Copies what is in the field boxes into the request being edited.
+  /// Copies what is in the field boxes into the request being edited. A
+  /// criterion on a field this layout has no box for is left as it is, so a
+  /// saved find naming a field the layout does not show keeps it (#34).
   void _captureCurrentFindRequest() {
     final values = _currentFindRequest.values;
-    values.clear();
+    for (final field in _findControllers.keys) {
+      values.remove(field);
+    }
     _findControllers.forEach((field, controller) {
       final text = controller.text.trim();
       if (text.isNotEmpty) values[field] = controller.text;
     });
+  }
+
+  /// The requests as they stand, for saving them under a name (#34). The
+  /// criteria travel as typed, so a saved find can be opened and changed.
+  List<SavedFindRequestModel> currentFindRequests() {
+    _captureCurrentFindRequest();
+    final requests = <SavedFindRequestModel>[];
+    for (final request in _findRequests) {
+      final values = <String, String>{};
+      request.values.forEach((field, value) {
+        if (value.trim().isNotEmpty) values[field] = value.trim();
+      });
+      if (values.isEmpty) continue;
+      requests.add(SavedFindRequestModel(values: values, omit: request.omit));
+    }
+    return requests;
+  }
+
+  /// Puts a saved find's requests into Find mode and performs it, so what
+  /// ran is also what the boxes show if the user goes back to change it.
+  Future<void> runSavedFind(SavedFindModel find) async {
+    if (find.requests.isEmpty) return;
+    setState(() {
+      _findRequests
+        ..clear()
+        ..addAll(find.requests.map((r) => FindRequestDraft(
+              values: Map<String, String>.from(r.values),
+              omit: r.omit,
+            )));
+      _findRequestIndex = 0;
+    });
+    _applyCurrentFindRequestToControllers();
+    await _performFind();
   }
 
   /// Puts a request's values into the field boxes.

@@ -591,6 +591,68 @@ Writes a found set out and returns the file itself, with `Content-Disposition` a
 
 ---
 
+### Saved finds
+
+A saved find is a named set of find requests on one table (#34). The criteria
+are stored **as they were typed** (`>100`, `Paris`, `a...b`), not as the
+operators they parse into, so a saved find can be opened in Find mode, read and
+changed, and is parsed again every time it runs. Running one is `POST
+/api/v1/data/{table}/find` with those requests.
+
+The finds of a table are visible to every account that can search it, and the
+account that saved one — or any admin — may rename or delete it. A find
+restored from a solution file has no owner account, so anyone with access to
+the table may change it.
+
+#### `GET /api/v1/saved-finds`
+Lists the saved finds. `?table=<name>` limits them to one table; without it the
+list holds every table the caller can reach. Also mounted at
+`/api/v1/schemas/saved-finds`.
+
+##### Response `200 OK`
+```json
+[
+  {
+    "id": "3f2a…",
+    "name": "New York or London, not new",
+    "table_name": "customers",
+    "requests": [
+      {"values": {"city": "=New York"}, "omit": false},
+      {"values": {"city": "=London"}, "omit": false},
+      {"values": {"status": "=New"}, "omit": true}
+    ],
+    "created_by": "u-0001",
+    "created_at": "2026-10-08T09:12:00Z",
+    "updated_at": "2026-10-08T09:12:00Z"
+  }
+]
+```
+
+#### `POST /api/v1/saved-finds`
+Saves a find. The body is `name`, `table_name` and `requests`.
+
+Checked against the catalog before it is stored, so a saved find cannot fail
+with "unknown field" the first time someone runs it: the table must exist, every
+criterion must name one of its fields, and at least one request must have
+something typed in it. A request with nothing in it is dropped rather than
+stored, since it would find everything.
+
+- `201 Created`: the find, as `GET` returns it.
+- `403 Forbidden`: the caller cannot search that table.
+- `409 Conflict`: the table already has a find with that name.
+- `422 Unprocessable Entity`: no name, an unknown table or field, or nothing typed.
+
+#### `PUT /api/v1/saved-finds/{id}`
+Replaces the name and the requests. The table cannot change: that would be a
+different find, and `table_name` in the body is ignored. Requires the account
+that saved it, or an admin (`403` otherwise).
+
+#### `DELETE /api/v1/saved-finds/{id}`
+Removes the find; the records it finds are not affected. Same rule as `PUT`.
+Answers `204 No Content`.
+
+---
+
 ### `POST /api/v1/data/{table}/summary`
 
 Works out the figures of a report: what each summary field comes to over the found set, and over each group of it (#32). See [docs/specs/summary_fields_and_reports.md](../specs/summary_fields_and_reports.md).

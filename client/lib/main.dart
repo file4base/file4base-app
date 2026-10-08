@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,7 @@ import 'features/about/about_dialog.dart';
 import 'features/auth/database_login_dialog.dart';
 import 'features/connection/server_connection_dialog.dart';
 import 'features/data_browser/data_browser_widget.dart';
+import 'features/data_browser/saved_finds_dialog.dart';
 import 'features/layout_engine/layout_designer_widget.dart';
 import 'features/layout_engine/layout_preview_widget.dart';
 import 'features/layout_engine/manage_layouts_dialog.dart';
@@ -157,6 +159,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   UserModel? _currentUser;
   List<LayoutModel> _serverLayouts = [];
   Map<String, String> _userPermissions = {};
+  /// The finds saved on the table in hand (#34), as the Records menu lists
+  /// them.
+  List<SavedFindModel> _savedFinds = const [];
+  String? _savedFindsTable;
+
   /// What the signed-in account may do beyond reading and writing records:
   /// the capabilities of its role (#39). The server enforces them; these are
   /// held so the interface can say so before a request is refused.
@@ -442,6 +449,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             _applyLayout(selectedLayoutModel, tables);
           } else if (tables.isNotEmpty) {
             _selectedTable = tables.first;
+            unawaited(_loadSavedFinds());
             _activeLayout = LayoutDefinitionModel.defaultForTable(
               _selectedTable!.displayName,
               _selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
@@ -477,6 +485,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         : (tables.isNotEmpty ? tables.first : null);
 
     _selectedTable = matchTable;
+    if (matchTable?.name != _savedFindsTable) unawaited(_loadSavedFinds());
 
     try {
       _activeLayout = LayoutDefinitionModel.fromJson(layoutModel.definition).copyWith(
@@ -1150,6 +1159,98 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
   }
 
+  // ─── Saved finds (#34) ─────────────────────────────────────────────────────
+
+  /// Reads the finds saved on the table in hand. A server without them, or a
+  /// table nobody has saved a find on, simply gives an empty menu.
+  Future<void> _loadSavedFinds() async {
+    final table = _selectedTable;
+    if (table == null || _currentUser == null) {
+      _savedFindsTable = null;
+      if (mounted && _savedFinds.isNotEmpty) setState(() => _savedFinds = const []);
+      return;
+    }
+    _savedFindsTable = table.name;
+    try {
+      final finds = await ref.read(apiClientProvider).listSavedFinds(table: table.name);
+      // Another table may have been chosen while this was in flight.
+      if (mounted && _savedFindsTable == table.name) setState(() => _savedFinds = finds);
+    } catch (_) {
+      if (mounted) setState(() => _savedFinds = const []);
+    }
+  }
+
+  /// Records > Saved Finds > Save Current Find...: names the requests Find
+  /// mode holds now and stores them.
+  Future<void> _handleSaveCurrentFind() async {
+    final table = _selectedTable;
+    final browser = _dataBrowserKey.currentState;
+    if (table == null || browser == null) return;
+
+    final requests = browser.currentFindRequests();
+    if (requests.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Type the criteria to save in Find mode first.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final name = await SaveFindDialog.show(
+      context,
+      tableLabel: table.displayName,
+      existing: _savedFinds,
+      requests: requests,
+    );
+    if (name == null || !mounted) return;
+
+    try {
+      await ref.read(apiClientProvider).createSavedFind(
+            name: name,
+            table: table.name,
+            requests: requests,
+          );
+      await _loadSavedFinds();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Saved the find "$name". It is in Records > Saved Finds.'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  /// Runs a saved find: its requests go into Find mode and the find is
+  /// performed, so the found set and the boxes agree.
+  Future<void> _handleRunSavedFind(SavedFindModel find) async {
+    final browser = _dataBrowserKey.currentState;
+    if (browser == null) return;
+    await browser.runSavedFind(find);
+  }
+
+  Future<void> _handleManageSavedFinds() async {
+    final table = _selectedTable;
+    if (table == null) return;
+    final changed = await ManageSavedFindsDialog.show(
+      context,
+      apiClient: ref.read(apiClientProvider),
+      tableLabel: table.displayName,
+      finds: _savedFinds,
+    );
+    if (changed) await _loadSavedFinds();
+  }
+
   /// File > Import Records: brings records in from a CSV, a tab-separated
   /// file, an Excel workbook or XML (#38).
   Future<void> _handleImportRecords() async {
@@ -1424,6 +1525,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onGoToFindRequest: mode == OperationalMode.find
                       ? (target) => _dataBrowserKey.currentState?.goToFindRequest(target)
                       : null,
+                  savedFinds: _savedFinds,
+                  onRunSavedFind: _selectedTable == null ? null : _handleRunSavedFind,
+                  onSaveCurrentFind: _selectedTable == null ? null : _handleSaveCurrentFind,
+                  onManageSavedFinds: _selectedTable == null ? null : _handleManageSavedFinds,
                   isToolbarVisible: _isToolbarVisible,
                   onToggleToolbar: (visible) => setState(() => _isToolbarVisible = visible),
                   onZoomIn: () => ref.read(zoomProvider.notifier).zoomIn(),
@@ -1462,6 +1567,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                             if (newTable != null) {
                               setState(() {
                                 _selectedTable = newTable;
+                                unawaited(_loadSavedFinds());
                                 final matchLayout = _serverLayouts.where((l) {
                                   final toName = l.definition['table_occurrence']?.toString().toLowerCase();
                                   return toName == newTable.name.toLowerCase() ||

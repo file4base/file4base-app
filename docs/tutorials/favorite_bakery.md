@@ -345,6 +345,35 @@ A find made only of omitting requests starts from every record, so a single
 omitting request with `New York` in **City** finds everyone who does not live
 there.
 
+### Saving a find
+
+A find you will want again can be named and kept.
+
+1. Build it in Find mode — the New York or London find above, with the third
+   request omitting Customer Type `New`.
+2. Choose **Requests > Saved Finds > Save Current Find...**
+
+   The dialog lists what it is about to save, one line per request:
+   `Find: city =New York`, `Find: city =London`, `Omit: status =New`. Type a
+   name and click **Save**. A name the table already uses is refused before the
+   dialog closes.
+3. Back in Browse mode, choose **Records > Saved Finds** and the find is in the
+   list. Clicking it puts those requests back into Find mode and performs
+   them, so the found set is the same 5 records the table below gives for that
+   find.
+
+**Requests > Saved Finds** holds the same submenu while you are typing the
+criteria, which is where you usually want *Save Current Find*.
+
+**Edit Saved Finds...** lists the finds of the table with what each one
+searches, and renames or deletes them. A find is saved on the table, not on
+your account: everyone who can search the table can run it, and whoever saved
+it — or an administrator — can change it. Saved finds travel in the `.f4p`
+solution file, so a solution arrives with its finds.
+
+The criteria are stored exactly as you typed them, `>100` and `...` included,
+so opening a saved find shows you the find rather than a translation of it.
+
 ### What a find in this database gives you
 
 | Criterion | Found |
@@ -1438,9 +1467,6 @@ builds labels and a letter with them.
 **A report does not start each group on a new page** ([#32](https://github.com/file4base/file4base-app/issues/32))**.**
 It flows continuously and is cut wherever the page ends, and the header is not
 repeated at the top of each printed page.
-
-**No saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34))**.**
-A find cannot be named and run again later.
 
 **No find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46))**.**
 Find mode takes criteria on the record's own fields. A related field says so in

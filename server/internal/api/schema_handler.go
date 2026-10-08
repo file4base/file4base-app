@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -97,6 +98,20 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		}
 	}
 
+	// A saved find is a working tool, not a design object: anyone who can
+	// search a table may save a find on it, and the owner of a find or an
+	// admin may change or delete it (checked in the handlers).
+	savedFinds := func(prefix string) func(r chi.Router) {
+		root := rootPath(prefix)
+		return func(r chi.Router) {
+			r.Get(root, h.ListSavedFinds)
+			r.Post(root, h.CreateSavedFind)
+			r.Get(prefix+"/{id}", h.GetSavedFind)
+			r.Put(prefix+"/{id}", h.UpdateSavedFind)
+			r.Delete(prefix+"/{id}", h.DeleteSavedFind)
+		}
+	}
+
 	r.Route("/api/v1/schemas", func(r chi.Router) {
 		r.Use(RequireSession)
 		tables(r)
@@ -105,6 +120,12 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		layouts("/layouts")(r)
 		scripts("/scripts")(r)
 		valueLists("/value-lists")(r)
+		savedFinds("/saved-finds")(r)
+	})
+
+	r.Route("/api/v1/saved-finds", func(r chi.Router) {
+		r.Use(RequireSession)
+		savedFinds("")(r)
 	})
 
 	r.Route("/api/v1/value-lists", func(r chi.Router) {
@@ -836,6 +857,166 @@ func writeValueListError(w http.ResponseWriter, r *http.Request, err error) {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Value List Not Found", err.Error())
 	case errors.Is(err, schema.ErrValueListExists):
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Value List Already Exists", err.Error())
+	default:
+		writeSchemaError(w, r, err)
+	}
+}
+
+// ─── Saved finds (#34) ───────────────────────────────────────────────────────
+
+// savedFindAccess checks that the caller may reach the table a find searches.
+// A find is as readable as the records it would return.
+func savedFindAccess(w http.ResponseWriter, r *http.Request, tableName string) bool {
+	sess := currentSession(r)
+	if sess.IsAdmin() {
+		return true
+	}
+	level, err := schemaService(r).TableAccess(r.Context(), sess.UserID, tableName)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return false
+	}
+	if level == schema.AccessNone {
+		writeForbidden(w, r, "you do not have access to this table")
+		return false
+	}
+	return true
+}
+
+// ListSavedFinds answers the saved finds of one table (`?table=`) or of every
+// table the caller can reach.
+func (h *SchemaHandler) ListSavedFinds(w http.ResponseWriter, r *http.Request) {
+	table := strings.TrimSpace(r.URL.Query().Get("table"))
+	if table != "" && !savedFindAccess(w, r, table) {
+		return
+	}
+
+	finds, err := schemaService(r).ListSavedFinds(r.Context(), table)
+	if err != nil {
+		writeSavedFindError(w, r, err)
+		return
+	}
+
+	// Without a table, the list is filtered to what the caller can read, so
+	// a find does not disclose criteria on a table they cannot search.
+	if table == "" {
+		sess := currentSession(r)
+		if !sess.IsAdmin() {
+			svc := schemaService(r)
+			allowed := make([]schema.SavedFind, 0, len(finds))
+			levels := map[string]string{}
+			for _, find := range finds {
+				level, ok := levels[find.TableName]
+				if !ok {
+					resolved, err := svc.TableAccess(r.Context(), sess.UserID, find.TableName)
+					if err != nil {
+						telemetry.WriteInternalError(w, r, err)
+						return
+					}
+					level, levels[find.TableName] = resolved, resolved
+				}
+				if level != schema.AccessNone {
+					allowed = append(allowed, find)
+				}
+			}
+			finds = allowed
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(finds)
+}
+
+func (h *SchemaHandler) GetSavedFind(w http.ResponseWriter, r *http.Request) {
+	find, err := schemaService(r).GetSavedFind(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeSavedFindError(w, r, err)
+		return
+	}
+	if !savedFindAccess(w, r, find.TableName) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(find)
+}
+
+func (h *SchemaHandler) CreateSavedFind(w http.ResponseWriter, r *http.Request) {
+	var in schema.SavedFindInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if !savedFindAccess(w, r, in.TableName) {
+		return
+	}
+
+	find, err := schemaService(r).CreateSavedFind(r.Context(), in, currentSession(r).UserID)
+	if err != nil {
+		writeSavedFindError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(find)
+}
+
+func (h *SchemaHandler) UpdateSavedFind(w http.ResponseWriter, r *http.Request) {
+	var in schema.SavedFindInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if !mayChangeSavedFind(w, r, chi.URLParam(r, "id")) {
+		return
+	}
+
+	find, err := schemaService(r).UpdateSavedFind(r.Context(), chi.URLParam(r, "id"), in)
+	if err != nil {
+		writeSavedFindError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(find)
+}
+
+func (h *SchemaHandler) DeleteSavedFind(w http.ResponseWriter, r *http.Request) {
+	if !mayChangeSavedFind(w, r, chi.URLParam(r, "id")) {
+		return
+	}
+	if err := schemaService(r).DeleteSavedFind(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeSavedFindError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// mayChangeSavedFind lets the account that saved a find, and any admin,
+// rename or delete it. Everyone else can run it but not change it.
+func mayChangeSavedFind(w http.ResponseWriter, r *http.Request, id string) bool {
+	find, err := schemaService(r).GetSavedFind(r.Context(), id)
+	if err != nil {
+		writeSavedFindError(w, r, err)
+		return false
+	}
+	if !savedFindAccess(w, r, find.TableName) {
+		return false
+	}
+	sess := currentSession(r)
+	if sess.IsAdmin() || find.CreatedBy == "" || find.CreatedBy == sess.UserID {
+		return true
+	}
+	writeForbidden(w, r, "this find was saved by another account")
+	return false
+}
+
+func writeSavedFindError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, schema.ErrSavedFindNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Saved Find Not Found", err.Error())
+	case errors.Is(err, schema.ErrSavedFindExists):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Saved Find Already Exists", err.Error())
+	case errors.Is(err, schema.ErrInvalidSavedFind):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Saved Find", err.Error())
 	default:
 		writeSchemaError(w, r, err)
 	}
