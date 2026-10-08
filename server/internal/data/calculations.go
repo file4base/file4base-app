@@ -104,6 +104,13 @@ func (s *Service) applyCalculations(ctx context.Context, tableName string, recor
 	if err != nil {
 		return err
 	}
+	return applyCalculationsTo(calculations, record)
+}
+
+// applyCalculationsTo computes calculations that were read already, which is
+// what an import does: the formulas are read once and applied to every row
+// rather than fetched again for each (#38).
+func applyCalculationsTo(calculations []calculation, record map[string]interface{}) error {
 	for _, c := range calculations {
 		answer, err := calc.Evaluate(c.expr, calc.Record(record), c.result)
 		if err != nil {

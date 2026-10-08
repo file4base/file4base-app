@@ -7,6 +7,7 @@ import '../../core/services/solution_storage.dart';
 enum ExportFormat {
   csv,
   tsv,
+  xlsx,
   json,
   xml,
   html,
@@ -17,11 +18,20 @@ class ExportRecordsDialog extends StatefulWidget {
   final List<TableModel> tables;
   final TableModel? initialTable;
 
+  /// The find requests that define the found set of [initialTable], so the
+  /// export can be of what was found rather than the whole table (#38).
+  final List<Map<String, dynamic>> findRequests;
+
+  /// How many records that found set holds, for saying so.
+  final int foundCount;
+
   const ExportRecordsDialog({
     super.key,
     required this.apiClient,
     required this.tables,
     this.initialTable,
+    this.findRequests = const [],
+    this.foundCount = 0,
   });
 
   static Future<void> show(
@@ -29,6 +39,8 @@ class ExportRecordsDialog extends StatefulWidget {
     required ApiClient apiClient,
     required List<TableModel> tables,
     TableModel? initialTable,
+    List<Map<String, dynamic>> findRequests = const [],
+    int foundCount = 0,
   }) {
     return showDialog(
       context: context,
@@ -36,6 +48,8 @@ class ExportRecordsDialog extends StatefulWidget {
         apiClient: apiClient,
         tables: tables,
         initialTable: initialTable,
+        findRequests: findRequests,
+        foundCount: foundCount,
       ),
     );
   }
@@ -48,6 +62,17 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
   late TableModel? _selectedTable;
   ExportFormat _selectedFormat = ExportFormat.csv;
   bool _includeHeaders = true;
+
+  /// Write the found set rather than the whole table. Only offered when
+  /// there is one, and only for the table it was found in.
+  bool _foundSetOnly = true;
+
+  /// True when a found set is in hand for the table being exported.
+  bool get _hasFoundSet =>
+      widget.findRequests.isNotEmpty && _selectedTable?.id == widget.initialTable?.id;
+
+  List<Map<String, dynamic>> get _requests =>
+      _hasFoundSet && _foundSetOnly ? widget.findRequests : const [];
   bool _isExporting = false;
   String? _statusMessage;
   String? _errorMessage;
@@ -63,7 +88,9 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
       case ExportFormat.csv:
         return 'CSV (Comma-Separated Values)';
       case ExportFormat.tsv:
-        return 'Excel / Tab-Separated (.tsv / .xls)';
+        return 'Tab-Separated Text (.tsv)';
+      case ExportFormat.xlsx:
+        return 'Excel Workbook (.xlsx)';
       case ExportFormat.json:
         return 'JSON (JavaScript Object Notation)';
       case ExportFormat.xml:
@@ -79,6 +106,8 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
         return 'csv';
       case ExportFormat.tsv:
         return 'tsv';
+      case ExportFormat.xlsx:
+        return 'xlsx';
       case ExportFormat.json:
         return 'json';
       case ExportFormat.xml:
@@ -120,6 +149,10 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
 
   Uint8List _generateExportBytes(List<Map<String, dynamic>> rows, List<String> columns) {
     switch (_selectedFormat) {
+      // A workbook never reaches here: the server writes it (see
+      // _exportWorkbook), because it is the one format needing a library.
+      case ExportFormat.xlsx:
+        throw StateError('a workbook is written by the server');
       case ExportFormat.csv:
       case ExportFormat.tsv:
         final delimiter = _selectedFormat == ExportFormat.csv ? ',' : '\t';
@@ -180,6 +213,34 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
     }
   }
 
+  /// An Excel workbook is written by the server: it is the only format that
+  /// needs a library, and the server already has one for reading them.
+  Future<void> _exportWorkbook() async {
+    final table = _selectedTable!;
+    final columns = table.columns.where((c) => c.fieldType != 'SUMMARY').toList();
+
+    setState(() => _statusMessage = 'Writing the workbook...');
+    final bytes = await widget.apiClient.exportRecords(
+      table.name,
+      format: 'xlsx',
+      name: table.displayName,
+      requests: _requests,
+      fields: [for (final c in columns) c.name],
+      headings: _includeHeaders ? [for (final c in columns) c.displayName] : const [],
+    );
+
+    final filename = '${table.name}_export.xlsx';
+    await SolutionStorageService.saveFile(filename: filename, bytes: bytes);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Exported "$filename".'),
+        backgroundColor: Colors.green.shade700,
+      ),
+    );
+  }
+
   Future<void> _performExport() async {
     if (_selectedTable == null) {
       setState(() => _errorMessage = 'Please select a table to export.');
@@ -193,11 +254,20 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
     });
 
     try {
+      // A workbook is written by the server, which has the library for it;
+      // everything else is formatted here (#38).
+      if (_selectedFormat == ExportFormat.xlsx) {
+        await _exportWorkbook();
+        return;
+      }
+
       // Every page must arrive before anything is saved (issue #6).
-      final rows = await widget.apiClient.listAllRows(_selectedTable!.name, onProgress: (n) {
-        if (mounted) setState(() => _statusMessage = 'Fetching records from server... $n');
-      });
-      
+      final rows = _requests.isEmpty
+          ? await widget.apiClient.listAllRows(_selectedTable!.name, onProgress: (n) {
+              if (mounted) setState(() => _statusMessage = 'Fetching records from server... $n');
+            })
+          : await widget.apiClient.executeFindAll(_selectedTable!.name, _requests);
+
       if (!mounted) return;
 
       setState(() {

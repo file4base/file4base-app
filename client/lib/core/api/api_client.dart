@@ -732,6 +732,76 @@ class SummaryResultModel {
   }
 }
 
+/// What a file holds, read without writing anything (#38).
+class ImportPreviewModel {
+  final List<String> columns;
+
+  /// The sheets of a workbook, so another one can be chosen.
+  final List<String> sheets;
+
+  /// The first rows, for showing what is about to be brought in.
+  final List<List<String>> rows;
+
+  final int rowCount;
+
+  /// True when the file held more rows than the limit allowed.
+  final bool truncated;
+
+  const ImportPreviewModel({
+    this.columns = const [],
+    this.sheets = const [],
+    this.rows = const [],
+    this.rowCount = 0,
+    this.truncated = false,
+  });
+
+  factory ImportPreviewModel.fromJson(Map<String, dynamic> json) => ImportPreviewModel(
+        columns: [for (final c in (json['columns'] as List? ?? const [])) c as String],
+        sheets: [for (final s in (json['sheets'] as List? ?? const [])) s as String],
+        rows: [
+          for (final row in (json['rows'] as List? ?? const []))
+            [for (final cell in (row as List? ?? const [])) cell?.toString() ?? ''],
+        ],
+        rowCount: (json['row_count'] as num?)?.toInt() ?? 0,
+        truncated: json['truncated'] as bool? ?? false,
+      );
+
+  /// The value at a position, or "" when the row is short.
+  String cell(int row, int column) {
+    if (row < 0 || row >= rows.length) return '';
+    final cells = rows[row];
+    return column < 0 || column >= cells.length ? '' : cells[column];
+  }
+}
+
+/// What an import did.
+class ImportReportModel {
+  final int rows;
+  final int added;
+  final int updated;
+  final int skipped;
+  final List<String> fields;
+  final bool truncated;
+
+  const ImportReportModel({
+    this.rows = 0,
+    this.added = 0,
+    this.updated = 0,
+    this.skipped = 0,
+    this.fields = const [],
+    this.truncated = false,
+  });
+
+  factory ImportReportModel.fromJson(Map<String, dynamic> json) => ImportReportModel(
+        rows: (json['rows'] as num?)?.toInt() ?? 0,
+        added: (json['added'] as num?)?.toInt() ?? 0,
+        updated: (json['updated'] as num?)?.toInt() ?? 0,
+        skipped: (json['skipped'] as num?)?.toInt() ?? 0,
+        fields: [for (final f in (json['fields'] as List? ?? const [])) f as String],
+        truncated: json['truncated'] as bool? ?? false,
+      );
+}
+
 class ApiClient {
   final String baseUrl;
   final http.Client _httpClient;
@@ -1116,6 +1186,101 @@ class ApiClient {
       headers: _headers(),
     );
     _checkResponse(response);
+  }
+
+  /// Reads an uploaded file and reports what is in it, without writing
+  /// anything: the columns, the sheets a workbook holds, and the first rows,
+  /// so the import dialog can show what is about to be brought in (#38).
+  Future<ImportPreviewModel> previewImport(
+    String table, {
+    required String fileName,
+    required Uint8List bytes,
+    String? format,
+    bool hasHeader = true,
+    String? delimiter,
+    String? sheet,
+    String? recordElement,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/import/preview'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'file_name': fileName,
+        'content': base64Encode(bytes),
+        if (format != null) 'format': format,
+        'has_header': hasHeader,
+        if (delimiter != null) 'delimiter': delimiter,
+        if (sheet != null) 'sheet': sheet,
+        if (recordElement != null) 'record_element': recordElement,
+      }),
+    );
+    _checkResponse(response);
+    return ImportPreviewModel.fromJson(Map<String, dynamic>.from(jsonDecode(response.body) as Map));
+  }
+
+  /// Brings the records of a file into a table (#38).
+  ///
+  /// One transaction: the first row that cannot be read takes the whole file
+  /// with it, and the error says which row it was.
+  Future<ImportReportModel> importRecords(
+    String table, {
+    required String fileName,
+    required Uint8List bytes,
+    required Map<String, dynamic> options,
+    String? format,
+    bool hasHeader = true,
+    String? delimiter,
+    String? sheet,
+    String? recordElement,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/import'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'file_name': fileName,
+        'content': base64Encode(bytes),
+        if (format != null) 'format': format,
+        'has_header': hasHeader,
+        if (delimiter != null) 'delimiter': delimiter,
+        if (sheet != null) 'sheet': sheet,
+        if (recordElement != null) 'record_element': recordElement,
+        'options': options,
+      }),
+    );
+    _checkResponse(response);
+    return ImportReportModel.fromJson(Map<String, dynamic>.from(jsonDecode(response.body) as Map));
+  }
+
+  /// Writes a found set out as CSV, tab-separated text or a workbook, and
+  /// hands back the bytes to save (#38).
+  Future<Uint8List> exportRecords(
+    String table, {
+    String format = 'csv',
+    String? name,
+    List<Map<String, dynamic>> requests = const [],
+    List<String> fields = const [],
+    List<String> headings = const [],
+    List<String> sort = const [],
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/export'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'format': format,
+        if (name != null) 'name': name,
+        'requests': requests,
+        'fields': fields,
+        'headings': headings,
+        'sort': [
+          for (final field in sort)
+            field.startsWith('-')
+                ? {'field': field.substring(1), 'descending': true}
+                : {'field': field, 'descending': false},
+        ],
+      }),
+    );
+    _checkResponse(response);
+    return response.bodyBytes;
   }
 
   /// Works out the figures of a report over a found set (#32).

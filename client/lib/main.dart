@@ -19,6 +19,7 @@ import 'features/layout_engine/layout_designer_widget.dart';
 import 'features/layout_engine/layout_preview_widget.dart';
 import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/new_layout_assistant.dart';
+import 'features/data_io/import_records_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'core/models/file_options_model.dart';
 import 'core/models/page_setup_model.dart';
@@ -1108,6 +1109,42 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       apiClient: client,
       tables: _tables,
       initialTable: _selectedTable,
+      // So the export can be of the found set rather than the table (#38).
+      findRequests: _foundSetRequests,
+      foundCount: _totalRecords,
+    );
+  }
+
+  /// File > Import Records: brings records in from a CSV, a tab-separated
+  /// file, an Excel workbook or XML (#38).
+  Future<void> _handleImportRecords() async {
+    if (_currentUser == null) {
+      _startAuthSequence();
+      return;
+    }
+    final table = _selectedTable;
+    if (table == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Choose the table to import into first.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final client = ref.read(apiClientProvider);
+    final report = await ImportRecordsDialog.show(context, table: table, apiClient: client);
+    if (report == null || !mounted) return;
+
+    // The found set is now out of date, so the records are read again.
+    _dataBrowserKey.currentState?.fetchRecords();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Imported ${report.added} added, ${report.updated} updated '
+            'from ${report.rows} row(s).'),
+        backgroundColor: Colors.green.shade700,
+      ),
     );
   }
 
@@ -1304,6 +1341,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onPrint: _handlePrint,
                   onQuit: _handleQuit,
                   onExportRecords: _handleExportRecords,
+                  onImportRecords: _handleImportRecords,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
                   onDuplicateRecord: () => _dataBrowserKey.currentState?.duplicateRecord(),

@@ -499,6 +499,96 @@ Supported operators: `=`, `!=`, `>`, `<`, `>=`, `<=`, `LIKE`, `RANGE`, `IS_EMPTY
 
 ---
 
+### Importing and exporting records
+
+File4Base reads records out of comma- and tab-separated text, Excel workbooks and XML, and writes a found set back out (#38). See [docs/specs/importing_and_exporting_records.md](../specs/importing_and_exporting_records.md).
+
+The file travels **base64 in the JSON body**, beside the settings, rather than as a separate upload, so one request carries the file and what to do with it. The format is taken from `format`, or guessed from `file_name`.
+
+### `POST /api/v1/data/{table}/import/preview`
+
+Reads a file and reports what is in it. **Writes nothing**, but needs write access to the table, because it is a step on the way to writing.
+
+#### Request Body
+```json
+{
+  "file_name": "customers.csv",
+  "content": "TGFzdCBOYW1lLENpdHkKRHVyYW5kLFBhcmlzCg==",
+  "format": "csv",
+  "has_header": true,
+  "delimiter": ",",
+  "sheet": "Customers",
+  "record_element": "customer"
+}
+```
+`format` is `csv`, `tsv`, `xlsx` or `xml`. `delimiter` empty means the parser works it out. `sheet` and `record_element` apply to workbooks and XML.
+
+#### Response `200 OK`
+```json
+{
+  "columns": ["Last Name", "City"],
+  "sheets": ["Customers", "Notes"],
+  "rows": [["Durand", "Paris"]],
+  "row_count": 2,
+  "truncated": false
+}
+```
+`rows` is at most the first 20, for a preview. `truncated` is true when the file held more rows than the guards allow — the rest were not read, and saying so is the caller's job.
+
+### `POST /api/v1/data/{table}/import`
+
+Brings the records in. Same body, plus `options`:
+
+```json
+{
+  "options": {
+    "action": "add",
+    "date_order": "dmy",
+    "mappings": [{"column": 0, "field": "last_name"}, {"column": 1, "field": "city"}],
+    "match_fields": ["last_name"],
+    "add_unmatched": false
+  }
+}
+```
+
+- `action` — `add` makes every row a new record; `update_matching` updates the record whose `match_fields` hold the same values, case-insensitively, and adds or passes over the rest according to `add_unmatched`.
+- `date_order` — `iso` (default), `dmy` or `mdy`. `03/04/2011` cannot be read without being told.
+- `mappings` — which column goes to which field. A column not listed is left out.
+
+**One transaction.** The first row that cannot be read or stored takes the whole file with it; nothing is written and the error names the row and the column. The field validation rules apply, and calculation fields are worked out for imported records.
+
+A column sent to a **calculation** or a **summary** field is refused: the first's formula owns its value, the second has none in a record.
+
+#### Response `200 OK`
+```json
+{"rows": 2, "added": 2, "updated": 0, "skipped": 0, "fields": ["last_name", "city"], "truncated": false}
+```
+
+#### Errors
+- `422 Import Failed` — a bad mapping, or a row that could not be read. The detail names the row and the column.
+- `422 Invalid Source File` — the file is not what it claims to be.
+- `413 Source File Too Large` — past the 25 MiB, 100 000-row or 256-column guard.
+
+### `POST /api/v1/data/{table}/export`
+
+Writes a found set out and returns the file itself, with `Content-Disposition` and an `X-File4Base-Rows` count.
+
+#### Request Body
+```json
+{
+  "format": "xlsx",
+  "name": "Customers",
+  "requests": [{"criteria": [{"field_name": "city", "operator": "=", "value": "Paris"}]}],
+  "fields": ["last_name", "city"],
+  "headings": ["Last Name", "City"],
+  "sort": [{"field": "last_name"}]
+}
+```
+
+`format` is `csv`, `tsv` or `xlsx`; XML is read but not written. `requests` takes the same find requests a find does, so what is exported is what was found — empty exports the table. Empty `fields` writes every field by name. A date is written as a date rather than as the timestamp the column holds, and a CSV carries a byte order mark so Excel opens it as UTF-8.
+
+---
+
 ### `POST /api/v1/data/{table}/summary`
 
 Works out the figures of a report: what each summary field comes to over the found set, and over each group of it (#32). See [docs/specs/summary_fields_and_reports.md](../specs/summary_fields_and_reports.md).

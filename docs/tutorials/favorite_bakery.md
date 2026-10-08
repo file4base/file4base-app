@@ -4,8 +4,8 @@ This tutorial builds a working database from nothing: the customer list of a
 fictitious business called **Favorite Bakery**, which lets customers pay an
 annual fee in exchange for a discount. By the end you will have two tables, a
 relationship between them, several layouts, a found set, a sorted list, a
-report that subtotals, a chart, a sheet of mailing labels, a portal, a
-printable sheet and a second account.
+report that subtotals, a chart, a sheet of mailing labels, a portal, an
+imported file, a printable sheet and a second account.
 
 It takes about an hour.
 
@@ -34,11 +34,12 @@ this tutorial says so instead of describing it — see
 - [Lesson 13 — A chart](#lesson-13--a-chart)
 - [Lesson 14 — Labels and a letter](#lesson-14--labels-and-a-letter)
 - [Lesson 15 — Preview and print](#lesson-15--preview-and-print)
-- [Lesson 16 — A second table and a relationship](#lesson-16--a-second-table-and-a-relationship)
-- [Lesson 17 — Show related records](#lesson-17--show-related-records)
-- [Lesson 18 — Scripts](#lesson-18--scripts)
-- [Lesson 19 — Accounts and privileges](#lesson-19--accounts-and-privileges)
-- [Lesson 20 — Backups](#lesson-20--backups)
+- [Lesson 16 — Import and export records](#lesson-16--import-and-export-records)
+- [Lesson 17 — A second table and a relationship](#lesson-17--a-second-table-and-a-relationship)
+- [Lesson 18 — Show related records](#lesson-18--show-related-records)
+- [Lesson 19 — Scripts](#lesson-19--scripts)
+- [Lesson 20 — Accounts and privileges](#lesson-20--accounts-and-privileges)
+- [Lesson 21 — Backups](#lesson-21--backups)
 - [Reference: the sample data](#reference-the-sample-data)
 - [What is not here yet](#what-is-not-here-yet)
 
@@ -972,7 +973,121 @@ Choose **View > Browse Mode** to come back.
 
 ---
 
-## Lesson 16 — A second table and a relationship
+## Lesson 16 — Import and export records
+
+Typing sixteen customers in was lesson 4. Most data arrives in a file somebody
+else wrote.
+
+### Export what you have
+
+Choose **File > Export Records...**
+
+| | |
+| --- | --- |
+| **Table** | Customers |
+| **Format** | CSV (Comma-Separated Values) |
+| **Include headers** | ticked |
+
+Click **Export** and save it. Open it in a spreadsheet: sixteen rows under a
+line of column headings. **Dates come out as dates** — `2011-01-15`, not the
+timestamp the column holds — and a CSV is written with a byte order mark, so
+accented names survive being opened in Excel.
+
+Choosing **Excel Workbook (.xlsx)** writes a real workbook instead. That one is
+written by the server, which has the library for it.
+
+> With a found set in hand, the dialog offers to export **that** rather than
+> the whole table. Find the Paris customers first and the export is five rows.
+
+### Import a file
+
+Make a file called `new_customers.csv` with these lines:
+
+```
+Last Name,First Name,City,Country,Customer Type,Fee Paid,Date Paid
+Moreau,Élise,Lyon,France,New,200,2026-02-11
+Okafor,Chidi,Lagos,Nigeria,Continuing,100,2026-03-02
+```
+
+Then choose **File > Import Records > File...** and pick it.
+
+The dialog reads the file and says `new_customers.csv — 2 row(s), 7 column(s)`.
+Underneath, every column of the file gets a row, with its first value as a
+sample and a field to send it to.
+
+**Most of them are already matched.** File4Base matches a column to the field
+whose name or label it looks like, so `Last Name` found Last Name and
+`Fee Paid` found Fee Paid. A column that matches nothing is **left out** until
+you say otherwise — it does not guess.
+
+Three settings sit above the mapping:
+
+| | |
+| --- | --- |
+| **First row holds the column names** | ticked — otherwise the headings would be imported as a record |
+| **Sheet** | shown only for a workbook with more than one |
+| **Dates are written** | **Year first**, because this file is `2026-02-11` |
+
+> **Why File4Base asks about dates.** `03/04/2011` is 3 April in most of the
+> world and 4 March in the United States, and nothing in the value says which.
+> Rather than guess and be wrong half the time, the import asks. Get it wrong
+> and you are told: a day of 25 is no month, so the import stops and names the
+> row.
+
+Leave **Add every row as a new record** selected and click **Import**.
+
+> `2 row(s) read from new_customers.csv` — `2 record(s) added`
+
+Back in Browse mode there are **18 records**. Find Élise Moreau and look at her
+**Annual Fee**: **200**. The calculation from lesson 10 ran for the imported
+records too — importing is not a back door around the rest of the database.
+
+### A file that will not go in
+
+Change `200` to `two hundred` in the first row and import it again.
+
+Nothing happens, and the dialog says:
+
+> `import failed: row 2, Fee Paid: "two hundred" is not a number`
+
+Not "the import failed" — **which row, which column, and what was in it**. And
+nothing was imported: the row before it was fine, and it is not there either.
+An import is one go. A half-imported file is worse than none, because you
+cannot tell by looking where it stopped.
+
+### Updating instead of adding
+
+Say a file holds new phone numbers for customers you already have. Choose
+**Update the records that match, on:** and pick **Last Name**. Each row finds
+its record and changes the fields its columns were sent to; **a field no column
+was sent to is left alone**.
+
+Rows that match nothing are passed over, unless you tick **Add the rows that
+match no record**.
+
+Matching ignores case, the way a find does, and a row whose match field is
+empty matches nothing rather than everything.
+
+### What it reads
+
+| | |
+| --- | --- |
+| **File...** | CSV, tab-separated text, an Excel workbook (.xlsx) or XML |
+| **XML Data Source...** | the same dialog; it reads a repeating element, and FileMaker's own `FMPXMLRESULT` export |
+| **Folder...** | greyed out — importing a folder of pictures is not built |
+| **ODBC Data Source...** | greyed out — reading a live database is its own job |
+
+A file is read up to 25 MB, 100 000 rows and 256 columns. Past that, the rows
+that were read are still shown and the dialog says the file was cut, rather
+than importing part of it quietly.
+
+Two fields can never be imported into: a **calculation**, whose formula owns
+its value, and a **summary**, which has no value in a record. They are not
+offered in the mapping.
+
+---
+
+## Lesson 17 — A second table and a relationship
 
 Customers work for companies, and several customers work for the same one. That
 is a second table.
@@ -1008,7 +1123,7 @@ Then enter three records in Browse mode:
    on the left, `customers` on the right — then click the **Company** field in
    each list.
 4. Tick **Allow records to be created in "customers" through this
-   relationship**. Lesson 17 uses it to add a customer from the company's own
+   relationship**. Lesson 18 uses it to add a customer from the company's own
    layout.
 
    The options name both tables, because they act on one side: the side the
@@ -1020,7 +1135,7 @@ Then enter three records in Browse mode:
      comes back to it.
    - *Sort the related records of "customers" by their match field* — that
      would order them by company, which is the same for all of them. A portal
-     sorts its own rows, which lesson 17 does instead.
+     sorts its own rows, which lesson 18 does instead.
 5. Click **OK**.
 
 A line now joins the two cards, anchored on the two **Company** fields, with an
@@ -1029,9 +1144,9 @@ reads `2 occurrences · 1 relationships`.
 
 ---
 
-## Lesson 17 — Show related records
+## Lesson 18 — Show related records
 
-The relationship from lesson 16 is drawn, but nothing uses it yet. A layout can
+The relationship from lesson 17 is drawn, but nothing uses it yet. A layout can
 read the other side of it in two ways: **one field** of the related record, and
 a **portal**, which is the list of them.
 
@@ -1128,7 +1243,7 @@ Step to the next company and the rows change with it: **DEF Ltd.** has 5 and
   never type the company name — the relationship owns that field, and a value
   sent for it would be overwritten.
 
-  This needs *Allow records to be created…* on the relationship, which lesson 16
+  This needs *Allow records to be created…* on the relationship, which lesson 17
   ticked. Without it the row is still offered but the server refuses, and the
   Portal Setup panel warns you.
 - **Remove.** The button at the right of each row deletes that customer record.
@@ -1165,7 +1280,7 @@ wrong one for customers, who outlive the company they happen to work for.
 
 ---
 
-## Lesson 18 — Scripts
+## Lesson 19 — Scripts
 
 Choose **Scripts > Script Workspace...**
 
@@ -1192,7 +1307,7 @@ without executing them.
 
 ---
 
-## Lesson 19 — Accounts and privileges
+## Lesson 20 — Accounts and privileges
 
 Choose **File > Manage > Security...**
 
@@ -1226,7 +1341,7 @@ account roles and layout privileges to restrict access today.
 
 ---
 
-## Lesson 20 — Backups
+## Lesson 21 — Backups
 
 The database lives in PostgreSQL (or MariaDB), so backing it up means backing up
 the engine's data.
@@ -1314,13 +1429,12 @@ A find cannot be named and run again later.
 **No find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46))**.**
 Find mode takes criteria on the record's own fields. A related field says so in
 Find mode rather than offering a box that would do nothing. Portals and related
-fields themselves do work — see lesson 17.
+fields themselves do work — see lesson 18.
 
-**No import of foreign files** ([#38](https://github.com/file4base/file4base-app/issues/38))**.** *File > Import Records* (file, folder, XML,
-ODBC) is a roadmap item. File4Base reads its own `.f4p` solutions and `.f4data`
-data files.
+**No import from ODBC, and no folder import** ([#47](https://github.com/file4base/file4base-app/issues/47))**.**
+Both menu items are greyed out. Files do import — lesson 16 brings a CSV in.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 19.
+**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 20.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

@@ -57,6 +57,10 @@ class File4BaseMenuBar extends StatelessWidget {
   final double? zoomLevel;
   final VoidCallback? onChangePassword;
   final VoidCallback? onExportRecords;
+
+  /// File > Import Records > File... — brings records in from a CSV, a
+  /// tab-separated file, an Excel workbook or XML (#38).
+  final VoidCallback? onImportRecords;
   final VoidCallback? onPrint;
   final VoidCallback? onQuit;
   final bool isAuthenticated;
@@ -96,6 +100,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onPrint,
     this.onQuit,
     this.onExportRecords,
+    this.onImportRecords,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -433,20 +438,30 @@ class File4BaseMenuBar extends StatelessWidget {
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Import File', 'Roadmap Phase 4', 'Import CSV, XLSX, XML, or JSON into active table.'),
+              onPressed: !isAuthenticated
+                  ? () => _showNotice(context, 'Authentication Required',
+                      'Please sign in to import records.')
+                  : onImportRecords,
               child: const Text('File...'),
             ),
-            MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Import Folder', 'Roadmap Phase 8', 'Batch import image assets into container fields.'),
-              child: const Text('Folder...'),
+            // Importing a folder of pictures into container fields, and
+            // reading an ODBC source, are separate pieces of work; the items
+            // are shown disabled rather than opening a dialog that does
+            // nothing (#38).
+            const MenuItemButton(
+              onPressed: null, // not implemented: shown disabled
+              child: Text('Folder...'),
             ),
             MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Import XML', 'Roadmap Phase 4', 'Parse XML schema data source.'),
+              onPressed: !isAuthenticated
+                  ? () => _showNotice(context, 'Authentication Required',
+                      'Please sign in to import records.')
+                  : onImportRecords,
               child: const Text('XML Data Source...'),
             ),
-            MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Import ODBC', 'Roadmap Phase 4', 'Extract data directly from ODBC origin.'),
-              child: const Text('ODBC Data Source...'),
+            const MenuItemButton(
+              onPressed: null, // not implemented: shown disabled
+              child: Text('ODBC Data Source...'),
             ),
           ],
           child: const Text('Import Records'),
@@ -454,7 +469,7 @@ class File4BaseMenuBar extends StatelessWidget {
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export records.')
-              : (onExportRecords ?? () => _showRoadmapDialog(context, 'Export Records', 'Roadmap Phase 4', 'Export records to CSV, JSON, XML, or Excel format.')),
+              : onExportRecords,
           child: const Text('Export Records...'),
         ),
         MenuItemButton(

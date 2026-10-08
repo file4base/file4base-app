@@ -108,7 +108,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and the layout themes and label stock of
     [#33](https://github.com/file4base/file4base-app/issues/33).
 
+- **Importing records from CSV, tab-separated text, Excel and XML**
+  ([#38](https://github.com/file4base/file4base-app/issues/38)). File4Base
+  could only read its own files, so an existing data set could not be loaded
+  into a new database without going through the REST API by hand; all four
+  **File > Import Records** entries opened a roadmap dialog. Lesson 16 of the
+  tutorial is new;
+  [docs/specs/importing_and_exporting_records.md](docs/specs/importing_and_exporting_records.md)
+  is the specification.
+  - A new `dataio` package parses the formats other programs write. The
+    separator of a delimited file is worked out when it is not given, a byte
+    order mark is stripped, quoted values keep their commas and newlines, and
+    a short row is a row with empty cells. An Excel workbook is read a sheet
+    at a time, as the text the sheet shows. XML is read either as a repeating
+    element, worked out from the file, or as FileMaker's own `FMPXMLRESULT`.
+  - **Everything arrives as text**, and turning it into a value is the
+    import's job, so a value that will not convert is reported with the row
+    and column it came from rather than quietly becoming zero. An empty cell
+    is nothing, never a zero or a blank date.
+  - **A date is not guessed**: `03/04/2011` is 3 April or 4 March depending on
+    where the file came from, so the dialog asks and the error names the order
+    it tried.
+  - **A field mapping** with a preview of the file, matching each column to
+    the field whose name or label it looks like and leaving the rest out
+    rather than guessing. A column cannot be sent to a calculation field,
+    whose formula owns its value, or a summary field, which has no value in a
+    record.
+  - **Add** every row, or **update the records that match** on chosen fields,
+    adding or passing over the rows that match nothing. Matching ignores case
+    as a find does, and an empty key matches nothing.
+  - **One transaction.** The first row that cannot be read or stored takes the
+    whole file with it — not even the rows before it are written — and the
+    error names the row and the column. The field validation rules apply, and
+    calculation fields are worked out for imported records.
+  - Size, row and column guards for text and spreadsheets, equivalent to what
+    `msgpackguard` gives the MessagePack path. A file read in part says so
+    rather than importing quietly.
+  - Three endpoints: `POST /api/v1/data/{table}/import/preview`, `/import` and
+    `/export`, documented in
+    [docs/api/API_REFERENCE.md](docs/api/API_REFERENCE.md).
+  - **ODBC is now [#47](https://github.com/file4base/file4base-app/issues/47)**,
+    as the issue itself suggested: a network client, a credential store and
+    probably a cgo dependency, each worth its own argument. That menu item and
+    **Folder...** are shown disabled rather than opening a dialog that does
+    nothing.
+
 ### Changed
+- **Export Records** writes an **Excel workbook** as well as the formats it
+  already wrote, and can write the **found set** rather than the whole table.
+  The workbook is written by the server, which is the one format needing a
+  library ([#38](https://github.com/file4base/file4base-app/issues/38)).
 - Preview prints the **found set**, not the whole table. It had always read
   every record regardless of the find, which only became visible once a report
   could be printed ([#32](https://github.com/file4base/file4base-app/issues/32)).
@@ -122,6 +171,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A report over records that were not in its order crashed instead of drawing
   with its warning: a group that opened twice gave two bands the same key
   ([#32](https://github.com/file4base/file4base-app/issues/32)).
+- An exported DATE came out in Go's default time format
+  (`2011-03-01 00:00:00 +0000 UTC`) on PostgreSQL, which returns a time rather
+  than text. A date is written as a date on both engines
+  ([#38](https://github.com/file4base/file4base-app/issues/38)).
+- The two radio buttons choosing what an import does were built with the
+  per-tile `groupValue` and `onChanged`, which newer Flutter ignores without a
+  `RadioGroup` ancestor, so the taps did nothing
+  ([#38](https://github.com/file4base/file4base-app/issues/38)).
 - Switching to a layout carrying charts never read their figures, so they sat
   on "Reading the figures…" for good: nothing but fetching records loaded them,
   and switching layouts does not fetch records

@@ -1,13 +1,16 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/data"
+	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
@@ -34,6 +37,9 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/", h.InsertRow)
 		r.Post("/find", h.FindRows)
 		r.Post("/summary", h.SummarizeRows)
+		r.Post("/import/preview", h.PreviewImport)
+		r.Post("/import", h.ImportRows)
+		r.Post("/export", h.ExportRows)
 		r.Get("/{id}", h.GetRow)
 		r.Get("/{id}/related", h.ListRelatedRows)
 		r.Post("/{id}/related", h.CreateRelatedRow)
@@ -73,6 +79,12 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 	switch {
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
+	case errors.Is(err, dataio.ErrSourceTooLarge):
+		telemetry.WriteProblem(w, r, http.StatusRequestEntityTooLarge, "Source File Too Large", err.Error())
+	case errors.Is(err, dataio.ErrInvalidSource):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Source File", err.Error())
+	case errors.Is(err, data.ErrImport):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Import Failed", err.Error())
 	case errors.Is(err, data.ErrInvalidSummary):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Summary Field", err.Error())
 	case errors.Is(err, data.ErrRelationshipNotFound):
@@ -247,6 +259,204 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(results)
+}
+
+// ImportBody is what the import endpoints take: the file itself, base64 so it
+// travels in JSON beside the settings, and how to read it.
+type ImportBody struct {
+	FileName string `json:"file_name"`
+
+	// The file, base64 encoded (standard alphabet, padding optional).
+	Content string `json:"content"`
+
+	Format        string `json:"format"`
+	HasHeader     bool   `json:"has_header"`
+	Delimiter     string `json:"delimiter"`
+	Sheet         string `json:"sheet"`
+	RecordElement string `json:"record_element"`
+
+	// Only used by the import itself, not by the preview.
+	Options data.ImportOptions `json:"options"`
+}
+
+// parseSource decodes and reads the file an import body carries.
+func parseSource(body ImportBody) (*dataio.Table, error) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(body.Content))
+	if err != nil {
+		// A client that left the padding off still gets read.
+		raw, err = base64.RawStdEncoding.DecodeString(strings.TrimSpace(body.Content))
+		if err != nil {
+			return nil, fmt.Errorf("%w: the file could not be decoded: %v", dataio.ErrInvalidSource, err)
+		}
+	}
+
+	format := dataio.Format(strings.ToLower(strings.TrimSpace(body.Format)))
+	if format == "" {
+		format = dataio.FormatFromName(body.FileName)
+	}
+
+	return dataio.Parse(raw, dataio.Options{
+		Format:        format,
+		HasHeader:     body.HasHeader,
+		Delimiter:     body.Delimiter,
+		Sheet:         body.Sheet,
+		RecordElement: body.RecordElement,
+	})
+}
+
+// PreviewImport reads a file and reports what is in it, without writing
+// anything (#38).
+//
+//	POST /api/v1/data/{table}/import/preview
+//
+// It answers the columns the file has, the sheets a workbook holds, and the
+// first rows, so the import dialog can show what is about to be brought in
+// and match the columns to the fields.
+func (h *DataHandler) PreviewImport(w http.ResponseWriter, r *http.Request) {
+	table := chi.URLParam(r, "table")
+	// Previewing writes nothing, but it reads a file into a table the caller
+	// must be allowed to write to, so it asks for write access.
+	if _, ok := h.authorize(w, r, table, true); !ok {
+		return
+	}
+
+	var body ImportBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	source, err := parseSource(body)
+	if err != nil {
+		writeDataError(w, r, http.StatusUnprocessableEntity, "Invalid Source File", err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"columns":   source.Columns,
+		"sheets":    source.Sheets,
+		"rows":      source.Sample(20),
+		"row_count": len(source.Rows),
+		"truncated": source.Truncated,
+	})
+}
+
+// ImportRows brings the records of a file into a table (#38).
+//
+//	POST /api/v1/data/{table}/import
+//
+// It is one transaction: the first row that cannot be read or stored takes the
+// whole file with it, and the answer says which row it was.
+func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
+	table := chi.URLParam(r, "table")
+	svc, ok := h.authorize(w, r, table, true)
+	if !ok {
+		return
+	}
+
+	var body ImportBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	source, err := parseSource(body)
+	if err != nil {
+		writeDataError(w, r, http.StatusUnprocessableEntity, "Invalid Source File", err)
+		return
+	}
+
+	report, err := svc.ImportRecords(r.Context(), table, source, body.Options)
+	if err != nil {
+		writeDataError(w, r, http.StatusUnprocessableEntity, "Import Failed", err)
+		return
+	}
+
+	report.Rows = len(source.Rows)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"rows":      report.Rows,
+		"added":     report.Added,
+		"updated":   report.Updated,
+		"skipped":   report.Skipped,
+		"fields":    report.Fields,
+		"truncated": source.Truncated,
+	})
+}
+
+// ExportBody is what the export endpoint takes.
+type ExportBody struct {
+	Format string `json:"format"`
+
+	// The sheet name of a workbook, and the stem of the suggested file name.
+	Name string `json:"name"`
+
+	data.ExportOptions
+}
+
+// ExportRows writes a found set out as CSV, tab-separated text or a workbook
+// (#38).
+//
+//	POST /api/v1/data/{table}/export
+//
+// The body takes the same find requests a find does, so what is exported is
+// what was found.
+func (h *DataHandler) ExportRows(w http.ResponseWriter, r *http.Request) {
+	table := chi.URLParam(r, "table")
+	svc, ok := h.authorize(w, r, table, false)
+	if !ok {
+		return
+	}
+
+	var body ExportBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	format := dataio.Format(strings.ToLower(strings.TrimSpace(body.Format)))
+	if format == "" {
+		format = dataio.FormatCSV
+	}
+	if format == dataio.FormatXML {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Format Not Supported",
+			"records are exported as csv, tsv or xlsx; XML is read but not written")
+		return
+	}
+
+	source, err := svc.ExportRecords(r.Context(), table, body.ExportOptions)
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Export Failed", err)
+		return
+	}
+
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		name = table
+	}
+
+	var out []byte
+	switch format {
+	case dataio.FormatXLSX:
+		out, err = dataio.WriteXLSX(source, name)
+	case dataio.FormatTSV:
+		out, err = dataio.WriteDelimited(source, '\t', false)
+	default:
+		// With the byte order mark, so Excel opens it as UTF-8 and accented
+		// names survive the round trip.
+		out, err = dataio.WriteDelimited(source, ',', true)
+	}
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", dataio.ContentType(format))
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", name+dataio.Extension(format)))
+	w.Header().Set("X-File4Base-Rows", fmt.Sprint(len(source.Rows)))
+	_, _ = w.Write(out)
 }
 
 // SummarizeRows works out the figures of a report: what each summary field
