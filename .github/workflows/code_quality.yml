@@ -1,31 +1,28 @@
-name: Qodana
+name: Qodana Configuration Upload
+
 on:
-  workflow_dispatch:
-  pull_request:
-  push:
-    branches: # Specify your branches here
-      - main # The 'main' branch
-      - 'releases/*' # The release branches
+    push:
+        branches: [ main, dev ]
+    pull_request:
+        branches: [ main ]
+    workflow_dispatch:
 
 jobs:
-  qodana:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      checks: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}  # to check out the actual pull request commit, not the merge commit
-          fetch-depth: 0  # a full history is required for pull request analysis
-          submodules: false
+    upload-qodana-config:
+        runs-on: ubuntu-latest
 
-      - name: 'Qodana Scan'
-        uses: JetBrains/qodana-action@v2026.1
-        with:
-          pr-mode: false
-          args: --project-dir,client
-        env:
-          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
-          QODANA_ENDPOINT: 'https://qodana.cloud'
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Run Qodana Configuration Uploader
+              env:
+                  QODANA_CONFIGURATIONS_TOKEN: ${{ secrets.QODANA_CONFIGURATIONS_TOKEN }}
+              run: |
+                  docker run --rm \
+                    -v $(pwd):/workspace \
+                    -w /workspace \
+                    -e QODANA_CONFIGURATIONS_TOKEN=$QODANA_CONFIGURATIONS_TOKEN \
+                    jetbrains/qodana-configuration-uploader:latest \
+                    --global-configs-file qodana-global-configurations.yaml \
+                    --qodana-host https://qodana.cloud
