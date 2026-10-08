@@ -1,0 +1,5 @@
+# Qodana global configuration used by the configuration uploader.
+# This keeps the uploader happy while using the default starter profile.
+version: "1.0"
+profiles:
+  - name: qodana.starter
