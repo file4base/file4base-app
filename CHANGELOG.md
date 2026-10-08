@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46)).
+  Since #36 a layout can show a field of a related record; in Find mode that
+  field drew a notice saying finding on it was not supported. It is a criterion
+  box now: what is typed there finds the records whose **related** records match
+  it — "every customer whose company is in Paris" finds customers, not
+  companies.
+  - A criterion names the relationship it reaches through (`relationship_id`,
+    plus `occurrence` when the relationship joins a table to itself) and
+    becomes an `EXISTS` over the related table. It takes the same operators as
+    a criterion on an own field, combines with them with AND, and composes with
+    the OR and omit semantics of several requests.
+  - **A record with an empty match field relates to nothing**, so it never
+    matches a related criterion — the rule the related reads already follow.
+  - **The related table's access is enforced**: a user who cannot see Companies
+    cannot search Customers through it either, on `/find` and on `/summary`.
+  - Saved finds hold related criteria too, checked against the related table.
+  - A related field whose *allow find entry* option is off says it takes no
+    criteria, instead of a box that would do nothing.
 - **Saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34)).
   Several find requests with OR and omit landed in `2779dbe`; what was missing
   was naming a find and running it again. A find is now saved on its table in a

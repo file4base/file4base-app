@@ -103,6 +103,19 @@ func (s *Service) checkSavedFind(ctx context.Context, in SavedFindInput) (SavedF
 	for i, request := range in.Requests {
 		values := make(map[string]string, len(request.Values))
 		for field, value := range request.Values {
+			// A criterion on a related field is held under a key naming the
+			// relationship it reaches through (#46); it is checked against
+			// the related table instead of this one.
+			if related, ok := parseRelatedCriterionKey(field); ok {
+				if err := s.checkRelatedCriterion(ctx, in.TableName, related); err != nil {
+					return in, fmt.Errorf("%w: request %d: %s", ErrInvalidSavedFind, i+1, err.Error())
+				}
+				if value = strings.TrimSpace(value); value == "" {
+					continue
+				}
+				values[field] = value
+				continue
+			}
 			field = dbal.NormalizeIdentifier(field)
 			if _, ok := fields[field]; !ok {
 				return in, fmt.Errorf("%w: request %d searches %q, which is not a field of %q",
@@ -316,4 +329,82 @@ func (s *Service) savedFindNameTaken(ctx context.Context, tableName, name, excep
 		return false, fmt.Errorf("failed checking the name %q: %w", name, err)
 	}
 	return count > 0, nil
+}
+
+// relatedCriterion is a criterion on a field of a related table, as a saved
+// find's key encodes it: "rel:<relationship id>:<occurrence>:<field>" (#46).
+type relatedCriterion struct {
+	RelationshipID string
+	Occurrence     string
+	Field          string
+}
+
+func parseRelatedCriterionKey(key string) (relatedCriterion, bool) {
+	if !strings.HasPrefix(key, "rel:") {
+		return relatedCriterion{}, false
+	}
+	parts := strings.Split(key, ":")
+	if len(parts) < 4 {
+		return relatedCriterion{}, false
+	}
+	return relatedCriterion{
+		RelationshipID: strings.TrimSpace(parts[1]),
+		Occurrence:     strings.TrimSpace(parts[2]),
+		Field:          dbal.NormalizeIdentifier(strings.Join(parts[3:], ":")),
+	}, true
+}
+
+// checkRelatedCriterion verifies that the relationship exists, reaches the
+// table being searched, and that the related table has the field.
+func (s *Service) checkRelatedCriterion(ctx context.Context, tableName string, crit relatedCriterion) error {
+	if crit.RelationshipID == "" || crit.Field == "" {
+		return fmt.Errorf("a criterion on a related field needs a relationship and a field")
+	}
+
+	q := `SELECT lo.id, lo.name, lt.name, ro.id, ro.name, rt.name
+	      FROM sys_relationships r
+	      JOIN sys_table_occurrences lo ON lo.id = r.left_occurrence_id
+	      JOIN sys_tables lt ON lt.id = lo.base_table_id
+	      JOIN sys_table_occurrences ro ON ro.id = r.right_occurrence_id
+	      JOIN sys_tables rt ON rt.id = ro.base_table_id
+	      WHERE r.id = ` + s.savedFindPlaceholder(1)
+	var leftID, leftName, leftTable, rightID, rightName, rightTable string
+	err := s.driver.DB().QueryRowContext(ctx, q, crit.RelationshipID).
+		Scan(&leftID, &leftName, &leftTable, &rightID, &rightName, &rightTable)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("relationship %s is not in this database", crit.RelationshipID)
+	}
+	if err != nil {
+		return err
+	}
+
+	// Which side holds the related records: the occurrence names it, and
+	// without one the side that is not the table being searched.
+	targetTable := ""
+	switch {
+	case crit.Occurrence == rightID || crit.Occurrence == rightName:
+		targetTable = rightTable
+	case crit.Occurrence == leftID || crit.Occurrence == leftName:
+		targetTable = leftTable
+	case crit.Occurrence != "":
+		return fmt.Errorf("relationship %s has no side %q", crit.RelationshipID, crit.Occurrence)
+	case leftTable == tableName && rightTable == tableName:
+		return fmt.Errorf("relationship %s joins %s to itself, so the side to search must be named",
+			crit.RelationshipID, tableName)
+	case leftTable == tableName:
+		targetTable = rightTable
+	case rightTable == tableName:
+		targetTable = leftTable
+	default:
+		return fmt.Errorf("relationship %s does not reach %s", crit.RelationshipID, tableName)
+	}
+
+	relatedFields, err := s.tableFieldNames(ctx, targetTable)
+	if err != nil {
+		return err
+	}
+	if _, ok := relatedFields[crit.Field]; !ok {
+		return fmt.Errorf("%q is not a field of the related table %q", crit.Field, targetTable)
+	}
+	return nil
 }

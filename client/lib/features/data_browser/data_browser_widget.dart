@@ -1043,9 +1043,31 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   /// Translates what the user typed into one find request's criteria. The
   /// operators are the ones the Find mode toolbar offers.
+  /// The key a criterion on a *related* field is held under, in the find
+  /// controllers and in a saved find's values (#46). An own field is held
+  /// under its plain name, so the two cannot collide: a field name is
+  /// lower-case letters, digits and underscores, and never contains a colon.
+  static String relatedCriterionKey(String relationshipId, String occurrence, String field) =>
+      'rel:$relationshipId:$occurrence:$field';
+
+  /// Reads back what [relatedCriterionKey] wrote, or null for an own field.
+  static ({String relationshipId, String occurrence, String field})? parseRelatedCriterionKey(String key) {
+    if (!key.startsWith('rel:')) return null;
+    final parts = key.split(':');
+    if (parts.length < 4) return null;
+    return (
+      relationshipId: parts[1],
+      occurrence: parts[2],
+      // A field name has no colon, but rejoin anyway rather than lose text.
+      field: parts.sublist(3).join(':'),
+    );
+  }
+
   static List<Map<String, dynamic>> criteriaFor(Map<String, String> values) {
     final criteria = <Map<String, dynamic>>[];
-    values.forEach((fieldName, raw) {
+    values.forEach((key, raw) {
+      final related = parseRelatedCriterionKey(key);
+      final fieldName = related?.field ?? key;
       String text = raw.trim();
       if (text.isEmpty) return;
 
@@ -1087,6 +1109,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': wildcard});
       } else {
         criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': '%$text%'});
+      }
+
+      // A criterion on a related field names the relationship it reaches
+      // through, so the server finds the records whose related records match.
+      if (related != null && criteria.isNotEmpty) {
+        criteria.last['relationship_id'] = related.relationshipId;
+        if (related.occurrence.isNotEmpty) {
+          criteria.last['occurrence'] = related.occurrence;
+        }
       }
     });
     return criteria;
@@ -2144,8 +2175,38 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         // from the record in hand, so none of what follows applies.
         if (obj.fieldBinding?.isRelated ?? false) {
           if (isFindMode) {
-            return relatedNotice('Find on ${obj.fieldBinding!.qualifiedName} is not supported yet',
-                isDark: isDark, radius: obj.style.cornerRadius);
+            // A criterion here finds the records whose *related* records
+            // match it (#46), so the box is a real criterion box.
+            final binding = obj.fieldBinding!;
+            if (!binding.allowFindEntry) {
+              return relatedNotice('${binding.qualifiedName} takes no criteria',
+                  isDark: isDark, radius: obj.style.cornerRadius);
+            }
+            final key = relatedCriterionKey(
+              binding.relationshipId ?? '',
+              binding.tableOccurrence ?? '',
+              binding.fieldName,
+            );
+            final controller = _findControllers.putIfAbsent(key, () {
+              return TextEditingController(text: _currentFindRequest.values[key] ?? '');
+            });
+            return TextField(
+              controller: controller,
+              textAlign: _parseTextAlign(obj.style.textAlign),
+              style: TextStyle(fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: 'Search ${binding.qualifiedName}...',
+                hintStyle: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+                ),
+                suffixIcon: const Icon(Icons.link, size: 14, color: Colors.grey),
+              ),
+              onTap: () => setState(() => _lastFocusedFindField = key),
+              onSubmitted: (_) => _performFind(),
+            );
           }
           final related = _relatedContext;
           if (related == null) {

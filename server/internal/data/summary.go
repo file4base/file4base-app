@@ -288,7 +288,12 @@ func (s *Service) Summarize(ctx context.Context, tableName string, req SummaryRe
 	}
 
 	dialect := s.driver.Dialect()
-	where, values, err := buildFindClauses(dialect, fields, tableName, req.Requests)
+	// A report totals the found set, criteria on related fields included.
+	related, err := s.resolveFindRelations(ctx, tableName, req.Requests)
+	if err != nil {
+		return nil, err
+	}
+	where, values, err := buildFindClauses(dialect, fields, tableName, req.Requests, related)
 	if err != nil {
 		return nil, err
 	}

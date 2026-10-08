@@ -253,6 +253,10 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.authorizeFindRelations(w, r, svc, table, body.Requests) {
+		return
+	}
+
 	results, err := svc.ExecuteFind(r.Context(), table, body.Requests, body.Options)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Find Query Error", err)
@@ -482,6 +486,10 @@ func (h *DataHandler) SummarizeRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.authorizeFindRelations(w, r, svc, table, body.Requests) {
+		return
+	}
+
 	result, err := svc.Summarize(r.Context(), table, body)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Summary Error", err)
@@ -582,6 +590,33 @@ func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(inserted)
+}
+
+// authorizeFindRelations enforces the caller's access on every table a find
+// reaches through a relationship (#46): a criterion on a related field reads
+// the related table, so a user who cannot see that table cannot search it
+// sideways either.
+func (h *DataHandler) authorizeFindRelations(
+	w http.ResponseWriter, r *http.Request, svc *data.Service, table string, requests []data.FindRequest,
+) bool {
+	seen := map[string]struct{}{}
+	for _, req := range requests {
+		for _, crit := range req.Criteria {
+			relationship := strings.TrimSpace(crit.RelationshipID)
+			if relationship == "" {
+				continue
+			}
+			key := relationship + "\x00" + strings.TrimSpace(crit.Occurrence)
+			if _, done := seen[key]; done {
+				continue
+			}
+			seen[key] = struct{}{}
+			if !h.authorizeRelated(w, r, svc, table, relationship, strings.TrimSpace(crit.Occurrence), false) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // authorizeRelated enforces the caller's access level on the table at the far

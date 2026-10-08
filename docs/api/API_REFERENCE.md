@@ -591,6 +591,30 @@ Writes a found set out and returns the file itself, with `Content-Disposition` a
 
 ---
 
+### Criteria on a related field
+
+A criterion may name a relationship instead of searching the record's own
+field (#46). It then finds the records that have a related record matching it:
+
+```json
+{
+  "requests": [{"criteria": [
+    {"field_name": "company_address", "operator": "LIKE", "value": "%Paris%",
+     "relationship_id": "a012b0fa-…", "occurrence": "d97e092c-…"}
+  ]}]
+}
+```
+
+`relationship_id` is the relationship to reach through; `occurrence` names the
+side to read and is needed only when the relationship joins a table to itself.
+The criterion takes the same operators as one on an own field and combines with
+them, and with the OR and omit semantics of several requests, in the same way.
+
+A record whose match field is empty relates to nothing, so it never matches a
+related criterion. The caller must have access to the related table as well:
+`POST /api/v1/data/{table}/find` and `/summary` answer `403 Forbidden` when they
+do not, and `400 Unknown Field` when the related table has no such field.
+
 ### Saved finds
 
 A saved find is a named set of find requests on one table (#34). The criteria
@@ -630,6 +654,10 @@ list holds every table the caller can reach. Also mounted at
 
 #### `POST /api/v1/saved-finds`
 Saves a find. The body is `name`, `table_name` and `requests`.
+
+A criterion on a related field is held under the key
+`rel:<relationship id>:<occurrence>:<field>` instead of a plain field name, and
+is checked against the related table (#46).
 
 Checked against the catalog before it is stored, so a saved find cannot fail
 with "unknown field" the first time someone runs it: the table must exist, every

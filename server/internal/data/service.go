@@ -27,6 +27,18 @@ type FindCriterion struct {
 	Operator  string      `json:"operator"` // "=", "==", "!=", ">", "<", ">=", "<=", "LIKE", "RANGE", "IS_EMPTY", "IS_NOT_EMPTY"
 	Value     interface{} `json:"value"`
 	ValueTo   interface{} `json:"value_to,omitempty"` // For range queries
+
+	// RelationshipID searches a field of a *related* record instead of the
+	// record's own (#46): the criterion then finds the records that have a
+	// related record matching it. Occurrence names the side to read when the
+	// relationship joins a table to itself.
+	RelationshipID string `json:"relationship_id,omitempty"`
+	Occurrence     string `json:"occurrence,omitempty"`
+}
+
+// isRelated reports whether the criterion searches a related record.
+func (c FindCriterion) isRelated() bool {
+	return strings.TrimSpace(c.RelationshipID) != ""
 }
 
 // FindRequest represents one disjunctive search request (OR unit)
@@ -644,14 +656,92 @@ func buildFindWhere(include, omit []string) string {
 	return "WHERE " + strings.Join(parts, " AND ")
 }
 
+// criterionClause renders one criterion against an already-quoted column
+// expression, appending the values its placeholders take. colIdent is the
+// record's own column, or a related table's column when the criterion reaches
+// through a relationship (#46), so both read the same operators.
+func criterionClause(
+	dialect dbal.Dialect, colIdent string, crit FindCriterion, idx *int, values *[]interface{},
+) string {
+	place := func() string {
+		p := dialect.Placeholder(*idx)
+		*idx++
+		return p
+	}
+
+	switch crit.Operator {
+	case "IS_EMPTY":
+		return fmt.Sprintf("(%s IS NULL OR %s = '')", colIdent, dialect.CastToText(colIdent))
+
+	case "IS_NOT_EMPTY":
+		return fmt.Sprintf("(%s IS NOT NULL AND %s <> '')", colIdent, dialect.CastToText(colIdent))
+
+	case "RANGE":
+		valStr := fmt.Sprintf("%v", crit.Value)
+		valToStr := fmt.Sprintf("%v", crit.ValueTo)
+		num1, err1 := strconv.ParseFloat(valStr, 64)
+		num2, err2 := strconv.ParseFloat(valToStr, 64)
+		if err1 == nil && err2 == nil {
+			// Numeric range query with safe regex check so non-numeric column rows don't crash
+			clause := fmt.Sprintf("%s BETWEEN %s AND %s", dialect.NumericValue(colIdent), place(), place())
+			*values = append(*values, num1, num2)
+			return clause
+		}
+		// Text or date range query
+		clause := fmt.Sprintf("%s BETWEEN %s AND %s", dialect.CastToText(colIdent), place(), place())
+		*values = append(*values, valStr, valToStr)
+		return clause
+
+	case "LIKE":
+		// Compared as text so it works on any column type
+		clause := dialect.CaseInsensitiveLike(colIdent, place())
+		*values = append(*values, fmt.Sprintf("%v", crit.Value))
+		return clause
+
+	case "=", "==":
+		// Case-insensitive exact match
+		clause := fmt.Sprintf("LOWER(%s) = LOWER(%s)", dialect.CastToText(colIdent), place())
+		*values = append(*values, fmt.Sprintf("%v", crit.Value))
+		return clause
+
+	case "!=":
+		clause := fmt.Sprintf("(%s IS NULL OR LOWER(%s) <> LOWER(%s))", colIdent, dialect.CastToText(colIdent), place())
+		*values = append(*values, fmt.Sprintf("%v", crit.Value))
+		return clause
+
+	case ">", "<", ">=", "<=":
+		valStr := fmt.Sprintf("%v", crit.Value)
+		if num, err := strconv.ParseFloat(valStr, 64); err == nil {
+			// Numeric comparison
+			clause := fmt.Sprintf("%s %s %s", dialect.NumericValue(colIdent), crit.Operator, place())
+			*values = append(*values, num)
+			return clause
+		}
+		// Text comparison
+		clause := fmt.Sprintf("%s %s %s", dialect.CastToText(colIdent), crit.Operator, place())
+		*values = append(*values, valStr)
+		return clause
+
+	default:
+		clause := dialect.CaseInsensitiveLike(colIdent, place())
+		*values = append(*values, "%"+fmt.Sprintf("%v", crit.Value)+"%")
+		return clause
+	}
+}
+
 // buildFindClauses turns the find requests into the WHERE clause that defines
 // the found set, and the values its placeholders take.
 //
 // It is shared by ExecuteFind and by Summarize, so a report totals exactly the
 // records the find returned rather than a set built a second, slightly
 // different way.
+//
+// related holds the relationships the criteria reach through, resolved before
+// this is called (see Service.resolveFindRelations), so that building the
+// clause stays a pure function of the catalog it was given.
 func buildFindClauses(
 	dialect dbal.Dialect, fields fieldSet, tableName string, requests []FindRequest,
+	related map[string]relatedFindTarget,
 ) (string, []interface{}, error) {
 	// Requests that match are unioned; requests marked Omit subtract from what
 	// they found. (OR-ing an omitting request in, as this used to do, made
@@ -678,80 +768,26 @@ func buildFindClauses(
 				if strings.HasPrefix(strVal, "=") || strings.HasPrefix(strVal, "!") ||
 					strings.HasPrefix(strVal, ">") || strings.HasPrefix(strVal, "<") ||
 					strings.Contains(strVal, "...") || strVal == "*" || strVal == "//" {
-					crit = ParseFile4BaseFindCriteria(crit.FieldName, strVal)
+					parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
+					parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
+					crit = parsed
 				}
+			}
+
+			if crit.isRelated() {
+				clause, err := relatedCriterionClause(dialect, tableName, crit, related, &idx, &values)
+				if err != nil {
+					return "", nil, err
+				}
+				andClauses = append(andClauses, clause)
+				continue
 			}
 
 			if err := checkField(fields, tableName, crit.FieldName); err != nil {
 				return "", nil, err
 			}
-			colIdent := dialect.QuoteIdentifier(crit.FieldName)
-
-			switch crit.Operator {
-			case "IS_EMPTY":
-				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR %s = '')", colIdent, dialect.CastToText(colIdent)))
-
-			case "IS_NOT_EMPTY":
-				andClauses = append(andClauses, fmt.Sprintf("(%s IS NOT NULL AND %s <> '')", colIdent, dialect.CastToText(colIdent)))
-
-			case "RANGE":
-				valStr := fmt.Sprintf("%v", crit.Value)
-				valToStr := fmt.Sprintf("%v", crit.ValueTo)
-				num1, err1 := strconv.ParseFloat(valStr, 64)
-				num2, err2 := strconv.ParseFloat(valToStr, 64)
-				if err1 == nil && err2 == nil {
-					// Numeric range query with safe regex check so non-numeric column rows don't crash
-					andClauses = append(andClauses, fmt.Sprintf("%s BETWEEN %s AND %s",
-						dialect.NumericValue(colIdent), dialect.Placeholder(idx), dialect.Placeholder(idx+1)))
-					values = append(values, num1, num2)
-				} else {
-					// Text or date range query
-					andClauses = append(andClauses, fmt.Sprintf("%s BETWEEN %s AND %s",
-						dialect.CastToText(colIdent), dialect.Placeholder(idx), dialect.Placeholder(idx+1)))
-					values = append(values, valStr, valToStr)
-				}
-				idx += 2
-
-			case "LIKE":
-				valStr := fmt.Sprintf("%v", crit.Value)
-				// Compared as text so it works on any column type
-				andClauses = append(andClauses, dialect.CaseInsensitiveLike(colIdent, dialect.Placeholder(idx)))
-				values = append(values, valStr)
-				idx++
-
-			case "=", "==":
-				valStr := fmt.Sprintf("%v", crit.Value)
-				// Case-insensitive exact match
-				andClauses = append(andClauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)", dialect.CastToText(colIdent), dialect.Placeholder(idx)))
-				values = append(values, valStr)
-				idx++
-
-			case "!=":
-				valStr := fmt.Sprintf("%v", crit.Value)
-				andClauses = append(andClauses, fmt.Sprintf("(%s IS NULL OR LOWER(%s) <> LOWER(%s))", colIdent, dialect.CastToText(colIdent), dialect.Placeholder(idx)))
-				values = append(values, valStr)
-				idx++
-
-			case ">", "<", ">=", "<=":
-				valStr := fmt.Sprintf("%v", crit.Value)
-				if num, err := strconv.ParseFloat(valStr, 64); err == nil {
-					// Numeric comparison
-					andClauses = append(andClauses, fmt.Sprintf("%s %s %s",
-						dialect.NumericValue(colIdent), crit.Operator, dialect.Placeholder(idx)))
-					values = append(values, num)
-				} else {
-					// Text comparison
-					andClauses = append(andClauses, fmt.Sprintf("%s %s %s", dialect.CastToText(colIdent), crit.Operator, dialect.Placeholder(idx)))
-					values = append(values, valStr)
-				}
-				idx++
-
-			default:
-				valStr := fmt.Sprintf("%v", crit.Value)
-				andClauses = append(andClauses, dialect.CaseInsensitiveLike(colIdent, dialect.Placeholder(idx)))
-				values = append(values, "%"+valStr+"%")
-				idx++
-			}
+			andClauses = append(andClauses, criterionClause(
+				dialect, dialect.QuoteIdentifier(crit.FieldName), crit, &idx, &values))
 		}
 
 		if len(andClauses) > 0 {
@@ -782,7 +818,11 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 
 	dialect := s.driver.Dialect()
-	whereClause, values, err := buildFindClauses(dialect, fields, tableName, requests)
+	related, err := s.resolveFindRelations(ctx, tableName, requests)
+	if err != nil {
+		return nil, err
+	}
+	whereClause, values, err := buildFindClauses(dialect, fields, tableName, requests, related)
 	if err != nil {
 		return nil, err
 	}

@@ -1206,6 +1206,25 @@ A related field is **shown, not typed into**. A relationship can match several
 records, and it would not be clear which one an edit changed. The next section
 is where related records are edited.
 
+### Find on the related field
+
+In **Find mode** the related field is a criterion box like any other, with a
+link badge. What you type there is matched against the *related* record:
+
+1. Choose **View > Find Mode** on the Customers Form layout.
+2. Type `*Rue de la Paix*` in **Company Address** and click **Perform Find**.
+
+The found set is the **customers of XYZ Inc.**, the company whose address that
+is — customers, not companies. That is what a relational find is for: a
+question about the related record, answered with the records in hand.
+
+A customer with no company, or one whose company name matches no company
+record, is not found: an empty match field relates to nothing.
+
+A criterion on a related field mixes with the rest as you would expect: with a
+criterion on one of the customer's own fields in the same request it is an AND,
+and a second request is still an OR. A saved find can hold one too.
+
 ### Put a portal of customers on the company layout
 
 1. Go to the **Companies Form** layout and choose **View > Layout Mode**.
@@ -1467,11 +1486,6 @@ builds labels and a letter with them.
 **A report does not start each group on a new page** ([#32](https://github.com/file4base/file4base-app/issues/32))**.**
 It flows continuously and is cut wherever the page ends, and the header is not
 repeated at the top of each printed page.
-
-**No find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46))**.**
-Find mode takes criteria on the record's own fields. A related field says so in
-Find mode rather than offering a box that would do nothing. Portals and related
-fields themselves do work — see lesson 18.
 
 **No import from ODBC, and no folder import** ([#47](https://github.com/file4base/file4base-app/issues/47))**.**
 Both menu items are greyed out. Files do import — lesson 16 brings a CSV in.

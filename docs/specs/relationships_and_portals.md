@@ -130,11 +130,43 @@ forever.
 This is integrity defined by the schema, so it applies whatever access the
 caller has on the related table — the same way a foreign key would.
 
+## Finding on a related field
+
+A criterion typed into a related field finds the records whose **related**
+records match it (#46): on a Customers layout showing `Companies::company_address`,
+typing `*Paris*` there finds the customers whose company is in Paris — the
+customers, not the companies.
+
+The criterion names the relationship it reaches through, and the occurrence
+when the relationship joins a table to itself:
+
+```json
+{"field_name": "company_address", "operator": "LIKE", "value": "%Paris%",
+ "relationship_id": "a012…", "occurrence": "d97e…"}
+```
+
+It becomes an `EXISTS` over the related table joined on the match fields, so:
+
+- it takes the same operators as a criterion on an own field;
+- it combines with the record's own criteria with AND, and with the OR and
+  omit semantics of several requests, exactly as those do;
+- a record with an **empty match field relates to nothing**, so it never
+  matches a related criterion — not even one like "the field is empty", which
+  is about the related record's field rather than about having no related
+  record at all;
+- the relationship is read in either direction: the companies that have a
+  customer called Tang is the same criterion the other way round;
+- the caller must have access to the related table. A user who cannot see
+  Companies cannot search Customers through it either; the request answers
+  `403`.
+
+A related field takes a criterion unless its **allow find entry** option is
+off, in which case Find mode says the field takes none. Saved finds hold
+related criteria too, keyed by the relationship (see
+[solution_bundle_format.md](solution_bundle_format.md)).
+
 ## What is not here yet
 
-- **Finding on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46)).
-  Find mode takes criteria on the record's own fields. A related field says so
-  in Find mode rather than offering a box that would do nothing.
 - **Editing a related field in place.** Related records are edited in a portal.
 - **Creating the related record from a related field.** A related field with no
   matching record stays empty; it does not create one even when the

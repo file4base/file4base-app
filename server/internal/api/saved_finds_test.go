@@ -215,3 +215,167 @@ func TestAPI_SavedFindsTravelInTheBundle(t *testing.T) {
 		h.do(http.MethodGet, "/api/v1/saved-finds?table=customers", dst, nil, &restored).Code)
 	assert.Len(t, restored, 1)
 }
+
+// A saved find may hold a criterion on a related field (#46), which is
+// checked against the related table rather than the one being searched.
+func TestAPI_SavedFindOnARelatedField(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_relfind")
+	h.createDatabase(db, "alice", "alice-secret")
+	owner := h.login(db, "alice", "alice-secret")
+
+	ids := map[string]string{}
+	for _, table := range []struct{ display, name string }{
+		{"Companies", "companies"},
+		{"Customers", "customers"},
+	} {
+		var tbl struct {
+			ID string `json:"id"`
+		}
+		rec := h.do(http.MethodPost, "/api/v1/schemas/tables", owner,
+			map[string]string{"display_name": table.display, "custom_name": table.name}, &tbl)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		ids[table.name] = tbl.ID
+	}
+	columns := map[string]string{}
+	for _, col := range []struct{ table, field string }{
+		{"companies", "company"},
+		{"companies", "company_address"},
+		{"customers", "company"},
+		{"customers", "last_name"},
+	} {
+		var created struct {
+			ID string `json:"id"`
+		}
+		rec := h.do(http.MethodPost, "/api/v1/schemas/tables/"+ids[col.table]+"/columns", owner,
+			map[string]interface{}{"display_name": col.field, "name": col.field, "field_type": "TEXT"}, &created)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		columns[col.table+"."+col.field] = created.ID
+	}
+
+	var occurrences []struct {
+		ID          string `json:"id"`
+		BaseTableID string `json:"base_table_id"`
+	}
+	require.Equal(t, http.StatusOK, h.do(http.MethodGet, "/api/v1/schemas/occurrences", owner, nil, &occurrences).Code)
+	occurrence := map[string]string{}
+	for _, o := range occurrences {
+		for name, id := range ids {
+			if o.BaseTableID == id {
+				occurrence[name] = o.ID
+			}
+		}
+	}
+
+	var rel struct {
+		ID string `json:"id"`
+	}
+	rec := h.do(http.MethodPost, "/api/v1/schemas/relationships", owner, map[string]interface{}{
+		"name":                "companies_customers",
+		"left_occurrence_id":  occurrence["companies"],
+		"left_column_id":      columns["companies.company"],
+		"right_occurrence_id": occurrence["customers"],
+		"right_column_id":     columns["customers.company"],
+		"operator":            "=",
+	}, &rel)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	key := "rel:" + rel.ID + ":" + occurrence["companies"] + ":company_address"
+	var saved schema.SavedFind
+	rec = h.do(http.MethodPost, "/api/v1/saved-finds", owner, map[string]interface{}{
+		"name": "Customers in Paris", "table_name": "customers",
+		"requests": []map[string]interface{}{{"values": map[string]string{key: "*Paris*"}}},
+	}, &saved)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, "*Paris*", saved.Requests[0].Values[key])
+
+	// A field the related table does not have is refused, as an unknown own
+	// field is.
+	rec = h.do(http.MethodPost, "/api/v1/saved-finds", owner, map[string]interface{}{
+		"name": "Nope", "table_name": "customers",
+		"requests": []map[string]interface{}{{"values": map[string]string{
+			"rel:" + rel.ID + ":" + occurrence["companies"] + ":postcode": "75008",
+		}}},
+	}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+
+	// So is a relationship that does not reach the table being searched.
+	rec = h.do(http.MethodPost, "/api/v1/saved-finds", owner, map[string]interface{}{
+		"name": "Nope either", "table_name": "customers",
+		"requests": []map[string]interface{}{{"values": map[string]string{
+			"rel:00000000-0000-0000-0000-000000000000::company_address": "Paris",
+		}}},
+	}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+
+	// And the find itself runs: a criterion on the related field finds the
+	// customers whose company is in Paris.
+	for _, row := range []map[string]string{
+		{"company": "XYZ Inc.", "company_address": "14 Avenue Foch, Paris"},
+		{"company": "ABC Company", "company_address": "51 Market Street, San Francisco"},
+	} {
+		require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/companies", owner, row, nil).Code)
+	}
+	for _, row := range []map[string]string{
+		{"last_name": "Durand", "company": "XYZ Inc."},
+		{"last_name": "Smith", "company": "ABC Company"},
+	} {
+		require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/customers", owner, row, nil).Code)
+	}
+
+	relatedFind := map[string]interface{}{
+		"requests": []map[string]interface{}{{"criteria": []map[string]interface{}{{
+			"field_name":      "company_address",
+			"operator":        "LIKE",
+			"value":           "%Paris%",
+			"relationship_id": rel.ID,
+			"occurrence":      occurrence["companies"],
+		}}}},
+	}
+	var found []map[string]interface{}
+	rec = h.do(http.MethodPost, "/api/v1/data/customers/find", owner, relatedFind, &found)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, found, 1)
+	assert.Equal(t, "Durand", found[0]["last_name"])
+
+	// A user who cannot see the companies table cannot search customers
+	// through it either: the criterion reads the related table.
+	var layout struct {
+		ID string `json:"id"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/schemas/layouts", owner,
+		map[string]interface{}{"name": "Companies Form", "to_id": occurrence["companies"]}, &layout)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodPost, "/api/v1/security/users", owner,
+		map[string]interface{}{"username": "carol", "password": "carol-secret-pw", "role": "user"}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var users []struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+	}
+	require.Equal(t, http.StatusOK, h.do(http.MethodGet, "/api/v1/security/users", owner, nil, &users).Code)
+	carol := ""
+	for _, u := range users {
+		if u.Username == "carol" {
+			carol = u.ID
+		}
+	}
+	require.NotEmpty(t, carol)
+	rec = h.do(http.MethodPut, "/api/v1/security/users/"+carol+"/permissions", owner,
+		map[string]interface{}{"permissions": []map[string]string{
+			{"layout_id": layout.ID, "access_level": "none"},
+		}}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	carolToken := h.login(db, "carol", "carol-secret-pw")
+	assert.Equal(t, http.StatusOK,
+		h.do(http.MethodPost, "/api/v1/data/customers/find", carolToken, map[string]interface{}{
+			"requests": []map[string]interface{}{{"criteria": []map[string]interface{}{
+				{"field_name": "last_name", "operator": "=", "value": "Durand"},
+			}}},
+		}, nil).Code, "their own table is still searchable")
+	assert.Equal(t, http.StatusForbidden,
+		h.do(http.MethodPost, "/api/v1/data/customers/find", carolToken, relatedFind, nil).Code)
+	assert.Equal(t, http.StatusForbidden,
+		h.do(http.MethodPost, "/api/v1/data/customers/summary", carolToken, relatedFind, nil).Code)
+}

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
+import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/saved_finds_dialog.dart';
 import 'package:file4base_client/main.dart' show OperationalMode;
 import 'package:flutter/material.dart';
@@ -257,6 +258,49 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('saved by another account'), findsOneWidget);
       expect(find.text('Paris customers'), findsOneWidget);
+    });
+  });
+
+  group('Criteria on a related field (#46)', () {
+    test('a related key round-trips through its parser', () {
+      final key = DataBrowserWidgetState.relatedCriterionKey('rel-1', 'occ-2', 'company_address');
+      expect(key, 'rel:rel-1:occ-2:company_address');
+
+      final parsed = DataBrowserWidgetState.parseRelatedCriterionKey(key);
+      expect(parsed?.relationshipId, 'rel-1');
+      expect(parsed?.occurrence, 'occ-2');
+      expect(parsed?.field, 'company_address');
+
+      // An own field is not a related key, so the two cannot be confused.
+      expect(DataBrowserWidgetState.parseRelatedCriterionKey('company_address'), isNull);
+      expect(DataBrowserWidgetState.parseRelatedCriterionKey('rel:incomplete'), isNull);
+    });
+
+    test('a criterion on a related field names the relationship it reaches through', () {
+      final criteria = DataBrowserWidgetState.criteriaFor({
+        'last_name': 'Durand',
+        DataBrowserWidgetState.relatedCriterionKey('rel-1', 'occ-2', 'company_address'): '*Paris*',
+      });
+
+      final own = criteria.firstWhere((c) => c['field_name'] == 'last_name');
+      expect(own.containsKey('relationship_id'), isFalse);
+
+      final related = criteria.firstWhere((c) => c['field_name'] == 'company_address');
+      expect(related['relationship_id'], 'rel-1');
+      expect(related['occurrence'], 'occ-2');
+      // The operators are the ones an own field takes.
+      expect(related['operator'], 'LIKE');
+      expect(related['value'], '%Paris%');
+    });
+
+    test('an occurrence is left out when the relationship has only one side to read', () {
+      final criteria = DataBrowserWidgetState.criteriaFor({
+        DataBrowserWidgetState.relatedCriterionKey('rel-1', '', 'company'): '=DEF Ltd.',
+      });
+      expect(criteria.single['relationship_id'], 'rel-1');
+      expect(criteria.single.containsKey('occurrence'), isFalse);
+      expect(criteria.single['operator'], '=');
+      expect(criteria.single['value'], 'DEF Ltd.');
     });
   });
 }

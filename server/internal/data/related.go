@@ -477,3 +477,104 @@ func (s *Service) cascadeDelete(ctx context.Context, tableName, id string, seen 
 	}
 	return nil
 }
+
+// ─── Find on a related field (#46) ───────────────────────────────────────────
+
+// relatedFindTarget is everything a criterion on a related field needs: the
+// table the related records live in, the two match columns, the comparison
+// between them, and the fields that table has.
+type relatedFindTarget struct {
+	TableName    string
+	SourceColumn string // the match field of the table being searched
+	TargetColumn string // the match field of the related table
+	Operator     string // SQL comparison between the two match fields
+	Fields       fieldSet
+	Relationship string // name, for error messages
+}
+
+// resolveFindRelations resolves every relationship the criteria reach
+// through, once each, before the WHERE clause is built.
+func (s *Service) resolveFindRelations(
+	ctx context.Context, tableName string, requests []FindRequest,
+) (map[string]relatedFindTarget, error) {
+	targets := map[string]relatedFindTarget{}
+	for _, req := range requests {
+		for _, crit := range req.Criteria {
+			if !crit.isRelated() {
+				continue
+			}
+			key := relatedFindKey(crit)
+			if _, done := targets[key]; done {
+				continue
+			}
+
+			rel, err := s.Relationship(ctx, strings.TrimSpace(crit.RelationshipID))
+			if err != nil {
+				return nil, err
+			}
+			source, target, err := rel.Sides(tableName, strings.TrimSpace(crit.Occurrence))
+			if err != nil {
+				return nil, err
+			}
+			op, err := rel.sqlOperator()
+			if err != nil {
+				return nil, err
+			}
+			fields, err := s.tableFields(ctx, target.TableName)
+			if err != nil {
+				return nil, err
+			}
+			targets[key] = relatedFindTarget{
+				TableName:    target.TableName,
+				SourceColumn: source.Column,
+				TargetColumn: target.Column,
+				Operator:     op,
+				Fields:       fields,
+				Relationship: rel.Name,
+			}
+		}
+	}
+	return targets, nil
+}
+
+// relatedFindKey identifies a resolved relationship: the same relationship
+// read from the same side resolves once.
+func relatedFindKey(crit FindCriterion) string {
+	return strings.TrimSpace(crit.RelationshipID) + "\x00" + strings.TrimSpace(crit.Occurrence)
+}
+
+// relatedCriterionClause turns a criterion on a related field into a
+// condition on the record being searched: it matches when the record has at
+// least one related record the criterion matches.
+//
+// A record whose match field is empty relates to nothing, which is the rule
+// the related reads already follow, so it never matches a related criterion —
+// not even through an operator like "is empty", which is about the related
+// record's field and not about the absence of related records.
+func relatedCriterionClause(
+	dialect dbal.Dialect, tableName string, crit FindCriterion,
+	targets map[string]relatedFindTarget, idx *int, values *[]interface{},
+) (string, error) {
+	target, ok := targets[relatedFindKey(crit)]
+	if !ok {
+		return "", fmt.Errorf("%w: %s", ErrRelationshipNotFound, crit.RelationshipID)
+	}
+	if err := checkField(target.Fields, target.TableName, crit.FieldName); err != nil {
+		return "", err
+	}
+
+	// The subquery's own name for the related table, so a relationship from a
+	// table to itself still has two distinguishable sides.
+	const alias = "f4b_rel"
+	parent := dialect.QuoteIdentifier(tableName) + "." + dialect.QuoteIdentifier(target.SourceColumn)
+	child := alias + "." + dialect.QuoteIdentifier(target.TargetColumn)
+	inner := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName), crit, idx, values)
+
+	return fmt.Sprintf(
+		"(%s IS NOT NULL AND %s <> '' AND EXISTS (SELECT 1 FROM %s %s WHERE %s %s %s AND %s))",
+		parent, dialect.CastToText(parent),
+		dialect.QuoteIdentifier(target.TableName), alias,
+		child, target.Operator, parent,
+		inner,
+	), nil
+}

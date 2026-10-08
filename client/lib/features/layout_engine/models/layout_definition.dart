@@ -168,8 +168,19 @@ class FieldBindingModel {
 
   /// How the field is written on a layout: `Companies::company_address` for a
   /// related field, the bare field name otherwise.
-  String get qualifiedName =>
-      isRelated && (tableOccurrence?.isNotEmpty ?? false) ? '$tableOccurrence::$fieldName' : fieldName;
+  ///
+  /// A layout may name the occurrence by its id rather than by its name; an id
+  /// says nothing to a reader, so the bare field name is used instead.
+  String get qualifiedName {
+    final occurrence = tableOccurrence ?? '';
+    if (!isRelated || occurrence.isEmpty || _looksLikeId(occurrence)) return fieldName;
+    return '$occurrence::$fieldName';
+  }
+
+  static final RegExp _idPattern =
+      RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', caseSensitive: false);
+
+  static bool _looksLikeId(String value) => _idPattern.hasMatch(value.trim());
 
   /// The style actually used: a control that needs a value list but has none
   /// falls back to an edit box, so deleting a list cannot break a layout.
