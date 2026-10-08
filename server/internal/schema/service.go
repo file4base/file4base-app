@@ -203,6 +203,15 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
 		);`,
+		// Capabilities granted per account role (#39). A role without a
+		// row holds every capability, so a database created before this
+		// table existed keeps working unrestricted.
+		`CREATE TABLE IF NOT EXISTS sys_privileges (
+			role VARCHAR(32) PRIMARY KEY,
+			bulk_export BOOLEAN NOT NULL DEFAULT TRUE,
+			bulk_import BOOLEAN NOT NULL DEFAULT TRUE,
+			updated_at ` + ts + `
+		);`,
 		`CREATE TABLE IF NOT EXISTS sys_scripts (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,

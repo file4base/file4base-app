@@ -170,6 +170,33 @@ func RequireOwner(next http.Handler) http.Handler {
 	return RequireRole(auth.RoleOwner)(next)
 }
 
+// RequireCapability only lets sessions through whose role holds the given
+// capability (see schema.Capabilities). Capabilities are actions the server
+// performs, so this is the one place that can refuse them: a restriction
+// applied in a client would be no restriction at all, since every client
+// speaks to the same REST API.
+func RequireCapability(capability string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sess, ok := auth.FromContext(r.Context())
+			if !ok {
+				writeUnauthorized(w, r, "a valid session token is required; sign in via POST /api/v1/auth/login")
+				return
+			}
+			allowed, err := schemaService(r).RoleAllows(r.Context(), sess.Role, capability)
+			if err != nil {
+				telemetry.WriteInternalError(w, r, err)
+				return
+			}
+			if !allowed {
+				writeForbidden(w, r, "your role does not hold the "+capability+" privilege")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func writeForbidden(w http.ResponseWriter, r *http.Request, detail string) {
 	telemetry.WriteProblem(w, r, http.StatusForbidden, "Forbidden", detail)
 }

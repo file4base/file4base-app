@@ -45,6 +45,15 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   List<LayoutModel> _layouts = [];
   Map<String, List<UserLayoutPermissionModel>> _userPermissionsMap = {};
 
+  /// The capabilities each role holds (#39). Defaults are what a server
+  /// without them reports: every role holds everything.
+  List<RolePrivilegesModel> _rolePrivileges = const [
+    RolePrivilegesModel(role: 'owner'),
+    RolePrivilegesModel(role: 'admin'),
+    RolePrivilegesModel(role: 'user'),
+  ];
+  bool _savingPrivileges = false;
+
   bool _isLoading = true;
   String? _errorMessage;
   String _searchQuery = '';
@@ -72,6 +81,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     try {
       final users = await widget.apiClient.listUsers(database: widget.databaseName);
       final layouts = await widget.apiClient.listLayouts();
+      await _loadRolePrivileges();
 
       // Preload permissions for all users
       final permsMap = <String, List<UserLayoutPermissionModel>>{};
@@ -99,6 +109,18 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
           _errorMessage = e.toString().replaceFirst('Exception: ', '');
         });
       }
+    }
+  }
+
+  /// Reads the stored capability grants. A server from before #39 answers
+  /// 404, which leaves the defaults in place rather than failing the dialog.
+  Future<void> _loadRolePrivileges() async {
+    try {
+      final privileges = await widget.apiClient.listRolePrivileges(database: widget.databaseName);
+      if (!mounted || privileges.isEmpty) return;
+      setState(() => _rolePrivileges = privileges);
+    } catch (_) {
+      // Keep the defaults; the server is what enforces them anyway.
     }
   }
 
@@ -1557,6 +1579,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   }
 
   Widget _buildExtendedPrivilegesTab() {
+    final isOwner = widget.currentUser.role == 'owner';
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -1564,72 +1587,68 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
         children: [
           Row(
             children: const [
-              Icon(Icons.public, size: 20, color: Color(0xFF1E88E5)),
+              Icon(Icons.shield_outlined, size: 20, color: Color(0xFF1E88E5)),
               SizedBox(width: 8),
               Text(
-                'Network and Protocol Access (Extended Privileges)',
+                'Extended Privileges',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
               ),
             ],
           ),
           const SizedBox(height: 6),
           const Text(
-            'Which access methods each privilege set may use.',
+            'Which bulk operations each account role may perform. Enforced by the '
+            'server on every request, whichever client makes it.',
             style: TextStyle(fontSize: 12, color: Colors.grey),
           ),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: Colors.orange.withValues(alpha: 0.10),
+              color: Colors.blue.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
+              border: Border.all(color: Colors.blue.withValues(alpha: 0.4)),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.warning_amber_outlined, size: 18, color: Colors.orange.shade800),
+                Icon(Icons.info_outline, size: 18, color: Colors.blue.shade800),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Not enforced yet. The server does not restrict access by method, so every '
-                    'account that can sign in can use all of them. This list is the planned set; '
-                    'use account roles and layout privileges to restrict access today.',
-                    style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+                    'File4Base restricts access by account role, by table and layout, and '
+                    'by the privileges below. It does not restrict access by client: the '
+                    'desktop client, the Web Client and a direct REST call all speak to the '
+                    'same API with the same session token, so the server cannot tell them '
+                    'apart and a setting that claimed to would restrict nothing.',
+                    style: TextStyle(fontSize: 12, color: Colors.blue.shade900),
                   ),
                 ),
               ],
             ),
           ),
+          if (!isOwner) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.lock_outline, size: 16, color: Colors.orange.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Only an owner can change these privileges.',
+                    style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 16),
 
           Expanded(
             child: ListView(
               children: [
-                _buildExtPrivCard(
-                  code: 'f4bapp',
-                  title: 'Access via File4Base Desktop',
-                  description: 'Allow database access through the native desktop client (macOS / Linux / Windows).',
-                  icon: Icons.desktop_windows_outlined,
-                ),
-                _buildExtPrivCard(
-                  code: 'f4bwebdirect',
-                  title: 'Access via File4Base WebDirect',
-                  description: 'Allow database access through modern web browsers via Nginx.',
-                  icon: Icons.language_outlined,
-                ),
-                _buildExtPrivCard(
-                  code: 'f4brest',
-                  title: 'Access via REST API / Data API',
-                  description: 'Allow JSON queries, record ingestion, and backend automation through secure REST endpoints.',
-                  icon: Icons.api_outlined,
-                ),
-                _buildExtPrivCard(
-                  code: 'f4bexport',
-                  title: 'Bulk record export',
-                  description: 'Allow data export to Excel, CSV, JSON, and packaged .f4b solution files.',
-                  icon: Icons.file_download_outlined,
-                ),
+                for (final capability in Capability.all)
+                  _buildCapabilityCard(capability, isOwner),
               ],
             ),
           ),
@@ -1638,46 +1657,164 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     );
   }
 
-  Widget _buildExtPrivCard({
-    required String code,
-    required String title,
-    required String description,
-    required IconData icon,
-  }) {
+  /// One capability, with a switch per role. The owner's switch is shown on
+  /// and locked: an owner always holds every privilege, so that they cannot
+  /// lock themselves out of their own database.
+  Widget _buildCapabilityCard(String capability, bool isOwner) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: Colors.grey.shade800)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: Colors.grey.shade800),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
-        child: Row(
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon, size: 28, color: const Color(0xFF1E88E5)),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  capability == Capability.bulkExport
+                      ? Icons.file_download_outlined
+                      : Icons.file_upload_outlined,
+                  size: 28,
+                  color: const Color(0xFF1E88E5),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                        decoration: BoxDecoration(color: Colors.grey.shade800, borderRadius: BorderRadius.circular(4)),
-                        child: Text(code, style: const TextStyle(fontSize: 10, fontFamily: 'monospace')),
+                      Row(
+                        children: [
+                          Text(
+                            Capability.label(capability),
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade800,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              capability,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontFamily: 'monospace',
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        Capability.description(capability),
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(description, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                ],
-              ),
+                ),
+              ],
+            ),
+            const Divider(height: 22),
+            Wrap(
+              spacing: 24,
+              runSpacing: 4,
+              children: [
+                for (final privileges in _rolePrivileges)
+                  _buildCapabilitySwitch(privileges, capability, isOwner),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildCapabilitySwitch(RolePrivilegesModel privileges, String capability, bool isOwner) {
+    final locked = privileges.role == 'owner' || !isOwner || _savingPrivileges;
+    return SizedBox(
+      width: 180,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Switch(
+            value: privileges.allows(capability),
+            onChanged: locked ? null : (value) => _setCapability(privileges.role, capability, value),
+          ),
+          const SizedBox(width: 4),
+          Text(_roleLabel(privileges.role), style: const TextStyle(fontSize: 12)),
+          if (privileges.role == 'owner') ...[
+            const SizedBox(width: 4),
+            Tooltip(
+              message: 'An owner always holds every privilege.',
+              child: Icon(Icons.lock_outline, size: 14, color: Colors.grey.shade600),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  String _roleLabel(String role) {
+    switch (role) {
+      case 'owner':
+        return 'Owner';
+      case 'admin':
+        return 'Admin';
+      case 'user':
+        return 'User';
+      default:
+        return role;
+    }
+  }
+
+  /// Grants or withholds one capability for one role and stores it at once:
+  /// a switch that only changed a local variable would be the very problem
+  /// this tab had (#39).
+  Future<void> _setCapability(String role, String capability, bool allowed) async {
+    final updated = _rolePrivileges
+        .map((p) => p.role == role ? p.withCapability(capability, allowed) : p)
+        .toList();
+    setState(() {
+      _rolePrivileges = updated;
+      _savingPrivileges = true;
+    });
+    try {
+      final stored = await widget.apiClient.setRolePrivileges(
+        [updated.firstWhere((p) => p.role == role)],
+        database: widget.databaseName,
+      );
+      if (!mounted) return;
+      setState(() {
+        _rolePrivileges = stored.isEmpty ? updated : stored;
+        _savingPrivileges = false;
+      });
+      widget.onModified?.call();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${Capability.label(capability)} '
+              '${allowed ? 'granted to' : 'withheld from'} ${_roleLabel(role).toLowerCase()}s.'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _savingPrivileges = false);
+      await _loadRolePrivileges();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
   }
 
 }

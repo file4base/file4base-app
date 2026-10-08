@@ -46,6 +46,10 @@ func (h *SecurityHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Delete("/users/{id}", h.DeleteUser)
 		r.Get("/users/{id}/permissions", h.GetUserPermissions) // admins, or the user themselves
 		r.With(RequireAdmin).Put("/users/{id}/permissions", h.SetUserPermissions)
+		r.With(RequireAdmin).Get("/privileges", h.GetRolePrivileges)
+		// Granting a capability to a role is a change to the security
+		// policy of the database, so only an owner may make it.
+		r.With(RequireOwner).Put("/privileges", h.SetRolePrivileges)
 	})
 }
 
@@ -112,15 +116,25 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The capabilities of the account's role travel with the sign-in so a
+	// client can tell a user what they may do before they try it. They are
+	// a courtesy: the server enforces them on every call (#39).
+	capabilities, err := svc.CapabilitiesOf(r.Context(), user.Role)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, errors.New("failed reading role privileges"))
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":     "ok",
-		"database":   dbName,
-		"user":       user,
-		"token":      token,
-		"token_type": "Bearer",
-		"expires_at": sess.ExpiresAt.UTC().Format(time.RFC3339),
+		"status":       "ok",
+		"database":     dbName,
+		"user":         user,
+		"token":        token,
+		"token_type":   "Bearer",
+		"capabilities": capabilities,
+		"expires_at":   sess.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 
@@ -138,10 +152,17 @@ func (h *SecurityHandler) CurrentSession(w http.ResponseWriter, r *http.Request)
 		perms = make([]schema.UserLayoutPermission, 0)
 	}
 
+	capabilities, err := schemaService(r).CapabilitiesOf(r.Context(), sess.Role)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"database": sess.Database,
+		"database":     sess.Database,
+		"capabilities": capabilities,
 		"user": schema.AuthUser{
 			ID:          sess.UserID,
 			Username:    sess.Username,
@@ -350,4 +371,43 @@ func (h *SecurityHandler) SetUserPermissions(w http.ResponseWriter, r *http.Requ
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+type rolePrivilegesRequest struct {
+	Privileges []schema.RolePrivileges `json:"privileges"`
+}
+
+// GetRolePrivileges returns the capabilities each account role holds (#39).
+func (h *SecurityHandler) GetRolePrivileges(w http.ResponseWriter, r *http.Request) {
+	privileges, err := schemaService(r).ListRolePrivileges(r.Context())
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"capabilities": schema.Capabilities(),
+		"privileges":   privileges,
+	})
+}
+
+// SetRolePrivileges replaces the capabilities of the roles in the request.
+// The owner's entry is stored fully granted whatever it says: an owner must
+// not be able to lock themselves out of their own database.
+func (h *SecurityHandler) SetRolePrivileges(w http.ResponseWriter, r *http.Request) {
+	var req rolePrivilegesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Request", "the request body is not valid JSON")
+		return
+	}
+	if err := schemaService(r).SetRolePrivileges(r.Context(), req.Privileges); err != nil {
+		if errors.Is(err, schema.ErrUnknownRole) {
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unknown Role", err.Error())
+			return
+		}
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	h.GetRolePrivileges(w, r)
 }

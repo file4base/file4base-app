@@ -37,9 +37,11 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/", h.InsertRow)
 		r.Post("/find", h.FindRows)
 		r.Post("/summary", h.SummarizeRows)
-		r.Post("/import/preview", h.PreviewImport)
-		r.Post("/import", h.ImportRows)
-		r.Post("/export", h.ExportRows)
+		// Bringing records in or out in bulk is a capability an owner can
+		// withhold from a role (#39), enforced here rather than in a client.
+		r.With(RequireCapability(schema.CapabilityBulkImport)).Post("/import/preview", h.PreviewImport)
+		r.With(RequireCapability(schema.CapabilityBulkImport)).Post("/import", h.ImportRows)
+		r.With(RequireCapability(schema.CapabilityBulkExport)).Post("/export", h.ExportRows)
 		r.Get("/{id}", h.GetRow)
 		r.Get("/{id}/related", h.ListRelatedRows)
 		r.Post("/{id}/related", h.CreateRelatedRow)

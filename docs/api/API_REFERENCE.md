@@ -505,6 +505,8 @@ File4Base reads records out of comma- and tab-separated text, Excel workbooks an
 
 The file travels **base64 in the JSON body**, beside the settings, rather than as a separate upload, so one request carries the file and what to do with it. The format is taken from `format`, or guessed from `file_name`.
 
+Moving records in or out in bulk is a privilege an owner can withhold from a role (#39): without it, `import`, `import/preview` and `export` answer `403 Forbidden` whatever the caller's table access is. See [`/api/v1/security/privileges`](#get-apiv1securityprivileges).
+
 ### `POST /api/v1/data/{table}/import/preview`
 
 Reads a file and reports what is in it. **Writes nothing**, but needs write access to the table, because it is a step on the way to writing.
@@ -904,7 +906,7 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 ---
 
 ### `GET /api/v1/solutions/export-data`
-Dumps all records and table rows from the active database into a binary MessagePack data file (`.f4data`).
+Dumps all records and table rows from the active database into a binary MessagePack data file (`.f4data`). Requires the `owner` or `admin` role and the `bulk_export` privilege (#39).
 
 #### Response `200 OK`
 - `Content-Type: application/x-msgpack`
@@ -913,7 +915,7 @@ Dumps all records and table rows from the active database into a binary MessageP
 ---
 
 ### `POST /api/v1/solutions/import-data`
-Restores records into the session's database from a MessagePack `.f4data` payload, in **one transaction**.
+Restores records into the session's database from a MessagePack `.f4data` payload, in **one transaction**. Requires the `owner` or `admin` role and the `bulk_import` privilege (#39).
 
 Only catalog tables receive rows (internal `sys_*` tables never do, even if a catalog row names one), and every field of every record must be a field of its table: otherwise the request answers `400 Bad Request` before any row is written. The first record the database rejects (for example, text in a NUMBER field) rolls back the whole import and is reported with its table and position. A record whose `id` already exists is skipped, not overwritten. Tables of the file that the database does not have are listed in `skipped_tables`.
 
@@ -968,9 +970,12 @@ Signing in never initializes a database or creates accounts.
   },
   "token": "5f1c…64 hex characters",
   "token_type": "Bearer",
+  "capabilities": ["bulk_export", "bulk_import"],
   "expires_at": "2026-10-06T20:00:00Z"
 }
 ```
+
+`capabilities` lists the extended privileges the account's role holds (#39), so a client can say what the account may do before trying it. The server enforces them on every request regardless.
 
 #### Errors
 - `401 Unauthorized`: invalid username or password, deactivated account, or the database has no File4Base catalog.
@@ -985,12 +990,13 @@ Revokes the session of the bearer token. Response `204 No Content`.
 ---
 
 ### `GET /api/v1/auth/session`
-Returns the user, role, layout permissions and database of the current session.
+Returns the user, role, layout permissions, extended privileges and database of the current session.
 
 #### Response `200 OK`
 ```json
 {
   "database": "invoices_db",
+  "capabilities": ["bulk_export", "bulk_import"],
   "user": {
     "id": "u-0001",
     "username": "alice",
@@ -1111,6 +1117,58 @@ Replaces the per-layout permissions of a user. Requires the `owner` or `admin` r
   ]
 }
 ```
+
+---
+
+### `GET /api/v1/security/privileges`
+Returns the extended privileges each account role holds (#39). Requires the `owner` or `admin` role.
+
+An extended privilege is an **action** the server performs and can therefore refuse. File4Base does not restrict access by client: the desktop client, the Web Client and a direct REST call all speak to this API with the same session token, so the server cannot tell them apart, and a setting that claimed to would restrict nothing.
+
+A role with nothing stored holds every privilege, so a database created before this table existed is not restricted by upgrading. An `owner` always holds every privilege and is reported as such whatever is stored.
+
+#### Response `200 OK`
+```json
+{
+  "capabilities": ["bulk_export", "bulk_import"],
+  "privileges": [
+    {"role": "owner", "bulk_export": true, "bulk_import": true},
+    {"role": "admin", "bulk_export": true, "bulk_import": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false}
+  ]
+}
+```
+
+| Capability | Covers |
+| --- | --- |
+| `bulk_export` | `POST /api/v1/data/{table}/export` and `GET /api/v1/solutions/export-data`. |
+| `bulk_import` | `POST /api/v1/data/{table}/import`, `POST /api/v1/data/{table}/import/preview` and `POST /api/v1/solutions/import-data`. |
+
+Reading or writing one record at a time is not a bulk privilege: that is governed by the account role and by the per-table and per-layout access levels.
+
+---
+
+### `PUT /api/v1/security/privileges`
+Replaces the extended privileges of the roles in the request. Requires the `owner` role: granting a privilege to one's own role would be no restriction at all.
+
+Roles left out of the body keep what they hold. The `owner` entry is stored fully granted whatever it says, so that an owner cannot lock themselves out of their own database. The change applies to sessions that are already open, on the next request they make.
+
+#### Request Body
+```json
+{
+  "privileges": [
+    {"role": "admin", "bulk_export": true, "bulk_import": false},
+    {"role": "user", "bulk_export": false, "bulk_import": false}
+  ]
+}
+```
+
+#### Response `200 OK`
+The same body as `GET /api/v1/security/privileges`.
+
+#### Errors
+- `403 Forbidden`: the caller is not an owner.
+- `422 Unprocessable Entity`: a role File4Base does not have.
 
 ---
 

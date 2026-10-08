@@ -537,10 +537,97 @@ class UserModel {
   };
 }
 
+/// Capabilities an owner can grant to or withhold from an account role (#39).
+/// They are actions the server performs, so the server is what enforces them;
+/// a client only uses them to say what an account may do before it tries.
+class Capability {
+  static const String bulkExport = 'bulk_export';
+  static const String bulkImport = 'bulk_import';
+
+  static const List<String> all = [bulkExport, bulkImport];
+
+  /// The name shown in the interface for a capability.
+  static String label(String capability) {
+    switch (capability) {
+      case bulkExport:
+        return 'Bulk record export';
+      case bulkImport:
+        return 'Bulk record import';
+      default:
+        return capability;
+    }
+  }
+
+  /// What the capability covers, in one sentence.
+  static String description(String capability) {
+    switch (capability) {
+      case bulkExport:
+        return 'Export a table or found set as CSV, tab-separated text or an Excel '
+            'workbook, and write the .f4data data file.';
+      case bulkImport:
+        return 'Bring records in from CSV, tab-separated text, Excel or XML, and '
+            'read back a .f4data data file.';
+      default:
+        return '';
+    }
+  }
+
+  const Capability._();
+}
+
+/// The capabilities one account role holds.
+class RolePrivilegesModel {
+  final String role;
+  final bool bulkExport;
+  final bool bulkImport;
+
+  const RolePrivilegesModel({
+    required this.role,
+    this.bulkExport = true,
+    this.bulkImport = true,
+  });
+
+  bool allows(String capability) {
+    switch (capability) {
+      case Capability.bulkExport:
+        return bulkExport;
+      case Capability.bulkImport:
+        return bulkImport;
+      default:
+        return false;
+    }
+  }
+
+  RolePrivilegesModel withCapability(String capability, bool allowed) {
+    return RolePrivilegesModel(
+      role: role,
+      bulkExport: capability == Capability.bulkExport ? allowed : bulkExport,
+      bulkImport: capability == Capability.bulkImport ? allowed : bulkImport,
+    );
+  }
+
+  factory RolePrivilegesModel.fromJson(Map<String, dynamic> json) {
+    return RolePrivilegesModel(
+      role: json['role'] as String? ?? '',
+      bulkExport: json['bulk_export'] as bool? ?? true,
+      bulkImport: json['bulk_import'] as bool? ?? true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'role': role,
+        'bulk_export': bulkExport,
+        'bulk_import': bulkImport,
+      };
+}
+
 class AuthResult {
   final String status;
   final String database;
   final UserModel user;
+
+  /// What the account's role may do, as the server reports it at sign-in.
+  final List<String> capabilities;
 
   /// Bearer token of the session opened by the server for this sign-in.
   final String? token;
@@ -552,6 +639,7 @@ class AuthResult {
     required this.status,
     required this.database,
     required this.user,
+    this.capabilities = Capability.all,
     this.token,
     this.fileName,
     this.solutionName,
@@ -563,6 +651,8 @@ class AuthResult {
       status: json['status'] as String? ?? 'ok',
       database: json['database'] as String? ?? '',
       user: UserModel.fromJson(json['user'] as Map<String, dynamic>),
+      // A server from before #39 reports nothing, and restricts nothing.
+      capabilities: (json['capabilities'] as List<dynamic>?)?.whereType<String>().toList() ?? Capability.all,
       token: json['token'] as String?,
       fileName: json['file_name'] as String?,
       solutionName: json['solution_name'] as String?,
@@ -573,6 +663,7 @@ class AuthResult {
     String? status,
     String? database,
     UserModel? user,
+    List<String>? capabilities,
     String? token,
     String? fileName,
     String? solutionName,
@@ -582,6 +673,7 @@ class AuthResult {
       status: status ?? this.status,
       database: database ?? this.database,
       user: user ?? this.user,
+      capabilities: capabilities ?? this.capabilities,
       token: token ?? this.token,
       fileName: fileName ?? this.fileName,
       solutionName: solutionName ?? this.solutionName,
@@ -1789,6 +1881,50 @@ class ApiClient {
       }),
     );
     _checkResponse(response);
+  }
+
+  /// Reads what the caller's own session may do: the capabilities its role
+  /// holds (#39). A server without them answers nothing, which means no
+  /// restriction.
+  Future<List<String>> sessionCapabilities({String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/auth/session'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['capabilities'] as List<dynamic>?)?.whereType<String>().toList() ?? Capability.all;
+  }
+
+  /// Reads the capabilities each account role holds (#39).
+  Future<List<RolePrivilegesModel>> listRolePrivileges({String? database}) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/security/privileges$query'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final list = body['privileges'] as List<dynamic>? ?? const [];
+    return list.map((item) => RolePrivilegesModel.fromJson(item as Map<String, dynamic>)).toList();
+  }
+
+  /// Replaces the capabilities of the roles given. Only an owner may call it,
+  /// and the owner's own role always keeps every capability.
+  Future<List<RolePrivilegesModel>> setRolePrivileges(
+    List<RolePrivilegesModel> privileges, {
+    String? database,
+  }) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/security/privileges$query'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
+      body: jsonEncode({'privileges': privileges.map((p) => p.toJson()).toList()}),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final list = body['privileges'] as List<dynamic>? ?? const [];
+    return list.map((item) => RolePrivilegesModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
   // ==========================================

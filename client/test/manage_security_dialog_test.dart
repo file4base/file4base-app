@@ -221,4 +221,149 @@ void main() {
       expect(onModifiedCalled, isTrue);
     });
   });
+
+  group('Extended privileges tab (#39)', () {
+    /// Serves the dialog's reads and records what it writes.
+    MockClient privilegeClient({
+      required List<Map<String, dynamic>> privileges,
+      required List<Map<String, dynamic>> written,
+    }) {
+      return MockClient((request) async {
+        if (request.url.path == '/api/v1/security/privileges') {
+          if (request.method == 'PUT') {
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            written.addAll((body['privileges'] as List<dynamic>).cast<Map<String, dynamic>>());
+            for (final p in written) {
+              privileges.removeWhere((existing) => existing['role'] == p['role']);
+              privileges.add(p);
+            }
+          }
+          return http.Response(
+            jsonEncode({
+              'capabilities': ['bulk_export', 'bulk_import'],
+              'privileges': privileges,
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.path == '/api/v1/security/users') {
+          return http.Response(
+            jsonEncode([
+              {'id': 'owner-1', 'username': 'admin_root', 'role': 'owner', 'is_active': true},
+            ]),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        if (request.url.path == '/api/v1/schemas/layouts' || request.url.path.contains('/permissions')) {
+          return http.Response('[]', 200, headers: {'content-type': 'application/json'});
+        }
+        return http.Response('Not found', 404);
+      });
+    }
+
+    Future<void> openTab(WidgetTester tester, MockClient client, {String role = 'owner'}) async {
+      tester.view.physicalSize = const Size(1280, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      final apiClient = ApiClient(baseUrl: 'http://test-server:8080', httpClient: client);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ManageSecurityDialog(
+              apiClient: apiClient,
+              currentUser: UserModel(id: 'owner-1', username: 'admin_root', role: role, isActive: true),
+              databaseName: 'bakery',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Extended privileges'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('shows the capabilities that are enforced and no access method', (tester) async {
+      final written = <Map<String, dynamic>>[];
+      await openTab(
+        tester,
+        privilegeClient(
+          privileges: [
+            {'role': 'owner', 'bulk_export': true, 'bulk_import': true},
+            {'role': 'admin', 'bulk_export': true, 'bulk_import': false},
+            {'role': 'user', 'bulk_export': false, 'bulk_import': false},
+          ],
+          written: written,
+        ),
+      );
+
+      expect(find.text('Bulk record export'), findsOneWidget);
+      expect(find.text('Bulk record import'), findsOneWidget);
+
+      // The access methods the tab used to claim are gone: they were never
+      // enforced and could not be (#39).
+      expect(find.textContaining('WebDirect'), findsNothing);
+      expect(find.textContaining('REST API'), findsNothing);
+      expect(find.textContaining('does not restrict access by client'), findsOneWidget);
+
+      // Two capabilities by three roles, each switch reflecting what is stored.
+      final switches = tester.widgetList<Switch>(find.byType(Switch)).toList();
+      expect(switches.length, 6);
+      expect(switches.map((s) => s.value).toList(), [true, true, false, true, false, false]);
+
+      // The owner's switches are locked on.
+      expect(switches[0].onChanged, isNull);
+      expect(switches[3].onChanged, isNull);
+      expect(switches[1].onChanged, isNotNull);
+    });
+
+    testWidgets('a change is stored at once, not kept in the dialog', (tester) async {
+      final written = <Map<String, dynamic>>[];
+      await openTab(
+        tester,
+        privilegeClient(
+          privileges: [
+            {'role': 'owner', 'bulk_export': true, 'bulk_import': true},
+            {'role': 'admin', 'bulk_export': true, 'bulk_import': true},
+            {'role': 'user', 'bulk_export': true, 'bulk_import': true},
+          ],
+          written: written,
+        ),
+      );
+
+      // Withhold bulk export from the user role.
+      await tester.tap(find.byType(Switch).at(2));
+      await tester.pumpAndSettle();
+
+      expect(written, [
+        {'role': 'user', 'bulk_export': false, 'bulk_import': true},
+      ]);
+      expect(tester.widget<Switch>(find.byType(Switch).at(2)).value, isFalse);
+      expect(find.textContaining('withheld from users'), findsOneWidget);
+    });
+
+    testWidgets('an account that is not an owner can only read the grants', (tester) async {
+      final written = <Map<String, dynamic>>[];
+      await openTab(
+        tester,
+        privilegeClient(
+          privileges: [
+            {'role': 'owner', 'bulk_export': true, 'bulk_import': true},
+            {'role': 'admin', 'bulk_export': true, 'bulk_import': true},
+            {'role': 'user', 'bulk_export': false, 'bulk_import': true},
+          ],
+          written: written,
+        ),
+        role: 'admin',
+      );
+
+      expect(find.text('Only an owner can change these privileges.'), findsOneWidget);
+      for (final s in tester.widgetList<Switch>(find.byType(Switch))) {
+        expect(s.onChanged, isNull);
+      }
+      expect(written, isEmpty);
+    });
+  });
 }

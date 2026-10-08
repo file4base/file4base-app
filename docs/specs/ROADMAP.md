@@ -74,6 +74,7 @@
 - [x] Per-session database binding (no server-wide active database).
 - [x] Server-side enforcement of roles (`owner`, `admin`, `user`) and per-layout permissions.
 - [x] Data API restricted to catalog tables and fields; system tables unreachable.
+- [x] Extended privileges: bulk record export and import granted per account role and enforced on every request ([#39](https://github.com/file4base/file4base-app/issues/39), [security_model.md](security_model.md)). Access is not restricted by client, and nothing claims it is.
 - [x] No default accounts; database creation provisions the first owner explicitly.
 - [x] Go test suite and `go vet` in CI.
 - [ ] Sign-in rate limiting and account lockout.

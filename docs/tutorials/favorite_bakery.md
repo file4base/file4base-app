@@ -1332,12 +1332,31 @@ Grants an account access to specific layouts rather than all of them.
 
 ### Extended privileges
 
-Lists the access methods — desktop client, web client, REST API, bulk export.
-The web-client row currently reads **Access via File4Base WebDirect**; its
-display-name change is tracked in [#8](https://github.com/file4base/file4base-app/issues/8).
-**They are not enforced yet**, and the tab says so: the server does not restrict
-access by method, so any account that can sign in can use all of them. Use
-account roles and layout privileges to restrict access today.
+Two privileges, each with a switch per privilege set:
+
+- **Bulk record export** — exporting a table or found set as CSV, tab-separated
+  text or a workbook, and writing the `.f4data` data file.
+- **Bulk record import** — bringing records in from a file, and reading a
+  `.f4data` file back.
+
+Turn one off for the **User** set and sign in as a user: *File > Export
+Records...* says the privilege is not allowed for the account's role rather than
+opening the dialog, and a request sent straight to the API answers `403` as
+well. The switches are stored the moment you move them, and they apply to
+sessions that are already open.
+
+The **Owner** switches are on and locked: an owner always holds every privilege,
+so that an owner cannot lock themselves out of their own database. Only an owner
+can change the switches; an admin sees them and the reason they are read-only.
+
+Reading and writing one record at a time is not governed here — that is the
+privilege set itself, plus the layout privileges above.
+
+There is no switch for the *access method*. Every client — the desktop
+application, the File4Base Web Client in a browser, a script calling the REST
+API — speaks to the same API with the same session token, so the server cannot
+tell them apart, and a switch that claimed to would restrict nothing. The tab
+says so in as many words.
 
 ---
 
@@ -1420,9 +1439,6 @@ builds labels and a letter with them.
 It flows continuously and is cut wherever the page ends, and the header is not
 repeated at the top of each printed page.
 
-**No merge fields in text** ([#33](https://github.com/file4base/file4base-app/issues/33))**.** Form letters and mailing labels, which depend on
-merge fields that collapse when empty, cannot be built.
-
 **No saved finds** ([#34](https://github.com/file4base/file4base-app/issues/34))**.**
 A find cannot be named and run again later.
 
@@ -1434,7 +1450,11 @@ fields themselves do work — see lesson 18.
 **No import from ODBC, and no folder import** ([#47](https://github.com/file4base/file4base-app/issues/47))**.**
 Both menu items are greyed out. Files do import — lesson 16 brings a CSV in.
 
-**Extended privileges are not enforced** ([#39](https://github.com/file4base/file4base-app/issues/39))**.** See lesson 20.
+**No restriction by client** ([#39](https://github.com/file4base/file4base-app/issues/39))**.**
+File4Base restricts access by account role, by table and layout, and by the two
+extended privileges of lesson 20. It does not restrict access by the client used:
+every client speaks to the same REST API with the same session token, so a
+setting that claimed to would restrict nothing.
 
 **Some menu commands are greyed out.** Those are commands that do not exist yet.
 A greyed item is the application telling you the truth; it used to show a

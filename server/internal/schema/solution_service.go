@@ -146,6 +146,7 @@ type SolutionBundle struct {
 	Scripts            []BundleScript         `msgpack:"scripts"`
 	ValueLists         []BundleValueList      `msgpack:"value_lists,omitempty"`
 	Users              []BundleAccount        `msgpack:"users"`
+	Privileges         []RolePrivileges       `msgpack:"privileges,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
 }
@@ -210,6 +211,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("failed listing accounts: %w", err)
 	}
+	privileges, err := s.ListRolePrivileges(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing role privileges: %w", err)
+	}
 
 	conn := opts.Connection
 	if conn.Engine == "" {
@@ -228,6 +233,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		Scripts:            make([]BundleScript, 0, len(scripts)),
 		ValueLists:         make([]BundleValueList, 0, len(valueLists)),
 		Users:              make([]BundleAccount, 0, len(users)),
+		Privileges:         privileges,
 		FileOptions:        withoutSecrets(opts.FileOptions),
 		PageSetup:          opts.PageSetup,
 	}
@@ -362,6 +368,7 @@ type ImportReport struct {
 	ValueListsCreated       int      `json:"value_lists_created"`
 	ValueListsUpdated       int      `json:"value_lists_updated"`
 	AccountsCreated         int      `json:"accounts_created"`
+	PrivilegesUpdated       int      `json:"privileges_updated"`
 	AccountsPendingPassword []string `json:"accounts_pending_password"`
 	// Totals in the bundle, kept for older clients.
 	TablesCount  int `json:"tables_count"`
@@ -684,6 +691,20 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		}
 		report.AccountsCreated++
 		report.AccountsPendingPassword = append(report.AccountsPendingPassword, created.Username)
+	}
+
+	// 7. Role privileges (#39). They are keyed by role, so there is nothing
+	// to remap; a file written before they existed leaves them untouched.
+	if len(b.Privileges) > 0 {
+		previous, err := s.ListRolePrivileges(ctx)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("reading role privileges: %w", err))
+		}
+		if err := s.SetRolePrivileges(ctx, b.Privileges); err != nil {
+			return nil, rollback(fmt.Errorf("restoring role privileges: %w", err))
+		}
+		undo = append(undo, func() { _ = s.SetRolePrivileges(bg, previous) })
+		report.PrivilegesUpdated = len(b.Privileges)
 	}
 
 	return report, nil

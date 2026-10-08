@@ -157,6 +157,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   UserModel? _currentUser;
   List<LayoutModel> _serverLayouts = [];
   Map<String, String> _userPermissions = {};
+  /// What the signed-in account may do beyond reading and writing records:
+  /// the capabilities of its role (#39). The server enforces them; these are
+  /// held so the interface can say so before a request is refused.
+  Set<String> _capabilities = Capability.all.toSet();
   FileOptionsModel _fileOptions = const FileOptionsModel();
   PageSetupModel _pageSetup = const PageSetupModel();
 
@@ -323,8 +327,35 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  /// Reads the capabilities of the signed-in account's role, so that
+  /// File > Import/Export Records can say what is withheld instead of
+  /// letting the request come back refused.
+  Future<void> _loadCapabilities() async {
+    final client = ref.read(apiClientProvider);
+    try {
+      final capabilities = await client.sessionCapabilities(database: _activeDatabaseName);
+      if (mounted) setState(() => _capabilities = capabilities.toSet());
+    } catch (_) {
+      // Unknown: let the server answer. It is what enforces them.
+      if (mounted) setState(() => _capabilities = Capability.all.toSet());
+    }
+  }
+
+  /// Tells the user a privilege their role does not hold, naming who can
+  /// grant it.
+  void _reportMissingCapability(String capability) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${Capability.label(capability)} is not allowed for your account role. '
+            'An owner grants it in File > Manage > Security, under Extended privileges.'),
+        backgroundColor: Colors.orange,
+      ),
+    );
+  }
+
   Future<void> _loadUserPermissions() async {
     if (_currentUser == null) return;
+    await _loadCapabilities();
     if (_currentUser!.role == 'owner' || _currentUser!.role == 'admin') {
       if (mounted) setState(() => _userPermissions = {});
       return;
@@ -1094,6 +1125,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       _startAuthSequence();
       return;
     }
+    if (!_capabilities.contains(Capability.bulkExport)) {
+      _reportMissingCapability(Capability.bulkExport);
+      return;
+    }
     if (_tables.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1120,6 +1155,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   Future<void> _handleImportRecords() async {
     if (_currentUser == null) {
       _startAuthSequence();
+      return;
+    }
+    if (!_capabilities.contains(Capability.bulkImport)) {
+      _reportMissingCapability(Capability.bulkImport);
       return;
     }
     final table = _selectedTable;

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Extended privileges are real privileges now**
+  ([#39](https://github.com/file4base/file4base-app/issues/39)). Manage Security
+  listed four "access methods" — desktop, WebDirect, REST API, bulk export —
+  that nothing enforced: the server had no concept of them, so every account
+  that could sign in could use all of them. The tab now holds two privileges
+  that the server does enforce, and states plainly what File4Base does not
+  restrict. [docs/specs/security_model.md](docs/specs/security_model.md) is the
+  specification.
+  - **Bulk record export** and **bulk record import** are granted per account
+    role in a new `sys_privileges` catalog table. Without the privilege,
+    `POST /api/v1/data/{table}/export`, `/import`, `/import/preview` and the
+    `.f4data` endpoints answer `403 Forbidden`, whatever the caller's table
+    access is and whichever client calls them.
+  - **A role with nothing stored holds every privilege**, so upgrading a
+    database restricts nothing: a restriction only appears because an owner
+    asked for one.
+  - **An owner always holds every privilege** and the switches say so, so that
+    an owner cannot lock themselves out of their own database. Only an owner can
+    change the grants; an admin can read them.
+  - **The switches store what they show.** Before `e7473a4` the tab had
+    switches that wrote to local variables, were never sent to the server and
+    were lost when the dialog closed. Each switch is now written as it is moved,
+    and applies to sessions that are already open.
+  - **Clients are told what their role may do**, in the `capabilities` of the
+    sign-in and session responses, so *File > Import/Export Records...* says a
+    privilege is withheld instead of letting the request come back refused.
+    That is a courtesy; the server checks every call.
+  - **The grants travel in the solution bundle** and are restored on import,
+    keyed by role.
+- **No privilege per access method, and no claim of one.** Every File4Base
+  client is a REST client: the desktop application, the Web Client behind Nginx
+  and a direct `curl` all call the same endpoints with the same session token,
+  so what would identify the client is something the request itself claims and
+  anyone with valid credentials can claim it. A switch built on that would read
+  as a restriction and behave as a suggestion. The tab, the specification and
+  the tutorial now say what is enforced — account role, table and layout,
+  these privileges — and why the method is not among them. Binding the method to
+  the token at sign-in, with a secret shared with the Web Client's proxy, is
+  what building it would take.
+
+---
+
 ## [0.10.0] - 2026-10-08
 
 ### Added

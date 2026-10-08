@@ -64,8 +64,10 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Get("/export", h.ExportSolution)
 		r.With(RequireAdmin).Post("/export", h.ExportSolution)
 		r.With(RequireOwner).Post("/import", h.ImportSolution)
-		r.With(RequireAdmin).Get("/export-data", h.ExportDatabaseData)
-		r.With(RequireAdmin).Post("/import-data", h.ImportDatabaseData)
+		// The data file carries every record, so it needs the same bulk
+		// capability as a record export or import (#39).
+		r.With(RequireAdmin, RequireCapability(schema.CapabilityBulkExport)).Get("/export-data", h.ExportDatabaseData)
+		r.With(RequireAdmin, RequireCapability(schema.CapabilityBulkImport)).Post("/import-data", h.ImportDatabaseData)
 	})
 }
 
