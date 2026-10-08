@@ -9,6 +9,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/extsource"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
@@ -126,6 +127,19 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/saved-finds", func(r chi.Router) {
 		r.Use(RequireSession)
 		savedFinds("")(r)
+	})
+
+	// External SQL data sources (#47). Reading the list is an admin matter;
+	// registering one names a machine the server will connect to, so only an
+	// owner may add, change or remove one.
+	r.Route("/api/v1/data-sources", func(r chi.Router) {
+		r.Use(RequireSession)
+		r.With(RequireAdmin).Get("/", h.ListDataSources)
+		r.With(RequireOwner).Post("/", h.CreateDataSource)
+		r.With(RequireAdmin).Get("/{id}", h.GetDataSource)
+		r.With(RequireOwner).Put("/{id}", h.UpdateDataSource)
+		r.With(RequireOwner).Delete("/{id}", h.DeleteDataSource)
+		r.With(RequireAdmin).Post("/{id}/tables", h.ListDataSourceTables)
 	})
 
 	r.Route("/api/v1/value-lists", func(r chi.Router) {
@@ -1017,6 +1031,133 @@ func writeSavedFindError(w http.ResponseWriter, r *http.Request, err error) {
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Saved Find Already Exists", err.Error())
 	case errors.Is(err, schema.ErrInvalidSavedFind):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Saved Find", err.Error())
+	default:
+		writeSchemaError(w, r, err)
+	}
+}
+
+// ─── External SQL data sources (#47) ─────────────────────────────────────────
+
+func (h *SchemaHandler) ListDataSources(w http.ResponseWriter, r *http.Request) {
+	sources, err := schemaService(r).ListDataSources(r.Context())
+	if err != nil {
+		writeDataSourceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"engines": dataSourceEngines(),
+		"sources": sources,
+	})
+}
+
+// dataSourceEngines is what the dialog offers, named as it writes them.
+func dataSourceEngines() []map[string]interface{} {
+	engines := make([]map[string]interface{}, 0, len(extsource.Engines))
+	for _, engine := range extsource.Engines {
+		engines = append(engines, map[string]interface{}{
+			"engine":       string(engine),
+			"label":        engine.Label(),
+			"default_port": engine.DefaultPort(),
+		})
+	}
+	return engines
+}
+
+func (h *SchemaHandler) GetDataSource(w http.ResponseWriter, r *http.Request) {
+	source, err := schemaService(r).GetDataSource(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeDataSourceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(source)
+}
+
+func (h *SchemaHandler) CreateDataSource(w http.ResponseWriter, r *http.Request) {
+	var in schema.DataSourceInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	source, err := schemaService(r).CreateDataSource(r.Context(), in)
+	if err != nil {
+		writeDataSourceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(source)
+}
+
+func (h *SchemaHandler) UpdateDataSource(w http.ResponseWriter, r *http.Request) {
+	var in schema.DataSourceInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	source, err := schemaService(r).UpdateDataSource(r.Context(), chi.URLParam(r, "id"), in)
+	if err != nil {
+		writeDataSourceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(source)
+}
+
+func (h *SchemaHandler) DeleteDataSource(w http.ResponseWriter, r *http.Request) {
+	if err := schemaService(r).DeleteDataSource(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeDataSourceError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListDataSourceTables connects to the source and answers its tables, so the
+// import dialog can offer them. It is also what "Test connection" calls: a
+// source that answers its catalog is a source that can be read.
+//
+// The password travels in the body of this request and is never stored.
+func (h *SchemaHandler) ListDataSourceTables(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Password string `json:"password"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+			return
+		}
+	}
+
+	source, err := schemaService(r).GetDataSource(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeDataSourceError(w, r, err)
+		return
+	}
+	tables, err := extsource.ListTables(r.Context(), source.Connection(), source.Password(body.Password))
+	if err != nil {
+		writeDataSourceError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"tables": tables})
+}
+
+func writeDataSourceError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, schema.ErrDataSourceNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Data Source Not Found", err.Error())
+	case errors.Is(err, schema.ErrDataSourceExists):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Data Source Already Exists", err.Error())
+	case errors.Is(err, schema.ErrInvalidDataSource), errors.Is(err, extsource.ErrUnsupportedEngine):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Data Source", err.Error())
+	case errors.Is(err, extsource.ErrUnsafeStatement):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsafe Statement", err.Error())
+	case errors.Is(err, extsource.ErrConnection):
+		// The source is another machine: unreachable is not our fault, and
+		// the driver's own words are what an owner needs to see.
+		telemetry.WriteProblem(w, r, http.StatusBadGateway, "Data Source Unreachable", err.Error())
 	default:
 		writeSchemaError(w, r, err)
 	}

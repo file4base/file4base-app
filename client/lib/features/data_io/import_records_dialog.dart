@@ -29,6 +29,10 @@ class ImportAction {
   static const String updateMatching = 'update_matching';
 }
 
+/// Where the records come from: a file, or another SQL database the owner
+/// registered as a data source (#47).
+enum ImportSourceKind { file, external }
+
 class ImportRecordsDialog extends StatefulWidget {
   final TableModel table;
   final ApiClient apiClient;
@@ -37,12 +41,16 @@ class ImportRecordsDialog extends StatefulWidget {
   final String? fileName;
   final Uint8List? bytes;
 
+  /// Which kind of source the dialog opens on.
+  final ImportSourceKind initialSource;
+
   const ImportRecordsDialog({
     super.key,
     required this.table,
     required this.apiClient,
     this.fileName,
     this.bytes,
+    this.initialSource = ImportSourceKind.file,
   });
 
   /// Shows the dialog. Returns the report when records were imported, so the
@@ -51,11 +59,16 @@ class ImportRecordsDialog extends StatefulWidget {
     BuildContext context, {
     required TableModel table,
     required ApiClient apiClient,
+    ImportSourceKind initialSource = ImportSourceKind.file,
   }) {
     return showDialog<ImportReportModel>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => ImportRecordsDialog(table: table, apiClient: apiClient),
+      builder: (_) => ImportRecordsDialog(
+        table: table,
+        apiClient: apiClient,
+        initialSource: initialSource,
+      ),
     );
   }
 
@@ -66,6 +79,20 @@ class ImportRecordsDialog extends StatefulWidget {
 class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
   String? _fileName;
   Uint8List? _bytes;
+
+  // ─── An external SQL data source (#47) ─────────────────────────────────────
+  late ImportSourceKind _sourceKind = widget.initialSource;
+  List<DataSourceModel> _sources = const [];
+  DataSourceModel? _source;
+  bool _loadingSources = false;
+  String? _sourcesError;
+
+  /// Whole table, or a statement typed here.
+  bool _wholeTable = true;
+  List<String> _sourceTables = const [];
+  String? _sourceTable;
+  final TextEditingController _queryController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
 
   ImportPreviewModel? _preview;
   bool _busy = false;
@@ -90,6 +117,78 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
     _fileName = widget.fileName;
     _bytes = widget.bytes;
     if (_bytes != null) _loadPreview();
+    if (_sourceKind == ImportSourceKind.external) _loadSources();
+  }
+
+  @override
+  void dispose() {
+    _queryController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  /// Reads the registered connections. A regular user is not allowed to see
+  /// them, which the dialog says rather than showing an empty list.
+  Future<void> _loadSources() async {
+    setState(() {
+      _loadingSources = true;
+      _sourcesError = null;
+    });
+    try {
+      final result = await widget.apiClient.listDataSources();
+      if (!mounted) return;
+      setState(() {
+        _sources = result.sources;
+        _source ??= _sources.isEmpty ? null : _sources.first;
+        _loadingSources = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingSources = false;
+        _sourcesError = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  /// Connects and lists the tables of the chosen source, which is also how
+  /// the connection is tested.
+  Future<void> _loadSourceTables() async {
+    final source = _source;
+    if (source == null) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final tables = await widget.apiClient
+          .listDataSourceTables(source.id, password: _passwordController.text);
+      if (!mounted) return;
+      setState(() {
+        _sourceTables = tables;
+        _sourceTable = tables.isEmpty ? null : (tables.contains(_sourceTable) ? _sourceTable : tables.first);
+        _busy = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _sourceTables = const [];
+        _error = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  /// What the import reads from, when it reads from a data source.
+  ExternalSourceRef? get _externalRef {
+    final source = _source;
+    if (_sourceKind != ImportSourceKind.external || source == null) return null;
+    return ExternalSourceRef(
+      id: source.id,
+      table: _wholeTable ? (_sourceTable ?? '') : '',
+      query: _wholeTable ? '' : _queryController.text.trim(),
+      password: _passwordController.text,
+    );
   }
 
   /// The fields a column can be sent to: not the primary key, which File4Base
@@ -118,9 +217,10 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
   }
 
   Future<void> _loadPreview() async {
+    final external = _externalRef;
     final bytes = _bytes;
     final name = _fileName;
-    if (bytes == null || name == null) return;
+    if (external == null && (bytes == null || name == null)) return;
 
     setState(() {
       _busy = true;
@@ -129,10 +229,11 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
     try {
       final preview = await widget.apiClient.previewImport(
         widget.table.name,
-        fileName: name,
-        bytes: bytes,
+        fileName: name ?? '',
+        bytes: external == null ? bytes : null,
         hasHeader: _hasHeader,
         sheet: _sheet,
+        dataSource: external,
       );
       if (!mounted) return;
       setState(() {
@@ -177,7 +278,16 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
 
   /// What stops the import, said rather than leaving the button dead.
   String? get _blocker {
-    if (_bytes == null) return 'Choose a file to import.';
+    if (_sourceKind == ImportSourceKind.external) {
+      if (_source == null) {
+        return _sourcesError ?? 'No data source is registered. An owner adds one in File > Manage > Data Sources.';
+      }
+      if (_wholeTable && (_sourceTable ?? '').isEmpty) return 'Read the source and choose a table.';
+      if (!_wholeTable && _queryController.text.trim().isEmpty) return 'Type the SELECT statement to read.';
+      if (_preview == null) return 'Read the source to see what it holds.';
+    } else if (_bytes == null) {
+      return 'Choose a file to import.';
+    }
     if (_preview == null) return null;
     if (_preview!.rowCount == 0) return 'The file holds no rows.';
     if (_mapping.isEmpty) return 'Send at least one column to a field.';
@@ -193,9 +303,10 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
   }
 
   Future<void> _import() async {
+    final external = _externalRef;
     final bytes = _bytes;
     final name = _fileName;
-    if (bytes == null || name == null) return;
+    if (external == null && (bytes == null || name == null)) return;
 
     setState(() {
       _busy = true;
@@ -204,10 +315,11 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
     try {
       final report = await widget.apiClient.importRecords(
         widget.table.name,
-        fileName: name,
-        bytes: bytes,
+        fileName: name ?? '',
+        bytes: external == null ? bytes : null,
         hasHeader: _hasHeader,
         sheet: _sheet,
+        dataSource: external,
         options: {
           'action': _action,
           'date_order': _dateOrder,
@@ -279,7 +391,9 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
         Expanded(
           child: ListView(
             children: [
-              _filePicker(),
+              _sourceKindPicker(),
+              const SizedBox(height: 10),
+              if (_sourceKind == ImportSourceKind.external) _sourcePicker() else _filePicker(),
               if (_error != null) ...[
                 const SizedBox(height: 10),
                 Container(
@@ -325,6 +439,203 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
     );
   }
 
+  /// Where the records come from. Switching clears what was read, so the
+  /// mapping below always belongs to the source shown.
+  Widget _sourceKindPicker() {
+    return SegmentedButton<ImportSourceKind>(
+      segments: const [
+        ButtonSegment(
+          value: ImportSourceKind.file,
+          icon: Icon(Icons.insert_drive_file_outlined, size: 15),
+          label: Text('From a file'),
+        ),
+        ButtonSegment(
+          value: ImportSourceKind.external,
+          icon: Icon(Icons.storage_outlined, size: 15),
+          label: Text('From a SQL data source'),
+        ),
+      ],
+      selected: {_sourceKind},
+      showSelectedIcon: false,
+      style: const ButtonStyle(visualDensity: VisualDensity.compact),
+      onSelectionChanged: _busy
+          ? null
+          : (selection) {
+              setState(() {
+                _sourceKind = selection.first;
+                _preview = null;
+                _error = null;
+                _mapping.clear();
+                _matchFields.clear();
+              });
+              if (_sourceKind == ImportSourceKind.external && _sources.isEmpty) _loadSources();
+            },
+    );
+  }
+
+  /// What the records were read from, for the report: the file's name, or
+  /// the data source and what was read from it.
+  String get _sourceLabel {
+    if (_sourceKind == ImportSourceKind.file) return _fileName ?? 'the file';
+    final source = _source;
+    if (source == null) return 'the data source';
+    if (_wholeTable) {
+      return (_sourceTable ?? '').isEmpty ? source.name : '${source.name} · $_sourceTable';
+    }
+    return '${source.name} · a SELECT';
+  }
+
+  /// The registered connection, what to read from it, and the password for
+  /// this read — which is never stored.
+  Widget _sourcePicker() {
+    final source = _source;
+    final preview = _preview;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_loadingSources)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('Reading the data sources…', style: TextStyle(fontSize: 11.5)),
+          )
+        else if (_sources.isEmpty)
+          Text(
+            _sourcesError ??
+                'No data source is registered. An owner adds one in File > Manage > Data Sources.',
+            style: TextStyle(fontSize: 11.5, color: Colors.orange.shade800),
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  key: const ValueKey('import-source'),
+                  initialValue: source?.id,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Data source',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: [
+                    for (final s in _sources)
+                      DropdownMenuItem(value: s.id, child: Text('${s.name} — ${s.summary}')),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (id) => setState(() {
+                            _source = _sources.where((s) => s.id == id).firstOrNull;
+                            _sourceTables = const [];
+                            _sourceTable = null;
+                            _preview = null;
+                          }),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 200,
+                child: TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    helperText: (source?.passwordEnv ?? '').isEmpty
+                        ? 'Used for this import only'
+                        : 'Leave empty to use ${source!.passwordEnv}',
+                    helperMaxLines: 2,
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        if (_sources.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: true, label: Text('A table')),
+                  ButtonSegment(value: false, label: Text('A SELECT')),
+                ],
+                selected: {_wholeTable},
+                showSelectedIcon: false,
+                style: const ButtonStyle(visualDensity: VisualDensity.compact),
+                onSelectionChanged: _busy
+                    ? null
+                    : (selection) => setState(() {
+                          _wholeTable = selection.first;
+                          _preview = null;
+                        }),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                key: const ValueKey('import-read-source'),
+                icon: const Icon(Icons.sync, size: 16),
+                label: Text(_wholeTable ? 'List tables' : 'Read'),
+                onPressed: _busy || source == null
+                    ? null
+                    : () => _wholeTable ? _loadSourceTables() : _loadPreview(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_wholeTable)
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    key: const ValueKey('import-source-table'),
+                    initialValue: _sourceTable,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Table',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      for (final t in _sourceTables) DropdownMenuItem(value: t, child: Text(t)),
+                    ],
+                    onChanged: _busy || _sourceTables.isEmpty
+                        ? null
+                        : (value) {
+                            setState(() {
+                              _sourceTable = value;
+                              _preview = null;
+                            });
+                            _loadPreview();
+                          },
+                  ),
+                ),
+              ],
+            )
+          else
+            TextField(
+              controller: _queryController,
+              maxLines: 3,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+              decoration: const InputDecoration(
+                labelText: 'SELECT statement',
+                helperText: 'One SELECT. File4Base never writes to a data source.',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          if (preview != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '${preview.rowCount} row(s), ${preview.columns.length} column(s)'
+                '${preview.truncated ? ' (the source held more and was cut)' : ''}',
+                style: const TextStyle(fontSize: 11.5),
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+
   Widget _filePicker() {
     final preview = _preview;
     return Row(
@@ -359,23 +670,26 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        SizedBox(
-          width: 240,
-          child: CheckboxListTile(
-            key: const ValueKey('import-has-header'),
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('First row holds the column names',
-                style: TextStyle(fontSize: 11.5)),
-            value: _hasHeader,
-            onChanged: _busy
-                ? null
-                : (v) {
-                    setState(() => _hasHeader = v ?? true);
-                    _loadPreview();
-                  },
+        // A SQL result set names its own columns, so there is no first row
+        // to ask about (#47).
+        if (_sourceKind == ImportSourceKind.file)
+          SizedBox(
+            width: 240,
+            child: CheckboxListTile(
+              key: const ValueKey('import-has-header'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('First row holds the column names',
+                  style: TextStyle(fontSize: 11.5)),
+              value: _hasHeader,
+              onChanged: _busy
+                  ? null
+                  : (v) {
+                      setState(() => _hasHeader = v ?? true);
+                      _loadPreview();
+                    },
+            ),
           ),
-        ),
         if (preview.sheets.length > 1)
           SizedBox(
             width: 200,
@@ -617,7 +931,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
         children: [
           const Icon(Icons.check_circle_outline, size: 44, color: Color(0xFF2E7D32)),
           const SizedBox(height: 12),
-          Text('${report.rows} row(s) read from $_fileName',
+          Text('${report.rows} row(s) read from $_sourceLabel',
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
           const SizedBox(height: 10),
           for (final line in [

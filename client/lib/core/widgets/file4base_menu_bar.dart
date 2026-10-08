@@ -70,6 +70,13 @@ class File4BaseMenuBar extends StatelessWidget {
   /// File > Import Records > File... — brings records in from a CSV, a
   /// tab-separated file, an Excel workbook or XML (#38).
   final VoidCallback? onImportRecords;
+
+  /// File > Import Records > External SQL Data Source... — reads the records
+  /// out of another SQL database instead of a file (#47).
+  final VoidCallback? onImportFromDataSource;
+
+  /// File > Manage > Data Sources... — the registered connections (#47).
+  final VoidCallback? onManageDataSources;
   final VoidCallback? onPrint;
   final VoidCallback? onQuit;
   final bool isAuthenticated;
@@ -110,6 +117,8 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onQuit,
     this.onExportRecords,
     this.onImportRecords,
+    this.onImportFromDataSource,
+    this.onManageDataSources,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -404,7 +413,7 @@ class File4BaseMenuBar extends StatelessWidget {
               child: const Text('Custom Functions...'),
             ),
             MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'External Data Sources', 'Roadmap Phase 1/4', 'PostgreSQL, MariaDB, and ODBC external connections.'),
+              onPressed: onManageDataSources,
               child: const Text('External Data Sources...'),
             ),
             MenuItemButton(
@@ -457,10 +466,9 @@ class File4BaseMenuBar extends StatelessWidget {
                   : onImportRecords,
               child: const Text('File...'),
             ),
-            // Importing a folder of pictures into container fields, and
-            // reading an ODBC source, are separate pieces of work; the items
-            // are shown disabled rather than opening a dialog that does
-            // nothing (#38).
+            // Importing a folder of pictures into container fields is a
+            // separate piece of work; the item is shown disabled rather than
+            // opening a dialog that does nothing (#38).
             const MenuItemButton(
               onPressed: null, // not implemented: shown disabled
               child: Text('Folder...'),
@@ -472,9 +480,14 @@ class File4BaseMenuBar extends StatelessWidget {
                   : onImportRecords,
               child: const Text('XML Data Source...'),
             ),
-            const MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: Text('ODBC Data Source...'),
+            // Not ODBC: File4Base reads the engines it has Go drivers for,
+            // and the item says so rather than promising a bridge (#47).
+            MenuItemButton(
+              onPressed: !isAuthenticated
+                  ? () => _showNotice(context, 'Authentication Required',
+                      'Please sign in to import records.')
+                  : onImportFromDataSource,
+              child: const Text('External SQL Data Source...'),
             ),
           ],
           child: const Text('Import Records'),

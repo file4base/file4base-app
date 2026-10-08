@@ -203,6 +203,23 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
 		);`,
+		// A named connection to another SQL database records can be
+		// imported from (#47). It holds no password: one is supplied with
+		// the request, or taken from the environment variable named here.
+		`CREATE TABLE IF NOT EXISTS sys_data_sources (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL UNIQUE,
+			engine VARCHAR(32) NOT NULL,
+			host VARCHAR(255) NOT NULL,
+			port INT,
+			database_name VARCHAR(128),
+			username VARCHAR(128),
+			schema_name VARCHAR(128),
+			use_tls BOOLEAN NOT NULL DEFAULT FALSE,
+			password_env VARCHAR(128),
+			created_at ` + ts + `,
+			updated_at ` + ts + `
+		);`,
 		// A named set of find requests on one table (#34). The requests
 		// are stored as the criteria were typed, so a saved find can be
 		// opened, read and changed in Find mode.

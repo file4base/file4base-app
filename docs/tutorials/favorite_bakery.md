@@ -1104,7 +1104,7 @@ empty matches nothing rather than everything.
 | **File...** | CSV, tab-separated text, an Excel workbook (.xlsx) or XML |
 | **XML Data Source...** | the same dialog; it reads a repeating element, and FileMaker's own `FMPXMLRESULT` export |
 | **Folder...** | greyed out — importing a folder of pictures is not built |
-| **ODBC Data Source...** | greyed out — reading a live database is its own job |
+| **External SQL Data Source...** | reads another SQL database directly; see below |
 
 A file is read up to 25 MB, 100 000 rows and 256 columns. Past that, the rows
 that were read are still shown and the dialog says the file was cut, rather
@@ -1113,6 +1113,28 @@ than importing part of it quietly.
 Two fields can never be imported into: a **calculation**, whose formula owns
 its value, and a **summary**, which has no value in a record. They are not
 offered in the mapping.
+
+
+### Import from another database
+
+Records can also come straight out of another SQL database, with no file in
+between: **File > Import Records > External SQL Data Source...**
+
+An **owner** registers the connection first, in **File > Manage > External
+Data Sources...**: the engine (PostgreSQL, MySQL / MariaDB or Microsoft SQL
+Server), the host, port, database, user and schema. There is no password
+field — File4Base stores none. You type the password when the import runs, or
+name an environment variable of the server for it to read.
+
+In the import dialog, choose **From a SQL data source**, pick the connection,
+type the password and click **List tables**. Choosing a table reads it and the
+rest of the dialog is the one you already know: the same column mapping, the
+same date setting, the same one-transaction import. **A SELECT** instead of
+**A table** reads a statement you write — one `SELECT`, nothing else, because
+File4Base never writes to a data source.
+
+It is not ODBC. Those three engines are the ones File4Base has drivers for;
+anything else still goes through a file.
 
 ---
 
@@ -1487,8 +1509,12 @@ builds labels and a letter with them.
 It flows continuously and is cut wherever the page ends, and the header is not
 repeated at the top of each printed page.
 
-**No import from ODBC, and no folder import** ([#47](https://github.com/file4base/file4base-app/issues/47))**.**
-Both menu items are greyed out. Files do import — lesson 16 brings a CSV in.
+**No ODBC, and no folder import** ([#47](https://github.com/file4base/file4base-app/issues/47))**.**
+*Import Records > Folder...* is greyed out. There is no ODBC bridge either:
+File4Base reads another database with its own drivers, so *Import Records >
+External SQL Data Source...* covers PostgreSQL, MySQL / MariaDB and Microsoft
+SQL Server, and anything else needs a file. Files do import — lesson 16 brings
+a CSV in.
 
 **No restriction by client** ([#39](https://github.com/file4base/file4base-app/issues/39))**.**
 File4Base restricts access by account role, by table and layout, and by the two

@@ -111,11 +111,74 @@ survive.
 Column headings are the field labels by default, or the field names, which
 reimport without being matched by hand.
 
+## Reading another SQL database
+
+Records can also come from a database rather than a file (#47):
+**File > Import Records > External SQL Data Source...**, which arrives at the
+same dialog, with the same preview, mapping and one-transaction import. Only
+where the rows come from is different.
+
+### Not ODBC, and the menu says so
+
+Go has no ODBC in its standard library, and the cgo bridges available pull
+unixODBC and third-party drivers into the API image, which would end the
+single static binary the server is today. File4Base reads the engines it has
+Go drivers for instead:
+
+| Engine | Driver | Default port |
+| --- | --- | --- |
+| PostgreSQL | `pgx` (the one File4Base itself speaks) | 5432 |
+| MySQL / MariaDB | `go-sql-driver/mysql` | 3306 |
+| Microsoft SQL Server | `microsoft/go-mssqldb`, pure Go | 1433 |
+
+The menu item is called *External SQL Data Source*, not ODBC, because that is
+what it is.
+
+### A registered connection, and no stored password
+
+A connection is registered by an **owner** — `sys_data_sources`, managed in
+**File > Manage > External Data Sources...** — and holds the engine, host,
+port, database, user, schema and whether to use TLS.
+
+**It holds no password.** There is no key management in File4Base to protect
+one with, so rather than pretend, a password is either:
+
+- typed in the import dialog, used for that request and never stored or
+  logged; or
+- read from an **environment variable of the server**, whose name the
+  connection records (`password_env`). The secret then lives wherever the
+  operator keeps the server's environment.
+
+An import names a **registered** source, never a host of its own, so a request
+cannot point the server at an arbitrary machine. Registering is owner-only for
+the same reason; an admin can read the list and test a connection.
+
+### What is read, and what is refused
+
+- A **table** picked from the source's own catalog, or a **single SELECT**
+  typed by the caller. Nothing else: a statement that is not one `SELECT`
+  (or `WITH … SELECT`), or that holds a second statement, is refused before a
+  connection is opened. File4Base never writes to a data source.
+- A table name from the picker is quoted in the engine's own spelling, and
+  anything that is not a plain name is refused rather than concatenated.
+- The same guards a file gets: the row cap is applied by the source database
+  where the engine allows it, a source with more rows is cut and says so, and
+  one with more columns than the limit is refused rather than cut, since a
+  half-read row would map to the wrong fields.
+- A statement timeout, 30 seconds by default and 5 minutes at most.
+- Every value arrives as **text**, exactly as from a file, so coercion stays
+  the import's job and a value that will not convert is reported with its row
+  and column.
+- The connection is opened for one read and closed again.
+
+Listing a source's tables is also how a connection is tested: one that answers
+its catalog is one an import can read.
+
 ## What is not here yet
 
-- **ODBC**, which is [#47](https://github.com/file4base/file4base-app/issues/47):
-  a network client, a credential store and probably a cgo dependency, each
-  worth its own argument. The menu item is shown disabled.
+- **ODBC itself** ([#47](https://github.com/file4base/file4base-app/issues/47)).
+  A source that is not PostgreSQL, MySQL/MariaDB or SQL Server needs its own
+  Go driver, or an ODBC bridge and the cgo dependency that comes with it.
 - **Importing a folder** of pictures into container fields. Also disabled.
 - **Making a table from a file** — the table and its fields have to exist
   first.

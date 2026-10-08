@@ -681,6 +681,88 @@ Answers `204 No Content`.
 
 ---
 
+### External SQL data sources
+
+Records can be imported from another SQL database rather than a file (#47).
+File4Base reads **PostgreSQL**, **MySQL / MariaDB** and **Microsoft SQL
+Server** with Go drivers; it is not an ODBC bridge, and the interface says so.
+
+A connection is registered by an owner and **holds no password**: one is given
+with the request that reads, or taken from an environment variable of the
+server whose name the connection records. An import names a registered source,
+never a host of its own.
+
+#### `GET /api/v1/data-sources`
+Lists the registered connections and the engines available. Requires the
+`owner` or `admin` role.
+
+##### Response `200 OK`
+```json
+{
+  "engines": [
+    {"engine": "postgres", "label": "PostgreSQL", "default_port": 5432},
+    {"engine": "mysql", "label": "MySQL / MariaDB", "default_port": 3306},
+    {"engine": "sqlserver", "label": "Microsoft SQL Server", "default_port": 1433}
+  ],
+  "sources": [
+    {
+      "id": "f51c…",
+      "name": "Legacy members",
+      "engine": "postgres",
+      "host": "db.example",
+      "port": 5432,
+      "database": "legacy",
+      "username": "reader",
+      "schema": "public",
+      "tls": false,
+      "password_env": "LEGACY_DB_PASSWORD"
+    }
+  ]
+}
+```
+
+#### `POST /api/v1/data-sources`
+Registers a connection. Requires the `owner` role: it names a machine the
+server will connect to. The body is the source without `id`; `password_env` is
+optional and is the **name** of an environment variable, never a password.
+
+- `201 Created`, `403 Forbidden` for a non-owner, `409 Conflict` for a name
+  already taken, `422 Unprocessable Entity` for an unknown engine, a missing
+  host or a `password_env` that is not an environment variable name.
+
+#### `PUT /api/v1/data-sources/{id}` / `DELETE /api/v1/data-sources/{id}`
+Replace or remove a connection. Owner only.
+
+#### `POST /api/v1/data-sources/{id}/tables`
+Connects and answers the tables the source holds, so the import dialog can
+offer them. This is also how a connection is tested. Requires the `owner` or
+`admin` role. The body may carry `{"password": "…"}`, used for this request
+only; left out, the source's `password_env` is read.
+
+- `200 OK` with `{"tables": [...]}`.
+- `502 Bad Gateway` when the source cannot be reached or refuses the
+  credentials, with what the driver said.
+
+#### Importing from a source
+`POST /api/v1/data/{table}/import/preview` and `/import` take a `data_source`
+instead of `content`:
+
+```json
+{
+  "data_source": {"id": "f51c…", "table": "legacy_members", "password": "…"},
+  "options": {"action": "add", "mappings": [{"column": 0, "field": "full_name"}]}
+}
+```
+
+`table` reads a whole table; `query` reads a single `SELECT` instead. Anything
+that is not one SELECT answers `422 Unsafe Statement` before a connection is
+opened — File4Base never writes to a data source. A source that is not
+registered answers `404`, and one that cannot be reached `502`. Everything
+else — preview, mapping, coercion, validation, one transaction — is the file
+import's, unchanged.
+
+---
+
 ### `POST /api/v1/data/{table}/summary`
 
 Works out the figures of a report: what each summary field comes to over the found set, and over each group of it (#32). See [docs/specs/summary_fields_and_reports.md](../specs/summary_fields_and_reports.md).

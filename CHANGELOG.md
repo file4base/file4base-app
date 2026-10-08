@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Import records from another SQL database**
+  ([#47](https://github.com/file4base/file4base-app/issues/47)). *File >
+  Import Records > ODBC Data Source...* was greyed out. It is now **External
+  SQL Data Source...**, and it works: the records are read straight out of
+  another database and arrive at the same dialog, with the same preview,
+  mapping, coercion and one-transaction import a file goes through.
+  [docs/specs/importing_and_exporting_records.md](docs/specs/importing_and_exporting_records.md)
+  has the specification.
+  - **Not ODBC, and the menu says so.** Go has no ODBC in its standard
+    library and the cgo bridges pull unixODBC and third-party drivers into
+    the API image, which would end the single static binary the server is.
+    File4Base reads **PostgreSQL**, **MySQL / MariaDB** and **Microsoft SQL
+    Server** with Go drivers instead (one new dependency,
+    `microsoft/go-mssqldb`, pure Go).
+  - **A registered connection holds no password.** There is no key management
+    to protect one with, so rather than pretend: the password is typed for
+    that import and never stored or logged, or read from an environment
+    variable of the server whose name the connection records.
+  - **An import names a registered source, never a host of its own**, so a
+    request cannot point the server at an arbitrary machine. Registering one
+    is owner-only; an admin can read the list and test a connection.
+  - **Only a single SELECT is ever run.** A statement that is not one
+    `SELECT`, or that holds a second one, is refused before a connection is
+    opened, and a table name from the picker is quoted rather than
+    concatenated. File4Base never writes to a data source.
+  - The same guards a file gets: the row cap applied by the source database,
+    a source that was cut says so, more columns than the limit is refused
+    rather than cut, and a statement timeout.
+  - Connections travel in the solution bundle, without a password. New
+    endpoints under `/api/v1/data-sources`, and `data_source` on the import
+    and preview endpoints.
 - **Find on a related field** ([#46](https://github.com/file4base/file4base-app/issues/46)).
   Since #36 a layout can show a field of a related record; in Find mode that
   field drew a notice saying finding on it was not supported. It is a criterion

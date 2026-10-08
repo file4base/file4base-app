@@ -22,6 +22,7 @@ import 'features/layout_engine/layout_preview_widget.dart';
 import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/new_layout_assistant.dart';
 import 'features/data_io/import_records_dialog.dart';
+import 'features/data_io/manage_data_sources_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'core/models/file_options_model.dart';
 import 'core/models/page_setup_model.dart';
@@ -1251,9 +1252,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (changed) await _loadSavedFinds();
   }
 
+  /// File > Import Records > External SQL Data Source...: reads the records
+  /// out of another SQL database instead of a file (#47).
+  Future<void> _handleImportFromDataSource() =>
+      _handleImportRecords(source: ImportSourceKind.external);
+
   /// File > Import Records: brings records in from a CSV, a tab-separated
   /// file, an Excel workbook or XML (#38).
-  Future<void> _handleImportRecords() async {
+  Future<void> _handleImportRecords({ImportSourceKind source = ImportSourceKind.file}) async {
     if (_currentUser == null) {
       _startAuthSequence();
       return;
@@ -1274,7 +1280,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
 
     final client = ref.read(apiClientProvider);
-    final report = await ImportRecordsDialog.show(context, table: table, apiClient: client);
+    final report = await ImportRecordsDialog.show(
+      context,
+      table: table,
+      apiClient: client,
+      initialSource: source,
+    );
     if (report == null || !mounted) return;
 
     // The found set is now out of date, so the records are read again.
@@ -1525,6 +1536,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onGoToFindRequest: mode == OperationalMode.find
                       ? (target) => _dataBrowserKey.currentState?.goToFindRequest(target)
                       : null,
+                  onImportFromDataSource: _handleImportFromDataSource,
+                  onManageDataSources: _currentUser == null
+                      ? null
+                      : () => ManageDataSourcesDialog.show(
+                            context,
+                            apiClient: ref.read(apiClientProvider),
+                            canEdit: _currentUser!.role == 'owner',
+                          ),
                   savedFinds: _savedFinds,
                   onRunSavedFind: _selectedTable == null ? null : _handleRunSavedFind,
                   onSaveCurrentFind: _selectedTable == null ? null : _handleSaveCurrentFind,

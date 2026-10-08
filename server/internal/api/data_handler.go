@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/extsource"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/file4base/file4base-app/server/internal/validation"
@@ -281,8 +283,74 @@ type ImportBody struct {
 	Sheet         string `json:"sheet"`
 	RecordElement string `json:"record_element"`
 
+	// DataSource reads the records from another SQL database instead of a
+	// file (#47). The source is one an owner registered: the request names
+	// it, never a host of its own.
+	DataSource *ExternalSourceBody `json:"data_source,omitempty"`
+
 	// Only used by the import itself, not by the preview.
 	Options data.ImportOptions `json:"options"`
+}
+
+// ExternalSourceBody says what to read from a registered data source.
+type ExternalSourceBody struct {
+	ID    string `json:"id"`
+	Table string `json:"table"`
+	Query string `json:"query"`
+
+	// Password is used for this request only: it is never stored and never
+	// logged. Left out, the source's PasswordEnv is used.
+	Password string `json:"password"`
+
+	// Timeout in seconds for the read, clamped by the reader.
+	TimeoutSeconds int `json:"timeout_seconds"`
+}
+
+// importSource reads what an import is to bring in: the file in the body, or
+// the registered data source it names (#47).
+func importSource(r *http.Request, body ImportBody) (*dataio.Table, error) {
+	if body.DataSource != nil && strings.TrimSpace(body.DataSource.ID) != "" {
+		return readExternalSource(r, body)
+	}
+	return parseSource(body)
+}
+
+// writeImportSourceError maps the reading failures of both kinds of source.
+func writeImportSourceError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, schema.ErrDataSourceNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Data Source Not Found", err.Error())
+	case errors.Is(err, extsource.ErrUnsafeStatement):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsafe Statement", err.Error())
+	case errors.Is(err, extsource.ErrUnsupportedEngine):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsupported Engine", err.Error())
+	case errors.Is(err, extsource.ErrConnection):
+		telemetry.WriteProblem(w, r, http.StatusBadGateway, "Data Source Unreachable", err.Error())
+	default:
+		writeDataError(w, r, http.StatusUnprocessableEntity, "Invalid Source File", err)
+	}
+}
+
+// readExternalSource reads the records out of a registered data source.
+//
+// The request names a source the owner registered, never a host of its own,
+// so an import cannot be pointed at an arbitrary machine. The connection is
+// opened for this read and closed again.
+func readExternalSource(r *http.Request, body ImportBody) (*dataio.Table, error) {
+	ref := body.DataSource
+	source, err := schemaService(r).GetDataSource(r.Context(), strings.TrimSpace(ref.ID))
+	if err != nil {
+		return nil, err
+	}
+
+	password := source.Password(ref.Password)
+	opts := extsource.ReadOptions{
+		Table:   ref.Table,
+		Query:   ref.Query,
+		Limits:  dataio.DefaultLimits(),
+		Timeout: time.Duration(ref.TimeoutSeconds) * time.Second,
+	}
+	return extsource.Read(r.Context(), source.Connection(), password, opts)
 }
 
 // parseSource decodes and reads the file an import body carries.
@@ -332,9 +400,9 @@ func (h *DataHandler) PreviewImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source, err := parseSource(body)
+	source, err := importSource(r, body)
 	if err != nil {
-		writeDataError(w, r, http.StatusUnprocessableEntity, "Invalid Source File", err)
+		writeImportSourceError(w, r, err)
 		return
 	}
 
@@ -367,9 +435,9 @@ func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source, err := parseSource(body)
+	source, err := importSource(r, body)
 	if err != nil {
-		writeDataError(w, r, http.StatusUnprocessableEntity, "Invalid Source File", err)
+		writeImportSourceError(w, r, err)
 		return
 	}
 

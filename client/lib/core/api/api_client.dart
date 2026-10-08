@@ -537,6 +537,121 @@ class UserModel {
   };
 }
 
+/// A registered connection to another SQL database records can be imported
+/// from (#47). It holds no password: one is given per read, or taken from an
+/// environment variable of the server.
+class DataSourceModel {
+  final String id;
+  final String name;
+  final String engine;
+  final String host;
+  final int port;
+  final String database;
+  final String username;
+  final String schema;
+  final bool tls;
+  final String passwordEnv;
+
+  const DataSourceModel({
+    required this.id,
+    required this.name,
+    required this.engine,
+    required this.host,
+    this.port = 0,
+    this.database = '',
+    this.username = '',
+    this.schema = '',
+    this.tls = false,
+    this.passwordEnv = '',
+  });
+
+  factory DataSourceModel.fromJson(Map<String, dynamic> json) {
+    return DataSourceModel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      engine: json['engine'] as String? ?? '',
+      host: json['host'] as String? ?? '',
+      port: (json['port'] as num?)?.toInt() ?? 0,
+      database: json['database'] as String? ?? '',
+      username: json['username'] as String? ?? '',
+      schema: json['schema'] as String? ?? '',
+      tls: json['tls'] as bool? ?? false,
+      passwordEnv: json['password_env'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'engine': engine,
+        'host': host,
+        'port': port,
+        'database': database,
+        'username': username,
+        'schema': schema,
+        'tls': tls,
+        'password_env': passwordEnv,
+      };
+
+  /// How the engine is written in the interface.
+  String get engineLabel {
+    switch (engine) {
+      case 'postgres':
+        return 'PostgreSQL';
+      case 'mysql':
+        return 'MySQL / MariaDB';
+      case 'sqlserver':
+        return 'Microsoft SQL Server';
+      default:
+        return engine;
+    }
+  }
+
+  /// Where it points, in one line.
+  String get summary {
+    final where = port > 0 ? '$host:$port' : host;
+    final parts = [engineLabel, where, if (database.isNotEmpty) database];
+    return parts.join(' · ');
+  }
+}
+
+/// The engines an external data source can use, as the server reports them.
+class DataSourceEngine {
+  final String engine;
+  final String label;
+  final int defaultPort;
+
+  const DataSourceEngine({required this.engine, required this.label, required this.defaultPort});
+
+  factory DataSourceEngine.fromJson(Map<String, dynamic> json) => DataSourceEngine(
+        engine: json['engine'] as String? ?? '',
+        label: json['label'] as String? ?? '',
+        defaultPort: (json['default_port'] as num?)?.toInt() ?? 0,
+      );
+}
+
+/// Where an import reads from: a registered data source, a table or a
+/// statement, and the password for this read only.
+class ExternalSourceRef {
+  final String id;
+  final String table;
+  final String query;
+  final String password;
+
+  const ExternalSourceRef({
+    required this.id,
+    this.table = '',
+    this.query = '',
+    this.password = '',
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        if (table.isNotEmpty) 'table': table,
+        if (query.isNotEmpty) 'query': query,
+        if (password.isNotEmpty) 'password': password,
+      };
+}
+
 /// One request of a saved find: what was typed into each field, and whether
 /// the request omits what it matches (#34).
 class SavedFindRequestModel {
@@ -1349,25 +1464,27 @@ class ApiClient {
   /// so the import dialog can show what is about to be brought in (#38).
   Future<ImportPreviewModel> previewImport(
     String table, {
-    required String fileName,
-    required Uint8List bytes,
+    String fileName = '',
+    Uint8List? bytes,
     String? format,
     bool hasHeader = true,
     String? delimiter,
     String? sheet,
     String? recordElement,
+    ExternalSourceRef? dataSource,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/import/preview'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'file_name': fileName,
-        'content': base64Encode(bytes),
+        if (bytes != null) 'content': base64Encode(bytes),
         if (format != null) 'format': format,
         'has_header': hasHeader,
         if (delimiter != null) 'delimiter': delimiter,
         if (sheet != null) 'sheet': sheet,
         if (recordElement != null) 'record_element': recordElement,
+        if (dataSource != null) 'data_source': dataSource.toJson(),
       }),
     );
     _checkResponse(response);
@@ -1380,26 +1497,28 @@ class ApiClient {
   /// with it, and the error says which row it was.
   Future<ImportReportModel> importRecords(
     String table, {
-    required String fileName,
-    required Uint8List bytes,
+    String fileName = '',
+    Uint8List? bytes,
     required Map<String, dynamic> options,
     String? format,
     bool hasHeader = true,
     String? delimiter,
     String? sheet,
     String? recordElement,
+    ExternalSourceRef? dataSource,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/import'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'file_name': fileName,
-        'content': base64Encode(bytes),
+        if (bytes != null) 'content': base64Encode(bytes),
         if (format != null) 'format': format,
         'has_header': hasHeader,
         if (delimiter != null) 'delimiter': delimiter,
         if (sheet != null) 'sheet': sheet,
         if (recordElement != null) 'record_element': recordElement,
+        if (dataSource != null) 'data_source': dataSource.toJson(),
         'options': options,
       }),
     );
@@ -1945,6 +2064,68 @@ class ApiClient {
       }),
     );
     _checkResponse(response);
+  }
+
+  // ─── External SQL data sources (#47) ───────────────────────────────────────
+
+  /// Lists the registered connections and the engines File4Base can read.
+  Future<({List<DataSourceModel> sources, List<DataSourceEngine> engines})> listDataSources() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/data-sources'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (
+      sources: (body['sources'] as List<dynamic>? ?? const [])
+          .map((item) => DataSourceModel.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      engines: (body['engines'] as List<dynamic>? ?? const [])
+          .map((item) => DataSourceEngine.fromJson(item as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  Future<DataSourceModel> createDataSource(DataSourceModel source) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data-sources'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(source.toJson()),
+    );
+    _checkResponse(response);
+    return DataSourceModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<DataSourceModel> updateDataSource(String id, DataSourceModel source) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/data-sources/$id'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(source.toJson()),
+    );
+    _checkResponse(response);
+    return DataSourceModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteDataSource(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/data-sources/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  /// Connects to the source and answers its tables. This is also how a
+  /// connection is tested: one that lists its tables can be read. The
+  /// password is used for this request only.
+  Future<List<String>> listDataSourceTables(String id, {String password = ''}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data-sources/$id/tables'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'password': password}),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['tables'] as List<dynamic>? ?? const []).whereType<String>().toList();
   }
 
   // ─── Saved finds (#34) ─────────────────────────────────────────────────────

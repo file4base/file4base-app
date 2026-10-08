@@ -34,27 +34,29 @@ class _ImportApi extends ApiClient {
   @override
   Future<ImportPreviewModel> previewImport(
     String table, {
-    required String fileName,
-    required Uint8List bytes,
+    String fileName = '',
+    Uint8List? bytes,
     String? format,
     bool hasHeader = true,
     String? delimiter,
     String? sheet,
     String? recordElement,
+    ExternalSourceRef? dataSource,
   }) async =>
       preview;
 
   @override
   Future<ImportReportModel> importRecords(
     String table, {
-    required String fileName,
-    required Uint8List bytes,
+    String fileName = '',
+    Uint8List? bytes,
     required Map<String, dynamic> options,
     String? format,
     bool hasHeader = true,
     String? delimiter,
     String? sheet,
     String? recordElement,
+    ExternalSourceRef? dataSource,
   }) async {
     imports.add(options);
     if (importError != null) throw importError!;

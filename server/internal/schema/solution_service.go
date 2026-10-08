@@ -143,6 +143,21 @@ type BundleSavedFind struct {
 	Requests  []SavedFindRequest `msgpack:"requests"`
 }
 
+// BundleDataSource carries a registered external SQL connection (#47). It
+// holds no password, because the catalog holds none either: a bundle can be
+// opened and read by anyone it is sent to.
+type BundleDataSource struct {
+	Name        string `msgpack:"name"`
+	Engine      string `msgpack:"engine"`
+	Host        string `msgpack:"host"`
+	Port        int    `msgpack:"port"`
+	Database    string `msgpack:"database,omitempty"`
+	Username    string `msgpack:"username,omitempty"`
+	Schema      string `msgpack:"schema,omitempty"`
+	TLS         bool   `msgpack:"tls"`
+	PasswordEnv string `msgpack:"password_env,omitempty"`
+}
+
 type SolutionBundle struct {
 	Format             string                 `msgpack:"format"`
 	Version            string                 `msgpack:"version"`
@@ -158,6 +173,7 @@ type SolutionBundle struct {
 	Users              []BundleAccount        `msgpack:"users"`
 	Privileges         []RolePrivileges       `msgpack:"privileges,omitempty"`
 	SavedFinds         []BundleSavedFind      `msgpack:"saved_finds,omitempty"`
+	DataSources        []BundleDataSource     `msgpack:"data_sources,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
 }
@@ -230,6 +246,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("failed listing saved finds: %w", err)
 	}
+	dataSources, err := s.ListDataSources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing data sources: %w", err)
+	}
 
 	conn := opts.Connection
 	if conn.Engine == "" {
@@ -250,6 +270,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		Users:              make([]BundleAccount, 0, len(users)),
 		Privileges:         privileges,
 		SavedFinds:         make([]BundleSavedFind, 0, len(savedFinds)),
+		DataSources:        make([]BundleDataSource, 0, len(dataSources)),
 		FileOptions:        withoutSecrets(opts.FileOptions),
 		PageSetup:          opts.PageSetup,
 	}
@@ -302,6 +323,12 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	for _, f := range savedFinds {
 		b.SavedFinds = append(b.SavedFinds, BundleSavedFind{
 			Name: f.Name, TableName: f.TableName, Requests: f.Requests,
+		})
+	}
+	for _, d := range dataSources {
+		b.DataSources = append(b.DataSources, BundleDataSource{
+			Name: d.Name, Engine: d.Engine, Host: d.Host, Port: d.Port, Database: d.Database,
+			Username: d.Username, Schema: d.Schema, TLS: d.TLS, PasswordEnv: d.PasswordEnv,
 		})
 	}
 	for _, u := range users {
@@ -391,6 +418,7 @@ type ImportReport struct {
 	AccountsCreated         int      `json:"accounts_created"`
 	PrivilegesUpdated       int      `json:"privileges_updated"`
 	SavedFindsCreated       int      `json:"saved_finds_created"`
+	DataSourcesCreated      int      `json:"data_sources_created"`
 	AccountsPendingPassword []string `json:"accounts_pending_password"`
 	// Totals in the bundle, kept for older clients.
 	TablesCount  int `json:"tables_count"`
@@ -745,7 +773,36 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		report.SavedFindsCreated++
 	}
 
-	// 8. Role privileges (#39). They are keyed by role, so there is nothing
+	// 8. Data sources (#47), matched by name. They carry no password, so a
+	// restored source needs one given at import time or in the server's
+	// environment before it can be read.
+	for _, d := range b.DataSources {
+		existing, err := s.ListDataSources(ctx)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("reading the data sources: %w", err))
+		}
+		known := false
+		for _, e := range existing {
+			if strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(d.Name)) {
+				known = true
+				break
+			}
+		}
+		if known {
+			continue
+		}
+		created, err := s.CreateDataSource(ctx, DataSourceInput{
+			Name: d.Name, Engine: d.Engine, Host: d.Host, Port: d.Port, Database: d.Database,
+			Username: d.Username, Schema: d.Schema, TLS: d.TLS, PasswordEnv: d.PasswordEnv,
+		})
+		if err != nil {
+			return nil, rollback(fmt.Errorf("restoring the data source %q: %w", d.Name, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteDataSource(bg, created.ID) })
+		report.DataSourcesCreated++
+	}
+
+	// 9. Role privileges (#39). They are keyed by role, so there is nothing
 	// to remap; a file written before they existed leaves them untouched.
 	if len(b.Privileges) > 0 {
 		previous, err := s.ListRolePrivileges(ctx)

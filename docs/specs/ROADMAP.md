@@ -44,7 +44,7 @@
 - [x] Several find requests, unioned, with omitting requests subtracting, and saved finds: a named set of requests, stored in the catalog, carried in the solution file and run again from the Records or Requests menu ([#34](https://github.com/file4base/file4base-app/issues/34)).
 - [x] Multi-field sort orders ([#35](https://github.com/file4base/file4base-app/issues/35)).
 - [x] Find on a related field: a criterion on a field of a related record finds the records whose related records match it ([#46](https://github.com/file4base/file4base-app/issues/46), [relationships_and_portals.md](relationships_and_portals.md)).
-- [x] Import records from CSV, tab-separated text, Excel workbooks and XML, with field mapping and one-transaction atomicity; export the found set as CSV, TSV or a workbook ([#38](https://github.com/file4base/file4base-app/issues/38), [docs/specs/importing_and_exporting_records.md](importing_and_exporting_records.md)). ODBC is [#47](https://github.com/file4base/file4base-app/issues/47).
+- [x] Import records from CSV, tab-separated text, Excel workbooks and XML, with field mapping and one-transaction atomicity; export the found set as CSV, TSV or a workbook ([#38](https://github.com/file4base/file4base-app/issues/38), [docs/specs/importing_and_exporting_records.md](importing_and_exporting_records.md)). Records also import from another SQL database — PostgreSQL, MySQL/MariaDB or SQL Server — through a connection an owner registers, which stores no password ([#47](https://github.com/file4base/file4base-app/issues/47)).
 
 ## Phase 5: Dynamic Layout Engine & 4 Execution Modes
 - [x] Define JSON layout schema specification (`docs/specs/layout_schema.json`).

@@ -38,7 +38,7 @@ file_4_base_menu_bar:
           - File...
           - Folder...
           - XML Data Source...
-          - ODBC Data Source...
+          - External SQL Data Source...
       - Export Records...
       - Save/Send Records As:
           - Excel...
@@ -204,7 +204,7 @@ Available across all modes; manages persistence, server connectivity, import/exp
   * **Scripts...** (Script Workspace).
   * **Custom Functions...** (Calculations and reusable recursive functions).
   * **Custom Menus...** (Application menu bar overrides).
-  * **External Data Sources...** (ODBC/SQL connections and external origins).
+  * **External Data Sources...** (registered connections to PostgreSQL, MySQL/MariaDB and SQL Server that records are imported from; not ODBC).
   * **Containers...** (Secure and open blob storage configuration).
 * ---
 * **Sharing**
@@ -218,7 +218,7 @@ Available across all modes; manages persistence, server connectivity, import/exp
 * **Import Records**
   * **File...** (CSV, XLSX, XML, JSON).
   * **Folder...** (Batch import of images or text files into records).
-  * **ODBC Data Source...**
+  * **External SQL Data Source...** (reads another SQL database directly).
 * **Export Records...**
 * ---
 * **Page Setup...** (`Ctrl+Shift+P` / `Cmd+Shift+P`)
