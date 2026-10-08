@@ -10,6 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Data Viewer** ([#50](https://github.com/file4base/file4base-app/issues/50)).
+  A formula was only ever visible through its field: finding out why a
+  calculation came out wrong meant changing the formula, saving the field,
+  looking at a record and changing it back. **Tools > Data Viewer** shows the
+  fields of the record in hand with their types and values, and a watch list
+  of expressions evaluated against that record.
+  [docs/specs/data_viewer.md](docs/specs/data_viewer.md) is the specification.
+  - **The same engine as the fields.** A watched expression is evaluated by
+    `internal/calc`, the one that fills the calculation fields, through a new
+    `POST /api/v1/data/{table}/evaluate`. The viewer and the field agree by
+    construction: there is no second implementation to drift. It only reads.
+  - **One bad expression is one bad line**: it answers with its own error and
+    the position the parser stopped at, and the others still answer.
+  - **A field the table does not have reads as empty** — the engine's rule —
+    and the viewer names it rather than showing a quietly wrong answer.
+  - The result type is chosen per watch, so the same expression read as Text,
+    Number, Date, Timestamp or Boolean answers in that shape.
+  - **The Variables tab says no script sets a variable yet**, because *Set
+    Variable*, *If* and *Loop* stop a script with a message today. An empty
+    list would have read as "none are set".
+
+### Fixed
+- **A layout created without naming a table occurrence took an arbitrary
+  one.** The fallback read the first row of `sys_table_occurrences` with no
+  order, so which table a layout ended up bound to depended on the engine —
+  PostgreSQL and MariaDB disagreed. It is the first occurrence **by name**
+  now. Found while testing the Data Viewer against both engines; the client
+  always names the occurrence, so this only reached callers of the API that
+  left it out.
 - **The Tools menu is honest, and its first tool is real**
   ([#48](https://github.com/file4base/file4base-app/issues/48),
   [#49](https://github.com/file4base/file4base-app/issues/49)). Every item of

@@ -116,6 +116,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   int get currentIndex => _currentIndex;
   int get totalRecords => _records.length;
+
+  /// The record in hand, as the Data Viewer shows it (#50), and its id. Null
+  /// when the found set is empty or the record has not been committed yet.
+  Map<String, dynamic>? get currentRecord {
+    if (_records.isEmpty || _currentIndex >= _records.length) return null;
+    return _records[_currentIndex];
+  }
+
+  String? get currentRecordId {
+    final record = currentRecord;
+    if (record == null || record[_draftKey] == true) return null;
+    final id = record['id']?.toString();
+    return (id == null || id.isEmpty) ? null : id;
+  }
   bool get isOmit => _omit;
   bool get isFoundSet => _isFoundSet;
 

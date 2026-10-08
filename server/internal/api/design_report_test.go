@@ -75,9 +75,11 @@ func TestAPI_DesignReport(t *testing.T) {
 			} `json:"fields"`
 		} `json:"tables"`
 		Relationships []struct {
-			Name              string `json:"name"`
-			Left, LeftField   string `json:"left"`
-			Right, RightField string `json:"right"`
+			Name       string `json:"name"`
+			Left       string `json:"left"`
+			LeftField  string `json:"left_field"`
+			Right      string `json:"right"`
+			RightField string `json:"right_field"`
 		} `json:"relationships"`
 		Layouts []struct {
 			Name       string          `json:"name"`

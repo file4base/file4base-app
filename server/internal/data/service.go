@@ -133,6 +133,9 @@ var ErrTableNotFound = errors.New("table not found")
 // registered for the table in the system catalog (sys_columns).
 var ErrUnknownField = errors.New("unknown field")
 
+// ErrRecordNotFound is returned when a table has no record with that id.
+var ErrRecordNotFound = errors.New("record not found")
+
 // ErrInvalidValue is returned when a field value cannot be stored in its
 // field, such as a CONTAINER value that is not base64.
 var ErrInvalidValue = errors.New("invalid field value")
@@ -379,7 +382,7 @@ func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[
 		return nil, err
 	}
 	if len(results) == 0 {
-		return nil, fmt.Errorf("record not found with id: %s", id)
+		return nil, fmt.Errorf("%w: %s", ErrRecordNotFound, id)
 	}
 	return results[0], nil
 }

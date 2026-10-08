@@ -39,6 +39,7 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.Post("/", h.InsertRow)
 		r.Post("/find", h.FindRows)
 		r.Post("/summary", h.SummarizeRows)
+		r.Post("/evaluate", h.EvaluateExpression)
 		// Bringing records in or out in bulk is a capability an owner can
 		// withhold from a role (#39), enforced here rather than in a client.
 		r.With(RequireCapability(schema.CapabilityBulkImport)).Post("/import/preview", h.PreviewImport)
@@ -78,11 +79,105 @@ func (h *DataHandler) authorize(w http.ResponseWriter, r *http.Request, table st
 	return data.NewService(driver), true
 }
 
+// EvaluateExpressionBody is what the Data Viewer asks (#50).
+type EvaluateExpressionBody struct {
+	// Expressions are evaluated in the order they are given, each on its
+	// own: one that does not parse does not stop the others, because a
+	// viewer shows a list and a typo in one line must not blank the rest.
+	Expressions []string `json:"expressions"`
+
+	// Expression is the single-expression form, for a caller that watches one.
+	Expression string `json:"expression"`
+
+	// RecordID is the record to evaluate against. Without one the
+	// expressions are evaluated against no record, so every field reads as
+	// empty and a formula like UPPER("ab") still answers.
+	RecordID string `json:"record_id"`
+
+	// ResultType is how to read the answer: Text, Number, Date, Timestamp or
+	// Boolean. Text when it is left out.
+	ResultType string `json:"result_type"`
+}
+
+// EvaluateExpression computes expressions against a record with the engine
+// the calculation fields use, so the Data Viewer and the field agree (#50).
+//
+//	POST /api/v1/data/{table}/evaluate
+//
+// It only reads: evaluating a formula is all the engine can do, and the
+// caller needs no more than read access to the table.
+func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request) {
+	table := chi.URLParam(r, "table")
+	svc, ok := h.authorize(w, r, table, false)
+	if !ok {
+		return
+	}
+
+	var body EvaluateExpressionBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	expressions := body.Expressions
+	if len(expressions) == 0 && strings.TrimSpace(body.Expression) != "" {
+		expressions = []string{body.Expression}
+	}
+	if len(expressions) == 0 {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Nothing to Evaluate",
+			"give an expression to evaluate")
+		return
+	}
+	if len(expressions) > maxWatchedExpressions {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Expressions",
+			fmt.Sprintf("at most %d expressions are evaluated in one request", maxWatchedExpressions))
+		return
+	}
+
+	results := make([]map[string]interface{}, 0, len(expressions))
+	for _, expression := range expressions {
+		evaluation, err := svc.EvaluateExpression(r.Context(), table, body.RecordID, expression, body.ResultType)
+		if err != nil {
+			// A record that is not there, or a table that is not reachable,
+			// is about the request rather than about one expression.
+			if errors.Is(err, data.ErrTableNotFound) || errors.Is(err, data.ErrRecordNotFound) {
+				writeDataError(w, r, http.StatusNotFound, "Not Found", err)
+				return
+			}
+			results = append(results, map[string]interface{}{
+				"expression": expression,
+				"error":      strings.TrimPrefix(err.Error(), "invalid expression: "),
+			})
+			continue
+		}
+		results = append(results, map[string]interface{}{
+			"expression":     evaluation.Expression,
+			"value":          evaluation.Value,
+			"text":           evaluation.Text,
+			"result_type":    evaluation.ResultType,
+			"fields":         evaluation.Fields,
+			"unknown_fields": evaluation.UnknownFields,
+			"record_id":      evaluation.RecordID,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"results": results})
+}
+
+// maxWatchedExpressions bounds one request, since each one reads the record
+// again.
+const maxWatchedExpressions = 50
+
 // writeDataError maps data-layer errors to RFC 9457 responses.
 func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, title string, err error) {
 	switch {
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
+	case errors.Is(err, data.ErrRecordNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Record Not Found", err.Error())
+	case errors.Is(err, data.ErrInvalidExpression):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Expression", err.Error())
 	case errors.Is(err, dataio.ErrSourceTooLarge):
 		telemetry.WriteProblem(w, r, http.StatusRequestEntityTooLarge, "Source File Too Large", err.Error())
 	case errors.Is(err, dataio.ErrInvalidSource):

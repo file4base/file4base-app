@@ -112,9 +112,13 @@ func (s *Service) CreateLayout(ctx context.Context, name string, toID string, de
 		return nil, fmt.Errorf("%w: '%s'", ErrUnknownTableOccurrence, toID)
 	}
 	if resolvedTOID == "" {
-		// No table given: use the first table occurrence
+		// No table given: the first occurrence **by name**, so that a caller
+		// who leaves it out gets the same layout every time. Without the
+		// order this was whichever row the engine happened to return first,
+		// which differed between PostgreSQL and MariaDB.
 		var firstTOID string
-		err := db.QueryRowContext(ctx, `SELECT id FROM sys_table_occurrences LIMIT 1`).Scan(&firstTOID)
+		err := db.QueryRowContext(ctx,
+			`SELECT id FROM sys_table_occurrences ORDER BY name ASC LIMIT 1`).Scan(&firstTOID)
 		if err != nil {
 			return nil, fmt.Errorf("no table occurrence found for layout: %w", err)
 		}

@@ -83,7 +83,7 @@
 
 ## Tools
 - [x] Database Design Report: what the solution is made of, as a page to read, and the design as XML or JSON for version control ([#49](https://github.com/file4base/file4base-app/issues/49), [design_report.md](design_report.md)).
-- [ ] Data Viewer: fields, variables and watched expressions ([#50](https://github.com/file4base/file4base-app/issues/50)).
+- [x] Data Viewer: the fields of the record in hand and expressions evaluated by the engine that fills the calculation fields ([#50](https://github.com/file4base/file4base-app/issues/50), [data_viewer.md](data_viewer.md)). Variables wait on the script runner.
 - [ ] Script Debugger: step through a script ([#51](https://github.com/file4base/file4base-app/issues/51)).
 - [ ] Custom menus defined by the solution ([#52](https://github.com/file4base/file4base-app/issues/52)).
 - [ ] Developer utilities: clone without records, rename, lock the design ([#53](https://github.com/file4base/file4base-app/issues/53)).

@@ -83,6 +83,10 @@ class File4BaseMenuBar extends StatelessWidget {
   /// control (#49).
   final VoidCallback? onDesignReport;
   final VoidCallback? onSaveDesignAsText;
+
+  /// Tools > Data Viewer — the fields of the record in hand and the
+  /// expressions being watched (#50).
+  final VoidCallback? onDataViewer;
   final VoidCallback? onPrint;
   final VoidCallback? onQuit;
   final bool isAuthenticated;
@@ -127,6 +131,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onManageDataSources,
     this.onDesignReport,
     this.onSaveDesignAsText,
+    this.onDataViewer,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -1099,9 +1104,9 @@ class File4BaseMenuBar extends StatelessWidget {
           onPressed: null, // #51: not implemented, shown disabled
           child: Text('Script Debugger'),
         ),
-        const MenuItemButton(
-          onPressed: null, // #50: not implemented, shown disabled
-          child: Text('Data Viewer'),
+        MenuItemButton(
+          onPressed: onDataViewer,
+          child: const Text('Data Viewer'),
         ),
         const Divider(height: 1),
         MenuItemButton(

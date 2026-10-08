@@ -23,6 +23,7 @@ import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/new_layout_assistant.dart';
 import 'features/data_io/import_records_dialog.dart';
 import 'features/data_io/manage_data_sources_dialog.dart';
+import 'features/tools/data_viewer_dialog.dart';
 import 'features/tools/design_report_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'core/models/file_options_model.dart';
@@ -171,6 +172,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   UserModel? _currentUser;
   List<LayoutModel> _serverLayouts = [];
   Map<String, String> _userPermissions = {};
+  /// The expressions the Data Viewer is watching (#50). They outlive the
+  /// dialog, so closing it does not lose what was being watched.
+  List<String> _watchedExpressions = const [];
+
   /// The finds saved on the table in hand (#34), as the Records menu lists
   /// them.
   List<SavedFindModel> _savedFinds = const [];
@@ -1548,6 +1553,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ? (target) => _dataBrowserKey.currentState?.goToFindRequest(target)
                       : null,
                   onImportFromDataSource: _handleImportFromDataSource,
+                  onDataViewer: _currentUser == null || _selectedTable == null
+                      ? null
+                      : () => DataViewerDialog.show(
+                            context,
+                            apiClient: ref.read(apiClientProvider),
+                            table: _selectedTable,
+                            record: _dataBrowserKey.currentState?.currentRecord,
+                            recordId: _dataBrowserKey.currentState?.currentRecordId,
+                            initialWatches: _watchedExpressions,
+                            onWatchesChanged: (watches) => _watchedExpressions = watches,
+                          ),
                   onDesignReport: _currentUser == null || !_currentUser!.isAdmin
                       ? null
                       : () => DesignReportDialog.show(

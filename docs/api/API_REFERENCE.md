@@ -615,6 +615,60 @@ related criterion. The caller must have access to the related table as well:
 `POST /api/v1/data/{table}/find` and `/summary` answer `403 Forbidden` when they
 do not, and `400 Unknown Field` when the related table has no such field.
 
+### `POST /api/v1/data/{table}/evaluate`
+
+Evaluates expressions against a record with the engine that fills the
+calculation fields, which is what the Data Viewer runs on (#50). It only
+reads: evaluating a formula is all the engine can do, and the caller needs
+read access to the table, nothing more.
+
+#### Request Body
+```json
+{
+  "expressions": ["fee_paid * 2", "UPPER(last_name) & \", \" & city"],
+  "record_id": "a1b2…",
+  "result_type": "Number"
+}
+```
+
+`expression` (singular) is accepted for a caller watching one. Without
+`record_id` every field reads as empty, so a formula like `UPPER("ab")` still
+answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`
+or `Boolean`, and the answer comes back in that shape, exactly as a
+calculation field with that result type would store it. At most 50
+expressions in one request.
+
+#### Response `200 OK`
+```json
+{
+  "results": [
+    {
+      "expression": "fee_paid * 2",
+      "value": 200,
+      "text": "200",
+      "result_type": "NUMBER",
+      "fields": ["fee_paid"],
+      "unknown_fields": [],
+      "record_id": "a1b2…"
+    },
+    {"expression": "fee_paid *", "error": "the formula ends too early (at position 10)"}
+  ]
+}
+```
+
+**One expression that does not parse does not stop the others**: it answers
+with its own `error` and the rest still answer, because a viewer shows a list
+and a typo in one line must not blank the rest. A field the table does not
+have reads as empty — the engine's rule — and is named in `unknown_fields`
+rather than being quietly ignored.
+
+#### Errors
+- `403 Forbidden`: no access to the table.
+- `404 Not Found`: no such table, or no record with that id.
+- `422 Unprocessable Entity`: nothing to evaluate, or more than 50 expressions.
+
+---
+
 ### Saved finds
 
 A saved find is a named set of find requests on one table (#34). The criteria

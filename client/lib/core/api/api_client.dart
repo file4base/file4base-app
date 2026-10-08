@@ -537,6 +537,45 @@ class UserModel {
   };
 }
 
+/// What one watched expression came to (#50): a value, or the reason it has
+/// none.
+class EvaluationModel {
+  final String expression;
+  final String text;
+  final String resultType;
+  final List<String> fields;
+  final List<String> unknownFields;
+  final String error;
+
+  const EvaluationModel({
+    required this.expression,
+    this.text = '',
+    this.resultType = '',
+    this.fields = const [],
+    this.unknownFields = const [],
+    this.error = '',
+  });
+
+  bool get failed => error.isNotEmpty;
+
+  /// True when the expression came to nothing, which is not a failure: an
+  /// empty field read as empty.
+  bool get isEmpty => !failed && text.isEmpty;
+
+  factory EvaluationModel.fromJson(Map<String, dynamic> json) {
+    List<String> strings(String key) =>
+        (json[key] as List<dynamic>? ?? const []).whereType<String>().toList();
+    return EvaluationModel(
+      expression: json['expression'] as String? ?? '',
+      text: json['text'] as String? ?? '',
+      resultType: json['result_type'] as String? ?? '',
+      fields: strings('fields'),
+      unknownFields: strings('unknown_fields'),
+      error: json['error'] as String? ?? '',
+    );
+  }
+}
+
 /// A registered connection to another SQL database records can be imported
 /// from (#47). It holds no password: one is given per read, or taken from an
 /// environment variable of the server.
@@ -2064,6 +2103,35 @@ class ApiClient {
       }),
     );
     _checkResponse(response);
+  }
+
+  // ─── Data Viewer (#50) ─────────────────────────────────────────────────────
+
+  /// Evaluates expressions against a record with the engine the calculation
+  /// fields use, so the viewer and the field agree. It only reads.
+  ///
+  /// One expression that does not parse does not stop the others: each
+  /// result carries either a value or its own error.
+  Future<List<EvaluationModel>> evaluateExpressions(
+    String table, {
+    required List<String> expressions,
+    String? recordId,
+    String resultType = 'Text',
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'expressions': expressions,
+        if (recordId != null && recordId.isNotEmpty) 'record_id': recordId,
+        'result_type': resultType,
+      }),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['results'] as List<dynamic>? ?? const [])
+        .map((item) => EvaluationModel.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   // ─── Design report (#49) ───────────────────────────────────────────────────

@@ -131,7 +131,7 @@ func TestAPI_SavedFinds(t *testing.T) {
 	}
 	require.NotEmpty(t, occurrenceID)
 	rec = h.do(http.MethodPost, "/api/v1/schemas/layouts", owner,
-		map[string]interface{}{"name": "Customers Form", "to_id": occurrenceID}, &layout)
+		map[string]interface{}{"name": "Customers Form", "table_occurrence_id": occurrenceID}, &layout)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 
 	var carol struct {
@@ -344,7 +344,7 @@ func TestAPI_SavedFindOnARelatedField(t *testing.T) {
 		ID string `json:"id"`
 	}
 	rec = h.do(http.MethodPost, "/api/v1/schemas/layouts", owner,
-		map[string]interface{}{"name": "Companies Form", "to_id": occurrence["companies"]}, &layout)
+		map[string]interface{}{"name": "Companies Form", "table_occurrence_id": occurrence["companies"]}, &layout)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	rec = h.do(http.MethodPost, "/api/v1/security/users", owner,
 		map[string]interface{}{"username": "carol", "password": "carol-secret-pw", "role": "user"}, nil)
