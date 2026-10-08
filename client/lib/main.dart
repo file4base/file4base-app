@@ -23,6 +23,7 @@ import 'features/layout_engine/manage_layouts_dialog.dart';
 import 'features/layout_engine/new_layout_assistant.dart';
 import 'features/data_io/import_records_dialog.dart';
 import 'features/data_io/manage_data_sources_dialog.dart';
+import 'features/tools/design_report_dialog.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'core/models/file_options_model.dart';
 import 'core/models/page_setup_model.dart';
@@ -138,6 +139,16 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   String _serverStatus = 'Checking...';
   String _activeSolutionFileName = 'Untitled.f4p';
   String _activeSolutionName = 'Untitled Solution';
+
+  /// The name a design report is headed with (#49): the solution's, or the
+  /// database's when no solution file has named it, rather than the
+  /// placeholder "Untitled Solution".
+  String? get _reportedSolutionName {
+    if (_activeSolutionName.isNotEmpty && _activeSolutionName != 'Untitled Solution') {
+      return _activeSolutionName;
+    }
+    return _activeDatabaseName;
+  }
   String _activeDatabaseName = '';
   StorageDirectoryRef? _activeSolutionDirectory;
   List<TableModel> _tables = [];
@@ -1537,6 +1548,21 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ? (target) => _dataBrowserKey.currentState?.goToFindRequest(target)
                       : null,
                   onImportFromDataSource: _handleImportFromDataSource,
+                  onDesignReport: _currentUser == null || !_currentUser!.isAdmin
+                      ? null
+                      : () => DesignReportDialog.show(
+                            context,
+                            apiClient: ref.read(apiClientProvider),
+                            solutionName: _reportedSolutionName,
+                          ),
+                  onSaveDesignAsText: _currentUser == null || !_currentUser!.isAdmin
+                      ? null
+                      : () => DesignReportDialog.show(
+                            context,
+                            apiClient: ref.read(apiClientProvider),
+                            solutionName: _reportedSolutionName,
+                            initialFormat: DesignReportFormat.xml,
+                          ),
                   onManageDataSources: _currentUser == null
                       ? null
                       : () => ManageDataSourcesDialog.show(

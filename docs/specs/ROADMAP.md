@@ -81,6 +81,14 @@
 - [ ] Sign-in rate limiting and account lockout.
 - [ ] Sessions shared across server replicas (required for horizontal scaling).
 
+## Tools
+- [x] Database Design Report: what the solution is made of, as a page to read, and the design as XML or JSON for version control ([#49](https://github.com/file4base/file4base-app/issues/49), [design_report.md](design_report.md)).
+- [ ] Data Viewer: fields, variables and watched expressions ([#50](https://github.com/file4base/file4base-app/issues/50)).
+- [ ] Script Debugger: step through a script ([#51](https://github.com/file4base/file4base-app/issues/51)).
+- [ ] Custom menus defined by the solution ([#52](https://github.com/file4base/file4base-app/issues/52)).
+- [ ] Developer utilities: clone without records, rename, lock the design ([#53](https://github.com/file4base/file4base-app/issues/53)).
+- [ ] Copy and paste structure between solutions ([#54](https://github.com/file4base/file4base-app/issues/54)).
+
 ## Phase 6: Real-Time Sync & Multi-User Collaboration
 - [ ] Set up WebSocket hub in Go server.
 - [ ] Implement DB event notifications (PostgreSQL `LISTEN/NOTIFY` with fallback to Go pub/sub for MariaDB).

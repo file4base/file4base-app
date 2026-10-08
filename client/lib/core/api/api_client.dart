@@ -2066,6 +2066,34 @@ class ApiClient {
     _checkResponse(response);
   }
 
+  // ─── Design report (#49) ───────────────────────────────────────────────────
+
+  /// Reads the solution's design: `html` for the report to read, `xml` or
+  /// `json` for the design as text. Answers the document and the name to
+  /// save it under.
+  Future<({Uint8List bytes, String fileName})> designReport({
+    required String format,
+    String? solution,
+  }) async {
+    final query = <String>[
+      'format=${Uri.encodeComponent(format)}',
+      if (solution != null && solution.isNotEmpty) 'solution=${Uri.encodeComponent(solution)}',
+    ].join('&');
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/solutions/design-report?$query'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+
+    // The server names the file; the header is the one place that knows both
+    // the solution's name and the format.
+    var name = 'solution_design.$format';
+    final disposition = response.headers['content-disposition'] ?? '';
+    final match = RegExp(r'filename="([^"]+)"').firstMatch(disposition);
+    if (match != null) name = match.group(1)!;
+    return (bytes: response.bodyBytes, fileName: name);
+  }
+
   // ─── External SQL data sources (#47) ───────────────────────────────────────
 
   /// Lists the registered connections and the engines File4Base can read.

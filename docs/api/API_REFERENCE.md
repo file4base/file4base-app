@@ -1077,6 +1077,35 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 
 ---
 
+### `GET /api/v1/solutions/design-report`
+Answers what the solution is made of (#49): tables and fields with their
+options and validation, the relationships graph, the layouts with the fields
+they bind and the scripts they run, the scripts and their steps, value lists,
+accounts with their layout permissions, extended privileges, saved finds and
+registered data sources. Requires the `owner` or `admin` role.
+
+| Parameter | Meaning |
+| --- | --- |
+| `format` | `html` (default) — the report to read; `xml` or `json` — the design as text. |
+| `solution` | The name to head the report with. Defaults to the session's database. |
+
+**No records and no secrets**, in any format: no password, no password hash,
+no stored credential. A data source appears without one because the catalog
+holds none either.
+
+The `xml` and `json` forms carry **no timestamp**, so writing the same design
+twice produces the same bytes — which is what makes them worth committing. A
+`.f4p` file is MessagePack and cannot be diffed; these can. They also carry
+each layout's definition exactly as it is stored, so a change to a layout is
+visible in the diff. The `html` form is one self-contained page with no script
+and nothing to fetch, and shows the moment it was made.
+
+- `200 OK` with `Content-Disposition: attachment; filename="<solution>_design.<ext>"`.
+- `403 Forbidden` for a regular user, `422 Unprocessable Entity` for a format
+  File4Base does not write.
+
+---
+
 ### `GET /api/v1/solutions/export-data`
 Dumps all records and table rows from the active database into a binary MessagePack data file (`.f4data`). Requires the `owner` or `admin` role and the `bulk_export` privilege (#39).
 

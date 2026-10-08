@@ -103,12 +103,18 @@ class SolutionStorageService {
     if (kIsWeb) {
       triggerBrowserDownload(bytes, filename);
     } else {
+      // The filter follows the file being saved: solution files, but also a
+      // record export, a design report or the design as text.
+      final extension = filename.contains('.') ? filename.split('.').last.toLowerCase() : '';
+      final allowed = extension.isEmpty
+          ? const ['f4p', 'f4b', 'f4data', 'msgpack']
+          : [extension];
       await FilePicker.saveFile(
-        dialogTitle: 'Save Solution File',
+        dialogTitle: 'Save File',
         fileName: filename,
         bytes: bytes,
         type: FileType.custom,
-        allowedExtensions: ['f4p', 'f4b', 'f4data', 'msgpack'],
+        allowedExtensions: allowed,
       );
     }
   }

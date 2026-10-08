@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The Tools menu is honest, and its first tool is real**
+  ([#48](https://github.com/file4base/file4base-app/issues/48),
+  [#49](https://github.com/file4base/file4base-app/issues/49)). Every item of
+  the Tools menu opened a "roadmap" dialog that described the tool as though
+  it were planned rather than doing anything — the same shape as the extended
+  privileges of #39. What does not exist is now **shown disabled**, and each
+  of the five has its own issue
+  ([#50](https://github.com/file4base/file4base-app/issues/50),
+  [#51](https://github.com/file4base/file4base-app/issues/51),
+  [#52](https://github.com/file4base/file4base-app/issues/52),
+  [#53](https://github.com/file4base/file4base-app/issues/53),
+  [#54](https://github.com/file4base/file4base-app/issues/54)).
+- **Database Design Report, and the design as text for version control**
+  ([#49](https://github.com/file4base/file4base-app/issues/49)).
+  [docs/specs/design_report.md](docs/specs/design_report.md) is the
+  specification.
+  - **Tools > Database Design Report...** writes one self-contained HTML page:
+    tables and fields with their options, validation and formulas; the
+    relationships graph; every layout with its parts, the fields it binds —
+    naming the relationship a related field is read through — its portals and
+    the scripts it runs; every script and step; value lists; accounts with
+    their layout permissions; extended privileges; saved finds; and data
+    sources. No script in the page and nothing to fetch, so it opens from a
+    file and prints.
+  - **Tools > Save Design as XML...** writes the same design as XML or JSON.
+    A `.f4p` file is MessagePack and cannot be diffed; this can, and it
+    carries each layout's definition exactly as it is stored, so a change to a
+    layout is a readable diff. The text forms have **no timestamp** and a
+    fixed order throughout, so writing an unchanged solution twice produces
+    the same bytes and no commit noise.
+  - **No records and no secrets in any format** — no password, no password
+    hash, no stored credential — and the report says so about itself, so what
+    is absent from it is not read as absent from the solution.
+  - One walk of the catalog, the one the solution export already does, so the
+    report and the `.f4p` file cannot describe different solutions. New
+    endpoint `GET /api/v1/solutions/design-report`, owner or admin.
 - **Import records from another SQL database**
   ([#47](https://github.com/file4base/file4base-app/issues/47)). *File >
   Import Records > ODBC Data Source...* was greyed out. It is now **External

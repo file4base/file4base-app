@@ -77,6 +77,12 @@ class File4BaseMenuBar extends StatelessWidget {
 
   /// File > Manage > Data Sources... — the registered connections (#47).
   final VoidCallback? onManageDataSources;
+
+  /// Tools > Database Design Report... — what the solution is made of, as a
+  /// page to read, and Save Design as XML... — the same as text, for version
+  /// control (#49).
+  final VoidCallback? onDesignReport;
+  final VoidCallback? onSaveDesignAsText;
   final VoidCallback? onPrint;
   final VoidCallback? onQuit;
   final bool isAuthenticated;
@@ -119,6 +125,8 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onImportRecords,
     this.onImportFromDataSource,
     this.onManageDataSources,
+    this.onDesignReport,
+    this.onSaveDesignAsText,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -1082,32 +1090,41 @@ class File4BaseMenuBar extends StatelessWidget {
 
   // 8. Tools Menu
   Widget _buildToolsMenu(BuildContext context) {
+    // A tool that does not exist is shown disabled. The Tools menu used to
+    // open a "roadmap" dialog for each of them, which read as though the
+    // tool were there (#48).
     return SubmenuButton(
       menuChildren: [
-        MenuItemButton(
-          onPressed: () => _showRoadmapDialog(context, 'Script Debugger', 'Roadmap Phase 7', 'Step-by-step interactive script execution and breakpoint monitor.'),
-          child: const Text('Script Debugger'),
+        const MenuItemButton(
+          onPressed: null, // #51: not implemented, shown disabled
+          child: Text('Script Debugger'),
         ),
-        MenuItemButton(
-          onPressed: () => _showRoadmapDialog(context, 'Data Viewer', 'Roadmap Phase 7', 'Real-time inspector for global variables (\$), local variables (\$\$), and watch formulas.'),
-          child: const Text('Data Viewer'),
+        const MenuItemButton(
+          onPressed: null, // #50: not implemented, shown disabled
+          child: Text('Data Viewer'),
         ),
-        SubmenuButton(
-          menuChildren: [
-            MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Custom Menus', 'Roadmap Phase 8', 'Customize, override, and reorder application menu bars per layout.'),
-              child: const Text('Manage Custom Menus...'),
-            ),
-          ],
-          child: const Text('Custom Menus'),
-        ),
+        const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => _showRoadmapDialog(context, 'Database Design Report', 'Roadmap Phase 8', 'Generate comprehensive XML/HTML schema and relationship audit documentation.'),
+          onPressed: onDesignReport,
           child: const Text('Database Design Report...'),
         ),
         MenuItemButton(
-          onPressed: () => _showRoadmapDialog(context, 'Developer Utilities', 'Roadmap Phase 8', 'File renaming, custom extension bundling, and kiosk mode generator.'),
-          child: const Text('Developer Utilities...'),
+          onPressed: onSaveDesignAsText,
+          child: const Text('Save Design as XML...'),
+        ),
+        const Divider(height: 1),
+        const SubmenuButton(
+          menuChildren: [
+            MenuItemButton(
+              onPressed: null, // #52: not implemented, shown disabled
+              child: Text('Manage Custom Menus...'),
+            ),
+          ],
+          child: Text('Custom Menus'),
+        ),
+        const MenuItemButton(
+          onPressed: null, // #53: not implemented, shown disabled
+          child: Text('Developer Utilities...'),
         ),
       ],
       child: const Text('Tools', style: TextStyle(fontSize: 13)),

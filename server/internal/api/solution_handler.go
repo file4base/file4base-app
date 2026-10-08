@@ -11,6 +11,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/designreport"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
@@ -64,6 +65,9 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Get("/export", h.ExportSolution)
 		r.With(RequireAdmin).Post("/export", h.ExportSolution)
 		r.With(RequireOwner).Post("/import", h.ImportSolution)
+		// The design as a report to read, or as text for version control
+		// (#49). It carries no records and no secrets.
+		r.With(RequireAdmin).Get("/design-report", h.DesignReport)
 		// The data file carries every record, so it needs the same bulk
 		// capability as a record export or import (#39).
 		r.With(RequireAdmin, RequireCapability(schema.CapabilityBulkExport)).Get("/export-data", h.ExportDatabaseData)
@@ -442,4 +446,50 @@ func (h *SolutionHandler) ImportDatabaseData(w http.ResponseWriter, r *http.Requ
 		RecordsCount int    `json:"records_count"`
 		*schema.DataImportReport
 	}{"restored", report.RecordsInserted, report})
+}
+
+// DesignReport answers what the solution is made of (#49).
+//
+//	GET /api/v1/solutions/design-report?format=html|xml|json&solution=<name>
+//
+// HTML is the report to read; XML and JSON are the design as text, for
+// processing and for version control, and leave the timestamp out so that
+// writing the same design twice produces no diff.
+func (h *SolutionHandler) DesignReport(w http.ResponseWriter, r *http.Request) {
+	format := designreport.Format(strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format"))))
+	if format == "" {
+		format = designreport.FormatHTML
+	}
+	if !format.Known() {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unknown Format",
+			"a design report is written as html, xml or json")
+		return
+	}
+
+	solution := strings.TrimSpace(r.URL.Query().Get("solution"))
+	if solution == "" {
+		solution = sessionDatabase(r)
+	}
+
+	report, err := schemaService(r).DesignReport(r.Context(), schema.DesignReportOptions{
+		SolutionName: solution,
+		Database:     sessionDatabase(r),
+		Timestamped:  format == designreport.FormatHTML,
+	})
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	document, err := designreport.Write(report, format)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", format.ContentType())
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", designreport.FileName(report.Solution, format)))
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write(document)
 }
