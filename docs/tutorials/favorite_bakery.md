@@ -9,7 +9,7 @@ imported file, a printable sheet and a second account.
 
 It takes about an hour.
 
-**Every step below was carried out in File4Base 0.9.3 and the results are the
+**Every step below was carried out in File4Base 0.10.0 and the results are the
 ones the application actually produced.** Where File4Base does not do something,
 this tutorial says so instead of describing it — see
 [What is not here yet](#what-is-not-here-yet) at the end.
@@ -1409,7 +1409,7 @@ All names, companies and addresses are fictitious.
 
 ## What is not here yet
 
-These are things a FileMaker user will look for and not find in File4Base 0.9.3.
+These are things a FileMaker user will look for and not find in File4Base 0.10.0.
 They are listed so you do not go looking, and each one has an issue.
 
 **No merge variables** ([#33](https://github.com/file4base/file4base-app/issues/33))**.**

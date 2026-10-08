@@ -41,6 +41,9 @@
 - [x] Implement Find Mode query translator in Go:
   - [x] Translate file4base find operators (`*`, `...`, `=`, `!`, `>`, `<`) into agnostic SQL AST.
 - [x] Connect Flutter Grid / List view to generic CRUD endpoints (`DataBrowserWidget`).
+- [x] Several find requests, unioned, with omitting requests subtracting ([#34](https://github.com/file4base/file4base-app/issues/34)); saved finds are still to come.
+- [x] Multi-field sort orders ([#35](https://github.com/file4base/file4base-app/issues/35)).
+- [x] Import records from CSV, tab-separated text, Excel workbooks and XML, with field mapping and one-transaction atomicity; export the found set as CSV, TSV or a workbook ([#38](https://github.com/file4base/file4base-app/issues/38), [docs/specs/importing_and_exporting_records.md](importing_and_exporting_records.md)). ODBC is [#47](https://github.com/file4base/file4base-app/issues/47).
 
 ## Phase 5: Dynamic Layout Engine & 4 Execution Modes
 - [x] Define JSON layout schema specification (`docs/specs/layout_schema.json`).
@@ -57,7 +60,12 @@
   - [x] Portals (sub-table for 1:N related records).
   - [x] Drawn objects (line, rectangle, rounded rectangle, oval) with fill and line color/width, text inside shapes and embedded pictures/files (Insert menu).
   - [x] Button actions (single step or Perform Script) and Set Tab Order for Browse/Find keyboard navigation.
-  - [x] Parts (Top Navigation, Header, Body, Footer).
+  - [x] Parts (Header, Body, Footer, and the sub-summary and grand summary parts a report is made of).
+  - [x] Summary fields and grouped reports with subtotals and a grand total ([#32](https://github.com/file4base/file4base-app/issues/32)).
+  - [x] The New Layout assistant: form, list, report, labels and blank, with a field picker, layout themes and label stock ([#33](https://github.com/file4base/file4base-app/issues/33)).
+  - [x] Merge fields in layout text, with an empty line collapsing ([#33](https://github.com/file4base/file4base-app/issues/33)).
+  - [x] Charts: column, bar, line, area, pie and scatter ([#37](https://github.com/file4base/file4base-app/issues/37)).
+  - [x] Related fields on a layout, through a named relationship ([#36](https://github.com/file4base/file4base-app/issues/36)).
   - [x] Layout backend REST persistence (`/api/v1/schemas/layouts`).
   - [x] Official branding integration across macOS, Windows, Linux, and Web Client.
 
@@ -86,6 +94,6 @@
   - [ ] Contextual parameter inspector with formula constructor.
   - [ ] Categorized step catalog for Navigation, Records, Control & Logic, and Integration & Data.
 - [ ] Implement drag-and-drop step reordering and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
-- [ ] Embed formula calculation engine in Go (arithmetic, string concatenation, logical tests, date math via Google CEL).
+- [x] Formula calculation engine in Go: arithmetic, text joining, logical tests, comparisons and 20 functions, evaluated by the server so both engines agree. Written by hand rather than with Google CEL, whose grammar is not FileMaker's ([#30](https://github.com/file4base/file4base-app/issues/30), [docs/specs/calculation_formulas.md](calculation_formulas.md)).
 - [ ] Script step runner executing actions deterministically with step-by-step debugging.
   - [x] Client-side runner for layout buttons: single step actions and Perform Script for record, navigation, Set Field, dialog and URL steps. Control flow (`If`, `Loop`), variables and integration steps stop the script with a message until the calculation engine and server runner exist.
