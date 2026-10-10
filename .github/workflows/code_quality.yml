@@ -63,6 +63,7 @@ jobs:
         uses: JetBrains/qodana-action@v2024.3
         with:
           args: --project-dir=client
+          image: jetbrains/qodana-dart:2024.3
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: 'https://qodana.cloud'
