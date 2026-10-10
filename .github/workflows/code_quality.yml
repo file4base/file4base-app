@@ -24,10 +24,10 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: server/go.mod
+          go-version: '1.25.1'
 
-      - name: 'Qodana Go Scan'
-        uses: JetBrains/qodana-action@v2026.1
+      - name: Qodana Go Scan
+        uses: JetBrains/qodana-action@v2024.3
         with:
           args: --project-dir=server
         env:
@@ -50,7 +50,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.12.0'
+          flutter-version: '3.32.0'
           channel: stable
 
       - name: Verify Flutter version
@@ -60,8 +60,8 @@ jobs:
         working-directory: client
         run: flutter pub get
 
-      - name: 'Qodana Flutter Scan'
-        uses: JetBrains/qodana-action@v2026.1
+      - name: Qodana Flutter Scan
+        uses: JetBrains/qodana-action@v2024.3
         with:
           args: --project-dir=client
         env:
