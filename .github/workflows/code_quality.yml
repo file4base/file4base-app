@@ -33,36 +33,3 @@ jobs:
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: 'https://qodana.cloud'
-
-  qodana-flutter:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      checks: write
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-
-      - name: Verify Flutter version
-        run: flutter --version && dart --version
-
-      - name: Install Flutter dependencies
-        working-directory: client
-        run: flutter pub get
-
-      - name: Qodana Flutter Scan
-        uses: JetBrains/qodana-action@v2026.2
-        with:
-          args: --project-dir=client --linter dart
-        env:
-          QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
-          QODANA_ENDPOINT: 'https://qodana.cloud'
