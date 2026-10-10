@@ -50,11 +50,11 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.32.0'
+          flutter-version: '3.27.0'
           channel: stable
 
       - name: Verify Flutter version
-        run: flutter --version
+        run: flutter --version && dart --version
 
       - name: Install Flutter dependencies
         working-directory: client
