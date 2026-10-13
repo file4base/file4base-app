@@ -57,6 +57,7 @@ void main() {
     Map<String, dynamic>? lastRenameBody;
     Map<String, dynamic>? lastCloneBody;
     Map<String, dynamic>? lastLockBody;
+    Map<String, dynamic>? lastOptionsBody;
 
     final mockHttp = MockClient((request) async {
       if (request.url.path == '/api/v1/solutions/rename' &&
@@ -86,6 +87,19 @@ void main() {
           201,
         );
       }
+      if (request.url.path == '/api/v1/solutions/options' &&
+          request.method == 'PUT') {
+        lastOptionsBody = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response(
+          jsonEncode({
+            'database': 'bakery_db',
+            'solution_name': 'Bakery Suite',
+            'design_locked': false,
+            'file_options': lastOptionsBody!['file_options'],
+          }),
+          200,
+        );
+      }
       if (request.url.path == '/api/v1/solutions/lock-design' &&
           request.method == 'POST') {
         lastLockBody = jsonDecode(request.body) as Map<String, dynamic>;
@@ -105,6 +119,7 @@ void main() {
         ApiClient(baseUrl: 'http://localhost:8080', httpClient: mockHttp);
     SolutionMetaModel? latestMeta;
     CloneResultModel? clonedResult;
+    bool? kioskChanged;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -118,6 +133,7 @@ void main() {
             ),
             onMetaChanged: (m) => latestMeta = m,
             onSolutionCloned: (c) => clonedResult = c,
+            onKioskModeChanged: (k) => kioskChanged = k,
           ),
         ),
       ),
@@ -153,9 +169,26 @@ void main() {
     expect(clonedResult?.database, equals('bakery_prod'));
     expect(clonedResult?.designLocked, isTrue);
 
-    // 3. Permanently lock current design
+    // 3. Enable Kiosk Mode & AES-256-GCM encryption
+    await tester.ensureVisible(find.byKey(const Key('dev_util_kiosk_switch')));
+    await tester.tap(find.byKey(const Key('dev_util_kiosk_switch')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('dev_util_save_protection_button')),
+    );
+    await tester.tap(find.byKey(const Key('dev_util_save_protection_button')));
+    await tester.pumpAndSettle();
+    expect(lastOptionsBody?['file_options']?['kiosk_mode'], isTrue);
+    expect(lastOptionsBody?['file_options']?['encryption_enabled'], isTrue);
+    expect(kioskChanged, isTrue);
+
+    // 4. Permanently lock current design
+    await tester.ensureVisible(
+      find.byKey(const Key('dev_util_lock_confirm_checkbox')),
+    );
     await tester.tap(find.byKey(const Key('dev_util_lock_confirm_checkbox')));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('dev_util_lock_button')));
     await tester.tap(find.byKey(const Key('dev_util_lock_button')));
     await tester.pumpAndSettle();
     expect(lastLockBody?['confirm'], isTrue);

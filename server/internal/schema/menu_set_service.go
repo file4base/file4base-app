@@ -47,6 +47,8 @@ const (
 	MenuModeExtend = "extend"
 	// MenuModeReplace puts the items in place of the standard ones.
 	MenuModeReplace = "replace"
+	// MenuModeHide hides the entire standard menu from the menu bar.
+	MenuModeHide = "hide"
 )
 
 // MenuItem is one entry of a custom menu. An item with an empty title and no
@@ -150,14 +152,18 @@ func checkMenuSet(in MenuSetInput) (MenuSetInput, error) {
 		if mode == "" {
 			mode = MenuModeExtend
 		}
-		if mode != MenuModeExtend && mode != MenuModeReplace {
-			return in, fmt.Errorf("%w: a menu is %q or %q, not %q",
-				ErrInvalidMenuSet, MenuModeExtend, MenuModeReplace, menu.Mode)
+		if mode != MenuModeExtend && mode != MenuModeReplace && mode != MenuModeHide {
+			return in, fmt.Errorf("%w: a menu is %q, %q, or %q, not %q",
+				ErrInvalidMenuSet, MenuModeExtend, MenuModeReplace, MenuModeHide, menu.Mode)
 		}
-		if mode == MenuModeReplace && extendOnly(name) {
+		if (mode == MenuModeReplace || mode == MenuModeHide) && extendOnly(name) {
 			return in, fmt.Errorf(
 				"%w: the %s menu can only be extended, so that signing out and opening a solution stay reachable",
 				ErrInvalidMenuSet, name)
+		}
+		if mode == MenuModeHide {
+			cleaned = append(cleaned, CustomMenu{Menu: name, Mode: MenuModeHide, Items: []MenuItem{}})
+			continue
 		}
 
 		if len(menu.Items) == 0 {

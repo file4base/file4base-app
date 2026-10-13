@@ -8,10 +8,12 @@ enum AppThemeId {
   nord,
   solarizedLight,
   solarizedDark,
+  custom,
 }
 
 class AppThemeDefinition {
   final AppThemeId id;
+  final String? customKey;
   final String name;
   final String description;
   final String category;
@@ -43,6 +45,7 @@ class AppThemeDefinition {
 
   const AppThemeDefinition({
     required this.id,
+    this.customKey,
     required this.name,
     required this.description,
     required this.category,
@@ -64,6 +67,99 @@ class AppThemeDefinition {
     required this.fieldsColor,
     required this.integrationColor,
   });
+
+  String get uniqueKey => customKey ?? id.name;
+
+  static String _colorToHex(Color c) =>
+      '#${c.toARGB32().toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+
+  static Color _colorFromHex(dynamic raw, Color fallback) {
+    if (raw is! String) return fallback;
+    final clean = raw.trim().replaceFirst('#', '').replaceFirst('0x', '');
+    if (clean.length == 6) {
+      final parsed = int.tryParse('FF$clean', radix: 16);
+      if (parsed != null) return Color(parsed);
+    } else if (clean.length == 8) {
+      final parsed = int.tryParse(clean, radix: 16);
+      if (parsed != null) return Color(parsed);
+    }
+    return fallback;
+  }
+
+  Map<String, dynamic> toJson() => {
+        'format': 'file4base_theme_v1',
+        'id': uniqueKey,
+        'name': name,
+        'description': description,
+        'category': category,
+        'is_dark': isDark,
+        'colors': {
+          'background': _colorToHex(background),
+          'surface': _colorToHex(surface),
+          'surface_container': _colorToHex(surfaceContainer),
+          'border': _colorToHex(border),
+          'text_primary': _colorToHex(textPrimary),
+          'text_secondary': _colorToHex(textSecondary),
+          'primary_accent': _colorToHex(primaryAccent),
+          'secondary_accent': _colorToHex(secondaryAccent),
+          'success': _colorToHex(successColor),
+          'warning': _colorToHex(warningColor),
+          'error': _colorToHex(errorColor),
+          'nav': _colorToHex(navColor),
+          'records': _colorToHex(recordsColor),
+          'control': _colorToHex(controlColor),
+          'fields': _colorToHex(fieldsColor),
+          'integration': _colorToHex(integrationColor),
+        },
+      };
+
+  factory AppThemeDefinition.fromJson(Map<String, dynamic> json) {
+    final isDark = json['is_dark'] as bool? ?? false;
+    final base = isDark ? AppThemes.dark : AppThemes.light;
+    final rawColors = json['colors'];
+    final colors = rawColors is Map
+        ? Map<String, dynamic>.from(rawColors)
+        : const <String, dynamic>{};
+    final name = (json['name'] as String?)?.trim();
+    if (name == null || name.isEmpty) {
+      throw const FormatException('Theme JSON must include a non-empty "name".');
+    }
+    final rawId = (json['id'] as String?)?.trim() ??
+        name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
+    return AppThemeDefinition(
+      id: AppThemeId.custom,
+      customKey: 'custom_$rawId',
+      name: name,
+      description: (json['description'] as String?)?.trim().isNotEmpty == true
+          ? (json['description'] as String).trim()
+          : 'Imported custom layout theme.',
+      category: (json['category'] as String?)?.trim().isNotEmpty == true
+          ? (json['category'] as String).trim()
+          : 'Custom & Imported',
+      isDark: isDark,
+      background: _colorFromHex(colors['background'], base.background),
+      surface: _colorFromHex(colors['surface'], base.surface),
+      surfaceContainer:
+          _colorFromHex(colors['surface_container'], base.surfaceContainer),
+      border: _colorFromHex(colors['border'], base.border),
+      textPrimary: _colorFromHex(colors['text_primary'], base.textPrimary),
+      textSecondary:
+          _colorFromHex(colors['text_secondary'], base.textSecondary),
+      primaryAccent:
+          _colorFromHex(colors['primary_accent'], base.primaryAccent),
+      secondaryAccent:
+          _colorFromHex(colors['secondary_accent'], base.secondaryAccent),
+      successColor: _colorFromHex(colors['success'], base.successColor),
+      warningColor: _colorFromHex(colors['warning'], base.warningColor),
+      errorColor: _colorFromHex(colors['error'], base.errorColor),
+      navColor: _colorFromHex(colors['nav'], base.navColor),
+      recordsColor: _colorFromHex(colors['records'], base.recordsColor),
+      controlColor: _colorFromHex(colors['control'], base.controlColor),
+      fieldsColor: _colorFromHex(colors['fields'], base.fieldsColor),
+      integrationColor:
+          _colorFromHex(colors['integration'], base.integrationColor),
+    );
+  }
 
   ThemeData toThemeData() {
     final brightness = isDark ? Brightness.dark : Brightness.light;

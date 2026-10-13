@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/services/solution_storage.dart';
 import '../../core/theme/theme_model.dart';
 import '../../core/theme/theme_provider.dart';
 
@@ -29,11 +32,12 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
   }
 
   List<AppThemeDefinition> get _filteredThemes {
+    final all = ref.read(appThemeProvider.notifier).availableThemes;
     if (_searchFilter.isEmpty) {
-      return AppThemes.allThemes;
+      return all;
     }
     final q = _searchFilter.toLowerCase();
-    return AppThemes.allThemes.where((t) {
+    return all.where((t) {
       return t.name.toLowerCase().contains(q) ||
           t.description.toLowerCase().contains(q) ||
           t.category.toLowerCase().contains(q);
@@ -41,7 +45,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
   }
 
   void _applyTheme(AppThemeDefinition theme) {
-    ref.read(appThemeProvider.notifier).setTheme(theme.id);
+    ref.read(appThemeProvider.notifier).setThemeDefinition(theme);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -57,10 +61,139 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
     );
   }
 
+  Future<void> _copySelectedTheme() async {
+    final jsonStr =
+        ref.read(appThemeProvider.notifier).copyThemeToJson(_selectedTheme);
+    try {
+      await Clipboard.setData(ClipboardData(text: jsonStr));
+    } catch (_) {}
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Copied layout theme "${_selectedTheme.name}" to clipboard for pasting into another solution.',
+        ),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _exportSelectedTheme() async {
+    final jsonStr =
+        ref.read(appThemeProvider.notifier).copyThemeToJson(_selectedTheme);
+    final safeName = _selectedTheme.name
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    await SolutionStorageService.saveFile(
+      filename: '${safeName.isEmpty ? "theme" : safeName}.f4theme.json',
+      bytes: Uint8List.fromList(utf8.encode(jsonStr)),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Exported "${_selectedTheme.name}" theme file.'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Future<void> _showImportThemeDialog() async {
+    final notifier = ref.read(appThemeProvider.notifier);
+    final templateMap = Map<String, dynamic>.from(_selectedTheme.toJson());
+    templateMap['id'] = 'corporate_custom';
+    templateMap['name'] = '${_selectedTheme.name} (Corporate Copy)';
+    templateMap['category'] = 'Custom & Imported';
+    final initialText = notifier.lastCopiedThemeJson ??
+        const JsonEncoder.withIndent('  ').convert(templateMap);
+    var draftJson = initialText;
+    String? importError;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.content_paste_go, size: 20),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Paste / Import Layout Theme',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 540,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'Paste a theme JSON copied from another File4Base solution or customize the palette below to import it into this solution:',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 10),
+                    TextFormField(
+                      key: const Key('theme_import_json_field'),
+                      initialValue: draftJson,
+                      onChanged: (v) => draftJson = v,
+                      maxLines: 12,
+                      style: const TextStyle(fontSize: 11.5, fontFamily: 'monospace'),
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    if (importError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        importError!,
+                        key: const Key('theme_import_error_text'),
+                        style: TextStyle(fontSize: 12, color: Colors.red.shade700),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton.icon(
+                  key: const Key('theme_import_confirm_button'),
+                  icon: const Icon(Icons.download_done, size: 16),
+                  label: const Text('Import & Apply Theme'),
+                  onPressed: () {
+                    try {
+                      final imported =
+                          notifier.importThemeFromJson(draftJson, apply: true);
+                      setState(() => _selectedTheme = imported);
+                      Navigator.of(dialogCtx).pop();
+                    } catch (e) {
+                      setDialogState(() {
+                        importError = e.toString().replaceFirst('FormatException: ', '');
+                      });
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final activeTheme = ref.watch(appThemeProvider);
-    final isPreviewActive = activeTheme.id == _selectedTheme.id;
+    final isPreviewActive = activeTheme.uniqueKey == _selectedTheme.uniqueKey;
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -121,7 +254,43 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    key: const Key('theme_copy_button'),
+                    icon: const Icon(Icons.copy, size: 14),
+                    label: const Text('Copy Theme', style: TextStyle(fontSize: 11)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: activeTheme.textPrimary,
+                      side: BorderSide(color: activeTheme.border),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                    onPressed: _copySelectedTheme,
+                  ),
+                  const SizedBox(width: 6),
+                  OutlinedButton.icon(
+                    key: const Key('theme_import_button'),
+                    icon: const Icon(Icons.content_paste_go, size: 14),
+                    label: const Text('Paste / Import Theme...', style: TextStyle(fontSize: 11)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: activeTheme.textPrimary,
+                      side: BorderSide(color: activeTheme.border),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                    onPressed: _showImportThemeDialog,
+                  ),
+                  const SizedBox(width: 6),
+                  OutlinedButton.icon(
+                    key: const Key('theme_export_button'),
+                    icon: const Icon(Icons.file_download_outlined, size: 14),
+                    label: const Text('Export (.json)', style: TextStyle(fontSize: 11)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: activeTheme.textPrimary,
+                      side: BorderSide(color: activeTheme.border),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                    onPressed: _exportSelectedTheme,
+                  ),
+                  const SizedBox(width: 8),
                   IconButton(
                     icon: Icon(Icons.close, color: activeTheme.textSecondary, size: 20),
                     onPressed: () => Navigator.of(context).pop(),
@@ -181,8 +350,8 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             itemBuilder: (context, idx) {
                               final theme = _filteredThemes[idx];
-                              final isSelected = theme.id == _selectedTheme.id;
-                              final isActive = theme.id == activeTheme.id;
+                              final isSelected = theme.uniqueKey == _selectedTheme.uniqueKey;
+                              final isActive = theme.uniqueKey == activeTheme.uniqueKey;
 
                               return InkWell(
                                 onTap: () => setState(() => _selectedTheme = theme),

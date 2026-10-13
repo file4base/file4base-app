@@ -161,7 +161,7 @@ void main() {
       expect(item('Developer Utilities...').onPressed, isNull);
 
       expect(item('Database Design Report...').onPressed, isNotNull);
-      expect(item('Save Design as XML...').onPressed, isNotNull);
+      expect(item('Save a Copy as XML...').onPressed, isNotNull);
 
       await tester.tap(find.text('Database Design Report...'));
       await tester.pumpAndSettle();

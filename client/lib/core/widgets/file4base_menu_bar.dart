@@ -316,25 +316,39 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         children: [
           _applyCustomMenu('File', _buildFileMenu(context), extendOnly: true),
-          _applyCustomMenu('Edit', _buildEditMenu(context)),
-          _applyCustomMenu('View', _buildViewMenu(context)),
-          _applyCustomMenu('Insert', _buildInsertMenu(context)),
-          _applyCustomMenu('Format', _buildFormatMenu(context)),
-          if (activeMode == OperationalMode.find)
-            _applyCustomMenu('Requests', _buildRequestsMenu(context))
-          else
-            _applyCustomMenu('Records', _buildRecordsMenu(context)),
-          _applyCustomMenu('Scripts', _buildScriptsMenu(context)),
+          if (!_isMenuHidden('Edit'))
+            _applyCustomMenu('Edit', _buildEditMenu(context)),
+          if (!_isMenuHidden('View'))
+            _applyCustomMenu('View', _buildViewMenu(context)),
+          if (!_isMenuHidden('Insert'))
+            _applyCustomMenu('Insert', _buildInsertMenu(context)),
+          if (!_isMenuHidden('Format'))
+            _applyCustomMenu('Format', _buildFormatMenu(context)),
+          if (activeMode == OperationalMode.find) ...[
+            if (!_isMenuHidden('Requests'))
+              _applyCustomMenu('Requests', _buildRequestsMenu(context)),
+          ] else ...[
+            if (!_isMenuHidden('Records'))
+              _applyCustomMenu('Records', _buildRecordsMenu(context)),
+          ],
+          if (!_isMenuHidden('Scripts'))
+            _applyCustomMenu('Scripts', _buildScriptsMenu(context)),
           _applyCustomMenu(
             'Tools',
             _buildToolsMenu(context),
             preservedSuffix: [_buildCustomMenusSubmenu()],
           ),
-          _applyCustomMenu('Window', _buildWindowMenu(context)),
+          if (!_isMenuHidden('Window'))
+            _applyCustomMenu('Window', _buildWindowMenu(context)),
           _buildHelpMenu(context),
         ],
       ),
     );
+  }
+
+  bool _isMenuHidden(String menuName) {
+    final custom = activeMenuSet?.menuFor(menuName);
+    return custom != null && custom.mode.toLowerCase() == 'hide';
   }
 
   Widget _applyCustomMenu(
@@ -345,7 +359,17 @@ class File4BaseMenuBar extends StatelessWidget {
   }) {
     if (standard is! SubmenuButton) return standard;
     final custom = activeMenuSet?.menuFor(menuName);
-    if (custom == null || custom.items.isEmpty) return standard;
+    if (custom == null) return standard;
+    if (!extendOnly && custom.mode.toLowerCase() == 'hide') {
+      if (preservedSuffix.isNotEmpty) {
+        return SubmenuButton(
+          menuChildren: preservedSuffix,
+          child: standard.child,
+        );
+      }
+      return standard;
+    }
+    if (custom.items.isEmpty) return standard;
 
     final customWidgets = <Widget>[
       for (final item in custom.items)
@@ -1249,13 +1273,17 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         MenuItemButton(
           onPressed: onSaveDesignAsText,
-          child: const Text('Save Design as XML...'),
+          child: const Text('Save a Copy as XML...'),
         ),
         const Divider(height: 1),
         _buildCustomMenusSubmenu(),
         MenuItemButton(
           onPressed: onDeveloperUtilities,
           child: const Text('Developer Utilities...'),
+        ),
+        MenuItemButton(
+          onPressed: onManageThemes,
+          child: const Text('Layout Themes...'),
         ),
       ],
       child: const Text('Tools', style: TextStyle(fontSize: 13)),

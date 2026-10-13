@@ -183,5 +183,52 @@ void main() {
       // Verify provider state updated
       expect(capturedContainer.read(appThemeProvider).id, AppThemeId.monokai);
     });
+
+    testWidgets('copying and pasting/importing a custom corporate theme adds and activates it', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+
+      late ProviderContainer capturedContainer;
+
+      await tester.pumpWidget(
+        ProviderScope(
+          child: Consumer(
+            builder: (context, ref, child) {
+              capturedContainer = ProviderScope.containerOf(context);
+              return const MaterialApp(
+                home: Scaffold(
+                  body: ManageThemesDialog(),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Copy the selected theme
+      await tester.tap(find.byKey(const Key('theme_copy_button')));
+      await tester.pumpAndSettle();
+      expect(
+        capturedContainer.read(appThemeProvider.notifier).lastCopiedThemeJson,
+        contains('"format": "file4base_theme_v1"'),
+      );
+
+      // Open Paste / Import Theme dialog
+      await tester.tap(find.byKey(const Key('theme_import_button')));
+      await tester.pumpAndSettle();
+      expect(find.text('Paste / Import Layout Theme'), findsOneWidget);
+
+      await tester.enterText(
+        find.byKey(const Key('theme_import_json_field')),
+        '{"name":"Acme Corporate","description":"Brand blue","is_dark":false,"colors":{"primary_accent":"#0F4C81"}}',
+      );
+      await tester.tap(find.byKey(const Key('theme_import_confirm_button')));
+      await tester.pumpAndSettle();
+
+      expect(capturedContainer.read(appThemeProvider).name, 'Acme Corporate');
+      expect(find.text('Active: Acme Corporate'), findsOneWidget);
+    });
   });
 }

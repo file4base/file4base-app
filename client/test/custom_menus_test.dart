@@ -58,6 +58,11 @@ void main() {
             ),
           ],
         ),
+        CustomMenuModel(
+          menu: 'Format',
+          mode: 'hide',
+          items: [],
+        ),
       ],
     );
 
@@ -83,6 +88,9 @@ void main() {
       ),
     );
     await tester.pump();
+
+    // Format menu is hidden when mode == 'hide'
+    expect(find.text('Format'), findsNothing);
 
     // 1. Records menu is replaced by the custom items
     await tester.tap(find.text('Records'));

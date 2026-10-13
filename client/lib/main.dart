@@ -580,7 +580,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         }
         if (meta.fileOptions != null && meta.fileOptions!.isNotEmpty) {
           _fileOptions = FileOptionsModel.fromJson(meta.fileOptions!);
-          if (_fileOptions.hideAllToolbars) {
+          final isKiosk = meta.fileOptions!['kiosk_mode'] == true;
+          if (_fileOptions.hideAllToolbars ||
+              (isKiosk && !(_currentUser?.isAdmin ?? false))) {
             _isToolbarVisible = false;
           }
         }
@@ -598,12 +600,26 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       _startAuthSequence();
       return;
     }
+    if (_currentUser!.role != 'owner') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Developer Utilities require an account with the Owner role.'),
+        ),
+      );
+      return;
+    }
     final client = ref.read(apiClientProvider);
-    final initialMeta = SolutionMetaModel(
+    SolutionMetaModel initialMeta = SolutionMetaModel(
       database: _activeDatabaseName,
       solutionName: _reportedSolutionName ?? _activeDatabaseName,
       designLocked: _designLocked,
+      fileOptions: _fileOptions.toJson(),
+      pageSetup: _pageSetup.toJson(),
     );
+    try {
+      initialMeta = await client.getSolutionMeta();
+    } catch (_) {}
+    if (!mounted) return;
     await DeveloperUtilitiesDialog.show(
       context,
       apiClient: client,
@@ -615,12 +631,21 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           if (updated.solutionName.isNotEmpty) {
             _activeSolutionName = updated.solutionName;
           }
+          if (updated.fileOptions != null && updated.fileOptions!.isNotEmpty) {
+            _fileOptions = FileOptionsModel.fromJson(updated.fileOptions!);
+          }
         });
         if (updated.designLocked &&
             ref.read(operationalModeProvider) == OperationalMode.layout) {
           ref.read(operationalModeProvider.notifier).setMode(OperationalMode.browse);
         }
         _loadTables(targetLayoutId: _activeLayout?.id);
+      },
+      onKioskModeChanged: (kioskEnabled) {
+        if (!mounted) return;
+        if (kioskEnabled) {
+          setState(() => _isToolbarVisible = false);
+        }
       },
     );
   }
@@ -1716,42 +1741,63 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ? (target) => _dataBrowserKey.currentState?.goToFindRequest(target)
                       : null,
                   onImportFromDataSource: _handleImportFromDataSource,
-                  onScriptDebugger: _currentUser == null
+                  onScriptDebugger: () {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
+                    ScriptDebuggerDialog.show(
+                      context,
+                      apiClient: ref.read(apiClientProvider),
+                      host: _dataBrowserKey.currentState,
+                    );
+                  },
+                  onDataViewer: () {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
+                    DataViewerDialog.show(
+                      context,
+                      apiClient: ref.read(apiClientProvider),
+                      table: _selectedTable,
+                      record: _dataBrowserKey.currentState?.currentRecord,
+                      recordId: _dataBrowserKey.currentState?.currentRecordId,
+                      initialWatches: _watchedExpressions,
+                      onWatchesChanged: (watches) => _watchedExpressions = watches,
+                    );
+                  },
+                  onDesignReport: () {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
+                    DesignReportDialog.show(
+                      context,
+                      apiClient: ref.read(apiClientProvider),
+                      solutionName: _reportedSolutionName,
+                    );
+                  },
+                  onSaveDesignAsText: () {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
+                    DesignReportDialog.show(
+                      context,
+                      apiClient: ref.read(apiClientProvider),
+                      solutionName: _reportedSolutionName,
+                      initialFormat: DesignReportFormat.xml,
+                    );
+                  },
+                  onManageCustomMenus: _designLocked
                       ? null
-                      : () => ScriptDebuggerDialog.show(
-                            context,
-                            apiClient: ref.read(apiClientProvider),
-                            host: _dataBrowserKey.currentState,
-                          ),
-                  onDataViewer: _currentUser == null || _selectedTable == null
-                      ? null
-                      : () => DataViewerDialog.show(
-                            context,
-                            apiClient: ref.read(apiClientProvider),
-                            table: _selectedTable,
-                            record: _dataBrowserKey.currentState?.currentRecord,
-                            recordId: _dataBrowserKey.currentState?.currentRecordId,
-                            initialWatches: _watchedExpressions,
-                            onWatchesChanged: (watches) => _watchedExpressions = watches,
-                          ),
-                  onDesignReport: _currentUser == null || !_currentUser!.isAdmin
-                      ? null
-                      : () => DesignReportDialog.show(
-                            context,
-                            apiClient: ref.read(apiClientProvider),
-                            solutionName: _reportedSolutionName,
-                          ),
-                  onSaveDesignAsText: _currentUser == null || !_currentUser!.isAdmin
-                      ? null
-                      : () => DesignReportDialog.show(
-                            context,
-                            apiClient: ref.read(apiClientProvider),
-                            solutionName: _reportedSolutionName,
-                            initialFormat: DesignReportFormat.xml,
-                          ),
-                  onManageCustomMenus: _currentUser == null || !_currentUser!.isAdmin || _designLocked
-                      ? null
-                      : () => ManageCustomMenusDialog.show(
+                      : () {
+                          if (_currentUser == null) {
+                            _startAuthSequence();
+                            return;
+                          }
+                          ManageCustomMenusDialog.show(
                             context,
                             apiClient: ref.read(apiClientProvider),
                             layouts: _serverLayouts,
@@ -1759,10 +1805,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                               _loadMenuSets();
                               _loadTables(targetLayoutId: _activeLayout?.id);
                             },
-                          ),
-                  onDeveloperUtilities: _currentUser == null || _currentUser!.role != 'owner'
-                      ? null
-                      : _handleDeveloperUtilities,
+                          );
+                        },
+                  onDeveloperUtilities: _handleDeveloperUtilities,
                   menuSets: _menuSets,
                   activeMenuSet: _effectiveMenuSet,
                   onSelectMenuSet: (set) => setState(() {

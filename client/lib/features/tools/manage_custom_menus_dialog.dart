@@ -578,6 +578,77 @@ class _ManageCustomMenusDialogState extends State<ManageCustomMenusDialog> {
     );
   }
 
+  static List<CustomMenuItemModel> _standardItemsForMenu(String menuName) {
+    switch (menuName.toLowerCase()) {
+      case 'records':
+        return const [
+          CustomMenuItemModel(
+            title: 'New Record',
+            shortcut: 'cmd+N',
+            action: {'type': 'single_step', 'step_type': 'new_record'},
+          ),
+          CustomMenuItemModel(
+            title: 'Duplicate Record',
+            shortcut: 'cmd+D',
+            action: {'type': 'single_step', 'step_type': 'duplicate_record'},
+          ),
+          CustomMenuItemModel(
+            title: 'Delete Record...',
+            shortcut: 'cmd+E',
+            action: {'type': 'single_step', 'step_type': 'delete_record'},
+          ),
+          CustomMenuItemModel(separator: true),
+          CustomMenuItemModel(
+            title: 'Commit Records',
+            action: {'type': 'single_step', 'step_type': 'commit_records'},
+          ),
+          CustomMenuItemModel(
+            title: 'Revert Record...',
+            action: {'type': 'single_step', 'step_type': 'revert_record'},
+          ),
+          CustomMenuItemModel(separator: true),
+          CustomMenuItemModel(
+            title: 'Show All Records',
+            shortcut: 'cmd+J',
+            action: {'type': 'single_step', 'step_type': 'show_all_records'},
+          ),
+        ];
+      case 'requests':
+        return const [
+          CustomMenuItemModel(
+            title: 'Enter Find Mode',
+            action: {'type': 'single_step', 'step_type': 'enter_find_mode'},
+          ),
+          CustomMenuItemModel(
+            title: 'Perform Find',
+            action: {'type': 'single_step', 'step_type': 'perform_find'},
+          ),
+          CustomMenuItemModel(
+            title: 'Show All Records',
+            action: {'type': 'single_step', 'step_type': 'show_all_records'},
+          ),
+        ];
+      case 'view':
+        return const [
+          CustomMenuItemModel(
+            title: 'Browse Mode',
+            action: {'type': 'single_step', 'step_type': 'enter_browse_mode'},
+          ),
+          CustomMenuItemModel(
+            title: 'Find Mode',
+            action: {'type': 'single_step', 'step_type': 'enter_find_mode'},
+          ),
+        ];
+      default:
+        return const [
+          CustomMenuItemModel(
+            title: 'New Record',
+            action: {'type': 'single_step', 'step_type': 'new_record'},
+          ),
+        ];
+    }
+  }
+
   Widget _buildMenuEditor(int menuIdx) {
     final menu = _editingMenus[menuIdx];
     final extendOnly = _isExtendOnly(menu.menu);
@@ -642,7 +713,7 @@ class _ManageCustomMenusDialogState extends State<ManageCustomMenusDialog> {
                         style: TextStyle(fontSize: 12),
                       ),
                     ),
-                    if (!extendOnly)
+                    if (!extendOnly) ...[
                       const DropdownMenuItem(
                         value: 'replace',
                         child: Text(
@@ -650,59 +721,92 @@ class _ManageCustomMenusDialogState extends State<ManageCustomMenusDialog> {
                           style: TextStyle(fontSize: 12),
                         ),
                       ),
+                      const DropdownMenuItem(
+                        value: 'hide',
+                        child: Text(
+                          'Hide entire menu',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
                   ],
                   onChanged: extendOnly
                       ? null
                       : (next) {
                           if (next == null) return;
                           setState(() {
+                            final nextItems = next == 'hide'
+                                ? const <CustomMenuItemModel>[]
+                                : (menu.items.isEmpty
+                                    ? _standardItemsForMenu(menu.menu)
+                                    : menu.items);
                             _editingMenus[menuIdx] = CustomMenuModel(
                               menu: menu.menu,
                               mode: next,
-                              items: menu.items,
+                              items: nextItems,
                             );
                           });
                         },
                 ),
-                TextButton.icon(
-                  key: ValueKey('custom-menu-add-item-$menuIdx'),
-                  onPressed: () {
-                    setState(() {
-                      final nextItems = List<CustomMenuItemModel>.from(menu.items)
-                        ..add(
-                          const CustomMenuItemModel(
-                            title: 'New Item',
-                            action: {
-                              'type': 'single_step',
-                              'step_type': 'new_record',
-                            },
-                          ),
+                if (effectiveMode != 'hide') ...[
+                  TextButton.icon(
+                    key: ValueKey('custom-menu-add-item-$menuIdx'),
+                    onPressed: () {
+                      setState(() {
+                        final nextItems = List<CustomMenuItemModel>.from(menu.items)
+                          ..add(
+                            const CustomMenuItemModel(
+                              title: 'New Item',
+                              action: {
+                                'type': 'single_step',
+                                'step_type': 'new_record',
+                              },
+                            ),
+                          );
+                        _editingMenus[menuIdx] = CustomMenuModel(
+                          menu: menu.menu,
+                          mode: effectiveMode,
+                          items: nextItems,
                         );
-                      _editingMenus[menuIdx] = CustomMenuModel(
-                        menu: menu.menu,
-                        mode: effectiveMode,
-                        items: nextItems,
-                      );
-                    });
-                  },
-                  icon: const Icon(Icons.add, size: 14),
-                  label: const Text('Item', style: TextStyle(fontSize: 11.5)),
-                ),
-                TextButton(
-                  key: ValueKey('custom-menu-add-sep-$menuIdx'),
-                  onPressed: () {
-                    setState(() {
-                      final nextItems = List<CustomMenuItemModel>.from(menu.items)
-                        ..add(const CustomMenuItemModel(separator: true));
-                      _editingMenus[menuIdx] = CustomMenuModel(
-                        menu: menu.menu,
-                        mode: effectiveMode,
-                        items: nextItems,
-                      );
-                    });
-                  },
-                  child: const Text('Separator', style: TextStyle(fontSize: 11.5)),
-                ),
+                      });
+                    },
+                    icon: const Icon(Icons.add, size: 14),
+                    label: const Text('Item', style: TextStyle(fontSize: 11.5)),
+                  ),
+                  TextButton(
+                    key: ValueKey('custom-menu-add-sep-$menuIdx'),
+                    onPressed: () {
+                      setState(() {
+                        final nextItems = List<CustomMenuItemModel>.from(menu.items)
+                          ..add(const CustomMenuItemModel(separator: true));
+                        _editingMenus[menuIdx] = CustomMenuModel(
+                          menu: menu.menu,
+                          mode: effectiveMode,
+                          items: nextItems,
+                        );
+                      });
+                    },
+                    child: const Text('Separator', style: TextStyle(fontSize: 11.5)),
+                  ),
+                  if (effectiveMode == 'replace')
+                    TextButton.icon(
+                      key: ValueKey('custom-menu-load-standard-$menuIdx'),
+                      onPressed: () {
+                        setState(() {
+                          _editingMenus[menuIdx] = CustomMenuModel(
+                            menu: menu.menu,
+                            mode: effectiveMode,
+                            items: _standardItemsForMenu(menu.menu),
+                          );
+                        });
+                      },
+                      icon: const Icon(Icons.playlist_add_check, size: 15),
+                      label: const Text(
+                        'Load Standard Items',
+                        style: TextStyle(fontSize: 11.5),
+                      ),
+                    ),
+                ],
                 if (_editingMenus.length > 1)
                   IconButton(
                     icon: const Icon(Icons.close, size: 16),
@@ -712,8 +816,29 @@ class _ManageCustomMenusDialogState extends State<ManageCustomMenusDialog> {
               ],
             ),
             const Divider(height: 12),
-            for (var itemIdx = 0; itemIdx < menu.items.length; itemIdx++)
-              _buildItemRow(menuIdx, itemIdx, menu.items[itemIdx]),
+            if (effectiveMode == 'hide')
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(Icons.visibility_off_outlined,
+                        size: 16, color: Colors.orange.shade800),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'The "${menu.menu}" menu will be hidden from the menu bar when this menu set is active.',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.orange.shade900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              for (var itemIdx = 0; itemIdx < menu.items.length; itemIdx++)
+                _buildItemRow(menuIdx, itemIdx, menu.items[itemIdx]),
           ],
         ),
       ),
