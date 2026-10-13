@@ -898,8 +898,8 @@ An **empty match field relates to nothing**: a record with nothing in its match 
 #### Response `200 OK`
 ```json
 [
-  {"id": "cu-1", "company": "Favorite Bakery", "last_name": "Soto"},
-  {"id": "cu-2", "company": "Favorite Bakery", "last_name": "Alvarez"}
+  {"id": "cu-1", "company": "Nordic Vault", "last_name": "Soto"},
+  {"id": "cu-2", "company": "Nordic Vault", "last_name": "Alvarez"}
 ]
 ```
 

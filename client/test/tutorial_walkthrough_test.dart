@@ -1,5 +1,5 @@
-// Defects found while building the Favorite Bakery database by hand, following
-// docs/tutorials/favorite_bakery_tutorial.md. Each test fails without its fix.
+// Regression tests covering core workflow behaviors verified in
+// docs/tutorials/seed_archive.md. Each test fails without its fix.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -117,6 +117,7 @@ void main() {
   findRequestTests();
   calculationFieldTests();
   valueListTests();
+  borealSeedArchiveDatasetTests();
 
   group('the Records menu', () {
     Future<void> pumpMenu(
@@ -238,10 +239,10 @@ void sortOrderTests() {
 
     test('breaks ties with the next level', () {
       final records = [
-        {'company': 'ABC Company', 'last_name': 'Smith'},
-        {'company': 'DEF Ltd.', 'last_name': 'Johnson'},
-        {'company': 'ABC Company', 'last_name': 'Lee'},
-        {'company': 'ABC Company', 'last_name': 'Murphy'},
+        {'company': 'Nordic Vault', 'last_name': 'Smith'},
+        {'company': 'Coastal Botanical', 'last_name': 'Johnson'},
+        {'company': 'Nordic Vault', 'last_name': 'Lee'},
+        {'company': 'Nordic Vault', 'last_name': 'Murphy'},
       ];
 
       const order = [SortLevel('company', true), SortLevel('last_name', true)];
@@ -257,10 +258,10 @@ void sortOrderTests() {
         });
 
       expect(sorted.map((r) => '${r['company']}/${r['last_name']}').toList(), [
-        'ABC Company/Lee',
-        'ABC Company/Murphy',
-        'ABC Company/Smith',
-        'DEF Ltd./Johnson',
+        'Coastal Botanical/Johnson',
+        'Nordic Vault/Lee',
+        'Nordic Vault/Murphy',
+        'Nordic Vault/Smith',
       ]);
     });
   });
@@ -550,6 +551,88 @@ void valueListTests() {
       expect(moved.fieldName, 'country');
       expect(moved.controlStyle, FieldControlStyle.popUpMenu);
       expect(moved.valueListId, 'v1');
+    });
+  });
+}
+
+// #41 — Verify that every count, find result, sort tie-break, summary subtotal,
+// and station portal grouping quoted in docs/tutorials/seed_archive.md holds
+// over the 16 sample accession records.
+void borealSeedArchiveDatasetTests() {
+  const accessions = <Map<String, Object>>[
+    {'code': 'BSA-101', 'genus': 'Betula', 'species': 'nana', 'station': 'Nordic Vault', 'tier': 'Standard', 'bioregion': 'Bergen', 'country': 'Norway'},
+    {'code': 'BSA-102', 'genus': 'Betula', 'species': 'pendula', 'station': 'Nordic Vault', 'tier': 'Standard', 'bioregion': 'Uppsala', 'country': 'Sweden'},
+    {'code': 'BSA-103', 'genus': 'Pinus', 'species': 'sylvestris', 'station': 'Coastal Botanical', 'tier': 'Cryogenic', 'bioregion': 'Uppsala', 'country': 'Sweden'},
+    {'code': 'BSA-104', 'genus': 'Gentiana', 'species': 'verna', 'station': 'Alpine Lab', 'tier': 'Standard', 'bioregion': 'Bergen', 'country': 'Norway'},
+    {'code': 'BSA-105', 'genus': 'Dryas', 'species': 'octopetala', 'station': 'Nordic Vault', 'tier': 'Cryogenic', 'bioregion': 'Geneva', 'country': 'Switzerland'},
+    {'code': 'BSA-106', 'genus': 'Saxifraga', 'species': 'aizoides', 'station': 'Coastal Botanical', 'tier': 'Standard', 'bioregion': 'Reykjavik', 'country': 'Iceland'},
+    {'code': 'BSA-107', 'genus': 'Leontopodium', 'species': 'nivale', 'station': 'Alpine Lab', 'tier': 'Standard', 'bioregion': 'Geneva', 'country': 'Switzerland'},
+    {'code': 'BSA-108', 'genus': 'Pinus', 'species': 'cembra', 'station': 'Alpine Lab', 'tier': 'Cryogenic', 'bioregion': 'Geneva', 'country': 'Switzerland'},
+    {'code': 'BSA-109', 'genus': 'Calluna', 'species': 'vulgaris', 'station': 'Nordic Vault', 'tier': 'Standard', 'bioregion': 'Edinburgh', 'country': 'Scotland'},
+    {'code': 'BSA-110', 'genus': 'Vaccinium', 'species': 'myrtillus', 'station': 'Coastal Botanical', 'tier': 'Standard', 'bioregion': 'Bergen', 'country': 'Norway'},
+    {'code': 'BSA-111', 'genus': 'Primula', 'species': 'farinosa', 'station': 'Alpine Lab', 'tier': 'Cryogenic', 'bioregion': 'Tartu', 'country': 'Estonia'},
+    {'code': 'BSA-112', 'genus': 'Juniperus', 'species': 'communis', 'station': 'Nordic Vault', 'tier': 'Standard', 'bioregion': 'Tromso', 'country': 'Norway'},
+    {'code': 'BSA-113', 'genus': 'Rubus', 'species': 'chamaemorus', 'station': 'Coastal Botanical', 'tier': 'Cryogenic', 'bioregion': 'Oulu', 'country': 'Finland'},
+    {'code': 'BSA-114', 'genus': 'Angelica', 'species': 'archangelica', 'station': 'Alpine Lab', 'tier': 'Standard', 'bioregion': 'Bergen', 'country': 'Norway'},
+    {'code': 'BSA-115', 'genus': 'Rhodiola', 'species': 'rosea', 'station': 'Nordic Vault', 'tier': 'Standard', 'bioregion': 'Reykjavik', 'country': 'Iceland'},
+    {'code': 'BSA-116', 'genus': 'Campanula', 'species': 'thyrsoides', 'station': 'Coastal Botanical', 'tier': 'Cryogenic', 'bioregion': 'Geneva', 'country': 'Switzerland'},
+  ];
+
+  int upkeepFor(Map<String, Object> row) => row['tier'] == 'Cryogenic' ? 180 : 75;
+
+  group('Boreal Seed Archive tutorial dataset (#41)', () {
+    test('find counts match Lesson 6 table', () {
+      expect(accessions.length, 16);
+      expect(accessions.where((r) => r['bioregion'] == 'Bergen').length, 4);
+      expect(accessions.where((r) => r['bioregion'] == 'Uppsala').length, 2);
+      expect(accessions.where((r) => r['bioregion'] == 'Geneva').length, 4);
+      expect(accessions.where((r) => r['country'] == 'Sweden').length, 2);
+      expect(accessions.where((r) => r['tier'] == 'Cryogenic').length, 6);
+      expect(accessions.where((r) => r['tier'] == 'Standard').length, 10);
+      expect(accessions.where((r) => upkeepFor(r) >= 180).length, 6);
+      expect(accessions.where((r) => (r['genus'] as String).startsWith('Bet')).length, 2);
+      expect(
+        accessions.where((r) => r['bioregion'] == 'Bergen' || r['bioregion'] == 'Uppsala').length,
+        6,
+      );
+      expect(
+        accessions
+            .where((r) =>
+                (r['bioregion'] == 'Bergen' || r['bioregion'] == 'Uppsala') &&
+                r['tier'] != 'Cryogenic')
+            .length,
+        5,
+      );
+    });
+
+    test('summary report and chart totals match Lessons 12 and 13', () {
+      final cryoTotal = accessions
+          .where((r) => r['tier'] == 'Cryogenic')
+          .fold<int>(0, (sum, r) => sum + upkeepFor(r));
+      final standardTotal = accessions
+          .where((r) => r['tier'] == 'Standard')
+          .fold<int>(0, (sum, r) => sum + upkeepFor(r));
+      expect(cryoTotal, 1080);
+      expect(standardTotal, 750);
+      expect(cryoTotal + standardTotal, 1830);
+
+      final genevaRows = accessions.where((r) => r['bioregion'] == 'Geneva').toList();
+      expect(genevaRows.length, 4);
+      expect(
+        genevaRows.where((r) => r['tier'] == 'Cryogenic').fold<int>(0, (s, r) => s + upkeepFor(r)),
+        540,
+      );
+      expect(
+        genevaRows.where((r) => r['tier'] == 'Standard').fold<int>(0, (s, r) => s + upkeepFor(r)),
+        75,
+      );
+      expect(genevaRows.fold<int>(0, (s, r) => s + upkeepFor(r)), 615);
+    });
+
+    test('station portals group 6, 5, and 5 accessions in Lesson 18', () {
+      expect(accessions.where((r) => r['station'] == 'Nordic Vault').length, 6);
+      expect(accessions.where((r) => r['station'] == 'Alpine Lab').length, 5);
+      expect(accessions.where((r) => r['station'] == 'Coastal Botanical').length, 5);
     });
   });
 }

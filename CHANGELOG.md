@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Independent Tutorial Scenario, Provenance Ledger & Studio UI Redesign**
+  ([#40](https://github.com/file4base/file4base-app/issues/40),
+  [#41](https://github.com/file4base/file4base-app/issues/41),
+  [#42](https://github.com/file4base/file4base-app/issues/42),
+  [#44](https://github.com/file4base/file4base-app/issues/44)):
+  - **Independent *Boreal Seed & Herbarium Archive* Tutorial** ([`docs/tutorials/seed_archive.md`](docs/tutorials/seed_archive.md)):
+    replaces the retired *Favorite Bakery* / `ABC Company` / `XYZ Inc.` scenario
+    with an original 21-lesson botanical repository walkthrough (`Accessions` and
+    `Stations`), verified by automated dataset tests in `client/test/tutorial_walkthrough_test.dart`
+    and updated test fixtures across `server/` and `client/test/` ([#41](https://github.com/file4base/file4base-app/issues/41)).
+  - **Consolidated Reference, Asset & Design Provenance Ledger** ([`docs/PROVENANCE.md`](docs/PROVENANCE.md)):
+    restores accurate external reference citations in `docs/specs/FUNCTIONAL_SPECIFICATION.md`,
+    `docs/specs/file4base_menu_reference_guide.md`, and `docs/specs/DBAL_SPECIFICATION.md`,
+    and inventories all shipped branding SVG/PNG/ICO assets and wireframes ([#42](https://github.com/file4base/file4base-app/issues/42), [#44](https://github.com/file4base/file4base-app/issues/44)).
+  - **File4Base Slate & Sky-Cyan Studio Chrome and Horizontal Part Rail**
+    (`client/lib/features/layout_engine/layout_designer_widget.dart`,
+    `client/lib/features/schema_manager/widgets/relationship_graph_widget.dart`,
+    `client/lib/features/schema_manager/manage_database_dialog.dart`):
+    replaces narrow rotated part tabs with a 96px Horizontal Part Rail showing
+    live point-height badges, replaces screenshot-derived amber graph halos with
+    File4Base Slate & Sky-Cyan (`#0284C7` / `#38BDF8`) selection rings and pill
+    operator badges, and updates `Exit Layout` studio styling ([#40](https://github.com/file4base/file4base-app/issues/40)).
 - **API SQLite Control Store, Granular Table Permissions, Encrypted Channel & Configurable API Server**:
   - **Embedded SQLite control store in `file4base-api`** (`server/internal/control`, persisted at `CONTROL_DB_PATH` / Docker volume `file4base-api-data`) storing the project-to-database registry (`GET /api/v1/projects`), project options (`GET/PUT /api/v1/solutions/options` for `file_options` and `page_setup`), accounts, per-table permissions, and per-layout permissions.
   - **Granular per-table access & modification permissions** (`sys_table_permissions` and `GET/PUT /api/v1/security/users/{id}/table-permissions`): owners and admins can configure per-table `access_level` (`read_write`, `read_only`, `none`) and modification flags (`can_create`, `can_edit`, `can_delete`, `can_modify_schema`) in **Manage Security**, enforced by the data API on record reads, inserts, updates, and deletes, and exported/imported inside `.f4p` solution bundles (`table_permissions` on `BundleAccount`).

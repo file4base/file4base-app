@@ -1,6 +1,6 @@
 # File4Base Menu Bar & Functional Command Reference
 
-This document details the canonical structure of menus, submenus, and commands for **File4Base** across its four operational modes (`Browse`, `Find`, `Layout`, `Preview`), modeled after File4base Pro. It serves as an implementation and compatibility reference for File4Base.
+This document details the canonical structure of menus, submenus, and commands for **File4Base** across its four operational modes (`Browse`, `Find`, `Layout`, `Preview`), informed by the command organization of Claris FileMaker Pro (versions 12–19; see [`docs/PROVENANCE.md`](../PROVENANCE.md)). It serves as a functional implementation and compatibility reference for File4Base.
 
 ---
 

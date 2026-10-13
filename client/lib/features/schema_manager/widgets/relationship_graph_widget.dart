@@ -461,20 +461,22 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
             },
             onDoubleTap: () => _showEditRelationshipDialog(rel),
             child: Container(
-              width: 32,
-              height: 24,
+              width: 34,
+              height: 22,
               decoration: BoxDecoration(
                 color: isSelected
-                    ? Colors.amber[100]
-                    : (isDark ? const Color(0xFF2D3039) : Colors.white),
+                    ? (isDark ? const Color(0xFF0C4A6E) : const Color(0xFFE0F2FE))
+                    : (isDark ? const Color(0xFF1E293B) : Colors.white),
                 border: Border.all(
-                  color: isSelected ? Colors.amber[800]! : (isDark ? Colors.grey[700]! : Colors.grey[400]!),
-                  width: isSelected ? 2 : 1,
+                  color: isSelected
+                      ? const Color(0xFF0284C7)
+                      : (isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1)),
+                  width: isSelected ? 1.8 : 1.0,
                 ),
-                borderRadius: BorderRadius.circular(5),
+                borderRadius: BorderRadius.circular(11),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.12),
+                    color: Colors.black.withValues(alpha: 0.12),
                     blurRadius: 3,
                     offset: const Offset(0, 1),
                   ),
@@ -484,9 +486,11 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                 child: Text(
                   rel.operator,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 13,
                     fontWeight: FontWeight.bold,
-                    color: isSelected ? Colors.amber[900] : (isDark ? Colors.white : Colors.black87),
+                    color: isSelected
+                        ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0369A1))
+                        : (isDark ? Colors.white : const Color(0xFF1E293B)),
                   ),
                 ),
               ),
@@ -539,26 +543,26 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
         onPanEnd: (_) => _onOccurrenceDragEnd(occ),
         child: Container(
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF21242C) : Colors.white,
-            borderRadius: BorderRadius.circular(6),
+            color: isDark ? const Color(0xFF1E2430) : Colors.white,
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(
+              // File4Base brand sky-cyan (#0284C7 / #38BDF8) selection ring
               color: isSelected
-                  ? const Color(0xFFFF9800) // Amber / gold highlight like screenshot
-                  : (isDark ? const Color(0xFF383C48) : const Color(0xFFB0B5C0)),
+                  ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7))
+                  : (isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1)),
               width: isSelected ? 2.0 : 1.0,
             ),
             boxShadow: isSelected
                 ? [
-                    // Vibrant amber halo seen around CLIENTES 2 in user reference screenshot
                     BoxShadow(
-                      color: const Color(0xFFFFB300).withOpacity(0.75),
-                      blurRadius: 10,
-                      spreadRadius: 2,
+                      color: const Color(0xFF0284C7).withValues(alpha: 0.28),
+                      blurRadius: 8,
+                      spreadRadius: 1,
                     ),
                   ]
                 : [
                     BoxShadow(
-                      color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
+                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.07),
                       blurRadius: 4,
                       offset: const Offset(0, 2),
                     ),
@@ -574,19 +578,21 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? (isDark ? const Color(0xFF3D331A) : const Color(0xFFFFF3CD))
-                      : (isDark ? const Color(0xFF2C303A) : const Color(0xFFE4E7EC)),
+                      ? (isDark ? const Color(0xFF0C4A6E) : const Color(0xFFE0F2FE))
+                      : (isDark ? const Color(0xFF283142) : const Color(0xFFF1F5F9)),
                   borderRadius: BorderRadius.vertical(
-                    top: const Radius.circular(5),
-                    bottom: isCollapsed ? const Radius.circular(5) : Radius.zero,
+                    top: const Radius.circular(7),
+                    bottom: isCollapsed ? const Radius.circular(7) : Radius.zero,
                   ),
                 ),
                 child: Row(
                   children: [
                     Icon(
-                      Icons.table_view_outlined,
+                      Icons.dataset_linked_outlined,
                       size: 15,
-                      color: isSelected ? const Color(0xFFB25E00) : (isDark ? Colors.grey[400] : Colors.grey[700]),
+                      color: isSelected
+                          ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0284C7))
+                          : (isDark ? Colors.grey[400] : const Color(0xFF475569)),
                     ),
                     const SizedBox(width: 6),
                     Expanded(
@@ -596,8 +602,8 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                           color: isSelected
-                              ? (isDark ? const Color(0xFFFFD54F) : const Color(0xFF7A4100))
-                              : (isDark ? Colors.white : Colors.black87),
+                              ? (isDark ? const Color(0xFFE0F2FE) : const Color(0xFF0C4A6E))
+                              : (isDark ? Colors.white : const Color(0xFF0F172A)),
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -721,8 +727,8 @@ class _RelationshipLinesPainter extends CustomPainter {
 
       final paint = Paint()
         ..color = isSelected
-            ? Colors.amber[800]!
-            : (isDark ? const Color(0xFF707789) : const Color(0xFF6B7280))
+            ? const Color(0xFF0284C7)
+            : (isDark ? const Color(0xFF64748B) : const Color(0xFF64748B))
         ..strokeWidth = isSelected ? 2.5 : 1.5
         ..style = PaintingStyle.stroke
         ..strokeCap = StrokeCap.round;
@@ -740,7 +746,9 @@ class _RelationshipLinesPainter extends CustomPainter {
 
       // Draw anchor dot at start and end
       final dotPaint = Paint()
-        ..color = isSelected ? Colors.amber[800]! : (isDark ? Colors.grey[400]! : Colors.grey[700]!)
+        ..color = isSelected
+            ? const Color(0xFF0284C7)
+            : (isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569))
         ..style = PaintingStyle.fill;
       canvas.drawCircle(p1, 3.0, dotPaint);
       canvas.drawCircle(p2, 3.0, dotPaint);

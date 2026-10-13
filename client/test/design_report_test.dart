@@ -42,10 +42,10 @@ void main() {
       final requested = <String>[];
       final api = _client(requested: requested);
 
-      final report = await api.designReport(format: 'xml', solution: 'Favorite Bakery');
+      final report = await api.designReport(format: 'xml', solution: 'Boreal Seed Archive');
       expect(requested.single, contains('/api/v1/solutions/design-report'));
       expect(requested.single, contains('format=xml'));
-      expect(requested.single, contains('solution=Favorite%20Bakery'));
+      expect(requested.single, contains('solution=Boreal%20Seed%20Archive'));
       expect(report.fileName, 'Bakery_design.html');
       expect(report.bytes, isA<Uint8List>());
     });
@@ -68,7 +68,7 @@ void main() {
         home: Scaffold(
           body: DesignReportDialog(
             apiClient: api,
-            solutionName: 'Favorite Bakery',
+            solutionName: 'Boreal Seed Archive',
             initialFormat: initial,
             save: (fileName, bytes) async => saved.add(fileName),
           ),

@@ -1471,7 +1471,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   },
                 ),
         ),
-        // Canonical FileMaker Bottom Action Panel
+        // File4Base Table Selection & Bulk Action Bar
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
           decoration: BoxDecoration(

@@ -98,7 +98,7 @@ class _RelatedApi extends ApiClient {
       String? occurrence,
       Map<String, dynamic> values = const {}}) async {
     created.add(Map.of(values));
-    final row = {'id': 'new-row', 'company': 'Favorite Bakery', ...values};
+    final row = {'id': 'new-row', 'company': 'Nordic Vault', ...values};
     children.add(row);
     return row;
   }
@@ -191,12 +191,12 @@ Future<_RelatedApi> _pump(
 
   final api = _RelatedApi(
     parents: [
-      {'id': 'co-1', 'company': 'Favorite Bakery', 'company_address': '12 Mill Lane'},
+      {'id': 'co-1', 'company': 'Nordic Vault', 'company_address': '12 Fjordveien'},
     ],
     children: children ??
         [
-          {'id': 'cu-1', 'company': 'Favorite Bakery', 'last_name': 'Soto'},
-          {'id': 'cu-2', 'company': 'Favorite Bakery', 'last_name': 'Alvarez'},
+          {'id': 'cu-1', 'company': 'Nordic Vault', 'last_name': 'Soto'},
+          {'id': 'cu-2', 'company': 'Nordic Vault', 'last_name': 'Alvarez'},
         ],
     relationships: relationships,
   );

@@ -1874,7 +1874,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         color: isDark ? const Color(0xFF1A1E24) : const Color(0xFFE5E5E7),
         child: Column(
           children: [
-            // Bar 1: Top FileMaker Layout Tools Toolbar
+            // Bar 1: File4Base Studio Tools Toolbar
             _buildLayoutToolsToolbar(context, isDark),
             // Bar 2: Layout Context & Options Subbar
             _buildLayoutContextBar(context, isDark),
@@ -2288,13 +2288,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           _buildAutoSaveIndicator(),
 
           const SizedBox(width: 12),
-          // Prominent [ Exit Layout ] Button
+          // File4Base Primary [ Exit Layout ] Action Button
           FilledButton.icon(
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF2E7D32),
+              backgroundColor: const Color(0xFF0284C7),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
-              elevation: 1,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+              elevation: 0,
             ),
             icon: const Icon(Icons.check_circle_outline, size: 14, color: Colors.white),
             label: const Text('Exit Layout',
@@ -2886,7 +2886,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // FileMaker Part Labels Gutter
+                // File4Base Horizontal Part Rail
                 _buildPartLabelsGutter(isDark),
                 const SizedBox(width: 2),
                 // The Canvas Design Sheet
@@ -3087,12 +3087,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     );
   }
 
-  // ─── FileMaker Part Labels Gutter (Left Margin) ───────────────────────────
+  // ─── File4Base Horizontal Part Rail (Left Canvas Margin) ──────────────────
 
   Widget _buildPartLabelsGutter(bool isDark) {
     return Column(
       children: [
-        for (final part in _layout.parts) _partTabWidget(part),
+        for (final part in _layout.parts) _partTabWidget(part, isDark: isDark),
       ],
     );
   }
@@ -3379,44 +3379,66 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     return 'Sub-summary by ${column?.displayName ?? field}';
   }
 
-  Widget _partTabWidget(LayoutPartModel part) {
+  Widget _partTabWidget(LayoutPartModel part, {bool isDark = false}) {
     final isResizing = _resizingPartId == part.id;
     final label = _partLabel(part);
     final isSummary = part.isSummaryPart;
+
+    final accentColor = isResizing
+        ? const Color(0xFF0284C7)
+        : (isSummary ? const Color(0xFF0369A1) : const Color(0xFF475569));
 
     return GestureDetector(
       key: ValueKey('part-tab-${part.id}'),
       onDoubleTap: () => _showPartSetupDialog(part.id),
       child: Tooltip(
-        message: '$label — double-click to set it up',
+        message: '$label (${part.height.round()} pt) — double-click to configure',
         child: Container(
-          width: 32,
+          width: 96,
           height: part.height,
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
           decoration: BoxDecoration(
             color: isResizing
-                ? const Color(0xFFBBDEFB)
-                : (isSummary ? const Color(0xFFD7E3F4) : const Color(0xFFE0E0E0)),
+                ? (isDark ? const Color(0xFF0C4A6E) : const Color(0xFFE0F2FE))
+                : (isSummary
+                    ? (isDark ? const Color(0xFF1E293B) : const Color(0xFFF0F9FF))
+                    : (isDark ? const Color(0xFF1E2430) : const Color(0xFFF1F5F9))),
             border: Border(
-              top: const BorderSide(color: Colors.black26),
-              left: const BorderSide(color: Colors.black26),
-              bottom: const BorderSide(color: Colors.black38, width: 1.5),
+              top: BorderSide(color: isDark ? Colors.white12 : const Color(0xFFCBD5E1)),
+              left: BorderSide(color: accentColor, width: 3),
+              bottom: BorderSide(
+                color: isDark ? Colors.white24 : const Color(0xFF94A3B8),
+                width: 1.2,
+              ),
             ),
           ),
-          child: Center(
-            child: RotatedBox(
-              quarterTurns: 3,
-              child: Text(
-                label,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: isResizing
-                      ? const Color(0xFF0D47A1)
-                      : (isSummary ? const Color(0xFF1A3A63) : Colors.black87),
-                  letterSpacing: 0.8,
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    color: isResizing
+                        ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0369A1))
+                        : (isDark ? Colors.white : const Color(0xFF0F172A)),
+                  ),
                 ),
-              ),
+                if (part.height >= 34)
+                  Text(
+                    '${part.height.round()} pt',
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: isDark ? Colors.white54 : const Color(0xFF64748B),
+                    ),
+                  ),
+              ],
             ),
           ),
         ),

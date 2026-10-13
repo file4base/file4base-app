@@ -1,12 +1,12 @@
-# File4Base Functional Specification: Core file4base Feature Mapping
+# File4Base Functional Specification: Core Feature Mapping
 
-This specification translates the core features, workflows, and tools documented in the *file4base Pro User's Guide* into technical requirements for **File4Base**, built with **Go** (Backend DBAL & Metadata Engine) and **Flutter** (Desktop Frontend Layout & Script Engine).
+This specification maps functional database, layout, calculation, and scripting workflows—informed by functional observation of Claris *FileMaker Pro 14 User's Guide* and *FileMaker Pro 12–19 Help* (see [`docs/PROVENANCE.md`](../PROVENANCE.md) and [`docs/LEGAL.md`](../LEGAL.md))—into technical requirements for **File4Base**, built with **Go** (Backend DBAL & Metadata Engine) and **Flutter** (Desktop & Web Client Layout & Script Engine).
 
 ---
 
-## 1. Architectural Matrix: file4base Features to File4Base Stack
+## 1. Architectural Matrix: Functional Reference to File4Base Stack
 
-| Domain | file4base Pro 14 Feature | File4Base Technical Implementation | Target Layer |
+| Domain | Reference Feature (FileMaker Pro 14) | File4Base Technical Implementation | Target Layer |
 |---|---|---|---|
 | **Data Storage & Schema** | Tables, Fields, Types, Auto-Enter, Validation, Global storage, Indexes | Dynamic Metadata (`sys_tables`, `sys_columns`, `sys_table_occurrences`), DBAL (`internal/dbal`), dynamic SQL migrations | Go + PostgreSQL / MariaDB |
 | **Relational Model** | Relationships Graph, Match Fields, Comparative operators, Cascading delete, Related creation, Lookups | Relationship Catalog (`sys_relationships`), DBAL JOIN builder, Lookup Triggers, Flutter GraphView UI (`custom_painter`) | Go + Flutter |

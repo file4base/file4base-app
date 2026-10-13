@@ -138,11 +138,11 @@ func TestRelatedRows(t *testing.T) {
 	f := newRelatedFixture(t, ctx, driver, false, false, "")
 
 	bakery, err := f.dataSvc.InsertRow(ctx, f.companies, map[string]interface{}{
-		"company": "Favorite Bakery", "company_address": "12 Mill Lane",
+		"company": "Nordic Vault", "company_address": "12 Fjordveien",
 	})
 	require.NoError(t, err)
 	_, err = f.dataSvc.InsertRow(ctx, f.companies, map[string]interface{}{
-		"company": "Other Bakery", "company_address": "99 Elsewhere",
+		"company": "Alpine Lab", "company_address": "99 Elsewhere",
 	})
 	require.NoError(t, err)
 	nameless, err := f.dataSvc.InsertRow(ctx, f.companies, map[string]interface{}{
@@ -151,10 +151,10 @@ func TestRelatedRows(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, c := range []struct{ company, lastName string }{
-		{"Favorite Bakery", "Soto"},
-		{"Favorite Bakery", "Alvarez"},
-		{"Favorite Bakery", "Mendez"},
-		{"Other Bakery", "Kane"},
+		{"Nordic Vault", "Soto"},
+		{"Nordic Vault", "Alvarez"},
+		{"Nordic Vault", "Mendez"},
+		{"Alpine Lab", "Kane"},
 		{"", "Unattached"},
 	} {
 		_, err := f.dataSvc.InsertRow(ctx, f.customers, map[string]interface{}{

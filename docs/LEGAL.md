@@ -6,8 +6,9 @@ Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International
 Inc. The File4Base browser component is called **File4Base Web Client**.
 
 This document sets contribution and release-review practices. It does not
-certify non-infringement or resolve historical provenance. The findings and
-remaining clearance work are tracked in [audit issue #44](https://github.com/file4base/file4base-app/issues/44).
+certify non-infringement or replace formal legal counsel. The consolidated
+reference, asset, UI design, and tutorial remediation records are maintained in
+[`docs/PROVENANCE.md`](PROVENANCE.md) (see also historical [audit issue #44](https://github.com/file4base/file4base-app/issues/44)).
 
 ## Project license and third-party material
 
@@ -51,9 +52,12 @@ the acceptance criterion for a feature.
 The legal distinction is explained by [CJEU C-406/10, SAS Institute](https://eur-lex.europa.eu/legal-content/EN/ALL/?uri=celex%3A62010CJ0406)
 on functionality and manual expression, and [C-393/09, BSA](https://eur-lex.europa.eu/legal-content/en/ALL/?uri=celex%3A62009CJ0393)
 on original GUI expression. Independently written code does not by itself clear
-an interface, manual, image or sample dataset. The current comparison and
-tutorial work remain open in [#40](https://github.com/file4base/file4base-app/issues/40)
-and [#41](https://github.com/file4base/file4base-app/issues/41).
+an interface, manual, image or sample dataset. The UI presentation review
+([#40](https://github.com/file4base/file4base-app/issues/40)) and the
+independent *Boreal Seed & Herbarium Archive* tutorial
+([`docs/tutorials/seed_archive.md`](tutorials/seed_archive.md),
+[#41](https://github.com/file4base/file4base-app/issues/41)) are documented in
+[`docs/PROVENANCE.md`](PROVENANCE.md).
 
 This policy deliberately reduces unnecessary expressive similarity while
 preserving useful behavior. It does not assert that every shared label,
@@ -62,7 +66,7 @@ percentage of a screen provides legal clearance.
 
 ## Reference and asset provenance
 
-Record the following in a contribution or its linked provenance record:
+Record the following in a contribution or in [`docs/PROVENANCE.md`](PROVENANCE.md):
 
 | Item | Information to record |
 | --- | --- |
@@ -88,9 +92,9 @@ software license should not be assumed to permit redistribution of manuals,
 screenshots, sample files or artwork. Resolve uncertain permissions before
 adding such material.
 
-The ledger is an evidence practice, not a claim that legislation universally
-requires this form. Completing historical records is tracked separately in
-[#42](https://github.com/file4base/file4base-app/issues/42).
+The ledger in [`docs/PROVENANCE.md`](PROVENANCE.md) is an evidence practice, not
+a claim that legislation universally requires this form
+([#42](https://github.com/file4base/file4base-app/issues/42)).
 
 ## Product names and comparisons
 

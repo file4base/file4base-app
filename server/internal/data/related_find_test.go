@@ -19,18 +19,18 @@ func TestExecuteFind_RelatedField(t *testing.T) {
 	f := newRelatedFixture(t, ctx, driver, false, false, "")
 
 	for _, company := range []map[string]interface{}{
-		{"company": "ABC Company", "company_address": "51 Market Street, San Francisco"},
-		{"company": "DEF Ltd.", "company_address": "77 Nathan Road, Hong Kong"},
-		{"company": "XYZ Inc.", "company_address": "14 Avenue Foch, Paris"},
+		{"company": "Nordic Vault", "company_address": "51 Market Street, San Francisco"},
+		{"company": "Coastal Botanical", "company_address": "77 Nathan Road, Hong Kong"},
+		{"company": "Alpine Lab", "company_address": "14 Avenue Foch, Paris"},
 	} {
 		_, err := f.dataSvc.InsertRow(ctx, f.companies, company)
 		require.NoError(t, err)
 	}
 	for _, customer := range []map[string]interface{}{
-		{"last_name": "Smith", "company": "ABC Company"},
-		{"last_name": "Tang", "company": "DEF Ltd."},
-		{"last_name": "Durand", "company": "XYZ Inc."},
-		{"last_name": "LeFranc", "company": "XYZ Inc."},
+		{"last_name": "Smith", "company": "Nordic Vault"},
+		{"last_name": "Tang", "company": "Coastal Botanical"},
+		{"last_name": "Durand", "company": "Alpine Lab"},
+		{"last_name": "LeFranc", "company": "Alpine Lab"},
 		{"last_name": "Nobody", "company": ""},
 		{"last_name": "Unknown", "company": "Not A Company"},
 	} {

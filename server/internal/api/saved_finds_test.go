@@ -311,14 +311,14 @@ func TestAPI_SavedFindOnARelatedField(t *testing.T) {
 	// And the find itself runs: a criterion on the related field finds the
 	// customers whose company is in Paris.
 	for _, row := range []map[string]string{
-		{"company": "XYZ Inc.", "company_address": "14 Avenue Foch, Paris"},
-		{"company": "ABC Company", "company_address": "51 Market Street, San Francisco"},
+		{"company": "Alpine Lab", "company_address": "14 Avenue Foch, Paris"},
+		{"company": "Nordic Vault", "company_address": "51 Market Street, San Francisco"},
 	} {
 		require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/companies", owner, row, nil).Code)
 	}
 	for _, row := range []map[string]string{
-		{"last_name": "Durand", "company": "XYZ Inc."},
-		{"last_name": "Smith", "company": "ABC Company"},
+		{"last_name": "Durand", "company": "Alpine Lab"},
+		{"last_name": "Smith", "company": "Nordic Vault"},
 	} {
 		require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/customers", owner, row, nil).Code)
 	}
