@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Developer Utilities: clone without records, rename, and permanently lock design**
+  ([#53](https://github.com/file4base/file4base-app/issues/53)). Owners can now
+  open **Tools > Developer Utilities...** to prepare a solution for deployment
+  or distribution:
+  - **Clone without records** (`POST /api/v1/solutions/clone`) creates a new
+    physical database on the server with all tables, fields, occurrences,
+    relationships, layouts, scripts, value lists, custom menus, accounts, and
+    privileges, and zero user records.
+  - **Rename solution** (`POST /api/v1/solutions/rename`) updates the solution's
+    logical name in `sys_solution_meta` and rewrites layout and script step
+    references to the previous solution name.
+  - **Lock solution design** (`POST /api/v1/solutions/lock-design`, or
+    `lock_design: true` when cloning) permanently and irreversibly disables
+    schema, layout, script, value list, custom menu, and data source mutations
+    (`403 Forbidden` via `RequireDesignUnlocked`) while keeping record CRUD,
+    searches, exports, and sign-in working.
 - **Custom Menus defined by the solution**
   ([#52](https://github.com/file4base/file4base-app/issues/52)). Solutions can
   now store custom menu sets in `sys_menu_sets` (`/api/v1/menu-sets`), mark one

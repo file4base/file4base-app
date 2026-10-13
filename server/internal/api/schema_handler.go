@@ -39,52 +39,52 @@ func rootPath(prefix string) string {
 func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 	tables := func(r chi.Router) {
 		r.Get("/tables", h.ListTables)
-		r.With(RequireAdmin).Post("/tables", h.CreateTable)
-		r.With(RequireAdmin).Delete("/tables/{id}", h.DeleteTable)
-		r.With(RequireAdmin).Put("/tables/{id}/rename", h.RenameTable)
-		r.With(RequireAdmin).Post("/tables/{id}/duplicate", h.DuplicateTable)
+		r.With(RequireAdmin, RequireDesignUnlocked).Post("/tables", h.CreateTable)
+		r.With(RequireAdmin, RequireDesignUnlocked).Delete("/tables/{id}", h.DeleteTable)
+		r.With(RequireAdmin, RequireDesignUnlocked).Put("/tables/{id}/rename", h.RenameTable)
+		r.With(RequireAdmin, RequireDesignUnlocked).Post("/tables/{id}/duplicate", h.DuplicateTable)
 		r.With(RequireAdmin).Post("/tables/{id}/truncate", h.TruncateTable)
-		r.With(RequireAdmin).Post("/tables/{id}/columns", h.AddColumn)
-		r.With(RequireAdmin).Put("/tables/{id}/columns/{columnId}", h.UpdateColumn)
-		r.With(RequireAdmin).Delete("/tables/{id}/columns/{columnId}", h.DeleteColumn)
+		r.With(RequireAdmin, RequireDesignUnlocked).Post("/tables/{id}/columns", h.AddColumn)
+		r.With(RequireAdmin, RequireDesignUnlocked).Put("/tables/{id}/columns/{columnId}", h.UpdateColumn)
+		r.With(RequireAdmin, RequireDesignUnlocked).Delete("/tables/{id}/columns/{columnId}", h.DeleteColumn)
 	}
 	occurrences := func(prefix string) func(r chi.Router) {
 		root := rootPath(prefix)
 		return func(r chi.Router) {
 			r.Get(root, h.ListOccurrences)
-			r.With(RequireAdmin).Post(root, h.CreateOccurrence)
-			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateOccurrence)
-			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteOccurrence)
+			r.With(RequireAdmin, RequireDesignUnlocked).Post(root, h.CreateOccurrence)
+			r.With(RequireAdmin, RequireDesignUnlocked).Put(prefix+"/{id}", h.UpdateOccurrence)
+			r.With(RequireAdmin, RequireDesignUnlocked).Delete(prefix+"/{id}", h.DeleteOccurrence)
 		}
 	}
 	relationships := func(prefix string) func(r chi.Router) {
 		root := rootPath(prefix)
 		return func(r chi.Router) {
 			r.Get(root, h.ListRelationships)
-			r.With(RequireAdmin).Post(root, h.CreateRelationship)
-			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateRelationship)
-			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteRelationship)
+			r.With(RequireAdmin, RequireDesignUnlocked).Post(root, h.CreateRelationship)
+			r.With(RequireAdmin, RequireDesignUnlocked).Put(prefix+"/{id}", h.UpdateRelationship)
+			r.With(RequireAdmin, RequireDesignUnlocked).Delete(prefix+"/{id}", h.DeleteRelationship)
 		}
 	}
 	layouts := func(prefix string) func(r chi.Router) {
 		root := rootPath(prefix)
 		return func(r chi.Router) {
 			r.Get(root, h.ListLayouts)
-			r.With(RequireAdmin).Post(root, h.CreateLayout)
+			r.With(RequireAdmin, RequireDesignUnlocked).Post(root, h.CreateLayout)
 			r.Get(prefix+"/{id}", h.GetLayout)
-			r.Put(prefix+"/{id}", h.UpdateLayout) // per-layout check inside the handler
-			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteLayout)
+			r.With(RequireDesignUnlocked).Put(prefix+"/{id}", h.UpdateLayout) // per-layout check inside the handler
+			r.With(RequireAdmin, RequireDesignUnlocked).Delete(prefix+"/{id}", h.DeleteLayout)
 		}
 	}
 	scripts := func(prefix string) func(r chi.Router) {
 		root := rootPath(prefix)
 		return func(r chi.Router) {
 			r.Get(root, h.ListScripts)
-			r.With(RequireAdmin).Post(root, h.CreateScript)
+			r.With(RequireAdmin, RequireDesignUnlocked).Post(root, h.CreateScript)
 			r.Get(prefix+"/{id}", h.GetScript)
-			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateScript)
-			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteScript)
-			r.With(RequireAdmin).Post(prefix+"/{id}/duplicate", h.DuplicateScript)
+			r.With(RequireAdmin, RequireDesignUnlocked).Put(prefix+"/{id}", h.UpdateScript)
+			r.With(RequireAdmin, RequireDesignUnlocked).Delete(prefix+"/{id}", h.DeleteScript)
+			r.With(RequireAdmin, RequireDesignUnlocked).Post(prefix+"/{id}/duplicate", h.DuplicateScript)
 		}
 	}
 
@@ -93,9 +93,9 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		return func(r chi.Router) {
 			r.Get(root, h.ListValueLists)
 			r.Get(prefix+"/{id}/values", h.ResolveValueList)
-			r.With(RequireAdmin).Post(root, h.CreateValueList)
-			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateValueList)
-			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteValueList)
+			r.With(RequireAdmin, RequireDesignUnlocked).Post(root, h.CreateValueList)
+			r.With(RequireAdmin, RequireDesignUnlocked).Put(prefix+"/{id}", h.UpdateValueList)
+			r.With(RequireAdmin, RequireDesignUnlocked).Delete(prefix+"/{id}", h.DeleteValueList)
 		}
 	}
 
@@ -120,10 +120,10 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		root := rootPath(prefix)
 		return func(r chi.Router) {
 			r.Get(root, h.ListMenuSets)
-			r.With(RequireAdmin).Post(root, h.CreateMenuSet)
+			r.With(RequireAdmin, RequireDesignUnlocked).Post(root, h.CreateMenuSet)
 			r.Get(prefix+"/{id}", h.GetMenuSet)
-			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateMenuSet)
-			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteMenuSet)
+			r.With(RequireAdmin, RequireDesignUnlocked).Put(prefix+"/{id}", h.UpdateMenuSet)
+			r.With(RequireAdmin, RequireDesignUnlocked).Delete(prefix+"/{id}", h.DeleteMenuSet)
 		}
 	}
 
@@ -155,10 +155,10 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/data-sources", func(r chi.Router) {
 		r.Use(RequireSession)
 		r.With(RequireAdmin).Get("/", h.ListDataSources)
-		r.With(RequireOwner).Post("/", h.CreateDataSource)
+		r.With(RequireOwner, RequireDesignUnlocked).Post("/", h.CreateDataSource)
 		r.With(RequireAdmin).Get("/{id}", h.GetDataSource)
-		r.With(RequireOwner).Put("/{id}", h.UpdateDataSource)
-		r.With(RequireOwner).Delete("/{id}", h.DeleteDataSource)
+		r.With(RequireOwner, RequireDesignUnlocked).Put("/{id}", h.UpdateDataSource)
+		r.With(RequireOwner, RequireDesignUnlocked).Delete("/{id}", h.DeleteDataSource)
 		r.With(RequireAdmin).Post("/{id}/tables", h.ListDataSourceTables)
 	})
 

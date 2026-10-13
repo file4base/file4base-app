@@ -215,6 +215,13 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
+		// Solution-wide metadata and irreversible design lock (#53).
+		`CREATE TABLE IF NOT EXISTS sys_solution_meta (
+			id VARCHAR(36) PRIMARY KEY,
+			solution_name VARCHAR(128) NOT NULL DEFAULT '',
+			design_locked BOOLEAN NOT NULL DEFAULT FALSE,
+			updated_at ` + ts + `
+		);`,
 		// A named connection to another SQL database records can be
 		// imported from (#47). It holds no password: one is supplied with
 		// the request, or taken from the environment variable named here.

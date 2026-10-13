@@ -2458,6 +2458,72 @@ class ApiClient {
     _checkResponse(response);
   }
 
+  // ==========================================
+  // Developer Utilities API (#53)
+  // ==========================================
+
+  Future<SolutionMetaModel> getSolutionMeta({String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/solutions/meta'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    return SolutionMetaModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  Future<CloneResultModel> cloneSolution({
+    required String targetDatabase,
+    String? solutionName,
+    bool lockDesign = false,
+    String? ownerUser,
+    String? ownerPassword,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/clone'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'target_database': targetDatabase,
+        if (solutionName != null && solutionName.trim().isNotEmpty)
+          'solution_name': solutionName.trim(),
+        'lock_design': lockDesign,
+        if (ownerUser != null && ownerUser.trim().isNotEmpty)
+          'owner_user': ownerUser.trim(),
+        if (ownerPassword != null && ownerPassword.isNotEmpty)
+          'owner_password': ownerPassword,
+      }),
+    );
+    _checkResponse(response);
+    return CloneResultModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  Future<SolutionMetaModel> renameSolution(String solutionName) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/rename'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'solution_name': solutionName.trim()}),
+    );
+    _checkResponse(response);
+    return SolutionMetaModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  Future<SolutionMetaModel> lockSolutionDesign({bool confirm = true}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/lock-design'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'confirm': confirm}),
+    );
+    _checkResponse(response);
+    return SolutionMetaModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
   void close() {
     _httpClient.close();
   }
@@ -2625,4 +2691,59 @@ class MenuSetsListingModel {
   }
 }
 
+/// Solution metadata and design lock state (#53).
+class SolutionMetaModel {
+  final String database;
+  final String solutionName;
+  final bool designLocked;
 
+  const SolutionMetaModel({
+    required this.database,
+    required this.solutionName,
+    this.designLocked = false,
+  });
+
+  factory SolutionMetaModel.fromJson(Map<String, dynamic> json) {
+    return SolutionMetaModel(
+      database: json['database'] as String? ?? '',
+      solutionName: json['solution_name'] as String? ?? '',
+      designLocked: json['design_locked'] as bool? ?? false,
+    );
+  }
+}
+
+/// Response from `POST /api/v1/solutions/clone` (#53).
+class CloneResultModel {
+  final String status;
+  final String database;
+  final String solutionName;
+  final bool designLocked;
+  final String ownerUser;
+  final int tablesCreated;
+  final int layoutsCreated;
+  final int scriptsCreated;
+
+  const CloneResultModel({
+    required this.status,
+    required this.database,
+    required this.solutionName,
+    this.designLocked = false,
+    this.ownerUser = '',
+    this.tablesCreated = 0,
+    this.layoutsCreated = 0,
+    this.scriptsCreated = 0,
+  });
+
+  factory CloneResultModel.fromJson(Map<String, dynamic> json) {
+    return CloneResultModel(
+      status: json['status'] as String? ?? 'cloned',
+      database: json['database'] as String? ?? '',
+      solutionName: json['solution_name'] as String? ?? '',
+      designLocked: json['design_locked'] as bool? ?? false,
+      ownerUser: json['owner_user'] as String? ?? '',
+      tablesCreated: (json['tables_created'] as num?)?.toInt() ?? 0,
+      layoutsCreated: (json['layouts_created'] as num?)?.toInt() ?? 0,
+      scriptsCreated: (json['scripts_created'] as num?)?.toInt() ?? 0,
+    );
+  }
+}

@@ -1584,3 +1584,64 @@ Replaces a custom menu set's name, `is_default` flag, and menu definitions.
 
 ### `DELETE /api/v1/menu-sets/{id}`
 Deletes a custom menu set (`204 No Content`). Layouts referencing the deleted menu set fall back to the solution's default or standard menu bar.
+
+---
+
+## 10. Developer Utilities (`#53`)
+
+Solution metadata and permanent design-lock state are stored in `sys_solution_meta`. Reading metadata is open to any authenticated session; cloning, renaming, or locking a solution's design requires the `owner` role.
+
+### `GET /api/v1/solutions/meta`
+Returns the active database name, the solution's logical name (`solution_name`), and whether its design is permanently locked (`design_locked`).
+
+#### Response `200 OK`
+```json
+{
+  "database": "bakery_db",
+  "solution_name": "Bakery Suite",
+  "design_locked": false,
+  "updated_at": "2026-10-13T12:30:00Z"
+}
+```
+
+### `POST /api/v1/solutions/clone`
+*Requires `owner` role.* Creates a new physical database on the server (`target_database`), copies the caller's owner account (or provisions `owner_user` / `owner_password` when supplied), imports the entire design of the active solution (tables, fields, occurrences, relationships, layouts, scripts, value lists, accounts, role privileges, saved finds, data sources, and custom menu sets) with **zero user records**, sets `solution_name`, and optionally locks the clone's design permanently (`lock_design: true`).
+
+#### Request Body
+```json
+{
+  "target_database": "bakery_prod",
+  "solution_name": "Bakery Production",
+  "lock_design": true
+}
+```
+
+#### Response `201 Created`
+```json
+{
+  "status": "cloned",
+  "database": "bakery_prod",
+  "solution_name": "Bakery Production",
+  "design_locked": true,
+  "owner_user": "alice",
+  "tables_created": 4,
+  "columns_created": 18,
+  "occurrences_created": 4,
+  "relationships_created": 3,
+  "layouts_created": 5,
+  "scripts_created": 2
+}
+```
+
+### `POST /api/v1/solutions/rename`
+*Requires `owner` role and an unlocked design.* Updates the solution's logical name in `sys_solution_meta` and rewrites any layout or script step parameters referencing the previous solution name.
+
+#### Request Body
+```json
+{
+  "solution_name": "Bakery Suite"
+}
+```
+
+### `POST /api/v1/solutions/lock-design`
+*Requires `owner` role.* Permanently and irreversibly locks the design of the active solution (`{"confirm": true}`). Once locked, all schema, layout, script, value list, menu set, data source, and solution import/rename mutations return `403 Forbidden`, while record CRUD, finds, exports, and authentication remain available.

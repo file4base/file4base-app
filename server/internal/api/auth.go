@@ -201,6 +201,24 @@ func writeForbidden(w http.ResponseWriter, r *http.Request, detail string) {
 	telemetry.WriteProblem(w, r, http.StatusForbidden, "Forbidden", detail)
 }
 
+// RequireDesignUnlocked rejects design changes on a solution whose design has
+// been permanently locked (#53). Record operations, searches, exports and
+// account management remain available.
+func RequireDesignUnlocked(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		locked, err := schemaService(r).IsDesignLocked(r.Context())
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+		if locked {
+			writeForbidden(w, r, "the design of this solution has been permanently locked")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // schemaService returns a schema service bound to the request's database.
 // Callers sit behind RequireSession, which guarantees the driver is present.
 func schemaService(r *http.Request) *schema.Service {

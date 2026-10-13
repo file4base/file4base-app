@@ -26,6 +26,7 @@ import 'features/data_io/manage_data_sources_dialog.dart';
 import 'features/script_workspace/script_debugger_dialog.dart';
 import 'features/tools/data_viewer_dialog.dart';
 import 'features/tools/design_report_dialog.dart';
+import 'features/tools/developer_utilities_dialog.dart';
 import 'features/tools/manage_custom_menus_dialog.dart';
 import 'features/layout_engine/layout_action_runner.dart';
 import 'features/layout_engine/models/layout_definition.dart';
@@ -188,6 +189,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   List<MenuSetModel> _menuSets = const [];
   bool _hasManualMenuSetOverride = false;
   MenuSetModel? _manualMenuSetOverride;
+
+  /// Whether the solution's design has been permanently locked (#53).
+  bool _designLocked = false;
 
   MenuSetModel? get _effectiveMenuSet {
     if (_hasManualMenuSetOverride) {
@@ -446,6 +450,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         layouts = await client.listLayouts();
       } catch (_) {}
       unawaited(_loadMenuSets());
+      unawaited(_loadSolutionMeta());
 
       // Ensure every table has at least one layout on server
       if (tables.isNotEmpty) {
@@ -565,6 +570,54 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     } catch (_) {
       if (mounted) setState(() => _menuSets = const []);
     }
+  }
+
+  Future<void> _loadSolutionMeta() async {
+    if (_currentUser == null) return;
+    try {
+      final meta = await ref.read(apiClientProvider).getSolutionMeta();
+      if (!mounted) return;
+      setState(() {
+        _designLocked = meta.designLocked;
+        if (meta.solutionName.isNotEmpty) {
+          _activeSolutionName = meta.solutionName;
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() => _designLocked = false);
+    }
+  }
+
+  Future<void> _handleDeveloperUtilities() async {
+    if (_currentUser == null) {
+      _startAuthSequence();
+      return;
+    }
+    final client = ref.read(apiClientProvider);
+    final initialMeta = SolutionMetaModel(
+      database: _activeDatabaseName,
+      solutionName: _reportedSolutionName ?? _activeDatabaseName,
+      designLocked: _designLocked,
+    );
+    await DeveloperUtilitiesDialog.show(
+      context,
+      apiClient: client,
+      initialMeta: initialMeta,
+      onMetaChanged: (updated) {
+        if (!mounted) return;
+        setState(() {
+          _designLocked = updated.designLocked;
+          if (updated.solutionName.isNotEmpty) {
+            _activeSolutionName = updated.solutionName;
+          }
+        });
+        if (updated.designLocked &&
+            ref.read(operationalModeProvider) == OperationalMode.layout) {
+          ref.read(operationalModeProvider.notifier).setMode(OperationalMode.browse);
+        }
+        _loadTables(targetLayoutId: _activeLayout?.id);
+      },
+    );
   }
 
   Future<void> _runCustomMenuItem(CustomMenuItemModel item) async {
@@ -728,6 +781,18 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           }
         } catch (_) {}
       }
+    }
+
+    if (newMode == OperationalMode.layout && _designLocked) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Design Locked: This solution’s design has been permanently locked and cannot be edited.'),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+      }
+      return;
     }
 
     if (newMode == OperationalMode.layout && _currentUser != null && _currentUser!.role == 'user') {
@@ -1646,7 +1711,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                             solutionName: _reportedSolutionName,
                             initialFormat: DesignReportFormat.xml,
                           ),
-                  onManageCustomMenus: _currentUser == null || !_currentUser!.isAdmin
+                  onManageCustomMenus: _currentUser == null || !_currentUser!.isAdmin || _designLocked
                       ? null
                       : () => ManageCustomMenusDialog.show(
                             context,
@@ -1657,6 +1722,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                               _loadTables(targetLayoutId: _activeLayout?.id);
                             },
                           ),
+                  onDeveloperUtilities: _currentUser == null || _currentUser!.role != 'owner'
+                      ? null
+                      : _handleDeveloperUtilities,
                   menuSets: _menuSets,
                   activeMenuSet: _effectiveMenuSet,
                   onSelectMenuSet: (set) => setState(() {

@@ -62,9 +62,13 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 	// Solution and data packaging endpoints
 	r.Route("/api/v1/solutions", func(r chi.Router) {
 		r.Use(RequireSession)
+		r.Get("/meta", h.GetSolutionMeta)
 		r.With(RequireAdmin).Get("/export", h.ExportSolution)
 		r.With(RequireAdmin).Post("/export", h.ExportSolution)
-		r.With(RequireOwner).Post("/import", h.ImportSolution)
+		r.With(RequireOwner, RequireDesignUnlocked).Post("/import", h.ImportSolution)
+		r.With(RequireOwner).Post("/clone", h.CloneSolution)
+		r.With(RequireOwner, RequireDesignUnlocked).Post("/rename", h.RenameSolution)
+		r.With(RequireOwner).Post("/lock-design", h.LockSolutionDesign)
 		// The design as a report to read, or as text for version control
 		// (#49). It carries no records and no secrets.
 		r.With(RequireAdmin).Get("/design-report", h.DesignReport)
@@ -332,11 +336,15 @@ func (h *SolutionHandler) ExportSolution(w http.ResponseWriter, r *http.Request)
 	if solutionName == "" {
 		solutionName = r.URL.Query().Get("name")
 	}
+	sess := currentSession(r)
 	if solutionName == "" {
-		solutionName = "file4base_solution"
+		if meta, err := schemaService(r).GetSolutionMeta(r.Context(), sess.Database); err == nil && meta.SolutionName != "" {
+			solutionName = meta.SolutionName
+		} else {
+			solutionName = "file4base_solution"
+		}
 	}
 
-	sess := currentSession(r)
 	port := 5432
 	if h.dbMgr.Engine() == dbal.EngineMariaDB {
 		port = 3306
@@ -468,7 +476,11 @@ func (h *SolutionHandler) DesignReport(w http.ResponseWriter, r *http.Request) {
 
 	solution := strings.TrimSpace(r.URL.Query().Get("solution"))
 	if solution == "" {
-		solution = sessionDatabase(r)
+		if meta, err := schemaService(r).GetSolutionMeta(r.Context(), sessionDatabase(r)); err == nil && meta.SolutionName != "" {
+			solution = meta.SolutionName
+		} else {
+			solution = sessionDatabase(r)
+		}
 	}
 
 	report, err := schemaService(r).DesignReport(r.Context(), schema.DesignReportOptions{
@@ -493,3 +505,259 @@ func (h *SolutionHandler) DesignReport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(document)
 }
+
+// GetSolutionMeta returns the solution's logical name and whether its design is
+// permanently locked (#53).
+func (h *SolutionHandler) GetSolutionMeta(w http.ResponseWriter, r *http.Request) {
+	dbName := sessionDatabase(r)
+	meta, err := schemaService(r).GetSolutionMeta(r.Context(), dbName)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Database string `json:"database"`
+		schema.SolutionMeta
+	}{
+		Database:     dbName,
+		SolutionMeta: meta,
+	})
+}
+
+// CloneSolutionRequest describes a server-side clone without records (#53).
+type CloneSolutionRequest struct {
+	TargetDatabase string `json:"target_database"`
+	SolutionName   string `json:"solution_name,omitempty"`
+	LockDesign     bool   `json:"lock_design,omitempty"`
+	OwnerUser      string `json:"owner_user,omitempty"`
+	OwnerPassword  string `json:"owner_password,omitempty"`
+}
+
+// CloneSolution creates a new physical database on the server containing the
+// entire design of the current solution and zero user records (#53).
+// Optionally, the new solution's design is permanently locked on creation.
+func (h *SolutionHandler) CloneSolution(w http.ResponseWriter, r *http.Request) {
+	var req CloneSolutionRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	targetDB := strings.ToLower(strings.TrimSpace(req.TargetDatabase))
+	if targetDB == "" {
+		telemetry.WriteValidationProblem(w, r, "A target database name is required", []telemetry.InvalidParam{
+			{Name: "target_database", Reason: "target_database cannot be empty"},
+		})
+		return
+	}
+
+	sess := currentSession(r)
+	if strings.EqualFold(targetDB, sess.Database) {
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Database Already Exists",
+			"target_database must be a new database name, not the active database")
+		return
+	}
+
+	ownerUser := strings.ToLower(strings.TrimSpace(req.OwnerUser))
+	if ownerUser != "" || strings.TrimSpace(req.OwnerPassword) != "" {
+		var invalid []telemetry.InvalidParam
+		if ownerUser == "" {
+			invalid = append(invalid, telemetry.InvalidParam{Name: "owner_user", Reason: "an owner username is required when owner_password is set"})
+		}
+		if reason := ownerPasswordProblem(req.OwnerPassword, ownerUser, targetDB); reason != "" {
+			invalid = append(invalid, telemetry.InvalidParam{Name: "owner_password", Reason: reason})
+		}
+		if len(invalid) > 0 {
+			telemetry.WriteValidationProblem(w, r, "Valid owner credentials are required", invalid)
+			return
+		}
+	}
+
+	solutionName := strings.TrimSpace(req.SolutionName)
+	if solutionName == "" {
+		solutionName = targetDB
+	}
+
+	// 1. Export the design bundle from the source database (zero records).
+	srcSvc := schemaService(r)
+	bundleBytes, err := srcSvc.ExportSolution(r.Context(), schema.ExportOptions{
+		SolutionName: solutionName,
+		Connection: schema.BundleConnection{
+			Engine:   string(h.dbMgr.Engine()),
+			Host:     "localhost",
+			Database: targetDB,
+			User:     sess.Username,
+			SSLMode:  "disable",
+		},
+	})
+	if err != nil {
+		telemetry.WriteInternalError(w, r, fmt.Errorf("failed exporting source solution design: %w", err))
+		return
+	}
+
+	// 2. Create the target physical database.
+	if err := h.dbMgr.CreateDatabase(r.Context(), targetDB); err != nil {
+		if errors.Is(err, dbal.ErrDatabaseExists) {
+			telemetry.WriteProblem(w, r, http.StatusConflict, "Database Already Exists",
+				"database '"+targetDB+"' already exists; choose a new database name")
+			return
+		}
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Creation Error", err.Error())
+		return
+	}
+
+	rollbackClone := func(cause error) {
+		_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+		telemetry.WriteInternalError(w, r, fmt.Errorf("failed cloning solution into %q: %w", targetDB, cause))
+	}
+
+	dstDriver, err := h.dbMgr.DriverFor(r.Context(), targetDB)
+	if err != nil {
+		rollbackClone(err)
+		return
+	}
+	dstSvc := schema.NewService(dstDriver)
+
+	// 3. Initialize system tables and provision the owner account on the clone.
+	if ownerUser != "" {
+		if err := dstSvc.EnsureSystemTablesWithCredentials(r.Context(), ownerUser, req.OwnerPassword); err != nil {
+			rollbackClone(err)
+			return
+		}
+	} else {
+		if err := dstSvc.EnsureSystemTablesWithCredentials(r.Context(), "", ""); err != nil {
+			rollbackClone(err)
+			return
+		}
+		if err := srcSvc.CopyOwnerAccount(r.Context(), dstSvc, sess.UserID); err != nil {
+			rollbackClone(err)
+			return
+		}
+		ownerUser = sess.Username
+	}
+
+	// 4. Import the design bundle into the target database (no records).
+	report, err := dstSvc.ImportSolution(r.Context(), bundleBytes)
+	if err != nil {
+		rollbackClone(err)
+		return
+	}
+
+	// 5. Set the solution name (and rewrite references if renamed from source).
+	srcMeta, _ := srcSvc.GetSolutionMeta(r.Context(), sess.Database)
+	if _, err := dstSvc.RenameSolution(r.Context(), srcMeta.SolutionName, solutionName); err != nil {
+		rollbackClone(err)
+		return
+	}
+
+	// 6. Optionally lock the clone's design permanently.
+	if req.LockDesign {
+		if _, err := dstSvc.LockDesign(r.Context(), solutionName); err != nil {
+			rollbackClone(err)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(struct {
+		Status       string `json:"status"`
+		Database     string `json:"database"`
+		SolutionName string `json:"solution_name"`
+		DesignLocked bool   `json:"design_locked"`
+		OwnerUser    string `json:"owner_user"`
+		*schema.ImportReport
+	}{
+		Status:       "cloned",
+		Database:     targetDB,
+		SolutionName: solutionName,
+		DesignLocked: req.LockDesign,
+		OwnerUser:    ownerUser,
+		ImportReport: report,
+	})
+}
+
+// RenameSolutionRequest is the JSON body of POST /api/v1/solutions/rename (#53).
+type RenameSolutionRequest struct {
+	SolutionName string `json:"solution_name"`
+}
+
+// RenameSolution updates the solution's logical name and rewrites any layout
+// or script references that named the previous solution name (#53).
+func (h *SolutionHandler) RenameSolution(w http.ResponseWriter, r *http.Request) {
+	var req RenameSolutionRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	dbName := sessionDatabase(r)
+	svc := schemaService(r)
+	prev, err := svc.GetSolutionMeta(r.Context(), dbName)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	meta, err := svc.RenameSolution(r.Context(), prev.SolutionName, req.SolutionName)
+	if err != nil {
+		switch {
+		case errors.Is(err, schema.ErrDesignLocked):
+			writeForbidden(w, r, err.Error())
+		case errors.Is(err, schema.ErrInvalidSolutionName):
+			telemetry.WriteValidationProblem(w, r, "A valid solution name is required", []telemetry.InvalidParam{
+				{Name: "solution_name", Reason: err.Error()},
+			})
+		default:
+			telemetry.WriteInternalError(w, r, err)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Database string `json:"database"`
+		schema.SolutionMeta
+	}{
+		Database:     dbName,
+		SolutionMeta: meta,
+	})
+}
+
+// LockDesignRequest is the JSON body of POST /api/v1/solutions/lock-design (#53).
+type LockDesignRequest struct {
+	Confirm bool `json:"confirm"`
+}
+
+// LockSolutionDesign permanently locks the design of the active solution (#53).
+func (h *SolutionHandler) LockSolutionDesign(w http.ResponseWriter, r *http.Request) {
+	var req LockDesignRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if !req.Confirm {
+		telemetry.WriteValidationProblem(w, r, "Locking a solution's design is permanent and requires explicit confirmation", []telemetry.InvalidParam{
+			{Name: "confirm", Reason: "confirm must be true to permanently lock the design"},
+		})
+		return
+	}
+
+	dbName := sessionDatabase(r)
+	meta, err := schemaService(r).LockDesign(r.Context(), dbName)
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Database string `json:"database"`
+		schema.SolutionMeta
+	}{
+		Database:     dbName,
+		SolutionMeta: meta,
+	})
+}
+
