@@ -2524,6 +2524,82 @@ class ApiClient {
     );
   }
 
+  // ==========================================
+  // Structure Clipboard API (#54)
+  // ==========================================
+
+  Future<Map<String, dynamic>> copyStructure({
+    required String kind,
+    String? tableId,
+    List<String>? columnIds,
+    String? layoutId,
+    String? scriptId,
+    String? database,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/clipboard/copy'),
+      headers: _headers(
+        contentType: 'application/json',
+        extra: database != null ? {'X-Database-Name': database} : null,
+      ),
+      body: jsonEncode({
+        'kind': kind,
+        if (tableId != null) 'table_id': tableId,
+        if (columnIds != null) 'column_ids': columnIds,
+        if (layoutId != null) 'layout_id': layoutId,
+        if (scriptId != null) 'script_id': scriptId,
+      }),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<ClipboardPreviewModel> previewStructureClipboard({
+    required Map<String, dynamic> envelope,
+    String? targetTableId,
+    String? database,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/clipboard/preview'),
+      headers: _headers(
+        contentType: 'application/json',
+        extra: database != null ? {'X-Database-Name': database} : null,
+      ),
+      body: jsonEncode({
+        'envelope': envelope,
+        if (targetTableId != null) 'target_table_id': targetTableId,
+      }),
+    );
+    _checkResponse(response);
+    return ClipboardPreviewModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  Future<ClipboardPasteReportModel> pasteStructureClipboard({
+    required Map<String, dynamic> envelope,
+    String? targetTableId,
+    String onCollision = 'rename',
+    String? database,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/clipboard/paste'),
+      headers: _headers(
+        contentType: 'application/json',
+        extra: database != null ? {'X-Database-Name': database} : null,
+      ),
+      body: jsonEncode({
+        'envelope': envelope,
+        if (targetTableId != null) 'target_table_id': targetTableId,
+        'on_collision': onCollision,
+      }),
+    );
+    _checkResponse(response);
+    return ClipboardPasteReportModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
   void close() {
     _httpClient.close();
   }
@@ -2744,6 +2820,93 @@ class CloneResultModel {
       tablesCreated: (json['tables_created'] as num?)?.toInt() ?? 0,
       layoutsCreated: (json['layouts_created'] as num?)?.toInt() ?? 0,
       scriptsCreated: (json['scripts_created'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// Missing dependency reported when previewing or pasting structure (#54).
+class ClipboardDependencyModel {
+  final String kind;
+  final String name;
+  final String detail;
+
+  const ClipboardDependencyModel({
+    required this.kind,
+    required this.name,
+    required this.detail,
+  });
+
+  factory ClipboardDependencyModel.fromJson(Map<String, dynamic> json) {
+    return ClipboardDependencyModel(
+      kind: json['kind'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      detail: json['detail'] as String? ?? '',
+    );
+  }
+}
+
+/// Response from `POST /api/v1/solutions/clipboard/preview` (#54).
+class ClipboardPreviewModel {
+  final String kind;
+  final String objectName;
+  final bool hasCollision;
+  final List<String> collisions;
+  final List<ClipboardDependencyModel> missingDependencies;
+
+  const ClipboardPreviewModel({
+    required this.kind,
+    required this.objectName,
+    this.hasCollision = false,
+    this.collisions = const [],
+    this.missingDependencies = const [],
+  });
+
+  factory ClipboardPreviewModel.fromJson(Map<String, dynamic> json) {
+    final rawCollisions = json['collisions'] as List<dynamic>? ?? const [];
+    final rawDeps = json['missing_dependencies'] as List<dynamic>? ?? const [];
+    return ClipboardPreviewModel(
+      kind: json['kind'] as String? ?? '',
+      objectName: json['object_name'] as String? ?? '',
+      hasCollision: json['has_collision'] as bool? ?? false,
+      collisions: rawCollisions.whereType<String>().toList(),
+      missingDependencies: rawDeps
+          .whereType<Map>()
+          .map((e) => ClipboardDependencyModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+    );
+  }
+}
+
+/// Response from `POST /api/v1/solutions/clipboard/paste` (#54).
+class ClipboardPasteReportModel {
+  final String kind;
+  final String createdId;
+  final String createdName;
+  final int createdCount;
+  final String collisionResolved;
+  final List<ClipboardDependencyModel> missingDependencies;
+
+  const ClipboardPasteReportModel({
+    required this.kind,
+    this.createdId = '',
+    required this.createdName,
+    this.createdCount = 1,
+    this.collisionResolved = '',
+    this.missingDependencies = const [],
+  });
+
+  factory ClipboardPasteReportModel.fromJson(Map<String, dynamic> json) {
+    final rawDeps = json['missing_dependencies'] as List<dynamic>? ?? const [];
+    return ClipboardPasteReportModel(
+      kind: json['kind'] as String? ?? '',
+      createdId: json['created_id'] as String? ?? '',
+      createdName: json['created_name'] as String? ?? '',
+      createdCount: (json['created_count'] as num?)?.toInt() ?? 1,
+      collisionResolved: json['collision_resolved'] as String? ?? '',
+      missingDependencies: rawDeps
+          .whereType<Map>()
+          .map((e) => ClipboardDependencyModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
     );
   }
 }

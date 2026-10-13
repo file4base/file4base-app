@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Copy and paste structure between solutions**
+  ([#54](https://github.com/file4base/file4base-app/issues/54)). Tables, fields,
+  layouts, and scripts can now be copied to the system clipboard as reviewable
+  `f4b.structure_clipboard` (`v1`) JSON text (`POST /api/v1/solutions/clipboard/copy`)
+  and pasted into the same or another solution from **Manage Database** (Tables
+  and Fields tabs), **Manage Layouts**, and **Script Workspace**:
+  - **Pre-paste collision & dependency preview**
+    (`POST /api/v1/solutions/clipboard/preview` and `StructurePastePreviewDialog`)
+    flags name collisions with a choice to **Keep both and rename** (`rename`)
+    or **Update / replace** (`replace`), and lists any missing table
+    occurrences, fields, scripts, layouts, or value lists in the destination
+    solution.
+  - **Name-based reference remapping** (`POST /api/v1/solutions/clipboard/paste`)
+    automatically remaps `table_occurrence_id`, `script_id`, and `value_list_id`
+    references when matching names exist in the destination solution, while
+    keeping unresolved references editable instead of failing silently.
 - **Developer Utilities: clone without records, rename, and permanently lock design**
   ([#53](https://github.com/file4base/file4base-app/issues/53)). Owners can now
   open **Tools > Developer Utilities...** to prepare a solution for deployment

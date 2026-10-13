@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/api_client.dart';
 import '../../core/theme/theme_model.dart';
 import '../../core/theme/theme_provider.dart';
+import '../tools/structure_clipboard_dialog.dart';
 import 'calculation_builder_dialog.dart';
 
 class ScriptWorkspaceDialog extends ConsumerStatefulWidget {
@@ -781,6 +782,38 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                   Text('Scripts', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
                                   const Spacer(),
                                   InkWell(
+                                    key: const Key('script_workspace_paste_button'),
+                                    onTap: () async {
+                                      final report = await StructureClipboardService.pasteStructure(
+                                        context,
+                                        apiClient: widget.apiClient,
+                                        expectedKind: 'script',
+                                        database: widget.databaseName,
+                                      );
+                                      if (report != null) {
+                                        await _loadInitialData();
+                                      }
+                                    },
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: theme.surfaceContainer,
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(color: theme.border),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.content_paste_rounded, size: 13, color: theme.textPrimary),
+                                          const SizedBox(width: 3),
+                                          Text('Paste', style: TextStyle(color: theme.textPrimary, fontSize: 10, fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 6),
+                                  InkWell(
                                     onTap: _addNewScript,
                                     borderRadius: BorderRadius.circular(4),
                                     child: Container(
@@ -896,6 +929,10 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                             child: Text(s.isActive ? 'Deactivate script' : 'Activate script', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
                                           ),
                                           PopupMenuItem(
+                                            value: 'copy_structure',
+                                            child: Text('Copy Structure', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
+                                          ),
+                                          PopupMenuItem(
                                             value: 'duplicate',
                                             child: Text('Duplicate', style: TextStyle(color: theme.textPrimary, fontSize: 12)),
                                           ),
@@ -906,6 +943,16 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                         ],
                                         onSelected: (val) {
                                           if (val == 'toggle') _toggleScriptActive(s.id);
+                                          if (val == 'copy_structure') {
+                                            StructureClipboardService.copyStructure(
+                                              context,
+                                              apiClient: widget.apiClient,
+                                              kind: 'script',
+                                              scriptId: s.id,
+                                              database: widget.databaseName,
+                                              label: 'Script "${s.name}"',
+                                            );
+                                          }
                                           if (val == 'duplicate') _duplicateActiveScript();
                                           if (val == 'delete') _deleteScript(s.id);
                                         },

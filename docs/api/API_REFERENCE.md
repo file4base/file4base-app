@@ -1645,3 +1645,56 @@ Returns the active database name, the solution's logical name (`solution_name`),
 
 ### `POST /api/v1/solutions/lock-design`
 *Requires `owner` role.* Permanently and irreversibly locks the design of the active solution (`{"confirm": true}`). Once locked, all schema, layout, script, value list, menu set, data source, and solution import/rename mutations return `403 Forbidden`, while record CRUD, finds, exports, and authentication remain available.
+
+---
+
+## 11. Structure Clipboard (`#54`)
+
+Enables copying and pasting individual design objects (`table`, `columns`, `layout`, `script`) between solutions as a reviewable JSON clipboard envelope, with pre-paste collision and missing-dependency analysis.
+
+### `POST /api/v1/solutions/clipboard/copy`
+Serializes a design object (`kind`: `"table"`, `"columns"`, `"layout"`, or `"script"`) from the active solution into a portable `f4b.structure_clipboard` (`v1`) JSON envelope including name-based hints (`occurrence_name`, `script_names`, `value_list_names`) so references can be remapped by name in the destination solution.
+
+#### Request Body
+```json
+{
+  "kind": "layout",
+  "layout_id": "2c8d8b7c-1a2b-4c3d-8e9f-001122334455"
+}
+```
+
+### `POST /api/v1/solutions/clipboard/preview`
+Inspects a `f4b.structure_clipboard` envelope against the destination solution (and optional `target_table_id` when `kind` is `"columns"`), reporting any name collisions (`has_collision`, `collisions`) and missing dependencies (`missing_dependencies` for `table_occurrence`, `field`, `script`, `layout`, and `value_list`).
+
+#### Request Body
+```json
+{
+  "envelope": {
+    "format": "f4b.structure_clipboard",
+    "version": 1,
+    "kind": "layout",
+    "layout": { "name": "Invoice Detail", "definition": {} }
+  }
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "kind": "layout",
+  "object_name": "Invoice Detail",
+  "has_collision": true,
+  "collisions": ["Invoice Detail"],
+  "missing_dependencies": [
+    {
+      "kind": "field",
+      "name": "LineItems::Total",
+      "detail": "Layout element elem_1 references missing field"
+    }
+  ]
+}
+```
+
+### `POST /api/v1/solutions/clipboard/paste`
+*Requires `admin` or `owner` role and an unlocked design.* Pastes a `f4b.structure_clipboard` envelope into the destination solution, resolving collisions according to `on_collision` (`"rename"` default or `"replace"`), remapping matching `table_occurrence_id`, `script_id`, and `value_list_id` references by name, and returning a paste report with any remaining `missing_dependencies`.
+

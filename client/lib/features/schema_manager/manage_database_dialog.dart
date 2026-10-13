@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
+import '../tools/structure_clipboard_dialog.dart';
 import 'field_options_dialog.dart';
 
 import 'widgets/relationship_graph_widget.dart';
@@ -1263,6 +1264,23 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                   ),
                 ),
                 const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  key: const Key('manage_db_paste_table_button'),
+                  icon: const Icon(Icons.content_paste_rounded, size: 16),
+                  label: const Text('Paste Table...'),
+                  onPressed: () async {
+                    final client = ref.read(apiClientProvider);
+                    final report = await StructureClipboardService.pasteStructure(
+                      context,
+                      apiClient: client,
+                      expectedKind: 'table',
+                    );
+                    if (report != null) {
+                      await _loadTables();
+                    }
+                  },
+                ),
+                const SizedBox(width: 8),
                 FilledButton.icon(
                   icon: const Icon(Icons.add, size: 16),
                   label: const Text('Create Table...'),
@@ -1398,6 +1416,23 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                               const SizedBox(width: 6),
                               const SizedBox(height: 24, child: VerticalDivider(width: 1)),
                               const SizedBox(width: 4),
+                              // Copy Table Structure
+                              IconButton(
+                                key: Key('copy_table_${tbl.id}'),
+                                icon: const Icon(Icons.content_copy_rounded, size: 18),
+                                tooltip: 'Copy Table Structure to Clipboard',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () {
+                                  final client = ref.read(apiClientProvider);
+                                  StructureClipboardService.copyStructure(
+                                    context,
+                                    apiClient: client,
+                                    kind: 'table',
+                                    tableId: tbl.id,
+                                    label: 'Table "${tbl.displayName}"',
+                                  );
+                                },
+                              ),
                               // Rename
                               IconButton(
                                 icon: const Icon(Icons.edit_outlined, size: 18),
@@ -1574,6 +1609,24 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
               const Spacer(),
+              OutlinedButton.icon(
+                key: const Key('manage_db_paste_fields_button'),
+                icon: const Icon(Icons.content_paste_rounded, size: 16),
+                label: const Text('Paste Fields...'),
+                onPressed: () async {
+                  final client = ref.read(apiClientProvider);
+                  final report = await StructureClipboardService.pasteStructure(
+                    context,
+                    apiClient: client,
+                    expectedKind: 'columns',
+                    targetTableId: _selectedTable!.id,
+                  );
+                  if (report != null) {
+                    await _loadTables();
+                  }
+                },
+              ),
+              const SizedBox(width: 8),
               FilledButton.icon(
                 icon: const Icon(Icons.add),
                 label: const Text('New Field...'),
@@ -1628,6 +1681,22 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                     ),
                     if (!col.isPrimaryKey) ...[
                       const SizedBox(width: 8),
+                      IconButton(
+                        key: Key('copy_field_${col.id}'),
+                        icon: const Icon(Icons.content_copy_rounded, size: 16),
+                        tooltip: 'Copy Field Structure to Clipboard',
+                        onPressed: () {
+                          final client = ref.read(apiClientProvider);
+                          StructureClipboardService.copyStructure(
+                            context,
+                            apiClient: client,
+                            kind: 'columns',
+                            tableId: _selectedTable!.id,
+                            columnIds: [col.id],
+                            label: 'Field "${col.displayName}"',
+                          );
+                        },
+                      ),
                       IconButton(
                         icon: const Icon(Icons.edit_outlined, size: 16),
                         tooltip: 'Rename Field',

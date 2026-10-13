@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api/api_client.dart';
 import '../../main.dart';
+import '../tools/structure_clipboard_dialog.dart';
 import 'new_layout_assistant.dart';
 
 /// ManageLayoutsDialog allows users to view all layouts in the solution,
@@ -348,6 +349,23 @@ class _ManageLayoutsDialogState extends ConsumerState<ManageLayoutsDialog> {
                     ],
                   ),
                   const Spacer(),
+                  OutlinedButton.icon(
+                    key: const Key('manage_layouts_paste_button'),
+                    icon: const Icon(Icons.content_paste, size: 16),
+                    label: const Text('Paste Layout'),
+                    onPressed: () async {
+                      final report =
+                          await StructureClipboardService.pasteStructure(
+                        context,
+                        apiClient: ref.read(apiClientProvider),
+                        expectedKind: 'layout',
+                      );
+                      if (report != null) {
+                        await _refreshLayouts();
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 8),
                   FilledButton.icon(
                     icon: const Icon(Icons.add, size: 16),
                     label: const Text('New Layout...'),
@@ -449,6 +467,25 @@ class _ManageLayoutsDialogState extends ConsumerState<ManageLayoutsDialog> {
                                   trailing: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
+                                      Tooltip(
+                                        message: 'Copy Layout Structure to Clipboard',
+                                        child: IconButton(
+                                          key: Key('copy_layout_${layout.id}'),
+                                          icon: const Icon(
+                                              Icons.copy_all_outlined,
+                                              size: 18),
+                                          onPressed: () =>
+                                              StructureClipboardService
+                                                  .copyStructure(
+                                            context,
+                                            apiClient:
+                                                ref.read(apiClientProvider),
+                                            kind: 'layout',
+                                            layoutId: layout.id,
+                                            label: 'layout "${layout.name}"',
+                                          ),
+                                        ),
+                                      ),
                                       Tooltip(
                                         message: 'Rename Layout',
                                         child: IconButton(

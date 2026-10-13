@@ -69,6 +69,10 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireOwner).Post("/clone", h.CloneSolution)
 		r.With(RequireOwner, RequireDesignUnlocked).Post("/rename", h.RenameSolution)
 		r.With(RequireOwner).Post("/lock-design", h.LockSolutionDesign)
+		// Copy and paste structure between solutions (#54).
+		r.With(RequireAdmin).Post("/clipboard/copy", h.CopyStructure)
+		r.With(RequireAdmin).Post("/clipboard/preview", h.PreviewClipboard)
+		r.With(RequireAdmin, RequireDesignUnlocked).Post("/clipboard/paste", h.PasteClipboard)
 		// The design as a report to read, or as text for version control
 		// (#49). It carries no records and no secrets.
 		r.With(RequireAdmin).Get("/design-report", h.DesignReport)
@@ -759,5 +763,78 @@ func (h *SolutionHandler) LockSolutionDesign(w http.ResponseWriter, r *http.Requ
 		Database:     dbName,
 		SolutionMeta: meta,
 	})
+}
+
+// CopyStructure produces a reviewable JSON clipboard envelope for a table,
+// fields, layout, or script (#54).
+func (h *SolutionHandler) CopyStructure(w http.ResponseWriter, r *http.Request) {
+	var in schema.CopyStructureInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	env, err := schemaService(r).CopyStructure(r.Context(), in)
+	if err != nil {
+		if errors.Is(err, schema.ErrInvalidClipboard) {
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Clipboard Request", err.Error())
+			return
+		}
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Not Found", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(env)
+}
+
+// PreviewClipboard inspects a clipboard envelope against the active database
+// and reports any name collisions and missing dependencies before pasting (#54).
+func (h *SolutionHandler) PreviewClipboard(w http.ResponseWriter, r *http.Request) {
+	var in schema.PreviewClipboardInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	preview, err := schemaService(r).PreviewClipboard(r.Context(), in)
+	if err != nil {
+		if errors.Is(err, schema.ErrInvalidClipboard) {
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Clipboard Envelope", err.Error())
+			return
+		}
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Clipboard Preview Error", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(preview)
+}
+
+// PasteClipboard pastes a copied table, fields, layout, or script into the
+// active database (#54).
+func (h *SolutionHandler) PasteClipboard(w http.ResponseWriter, r *http.Request) {
+	var in schema.PasteClipboardInput
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	report, err := schemaService(r).PasteClipboard(r.Context(), in)
+	if err != nil {
+		switch {
+		case errors.Is(err, schema.ErrInvalidClipboard):
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Clipboard Envelope", err.Error())
+		case errors.Is(err, schema.ErrDesignLocked):
+			writeForbidden(w, r, err.Error())
+		default:
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Clipboard Paste Error", err.Error())
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(report)
 }
 
