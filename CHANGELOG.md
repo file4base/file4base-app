@@ -9,12 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.12.0] - 2026-10-13
+
 ### Added
 - **Tools Menu Advanced Capabilities (`Custom Menus`, `Developer Utilities`, `Database Design Report`, `Save a Copy as XML`, `Layout Themes`)**:
-  - **Custom Menus (`Tools > Custom Menus`)**: Added `hide` menu mode (`MenuModeHide`) to completely hide non-essential standard menus from the menu bar, plus a **Load Standard Items** preset in `ManageCustomMenusDialog` so designers can selectively remove individual commands (such as *Delete Record*), rename menu labels, assign custom keyboard shortcuts, or bind menu commands to custom scripts.
-  - **Developer Utilities (`Tools > Developer Utilities...`)**: Added **Kiosk Mode** (`kiosk_mode` in `file_options`, hiding status toolbars and menus for non-admin accounts) and **AES-256-GCM Solution Encryption** configuration alongside solution renaming, zero-record database cloning, and permanent design lock.
-  - **Database Design Report & Save a Copy as XML (`Tools > Database Design Report...`, `Tools > Save a Copy as XML...`)**: Exposed direct structured XML design export (`Save a Copy as XML...`) and full HTML/XML/JSON DDR generation in the `Tools` menu, prompting sign-in automatically when invoked from an unauthenticated session.
-  - **Layout Themes (`Tools > Layout Themes...` & `File > Manage > Themes...`)**: Added `Layout Themes...` to the `Tools` menu and added **Copy Theme**, **Paste / Import Theme...**, and **Export (.json)** (`file4base_theme_v1`) in `ManageThemesDialog` so custom corporate themes can be copied and imported across different solutions without configuring elements one by one.
+  - **Custom Menus (`Tools > Custom Menus`)**: Added `hide` menu mode (`MenuModeHide`) to completely hide non-essential standard menus from the menu bar, plus a **Load Standard Items** preset in `ManageCustomMenusDialog` so designers can selectively remove individual commands (such as *Delete Record*), rename menu labels, assign custom keyboard shortcuts, or bind menu commands to custom scripts ([`docs/specs/custom_menus.md`](docs/specs/custom_menus.md)).
+  - **Developer Utilities (`Tools > Developer Utilities...`)**: Added **Kiosk Mode** (`kiosk_mode` in `file_options`, hiding status toolbars and menus for non-admin accounts) and **AES-256-GCM Solution Encryption** configuration alongside solution renaming, zero-record database cloning, and permanent design lock ([`docs/specs/developer_utilities.md`](docs/specs/developer_utilities.md)).
+  - **Database Design Report & Save a Copy as XML (`Tools > Database Design Report...`, `Tools > Save a Copy as XML...`)**: Exposed direct structured XML design export (`Save a Copy as XML...`) and full HTML/XML/JSON DDR generation in the `Tools` menu, prompting sign-in automatically when invoked from an unauthenticated session ([`docs/specs/design_report.md`](docs/specs/design_report.md)).
+  - **Layout Themes (`Tools > Layout Themes...` & `File > Manage > Themes...`)**: Added `Layout Themes...` to the `Tools` menu and added **Copy Theme**, **Paste / Import Theme...**, and **Export (.json)** (`file4base_theme_v1`) in `ManageThemesDialog` so custom corporate themes can be copied and imported across different solutions without configuring elements one by one ([`docs/specs/copy_paste_structure.md`](docs/specs/copy_paste_structure.md)).
 - **Assisted FileMaker Migration Path & Capability Parity Matrix**
   ([#26](https://github.com/file4base/file4base-app/issues/26),
   [#27](https://github.com/file4base/file4base-app/issues/27)):

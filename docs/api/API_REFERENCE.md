@@ -1572,7 +1572,8 @@ Lists all custom menu sets in the active database along with the canonical list 
 
 ### `POST /api/v1/menu-sets`
 Creates a custom menu set. Setting `is_default: true` clears the previous default menu set in the same transaction.
-- `File` may only use `mode: "extend"` (`422` if `replace`).
+- Each menu entry supports `mode`: `"extend"` (append custom items to the standard menu), `"replace"` (replace standard items with the custom item list), or `"hide"` (completely hide the menu from the menu bar; `items` must be omitted or empty).
+- `File` may only use `mode: "extend"` (`422` if `replace` or `hide`).
 - Shortcuts that shadow mode or quit shortcuts (`Cmd/Ctrl+B`, `F`, `L`, `U`, `Q`) or duplicate another item's shortcut within the same set are rejected (`422`).
 - Duplicate menu set names return `409 Conflict`.
 
@@ -1589,7 +1590,7 @@ Deletes a custom menu set (`204 No Content`). Layouts referencing the deleted me
 
 ## 10. Developer Utilities (`#53`)
 
-Solution metadata and permanent design-lock state are stored in `sys_solution_meta`. Reading metadata is open to any authenticated session; cloning, renaming, or locking a solution's design requires the `owner` role.
+Solution metadata, Kiosk Mode / encryption options (`file_options`), and permanent design-lock state are stored in `sys_solution_meta` and mirrored in the API's SQLite control store. Reading metadata is open to any authenticated session; cloning, renaming, or locking a solution's design requires the `owner` role.
 
 ### `GET /api/v1/solutions/meta`
 Returns the active database name, the solution's logical name (`solution_name`), and whether its design is permanently locked (`design_locked`).
@@ -1744,10 +1745,10 @@ Public endpoint (also included in `GET /api/v1/databases` under `projects`) list
 ```
 
 ### `GET /api/v1/solutions/options`
-Returns the active project's `solution_name`, `design_locked` flag, `file_options`, and `page_setup` stored in the API's SQLite control store.
+Returns the active project's `solution_name`, `design_locked` flag, `file_options` (including `kiosk_mode`, `encryption_enabled`, `encryption_key_hint`, `cipher`, and startup triggers), and `page_setup` stored in the API's SQLite control store.
 
 ### `PUT /api/v1/solutions/options`
-*Requires `admin` or `owner` role.* Updates `solution_name`, `file_options`, and/or `page_setup` for the active project in `sys_solution_meta` and the SQLite control store.
+*Requires `admin` or `owner` role.* Updates `solution_name`, `file_options` (including Developer Utilities `kiosk_mode` and `encryption_enabled`), and/or `page_setup` for the active project in `sys_solution_meta` and the SQLite control store.
 
 ### `GET /api/v1/security/users/{id}/table-permissions`
 *Requires `admin` or `owner` role (or the user's own session).* Returns the per-table access and granular modification permissions (`access_level`, `can_create`, `can_edit`, `can_delete`, `can_modify_schema`) for user `{id}`, backed by `sys_table_permissions` and mirrored in the SQLite control store.
@@ -1773,7 +1774,7 @@ Returns the active project's `solution_name`, `design_locked` flag, `file_option
 
 ---
 
-## 10. Assisted FileMaker Migration (`#26`)
+## 13. Assisted FileMaker Migration (`#26`)
 
 See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for the full conversion, trigger-quarantine, and disabled-account contract.
 

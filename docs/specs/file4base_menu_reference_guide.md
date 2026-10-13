@@ -142,10 +142,14 @@ file_4_base_menu_bar:
       - Script Debugger
       - Data Viewer
       - Database Design Report...
+      - Save a Copy as XML...
       - Save Design as XML...
       - Custom Menus:
+          - "[Standard File4Base Menus]"
+          - "[Solution Custom Menu Sets]"
           - Manage Custom Menus...
       - Developer Utilities...
+      - Layout Themes...
 
   - menu: Window
     items:
@@ -356,7 +360,26 @@ When entering UI designer mode, the menus change significantly to provide visual
 
 ---
 
-## 9. "Window" Menu
+## 9. "Tools" Menu
+
+Provides advanced debugging, structural auditing, custom menu bar management, deployment utilities, and cross-solution theme management:
+
+* **Script Debugger** ([`script_debugger.md`](script_debugger.md), `#51`) -> Step-by-step interactive execution of scripts (`Step`, `Continue`, `Stop`, `Start over`, and per-step breakpoints) driven directly by `LayoutActionRunner`.
+* **Data Viewer** ([`data_viewer.md`](data_viewer.md), `#50`) -> Live inspector displaying `Current` record fields and a `Watch` tab that evaluates calculation formulas against the active record via `POST /api/v1/data/{table}/evaluate`.
+* ---
+* **Database Design Report...** ([`design_report.md`](design_report.md), `#49`) -> Generates a comprehensive structural audit of tables, occurrences, relationships, fields, scripts, layouts, value lists, custom menus, and privilege sets in self-contained **HTML**, **XML**, or **JSON** format.
+* **Save a Copy as XML...** / **Save Design as XML...** ([`design_report.md`](design_report.md), `#49`) -> Immediately exports the complete open solution structure as a deterministic, timestamp-free XML document (`<File4BaseDesignReport>`), ideal for tracking and diffing schema/layout/script changes in Git.
+* ---
+* **Custom Menus** ([`custom_menus.md`](custom_menus.md), `#52`)
+  * **[Standard File4Base Menus]** (Restores the built-in menu bar at any time).
+  * *[List of custom menu sets defined in the solution]* (Switches the active menu bar).
+  * **Manage Custom Menus...** -> Opens the Custom Menu Set editor supporting **Append** (`extend`), **Replace** (`replace`, with a **Load Standard Items** preset to selectively hide commands such as *Delete Record*, rename labels, assign custom shortcuts, or bind items to scripts), and **Hide entire menu** (`hide`).
+* **Developer Utilities...** ([`developer_utilities.md`](developer_utilities.md), `#53`) -> Deployment and protection assistant supporting solution renaming with automatic reference rewriting, **Kiosk Mode** (`kiosk_mode`, hiding menus and toolbars for end users), **AES-256-GCM Solution Encryption**, clean zero-record production cloning, and irreversible **Permanent Design Lock** (`design_locked`).
+* **Layout Themes...** ([`copy_paste_structure.md`](copy_paste_structure.md)) -> Opens the Layout Theme Manager to apply built-in or custom themes across layouts, copy a theme as JSON (`file4base_theme_v1`), export `.theme.json` files, or paste/import corporate themes between different solutions.
+
+---
+
+## 10. "Window" Menu
 
 * **New Window** (Open independent parallel view with its own context state).
 * **Show/Hide Status Toolbar**
@@ -365,7 +388,7 @@ When entering UI designer mode, the menus change significantly to provide visual
 
 ---
 
-## 10. "Help" Menu
+## 11. "Help" Menu
 
 * **File4Base Help**
 * **Product Documentation & API Specs**
