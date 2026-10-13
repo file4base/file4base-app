@@ -17,12 +17,16 @@ Instead:
 ## 2. Supported Source Formats
 
 The Assisted Migration converter accepts:
-1. **Design Structure XML (`design_xml`):**
-   - FileMaker **Database Design Report (DDR)** XML (`<FMPReport>`).
+1. **Design Structure (`design_xml`):**
+   - FileMaker **Database Design Report (DDR) XML** (`<FMPReport>`).
    - FileMaker **Save a Copy as XML** (`<FMPSaveAsXML>`).
+   - FileMaker **HTML Database Design Report (DDR)** (`recipes.html` / `Summary.html`).
    - File4Base **Design Report XML** (`<design format="file4base_design">`).
-2. **Record Datasets (`data_files`, optional):**
+2. **Record & Container Datasets (`data_files` / `fmp12_base64`, optional):**
    - One or more **`FMPXMLRESULT`** (or repeating-element XML) files mapped by base table name.
+   - A binary **`.fmp12`** container (`fmp12_base64`) paired with an XML/HTML DDR (`design_xml`) to extract table records, relational UUID keys, calculated/summary fields, and embedded `JPEG`/`PNG` `CONTAINER` images (`server/internal/migration/fmp12_records.go`).
+
+> **Step-by-Step Case Study:** For a complete real-world walkthrough (migrating `recipes.fmp12` + `recipes.html` with portals, self-join disambiguation, `CONTAINER` photographs, `Group Buttons`, and scripts), see the [**FileMaker to File4Base Migration Guide (`docs/tutorials/filemaker_migration_guide.md`)**](../tutorials/filemaker_migration_guide.md).
 
 ---
 

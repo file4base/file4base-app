@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 760" width="1200" height="760" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif">
+  <rect width="1200" height="760" rx="16" fill="#0F172A"/>
+  <rect x="1" y="1" width="1198" height="758" rx="15" fill="none" stroke="#334155" stroke-width="2"/>
+
+  <!-- Title Bar -->
+  <text x="36" y="42" fill="#F8FAFC" font-size="20" font-weight="700">File4Base — Migrated "Recipes" Layouts (768pt Canvas Fidelity)</text>
+  <text x="1164" y="42" fill="#38BDF8" font-size="13" font-weight="600" text-anchor="end">File4Base Web &amp; Desktop Client</text>
+
+  <!-- Panel 1: Edit Recipe -->
+  <g transform="translate(32, 64)">
+    <rect width="552" height="320" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+    <rect width="552" height="36" rx="8" fill="#3C4043"/>
+    <text x="16" y="24" fill="#FFFFFF" font-size="15" font-weight="700">Edit Recipe</text>
+
+    <!-- Fields Left -->
+    <text x="16" y="54" fill="#334155" font-size="10" font-weight="700">Name</text>
+    <rect x="16" y="58" width="250" height="22" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="22" y="73" fill="#0F172A" font-size="11">Porridge Oats Cookies</text>
+
+    <text x="16" y="94" fill="#334155" font-size="10" font-weight="700">Description</text>
+    <rect x="16" y="98" width="250" height="38" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="22" y="112" fill="#334155" font-size="10">A wholesome and delicious cookie for a quick</text>
+    <text x="22" y="126" fill="#334155" font-size="10">breakfast or healthy snack anytime!</text>
+
+    <!-- Photo Container Right -->
+    <text x="284" y="54" fill="#334155" font-size="10" font-weight="700">Photo (CONTAINER)</text>
+    <rect x="284" y="58" width="250" height="78" rx="4" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <rect x="314" y="64" width="190" height="66" rx="4" fill="#E2E8F0"/>
+    <circle cx="385" cy="96" r="18" fill="#B45309" opacity="0.85"/>
+    <circle cx="425" cy="92" r="20" fill="#92400E" opacity="0.9"/>
+    <text x="410" y="124" fill="#475569" font-size="9" text-anchor="middle">Decoded JPEG Stream</text>
+
+    <!-- Portal: recipe_ingredients -->
+    <rect x="16" y="146" width="96" height="15" rx="2" fill="#DCDCDC"/>
+    <text x="64" y="157" fill="#475569" font-size="9" font-weight="700" text-anchor="middle">US/imperial</text>
+    <rect x="114" y="146" width="96" height="15" rx="2" fill="#DCDCDC"/>
+    <text x="162" y="157" fill="#475569" font-size="9" font-weight="700" text-anchor="middle">metric</text>
+
+    <text x="20" y="172" fill="#334155" font-size="9" font-weight="700">qty</text>
+    <text x="68" y="172" fill="#334155" font-size="9" font-weight="700">unit</text>
+    <text x="118" y="172" fill="#334155" font-size="9" font-weight="700">qty</text>
+    <text x="166" y="172" fill="#334155" font-size="9" font-weight="700">unit</text>
+    <text x="218" y="172" fill="#334155" font-size="9" font-weight="700">Ingredient</text>
+    <text x="410" y="172" fill="#334155" font-size="9" font-weight="700">Grouping</text>
+
+    <rect x="16" y="176" width="518" height="62" rx="4" fill="#FFFFFF" stroke="#94A3B8"/>
+    <text x="22" y="192" fill="#0F172A" font-size="10">1</text>
+    <text x="68" y="192" fill="#0F172A" font-size="10">cup</text>
+    <text x="218" y="192" fill="#0F172A" font-size="10">whole wheat flour</text>
+    <line x1="16" y1="198" x2="534" y2="198" stroke="#E2E8F0"/>
+    <text x="22" y="212" fill="#0F172A" font-size="10">1</text>
+    <text x="68" y="212" fill="#0F172A" font-size="10">tsp</text>
+    <text x="118" y="212" fill="#0F172A" font-size="10">6</text>
+    <text x="166" y="212" fill="#0F172A" font-size="10">ml</text>
+    <text x="218" y="212" fill="#0F172A" font-size="10">baking soda</text>
+    <line x1="16" y1="218" x2="534" y2="218" stroke="#E2E8F0"/>
+    <text x="22" y="232" fill="#0F172A" font-size="10">0.75</text>
+    <text x="68" y="232" fill="#0F172A" font-size="10">tsp</text>
+    <text x="118" y="232" fill="#0F172A" font-size="10">4</text>
+    <text x="166" y="232" fill="#0F172A" font-size="10">ml</text>
+    <text x="218" y="232" fill="#0F172A" font-size="10">salt</text>
+
+    <!-- Instructions & Tags -->
+    <text x="16" y="252" fill="#334155" font-size="10" font-weight="700">Instructions</text>
+    <rect x="16" y="256" width="360" height="48" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="22" y="270" fill="#334155" font-size="9">Preheat oven to 350°F (180°C). Combine whole wheat flour,</text>
+    <text x="22" y="282" fill="#334155" font-size="9">baking soda, salt, allspice, cinnamon and ginger...</text>
+
+    <text x="388" y="252" fill="#334155" font-size="10" font-weight="700">Tags</text>
+    <rect x="388" y="256" width="146" height="48" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="396" y="270" fill="#0F172A" font-size="9">dessert • breakfast • snacks</text>
+  </g>
+
+  <!-- Panel 2: View Recipe -->
+  <g transform="translate(616, 64)">
+    <rect width="552" height="320" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+    <text x="20" y="34" fill="#0F172A" font-size="20" font-weight="700">Porridge Oats Cookies</text>
+    <text x="20" y="52" fill="#0066CC" font-size="11" text-decoration="underline">http://www.rogersfoods.com/rogers-porridge-oats-cookies/</text>
+    <text x="380" y="26" fill="#334155" font-size="10">Author: Rogers Foods</text>
+    <text x="380" y="42" fill="#334155" font-size="10">Tags: dessert, breakfast, snacks</text>
+
+    <rect x="20" y="66" width="310" height="110" rx="4" fill="#F1F5F9" stroke="#CBD5E1"/>
+    <circle cx="155" cy="120" r="26" fill="#B45309" opacity="0.85"/>
+    <circle cx="205" cy="116" r="28" fill="#92400E" opacity="0.9"/>
+
+    <text x="346" y="82" fill="#1E293B" font-size="11">A wholesome and delicious</text>
+    <text x="346" y="98" fill="#1E293B" font-size="11">cookie for a quick breakfast</text>
+    <text x="346" y="114" fill="#1E293B" font-size="11">or healthy snack anytime!</text>
+
+    <text x="20" y="198" fill="#0F172A" font-size="10" font-weight="600">• 1 cup whole wheat flour</text>
+    <text x="20" y="214" fill="#0F172A" font-size="10" font-weight="600">• 1 tsp (6 ml) baking soda</text>
+    <text x="20" y="230" fill="#0F172A" font-size="10" font-weight="600">• 0.75 tsp (4 ml) salt</text>
+    <text x="20" y="254" fill="#334155" font-size="10">Preheat oven to 350°F (180°C). Combine whole wheat flour, baking soda...</text>
+    <text x="20" y="282" fill="#0F172A" font-size="11" font-weight="700">Yield: 20 - 24 cookies</text>
+  </g>
+
+  <!-- Panel 3: Recipe List -->
+  <g transform="translate(32, 412)">
+    <rect width="552" height="316" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+    <rect width="552" height="36" rx="8" fill="#3C4043"/>
+    <text x="16" y="24" fill="#FFFFFF" font-size="15" font-weight="700">Recipe List</text>
+    <rect y="36" width="552" height="22" fill="#E5E7EB"/>
+    <text x="16" y="51" fill="#1E293B" font-size="10" font-weight="700">Name</text>
+    <text x="270" y="51" fill="#1E293B" font-size="10" font-weight="700">Tags</text>
+    <text x="480" y="51" fill="#1E293B" font-size="10" font-weight="700">Photo</text>
+
+    <!-- Row 1 -->
+    <rect x="0" y="58" width="552" height="52" fill="#F0F9FF"/>
+    <rect x="14" y="68" width="240" height="28" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="22" y="86" fill="#0F172A" font-size="11">Porridge Oats Cookies</text>
+    <rect x="268" y="68" width="194" height="28" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="276" y="86" fill="#334155" font-size="10">dessert, breakfast, snacks</text>
+    <rect x="478" y="66" width="54" height="32" rx="4" fill="#FEF3C7" stroke="#0284C7" stroke-width="1.5"/>
+    <circle cx="505" cy="82" r="10" fill="#B45309"/>
+
+    <!-- Row 2 -->
+    <rect x="0" y="110" width="552" height="52" fill="#FFFFFF"/>
+    <rect x="14" y="120" width="240" height="28" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="22" y="138" fill="#0F172A" font-size="11">Southern Fried Chicken</text>
+    <rect x="268" y="120" width="194" height="28" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="276" y="138" fill="#334155" font-size="10">chicken, lunch, deep frying</text>
+    <rect x="478" y="118" width="54" height="32" rx="4" fill="#FEF3C7" stroke="#CBD5E1"/>
+    <circle cx="505" cy="134" r="10" fill="#D97706"/>
+
+    <!-- Row 3 -->
+    <rect x="0" y="162" width="552" height="52" fill="#F9FAFB"/>
+    <rect x="14" y="172" width="240" height="28" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="22" y="190" fill="#0F172A" font-size="11">Meatballs</text>
+    <rect x="268" y="172" width="194" height="28" rx="4" fill="#FFFFFF" stroke="#CBD5E1"/>
+    <text x="276" y="190" fill="#334155" font-size="10">main, beef</text>
+    <rect x="478" y="170" width="54" height="32" rx="4" fill="#FEF3C7" stroke="#CBD5E1"/>
+    <circle cx="505" cy="186" r="10" fill="#78350F"/>
+
+    <text x="16" y="250" fill="#0284C7" font-size="11" font-weight="600">✓ Clicking any Photo thumbnail runs Go to Layout ["View Recipe"]</text>
+  </g>
+
+  <!-- Panel 4: Web View -->
+  <g transform="translate(616, 412)">
+    <rect width="552" height="316" rx="10" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5"/>
+    <text x="20" y="32" fill="#0F172A" font-size="18" font-weight="700">Web view: Porridge Oats Cookies</text>
+    <rect x="466" y="12" width="68" height="28" rx="6" fill="#E2E8F0" stroke="#94A3B8"/>
+    <text x="500" y="30" fill="#0F172A" font-size="12" font-weight="700" text-anchor="middle">back</text>
+
+    <!-- Web Viewer Box -->
+    <rect x="16" y="50" width="520" height="248" rx="6" fill="#F8FAFC" stroke="#CBD5E1"/>
+    <rect x="16" y="50" width="520" height="32" rx="6" fill="#E2E8F0"/>
+    <text x="30" y="70" fill="#334155" font-size="10">🌐 http://www.rogersfoods.com/rogers-porridge-oats-cookies/</text>
+    <text x="450" y="70" fill="#0284C7" font-size="10" font-weight="700">Open in Browser</text>
+
+    <text x="40" y="116" fill="#0F172A" font-size="16" font-weight="700">Porridge Oats Cookies</text>
+    <text x="40" y="138" fill="#475569" font-size="11" font-style="italic">"A wholesome and delicious cookie for a quick breakfast or healthy snack!"</text>
+    <rect x="40" y="154" width="220" height="100" rx="6" fill="#E2E8F0"/>
+    <circle cx="130" cy="204" r="24" fill="#B45309"/>
+    <circle cx="172" cy="200" r="26" fill="#92400E"/>
+    <text x="280" y="185" fill="#0284C7" font-size="11" font-weight="600">Script: Open URL in web viewer if exists</text>
+    <text x="280" y="205" fill="#334155" font-size="10">1. If [ Get(LayoutName) ≠ "Web View" ... ]</text>
+    <text x="280" y="222" fill="#334155" font-size="10">2. Set Variable [ $$lastLayout; Get(LayoutName) ]</text>
+    <text x="280" y="239" fill="#334155" font-size="10">3. Go to Layout [ "Web View" (recipes) ]</text>
+  </g>
+</svg>

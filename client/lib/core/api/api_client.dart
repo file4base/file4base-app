@@ -2901,12 +2901,13 @@ class ApiClient {
     );
   }
 
-  /// Runs a read-only dry-run preflight conversion of a FileMaker DDR / XML
-  /// design document and optional FMPXMLRESULT data files (#26).
+  /// Runs a read-only dry-run preflight conversion of a FileMaker DDR / XML / HTML
+  /// design document and optional FMPXMLRESULT / .fmp12 data files (#26).
   Future<MigrationReportModel> migratePreflight({
     required String designXml,
     String? solutionName,
     Map<String, String> dataFiles = const {},
+    String? fmp12Base64,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/solutions/migrate/preflight'),
@@ -2916,6 +2917,8 @@ class ApiClient {
         if (solutionName != null && solutionName.trim().isNotEmpty)
           'solution_name': solutionName.trim(),
         if (dataFiles.isNotEmpty) 'data_files': dataFiles,
+        if (fmp12Base64 != null && fmp12Base64.isNotEmpty)
+          'fmp12_base64': fmp12Base64,
       }),
     );
     _checkResponse(response);
@@ -2926,12 +2929,13 @@ class ApiClient {
     );
   }
 
-  /// Applies an assisted FileMaker DDR / XML + FMPXMLRESULT migration into the
+  /// Applies an assisted FileMaker DDR / XML / HTML + FMPXMLRESULT / .fmp12 migration into the
   /// current database or a newly created isolated target database (#26).
   Future<MigrationApplyResultModel> migrateApply({
     required String designXml,
     String? solutionName,
     Map<String, String> dataFiles = const {},
+    String? fmp12Base64,
     String? targetDatabase,
     String? ownerUser,
     String? ownerPassword,
@@ -2944,6 +2948,8 @@ class ApiClient {
         if (solutionName != null && solutionName.trim().isNotEmpty)
           'solution_name': solutionName.trim(),
         if (dataFiles.isNotEmpty) 'data_files': dataFiles,
+        if (fmp12Base64 != null && fmp12Base64.isNotEmpty)
+          'fmp12_base64': fmp12Base64,
         if (targetDatabase != null && targetDatabase.trim().isNotEmpty)
           'target_database': targetDatabase.trim(),
         if (ownerUser != null && ownerUser.trim().isNotEmpty)

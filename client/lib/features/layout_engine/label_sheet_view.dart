@@ -2,14 +2,19 @@
 // and down the page, one record each, which is the only way a labels layout
 // means anything.
 
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_blueprint.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
-
-import 'layout_object_visuals.dart';
-import 'models/layout_blueprint.dart';
-import 'models/layout_definition.dart';
 
 /// Draws one page of labels.
 class LabelSheetView extends StatelessWidget {
+
+  const LabelSheetView({
+    required this.layout, required this.stock, required this.records, super.key,
+    this.userName,
+    this.formatField,
+  });
   final LayoutDefinitionModel layout;
   final LabelStock stock;
 
@@ -20,15 +25,6 @@ class LabelSheetView extends StatelessWidget {
 
   /// How a field's stored value is written inside merge text.
   final String Function(String fieldName, Object? value)? formatField;
-
-  const LabelSheetView({
-    super.key,
-    required this.layout,
-    required this.stock,
-    required this.records,
-    this.userName,
-    this.formatField,
-  });
 
   /// The records split into pages, one page per sheet of labels.
   static List<List<Map<String, dynamic>>> paginate(
@@ -74,7 +70,6 @@ class LabelSheetView extends StatelessWidget {
       width: stock.labelWidthPt,
       height: stock.labelHeightPt,
       child: Stack(
-        clipBehavior: Clip.hardEdge,
         children: [
           for (final obj in layout.objects)
             Positioned(

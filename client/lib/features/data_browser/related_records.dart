@@ -6,26 +6,25 @@
 
 import 'dart:async';
 
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
-
-import '../../core/api/api_client.dart';
-import '../layout_engine/layout_object_visuals.dart';
-import '../layout_engine/models/layout_definition.dart';
 
 /// What the far side of a relationship is, resolved from the catalog the
 /// client already holds.
 class RelatedTarget {
-  final RelationshipModel relationship;
-
-  /// The occurrence whose records are read, and the table behind it.
-  final TableOccurrenceModel occurrence;
-  final TableModel table;
 
   const RelatedTarget({
     required this.relationship,
     required this.occurrence,
     required this.table,
   });
+  final RelationshipModel relationship;
+
+  /// The occurrence whose records are read, and the table behind it.
+  final TableOccurrenceModel occurrence;
+  final TableModel table;
 }
 
 /// Every occurrence reachable from [fromTable] by following one relationship,
@@ -61,6 +60,16 @@ List<RelatedTarget> reachableTargets({
 /// The catalog a portal or a related field needs to reach the other side of a
 /// relationship, and the record it starts from.
 class RelatedContext {
+
+  const RelatedContext({
+    required this.apiClient,
+    required this.fromTable,
+    required this.recordId,
+    required this.relationshipsById,
+    required this.occurrencesById,
+    required this.tablesById,
+    required this.formatValue,
+  });
   final ApiClient apiClient;
 
   /// Physical name of the table the layout is on.
@@ -77,16 +86,6 @@ class RelatedContext {
   /// already knows how to work out.
   final String Function(ColumnModel column, Object? raw) formatValue;
 
-  const RelatedContext({
-    required this.apiClient,
-    required this.fromTable,
-    required this.recordId,
-    required this.relationshipsById,
-    required this.occurrencesById,
-    required this.tablesById,
-    required this.formatValue,
-  });
-
   TableModel? _tableOfOccurrence(TableOccurrenceModel occurrence) =>
       tablesById[occurrence.baseTableId];
 
@@ -98,43 +97,59 @@ class RelatedContext {
   /// is not in the catalog — a layout pointing at something that has been
   /// deleted must still draw.
   RelatedTarget? resolve(String? relationshipId, String? occurrence) {
-    if (relationshipId == null || relationshipId.isEmpty) return null;
-    final rel = relationshipsById[relationshipId];
-    if (rel == null) return null;
+    RelatedTarget? tryRelationship(RelationshipModel rel) {
+      final left = occurrencesById[rel.leftOccurrenceId];
+      final right = occurrencesById[rel.rightOccurrenceId];
+      if (left == null || right == null) return null;
 
-    final left = occurrencesById[rel.leftOccurrenceId];
-    final right = occurrencesById[rel.rightOccurrenceId];
-    if (left == null || right == null) return null;
+      final leftTable = _tableOfOccurrence(left);
+      final rightTable = _tableOfOccurrence(right);
+      if (leftTable == null || rightTable == null) return null;
 
-    final leftTable = _tableOfOccurrence(left);
-    final rightTable = _tableOfOccurrence(right);
-    if (leftTable == null || rightTable == null) return null;
-
-    bool wantsRight;
-    if (occurrence != null && occurrence.isNotEmpty) {
-      if (occurrence == right.id || occurrence == right.name) {
+      bool wantsRight;
+      if (occurrence != null && occurrence.isNotEmpty) {
+        if ((occurrence == right.id || occurrence.toLowerCase() == right.name.toLowerCase()) &&
+            leftTable.name == fromTable) {
+          wantsRight = true;
+        } else if ((occurrence == left.id || occurrence.toLowerCase() == left.name.toLowerCase()) &&
+            rightTable.name == fromTable) {
+          wantsRight = false;
+        } else {
+          return null;
+        }
+      } else if (leftTable.name == fromTable && rightTable.name == fromTable) {
+        // A self-join: which end is wanted is not something to guess.
+        return null;
+      } else if (leftTable.name == fromTable) {
         wantsRight = true;
-      } else if (occurrence == left.id || occurrence == left.name) {
+      } else if (rightTable.name == fromTable) {
         wantsRight = false;
       } else {
         return null;
       }
-    } else if (leftTable.name == fromTable && rightTable.name == fromTable) {
-      // A self-join: which end is wanted is not something to guess.
-      return null;
-    } else if (leftTable.name == fromTable) {
-      wantsRight = true;
-    } else if (rightTable.name == fromTable) {
-      wantsRight = false;
-    } else {
-      return null;
+
+      return RelatedTarget(
+        relationship: rel,
+        occurrence: wantsRight ? right : left,
+        table: wantsRight ? rightTable : leftTable,
+      );
     }
 
-    return RelatedTarget(
-      relationship: rel,
-      occurrence: wantsRight ? right : left,
-      table: wantsRight ? rightTable : leftTable,
-    );
+    if (relationshipId != null && relationshipId.isNotEmpty) {
+      final rel = relationshipsById[relationshipId];
+      if (rel != null) {
+        final match = tryRelationship(rel);
+        if (match != null) return match;
+      }
+    }
+
+    if (occurrence != null && occurrence.isNotEmpty) {
+      for (final rel in relationshipsById.values) {
+        final match = tryRelationship(rel);
+        if (match != null) return match;
+      }
+    }
+    return null;
   }
 }
 
@@ -170,16 +185,13 @@ Widget relatedNotice(String message, {required bool isDark, double radius = 4}) 
 /// related record is edited in a portal, where it is clear which record is
 /// being changed.
 class RelatedFieldView extends StatefulWidget {
+
+  const RelatedFieldView({
+    required this.object, required this.related, required this.isDark, super.key,
+  });
   final LayoutObjectModel object;
   final RelatedContext related;
   final bool isDark;
-
-  const RelatedFieldView({
-    super.key,
-    required this.object,
-    required this.related,
-    required this.isDark,
-  });
 
   @override
   State<RelatedFieldView> createState() => _RelatedFieldViewState();
@@ -322,6 +334,11 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
 /// A portal: one row per related record, with the layout objects drawn inside
 /// the portal repeated against each of them.
 class PortalView extends StatefulWidget {
+
+  const PortalView({
+    required this.object, required this.contents, required this.related, required this.isDark, super.key,
+    this.onChanged,
+  });
   final LayoutObjectModel object;
 
   /// The objects drawn inside the portal, in layout coordinates. Each row
@@ -334,15 +351,6 @@ class PortalView extends StatefulWidget {
   /// Called when a related record has been created or deleted, so the layout
   /// can refresh anything that counts them.
   final VoidCallback? onChanged;
-
-  const PortalView({
-    super.key,
-    required this.object,
-    required this.contents,
-    required this.related,
-    required this.isDark,
-    this.onChanged,
-  });
 
   @override
   State<PortalView> createState() => _PortalViewState();

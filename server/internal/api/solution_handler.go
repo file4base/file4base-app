@@ -87,6 +87,11 @@ func (h *SolutionHandler) RegisterPublicRoutes(r chi.Router) {
 	r.Post("/api/v1/databases", h.CreateDatabase)
 	r.Post("/api/v1/databases/", h.CreateDatabase)
 	r.Post("/api/v1/databases/switch", h.SwitchDatabase)
+	// Assisted FileMaker XML / HTML DDR and .fmp12 migration (#26).
+	// Registered with Optional auth so a clean server with zero databases can
+	// bootstrap a new target_database directly from a FileMaker migration.
+	r.Post("/api/v1/solutions/migrate/preflight", h.MigratePreflight)
+	r.Post("/api/v1/solutions/migrate/apply", h.MigrateApply)
 }
 
 // RegisterRoutes registers the endpoints that require a session.
@@ -109,9 +114,6 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Post("/clipboard/copy", h.CopyStructure)
 		r.With(RequireAdmin).Post("/clipboard/preview", h.PreviewClipboard)
 		r.With(RequireAdmin, RequireDesignUnlocked).Post("/clipboard/paste", h.PasteClipboard)
-		// Assisted FileMaker XML / DDR and FMPXMLRESULT migration (#26).
-		r.With(RequireAdmin).Post("/migrate/preflight", h.MigratePreflight)
-		r.With(RequireOwner, RequireDesignUnlocked).Post("/migrate/apply", h.MigrateApply)
 		// The design as a report to read, or as text for version control
 		// (#49). It carries no records and no secrets.
 		r.With(RequireAdmin).Get("/design-report", h.DesignReport)
@@ -1051,6 +1053,17 @@ func (h *SolutionHandler) PasteClipboard(w http.ResponseWriter, r *http.Request)
 // Save-as-XML design document and optional FMPXMLRESULT record exports,
 // returning a structured ConversionReport without touching any database (#26).
 func (h *SolutionHandler) MigratePreflight(w http.ResponseWriter, r *http.Request) {
+	sess, hasSession := auth.FromContext(r.Context())
+	if hasSession {
+		if !sess.IsAdmin() {
+			writeForbidden(w, r, "this operation requires an admin or owner account")
+			return
+		}
+	} else if !h.opts.AllowPublicDatabaseCreation {
+		writeUnauthorized(w, r, "authentication is required")
+		return
+	}
+
 	var req migration.MigrationRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&req); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
@@ -1084,9 +1097,28 @@ func (h *SolutionHandler) MigratePreflight(w http.ResponseWriter, r *http.Reques
 // optional FMPXMLRESULT record exports and imports them atomically into either
 // a newly created isolated target_database or the active session database (#26).
 func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
+	sess, hasSession := auth.FromContext(r.Context())
+	if hasSession {
+		if !sess.IsOwner() {
+			writeForbidden(w, r, "this operation requires an owner account")
+			return
+		}
+	} else if !h.opts.AllowPublicDatabaseCreation {
+		writeUnauthorized(w, r, "authentication is required")
+		return
+	}
+
 	var req migration.MigrationRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&req); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	targetDB := strings.ToLower(strings.TrimSpace(req.TargetDatabase))
+	if !hasSession && targetDB == "" {
+		telemetry.WriteValidationProblem(w, r, "Creating a migrated database without an active session requires target_database, owner_user, and owner_password", []telemetry.InvalidParam{
+			{Name: "target_database", Reason: "target_database is required when not signed in"},
+		})
 		return
 	}
 
@@ -1103,15 +1135,22 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetDB := strings.ToLower(strings.TrimSpace(req.TargetDatabase))
-	sess := currentSession(r)
 	createdNewDB := false
-	targetSvc := schemaService(r)
+	var targetSvc *schema.Service
+	if hasSession {
+		targetSvc = schemaService(r)
+	}
 
-	if targetDB != "" && !strings.EqualFold(targetDB, sess.Database) {
+	if targetDB != "" && (!hasSession || !strings.EqualFold(targetDB, sess.Database)) {
 		ownerUser := strings.ToLower(strings.TrimSpace(req.OwnerUser))
-		if ownerUser == "" {
+		if ownerUser == "" && hasSession {
 			ownerUser = sess.Username
+		}
+		if ownerUser == "" {
+			telemetry.WriteValidationProblem(w, r, "Creating a new target database requires an owner username", []telemetry.InvalidParam{
+				{Name: "owner_user", Reason: "owner_user is required when creating a new target_database"},
+			})
+			return
 		}
 		if reason := ownerPasswordProblem(req.OwnerPassword, ownerUser, targetDB); reason != "" {
 			telemetry.WriteValidationProblem(w, r, "Creating a new target database requires a valid owner password", []telemetry.InvalidParam{
@@ -1143,6 +1182,10 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		targetDB = sess.Database
+		if meta, err := targetSvc.GetSolutionMeta(r.Context(), targetDB); err == nil && meta.DesignLocked {
+			writeForbidden(w, r, schema.ErrDesignLocked.Error())
+			return
+		}
 	}
 
 	bundleBytes, err := msgpack.Marshal(converted.Bundle)

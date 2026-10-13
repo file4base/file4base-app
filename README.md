@@ -24,6 +24,8 @@ WebDirect are trademarks of Claris International Inc. See the
 - [Functional Specification (Feature Mapping)](docs/specs/FUNCTIONAL_SPECIFICATION.md)
 - [Dynamic Layout JSON Schema](docs/specs/layout_schema.json)
 - [Menu Bar & Functional Command Reference](docs/specs/file4base_menu_reference_guide.md)
+- [Assisted FileMaker Migration Specification](docs/specs/filemaker_migration.md)
+- [FileMaker to File4Base Migration Guide & Case Study (`Recipes`)](docs/tutorials/filemaker_migration_guide.md)
 
 
 ## Security Model

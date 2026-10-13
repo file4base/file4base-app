@@ -1,19 +1,16 @@
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
 
 /// Asks for the name a find is saved under, and warns when the name is
 /// already taken on this table so the save does not come back refused (#34).
 class SaveFindDialog extends StatefulWidget {
+
+  const SaveFindDialog({
+    required this.tableLabel, required this.existing, required this.requests, super.key,
+  });
   final String tableLabel;
   final List<SavedFindModel> existing;
   final List<SavedFindRequestModel> requests;
-
-  const SaveFindDialog({
-    super.key,
-    required this.tableLabel,
-    required this.existing,
-    required this.requests,
-  });
 
   static Future<String?> show(
     BuildContext context, {
@@ -133,16 +130,13 @@ class _SaveFindDialogState extends State<SaveFindDialog> {
 /// Lists the finds saved on a table so they can be renamed or deleted. It
 /// reports what the server answers rather than assuming the change took.
 class ManageSavedFindsDialog extends StatefulWidget {
+
+  const ManageSavedFindsDialog({
+    required this.apiClient, required this.tableLabel, required this.finds, super.key,
+  });
   final ApiClient apiClient;
   final String tableLabel;
   final List<SavedFindModel> finds;
-
-  const ManageSavedFindsDialog({
-    super.key,
-    required this.apiClient,
-    required this.tableLabel,
-    required this.finds,
-  });
 
   /// Returns true when anything changed, so the caller reloads its list.
   static Future<bool> show(
@@ -201,7 +195,7 @@ class _ManageSavedFindsDialogState extends State<ManageSavedFindsDialog> {
                     )
                   : ListView.separated(
                       itemCount: _finds.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      separatorBuilder: (_, _) => const Divider(height: 1),
                       itemBuilder: (context, index) {
                         final find = _finds[index];
                         return ListTile(
@@ -319,9 +313,9 @@ class _ManageSavedFindsDialogState extends State<ManageSavedFindsDialog> {
 /// Asks for a new name. It owns its controller, so the controller outlives
 /// the dialog's closing animation and is disposed with it.
 class _RenameSavedFindDialog extends StatefulWidget {
-  final String currentName;
 
   const _RenameSavedFindDialog({required this.currentName});
+  final String currentName;
 
   @override
   State<_RenameSavedFindDialog> createState() => _RenameSavedFindDialogState();

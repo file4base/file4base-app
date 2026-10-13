@@ -4,15 +4,25 @@
 // A report is read-only. It is what Preview and the printed sheet show, and
 // what List view shows for a layout that has summary parts.
 
-import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'dart:typed_data';
 
-import '../../core/api/api_client.dart';
-import '../layout_engine/layout_object_visuals.dart';
-import '../layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:flutter/material.dart';
 
 /// One band of a report: a layout part drawn once, against a record or against
 /// a set of figures.
 class ReportBand {
+
+  const ReportBand({
+    required this.part,
+    this.record,
+    this.summaries = const {},
+    this.breakValues = const {},
+    this.count = 0,
+  });
   final LayoutPartModel part;
 
   /// The record a body band draws. Null for a summary band.
@@ -27,14 +37,6 @@ class ReportBand {
 
   /// How many records this band covers. Zero for a body band.
   final int count;
-
-  const ReportBand({
-    required this.part,
-    this.record,
-    this.summaries = const {},
-    this.breakValues = const {},
-    this.count = 0,
-  });
 }
 
 /// The figures a report needs: one grouping per break level, where level `n`
@@ -223,6 +225,15 @@ String formatSummaryValue(Object? raw, String? summaryType) {
 
 /// Draws a found set as a report.
 class ReportView extends StatelessWidget {
+
+  const ReportView({
+    required this.layout, required this.table, required this.records, required this.figures, required this.specs, required this.formatValue, super.key,
+    this.sortedBy = const [],
+    this.onSortForReport,
+    this.isDark = false,
+    this.forPrint = false,
+    this.fitWidth,
+  });
   final LayoutDefinitionModel layout;
   final TableModel table;
 
@@ -255,21 +266,6 @@ class ReportView extends StatelessWidget {
   /// layout. A report wider than the paper is scaled down rather than having
   /// its rightmost columns fall off the sheet (#32).
   final double? fitWidth;
-
-  const ReportView({
-    super.key,
-    required this.layout,
-    required this.table,
-    required this.records,
-    required this.figures,
-    required this.specs,
-    required this.formatValue,
-    this.sortedBy = const [],
-    this.onSortForReport,
-    this.isDark = false,
-    this.forPrint = false,
-    this.fitWidth,
-  });
 
   ColumnModel? _column(String name) =>
       table.columns.where((c) => c.name.toLowerCase() == name.toLowerCase()).firstOrNull;
@@ -438,13 +434,19 @@ class ReportView extends StatelessWidget {
 
   Widget _object(LayoutObjectModel obj, ReportBand band) {
     if (obj.type == 'label') {
+      final resolved = resolveLayoutMergeText(
+        obj.text,
+        record: band.record,
+        layoutName: layout.name,
+        collapseEmptyLines: true,
+      );
       return Container(
-        alignment: _alignment(obj.style.textAlign),
-        padding: const EdgeInsets.symmetric(horizontal: 4),
+        alignment: obj.height > 36 ? Alignment.topLeft : _alignment(obj.style.textAlign),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         child: Text(
-          obj.text,
+          resolved,
           textAlign: _textAlign(obj.style.textAlign),
-          overflow: TextOverflow.ellipsis,
+          overflow: obj.height > 36 ? TextOverflow.clip : TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
             fontWeight: obj.style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.normal,
@@ -474,6 +476,18 @@ class ReportView extends StatelessWidget {
     final name = obj.fieldBinding?.fieldName ?? '';
     final column = _column(name);
     final spec = specs[name];
+
+    if (column != null && column.fieldType.toUpperCase() == 'CONTAINER' && band.record != null) {
+      final raw = band.record![column.name]?.toString() ?? '';
+      final bytes = _decodeImageBytes(raw);
+      if (bytes != null && bytes.isNotEmpty) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+          child: Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
+        );
+      }
+      return const SizedBox.shrink();
+    }
 
     String text;
     if (spec != null) {
@@ -506,6 +520,20 @@ class ReportView extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Uint8List? _decodeImageBytes(String raw) {
+    var trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    final commaIdx = trimmed.indexOf('base64,');
+    if (commaIdx >= 0) {
+      trimmed = trimmed.substring(commaIdx + 7).trim();
+    }
+    try {
+      return base64Decode(trimmed);
+    } catch (_) {
+      return null;
+    }
   }
 
   Alignment _alignment(String align) => switch (align) {

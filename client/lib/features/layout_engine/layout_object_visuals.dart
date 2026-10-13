@@ -1,9 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
-
-import 'models/layout_definition.dart';
 
 /// Rendering shared by Layout, Browse, Find and Preview modes for the drawn
 /// objects of a layout: shapes (`rect`, `rounded_rect`, `oval`), lines and
@@ -68,6 +67,7 @@ String resolveLayoutMergeText(
   String text, {
   Map<String, dynamic>? record,
   String? userName,
+  String? layoutName,
   int? pageNumber,
   DateTime? now,
   String Function(String fieldName, Object? value)? formatField,
@@ -81,7 +81,7 @@ String resolveLayoutMergeText(
     var sawValue = false;
 
     final resolved = line.replaceAllMapped(_mergePattern, (m) {
-      final key = m.group(1)!;
+      final key = m.group(1)!.trim();
       String keep(String value) {
         if (value.isNotEmpty) sawValue = true;
         return value;
@@ -100,13 +100,19 @@ String resolveLayoutMergeText(
         case 'currentuser':
           sawMerge = true;
           return userName == null ? m.group(0)! : keep(userName);
+        case 'layoutname':
+        case 'layout_name':
+          sawMerge = true;
+          return layoutName == null ? m.group(0)! : keep(layoutName);
         case 'pagenumber':
           sawMerge = true;
           return pageNumber == null ? m.group(0)! : keep(pageNumber.toString());
       }
       if (record != null) {
+        final normKey = key.toLowerCase().replaceAll(' ', '_');
         for (final entry in record.entries) {
-          if (entry.key.toLowerCase() == key.toLowerCase()) {
+          final ek = entry.key.toLowerCase();
+          if (ek == key.toLowerCase() || ek == normKey) {
             sawMerge = true;
             final value = formatField == null
                 ? (entry.value?.toString() ?? '')
@@ -196,13 +202,13 @@ ShapeBorder layoutShapeBorder(LayoutObjectModel obj, {BorderSide side = BorderSi
 /// A rectangle, rounded rectangle or oval with its fill, line (border)
 /// color and width, optional embedded media and optional text.
 class LayoutShapeView extends StatelessWidget {
+
+  const LayoutShapeView({required this.obj, super.key, this.text = '', this.borderOverride});
   final LayoutObjectModel obj;
   final String text;
 
   /// Overrides the border, e.g. to show the selection in Layout mode.
   final BorderSide? borderOverride;
-
-  const LayoutShapeView({super.key, required this.obj, this.text = '', this.borderOverride});
 
   @override
   Widget build(BuildContext context) {
@@ -251,10 +257,10 @@ class LayoutShapeView extends StatelessWidget {
 /// A straight line drawn across the longer side of its box, horizontal or
 /// vertical, centered, with the object's line color and width.
 class LayoutLineView extends StatelessWidget {
+
+  const LayoutLineView({required this.obj, super.key, this.colorOverride});
   final LayoutObjectModel obj;
   final Color? colorOverride;
-
-  const LayoutLineView({super.key, required this.obj, this.colorOverride});
 
   @override
   Widget build(BuildContext context) {
@@ -269,10 +275,10 @@ class LayoutLineView extends StatelessWidget {
 }
 
 class _LayoutLinePainter extends CustomPainter {
-  final Color color;
-  final double width;
 
   const _LayoutLinePainter({required this.color, required this.width});
+  final Color color;
+  final double width;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -294,9 +300,9 @@ class _LayoutLinePainter extends CustomPainter {
 /// Shows an embedded picture, or a tile with the icon and name of a PDF,
 /// audio/video or file attachment.
 class LayoutMediaView extends StatelessWidget {
-  final LayoutMediaModel media;
 
-  const LayoutMediaView({super.key, required this.media});
+  const LayoutMediaView({required this.media, super.key});
+  final LayoutMediaModel media;
 
   static final Map<String, Uint8List> _decoded = {};
 
@@ -411,9 +417,9 @@ Widget? buildDrawnLayoutObject(
 /// Background of a whole layout: its color (white by default) and its
 /// background picture. Fills the canvas behind every object.
 class LayoutBackgroundView extends StatelessWidget {
-  final LayoutDefinitionModel layout;
 
-  const LayoutBackgroundView({super.key, required this.layout});
+  const LayoutBackgroundView({required this.layout, super.key});
+  final LayoutDefinitionModel layout;
 
   static final Map<String, Uint8List> _decoded = {};
 
@@ -466,10 +472,10 @@ class LayoutBackgroundView extends StatelessWidget {
 /// Plays a layout's [effect] (a key of [kLayoutTransitions]) once when it is
 /// first shown. Give it a key per layout so switching layouts replays it.
 class LayoutEntryTransition extends StatefulWidget {
+
+  const LayoutEntryTransition({required this.effect, required this.child, super.key});
   final String effect;
   final Widget child;
-
-  const LayoutEntryTransition({super.key, required this.effect, required this.child});
 
   @override
   State<LayoutEntryTransition> createState() => _LayoutEntryTransitionState();
@@ -502,7 +508,7 @@ class _LayoutEntryTransitionState extends State<LayoutEntryTransition> with Sing
           child: FadeTransition(opacity: curve, child: widget.child),
         ),
       'zoom' => ScaleTransition(
-          scale: Tween(begin: 0.92, end: 1.0).animate(curve),
+          scale: Tween<double>(begin: 0.92, end: 1.0).animate(curve),
           child: FadeTransition(opacity: curve, child: widget.child),
         ),
       _ => widget.child,

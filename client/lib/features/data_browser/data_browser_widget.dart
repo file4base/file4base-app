@@ -1,20 +1,33 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/related_records.dart';
+import 'package:file4base_client/features/data_browser/report_view.dart';
+import 'package:file4base_client/features/layout_engine/chart_view.dart';
+import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/main.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../core/api/api_client.dart';
-import '../../main.dart';
-import '../layout_engine/layout_action_runner.dart';
-import '../layout_engine/layout_object_visuals.dart';
-import '../layout_engine/models/layout_definition.dart';
-import '../layout_engine/models/chart_definition.dart';
-import '../layout_engine/chart_view.dart';
-import 'related_records.dart';
-import 'report_view.dart';
 
 class DataBrowserWidget extends StatefulWidget {
+
+  const DataBrowserWidget({
+    required this.table, required this.apiClient, required this.mode, super.key,
+    this.layout,
+    this.onModeChanged,
+    this.onRecordChanged,
+    this.onTableModified,
+    this.currentUserName,
+    this.onGoToLayout,
+    this.onFoundSetChanged,
+  });
   final TableModel table;
   final ApiClient apiClient;
   final OperationalMode mode;
@@ -35,30 +48,16 @@ class DataBrowserWidget extends StatefulWidget {
   /// found set rather than the whole table (#32).
   final ValueChanged<List<Map<String, dynamic>>>? onFoundSetChanged;
 
-  const DataBrowserWidget({
-    super.key,
-    required this.table,
-    required this.apiClient,
-    required this.mode,
-    this.layout,
-    this.onModeChanged,
-    this.onRecordChanged,
-    this.onTableModified,
-    this.currentUserName,
-    this.onGoToLayout,
-    this.onFoundSetChanged,
-  });
-
   @override
   State<DataBrowserWidget> createState() => DataBrowserWidgetState();
 }
 
 /// One level of a sort order: a field and its direction.
 class SortLevel {
-  final String field;
-  final bool ascending;
 
   const SortLevel(this.field, this.ascending);
+  final String field;
+  final bool ascending;
 
   SortLevel get flipped => SortLevel(field, !ascending);
 
@@ -80,11 +79,11 @@ class SortLevel {
 /// One find request: what was typed into each field, and whether the request
 /// omits what it matches instead of finding it.
 class FindRequestDraft {
-  final Map<String, String> values;
-  bool omit;
 
   FindRequestDraft({Map<String, String>? values, this.omit = false})
       : values = values ?? <String, String>{};
+  final Map<String, String> values;
+  bool omit;
 
   FindRequestDraft copy() =>
       FindRequestDraft(values: Map<String, String>.from(values), omit: omit);
@@ -109,7 +108,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   List<SortLevel> _sortOrder = const [];
 
   String? get _sortField => _sortOrder.isEmpty ? null : _sortOrder.first.field;
-  bool get _sortAscending => _sortOrder.isEmpty ? true : _sortOrder.first.ascending;
+  bool get _sortAscending => _sortOrder.isEmpty || _sortOrder.first.ascending;
   final TextEditingController _recordNumberCtrl = TextEditingController();
   final FocusNode _recordNumberFocus = FocusNode();
   double? _sliderDragValue; // record shown by the slider while it is dragged
@@ -352,7 +351,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Map<String, SummarySpecModel> get _summarySpecs => {
         for (final col in widget.table.columns)
           if (col.fieldType == 'SUMMARY')
-            if (SummarySpecModel.tryParse(col.calculationFormula) case final spec?) col.name: spec,
+            col.name: ?SummarySpecModel.tryParse(col.calculationFormula),
       };
 
   /// The figures of the report: one grouping per break level, level 0 being
@@ -723,9 +722,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   void _rebuildFieldControllers() {
-    for (final c in _fieldControllers.values) c.dispose();
-    for (final f in _fieldFocusNodes.values) f.dispose();
-    for (final t in _fieldDebounceTimers.values) t?.cancel();
+    for (final c in _fieldControllers.values) {
+      c.dispose();
+    }
+    for (final f in _fieldFocusNodes.values) {
+      f.dispose();
+    }
+    for (final t in _fieldDebounceTimers.values) {
+      t?.cancel();
+    }
     _fieldControllers.clear();
     _fieldFocusNodes.clear();
     _fieldDebounceTimers.clear();
@@ -952,7 +957,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   bool _sameColumns(List<ColumnModel> a, List<ColumnModel> b) {
     if (a.length != b.length) return false;
-    for (int i = 0; i < a.length; i++) {
+    for (var i = 0; i < a.length; i++) {
       if (a[i].id != b[i].id || a[i].displayName != b[i].displayName || a[i].name != b[i].name) {
         return false;
       }
@@ -962,7 +967,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void _initFindControllers() {
     _findControllers.clear();
-    for (var col in widget.table.columns) {
+    for (final col in widget.table.columns) {
       _findControllers[col.name] = TextEditingController();
     }
     // A new table means the previous requests no longer refer to anything.
@@ -977,16 +982,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     HardwareKeyboard.instance.removeHandler(_handleRecordShortcut);
     _recordNumberCtrl.dispose();
     _recordNumberFocus.dispose();
-    for (var c in _findControllers.values) {
+    for (final c in _findControllers.values) {
       c.dispose();
     }
-    for (var c in _fieldControllers.values) {
+    for (final c in _fieldControllers.values) {
       c.dispose();
     }
-    for (var f in _fieldFocusNodes.values) {
+    for (final f in _fieldFocusNodes.values) {
       f.dispose();
     }
-    for (var t in _fieldDebounceTimers.values) {
+    for (final t in _fieldDebounceTimers.values) {
       t?.cancel();
     }
     super.dispose();
@@ -1082,7 +1087,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     values.forEach((key, raw) {
       final related = parseRelatedCriterionKey(key);
       final fieldName = related?.field ?? key;
-      String text = raw.trim();
+      var text = raw.trim();
       if (text.isEmpty) return;
 
       // Standard today's date formula: // -> current ISO date
@@ -1119,7 +1124,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       } else if (text.startsWith('=')) {
         criteria.add({'field_name': fieldName, 'operator': '=', 'value': text.substring(1).trim()});
       } else if (text.contains('*') || text.contains('@') || text.contains('?')) {
-        String wildcard = text.replaceAll('*', '%').replaceAll('@', '_').replaceAll('?', '_');
+        final wildcard = text.replaceAll('*', '%').replaceAll('@', '_').replaceAll('?', '_');
         criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': wildcard});
       } else {
         criteria.add({'field_name': fieldName, 'operator': 'LIKE', 'value': '%$text%'});
@@ -1219,7 +1224,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               ],
             ),
             backgroundColor: const Color(0xFF2E7D32),
-            duration: const Duration(seconds: 4),
             action: SnackBarAction(
               label: 'Show All',
               textColor: Colors.white,
@@ -1245,7 +1249,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     } else if (widget.mode == OperationalMode.find) {
       content = _buildFindModeForm();
     } else if (hasCustomLayoutForm) {
-      content = _buildLayoutCanvasView(widget.layout!, isFindMode: false);
+      content = _buildLayoutCanvasView(widget.layout!);
     } else if (_viewMode == 'table' && _records.isNotEmpty) {
       content = _buildTableView();
     } else if (_viewMode == 'list' && _records.isNotEmpty) {
@@ -1339,7 +1343,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Widget _buildRecordToolbar() {
     if (widget.mode == OperationalMode.browse) return _buildBrowseRecordBar();
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       // The find controls are wider than a narrow window, so they scroll
       // sideways instead of overflowing.
@@ -1368,7 +1372,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 icon: const Icon(Icons.clear_all, size: 16),
                 label: const Text('Clear Criteria'),
                 onPressed: () {
-                  for (var c in _findControllers.values) c.clear();
+                  for (final c in _findControllers.values) {
+                    c.clear();
+                  }
                   _captureCurrentFindRequest();
                   setState(() {});
                 },
@@ -1457,7 +1463,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           Row(
             children: [
               navButton(Icons.first_page, 'First record', atFirst ? null : () => _goToRecordIndex(0)),
-              navButton(Icons.chevron_left, 'Previous record (${_modKey}↑)', atFirst ? null : previousRecord),
+              navButton(Icons.chevron_left, 'Previous record ($_modKey↑)', atFirst ? null : previousRecord),
               const Text('Record ', style: TextStyle(fontSize: 13)),
               _RecordNumberField(
                 controller: _recordNumberCtrl,
@@ -1469,7 +1475,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 },
               ),
               Text(' of ${_records.length}', style: const TextStyle(fontSize: 13)),
-              navButton(Icons.chevron_right, 'Next record (${_modKey}↓)', atLast ? null : nextRecord),
+              navButton(Icons.chevron_right, 'Next record ($_modKey↓)', atLast ? null : nextRecord),
               navButton(Icons.last_page, 'Last record', atLast ? null : () => _goToRecordIndex(_records.length - 1)),
               if (_records.length > 1)
                 SizedBox(
@@ -1478,7 +1484,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                   // after the current record is saved.
                   child: Slider(
                     value: (_sliderDragValue ?? _currentIndex.toDouble()).clamp(0, (_records.length - 1).toDouble()),
-                    min: 0,
                     max: (_records.length - 1).toDouble(),
                     divisions: _records.length - 1,
                     label: '${(_sliderDragValue ?? _currentIndex.toDouble()).round() + 1}',
@@ -1632,7 +1637,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final cols = widget.table.columns.where((c) => !c.isPrimaryKey).toList();
     if (cols.isEmpty) return;
 
-    var order = List.of(_sortOrder);
+    final order = List.of(_sortOrder);
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1710,7 +1715,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       Expanded(
                         child: DropdownButtonFormField<String>(
                           key: const ValueKey('sort-add-field'),
-                          initialValue: null,
                           decoration: const InputDecoration(
                               labelText: 'Add a field', border: OutlineInputBorder(), isDense: true),
                           items: available
@@ -1763,6 +1767,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     // its parts, grouped and totalled, rather than listed (#32).
     if (_layoutIsReport) return _buildReportView();
 
+    if (widget.layout != null &&
+        widget.layout!.objects.isNotEmpty &&
+        widget.layout!.defaultView == 'list') {
+      return _buildCustomLayoutListView(widget.layout!);
+    }
+
     final cols = _visibleColumns;
     final theme = Theme.of(context);
     return ListView.separated(
@@ -1785,6 +1795,174 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         );
       },
     );
+  }
+
+  Widget _buildCustomLayoutListView(LayoutDefinitionModel layout) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
+    final headerPart = layout.parts.where((p) => p.type == LayoutPartType.header).firstOrNull;
+    final headerHeight = headerPart?.height ?? 0.0;
+    final headerObjects = layout.objects.where((o) => o.y < headerHeight).toList();
+    final bodyObjects = layout.objects.where((o) => o.y >= headerHeight).toList();
+
+    var maxBodyBottom = headerHeight + 48.0;
+    for (final o in bodyObjects) {
+      if (o.y + o.height > maxBodyBottom) {
+        maxBodyBottom = o.y + o.height;
+      }
+    }
+    final rowHeight = math.max<double>(46.0, maxBodyBottom - headerHeight + 8.0);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Center(
+        child: Container(
+          width: layout.width,
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF161B22) : Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1CFCA),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (headerHeight > 0)
+                SizedBox(
+                  width: layout.width,
+                  height: headerHeight,
+                  child: Stack(
+                    children: [
+                      for (final obj in headerObjects)
+                        Positioned(
+                          left: obj.x,
+                          top: obj.y,
+                          width: obj.width,
+                          height: obj.height,
+                          child: _buildLayoutObject(obj, _currentRecord, isDark, false),
+                        ),
+                    ],
+                  ),
+                ),
+              for (final (i, rec) in _records.indexed)
+                InkWell(
+                  onTap: () => _goToRecordIndex(i),
+                  onDoubleTap: () => _openRecordInForm(i),
+                  child: Container(
+                    width: layout.width,
+                    height: rowHeight,
+                    decoration: BoxDecoration(
+                      color: i == _currentIndex
+                          ? theme.colorScheme.primary.withValues(alpha: 0.08)
+                          : (i.isOdd
+                              ? (isDark ? const Color(0xFF1B2129) : const Color(0xFFF9FAFB))
+                              : Colors.transparent),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: isDark ? const Color(0xFF30363D) : const Color(0xFFE5E7EB),
+                        ),
+                      ),
+                    ),
+                    child: Stack(
+                      children: [
+                        for (final obj in bodyObjects)
+                          Positioned(
+                            left: obj.x,
+                            top: obj.y - headerHeight,
+                            width: obj.width,
+                            height: obj.height,
+                            child: _buildListRowObject(obj, rec, i, isDark),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildListRowObject(
+    LayoutObjectModel obj,
+    Map<String, dynamic> rec,
+    int recordIndex,
+    bool isDark,
+  ) {
+    if (obj.type == 'field') {
+      final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
+      final col = widget.table.columns
+          .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
+          .firstOrNull;
+      if (col != null && col.fieldType.toUpperCase() == 'CONTAINER') {
+        final bytes = _tryDecodeBase64Image(rec[col.name]?.toString());
+        return InkWell(
+          onTap: () async {
+            _goToRecordIndex(recordIndex);
+            if (obj.action != null) {
+              await _handleLayoutButtonClick(obj, col.displayName);
+            } else {
+              _openRecordInForm(recordIndex);
+            }
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF21262D) : const Color(0xFFF3F4F6),
+              border: Border.all(
+                color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB),
+              ),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: bytes != null && bytes.isNotEmpty
+                ? Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true)
+                : const Icon(Icons.image_outlined, size: 18, color: Colors.grey),
+          ),
+        );
+      }
+      final valText = col != null ? fieldText(col, rec[col.name]) : (rec[fieldName]?.toString() ?? '');
+      return Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF0D1117) : Colors.white,
+          border: Border.all(
+            color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB),
+          ),
+          borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+        ),
+        child: Text(
+          valText,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+            color: isDark ? Colors.white : Colors.black87,
+          ),
+        ),
+      );
+    }
+    if (obj.type == 'button') {
+      final btnText = _resolveTextForRecord(obj.text.isEmpty ? 'Button' : obj.text, rec);
+      return ElevatedButton(
+        onPressed: () async {
+          _goToRecordIndex(recordIndex);
+          await _handleLayoutButtonClick(obj, btnText);
+        },
+        child: Text(btnText, overflow: TextOverflow.ellipsis),
+      );
+    }
+    return _buildLayoutObject(obj, rec, isDark, false);
   }
 
   /// The found set drawn through the layout's parts (#32).
@@ -1842,7 +2020,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     Widget headerCell(ColumnModel c) {
       final sorted = _sortField == c.name;
       return InkWell(
-        onTap: () => _applySort(c.name, sorted ? !_sortAscending : true),
+        onTap: () => _applySort(c.name, !sorted || !_sortAscending),
         child: Container(
           width: colWidth,
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
@@ -1863,7 +2041,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           width: 56 + cols.length * colWidth,
           child: Column(
             children: [
-              Container(
+              ColoredBox(
                 color: theme.colorScheme.surfaceContainerHighest,
                 child: Row(children: [
                   const SizedBox(width: 56, child: Center(child: Text('#', style: TextStyle(fontSize: 12)))),
@@ -1944,7 +2122,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         PopupMenuItem(value: '<', child: Text('<  Less than')),
         PopupMenuItem(value: '>=', child: Text('>=  Greater than or equal')),
         PopupMenuItem(value: '<=', child: Text('<=  Less than or equal')),
-        PopupMenuItem(value: '//', child: Text('//  Today\'s date formula')),
+        PopupMenuItem(value: '//', child: Text("//  Today's date formula")),
         PopupMenuItem(value: '@', child: Text('@  Single character wildcard')),
       ],
     );
@@ -1972,7 +2150,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   Widget _buildBrowseModeContent() {
     if (_viewMode == 'form' && widget.layout != null && widget.layout!.objects.isNotEmpty) {
-      return _buildLayoutCanvasView(widget.layout!, isFindMode: false);
+      return _buildLayoutCanvasView(widget.layout!);
     }
     return _buildStandardCardContent();
   }
@@ -1985,13 +2163,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
     // The canvas has the layout's size: it ends at the bottom of the footer
     // (or of an object placed below it). Layouts without parts fit their objects.
-    double maxObjY = 0.0;
+    var maxObjY = 0.0;
     for (final obj in layout.objects) {
       final bottom = obj.y + obj.height;
       if (bottom > maxObjY) maxObjY = bottom;
     }
-    final canvasHeight =
-        layout.height > 0 ? math.max(layout.height, maxObjY) : math.max(maxObjY + 60.0, 520.0);
+    final canvasHeight = layout.height > 0
+        ? math.max<double>(layout.height, maxObjY)
+        : math.max<double>(maxObjY + 60.0, 520.0);
     final canvasWidth = layout.width;
     final hasCustomBackground = layout.backgroundColor != null || layout.backgroundImage != null;
     final tabRank = {
@@ -2016,7 +2195,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       key: ValueKey('layout-entry-${layout.id}'),
       effect: layout.transition,
       child: SingleChildScrollView(
-      scrollDirection: Axis.vertical,
       padding: const EdgeInsets.all(20),
       child: Center(
         child: SingleChildScrollView(
@@ -2134,7 +2312,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
                       // Render layout objects
                       ...topLevel.map((obj) {
-                        Widget child = _buildLayoutObject(obj, record, isDark, isFindMode,
+                        var child = _buildLayoutObject(obj, record, isDark, isFindMode,
                             portalContents: portalContents[obj.id] ?? const []);
                         final rank = tabRank[obj.id];
                         if (rank != null) {
@@ -2165,22 +2343,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       {List<LayoutObjectModel> portalContents = const []}) {
     switch (obj.type) {
       case 'label':
-        return Container(
-          alignment: _parseAlignment(obj.style.textAlign),
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          child: Text(
-            isFindMode ? obj.text : actionResolveText(obj.text),
-            textAlign: _parseTextAlign(obj.style.textAlign),
-            style: TextStyle(
-              fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
-              fontWeight: obj.style.fontWeight == 'bold'
-                  ? FontWeight.bold
-                  : FontWeight.normal,
-              color: obj.style.textColor != null
-                  ? _parseColor(obj.style.textColor!)
-                  : (isDark ? Colors.white : Colors.black87),
-            ),
+        final resolvedText = isFindMode ? obj.text : _resolveTextForRecord(obj.text, record);
+        final isMultilineLabel = obj.height > 36 || resolvedText.contains('\n');
+        final textWidget = Text(
+          resolvedText,
+          textAlign: _parseTextAlign(obj.style.textAlign),
+          style: TextStyle(
+            fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+            fontWeight: obj.style.fontWeight == 'bold'
+                ? FontWeight.bold
+                : FontWeight.normal,
+            height: isMultilineLabel ? 1.32 : null,
+            color: obj.style.textColor != null
+                ? _parseColor(obj.style.textColor!)
+                : (isDark ? Colors.white : Colors.black87),
           ),
+        );
+        return Container(
+          alignment: isMultilineLabel ? Alignment.topLeft : _parseAlignment(obj.style.textAlign),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: isMultilineLabel
+              ? SingleChildScrollView(child: textWidget)
+              : textWidget,
         );
 
       case 'field':
@@ -2335,6 +2519,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           );
         }
 
+        if (col.fieldType.toUpperCase() == 'CONTAINER') {
+          return _buildContainerFieldObject(obj, col, record, isDark);
+        }
+
         final ctrl = _fieldControllers[col.name];
         final fn = _fieldFocusNodes[col.name];
         final saving = _fieldSaving[col.name];
@@ -2355,11 +2543,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           );
         }
 
+        final isMultilineField = obj.height > 44;
         return TextField(
           controller: ctrl,
           focusNode: fn,
           readOnly: computed,
+          maxLines: isMultilineField ? null : 1,
+          expands: isMultilineField,
           textAlign: _parseTextAlign(obj.style.textAlign),
+          textAlignVertical: isMultilineField ? TextAlignVertical.top : TextAlignVertical.center,
           style: TextStyle(
             fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
             fontWeight: obj.style.fontWeight == 'bold'
@@ -2416,11 +2608,29 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
       case 'button':
       case 'popover_button':
-        final btnText = actionResolveText(obj.text.isEmpty ? 'Button' : obj.text);
+        final btnText = _resolveTextForRecord(obj.text.isEmpty ? 'Button' : obj.text, record);
         final btnBorder = parseLayoutColor(obj.style.borderColor);
+        if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
+          return InkWell(
+            onTap: isFindMode && obj.action == null ? null : () => _handleLayoutButtonClick(obj, btnText),
+            child: Container(
+              alignment: _parseAlignment(obj.style.textAlign),
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Text(
+                btnText,
+                style: TextStyle(
+                  fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 12,
+                  color: parseLayoutColor(obj.style.textColor) ?? const Color(0xFF0066CC),
+                  decoration: btnText.startsWith('http') ? TextDecoration.underline : TextDecoration.none,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          );
+        }
         return ElevatedButton(
           style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
             backgroundColor: parseLayoutColor(obj.style.fillColor),
             foregroundColor: parseLayoutColor(obj.style.textColor),
             shape: RoundedRectangleBorder(
@@ -2442,6 +2652,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             overflow: TextOverflow.ellipsis,
           ),
         );
+
+      case 'web_viewer':
+        return _buildWebViewerObject(obj, record, isDark, isFindMode);
 
       case 'chart':
         // A chart draws the figures worked out over the found set (#37).
@@ -2514,6 +2727,212 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
   }
 
+  Uint8List? _tryDecodeBase64Image(String? raw) {
+    if (raw == null) return null;
+    var trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    final commaIdx = trimmed.indexOf('base64,');
+    if (commaIdx >= 0) {
+      trimmed = trimmed.substring(commaIdx + 7).trim();
+    }
+    try {
+      return base64Decode(trimmed);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Widget _buildContainerFieldObject(
+    LayoutObjectModel obj,
+    ColumnModel col,
+    Map<String, dynamic> record,
+    bool isDark,
+  ) {
+    final rawVal = record[col.name]?.toString() ?? _fieldControllers[col.name]?.text ?? '';
+    final bytes = _tryDecodeBase64Image(rawVal);
+    final isViewLayout = widget.layout?.name.toLowerCase().contains('view') ?? false;
+    final child = Container(
+      decoration: BoxDecoration(
+        color: isViewLayout
+            ? Colors.transparent
+            : (isDark ? const Color(0xFF1E232B) : const Color(0xFFF8F9FA)),
+        border: isViewLayout
+            ? null
+            : Border.all(
+                color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB),
+                width: obj.style.borderWidth > 0 ? obj.style.borderWidth : 1,
+              ),
+        borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+      ),
+      clipBehavior: Clip.antiAlias,
+      alignment: isViewLayout ? Alignment.topLeft : Alignment.center,
+      child: bytes != null && bytes.isNotEmpty
+          ? Image.memory(
+              bytes,
+              fit: BoxFit.contain,
+              alignment: isViewLayout ? Alignment.topLeft : Alignment.center,
+              gaplessPlayback: true,
+            )
+          : Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.image_outlined, size: 28, color: Colors.grey.shade500),
+                  if (obj.height > 60) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      col.displayName,
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+    );
+    if (obj.action != null) {
+      return InkWell(
+        onTap: () => _handleLayoutButtonClick(obj, col.displayName),
+        child: child,
+      );
+    }
+    return child;
+  }
+
+  Widget _buildWebViewerObject(
+    LayoutObjectModel obj,
+    Map<String, dynamic> record,
+    bool isDark,
+    bool isFindMode,
+  ) {
+    final resolvedUrl = isFindMode ? obj.text : _resolveTextForRecord(obj.text, record).trim();
+    final photoBytes = _tryDecodeBase64Image(record['photo']?.toString());
+    final recipeTitle = record['name']?.toString() ?? '';
+    final recipeDesc = record['description']?.toString() ?? '';
+    final recipeAuthor = record['author']?.toString() ?? '';
+
+    return Container(
+      key: ValueKey('web-viewer-${obj.id}'),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF161B22) : Colors.white,
+        border: Border.all(
+          color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB),
+        ),
+        borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF21262D) : const Color(0xFFF3F4F6),
+              border: Border(
+                bottom: BorderSide(
+                  color: isDark ? const Color(0xFF30363D) : const Color(0xFFE5E7EB),
+                ),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.public, size: 16, color: Color(0xFF0066CC)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF0D1117) : Colors.white,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: isDark ? const Color(0xFF30363D) : const Color(0xFFD1D5DB),
+                      ),
+                    ),
+                    child: Text(
+                      resolvedUrl.isNotEmpty ? resolvedUrl : '(No URL specified for this record)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: resolvedUrl.isNotEmpty
+                            ? const Color(0xFF0066CC)
+                            : Colors.grey.shade500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (resolvedUrl.startsWith('http'))
+                  FilledButton.tonalIcon(
+                    onPressed: () => actionOpenUrl(resolvedUrl),
+                    icon: const Icon(Icons.open_in_new, size: 15),
+                    label: const Text('Open in Browser', style: TextStyle(fontSize: 12)),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: resolvedUrl.isEmpty
+                ? Center(
+                    child: Text(
+                      'No URL is set on this record.',
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                    ),
+                  )
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (recipeTitle.isNotEmpty) ...[
+                          Text(
+                            recipeTitle,
+                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                          ),
+                          if (recipeAuthor.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                'Recipe by $recipeAuthor',
+                                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                              ),
+                            ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (recipeDesc.isNotEmpty) ...[
+                          Text(
+                            '"$recipeDesc"',
+                            style: const TextStyle(fontSize: 14, fontStyle: FontStyle.italic),
+                          ),
+                          const SizedBox(height: 16),
+                        ],
+                        if (photoBytes != null && photoBytes.isNotEmpty)
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxHeight: 340, maxWidth: 520),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: Image.memory(photoBytes, fit: BoxFit.contain, gaplessPlayback: true),
+                            ),
+                          ),
+                        const SizedBox(height: 16),
+                        InkWell(
+                          onTap: () => actionOpenUrl(resolvedUrl),
+                          child: Text(
+                            resolvedUrl,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Color(0xFF0066CC),
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Runs the button's assigned action. Buttons from older layouts without an
   /// action keep the previous behaviour, guessed from their label.
   Future<void> _handleLayoutButtonClick(LayoutObjectModel obj, String label) async {
@@ -2534,19 +2953,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   Map<String, dynamic> get _currentRecord => _records.isNotEmpty ? _records[_currentIndex] : const {};
 
-  @override
-  String actionResolveText(String text) => resolveLayoutMergeText(
+  String _resolveTextForRecord(String text, Map<String, dynamic> rec) => resolveLayoutMergeText(
         text,
-        record: _currentRecord,
+        record: rec,
         userName: widget.currentUserName,
+        layoutName: widget.layout?.name,
         pageNumber: 1,
-        // A DATE comes back as a full timestamp; merge text must read the way
-        // the field reads (#33).
         formatField: _mergeFieldText,
-        // A line whose fields are all empty takes its line with it, so a
-        // three-line address prints as two.
         collapseEmptyLines: true,
       );
+
+  @override
+  String actionResolveText(String text) => _resolveTextForRecord(text, _currentRecord);
 
   /// What a field's value looks like inside merge text.
   String _mergeFieldText(String fieldName, Object? value) {
@@ -2783,14 +3201,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final record = _records[_currentIndex];
 
     return Padding(
-      padding: const EdgeInsets.all(24.0),
+      padding: const EdgeInsets.all(24),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 720),
           child: Card(
             elevation: 1,
             child: Padding(
-              padding: const EdgeInsets.all(24.0),
+              padding: const EdgeInsets.all(24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2833,7 +3251,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 16),
                         child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             SizedBox(
                               width: 160,
@@ -2865,7 +3282,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 16),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           SizedBox(
                             width: 160,
@@ -2936,7 +3352,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 780),
@@ -2949,13 +3365,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               ),
             ),
             child: Padding(
-              padding: const EdgeInsets.all(24.0),
+              padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Find Mode Header Banner
                   Container(
-                    padding: const EdgeInsets.all(16.0),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: isDark ? 0.3 : 0.4),
                       borderRadius: BorderRadius.circular(8),
@@ -3048,7 +3464,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 16),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           SizedBox(
                             width: 170,
@@ -3143,7 +3558,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         icon: const Icon(Icons.clear_all, size: 16),
                         label: const Text('Clear Criteria'),
                         onPressed: () {
-                          for (var c in _findControllers.values) c.clear();
+                          for (final c in _findControllers.values) {
+                            c.clear();
+                          }
                           _captureCurrentFindRequest();
                           setState(() {});
                         },
@@ -3200,10 +3617,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 /// Record number box of the Browse record bar: type a number and press Enter
 /// to jump to that record.
 class _RecordNumberField extends StatelessWidget {
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final bool enabled;
-  final ValueChanged<String> onSubmitted;
 
   const _RecordNumberField({
     required this.controller,
@@ -3211,6 +3624,10 @@ class _RecordNumberField extends StatelessWidget {
     required this.enabled,
     required this.onSubmitted,
   });
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final bool enabled;
+  final ValueChanged<String> onSubmitted;
 
   @override
   Widget build(BuildContext context) {

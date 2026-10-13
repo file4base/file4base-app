@@ -92,6 +92,7 @@ type MigrationRequest struct {
 	SolutionName   string            `json:"solution_name,omitempty"`
 	DesignXML      string            `json:"design_xml"`
 	DataFiles      map[string]string `json:"data_files,omitempty"` // TableName -> FMPXMLRESULT XML content
+	FMP12Base64    string            `json:"fmp12_base64,omitempty"`
 	TargetDatabase string            `json:"target_database,omitempty"`
 	OwnerUser      string            `json:"owner_user,omitempty"`
 	OwnerPassword  string            `json:"owner_password,omitempty"`
@@ -113,8 +114,8 @@ func IsFMP12Binary(filename string, data []byte) bool {
 		return true
 	}
 	if len(data) >= 20 {
-		if bytes.Contains(data[:minInt(len(data), 128)], []byte("HBAM2")) ||
-			bytes.Contains(data[:minInt(len(data), 128)], []byte("FileMaker Pro")) {
+		if bytes.Contains(data[:minInt(len(data), 4096)], []byte("HBAM2")) ||
+			bytes.Contains(data[:minInt(len(data), 4096)], []byte("FileMaker Pro")) {
 			return true
 		}
 		// Classic FileMaker binary magic header (\x00\x01\x00\x00\x00)
@@ -178,9 +179,9 @@ var catalogOnlyScriptSteps = map[string]string{
 	"insert from url": "Insert from URL",
 }
 
-// AnalyzeAndConvert parses a FileMaker DDR / Save-as-XML document and optional
-// FMPXMLRESULT table exports, returning a ConvertedSolution with its full
-// ConversionReport. It never touches a database.
+// AnalyzeAndConvert parses a FileMaker DDR / Save-as-XML document (XML or HTML)
+// and optional FMPXMLRESULT / .fmp12 table exports, returning a ConvertedSolution
+// with its full ConversionReport. It never touches a database.
 func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	rawXML := strings.TrimSpace(req.DesignXML)
 	if rawXML == "" {
@@ -188,6 +189,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	if IsFMP12Binary("", []byte(rawXML)) {
 		return nil, ErrBinaryFMP12
+	}
+	if isHTMLDDR(rawXML) {
+		return analyzeAndConvertHTMLDDR(req)
 	}
 
 	root, err := parseXMLTree([]byte(rawXML))
@@ -1057,6 +1061,10 @@ func convertLayoutNode(
 				"y":          64 + idx*44,
 				"width":      240,
 				"height":     32,
+				"field_binding": map[string]interface{}{
+					"field_name":    colName,
+					"control_style": "edit_box",
+				},
 			})
 		}
 		if len(objs) > 0 {
@@ -1437,14 +1445,17 @@ func sanitizeIdentifier(raw string) string {
 func coerceDataValue(valStr, fieldType string) interface{} {
 	switch fieldType {
 	case "NUMBER":
-		if f, err := strconv.ParseFloat(valStr, 64); err == nil {
+		if f, ok := parseFractionOrFloat(valStr); ok {
 			return f
 		}
-		return valStr
+		return nil
 	case "BOOLEAN":
 		low := strings.ToLower(valStr)
 		return low == "true" || low == "1" || low == "yes"
 	default:
+		if reUUIDHex.MatchString(valStr) {
+			return strings.ToLower(valStr)
+		}
 		return valStr
 	}
 }

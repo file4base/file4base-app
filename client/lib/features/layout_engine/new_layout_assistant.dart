@@ -8,22 +8,22 @@
 
 import 'package:flutter/material.dart';
 
-import '../../core/api/api_client.dart';
-import 'models/layout_blueprint.dart';
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_blueprint.dart';
 
 /// Shows the assistant and returns what to build, or null if it was cancelled.
 class NewLayoutAssistant extends StatefulWidget {
+
+  const NewLayoutAssistant({required this.tables, super.key, this.initialTable});
   final List<TableModel> tables;
   final TableModel? initialTable;
-
-  const NewLayoutAssistant({super.key, required this.tables, this.initialTable});
 
   static Future<({LayoutBlueprint blueprint, TableModel table})?> show(
     BuildContext context, {
     required List<TableModel> tables,
     TableModel? initialTable,
   }) {
-    if (tables.isEmpty) return Future.value(null);
+    if (tables.isEmpty) return Future.value();
     return showDialog<({LayoutBlueprint blueprint, TableModel table})>(
       context: context,
       builder: (_) => NewLayoutAssistant(tables: tables, initialTable: initialTable),
@@ -241,7 +241,7 @@ class _NewLayoutAssistantState extends State<NewLayoutAssistant> {
         DropdownButtonFormField<String>(
           key: const ValueKey('assistant-table'),
         isExpanded: true,
-          value: _table.id,
+          initialValue: _table.id,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           items: [
             for (final t in widget.tables)
@@ -271,7 +271,7 @@ class _NewLayoutAssistantState extends State<NewLayoutAssistant> {
         DropdownButtonFormField<String>(
           key: const ValueKey('assistant-theme'),
         isExpanded: true,
-          value: _theme.id,
+          initialValue: _theme.id,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           items: [
             for (final theme in LayoutTheme.all)
@@ -389,7 +389,7 @@ class _NewLayoutAssistantState extends State<NewLayoutAssistant> {
       DropdownButtonFormField<String>(
         key: const ValueKey('assistant-break-field'),
         isExpanded: true,
-        value: _breakField,
+        initialValue: _breakField,
         decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
         hint: const Text('Choose a field', style: TextStyle(fontSize: 12)),
         items: [
@@ -445,7 +445,7 @@ class _NewLayoutAssistantState extends State<NewLayoutAssistant> {
       const SizedBox(height: 4),
       DropdownButtonFormField<String>(
         key: const ValueKey('assistant-stock'),
-        value: _stockId,
+        initialValue: _stockId,
         decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
         isExpanded: true,
         items: [

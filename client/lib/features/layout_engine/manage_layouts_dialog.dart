@@ -1,28 +1,23 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/new_layout_assistant.dart';
+import 'package:file4base_client/features/tools/structure_clipboard_dialog.dart';
+import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/api/api_client.dart';
-import '../../main.dart';
-import '../tools/structure_clipboard_dialog.dart';
-import 'new_layout_assistant.dart';
 
 /// ManageLayoutsDialog allows users to view all layouts in the solution,
 /// create new layouts, rename existing layouts, duplicate layouts,
 /// and switch between them.
 class ManageLayoutsDialog extends ConsumerStatefulWidget {
+
+  const ManageLayoutsDialog({
+    required this.layouts, required this.tables, required this.activeLayout, required this.onSelectLayout, required this.onLayoutsChanged, super.key,
+  });
   final List<LayoutModel> layouts;
   final List<TableModel> tables;
   final LayoutModel? activeLayout;
   final ValueChanged<LayoutModel> onSelectLayout;
   final VoidCallback onLayoutsChanged;
-
-  const ManageLayoutsDialog({
-    super.key,
-    required this.layouts,
-    required this.tables,
-    required this.activeLayout,
-    required this.onSelectLayout,
-    required this.onLayoutsChanged,
-  });
 
   static Future<void> show(
     BuildContext context, {
@@ -34,7 +29,6 @@ class ManageLayoutsDialog extends ConsumerStatefulWidget {
   }) async {
     await showDialog(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => ManageLayoutsDialog(
         layouts: layouts,
         tables: tables,
@@ -319,7 +313,7 @@ class _ManageLayoutsDialogState extends ConsumerState<ManageLayoutsDialog> {
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 820, maxHeight: 600),
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -408,7 +402,7 @@ class _ManageLayoutsDialogState extends ConsumerState<ManageLayoutsDialog> {
                             ),
                             child: ListView.separated(
                               itemCount: _layouts.length,
-                              separatorBuilder: (_, __) =>
+                              separatorBuilder: (_, _) =>
                                   const Divider(height: 1),
                               itemBuilder: (ctx, idx) {
                                 final layout = _layouts[idx];

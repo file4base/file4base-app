@@ -3,10 +3,9 @@
 
 import 'dart:math' as math;
 
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:flutter/material.dart';
-
-import '../../core/api/api_client.dart';
-import 'models/chart_definition.dart';
 
 /// The colours series take when none was chosen, in order.
 const kChartPalette = <Color>[
@@ -83,7 +82,7 @@ ChartData chartDataFromRecords(
   }
 
   return ChartData(
-    seriesLabels: [series.first.label.isEmpty ? yField : series.first.label],
+    seriesLabels: [if (series.first.label.isEmpty) yField else series.first.label],
     points: points,
   );
 }
@@ -97,20 +96,18 @@ String chartValueText(double value) {
 
 /// Draws a chart into the space it is given.
 class ChartView extends StatelessWidget {
+
+  const ChartView({
+    required this.config, required this.data, super.key,
+    this.isDark = false,
+    this.notice,
+  });
   final ChartConfigModel config;
   final ChartData data;
   final bool isDark;
 
   /// Shown instead of the chart when there is nothing to draw.
   final String? notice;
-
-  const ChartView({
-    super.key,
-    required this.config,
-    required this.data,
-    this.isDark = false,
-    this.notice,
-  });
 
   @override
   Widget build(BuildContext context) {
@@ -216,11 +213,11 @@ class ChartView extends StatelessWidget {
 }
 
 class _ChartPainter extends CustomPainter {
+
+  _ChartPainter({required this.config, required this.data, required this.isDark});
   final ChartConfigModel config;
   final ChartData data;
   final bool isDark;
-
-  _ChartPainter({required this.config, required this.data, required this.isDark});
 
   Color get _axis => isDark ? Colors.white24 : Colors.black26;
   Color get _text => isDark ? Colors.white70 : Colors.black87;
@@ -433,7 +430,8 @@ class _ChartPainter extends CustomPainter {
     if (plot.width <= 0 || plot.height <= 0) return;
     _paintAxes(canvas, plot);
 
-    var maxX = 0.0, maxY = 0.0;
+    var maxX = 0.0;
+    var maxY = 0.0;
     for (final point in data.points) {
       final x = double.tryParse(point.category) ?? 0;
       final y = point.values.isEmpty ? null : point.values.first;

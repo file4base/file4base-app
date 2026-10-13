@@ -1,6 +1,12 @@
-name: Qodana
+name: Code Quality
 on:
   workflow_dispatch:
+    inputs:
+      auto_fix:
+        description: 'Apply automated Dart/Flutter fixes (dart fix --apply) and commit back to branch'
+        required: false
+        default: false
+        type: boolean
   pull_request:
   push:
     branches:
@@ -33,3 +39,55 @@ jobs:
         env:
           QODANA_TOKEN: ${{ secrets.QODANA_TOKEN }}
           QODANA_ENDPOINT: 'https://qodana.cloud'
+
+  flutter-analyze:
+    name: Flutter Static Analysis (very_good_analysis)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+    defaults:
+      run:
+        working-directory: client
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.Ref || github.ref_name }}
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Preview automated fixes (dart fix --dry-run)
+        if: ${{ !inputs.auto_fix }}
+        run: dart fix --dry-run
+
+      - name: Apply automated fixes (dart fix --apply)
+        if: ${{ inputs.auto_fix }}
+        run: |
+          dart fix --apply
+          dart format .
+
+      - name: Commit applied fixes
+        if: ${{ inputs.auto_fix }}
+        working-directory: .
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet client/; then
+            git add client/
+            git commit -m "style(client): apply very_good_analysis automated fixes"
+            git push
+          fi
+
+      - name: Run Flutter Analyze (very_good_analysis)
+        run: flutter analyze --no-fatal-infos
+
+

@@ -585,29 +585,35 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			}
 		}
 		tableIDs[t.ID] = dstID
-		for _, c := range t.Columns {
-			cname := dbal.NormalizeIdentifier(c.Name)
-			if id, ok := existingCols[cname]; ok {
-				columnIDs[c.ID] = id
-				continue
+		for _, calcPass := range []bool{false, true} {
+			for _, c := range t.Columns {
+				isCalc := strings.EqualFold(c.FieldType, string(dbal.FieldTypeCalculation))
+				if isCalc != calcPass {
+					continue
+				}
+				cname := dbal.NormalizeIdentifier(c.Name)
+				if id, ok := existingCols[cname]; ok {
+					columnIDs[c.ID] = id
+					continue
+				}
+				if c.IsPrimaryKey {
+					return nil, rollback(fmt.Errorf("table %s: primary key %s does not exist in the destination", name, cname))
+				}
+				col, err := s.AddColumn(ctx, dstID, ColumnMetadata{
+					Name: cname, DisplayName: c.DisplayName, FieldType: dbal.AgnosticFieldType(c.FieldType), IsNullable: c.IsNullable,
+					DefaultValue: c.DefaultValue, CalculationFormula: c.CalculationFormula, ValidationRules: c.ValidationRules,
+				})
+				if err != nil {
+					return nil, rollback(fmt.Errorf("adding field %s to table %s: %w", cname, name, err))
+				}
+				if existing != nil {
+					tblID, colID := dstID, col.ID
+					undo = append(undo, func() { _ = s.DeleteColumn(bg, tblID, colID) })
+				}
+				report.ColumnsCreated++
+				columnIDs[c.ID] = col.ID
+				existingCols[cname] = col.ID
 			}
-			if c.IsPrimaryKey {
-				return nil, rollback(fmt.Errorf("table %s: primary key %s does not exist in the destination", name, cname))
-			}
-			col, err := s.AddColumn(ctx, dstID, ColumnMetadata{
-				Name: cname, DisplayName: c.DisplayName, FieldType: dbal.AgnosticFieldType(c.FieldType), IsNullable: c.IsNullable,
-				DefaultValue: c.DefaultValue, CalculationFormula: c.CalculationFormula, ValidationRules: c.ValidationRules,
-			})
-			if err != nil {
-				return nil, rollback(fmt.Errorf("adding field %s to table %s: %w", cname, name, err))
-			}
-			if existing != nil {
-				tblID, colID := dstID, col.ID
-				undo = append(undo, func() { _ = s.DeleteColumn(bg, tblID, colID) })
-			}
-			report.ColumnsCreated++
-			columnIDs[c.ID] = col.ID
-			existingCols[cname] = col.ID
 		}
 	}
 

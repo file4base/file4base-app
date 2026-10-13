@@ -1,9 +1,7 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
-
-import '../../core/api/api_client.dart';
-import '../../core/models/script_models.dart';
-import 'layout_action_runner.dart';
-import 'models/layout_definition.dart';
 
 /// "Button Setup": the label of a layout button and what a click on it runs
 /// in Browse mode (nothing, a single step, or a stored script).
@@ -12,6 +10,14 @@ import 'models/layout_definition.dart';
 /// menu, Enter, or the inspector. Returns the updated button, or null when
 /// cancelled.
 class ButtonSetupDialog extends StatefulWidget {
+
+  const ButtonSetupDialog({
+    required this.button, required this.apiClient, super.key,
+    this.layoutNames = const [],
+    this.columns = const [],
+    this.contextTable = '',
+    this.onOpenScriptWorkspace,
+  });
   final LayoutObjectModel button;
   final ApiClient apiClient;
   final List<String> layoutNames;
@@ -20,16 +26,6 @@ class ButtonSetupDialog extends StatefulWidget {
 
   /// Opens the Script Workspace; completes when it closes.
   final Future<void> Function()? onOpenScriptWorkspace;
-
-  const ButtonSetupDialog({
-    super.key,
-    required this.button,
-    required this.apiClient,
-    this.layoutNames = const [],
-    this.columns = const [],
-    this.contextTable = '',
-    this.onOpenScriptWorkspace,
-  });
 
   static Future<LayoutObjectModel?> show(
     BuildContext context, {

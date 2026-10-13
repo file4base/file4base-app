@@ -1,12 +1,11 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-
-import '../../core/models/page_setup_model.dart';
 
 /// Builds print-ready PDFs from the Preview mode sheet.
 ///
@@ -17,7 +16,7 @@ import '../../core/models/page_setup_model.dart';
 /// pages.
 class LayoutPrintService {
   /// Capture resolution: 3 device pixels per point (~216 dpi).
-  static const double pixelRatio = 3.0;
+  static const double pixelRatio = 3;
 
   /// Captures the widget behind [boundaryKey] (a RepaintBoundary).
   static Future<ui.Image> capture(GlobalKey boundaryKey) async {
@@ -55,7 +54,7 @@ class LayoutPrintService {
   }
 
   static Future<Uint8List> _slicePng(ui.Image source, int top, int height) async {
-    ui.Image slice = source;
+    var slice = source;
     if (top != 0 || height != source.height) {
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);

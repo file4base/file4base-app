@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/services/solution_storage.dart';
 
 enum ExportFormat {
   csv,
@@ -14,6 +15,13 @@ enum ExportFormat {
 }
 
 class ExportRecordsDialog extends StatefulWidget {
+
+  const ExportRecordsDialog({
+    required this.apiClient, required this.tables, super.key,
+    this.initialTable,
+    this.findRequests = const [],
+    this.foundCount = 0,
+  });
   final ApiClient apiClient;
   final List<TableModel> tables;
   final TableModel? initialTable;
@@ -24,15 +32,6 @@ class ExportRecordsDialog extends StatefulWidget {
 
   /// How many records that found set holds, for saying so.
   final int foundCount;
-
-  const ExportRecordsDialog({
-    super.key,
-    required this.apiClient,
-    required this.tables,
-    this.initialTable,
-    this.findRequests = const [],
-    this.foundCount = 0,
-  });
 
   static Future<void> show(
     BuildContext context, {
@@ -65,7 +64,7 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
 
   /// Write the found set rather than the whole table. Only offered when
   /// there is one, and only for the table it was found in.
-  bool _foundSetOnly = true;
+  final bool _foundSetOnly = true;
 
   /// True when a found set is in hand for the table being exported.
   bool get _hasFoundSet =>
@@ -181,12 +180,12 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
       case ExportFormat.xml:
         final buffer = StringBuffer();
         buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
-        final tableName = _selectedTable?.name.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_') ?? 'records';
+        final tableName = _selectedTable?.name.replaceAll(RegExp('[^a-zA-Z0-9_]'), '_') ?? 'records';
         buffer.writeln('<$tableName>');
         for (final row in rows) {
           buffer.writeln('  <record>');
           for (final col in columns) {
-            final tag = col.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+            final tag = col.replaceAll(RegExp('[^a-zA-Z0-9_]'), '_');
             buffer.writeln('    <$tag>${_escapeXml(row[col])}</$tag>');
           }
           buffer.writeln('  </record>');
@@ -287,7 +286,7 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
         _statusMessage = 'Formatting ${rows.length} records...';
       });
 
-      List<String> columns = _selectedTable!.columns.map((c) => c.name).toList();
+      var columns = _selectedTable!.columns.map((c) => c.name).toList();
       if (columns.isEmpty && rows.isNotEmpty) {
         columns = rows.first.keys.toList();
       }

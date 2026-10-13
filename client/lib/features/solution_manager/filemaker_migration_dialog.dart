@@ -68,6 +68,8 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
   final _dataTableCtrl = TextEditingController();
   String? _designFileName;
   final Map<String, String> _dataFiles = {};
+  String? _fmp12FileName;
+  String? _fmp12Base64;
 
   bool _isRunningPreflight = false;
   bool _isApplying = false;
@@ -88,13 +90,13 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
     setState(() => _error = null);
     try {
       final file = await SolutionStorageService.pickFile(
-        allowedExtensions: ['xml', 'ddr'],
+        allowedExtensions: ['xml', 'ddr', 'html', 'htm'],
       );
       if (file == null) return;
       if (FileMakerMigrationDialog.isFmp12Binary(file.name, file.bytes)) {
         setState(() {
           _error =
-              '"${file.name}" is a binary .fmp12 container. Export a Database Design Report (DDR) or Save a Copy as XML from FileMaker first.';
+              '"${file.name}" is a binary .fmp12 container. Select the DDR XML or HTML file as the Design File, and attach the .fmp12 file using "Attach .fmp12 Data" below.';
         });
         return;
       }
@@ -105,7 +107,24 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         _report = null;
       });
     } catch (e) {
-      setState(() => _error = 'Failed reading XML file: $e');
+      setState(() => _error = 'Failed reading DDR file: $e');
+    }
+  }
+
+  Future<void> _pickFmp12DataFile() async {
+    setState(() => _error = null);
+    try {
+      final file = await SolutionStorageService.pickFile(
+        allowedExtensions: ['fmp12'],
+      );
+      if (file == null) return;
+      setState(() {
+        _fmp12FileName = file.name;
+        _fmp12Base64 = base64Encode(file.bytes);
+        _report = null;
+      });
+    } catch (e) {
+      setState(() => _error = 'Failed reading .fmp12 file: $e');
     }
   }
 
@@ -140,7 +159,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
     if (xml.isEmpty) {
       setState(() {
         _error =
-            'Select or paste a FileMaker DDR / Save-as-XML design file first.';
+            'Select or paste a FileMaker DDR (XML or HTML) / Save-as-XML design file first.';
       });
       return;
     }
@@ -153,6 +172,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         designXml: xml,
         solutionName: _solutionNameCtrl.text.trim(),
         dataFiles: _dataFiles,
+        fmp12Base64: _fmp12Base64,
       );
       if (!mounted) return;
       setState(() {
@@ -184,6 +204,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         designXml: xml,
         solutionName: _solutionNameCtrl.text.trim(),
         dataFiles: _dataFiles,
+        fmp12Base64: _fmp12Base64,
       );
       if (!mounted) return;
       setState(() {
@@ -287,7 +308,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                             icon: const Icon(Icons.upload_file, size: 15),
                             label: Text(
                               _designFileName == null
-                                  ? 'Choose DDR XML...'
+                                  ? 'Choose DDR (XML/HTML)...'
                                   : 'Design: $_designFileName',
                             ),
                           ),
@@ -307,7 +328,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                           ),
                           decoration: const InputDecoration(
                             hintText:
-                                'Paste FileMaker <FMPReport> / <FMPSaveAsXML> XML here or choose a file above...',
+                                'Paste FileMaker DDR (XML or HTML) / <FMPSaveAsXML> here or choose a file above...',
                             hintStyle: TextStyle(color: Colors.white38),
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.all(8),
@@ -338,24 +359,45 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                             icon: const Icon(Icons.dataset_outlined, size: 15),
                             label: const Text('Attach FMPXMLRESULT...'),
                           ),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            onPressed: _pickFmp12DataFile,
+                            icon: const Icon(Icons.storage_outlined, size: 15),
+                            label: Text(
+                              _fmp12FileName == null
+                                  ? 'Attach .fmp12 Data...'
+                                  : '.fmp12: $_fmp12FileName',
+                            ),
+                          ),
                         ],
                       ),
-                      if (_dataFiles.isNotEmpty) ...[
+                      if (_dataFiles.isNotEmpty || _fmp12FileName != null) ...[
                         const SizedBox(height: 6),
                         Wrap(
                           spacing: 6,
-                          children: _dataFiles.keys
-                              .map(
-                                (tbl) => Chip(
-                                  label: Text(
-                                    'Records: $tbl',
-                                    style: const TextStyle(fontSize: 11),
-                                  ),
-                                  onDeleted: () =>
-                                      setState(() => _dataFiles.remove(tbl)),
+                          children: [
+                            if (_fmp12FileName != null)
+                              Chip(
+                                label: Text(
+                                  'Binary Data: $_fmp12FileName',
+                                  style: const TextStyle(fontSize: 11),
                                 ),
-                              )
-                              .toList(),
+                                onDeleted: () => setState(() {
+                                  _fmp12FileName = null;
+                                  _fmp12Base64 = null;
+                                }),
+                              ),
+                            ..._dataFiles.keys.map(
+                              (tbl) => Chip(
+                                label: Text(
+                                  'Records: $tbl',
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                                onDeleted: () =>
+                                    setState(() => _dataFiles.remove(tbl)),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                       if (_error != null) ...[

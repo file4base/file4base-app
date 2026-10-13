@@ -34,8 +34,8 @@ func FunctionNames() []string {
 	return names
 }
 
-// evalCall evaluates a function. IF is handled here rather than in the table
-// because only the branch that is taken may be evaluated.
+// evalCall evaluates a function. IF and CASE are handled here rather than in
+// the table because only the branch that is taken may be evaluated.
 func evalCall(t callNode, record Record) (value, error) {
 	if t.name == "IF" {
 		test, err := eval(t.args[0], record)
@@ -47,6 +47,22 @@ func evalCall(t callNode, record Record) (value, error) {
 		}
 		if len(t.args) == 3 {
 			return eval(t.args[2], record)
+		}
+		return empty, nil
+	}
+
+	if t.name == "CASE" {
+		for i := 0; i+1 < len(t.args); i += 2 {
+			test, err := eval(t.args[i], record)
+			if err != nil {
+				return empty, err
+			}
+			if test.asBool() {
+				return eval(t.args[i+1], record)
+			}
+		}
+		if len(t.args)%2 == 1 {
+			return eval(t.args[len(t.args)-1], record)
 		}
 		return empty, nil
 	}
@@ -66,10 +82,13 @@ var functions map[string]function
 
 func init() {
 	functions = map[string]function{
-		// IF's branches are evaluated lazily in evalCall; the entry is here so
-		// the parser knows the name and its arity.
+		// IF and CASE branches are evaluated lazily in evalCall; the entries
+		// are here so the parser knows their names and arities.
 		"IF": {minArgs: 2, maxArgs: 3, call: func(t callNode, args []value) (value, error) {
 			return empty, errorAt(t.at, "IF is evaluated directly")
+		}},
+		"CASE": {minArgs: 2, maxArgs: -1, call: func(t callNode, args []value) (value, error) {
+			return empty, errorAt(t.at, "CASE is evaluated directly")
 		}},
 
 		"UPPER": text1(strings.ToUpper),
@@ -77,6 +96,23 @@ func init() {
 		"TRIM":  text1(strings.TrimSpace),
 		"LENGTH": {minArgs: 1, maxArgs: 1, call: func(t callNode, a []value) (value, error) {
 			return numberValue(float64(len([]rune(a[0].asText())))), nil
+		}},
+
+		"SUBSTITUTE": {minArgs: 3, maxArgs: 3, call: func(t callNode, a []value) (value, error) {
+			return textValue(strings.ReplaceAll(a[0].asText(), a[1].asText(), a[2].asText())), nil
+		}},
+
+		"LIST": {minArgs: 1, maxArgs: -1, call: func(t callNode, a []value) (value, error) {
+			var parts []string
+			for _, v := range a {
+				if !v.isEmpty() {
+					parts = append(parts, v.asText())
+				}
+			}
+			if len(parts) == 0 {
+				return empty, nil
+			}
+			return textValue(strings.Join(parts, "\n")), nil
 		}},
 
 		"CONCAT": {minArgs: 1, maxArgs: -1, call: func(t callNode, a []value) (value, error) {

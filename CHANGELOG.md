@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.12.1] - 2026-10-13
+
+### Added
+- **FileMaker HTML DDR & Binary `.fmp12` Record/Container Migration**:
+  - **HTML DDR Parser (`server/internal/migration/html_ddr.go`)**: Parses full and compact FileMaker HTML Database Design Reports (`recipes.html`, `Summary.html`), extracting base tables, columns, calculations, summaries, table occurrences, pair-keyed relationships (`layout_occurrence|target_occurrence`), value lists, scripts, and layouts (`768pt` and `1024pt` canvas bounds, portals with absolute child offsets, multiline merge text preserving `&#13;` line breaks, `Group Buttons` attached to fields and merge links, and `web_viewer` controls).
+  - **Binary `.fmp12` Record & `CONTAINER` Image Extractor (`server/internal/migration/fmp12_records.go`)**: Scans `HBAM2` pages when a `.fmp12` file is paired with an XML/HTML DDR (`fmp12_base64`), extracting table rows, relational UUID keys, embedded `JPEG`/`PNG` `CONTAINER` images (encoded as base64), and pre-evaluated calculation/summary fields (`qty_metric`, `unit_metric`, `yield_calc`, `ingredients_formatted`, `tags`).
+  - **Layout Canvas, List View, Container Image, Web Viewer & Script Runner Enhancements** (`client/lib/features/data_browser/data_browser_widget.dart`, `client/lib/features/data_browser/report_view.dart`, `client/lib/features/data_browser/related_records.dart`, `client/lib/features/layout_engine/layout_action_runner.dart`, `client/lib/features/layout_engine/layout_object_visuals.dart`):
+    - Renders `CONTAINER` fields (`recipes::Photo`) as decoded images (`Image.memory`) across Form, List, and Preview/Report views.
+    - Renders custom list layouts (`defaultView == 'list'`, e.g., `Recipe List`) with a fixed header band and repeating clickable record rows.
+    - Renders `web_viewer` objects (`Web View`) with address bar, recipe preview card, and external browser launch.
+    - Enables multiline `TextField` inputs when `height > 44` (`Description`, `Instructions`).
+    - Resolves `{{LayoutName}}` and `snake_case` merge tokens across Form, List, and Preview modes.
+    - Executes Title Case and `snake_case` script steps including `If` / `Else If` / `Else` / `End If` (`Get ( LayoutName )`, `not IsEmpty(...)`, `and`/`or`, `≠`), `Set Variable` (`$local` and `$$global` including `$$lastLayout`), and `Go to Layout`.
+    - Disambiguates self-join relationships in portals (`RelatedContext.resolve` and `relIDByOccurrence` pair keys) so parent-to-child portals (`recipe_ingredients`) are never shadowed by auxiliary self-joins (`recipe_ingredients = recipe_ingredients ordered`).
+- **FileMaker-to-File4Base Migration Guide & Case Study** ([`docs/tutorials/filemaker_migration_guide.md`](docs/tutorials/filemaker_migration_guide.md), [`docs/specs/filemaker_migration.md`](docs/specs/filemaker_migration.md), `assets/mockups/filemaker_migration_pipeline.svg`, `assets/mockups/filemaker_migration_layouts.svg`, `assets/mockups/file4base_edit_recipe_portal_error.png`, `assets/mockups/file4base_edit_recipe_resolved.png`): Step-by-step migration documentation, architecture diagrams, Before/After portal resolution screenshots, and engineering case study based on `recipes.fmp12` + `recipes.html`.
+- **Flutter Static Analysis with `very_good_analysis`** (`client/analysis_options.yaml`, `client/pubspec.yaml`, `.github/workflows/code_quality.yml`, `scripts/flutter_analyze_fix.sh`): Configured `very_good_analysis: ^10.2.0` for automated lint checking and `dart fix --apply` remediation locally and in GitHub Actions CI.
+
+---
+
 ## [0.12.0] - 2026-10-13
 
 ### Added

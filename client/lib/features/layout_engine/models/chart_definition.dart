@@ -39,6 +39,14 @@ class ChartType {
 
 /// One series of a chart: where its numbers come from and how it is drawn.
 class ChartSeriesModel {
+
+  const ChartSeriesModel({required this.field, this.label = '', this.color});
+
+  factory ChartSeriesModel.fromJson(Map<String, dynamic> json) => ChartSeriesModel(
+        field: json['field'] as String? ?? '',
+        label: json['label'] as String? ?? '',
+        color: json['color'] as String?,
+      );
   /// For a grouped chart, the summary field whose figure each column is. For a
   /// scatter, the number field plotted up the side.
   final String field;
@@ -48,14 +56,6 @@ class ChartSeriesModel {
 
   /// `#RRGGBB`, or null to take the next colour of the default palette.
   final String? color;
-
-  const ChartSeriesModel({required this.field, this.label = '', this.color});
-
-  factory ChartSeriesModel.fromJson(Map<String, dynamic> json) => ChartSeriesModel(
-        field: json['field'] as String? ?? '',
-        label: json['label'] as String? ?? '',
-        color: json['color'] as String?,
-      );
 
   Map<String, dynamic> toJson() => {
         'field': field,
@@ -72,6 +72,29 @@ class ChartSeriesModel {
 
 /// A chart's setup: what it draws and how.
 class ChartConfigModel {
+
+  const ChartConfigModel({
+    this.chartType = ChartType.column,
+    this.title = '',
+    this.categoryField,
+    this.series = const [],
+    this.showValues = true,
+    this.showLegend = true,
+    this.showPercentages = false,
+  });
+
+  factory ChartConfigModel.fromJson(Map<String, dynamic> json) => ChartConfigModel(
+        chartType: json['chart_type'] as String? ?? ChartType.column,
+        title: json['title'] as String? ?? '',
+        categoryField: json['category_field'] as String?,
+        series: [
+          for (final s in (json['series'] as List? ?? const []))
+            ChartSeriesModel.fromJson(Map<String, dynamic>.from(s as Map)),
+        ],
+        showValues: json['show_values'] as bool? ?? true,
+        showLegend: json['show_legend'] as bool? ?? true,
+        showPercentages: json['show_percentages'] as bool? ?? false,
+      );
   /// One of [ChartType].
   final String chartType;
 
@@ -90,16 +113,6 @@ class ChartConfigModel {
   /// Pie: label each slice with its share as well as its value.
   final bool showPercentages;
 
-  const ChartConfigModel({
-    this.chartType = ChartType.column,
-    this.title = '',
-    this.categoryField,
-    this.series = const [],
-    this.showValues = true,
-    this.showLegend = true,
-    this.showPercentages = false,
-  });
-
   /// True when the chart knows what to draw.
   bool get isBound =>
       (categoryField?.isNotEmpty ?? false) && series.any((s) => s.field.isNotEmpty);
@@ -110,19 +123,6 @@ class ChartConfigModel {
     if (ChartType.isSingleSeries(chartType) && named.length > 1) return [named.first];
     return named;
   }
-
-  factory ChartConfigModel.fromJson(Map<String, dynamic> json) => ChartConfigModel(
-        chartType: json['chart_type'] as String? ?? ChartType.column,
-        title: json['title'] as String? ?? '',
-        categoryField: json['category_field'] as String?,
-        series: [
-          for (final s in (json['series'] as List? ?? const []))
-            ChartSeriesModel.fromJson(Map<String, dynamic>.from(s as Map)),
-        ],
-        showValues: json['show_values'] as bool? ?? true,
-        showLegend: json['show_legend'] as bool? ?? true,
-        showPercentages: json['show_percentages'] as bool? ?? false,
-      );
 
   Map<String, dynamic> toJson() => {
         'chart_type': chartType,
@@ -157,18 +157,18 @@ class ChartConfigModel {
 
 /// One point of a chart: a category and a number per series.
 class ChartPoint {
-  final String category;
-  final List<double?> values;
 
   const ChartPoint({required this.category, required this.values});
+  final String category;
+  final List<double?> values;
 }
 
 /// The numbers a chart draws, worked out from the figures or the records.
 class ChartData {
-  final List<ChartPoint> points;
-  final List<String> seriesLabels;
 
   const ChartData({this.points = const [], this.seriesLabels = const []});
+  final List<ChartPoint> points;
+  final List<String> seriesLabels;
 
   bool get isEmpty => points.isEmpty || seriesLabels.isEmpty;
 
