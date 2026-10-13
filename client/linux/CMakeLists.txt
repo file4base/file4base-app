@@ -126,3 +126,15 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Install the project license and third-party notices for bundled native libraries (PDFium).
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+if(EXISTS "${CMAKE_BINARY_DIR}/pdfium-src/LICENSE")
+  install(FILES
+    "${CMAKE_BINARY_DIR}/pdfium-src/LICENSE"
+    "${CMAKE_BINARY_DIR}/pdfium-src/VERSION"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/THIRD_PARTY_NOTICES/pdfium"
+    COMPONENT Runtime)
+endif()

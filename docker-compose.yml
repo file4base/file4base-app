@@ -76,7 +76,7 @@ services:
           - server
           - file4base-api
 
-  # WebDirect Client (Web UI served when launched as a Server via docker compose)
+  # File4Base Web Client (Web UI served when launched as a Server via docker compose)
   web:
     build:
       context: ./client

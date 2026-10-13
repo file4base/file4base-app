@@ -14,6 +14,7 @@ set -euo pipefail
 # Environment overrides:
 #   FILE4BASE_REGISTRY  Docker Hub namespace (default: cloudresources)
 #   PLATFORMS           Target platforms (default: linux/amd64,linux/arm64,linux/arm/v7)
+#   EXPECTED_TAG        When set (e.g. in CI), must equal "v<VERSION>" or the script fails
 #   NO_LATEST=1         Do not move the `latest` tag (e.g. for a hotfix of an older release)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,11 +22,29 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VERSION="$(tr -d '[:space:]' < "${ROOT_DIR}/VERSION")"
 REGISTRY="${FILE4BASE_REGISTRY:-cloudresources}"
 PLATFORMS="${PLATFORMS:-linux/amd64,linux/arm64,linux/arm/v7}"
-BUILDER="file4base-builder"
+BUILDER="${BUILDX_BUILDER:-file4base-builder}"
 
 if ! [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Invalid version in VERSION file: ${VERSION}"
+    echo "Invalid version in VERSION file: ${VERSION}" >&2
     exit 1
+fi
+
+if [ -n "${EXPECTED_TAG:-}" ] && [ "${EXPECTED_TAG}" != "v${VERSION}" ]; then
+    echo "ERROR: tag '${EXPECTED_TAG}' does not match VERSION file ('${VERSION}'; expected 'v${VERSION}')." >&2
+    exit 1
+fi
+
+# When NO_LATEST is not explicitly set, do not move `latest` if a newer
+# release tag (vMAJOR.MINOR.PATCH) already exists in git (hotfix release).
+if [ -z "${NO_LATEST:-}" ]; then
+    newest_tag="$(git -C "${ROOT_DIR}" tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1 || true)"
+    if [ -n "${newest_tag}" ] && [ "${newest_tag}" != "${VERSION}" ]; then
+        highest="$(printf '%s\n%s\n' "${VERSION}" "${newest_tag}" | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)"
+        if [ "${highest}" != "${VERSION}" ]; then
+            echo "--> Newer release v${newest_tag} exists; setting NO_LATEST=1 for hotfix v${VERSION}"
+            NO_LATEST=1
+        fi
+    fi
 fi
 
 if [ -n "$(git -C "${ROOT_DIR}" status --porcelain)" ]; then

@@ -350,7 +350,7 @@ class _AboutFile4BaseDialogState extends State<AboutFile4BaseDialog>
             context,
             icon: Icons.web_rounded,
             label: 'Frontend Engine',
-            value: 'Flutter 3.x (WebDirect & Desktop Native)',
+            value: 'Flutter 3.x (File4Base Web Client & Desktop Native)',
           ),
           _infoTile(
             context,
@@ -445,9 +445,57 @@ class _AboutFile4BaseDialogState extends State<AboutFile4BaseDialog>
               _techBadge(context, Icons.router, 'chi HTTP Router', 'REST API Router'),
               _techBadge(context, Icons.bolt, 'pgx/v5 Driver', 'PostgreSQL Connectivity'),
               _techBadge(context, Icons.view_in_ar, 'Docker & Nginx', 'Container Runtime'),
+              _techBadge(context, Icons.picture_as_pdf, 'PDFium', 'PDF Rendering'),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: theme.dividerColor.withValues(alpha: 0.12),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Third-Party License Notices',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Desktop archives include LICENSE (GPL-3.0-only), Flutter package notices '
+                  '(data/flutter_assets/NOTICES.Z), and native PDFium notices '
+                  '(THIRD_PARTY_NOTICES/pdfium/LICENSE on Linux and Windows). '
+                  'Server images include Go notices at /usr/share/doc/file4base/THIRD_PARTY_NOTICES.',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    showLicensePage(
+                      context: context,
+                      applicationName: 'File4Base',
+                      applicationVersion: _version,
+                    );
+                  },
+                  icon: const Icon(Icons.description_outlined, size: 15),
+                  label: const Text(
+                    'View Open-Source Licenses',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(

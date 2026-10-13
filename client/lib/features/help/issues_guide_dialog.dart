@@ -151,7 +151,7 @@ class IssuesGuideDialog extends StatelessWidget {
                         icon: Icons.title_rounded,
                         title: '2. Use a clear, labeled title',
                         description:
-                            'Use descriptive prefixes such as [Bug], [Feature], [Desktop], or [WebDirect] (e.g. "[Bug] Cannot connect to PostgreSQL").',
+                            'Use descriptive prefixes such as [Bug], [Feature], [Desktop], or [Web Client] (e.g. "[Bug] Cannot connect to PostgreSQL").',
                       ),
                       const SizedBox(height: 10),
                       _buildGuidelineRow(

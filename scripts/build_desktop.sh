@@ -46,7 +46,9 @@ build_macos() {
     echo "==> Packaging macOS application..."
     APP_PATH="${CLIENT_DIR}/build/macos/Build/Products/Release/File4Base.app"
     if [ -d "${APP_PATH}" ]; then
+        cp "${ROOT_DIR}/LICENSE" "${APP_PATH}/Contents/Resources/LICENSE"
         ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${DIST_DIR}/File4Base-macOS-universal.zip"
+        "${SCRIPT_DIR}/verify_desktop_archive.sh" "${DIST_DIR}/File4Base-macOS-universal.zip"
         echo "Packaging complete: ${DIST_DIR}/File4Base-macOS-universal.zip"
     else
         echo "Error: File4Base.app not found at ${APP_PATH}"
@@ -62,6 +64,9 @@ build_linux() {
     BUNDLE_DIR="${CLIENT_DIR}/build/linux/x64/release/bundle"
     if [ -d "${BUNDLE_DIR}" ]; then
         tar -czf "${DIST_DIR}/File4Base-Linux-x64.tar.gz" -C "${BUNDLE_DIR}" .
+        "${SCRIPT_DIR}/verify_desktop_archive.sh" \
+            "${DIST_DIR}/File4Base-Linux-x64.tar.gz" \
+            "${CLIENT_DIR}/build/linux/x64/release/pdfium-src"
         echo "Packaging complete: ${DIST_DIR}/File4Base-Linux-x64.tar.gz"
     else
         echo "Error: Linux release bundle not found at ${BUNDLE_DIR}"
@@ -81,6 +86,9 @@ build_windows() {
         else
             (cd "${BUNDLE_DIR}" && zip -r -q "${DIST_DIR}/File4Base-Windows-x64.zip" .)
         fi
+        "${SCRIPT_DIR}/verify_desktop_archive.sh" \
+            "${DIST_DIR}/File4Base-Windows-x64.zip" \
+            "${CLIENT_DIR}/build/windows/x64/pdfium-src"
         echo "Packaging complete: ${DIST_DIR}/File4Base-Windows-x64.zip"
     else
         echo "Error: Windows release bundle not found at ${BUNDLE_DIR}"

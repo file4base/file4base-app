@@ -29,11 +29,16 @@ For each distributed archive/image, maintainers should verify:
 
 These checks support the applicable distribution conditions, including
 [GPLv3 sections 4–6](https://www.gnu.org/licenses/gpl-3.0.html), and each
-dependency's own license. The existing notice work in issues
-[#7](https://github.com/file4base/file4base-app/issues/7) and
-[#22](https://github.com/file4base/file4base-app/issues/22) does not establish
-that every native dependency is covered; PDFium is tracked in
-[#43](https://github.com/file4base/file4base-app/issues/43).
+dependency's own license. Go server dependencies are collected in
+`/usr/share/doc/file4base/THIRD_PARTY_NOTICES` ([#7](https://github.com/file4base/file4base-app/issues/7),
+[#22](https://github.com/file4base/file4base-app/issues/22)). For desktop
+targets that bundle the native PDFium library via the `printing` plugin (Linux
+and Windows; macOS uses Apple's system `PDFKit`), CMake installs the upstream
+PDFium `LICENSE` and `VERSION` under `THIRD_PARTY_NOTICES/pdfium/` alongside
+Flutter's `NOTICES.Z`, verified by `scripts/verify_desktop_archive.sh`
+([#43](https://github.com/file4base/file4base-app/issues/43)). Corrective
+notices and hash correspondence for earlier desktop archives (`v0.9.1`–`v0.11.0`)
+are maintained in [`THIRD_PARTY_NOTICES/pdfium/README.md`](../THIRD_PARTY_NOTICES/pdfium/README.md).
 
 ## Functional compatibility and original presentation
 
@@ -99,9 +104,10 @@ compatibility claim.
 addresses honest referential use. [Claris's trademark guidelines](https://www.claris.com/company/legal/trademark-guidelines)
 are also relevant to its names, but are the proprietor's policy rather than
 legislation. Independent naming reduces an avoidable association risk; an
-attribution notice does not cure otherwise confusing presentation. Remaining
-application labels and name clearance are tracked in
-[#8](https://github.com/file4base/file4base-app/issues/8).
+attribution notice does not cure otherwise confusing presentation. Active UI,
+OpenAPI descriptions, Docker configurations and documentation consistently use
+**File4Base Web Client** ([#8](https://github.com/file4base/file4base-app/issues/8));
+broader mark clearance remains tracked in [#44](https://github.com/file4base/file4base-app/issues/44).
 
 ## Rights questions and notices
 

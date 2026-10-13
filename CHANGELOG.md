@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Release workflow publishes multi-architecture Docker Hub images**
+  ([#55](https://github.com/file4base/file4base-app/issues/55)). Tagging a `v*`
+  release now builds and pushes `file4base-api` and `file4base-web` for
+  `linux/amd64`, `linux/arm64` and `linux/arm/v7` in
+  `.github/workflows/desktop_release.yml` after the PostgreSQL and MariaDB
+  server test suites pass, and before the GitHub Release is published.
+  `scripts/publish_images.sh` verifies that `EXPECTED_TAG` matches the root
+  `VERSION` file and automatically sets `NO_LATEST=1` when publishing a hotfix
+  tag older than the highest existing semver tag.
+- **PDFium redistribution notices in desktop release archives**
+  ([#43](https://github.com/file4base/file4base-app/issues/43)). Linux and
+  Windows desktop builds (which bundle `libpdfium.so` / `pdfium.dll` via
+  `printing 5.15.1`, `chromium/5200`) now install the complete upstream
+  PDFium `LICENSE` and `VERSION` under `THIRD_PARTY_NOTICES/pdfium/` alongside
+  the root `LICENSE` and Flutter's `NOTICES.Z`. Added
+  `scripts/verify_desktop_archive.sh` to verify binary/license SHA-256
+  correspondence in both `scripts/build_desktop.sh` and CI, added the
+  corrective notice bundle in `THIRD_PARTY_NOTICES/pdfium/` for existing
+  `v0.9.1`–`v0.11.0` downloads, and surfaced third-party notice locations and
+  Flutter's license viewer in the About dialog (`Credits` tab).
+- **Consistent `File4Base Web Client` naming across UI, OpenAPI, and Docker**
+  ([#8](https://github.com/file4base/file4base-app/issues/8)). Replaced the
+  remaining `WebDirect` display strings and comments in
+  `client/lib/features/about/about_dialog.dart`,
+  `client/lib/features/help/issues_guide_dialog.dart`,
+  `server/internal/api/swagger/ui/openapi.json`, `client/Dockerfile`, and
+  `docker-compose.yml` with **File4Base Web Client** (`[Web Client]`), leaving
+  `WebDirect` only in Claris trademark attributions and negative tests.
+
+---
+
 ## [0.11.0] - 2026-10-08
 
 ### Added

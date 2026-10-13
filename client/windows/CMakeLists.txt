@@ -106,3 +106,15 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# Install the project license and third-party notices for bundled native libraries (PDFium).
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../../LICENSE"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+if(EXISTS "${CMAKE_BINARY_DIR}/pdfium-src/LICENSE")
+  install(FILES
+    "${CMAKE_BINARY_DIR}/pdfium-src/LICENSE"
+    "${CMAKE_BINARY_DIR}/pdfium-src/VERSION"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/THIRD_PARTY_NOTICES/pdfium"
+    COMPONENT Runtime)
+endif()

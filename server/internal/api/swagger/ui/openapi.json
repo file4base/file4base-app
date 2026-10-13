@@ -16,7 +16,7 @@
     },
     {
       "url": "http://localhost:3000",
-      "description": "WebDirect Nginx Reverse Proxy"
+      "description": "File4Base Web Client Nginx Reverse Proxy"
     },
     {
       "url": "/",

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
+import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:file4base_client/main.dart';
 
 void main() {
@@ -216,6 +217,8 @@ void main() {
     expect(find.text('Service & Support — GitHub Issues'), findsOneWidget);
     expect(find.text('View Existing Issues'), findsOneWidget);
     expect(find.text('Open GitHub Issues'), findsOneWidget);
+    expect(find.textContaining('[Web Client]'), findsOneWidget);
+    expect(find.textContaining('WebDirect'), findsNothing);
 
     // Close Issues dialog
     await tester.tap(find.text('Cancel'));
@@ -332,5 +335,33 @@ void main() {
     await tester.tap(find.text('Quit'));
     await tester.pumpAndSettle();
     expect(quitCalled, isTrue);
+  });
+
+  testWidgets('AboutFile4BaseDialog uses File4Base Web Client name and surfaces third-party license notices',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: AboutFile4BaseDialog(serverStatus: 'Connected'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('WebDirect'), findsNothing);
+
+    // Switch to System Info tab
+    await tester.tap(find.text('System Info'));
+    await tester.pumpAndSettle();
+    expect(find.text('Flutter 3.x (File4Base Web Client & Desktop Native)'), findsOneWidget);
+    expect(find.textContaining('WebDirect'), findsNothing);
+
+    // Switch to Credits tab
+    await tester.tap(find.text('Credits').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Third-Party License Notices'), findsOneWidget);
+    expect(find.textContaining('THIRD_PARTY_NOTICES/pdfium/LICENSE'), findsOneWidget);
+    expect(find.text('View Open-Source Licenses'), findsOneWidget);
+    expect(find.textContaining('WebDirect'), findsNothing);
   });
 }

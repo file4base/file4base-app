@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for the File4Base WebDirect client.
+# Multi-stage Dockerfile for the File4Base Web Client.
 # Stage 1 compiles the Flutter web bundle, stage 2 serves it with Nginx, so
 # `docker compose up` works on a clean clone without a local Flutter SDK.
 
