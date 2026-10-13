@@ -29,7 +29,7 @@ FROM alpine:3.20
 LABEL org.opencontainers.image.documentation="Third-party license notices: /usr/share/doc/file4base/THIRD_PARTY_NOTICES"
 
 WORKDIR /app
-RUN apk --no-cache add ca-certificates tzdata curl
+RUN apk --no-cache add ca-certificates tzdata curl && mkdir -p /app/data
 
 COPY --from=builder /app/server /app/server
 COPY --from=builder /app/THIRD_PARTY_NOTICES /usr/share/doc/file4base/THIRD_PARTY_NOTICES

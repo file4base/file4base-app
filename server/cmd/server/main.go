@@ -14,6 +14,8 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/api"
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/control"
+	"github.com/file4base/file4base-app/server/internal/crypto"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
@@ -62,8 +64,8 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 			if allowAny || listed {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
-				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, X-Database-Name, traceparent, tracestate, X-Trace-ID")
-				w.Header().Set("Access-Control-Expose-Headers", "Link, Content-Length, Content-Disposition, traceparent, X-Trace-ID, Deprecation, Sunset")
+				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, X-Database-Name, X-File4Base-Encrypted, Accept-Encryption, traceparent, tracestate, X-Trace-ID")
+				w.Header().Set("Access-Control-Expose-Headers", "Link, Content-Length, Content-Disposition, X-File4Base-Encrypted, X-Original-Content-Type, traceparent, X-Trace-ID, Deprecation, Sunset")
 				w.Header().Set("Access-Control-Max-Age", "300")
 			}
 
@@ -140,6 +142,24 @@ func main() {
 	}
 	defer dbMgr.Close()
 
+	// Initialize embedded SQLite Control Store for project-to-database mapping,
+	// project options, and user table/layout permissions.
+	controlDBPath := strings.TrimSpace(os.Getenv("CONTROL_DB_PATH"))
+	if controlDBPath == "" {
+		controlDBPath = "./data/file4base_control.db"
+	}
+	controlStore, err := control.NewStore(controlDBPath)
+	if err != nil {
+		log.Printf("Warning: failed to open SQLite control store at %s (%v); falling back to in-memory control store", controlDBPath, err)
+		controlStore, err = control.NewStore(":memory:")
+		if err != nil {
+			log.Fatalf("Failed initializing fallback SQLite control store: %v", err)
+		}
+	} else {
+		log.Printf("SQLite control store ready at %s", controlDBPath)
+	}
+	defer controlStore.Close()
+
 	// Session store: every signed-in client holds a bearer token bound to
 	// exactly one database. There is no server-wide "active database".
 	sessions := auth.NewStore(envDuration("SESSION_TTL", auth.DefaultSessionTTL))
@@ -199,6 +219,8 @@ func main() {
 	// routes that run against the database of the caller's session.
 	api.Mount(r, dbMgr, sessions, api.Options{
 		AllowPublicDatabaseCreation: allowPublicCreate,
+		ControlStore:                controlStore,
+		ChannelSecret:               os.Getenv("FILE4BASE_CHANNEL_SECRET"),
 	})
 
 	srv := &http.Server{
@@ -207,7 +229,30 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	tlsEnabled := envBool("TLS_ENABLED", false)
+	tlsCert := strings.TrimSpace(os.Getenv("TLS_CERT_FILE"))
+	tlsKey := strings.TrimSpace(os.Getenv("TLS_KEY_FILE"))
+
 	go func() {
+		if tlsEnabled || (tlsCert != "" && tlsKey != "") {
+			if tlsCert != "" && tlsKey != "" {
+				log.Printf("Starting HTTPS listener with certificate %s", tlsCert)
+				if err := srv.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
+					log.Fatalf("Server ListenAndServeTLS error: %v", err)
+				}
+				return
+			}
+			tlsCfg, err := crypto.SelfSignedTLSConfig()
+			if err != nil {
+				log.Fatalf("Failed generating self-signed TLS certificate: %v", err)
+			}
+			srv.TLSConfig = tlsCfg
+			log.Println("Starting HTTPS listener with ephemeral self-signed ECDSA P-256 certificate")
+			if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+				log.Fatalf("Server ListenAndServeTLS error: %v", err)
+			}
+			return
+		}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server ListenAndServe error: %v", err)
 		}

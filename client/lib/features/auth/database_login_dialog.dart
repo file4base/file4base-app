@@ -6,14 +6,26 @@ import '../solution_manager/new_database_dialog.dart';
 
 class DatabaseLoginDialog extends StatefulWidget {
   final ApiClient apiClient;
+  final ValueChanged<String>? onServerUrlChanged;
 
-  const DatabaseLoginDialog({super.key, required this.apiClient});
+  const DatabaseLoginDialog({
+    super.key,
+    required this.apiClient,
+    this.onServerUrlChanged,
+  });
 
-  static Future<AuthResult?> show(BuildContext context, ApiClient apiClient) {
+  static Future<AuthResult?> show(
+    BuildContext context,
+    ApiClient apiClient, {
+    ValueChanged<String>? onServerUrlChanged,
+  }) {
     return showDialog<AuthResult>(
       context: context,
       barrierDismissible: true,
-      builder: (ctx) => DatabaseLoginDialog(apiClient: apiClient),
+      builder: (ctx) => DatabaseLoginDialog(
+        apiClient: apiClient,
+        onServerUrlChanged: onServerUrlChanged,
+      ),
     );
   }
 
@@ -23,9 +35,11 @@ class DatabaseLoginDialog extends StatefulWidget {
 
 class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _apiUrlController;
   final _usernameController = TextEditingController(text: 'admin');
   final _passwordController = TextEditingController();
   List<String> _databases = [];
+  Map<String, String> _projectNamesByDatabase = {};
   String? _selectedDatabase;
   bool _isLoadingDatabases = true;
   bool _isLoggingIn = false;
@@ -35,17 +49,33 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   @override
   void initState() {
     super.initState();
+    final initialUrl = widget.apiClient.baseUrl.trim().isNotEmpty
+        ? widget.apiClient.baseUrl.trim()
+        : 'http://127.0.0.1:8080';
+    _apiUrlController = TextEditingController(text: initialUrl);
     _loadDatabases();
   }
 
   @override
   void dispose() {
+    _apiUrlController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
+  void _applyApiUrlIfChanged() {
+    final raw = _apiUrlController.text.trim();
+    final normalized = (raw.isEmpty ? 'http://127.0.0.1:8080' : raw)
+        .replaceAll(RegExp(r'/+$'), '');
+    if (normalized != widget.apiClient.baseUrl) {
+      widget.apiClient.updateBaseUrl(normalized);
+      widget.onServerUrlChanged?.call(normalized);
+    }
+  }
+
   Future<void> _loadDatabases() async {
+    _applyApiUrlIfChanged();
     setState(() {
       _isLoadingDatabases = true;
       _errorMessage = null;
@@ -58,10 +88,24 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
               .toList() ??
           [];
       final String? active = res['active']?.toString();
+      final Map<String, String> projectMap = {};
+      final rawProjects = res['projects'] as List<dynamic>?;
+      if (rawProjects != null) {
+        for (final item in rawProjects) {
+          if (item is Map) {
+            final dbName = item['database']?.toString() ?? '';
+            final projName = item['name']?.toString() ?? '';
+            if (dbName.isNotEmpty && projName.isNotEmpty) {
+              projectMap[dbName] = projName;
+            }
+          }
+        }
+      }
 
       if (mounted) {
         setState(() {
           _databases = dbs;
+          _projectNamesByDatabase = projectMap;
           if (active != null && dbs.contains(active)) {
             _selectedDatabase = active;
           } else if (dbs.isNotEmpty) {
@@ -81,6 +125,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       if (mounted) {
         setState(() {
           _databases = [];
+          _projectNamesByDatabase = {};
           _selectedDatabase = null;
           if (_usernameController.text.trim().isEmpty) {
             _usernameController.text = 'admin';
@@ -93,6 +138,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   }
 
   Future<void> _handleNewDatabase() async {
+    _applyApiUrlIfChanged();
     final result = await NewDatabaseDialog.show(context, widget.apiClient);
     if (result != null && mounted) {
       await _loadDatabases();
@@ -151,6 +197,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   }
 
   Future<void> _handleLogin() async {
+    _applyApiUrlIfChanged();
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -178,9 +225,12 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
 
       if (mounted) {
         final loaded = _loadedSolution;
+        final registeredProjectName = _projectNamesByDatabase[auth.database];
         Navigator.of(context).pop(loaded != null && loaded.database == auth.database
             ? auth.copyWith(fileName: loaded.fileName, solutionName: loaded.solutionName)
-            : auth);
+            : (registeredProjectName != null && (auth.solutionName == null || auth.solutionName!.isEmpty)
+                ? auth.copyWith(solutionName: registeredProjectName)
+                : auth));
       }
     } catch (e) {
       if (mounted) {
@@ -287,9 +337,43 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                         ),
                       ),
 
+                    // API Server Selector
+                    const Text(
+                      'API SERVER CONNECTION',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            key: const Key('login_api_url_field'),
+                            controller: _apiUrlController,
+                            decoration: const InputDecoration(
+                              labelText: 'API Server URL',
+                              hintText: 'http://127.0.0.1:8080',
+                              border: OutlineInputBorder(),
+                              isDense: true,
+                              prefixIcon: Icon(Icons.dns_outlined, size: 20),
+                            ),
+                            onFieldSubmitted: (_) => _loadDatabases(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.outlined(
+                          key: const Key('login_api_connect_button'),
+                          tooltip: 'Connect to API Server & Refresh Projects',
+                          onPressed: _isLoadingDatabases ? null : _loadDatabases,
+                          icon: const Icon(Icons.sync, size: 20),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 16),
+
                     // Database Selector
                     const Text(
-                      'POSTGRESQL DATABASE',
+                      'PROJECT / DATABASE',
                       style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5),
                     ),
                     const SizedBox(height: 6),
@@ -308,9 +392,13 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                                     hintText: _databases.isEmpty ? 'No databases available' : 'Select a database',
                                   ),
                                   items: _databases.map((db) {
+                                    final projectName = _projectNamesByDatabase[db];
+                                    final label = (projectName != null && projectName.isNotEmpty && projectName != db)
+                                        ? '$projectName ($db)'
+                                        : db;
                                     return DropdownMenuItem<String>(
                                       value: db,
-                                      child: Text(db, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                      child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
                                     );
                                   }).toList(),
                                   onChanged: (val) {

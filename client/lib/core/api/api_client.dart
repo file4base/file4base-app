@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import '../crypto/payload_cipher.dart';
 import '../models/script_models.dart';
 
+export '../crypto/payload_cipher.dart';
 export '../models/script_models.dart';
 
 /// RFC 9457 Problem Details Exception
@@ -466,6 +468,76 @@ class UserLayoutPermissionModel {
       };
 }
 
+class UserTablePermissionModel {
+  final String id;
+  final String userId;
+  final String tableName;
+  final String accessLevel; // 'read_write', 'read_only', 'none'
+  final bool canCreate;
+  final bool canEdit;
+  final bool canDelete;
+  final bool canModifySchema;
+
+  const UserTablePermissionModel({
+    this.id = '',
+    this.userId = '',
+    required this.tableName,
+    this.accessLevel = 'read_write',
+    this.canCreate = true,
+    this.canEdit = true,
+    this.canDelete = true,
+    this.canModifySchema = false,
+  });
+
+  factory UserTablePermissionModel.fromJson(Map<String, dynamic> json) {
+    final access = json['access_level'] as String? ?? 'read_write';
+    final defaultWrite = access == 'read_write';
+    return UserTablePermissionModel(
+      id: json['id'] as String? ?? '',
+      userId: json['user_id'] as String? ?? '',
+      tableName: json['table_name'] as String? ?? '',
+      accessLevel: access,
+      canCreate: json['can_create'] as bool? ?? defaultWrite,
+      canEdit: json['can_edit'] as bool? ?? defaultWrite,
+      canDelete: json['can_delete'] as bool? ?? defaultWrite,
+      canModifySchema: json['can_modify_schema'] as bool? ?? false,
+    );
+  }
+
+  UserTablePermissionModel copyWith({
+    String? id,
+    String? userId,
+    String? tableName,
+    String? accessLevel,
+    bool? canCreate,
+    bool? canEdit,
+    bool? canDelete,
+    bool? canModifySchema,
+  }) {
+    return UserTablePermissionModel(
+      id: id ?? this.id,
+      userId: userId ?? this.userId,
+      tableName: tableName ?? this.tableName,
+      accessLevel: accessLevel ?? this.accessLevel,
+      canCreate: canCreate ?? this.canCreate,
+      canEdit: canEdit ?? this.canEdit,
+      canDelete: canDelete ?? this.canDelete,
+      canModifySchema: canModifySchema ?? this.canModifySchema,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        if (id.isNotEmpty) 'id': id,
+        if (userId.isNotEmpty) 'user_id': userId,
+        'table_name': tableName,
+        'access_level': accessLevel,
+        'can_create': canCreate,
+        'can_edit': canEdit,
+        'can_delete': canDelete,
+        'can_modify_schema': canModifySchema,
+      };
+}
+
 class UserModel {
   final String id;
   final String username;
@@ -474,6 +546,7 @@ class UserModel {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final List<UserLayoutPermissionModel> permissions;
+  final List<UserTablePermissionModel> tablePermissions;
 
   const UserModel({
     required this.id,
@@ -483,6 +556,7 @@ class UserModel {
     this.createdAt,
     this.updatedAt,
     this.permissions = const [],
+    this.tablePermissions = const [],
   });
 
   bool get isOwner => role == 'owner';
@@ -496,6 +570,7 @@ class UserModel {
     DateTime? createdAt,
     DateTime? updatedAt,
     List<UserLayoutPermissionModel>? permissions,
+    List<UserTablePermissionModel>? tablePermissions,
   }) {
     return UserModel(
       id: id ?? this.id,
@@ -505,14 +580,26 @@ class UserModel {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       permissions: permissions ?? this.permissions,
+      tablePermissions: tablePermissions ?? this.tablePermissions,
     );
   }
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
-    var rawPerms = json['permissions'];
+    final rawPerms = json['permissions'];
     List<UserLayoutPermissionModel> perms = [];
     if (rawPerms is List) {
-      perms = rawPerms.map((p) => UserLayoutPermissionModel.fromJson(p as Map<String, dynamic>)).toList();
+      perms = rawPerms
+          .whereType<Map>()
+          .map((p) => UserLayoutPermissionModel.fromJson(Map<String, dynamic>.from(p)))
+          .toList();
+    }
+    final rawTablePerms = json['table_permissions'];
+    List<UserTablePermissionModel> tblPerms = [];
+    if (rawTablePerms is List) {
+      tblPerms = rawTablePerms
+          .whereType<Map>()
+          .map((p) => UserTablePermissionModel.fromJson(Map<String, dynamic>.from(p)))
+          .toList();
     }
 
     return UserModel(
@@ -523,6 +610,7 @@ class UserModel {
       createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
       updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
       permissions: perms,
+      tablePermissions: tblPerms,
     );
   }
 
@@ -534,6 +622,7 @@ class UserModel {
     if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
     if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
     'permissions': permissions.map((p) => p.toJson()).toList(),
+    'table_permissions': tablePermissions.map((p) => p.toJson()).toList(),
   };
 }
 
@@ -851,6 +940,8 @@ class AuthResult {
   final String? token;
   final String? fileName;
   final String? solutionName;
+  final Map<String, dynamic>? fileOptions;
+  final Map<String, dynamic>? pageSetup;
   final dynamic directoryRef;
 
   const AuthResult({
@@ -861,10 +952,14 @@ class AuthResult {
     this.token,
     this.fileName,
     this.solutionName,
+    this.fileOptions,
+    this.pageSetup,
     this.directoryRef,
   });
 
   factory AuthResult.fromJson(Map<String, dynamic> json) {
+    final rawFileOpts = json['file_options'];
+    final rawPageSetup = json['page_setup'];
     return AuthResult(
       status: json['status'] as String? ?? 'ok',
       database: json['database'] as String? ?? '',
@@ -874,6 +969,8 @@ class AuthResult {
       token: json['token'] as String?,
       fileName: json['file_name'] as String?,
       solutionName: json['solution_name'] as String?,
+      fileOptions: rawFileOpts is Map ? Map<String, dynamic>.from(rawFileOpts) : null,
+      pageSetup: rawPageSetup is Map ? Map<String, dynamic>.from(rawPageSetup) : null,
     );
   }
 
@@ -885,6 +982,8 @@ class AuthResult {
     String? token,
     String? fileName,
     String? solutionName,
+    Map<String, dynamic>? fileOptions,
+    Map<String, dynamic>? pageSetup,
     dynamic directoryRef,
   }) {
     return AuthResult(
@@ -895,6 +994,8 @@ class AuthResult {
       token: token ?? this.token,
       fileName: fileName ?? this.fileName,
       solutionName: solutionName ?? this.solutionName,
+      fileOptions: fileOptions ?? this.fileOptions,
+      pageSetup: pageSetup ?? this.pageSetup,
       directoryRef: directoryRef ?? this.directoryRef,
     );
   }
@@ -1112,9 +1213,88 @@ class ImportReportModel {
       );
 }
 
+/// Transparent HTTP client wrapper that negotiates AES-256-GCM envelope
+/// encryption (`Accept-Encryption: aes-256-gcm` / `X-File4Base-Encrypted`)
+/// between the Web/Desktop client and `file4base-api`.
+class _EncryptedHttpClient extends http.BaseClient {
+  final http.Client _inner;
+  PayloadCipher cipher;
+  bool encryptRequests;
+
+  _EncryptedHttpClient(
+    this._inner, {
+    required this.cipher,
+    this.encryptRequests = false,
+  });
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    request.headers.putIfAbsent(PayloadCipher.headerAcceptEncryption, () => PayloadCipher.cipherName);
+
+    http.BaseRequest outgoing = request;
+    if (encryptRequests && request is http.Request && request.bodyBytes.isNotEmpty) {
+      final sealed = cipher.encrypt(request.bodyBytes);
+      final encReq = http.Request(request.method, request.url)
+        ..followRedirects = request.followRedirects
+        ..maxRedirects = request.maxRedirects
+        ..persistentConnection = request.persistentConnection
+        ..headers.addAll(request.headers)
+        ..bodyBytes = sealed;
+      encReq.headers[PayloadCipher.headerEncrypted] = PayloadCipher.cipherName;
+      outgoing = encReq;
+    }
+
+    final streamed = await _inner.send(outgoing);
+    final rawBytes = await streamed.stream.toBytes();
+
+    final isHeaderEncrypted =
+        streamed.headers[PayloadCipher.headerEncrypted.toLowerCase()]?.toLowerCase() ==
+            PayloadCipher.cipherName ||
+        streamed.headers[PayloadCipher.headerEncrypted]?.toLowerCase() ==
+            PayloadCipher.cipherName;
+
+    if (rawBytes.isNotEmpty && (isHeaderEncrypted || PayloadCipher.isEncryptedEnvelope(rawBytes))) {
+      final decrypted = cipher.decrypt(rawBytes);
+      final newHeaders = Map<String, String>.from(streamed.headers);
+      newHeaders.remove(PayloadCipher.headerEncrypted.toLowerCase());
+      newHeaders.remove(PayloadCipher.headerEncrypted);
+      final origCt = newHeaders.remove(PayloadCipher.headerOriginalContentType.toLowerCase()) ??
+          newHeaders.remove(PayloadCipher.headerOriginalContentType);
+      if (origCt != null && origCt.isNotEmpty) {
+        newHeaders['content-type'] = origCt;
+      }
+      newHeaders['content-length'] = decrypted.length.toString();
+      return http.StreamedResponse(
+        Stream<List<int>>.value(decrypted),
+        streamed.statusCode,
+        contentLength: decrypted.length,
+        request: streamed.request,
+        headers: newHeaders,
+        isRedirect: streamed.isRedirect,
+        persistentConnection: streamed.persistentConnection,
+        reasonPhrase: streamed.reasonPhrase,
+      );
+    }
+
+    return http.StreamedResponse(
+      Stream<List<int>>.value(rawBytes),
+      streamed.statusCode,
+      contentLength: rawBytes.length,
+      request: streamed.request,
+      headers: streamed.headers,
+      isRedirect: streamed.isRedirect,
+      persistentConnection: streamed.persistentConnection,
+      reasonPhrase: streamed.reasonPhrase,
+    );
+  }
+
+  @override
+  void close() => _inner.close();
+}
+
 class ApiClient {
-  final String baseUrl;
-  final http.Client _httpClient;
+  String baseUrl;
+  late final _EncryptedHttpClient _httpClient;
 
   /// Bearer token of the current server session (set by [login]).
   /// It is kept in memory only and sent on every request.
@@ -1125,9 +1305,37 @@ class ApiClient {
   void Function()? onUnauthorized;
 
   ApiClient({
-    this.baseUrl = 'http://localhost:8080',
+    this.baseUrl = 'http://127.0.0.1:8080',
     http.Client? httpClient,
-  }) : _httpClient = httpClient ?? http.Client();
+    String channelSecret = '',
+    bool encryptRequests = false,
+  }) {
+    _httpClient = _EncryptedHttpClient(
+      httpClient ?? http.Client(),
+      cipher: PayloadCipher(secret: channelSecret),
+      encryptRequests: encryptRequests,
+    );
+  }
+
+  /// Updates the AES-256-GCM channel secret used to encrypt/decrypt API payloads.
+  void setChannelSecret(String secret, {bool? encryptRequests}) {
+    _httpClient.cipher = PayloadCipher(secret: secret);
+    if (encryptRequests != null) {
+      _httpClient.encryptRequests = encryptRequests;
+    }
+  }
+
+  /// Active AES-256-GCM payload cipher.
+  PayloadCipher get payloadCipher => _httpClient.cipher;
+
+  /// Updates the target API server URL and clears any active session token if
+  /// the server address changed.
+  void updateBaseUrl(String newUrl) {
+    final normalized = newUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    if (normalized.isEmpty || normalized == baseUrl) return;
+    baseUrl = normalized;
+    _authToken = null;
+  }
 
   /// Whether this client currently holds a session token.
   bool get isAuthenticated => _authToken != null && _authToken!.isNotEmpty;
@@ -1144,6 +1352,7 @@ class ApiClient {
     final trace = TraceContext.create();
     final headers = <String, String>{
       'Accept': 'application/json',
+      PayloadCipher.headerAcceptEncryption: PayloadCipher.cipherName,
       ...trace.toHeaders(),
     };
     final token = _authToken;
@@ -2105,6 +2314,37 @@ class ApiClient {
     _checkResponse(response);
   }
 
+  Future<List<UserTablePermissionModel>> getUserTablePermissions(String userId, {String? database}) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/table-permissions$query'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list
+        .whereType<Map>()
+        .map((item) => UserTablePermissionModel.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
+  Future<void> setUserTablePermissions(
+    String userId,
+    List<UserTablePermissionModel> permissions, {
+    String? database,
+  }) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/table-permissions$query'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
+      body: jsonEncode({
+        'database': database ?? '',
+        'permissions': permissions.map((p) => p.toJson()).toList(),
+      }),
+    );
+    _checkResponse(response);
+  }
+
   // ─── Data Viewer (#50) ─────────────────────────────────────────────────────
 
   /// Evaluates expressions against a record with the engine the calculation
@@ -2473,6 +2713,67 @@ class ApiClient {
     );
   }
 
+  /// Reads the project options (`file_options`, `page_setup`) stored by the API
+  /// in its SQLite control store for the active database.
+  Future<SolutionMetaModel> getSolutionOptions({String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/solutions/options'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    return SolutionMetaModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  /// Persists project options (`file_options`, `page_setup`, `solution_name`)
+  /// in the API's SQLite control store.
+  Future<SolutionMetaModel> updateSolutionOptions({
+    String? solutionName,
+    Map<String, dynamic>? fileOptions,
+    Map<String, dynamic>? pageSetup,
+    String? database,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/solutions/options'),
+      headers: _headers(
+        contentType: 'application/json',
+        extra: database != null ? {'X-Database-Name': database} : null,
+      ),
+      body: jsonEncode({
+        if (solutionName != null && solutionName.trim().isNotEmpty) 'solution_name': solutionName.trim(),
+        if (fileOptions != null) 'file_options': fileOptions,
+        if (pageSetup != null) 'page_setup': pageSetup,
+      }),
+    );
+    _checkResponse(response);
+    return SolutionMetaModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  /// Lists the projects and database relationships registered in the API's
+  /// SQLite control store (`GET /api/v1/projects`).
+  Future<Map<String, dynamic>> listProjects() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/projects'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  /// Queries `GET /api/v1/crypto/handshake` to verify the server's active
+  /// payload cipher (`aes-256-gcm`), key fingerprint, and TLS status.
+  Future<Map<String, dynamic>> cryptoHandshake() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/crypto/handshake'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
   Future<CloneResultModel> cloneSolution({
     required String targetDatabase,
     String? solutionName,
@@ -2767,23 +3068,31 @@ class MenuSetsListingModel {
   }
 }
 
-/// Solution metadata and design lock state (#53).
+/// Solution metadata, design lock state, and project options (#53).
 class SolutionMetaModel {
   final String database;
   final String solutionName;
   final bool designLocked;
+  final Map<String, dynamic>? fileOptions;
+  final Map<String, dynamic>? pageSetup;
 
   const SolutionMetaModel({
     required this.database,
     required this.solutionName,
     this.designLocked = false,
+    this.fileOptions,
+    this.pageSetup,
   });
 
   factory SolutionMetaModel.fromJson(Map<String, dynamic> json) {
+    final rawFileOpts = json['file_options'];
+    final rawPageSetup = json['page_setup'];
     return SolutionMetaModel(
       database: json['database'] as String? ?? '',
       solutionName: json['solution_name'] as String? ?? '',
       designLocked: json['design_locked'] as bool? ?? false,
+      fileOptions: rawFileOpts is Map ? Map<String, dynamic>.from(rawFileOpts) : null,
+      pageSetup: rawPageSetup is Map ? Map<String, dynamic>.from(rawPageSetup) : null,
     );
   }
 }

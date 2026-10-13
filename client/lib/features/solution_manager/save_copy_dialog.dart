@@ -55,6 +55,7 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
   @override
   void initState() {
     super.initState();
+    _selectedDirectory = SolutionStorageService.defaultDirectory;
     _fileNameController = TextEditingController(
       text: '${widget.activeSolutionName}_copy',
     );
@@ -115,6 +116,7 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
         await SolutionStorageService.saveFile(
           filename: filename,
           bytes: bytes,
+          directoryRef: _selectedDirectory,
         );
       } else {
         final bytes = await widget.apiClient.exportDatabaseData();
@@ -122,6 +124,7 @@ class _SaveCopyDialogState extends State<SaveCopyDialog> {
         await SolutionStorageService.saveFile(
           filename: filename,
           bytes: bytes,
+          directoryRef: _selectedDirectory,
         );
       }
 

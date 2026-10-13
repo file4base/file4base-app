@@ -21,20 +21,39 @@ class StorageDirectoryRef {
 }
 
 class SolutionStorageService {
-  /// Prompts user to pick a destination directory on their hard drive.
+  static StorageDirectoryRef? _defaultDirectoryRef;
+
+  /// Returns the persistent reference to the destination folder selected by the
+  /// user, so all subsequent exports and saves write to the same directory.
+  static StorageDirectoryRef? get defaultDirectory => _defaultDirectoryRef;
+
+  /// Sets (or clears) the persistent destination directory reference.
+  static void setDefaultDirectory(StorageDirectoryRef? directoryRef) {
+    _defaultDirectoryRef = directoryRef;
+  }
+
+  /// Prompts user to pick a destination directory on their hard drive and
+  /// stores it as the persistent default directory reference.
   /// On Desktop, opens native folder picker (Finder / Explorer).
   /// On Chrome/Web, opens File System Access folder picker.
-  static Future<StorageDirectoryRef?> pickDirectory() async {
+  static Future<StorageDirectoryRef?> pickDirectory({
+    bool rememberAsDefault = true,
+  }) async {
     final res = await platformPickDirectory();
     if (res == null) return null;
-    return StorageDirectoryRef(
+    final ref = StorageDirectoryRef(
       displayName: res.displayName,
       handleOrPath: res.handleOrPath,
     );
+    if (rememberAsDefault) {
+      _defaultDirectoryRef = ref;
+    }
+    return ref;
   }
 
   /// Saves BOTH .f4p (solution definition, without passwords) and
-  /// .f4data (database records) into the given directory or prompts the user.
+  /// .f4data (database records) into the given directory, the remembered
+  /// default directory, or prompts the user once.
   /// NOTE: Prefer [saveSolutionFile] for structure-only auto-saves.
   static Future<bool> saveDualSolutionFiles({
     required String baseName,
@@ -51,14 +70,16 @@ class SolutionStorageService {
       f4dataName: f4dataBytes,
     };
 
-    if (directoryRef != null) {
+    final effectiveDir = directoryRef ?? _defaultDirectoryRef;
+    if (effectiveDir != null) {
+      _defaultDirectoryRef = effectiveDir;
       return await platformSaveFilesToDirectory(
-        directoryHandleOrPath: directoryRef.handleOrPath,
+        directoryHandleOrPath: effectiveDir.handleOrPath,
         files: files,
       );
     }
 
-    // Prompt user to select destination folder
+    // Prompt user to select destination folder (and remember it)
     final pickedDir = await pickDirectory();
     if (pickedDir != null) {
       return await platformSaveFilesToDirectory(
@@ -82,24 +103,39 @@ class SolutionStorageService {
   }) async {
     final sanitized = filename.replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
     final f4pName = '$sanitized.f4p';
+    _defaultDirectoryRef = directoryRef;
     try {
       return await platformSaveFilesToDirectory(
         directoryHandleOrPath: directoryRef.handleOrPath,
         files: {f4pName: bytes},
       );
     } catch (_) {
-      await saveFile(filename: f4pName, bytes: bytes);
+      await saveFile(filename: f4pName, bytes: bytes, directoryRef: directoryRef);
       return true;
     }
   }
 
   /// Saves a file with the given filename and bytes.
-  /// On Web, triggers a browser file download.
-  /// On Desktop, prompts save dialog and saves the bytes.
+  /// When a destination directory has been chosen (either passed via
+  /// [directoryRef] or remembered in [defaultDirectory]), writes directly into
+  /// that directory without re-prompting or falling back to browser Downloads.
   static Future<void> saveFile({
     required String filename,
     required Uint8List bytes,
+    StorageDirectoryRef? directoryRef,
   }) async {
+    final effectiveDir = directoryRef ?? _defaultDirectoryRef;
+    if (effectiveDir != null) {
+      _defaultDirectoryRef = effectiveDir;
+      try {
+        final written = await platformSaveFilesToDirectory(
+          directoryHandleOrPath: effectiveDir.handleOrPath,
+          files: {filename: bytes},
+        );
+        if (written) return;
+      } catch (_) {}
+    }
+
     if (kIsWeb) {
       triggerBrowserDownload(bytes, filename);
     } else {
@@ -109,13 +145,33 @@ class SolutionStorageService {
       final allowed = extension.isEmpty
           ? const ['f4p', 'f4b', 'f4data', 'msgpack']
           : [extension];
-      await FilePicker.saveFile(
+      final savedUri = await FilePicker.saveFile(
         dialogTitle: 'Save File',
         fileName: filename,
         bytes: bytes,
         type: FileType.custom,
         allowedExtensions: allowed,
       );
+      if (savedUri != null) {
+        String rawPath;
+        try {
+          rawPath = savedUri.toFilePath();
+        } catch (_) {
+          rawPath = savedUri.path;
+        }
+        if (rawPath.isNotEmpty) {
+          final normalized = rawPath.replaceAll('\\', '/');
+          final slashIdx = normalized.lastIndexOf('/');
+          if (slashIdx > 0) {
+            final dirPath = rawPath.substring(0, slashIdx);
+            final dirName = dirPath.split(RegExp(r'[/\\]')).where((s) => s.isNotEmpty).lastOrNull ?? dirPath;
+            _defaultDirectoryRef = StorageDirectoryRef(
+              displayName: dirName,
+              handleOrPath: dirPath,
+            );
+          }
+        }
+      }
     }
   }
 

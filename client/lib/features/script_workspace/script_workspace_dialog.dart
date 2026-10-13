@@ -779,36 +779,37 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                             children: [
                               Row(
                                 children: [
-                                  Text('Scripts', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
-                                  const Spacer(),
-                                  InkWell(
-                                    key: const Key('script_workspace_paste_button'),
-                                    onTap: () async {
-                                      final report = await StructureClipboardService.pasteStructure(
-                                        context,
-                                        apiClient: widget.apiClient,
-                                        expectedKind: 'script',
-                                        database: widget.databaseName,
-                                      );
-                                      if (report != null) {
-                                        await _loadInitialData();
-                                      }
-                                    },
-                                    borderRadius: BorderRadius.circular(4),
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: theme.surfaceContainer,
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(color: theme.border),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(Icons.content_paste_rounded, size: 13, color: theme.textPrimary),
-                                          const SizedBox(width: 3),
-                                          Text('Paste', style: TextStyle(color: theme.textPrimary, fontSize: 10, fontWeight: FontWeight.bold)),
-                                        ],
+                                  Expanded(
+                                    child: Text(
+                                      'Scripts',
+                                      style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  Tooltip(
+                                    message: 'Paste script from clipboard',
+                                    child: InkWell(
+                                      key: const Key('script_workspace_paste_button'),
+                                      onTap: () async {
+                                        final report = await StructureClipboardService.pasteStructure(
+                                          context,
+                                          apiClient: widget.apiClient,
+                                          expectedKind: 'script',
+                                          database: widget.databaseName,
+                                        );
+                                        if (report != null) {
+                                          await _loadInitialData();
+                                        }
+                                      },
+                                      borderRadius: BorderRadius.circular(4),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                        decoration: BoxDecoration(
+                                          color: theme.surfaceContainer,
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: theme.border),
+                                        ),
+                                        child: Icon(Icons.content_paste_rounded, size: 13, color: theme.textPrimary),
                                       ),
                                     ),
                                   ),

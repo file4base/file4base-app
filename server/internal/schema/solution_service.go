@@ -112,12 +112,22 @@ type BundlePermission struct {
 	AccessLevel string `msgpack:"access_level"`
 }
 
+type BundleTablePermission struct {
+	TableName       string `msgpack:"table_name" json:"table_name"`
+	AccessLevel     string `msgpack:"access_level" json:"access_level"`
+	CanCreate       bool   `msgpack:"can_create" json:"can_create"`
+	CanEdit         bool   `msgpack:"can_edit" json:"can_edit"`
+	CanDelete       bool   `msgpack:"can_delete" json:"can_delete"`
+	CanModifySchema bool   `msgpack:"can_modify_schema" json:"can_modify_schema"`
+}
+
 type BundleAccount struct {
-	ID          string             `msgpack:"id"`
-	Username    string             `msgpack:"username"`
-	Role        string             `msgpack:"role"`
-	IsActive    bool               `msgpack:"is_active"`
-	Permissions []BundlePermission `msgpack:"permissions"`
+	ID               string                  `msgpack:"id"`
+	Username         string                  `msgpack:"username"`
+	Role             string                  `msgpack:"role"`
+	IsActive         bool                    `msgpack:"is_active"`
+	Permissions      []BundlePermission      `msgpack:"permissions"`
+	TablePermissions []BundleTablePermission `msgpack:"table_permissions,omitempty"`
 }
 
 // SolutionBundle is the content of a .f4p solution file.
@@ -357,9 +367,30 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		if err != nil {
 			return nil, fmt.Errorf("failed reading permissions of %s: %w", u.Username, err)
 		}
-		acc := BundleAccount{ID: u.ID, Username: u.Username, Role: u.Role, IsActive: u.IsActive, Permissions: make([]BundlePermission, 0, len(perms))}
+		tablePerms, err := s.GetUserTablePermissions(ctx, u.ID)
+		if err != nil {
+			tablePerms = nil
+		}
+		acc := BundleAccount{
+			ID:               u.ID,
+			Username:         u.Username,
+			Role:             u.Role,
+			IsActive:         u.IsActive,
+			Permissions:      make([]BundlePermission, 0, len(perms)),
+			TablePermissions: make([]BundleTablePermission, 0, len(tablePerms)),
+		}
 		for _, p := range perms {
 			acc.Permissions = append(acc.Permissions, BundlePermission{LayoutID: p.LayoutID, AccessLevel: p.AccessLevel})
+		}
+		for _, tp := range tablePerms {
+			acc.TablePermissions = append(acc.TablePermissions, BundleTablePermission{
+				TableName:       tp.TableName,
+				AccessLevel:     tp.AccessLevel,
+				CanCreate:       tp.CanCreate,
+				CanEdit:         tp.CanEdit,
+				CanDelete:       tp.CanDelete,
+				CanModifySchema: tp.CanModifySchema,
+			})
 		}
 		b.Users = append(b.Users, acc)
 	}
@@ -425,23 +456,25 @@ func fixNumbers(v interface{}) interface{} {
 
 // ImportReport describes what a solution import changed.
 type ImportReport struct {
-	SolutionName            string   `json:"solution_name"`
-	TablesCreated           int      `json:"tables_created"`
-	ColumnsCreated          int      `json:"columns_created"`
-	OccurrencesCreated      int      `json:"occurrences_created"`
-	RelationshipsCreated    int      `json:"relationships_created"`
-	LayoutsCreated          int      `json:"layouts_created"`
-	LayoutsUpdated          int      `json:"layouts_updated"`
-	ScriptsCreated          int      `json:"scripts_created"`
-	ScriptsUpdated          int      `json:"scripts_updated"`
-	ValueListsCreated       int      `json:"value_lists_created"`
-	ValueListsUpdated       int      `json:"value_lists_updated"`
-	AccountsCreated         int      `json:"accounts_created"`
-	PrivilegesUpdated       int      `json:"privileges_updated"`
-	SavedFindsCreated       int      `json:"saved_finds_created"`
-	DataSourcesCreated      int      `json:"data_sources_created"`
-	MenuSetsCreated         int      `json:"menu_sets_created"`
-	AccountsPendingPassword []string `json:"accounts_pending_password"`
+	SolutionName            string                 `json:"solution_name"`
+	TablesCreated           int                    `json:"tables_created"`
+	ColumnsCreated          int                    `json:"columns_created"`
+	OccurrencesCreated      int                    `json:"occurrences_created"`
+	RelationshipsCreated    int                    `json:"relationships_created"`
+	LayoutsCreated          int                    `json:"layouts_created"`
+	LayoutsUpdated          int                    `json:"layouts_updated"`
+	ScriptsCreated          int                    `json:"scripts_created"`
+	ScriptsUpdated          int                    `json:"scripts_updated"`
+	ValueListsCreated       int                    `json:"value_lists_created"`
+	ValueListsUpdated       int                    `json:"value_lists_updated"`
+	AccountsCreated         int                    `json:"accounts_created"`
+	PrivilegesUpdated       int                    `json:"privileges_updated"`
+	SavedFindsCreated       int                    `json:"saved_finds_created"`
+	DataSourcesCreated      int                    `json:"data_sources_created"`
+	MenuSetsCreated         int                    `json:"menu_sets_created"`
+	AccountsPendingPassword []string               `json:"accounts_pending_password"`
+	FileOptions             map[string]interface{} `json:"file_options,omitempty"`
+	PageSetup               map[string]interface{} `json:"page_setup,omitempty"`
 	// Totals in the bundle, kept for older clients.
 	TablesCount  int `json:"tables_count"`
 	LayoutsCount int `json:"layouts_count"`
@@ -741,8 +774,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	}
 
 	// 6. Accounts: missing ones are created disabled, without a usable
-	// password, with their role and layout permissions. Existing accounts are
-	// never changed.
+	// password, with their role and layout/table permissions. Existing accounts
+	// are never changed.
 	for _, a := range b.Users {
 		if plan.users[strings.ToLower(strings.TrimSpace(a.Username))] {
 			continue
@@ -761,9 +794,27 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				return nil, rollback(fmt.Errorf("restoring permissions of %q: %w", a.Username, err))
 			}
 		}
+		tablePerms := make([]UserTablePermission, 0, len(a.TablePermissions))
+		for _, tp := range a.TablePermissions {
+			tablePerms = append(tablePerms, UserTablePermission{
+				TableName:       dbal.NormalizeIdentifier(tp.TableName),
+				AccessLevel:     tp.AccessLevel,
+				CanCreate:       tp.CanCreate,
+				CanEdit:         tp.CanEdit,
+				CanDelete:       tp.CanDelete,
+				CanModifySchema: tp.CanModifySchema,
+			})
+		}
+		if len(tablePerms) > 0 {
+			if err := s.SetUserTablePermissions(ctx, created.ID, tablePerms); err != nil {
+				return nil, rollback(fmt.Errorf("restoring table permissions of %q: %w", a.Username, err))
+			}
+		}
 		report.AccountsCreated++
 		report.AccountsPendingPassword = append(report.AccountsPendingPassword, created.Username)
 	}
+	report.FileOptions = withoutSecrets(b.FileOptions)
+	report.PageSetup = b.PageSetup
 
 	// 7. Saved finds (#34). They are matched by table and name, so importing
 	// the same file twice does not make a second copy, and a find whose
@@ -1048,6 +1099,15 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 			}
 			if !isValidAccessLevel(p.AccessLevel) {
 				return nil, invalid("account %q has unknown access level %q", a.Username, p.AccessLevel)
+			}
+		}
+		for _, tp := range a.TablePermissions {
+			tName := dbal.NormalizeIdentifier(tp.TableName)
+			if tName == "" || !tableNames[tName] {
+				return nil, invalid("account %q has a permission for a table that is not in the file (%q)", a.Username, tp.TableName)
+			}
+			if !isValidAccessLevel(tp.AccessLevel) {
+				return nil, invalid("account %q has unknown table access level %q", a.Username, tp.AccessLevel)
 			}
 		}
 	}

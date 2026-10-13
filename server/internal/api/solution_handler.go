@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/designreport"
 	"github.com/file4base/file4base-app/server/internal/schema"
@@ -26,6 +28,9 @@ type SolutionHandlerOptions struct {
 	// databases (the desktop "New Database" flow happens before sign-in).
 	// When false, only a signed-in owner can create databases.
 	AllowPublicDatabaseCreation bool
+	// ControlStore persists project ↔ database mappings, options, and user
+	// table/layout permissions in SQLite.
+	ControlStore *control.Store
 }
 
 // SolutionHandler serves server-level database management and the
@@ -44,12 +49,38 @@ func NewSolutionHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, 
 	}
 }
 
+func (h *SolutionHandler) syncProjectRecord(ctx context.Context, dbName string, svc *schema.Service, fileOpts, pageSetup map[string]interface{}) {
+	if h.opts.ControlStore == nil || strings.TrimSpace(dbName) == "" {
+		return
+	}
+	projName := dbName
+	locked := false
+	if svc != nil {
+		if meta, err := svc.GetSolutionMeta(ctx, dbName); err == nil {
+			if meta.SolutionName != "" {
+				projName = meta.SolutionName
+			}
+			locked = meta.DesignLocked
+		}
+	}
+	_ = h.opts.ControlStore.UpsertProject(ctx, control.ProjectRecord{
+		Database:     dbName,
+		Name:         projName,
+		Engine:       string(h.dbMgr.Engine()),
+		DesignLocked: locked,
+		FileOptions:  fileOpts,
+		PageSetup:    pageSetup,
+	})
+}
+
 // RegisterPublicRoutes registers the endpoints reachable without a session.
 // The router passed in should apply AuthMiddleware.Optional so that signed-in
 // callers are recognised.
 func (h *SolutionHandler) RegisterPublicRoutes(r chi.Router) {
 	r.Get("/api/v1/databases", h.ListDatabases)
 	r.Get("/api/v1/databases/", h.ListDatabases)
+	r.Get("/api/v1/projects", h.ListProjects)
+	r.Get("/api/v1/projects/", h.ListProjects)
 	r.Post("/api/v1/databases", h.CreateDatabase)
 	r.Post("/api/v1/databases/", h.CreateDatabase)
 	r.Post("/api/v1/databases/switch", h.SwitchDatabase)
@@ -63,6 +94,8 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/solutions", func(r chi.Router) {
 		r.Use(RequireSession)
 		r.Get("/meta", h.GetSolutionMeta)
+		r.Get("/options", h.GetSolutionOptions)
+		r.With(RequireAdmin).Put("/options", h.UpdateSolutionOptions)
 		r.With(RequireAdmin).Get("/export", h.ExportSolution)
 		r.With(RequireAdmin).Post("/export", h.ExportSolution)
 		r.With(RequireOwner, RequireDesignUnlocked).Post("/import", h.ImportSolution)
@@ -91,26 +124,69 @@ func sessionDatabase(r *http.Request) string {
 	return ""
 }
 
-// ListDatabases lists the solution databases available on the server.
-// "active" is the database of the caller's own session (empty when signed out).
+func (h *SolutionHandler) collectProjects(ctx context.Context, databases []string) []control.ProjectRecord {
+	projects := make([]control.ProjectRecord, 0, len(databases))
+	for _, dbName := range databases {
+		if h.opts.ControlStore != nil {
+			if proj, err := h.opts.ControlStore.GetProject(ctx, dbName); err == nil && proj != nil {
+				projects = append(projects, *proj)
+				continue
+			}
+		}
+		rec := control.ProjectRecord{
+			Database: dbName,
+			Name:     dbName,
+			Engine:   string(h.dbMgr.Engine()),
+		}
+		if driver, err := h.dbMgr.DriverFor(ctx, dbName); err == nil {
+			svc := schema.NewService(driver)
+			if svc.HasSystemCatalog(ctx) {
+				if meta, err := svc.GetSolutionMeta(ctx, dbName); err == nil {
+					if meta.SolutionName != "" {
+						rec.Name = meta.SolutionName
+					}
+					rec.DesignLocked = meta.DesignLocked
+				}
+			}
+		}
+		if h.opts.ControlStore != nil {
+			_ = h.opts.ControlStore.UpsertProject(ctx, rec)
+		}
+		projects = append(projects, rec)
+	}
+	return projects
+}
+
+// ListDatabases lists the solution databases available on the server along with
+// their registered project metadata from the API control store.
 func (h *SolutionHandler) ListDatabases(w http.ResponseWriter, r *http.Request) {
 	databases, err := h.dbMgr.ListDatabases(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, fmt.Errorf("failed listing databases: %w", err))
 		return
 	}
+	projects := h.collectProjects(r.Context(), databases)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"databases": databases,
+		"projects":  projects,
 		"active":    sessionDatabase(r),
 	})
 }
 
+// ListProjects returns the project ↔ database registry stored in the API's SQLite control store.
+func (h *SolutionHandler) ListProjects(w http.ResponseWriter, r *http.Request) {
+	h.ListDatabases(w, r)
+}
+
 type CreateDatabaseRequest struct {
-	Database string `json:"database"`
-	User     string `json:"user,omitempty"`
-	Password string `json:"password,omitempty"`
+	Database     string                 `json:"database"`
+	SolutionName string                 `json:"solution_name,omitempty"`
+	User         string                 `json:"user,omitempty"`
+	Password     string                 `json:"password,omitempty"`
+	FileOptions  map[string]interface{} `json:"file_options,omitempty"`
+	PageSetup    map[string]interface{} `json:"page_setup,omitempty"`
 }
 
 // CreateDatabase creates a new database and provisions its first owner account
@@ -164,9 +240,10 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 	}
 
 	// 2. Initialize the system catalog with the owner account
+	var svc *schema.Service
 	driver, err := h.dbMgr.DriverFor(r.Context(), dbName)
 	if err == nil {
-		svc := schema.NewService(driver)
+		svc = schema.NewService(driver)
 		if err = svc.EnsureSystemTablesWithCredentials(r.Context(), ownerUser, req.Password); err == nil {
 			var users int
 			if users, err = svc.CountUsers(r.Context()); err == nil && users == 0 {
@@ -181,13 +258,31 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	projName := strings.TrimSpace(req.SolutionName)
+	if projName == "" {
+		projName = dbName
+	}
+	if svc != nil && projName != dbName {
+		_, _ = svc.RenameSolution(r.Context(), dbName, projName)
+	}
+	if h.opts.ControlStore != nil {
+		_ = h.opts.ControlStore.UpsertProject(r.Context(), control.ProjectRecord{
+			Database:    dbName,
+			Name:        projName,
+			Engine:      string(h.dbMgr.Engine()),
+			FileOptions: req.FileOptions,
+			PageSetup:   req.PageSetup,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"database":   dbName,
-		"status":     "created",
-		"active":     sessionDatabase(r),
-		"owner_user": ownerUser,
+		"database":      dbName,
+		"solution_name": projName,
+		"status":        "created",
+		"active":        sessionDatabase(r),
+		"owner_user":    ownerUser,
 	})
 }
 
@@ -307,6 +402,9 @@ func (h *SolutionHandler) DeleteDatabase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	h.sessions.RevokeDatabase(name)
+	if h.opts.ControlStore != nil {
+		_ = h.opts.ControlStore.DeleteProject(r.Context(), name)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -341,12 +439,27 @@ func (h *SolutionHandler) ExportSolution(w http.ResponseWriter, r *http.Request)
 		solutionName = r.URL.Query().Get("name")
 	}
 	sess := currentSession(r)
+	svc := schemaService(r)
 	if solutionName == "" {
-		if meta, err := schemaService(r).GetSolutionMeta(r.Context(), sess.Database); err == nil && meta.SolutionName != "" {
+		if meta, err := svc.GetSolutionMeta(r.Context(), sess.Database); err == nil && meta.SolutionName != "" {
 			solutionName = meta.SolutionName
 		} else {
 			solutionName = "file4base_solution"
 		}
+	}
+
+	fileOpts := req.FileOptions
+	pageSetup := req.PageSetup
+	if h.opts.ControlStore != nil {
+		if proj, err := h.opts.ControlStore.GetProject(r.Context(), sess.Database); err == nil && proj != nil {
+			if len(fileOpts) == 0 && len(proj.FileOptions) > 0 {
+				fileOpts = proj.FileOptions
+			}
+			if len(pageSetup) == 0 && len(proj.PageSetup) > 0 {
+				pageSetup = proj.PageSetup
+			}
+		}
+		h.syncProjectRecord(r.Context(), sess.Database, svc, fileOpts, pageSetup)
 	}
 
 	port := 5432
@@ -363,11 +476,11 @@ func (h *SolutionHandler) ExportSolution(w http.ResponseWriter, r *http.Request)
 			User:     sess.Username,
 			SSLMode:  "disable",
 		},
-		FileOptions: req.FileOptions,
-		PageSetup:   req.PageSetup,
+		FileOptions: fileOpts,
+		PageSetup:   pageSetup,
 	}
 
-	bytes, err := schemaService(r).ExportSolution(r.Context(), opts)
+	bytes, err := svc.ExportSolution(r.Context(), opts)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, fmt.Errorf("failed exporting solution: %w", err))
 		return
@@ -409,11 +522,20 @@ func (h *SolutionHandler) ImportSolution(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	report, err := schemaService(r).ImportSolution(r.Context(), body)
+	svc := schemaService(r)
+	report, err := svc.ImportSolution(r.Context(), body)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Solution Import Error", err.Error())
 		return
 	}
+
+	dbName := sessionDatabase(r)
+	if strings.TrimSpace(report.SolutionName) != "" {
+		if prev, err := svc.GetSolutionMeta(r.Context(), dbName); err == nil && !prev.DesignLocked {
+			_, _ = svc.RenameSolution(r.Context(), prev.SolutionName, report.SolutionName)
+		}
+	}
+	h.syncProjectRecord(r.Context(), dbName, svc, report.FileOptions, report.PageSetup)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
@@ -514,19 +636,86 @@ func (h *SolutionHandler) DesignReport(w http.ResponseWriter, r *http.Request) {
 // permanently locked (#53).
 func (h *SolutionHandler) GetSolutionMeta(w http.ResponseWriter, r *http.Request) {
 	dbName := sessionDatabase(r)
-	meta, err := schemaService(r).GetSolutionMeta(r.Context(), dbName)
+	svc := schemaService(r)
+	meta, err := svc.GetSolutionMeta(r.Context(), dbName)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
+	var fileOpts, pageSetup map[string]interface{}
+	if h.opts.ControlStore != nil {
+		if proj, err := h.opts.ControlStore.GetProject(r.Context(), dbName); err == nil && proj != nil {
+			fileOpts = proj.FileOptions
+			pageSetup = proj.PageSetup
+		} else {
+			h.syncProjectRecord(r.Context(), dbName, svc, nil, nil)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
-		Database string `json:"database"`
+		Database    string                 `json:"database"`
+		FileOptions map[string]interface{} `json:"file_options,omitempty"`
+		PageSetup   map[string]interface{} `json:"page_setup,omitempty"`
 		schema.SolutionMeta
 	}{
 		Database:     dbName,
+		FileOptions:  fileOpts,
+		PageSetup:    pageSetup,
 		SolutionMeta: meta,
 	})
+}
+
+// SolutionOptionsPayload describes the project options stored in the API's
+// SQLite control store.
+type SolutionOptionsPayload struct {
+	SolutionName string                 `json:"solution_name,omitempty"`
+	FileOptions  map[string]interface{} `json:"file_options,omitempty"`
+	PageSetup    map[string]interface{} `json:"page_setup,omitempty"`
+}
+
+// GetSolutionOptions returns the project options (solution_name, file_options,
+// page_setup) stored in the API's SQLite control store for the active database.
+func (h *SolutionHandler) GetSolutionOptions(w http.ResponseWriter, r *http.Request) {
+	dbName := sessionDatabase(r)
+	svc := schemaService(r)
+	meta, _ := svc.GetSolutionMeta(r.Context(), dbName)
+	var fileOpts, pageSetup map[string]interface{}
+	if h.opts.ControlStore != nil {
+		if proj, err := h.opts.ControlStore.GetProject(r.Context(), dbName); err == nil && proj != nil {
+			if proj.Name != "" && meta.SolutionName == "" {
+				meta.SolutionName = proj.Name
+			}
+			fileOpts = proj.FileOptions
+			pageSetup = proj.PageSetup
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"database":      dbName,
+		"solution_name": meta.SolutionName,
+		"design_locked": meta.DesignLocked,
+		"file_options":  fileOpts,
+		"page_setup":    pageSetup,
+	})
+}
+
+// UpdateSolutionOptions persists updated project options (file_options,
+// page_setup, and optional solution_name) in the API's SQLite control store.
+func (h *SolutionHandler) UpdateSolutionOptions(w http.ResponseWriter, r *http.Request) {
+	var req SolutionOptionsPayload
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	dbName := sessionDatabase(r)
+	svc := schemaService(r)
+	if strings.TrimSpace(req.SolutionName) != "" {
+		if prev, err := svc.GetSolutionMeta(r.Context(), dbName); err == nil && !prev.DesignLocked {
+			_, _ = svc.RenameSolution(r.Context(), prev.SolutionName, req.SolutionName)
+		}
+	}
+	h.syncProjectRecord(r.Context(), dbName, svc, req.FileOptions, req.PageSetup)
+	h.GetSolutionOptions(w, r)
 }
 
 // CloneSolutionRequest describes a server-side clone without records (#53).
@@ -662,6 +851,7 @@ func (h *SolutionHandler) CloneSolution(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	h.syncProjectRecord(r.Context(), targetDB, dstSvc, report.FileOptions, report.PageSetup)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -718,6 +908,7 @@ func (h *SolutionHandler) RenameSolution(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
+	h.syncProjectRecord(r.Context(), dbName, svc, nil, nil)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
@@ -749,11 +940,13 @@ func (h *SolutionHandler) LockSolutionDesign(w http.ResponseWriter, r *http.Requ
 	}
 
 	dbName := sessionDatabase(r)
-	meta, err := schemaService(r).LockDesign(r.Context(), dbName)
+	svc := schemaService(r)
+	meta, err := svc.LockDesign(r.Context(), dbName)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
+	h.syncProjectRecord(r.Context(), dbName, svc, nil, nil)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {

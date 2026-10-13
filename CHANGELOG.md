@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **API SQLite Control Store, Granular Table Permissions, Encrypted Channel & Configurable API Server**:
+  - **Embedded SQLite control store in `file4base-api`** (`server/internal/control`, persisted at `CONTROL_DB_PATH` / Docker volume `file4base-api-data`) storing the project-to-database registry (`GET /api/v1/projects`), project options (`GET/PUT /api/v1/solutions/options` for `file_options` and `page_setup`), accounts, per-table permissions, and per-layout permissions.
+  - **Granular per-table access & modification permissions** (`sys_table_permissions` and `GET/PUT /api/v1/security/users/{id}/table-permissions`): owners and admins can configure per-table `access_level` (`read_write`, `read_only`, `none`) and modification flags (`can_create`, `can_edit`, `can_delete`, `can_modify_schema`) in **Manage Security**, enforced by the data API on record reads, inserts, updates, and deletes, and exported/imported inside `.f4p` solution bundles (`table_permissions` on `BundleAccount`).
+  - **AES-256-GCM encrypted payload channel & optional HTTPS listener** (`server/internal/crypto/envelope.go` and `client/lib/core/crypto/payload_cipher.dart`): authenticates and encrypts HTTP request/response payloads (including `.f4p` and `.f4data` exports/imports) using the `F4BE\x01` AES-256-GCM envelope (`X-File4Base-Encrypted: aes-256-gcm`, `Accept-Encryption: aes-256-gcm`, `GET /api/v1/crypto/handshake`), plus optional TLS (`TLS_ENABLED=true`) in `file4base-api`.
+  - **API Server URL selector in the Sign-In dialog** (`DatabaseLoginDialog`): defaults to `http://127.0.0.1:8080` and allows switching the target API server directly from the login screen, reloading the server's registered projects and databases.
 - **Copy and paste structure between solutions**
   ([#54](https://github.com/file4base/file4base-app/issues/54)). Tables, fields,
   layouts, and scripts can now be copied to the system clipboard as reviewable
@@ -60,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     references on import.
 
 ### Fixed
+- **Persistent destination folder for solution saves and record exports** (`SolutionStorageService.defaultDirectory`, `ExportRecordsDialog`, `SaveCopyDialog`, `NewDatabaseDialog`): once a destination folder is chosen on disk (or via the File System Access API on Web), subsequent solution saves (`.f4p`), database data exports (`.f4data`), and record exports (`.csv`, `.tab`, `.xlsx`) write directly into that folder instead of re-prompting or falling back to the browser's `Downloads` directory.
 - **Release workflow publishes multi-architecture Docker Hub images**
   ([#55](https://github.com/file4base/file4base-app/issues/55)). Tagging a `v*`
   release now builds and pushes `file4base-api` and `file4base-web` for

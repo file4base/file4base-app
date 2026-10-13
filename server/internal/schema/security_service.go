@@ -33,12 +33,24 @@ type UserLayoutPermission struct {
 	AccessLevel string `json:"access_level"` // "read_write", "read_only", "none"
 }
 
+type UserTablePermission struct {
+	ID              string `json:"id" msgpack:"id,omitempty"`
+	UserID          string `json:"user_id" msgpack:"user_id,omitempty"`
+	TableName       string `json:"table_name" msgpack:"table_name"`
+	AccessLevel     string `json:"access_level" msgpack:"access_level"` // "read_write", "read_only", "none"
+	CanCreate       bool   `json:"can_create" msgpack:"can_create"`
+	CanEdit         bool   `json:"can_edit" msgpack:"can_edit"`
+	CanDelete       bool   `json:"can_delete" msgpack:"can_delete"`
+	CanModifySchema bool   `json:"can_modify_schema" msgpack:"can_modify_schema"`
+}
+
 type AuthUser struct {
-	ID          string                 `json:"id"`
-	Username    string                 `json:"username"`
-	Role        string                 `json:"role"`
-	IsActive    bool                   `json:"is_active"`
-	Permissions []UserLayoutPermission `json:"permissions"`
+	ID               string                 `json:"id"`
+	Username         string                 `json:"username"`
+	Role             string                 `json:"role"`
+	IsActive         bool                   `json:"is_active"`
+	Permissions      []UserLayoutPermission `json:"permissions"`
+	TablePermissions []UserTablePermission  `json:"table_permissions,omitempty"`
 	// Stamp identifies the account state the user signed in with (see
 	// AccountStamp); it is stored in the session, never sent to clients.
 	Stamp string `json:"-"`
@@ -146,14 +158,19 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	if err != nil {
 		perms = make([]UserLayoutPermission, 0)
 	}
+	tablePerms, err := s.GetUserTablePermissions(ctx, id)
+	if err != nil {
+		tablePerms = make([]UserTablePermission, 0)
+	}
 
 	return &AuthUser{
-		ID:          id,
-		Username:    uName,
-		Role:        role,
-		IsActive:    isActive,
-		Permissions: perms,
-		Stamp:       AccountStamp(hash, role, isActive),
+		ID:               id,
+		Username:         uName,
+		Role:             role,
+		IsActive:         isActive,
+		Permissions:      perms,
+		TablePermissions: tablePerms,
+		Stamp:            AccountStamp(hash, role, isActive),
 	}, nil
 }
 
@@ -213,12 +230,46 @@ func (s *Service) LayoutAccess(ctx context.Context, userID, layoutID string) (st
 	return level, nil
 }
 
-// TableAccess derives the access level a user holds on a base table from the
-// layout permissions: the data API works on tables, while permissions are
-// granted per layout, so the most permissive level across every layout built
-// on the table applies. A table without layouts, or a layout without an
-// explicit permission row, defaults to read_write.
+// TablePermissionFor returns the explicit table permission row for userID on
+// tableName, or (nil, nil) if no explicit per-table rule has been set.
+func (s *Service) TablePermissionFor(ctx context.Context, userID, tableName string) (*UserTablePermission, error) {
+	q := `SELECT id, user_id, table_name, access_level, can_create, can_edit, can_delete, can_modify_schema
+	      FROM sys_table_permissions
+	      WHERE user_id = $1 AND LOWER(table_name) = LOWER($2)`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT id, user_id, table_name, access_level, can_create, can_edit, can_delete, can_modify_schema
+		      FROM sys_table_permissions
+		      WHERE user_id = ? AND LOWER(table_name) = LOWER(?)`
+	}
+	var p UserTablePermission
+	err := s.driver.DB().QueryRowContext(ctx, q, userID, tableName).Scan(
+		&p.ID, &p.UserID, &p.TableName, &p.AccessLevel,
+		&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanModifySchema,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		// If the table does not exist yet on an older catalog before migration, treat as no explicit row.
+		return nil, nil
+	}
+	return &p, nil
+}
+
+// TableAccess returns the access level a user holds on a base table.
+// If an explicit row exists in sys_table_permissions for (user_id, table_name),
+// it takes precedence; otherwise access is derived from the most permissive
+// layout built on the table (defaulting to read_write).
 func (s *Service) TableAccess(ctx context.Context, userID, tableName string) (string, error) {
+	if tp, err := s.TablePermissionFor(ctx, userID, tableName); err == nil && tp != nil {
+		if !isValidAccessLevel(tp.AccessLevel) {
+			return AccessNone, nil
+		}
+		if tp.AccessLevel == AccessReadWrite && !tp.CanCreate && !tp.CanEdit && !tp.CanDelete {
+			return AccessReadOnly, nil
+		}
+		return tp.AccessLevel, nil
+	}
 	q := `SELECT p.access_level
 	      FROM sys_layouts l
 	      JOIN sys_table_occurrences o ON o.id = l.table_occurrence_id
@@ -515,3 +566,99 @@ func (s *Service) SetUserPermissions(ctx context.Context, userID string, perms [
 
 	return tx.Commit()
 }
+
+// GetUserTablePermissions returns all explicit per-table permissions for a user.
+func (s *Service) GetUserTablePermissions(ctx context.Context, userID string) ([]UserTablePermission, error) {
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+
+	q := `SELECT id, user_id, table_name, access_level, can_create, can_edit, can_delete, can_modify_schema
+	      FROM sys_table_permissions
+	      WHERE user_id = $1
+	      ORDER BY table_name ASC`
+	if dialect.Engine() != dbal.EnginePostgres {
+		q = `SELECT id, user_id, table_name, access_level, can_create, can_edit, can_delete, can_modify_schema
+		      FROM sys_table_permissions
+		      WHERE user_id = ?
+		      ORDER BY table_name ASC`
+	}
+
+	rows, err := db.QueryContext(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed fetching user table permissions: %w", err)
+	}
+	defer rows.Close()
+
+	perms := make([]UserTablePermission, 0)
+	for rows.Next() {
+		var p UserTablePermission
+		if err := rows.Scan(&p.ID, &p.UserID, &p.TableName, &p.AccessLevel, &p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanModifySchema); err != nil {
+			continue
+		}
+		perms = append(perms, p)
+	}
+	return perms, nil
+}
+
+// SetUserTablePermissions replaces all per-table permissions for a user.
+func (s *Service) SetUserTablePermissions(ctx context.Context, userID string, perms []UserTablePermission) error {
+	for _, p := range perms {
+		if strings.TrimSpace(p.TableName) != "" && !isValidAccessLevel(p.AccessLevel) {
+			return fmt.Errorf("invalid access level '%s' for table %s", p.AccessLevel, p.TableName)
+		}
+	}
+
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	qDel := `DELETE FROM sys_table_permissions WHERE user_id = $1`
+	if dialect.Engine() != dbal.EnginePostgres {
+		qDel = `DELETE FROM sys_table_permissions WHERE user_id = ?`
+	}
+	if _, err := tx.ExecContext(ctx, qDel, userID); err != nil {
+		return fmt.Errorf("failed deleting old table permissions: %w", err)
+	}
+
+	qIns := `INSERT INTO sys_table_permissions (id, user_id, table_name, access_level, can_create, can_edit, can_delete, can_modify_schema, created_at)
+	         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	if dialect.Engine() != dbal.EnginePostgres {
+		qIns = `INSERT INTO sys_table_permissions (id, user_id, table_name, access_level, can_create, can_edit, can_delete, can_modify_schema, created_at)
+		         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	}
+
+	now := time.Now().UTC()
+	seen := make(map[string]struct{}, len(perms))
+	for _, p := range perms {
+		tName := strings.TrimSpace(p.TableName)
+		if tName == "" {
+			continue
+		}
+		key := strings.ToLower(tName)
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		canCreate := p.CanCreate
+		canEdit := p.CanEdit
+		canDelete := p.CanDelete
+		canModify := p.CanModifySchema
+		if p.AccessLevel == AccessNone || p.AccessLevel == AccessReadOnly {
+			canCreate = false
+			canEdit = false
+			canDelete = false
+			canModify = false
+		}
+		if _, err := tx.ExecContext(ctx, qIns, uuid.NewString(), userID, tName, p.AccessLevel, canCreate, canEdit, canDelete, canModify, now); err != nil {
+			return fmt.Errorf("failed inserting permission for table %s: %w", tName, err)
+		}
+	}
+
+	return tx.Commit()
+}
+

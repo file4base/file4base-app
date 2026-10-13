@@ -59,6 +59,9 @@ func TestAPI_ImportFromAnExternalSource(t *testing.T) {
 		t.Skip("database not available:", err)
 	}
 	defer driver.Close()
+	if err := driver.Ping(context.Background()); err != nil {
+		t.Skip("scratch database not available:", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

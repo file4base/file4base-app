@@ -1698,3 +1698,75 @@ Inspects a `f4b.structure_clipboard` envelope against the destination solution (
 ### `POST /api/v1/solutions/clipboard/paste`
 *Requires `admin` or `owner` role and an unlocked design.* Pastes a `f4b.structure_clipboard` envelope into the destination solution, resolving collisions according to `on_collision` (`"rename"` default or `"replace"`), remapping matching `table_occurrence_id`, `script_id`, and `value_list_id` references by name, and returning a paste report with any remaining `missing_dependencies`.
 
+---
+
+## 12. Project Control Store, Table Permissions & Encrypted Channel
+
+`file4base-api` maintains an embedded SQLite control store (`CONTROL_DB_PATH`, default `./data/file4base_control.db`) that records the relationship between logical projects (`solution_name`), physical databases (`database`), project options (`file_options`, `page_setup`), accounts, and per-user **table** and **layout** permissions. All of this metadata is also included in `.f4p` solution bundles (`POST /api/v1/solutions/export` and `POST /api/v1/solutions/import`).
+
+### Encrypted Payload Channel (`AES-256-GCM`)
+Communication between the Web/Desktop client and `file4base-api` supports both HTTPS (`TLS_ENABLED=true`, using `TLS_CERT_FILE`/`TLS_KEY_FILE` or an ephemeral ECDSA P-256 self-signed certificate) and authenticated **AES-256-GCM** envelope encryption (`F4BE\x01` + 12-byte random nonce + ciphertext + 16-byte GCM tag, keyed from `FILE4BASE_CHANNEL_SECRET`):
+- Request header `X-File4Base-Encrypted: aes-256-gcm`: the server transparently authenticates and decrypts the incoming request body before routing.
+- Request header `Accept-Encryption: aes-256-gcm`: the server seals the outgoing response body in an `F4BE\x01` AES-256-GCM envelope (`Content-Type: application/octet-stream`, `X-File4Base-Encrypted: aes-256-gcm`, `X-Original-Content-Type: <inner-type>`).
+
+### `GET /api/v1/crypto/handshake`
+Public endpoint reporting the server's active payload cipher, non-secret 16-hex-character key fingerprint, and TLS listener status.
+
+#### Response `200 OK`
+```json
+{
+  "status": "ok",
+  "cipher": "aes-256-gcm",
+  "key_fingerprint": "9f86d081884c7d65",
+  "tls": false
+}
+```
+
+### `GET /api/v1/projects`
+Public endpoint (also included in `GET /api/v1/databases` under `projects`) listing the project-to-database relationships and options registered in the API's SQLite control store.
+
+#### Response `200 OK`
+```json
+{
+  "engine": "postgres",
+  "projects": [
+    {
+      "database": "crm_prod",
+      "name": "Acme CRM",
+      "engine": "postgres",
+      "design_locked": false,
+      "file_options": {},
+      "page_setup": {},
+      "updated_at": "2026-10-13T13:30:00Z"
+    }
+  ]
+}
+```
+
+### `GET /api/v1/solutions/options`
+Returns the active project's `solution_name`, `design_locked` flag, `file_options`, and `page_setup` stored in the API's SQLite control store.
+
+### `PUT /api/v1/solutions/options`
+*Requires `admin` or `owner` role.* Updates `solution_name`, `file_options`, and/or `page_setup` for the active project in `sys_solution_meta` and the SQLite control store.
+
+### `GET /api/v1/security/users/{id}/table-permissions`
+*Requires `admin` or `owner` role (or the user's own session).* Returns the per-table access and granular modification permissions (`access_level`, `can_create`, `can_edit`, `can_delete`, `can_modify_schema`) for user `{id}`, backed by `sys_table_permissions` and mirrored in the SQLite control store.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "id": "8e110c4a-3b9d-41d2-9c8a-123456789abc",
+    "user_id": "2a4b6c8d-0e1f-2a3b-4c5d-6e7f8a9b0c1d",
+    "table_name": "invoices",
+    "access_level": "read_write",
+    "can_create": true,
+    "can_edit": true,
+    "can_delete": false,
+    "can_modify_schema": false
+  }
+]
+```
+
+### `PUT /api/v1/security/users/{id}/table-permissions`
+*Requires `admin` or `owner` role.* Replaces the per-table access and modification permissions for user `{id}` in both `sys_table_permissions` and the SQLite control store. Enforced on `GET/POST/PUT/DELETE /api/v1/data/{table}`.

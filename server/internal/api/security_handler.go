@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
@@ -15,10 +17,11 @@ import (
 )
 
 // SecurityHandler serves authentication (login, logout, session) and the
-// management of user accounts and layout permissions.
+// management of user accounts and layout/table permissions.
 type SecurityHandler struct {
-	dbMgr    *dbal.MultiDatabaseManager
-	sessions *auth.Store
+	dbMgr        *dbal.MultiDatabaseManager
+	sessions     *auth.Store
+	controlStore *control.Store
 }
 
 func NewSecurityHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store) *SecurityHandler {
@@ -26,6 +29,69 @@ func NewSecurityHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store) 
 		dbMgr:    dbMgr,
 		sessions: sessions,
 	}
+}
+
+func NewSecurityHandlerWithControl(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, controlStore *control.Store) *SecurityHandler {
+	return &SecurityHandler{
+		dbMgr:        dbMgr,
+		sessions:     sessions,
+		controlStore: controlStore,
+	}
+}
+
+func (h *SecurityHandler) syncProjectSecurity(ctx context.Context, dbName string, svc *schema.Service) {
+	if h.controlStore == nil || svc == nil || strings.TrimSpace(dbName) == "" {
+		return
+	}
+	if meta, err := svc.GetSolutionMeta(ctx, dbName); err == nil {
+		_ = h.controlStore.UpsertProject(ctx, control.ProjectRecord{
+			Database:     dbName,
+			Name:         meta.SolutionName,
+			Engine:       string(h.dbMgr.Engine()),
+			DesignLocked: meta.DesignLocked,
+		})
+	}
+	users, err := svc.ListUsers(ctx)
+	if err != nil {
+		return
+	}
+	uRecs := make([]control.UserRecord, 0, len(users))
+	for _, u := range users {
+		uRecs = append(uRecs, control.UserRecord{
+			ID:       u.ID,
+			Username: u.Username,
+			Role:     u.Role,
+			IsActive: u.IsActive,
+		})
+		if lPerms, err := svc.GetUserPermissions(ctx, u.ID); err == nil {
+			lpRecs := make([]control.LayoutPermissionRecord, 0, len(lPerms))
+			for _, lp := range lPerms {
+				lpRecs = append(lpRecs, control.LayoutPermissionRecord{
+					UserID:      u.ID,
+					LayoutID:    lp.LayoutID,
+					LayoutName:  lp.LayoutName,
+					AccessLevel: lp.AccessLevel,
+				})
+			}
+			_ = h.controlStore.SetLayoutPermissions(ctx, dbName, u.ID, lpRecs)
+		}
+		if tPerms, err := svc.GetUserTablePermissions(ctx, u.ID); err == nil {
+			tpRecs := make([]control.TablePermissionRecord, 0, len(tPerms))
+			for _, tp := range tPerms {
+				tpRecs = append(tpRecs, control.TablePermissionRecord{
+					UserID:          u.ID,
+					TableName:       tp.TableName,
+					AccessLevel:     tp.AccessLevel,
+					CanCreate:       tp.CanCreate,
+					CanEdit:         tp.CanEdit,
+					CanDelete:       tp.CanDelete,
+					CanModifySchema: tp.CanModifySchema,
+				})
+			}
+			_ = h.controlStore.SetTablePermissions(ctx, dbName, u.ID, tpRecs)
+		}
+	}
+	_ = h.controlStore.SyncUsers(ctx, dbName, uRecs)
 }
 
 // RegisterPublicRoutes registers the endpoints reachable without a session.
@@ -46,6 +112,8 @@ func (h *SecurityHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Delete("/users/{id}", h.DeleteUser)
 		r.Get("/users/{id}/permissions", h.GetUserPermissions) // admins, or the user themselves
 		r.With(RequireAdmin).Put("/users/{id}/permissions", h.SetUserPermissions)
+		r.Get("/users/{id}/table-permissions", h.GetUserTablePermissions) // admins, or the user themselves
+		r.With(RequireAdmin).Put("/users/{id}/table-permissions", h.SetUserTablePermissions)
 		r.With(RequireAdmin).Get("/privileges", h.GetRolePrivileges)
 		// Granting a capability to a role is a change to the security
 		// policy of the database, so only an owner may make it.
@@ -110,6 +178,8 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.syncProjectSecurity(r.Context(), dbName, svc)
+
 	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName, user.Stamp)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, errors.New("failed creating session"))
@@ -125,9 +195,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"status":       "ok",
 		"database":     dbName,
 		"user":         user,
@@ -135,7 +203,24 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"token_type":   "Bearer",
 		"capabilities": capabilities,
 		"expires_at":   sess.ExpiresAt.UTC().Format(time.RFC3339),
-	})
+	}
+	if h.controlStore != nil {
+		if proj, err := h.controlStore.GetProject(r.Context(), dbName); err == nil && proj != nil {
+			if proj.Name != "" {
+				resp["solution_name"] = proj.Name
+			}
+			if len(proj.FileOptions) > 0 {
+				resp["file_options"] = proj.FileOptions
+			}
+			if len(proj.PageSetup) > 0 {
+				resp["page_setup"] = proj.PageSetup
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // Logout revokes the caller's session.
@@ -147,12 +232,17 @@ func (h *SecurityHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // CurrentSession returns the user and database of the caller's session.
 func (h *SecurityHandler) CurrentSession(w http.ResponseWriter, r *http.Request) {
 	sess := currentSession(r)
-	perms, err := schemaService(r).GetUserPermissions(r.Context(), sess.UserID)
+	svc := schemaService(r)
+	perms, err := svc.GetUserPermissions(r.Context(), sess.UserID)
 	if err != nil {
 		perms = make([]schema.UserLayoutPermission, 0)
 	}
+	tablePerms, err := svc.GetUserTablePermissions(r.Context(), sess.UserID)
+	if err != nil {
+		tablePerms = make([]schema.UserTablePermission, 0)
+	}
 
-	capabilities, err := schemaService(r).CapabilitiesOf(r.Context(), sess.Role)
+	capabilities, err := svc.CapabilitiesOf(r.Context(), sess.Role)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
@@ -164,22 +254,25 @@ func (h *SecurityHandler) CurrentSession(w http.ResponseWriter, r *http.Request)
 		"database":     sess.Database,
 		"capabilities": capabilities,
 		"user": schema.AuthUser{
-			ID:          sess.UserID,
-			Username:    sess.Username,
-			Role:        sess.Role,
-			IsActive:    true,
-			Permissions: perms,
+			ID:               sess.UserID,
+			Username:         sess.Username,
+			Role:             sess.Role,
+			IsActive:         true,
+			Permissions:      perms,
+			TablePermissions: tablePerms,
 		},
 		"expires_at": sess.ExpiresAt.UTC().Format(time.RFC3339),
 	})
 }
 
 func (h *SecurityHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := schemaService(r).ListUsers(r.Context())
+	svc := schemaService(r)
+	users, err := svc.ListUsers(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
+	h.syncProjectSecurity(r.Context(), currentSession(r).Database, svc)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(users)
@@ -217,6 +310,7 @@ func (h *SecurityHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Creation Error", err.Error())
 		return
 	}
+	h.syncProjectSecurity(r.Context(), currentSession(r).Database, svc)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -275,6 +369,7 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "User Update Error", err.Error())
 		return
 	}
+	h.syncProjectSecurity(r.Context(), sess.Database, svc)
 
 	// Credentials, role or status changed: the user's other sessions must not
 	// outlive the change. The caller keeps their own session when editing themselves.
@@ -324,6 +419,7 @@ func (h *SecurityHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.sessions.RevokeUser(sess.Database, id, "")
+	h.syncProjectSecurity(r.Context(), sess.Database, svc)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -368,6 +464,53 @@ func (h *SecurityHandler) SetUserPermissions(w http.ResponseWriter, r *http.Requ
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Permission Update Error", err.Error())
 		return
 	}
+	h.syncProjectSecurity(r.Context(), currentSession(r).Database, svc)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+func (h *SecurityHandler) GetUserTablePermissions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	sess := currentSession(r)
+	if !sess.IsAdmin() && sess.UserID != id {
+		writeForbidden(w, r, "you can only read your own permissions")
+		return
+	}
+
+	perms, err := schemaService(r).GetUserTablePermissions(r.Context(), id)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Table Permissions Not Found", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(perms)
+}
+
+type SetTablePermissionsRequest struct {
+	Permissions []schema.UserTablePermission `json:"permissions"`
+}
+
+func (h *SecurityHandler) SetUserTablePermissions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req SetTablePermissionsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	svc := schemaService(r)
+	if _, err := svc.GetUser(r.Context(), id); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Not Found", err.Error())
+		return
+	}
+
+	if err := svc.SetUserTablePermissions(r.Context(), id, req.Permissions); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Table Permission Update Error", err.Error())
+		return
+	}
+	h.syncProjectSecurity(r.Context(), currentSession(r).Database, svc)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})

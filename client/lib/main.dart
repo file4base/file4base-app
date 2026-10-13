@@ -57,15 +57,7 @@ enum OperationalMode {
 
 class ServerUrlNotifier extends Notifier<String> {
   @override
-  String build() {
-    if (kIsWeb) {
-      final origin = Uri.base.origin;
-      if (origin.isNotEmpty && !origin.startsWith('null') && !origin.startsWith('file')) {
-        return origin;
-      }
-    }
-    return 'http://localhost:8080';
-  }
+  String build() => 'http://127.0.0.1:8080';
 
   void setUrl(String url) => state = url;
 }
@@ -274,7 +266,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
     if (!mounted) return;
 
-    final auth = await DatabaseLoginDialog.show(context, client);
+    final auth = await DatabaseLoginDialog.show(
+      context,
+      client,
+      onServerUrlChanged: (url) => ref.read(serverUrlProvider.notifier).setUrl(url),
+    );
     if (auth != null && mounted) {
       setState(() {
         _currentUser = auth.user;
@@ -581,6 +577,15 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         _designLocked = meta.designLocked;
         if (meta.solutionName.isNotEmpty) {
           _activeSolutionName = meta.solutionName;
+        }
+        if (meta.fileOptions != null && meta.fileOptions!.isNotEmpty) {
+          _fileOptions = FileOptionsModel.fromJson(meta.fileOptions!);
+          if (_fileOptions.hideAllToolbars) {
+            _isToolbarVisible = false;
+          }
+        }
+        if (meta.pageSetup != null && meta.pageSetup!.isNotEmpty) {
+          _pageSetup = PageSetupModel.fromJson(meta.pageSetup!);
         }
       });
     } catch (_) {
@@ -1051,7 +1056,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   Future<void> _handleSaveAs() async {
     final initialName = _activeSolutionFileName.replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
     final ctrl = TextEditingController(text: initialName == 'Untitled' ? 'MySolution' : initialName);
-    StorageDirectoryRef? pickedDir = _activeSolutionDirectory;
+    StorageDirectoryRef? pickedDir = _activeSolutionDirectory ?? SolutionStorageService.defaultDirectory;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1148,6 +1153,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         _activeSolutionDirectory = pickedDir;
       });
       if (pickedDir != null) {
+        SolutionStorageService.setDefaultDirectory(pickedDir);
         AutoSaveService.instance.updateLocation(
           directory: pickedDir!,
           baseName: baseName,
@@ -1176,12 +1182,19 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       final baseName = _activeSolutionName.replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
       final filename = '${baseName}_data.f4data';
 
-      // Try to save to the existing solution directory, or let user pick
-      if (_activeSolutionDirectory != null) {
-        await SolutionStorageService.saveFile(filename: filename, bytes: bytes);
-      } else {
-        await SolutionStorageService.saveFile(filename: filename, bytes: bytes);
+      // Save to the active/default solution directory, or prompt and remember it
+      var targetDir = _activeSolutionDirectory ?? SolutionStorageService.defaultDirectory;
+      if (targetDir == null) {
+        targetDir = await SolutionStorageService.pickDirectory();
+        if (targetDir != null && mounted) {
+          setState(() => _activeSolutionDirectory = targetDir);
+        }
       }
+      await SolutionStorageService.saveFile(
+        filename: filename,
+        bytes: bytes,
+        directoryRef: targetDir,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1220,6 +1233,18 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           _isToolbarVisible = false;
         }
       });
+      unawaited(
+        client
+            .updateSolutionOptions(
+              solutionName: _activeSolutionName,
+              fileOptions: _fileOptions.toJson(),
+              pageSetup: _pageSetup.toJson(),
+            )
+            .catchError((_) => SolutionMetaModel(
+                  database: _activeDatabaseName,
+                  solutionName: _activeSolutionName,
+                )),
+      );
       AutoSaveService.instance.markDirty();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1231,6 +1256,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   }
 
   Future<void> _handlePageSetup() async {
+    final client = ref.read(apiClientProvider);
     final updated = await PageSetupDialog.show(
       context,
       initialPageSetup: _pageSetup,
@@ -1239,6 +1265,18 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       setState(() {
         _pageSetup = updated;
       });
+      unawaited(
+        client
+            .updateSolutionOptions(
+              solutionName: _activeSolutionName,
+              fileOptions: _fileOptions.toJson(),
+              pageSetup: _pageSetup.toJson(),
+            )
+            .catchError((_) => SolutionMetaModel(
+                  database: _activeDatabaseName,
+                  solutionName: _activeSolutionName,
+                )),
+      );
       AutoSaveService.instance.markDirty();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

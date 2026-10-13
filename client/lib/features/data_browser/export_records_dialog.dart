@@ -76,11 +76,20 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
   bool _isExporting = false;
   String? _statusMessage;
   String? _errorMessage;
+  StorageDirectoryRef? _selectedDirectory;
 
   @override
   void initState() {
     super.initState();
     _selectedTable = widget.initialTable ?? (widget.tables.isNotEmpty ? widget.tables.first : null);
+    _selectedDirectory = SolutionStorageService.defaultDirectory;
+  }
+
+  Future<void> _handlePickDirectory() async {
+    final picked = await SolutionStorageService.pickDirectory();
+    if (picked != null && mounted) {
+      setState(() => _selectedDirectory = picked);
+    }
   }
 
   String _formatName(ExportFormat format) {
@@ -230,7 +239,11 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
     );
 
     final filename = '${table.name}_export.xlsx';
-    await SolutionStorageService.saveFile(filename: filename, bytes: bytes);
+    await SolutionStorageService.saveFile(
+      filename: filename,
+      bytes: bytes,
+      directoryRef: _selectedDirectory,
+    );
     if (!mounted) return;
     Navigator.of(context).pop();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -283,7 +296,11 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
       final ext = _extensionFor(_selectedFormat);
       final filename = '${_selectedTable!.name}_export.$ext';
 
-      await SolutionStorageService.saveFile(filename: filename, bytes: bytes);
+      await SolutionStorageService.saveFile(
+        filename: filename,
+        bytes: bytes,
+        directoryRef: _selectedDirectory,
+      );
 
       if (mounted) {
         Navigator.of(context).pop();
@@ -321,10 +338,50 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Select table and target format to export records:',
+              'Select table, target format, and destination folder to export records:',
               style: TextStyle(fontSize: 13),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: _selectedDirectory != null ? const Color(0xFF1E88E5) : Colors.grey.shade400,
+                ),
+                borderRadius: BorderRadius.circular(6),
+                color: _selectedDirectory != null
+                    ? const Color(0xFF1E88E5).withValues(alpha: 0.08)
+                    : null,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _selectedDirectory != null ? Icons.folder : Icons.folder_open,
+                    size: 18,
+                    color: _selectedDirectory != null ? const Color(0xFF1E88E5) : Colors.grey,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _selectedDirectory != null
+                          ? 'Folder: ${_selectedDirectory!.displayName}'
+                          : 'Destination folder (not selected yet)',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: _selectedDirectory != null ? FontWeight.bold : FontWeight.normal,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  TextButton(
+                    key: const Key('export_records_pick_folder_button'),
+                    onPressed: _isExporting ? null : _handlePickDirectory,
+                    child: Text(_selectedDirectory == null ? 'Choose Folder...' : 'Change...'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             if (_errorMessage != null) ...[
               Container(
                 padding: const EdgeInsets.all(8),

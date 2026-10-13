@@ -52,6 +52,10 @@ services:
       SESSION_TTL: "${SESSION_TTL:-12h}"
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-*}"
       ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-true}"
+      CONTROL_DB_PATH: "/app/data/file4base_control.db"
+      FILE4BASE_CHANNEL_SECRET: "${FILE4BASE_CHANNEL_SECRET:-}"
+    volumes:
+      - api_data:/app/data
     depends_on:
       mariadb:
         condition: service_healthy
@@ -86,6 +90,8 @@ services:
 volumes:
   mariadb_data:
     name: file4base-mariadb-data
+  api_data:
+    name: file4base-api-data
 
 networks:
   file4base-net:

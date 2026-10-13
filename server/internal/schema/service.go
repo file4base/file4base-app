@@ -203,6 +203,18 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS sys_table_permissions (
+			id VARCHAR(36) PRIMARY KEY,
+			user_id VARCHAR(36) NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
+			table_name VARCHAR(64) NOT NULL,
+			access_level VARCHAR(16) NOT NULL DEFAULT 'read_write',
+			can_create BOOLEAN NOT NULL DEFAULT TRUE,
+			can_edit BOOLEAN NOT NULL DEFAULT TRUE,
+			can_delete BOOLEAN NOT NULL DEFAULT TRUE,
+			can_modify_schema BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at ` + ts + `,
+			CONSTRAINT uq_user_table UNIQUE (user_id, table_name)
+		);`,
 		// Menu sets a solution installs over the standard menu bar (#52).
 		// A set is a convenience, never a boundary: what an account may do
 		// is the role, the table and layout access and the privileges, and

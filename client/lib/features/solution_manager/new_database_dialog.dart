@@ -67,7 +67,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   final _portController = TextEditingController(text: '5432');
   final _userController = TextEditingController(text: 'admin');
   final _passwordController = TextEditingController();
-  StorageDirectoryRef? _selectedDirectory;
+  StorageDirectoryRef? _selectedDirectory = SolutionStorageService.defaultDirectory;
   bool _autoCreateDb = true;
   bool _isCreating = false;
   bool _obscurePassword = true;

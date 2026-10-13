@@ -43,7 +43,9 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   late TabController _tabController;
   List<UserModel> _users = [];
   List<LayoutModel> _layouts = [];
+  List<TableModel> _tables = [];
   Map<String, List<UserLayoutPermissionModel>> _userPermissionsMap = {};
+  Map<String, List<UserTablePermissionModel>> _userTablePermissionsMap = {};
 
   /// The capabilities each role holds (#39). Defaults are what a server
   /// without them reports: every role holds everything.
@@ -81,10 +83,15 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     try {
       final users = await widget.apiClient.listUsers(database: widget.databaseName);
       final layouts = await widget.apiClient.listLayouts();
+      List<TableModel> tables = [];
+      try {
+        tables = await widget.apiClient.listTables();
+      } catch (_) {}
       await _loadRolePrivileges();
 
-      // Preload permissions for all users
+      // Preload layout and table permissions for all users
       final permsMap = <String, List<UserLayoutPermissionModel>>{};
+      final tablePermsMap = <String, List<UserTablePermissionModel>>{};
       for (final u in users) {
         try {
           final p = await widget.apiClient.getUserPermissions(u.id, database: widget.databaseName);
@@ -92,13 +99,21 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
         } catch (_) {
           permsMap[u.id] = [];
         }
+        try {
+          final tp = await widget.apiClient.getUserTablePermissions(u.id, database: widget.databaseName);
+          tablePermsMap[u.id] = tp;
+        } catch (_) {
+          tablePermsMap[u.id] = [];
+        }
       }
 
       if (mounted) {
         setState(() {
           _users = users;
           _layouts = layouts;
+          _tables = tables;
           _userPermissionsMap = permsMap;
+          _userTablePermissionsMap = tablePermsMap;
           _isLoading = false;
         });
       }
@@ -336,6 +351,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     String selectedRole = userToEdit?.role ?? 'user';
     bool isActive = userToEdit?.isActive ?? true;
     Map<String, String> layoutPerms = {};
+    Map<String, UserTablePermissionModel> tablePerms = {};
 
     // Load initial layout permissions
     for (final l in _layouts) {
@@ -344,6 +360,23 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     if (!isNew && _userPermissionsMap.containsKey(userToEdit.id)) {
       for (final p in _userPermissionsMap[userToEdit.id]!) {
         layoutPerms[p.layoutId] = p.accessLevel;
+      }
+    }
+
+    // Load initial table permissions
+    for (final t in _tables) {
+      tablePerms[t.name] = UserTablePermissionModel(
+        tableName: t.name,
+        accessLevel: 'read_write',
+        canCreate: true,
+        canEdit: true,
+        canDelete: true,
+        canModifySchema: selectedRole == 'owner' || selectedRole == 'admin',
+      );
+    }
+    if (!isNew && _userTablePermissionsMap.containsKey(userToEdit.id)) {
+      for (final tp in _userTablePermissionsMap[userToEdit.id]!) {
+        tablePerms[tp.tableName] = tp;
       }
     }
 
@@ -387,8 +420,8 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               ],
             ),
             content: SizedBox(
-              width: 580,
-              height: 480,
+              width: 620,
+              height: 540,
               child: isSaving
                   ? const Center(child: CircularProgressIndicator())
                   : SingleChildScrollView(
@@ -517,6 +550,194 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                           ),
 
                           const SizedBox(height: 20),
+                          const Divider(),
+                          const SizedBox(height: 8),
+
+                          // Table Access & Modification Privileges header
+                          Row(
+                            children: [
+                              const Icon(Icons.table_chart_outlined, size: 18, color: Color(0xFF1E88E5)),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Table access & modification privileges',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              const Spacer(),
+                              TextButton(
+                                onPressed: () {
+                                  setDlgState(() {
+                                    for (final t in _tables) {
+                                      tablePerms[t.name] = UserTablePermissionModel(
+                                        tableName: t.name,
+                                        accessLevel: 'read_write',
+                                        canCreate: true,
+                                        canEdit: true,
+                                        canDelete: true,
+                                        canModifySchema: selectedRole == 'owner' || selectedRole == 'admin',
+                                      );
+                                    }
+                                  });
+                                },
+                                child: const Text('All Read/Write', style: TextStyle(fontSize: 11)),
+                              ),
+                              TextButton(
+                                onPressed: () {
+                                  setDlgState(() {
+                                    for (final t in _tables) {
+                                      tablePerms[t.name] = UserTablePermissionModel(
+                                        tableName: t.name,
+                                        accessLevel: 'read_only',
+                                        canCreate: false,
+                                        canEdit: false,
+                                        canDelete: false,
+                                        canModifySchema: false,
+                                      );
+                                    }
+                                  });
+                                },
+                                child: const Text('Read Only', style: TextStyle(fontSize: 11)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+
+                          if (_tables.isEmpty)
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              width: double.infinity,
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey.shade800),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Center(
+                                child: Text('No tables are defined in this solution yet.', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                              ),
+                            )
+                          else
+                            Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(color: Colors.grey.shade800),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: ListView.separated(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: _tables.length,
+                                separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade800),
+                                itemBuilder: (ctx, i) {
+                                  final t = _tables[i];
+                                  final curPerm = tablePerms[t.name] ??
+                                      UserTablePermissionModel(tableName: t.name);
+                                  final isReadWrite = curPerm.accessLevel == 'read_write';
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            const Icon(Icons.table_rows_outlined, size: 16, color: Colors.grey),
+                                            const SizedBox(width: 8),
+                                            Expanded(
+                                              child: Text(
+                                                t.displayName.isNotEmpty ? '${t.displayName} (${t.name})' : t.name,
+                                                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                              ),
+                                            ),
+                                            SegmentedButton<String>(
+                                              showSelectedIcon: false,
+                                              segments: const [
+                                                ButtonSegment(
+                                                  value: 'read_write',
+                                                  label: Text('R/W', style: TextStyle(fontSize: 10)),
+                                                  tooltip: 'Read and Write',
+                                                ),
+                                                ButtonSegment(
+                                                  value: 'read_only',
+                                                  label: Text('Read', style: TextStyle(fontSize: 10)),
+                                                  tooltip: 'Read Only',
+                                                ),
+                                                ButtonSegment(
+                                                  value: 'none',
+                                                  label: Text('No access', style: TextStyle(fontSize: 10)),
+                                                  tooltip: 'No access',
+                                                ),
+                                              ],
+                                              selected: {curPerm.accessLevel},
+                                              onSelectionChanged: (val) {
+                                                final nextAccess = val.first;
+                                                final allowWrite = nextAccess == 'read_write';
+                                                setDlgState(() {
+                                                  tablePerms[t.name] = curPerm.copyWith(
+                                                    accessLevel: nextAccess,
+                                                    canCreate: allowWrite,
+                                                    canEdit: allowWrite,
+                                                    canDelete: allowWrite,
+                                                    canModifySchema: allowWrite && curPerm.canModifySchema,
+                                                  );
+                                                });
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                        if (isReadWrite)
+                                          Padding(
+                                            padding: const EdgeInsets.only(left: 24, top: 4),
+                                            child: Wrap(
+                                              spacing: 12,
+                                              runSpacing: 4,
+                                              children: [
+                                                FilterChip(
+                                                  label: const Text('Create records', style: TextStyle(fontSize: 10)),
+                                                  selected: curPerm.canCreate,
+                                                  visualDensity: VisualDensity.compact,
+                                                  onSelected: (v) {
+                                                    setDlgState(() {
+                                                      tablePerms[t.name] = curPerm.copyWith(canCreate: v);
+                                                    });
+                                                  },
+                                                ),
+                                                FilterChip(
+                                                  label: const Text('Edit records', style: TextStyle(fontSize: 10)),
+                                                  selected: curPerm.canEdit,
+                                                  visualDensity: VisualDensity.compact,
+                                                  onSelected: (v) {
+                                                    setDlgState(() {
+                                                      tablePerms[t.name] = curPerm.copyWith(canEdit: v);
+                                                    });
+                                                  },
+                                                ),
+                                                FilterChip(
+                                                  label: const Text('Delete records', style: TextStyle(fontSize: 10)),
+                                                  selected: curPerm.canDelete,
+                                                  visualDensity: VisualDensity.compact,
+                                                  onSelected: (v) {
+                                                    setDlgState(() {
+                                                      tablePerms[t.name] = curPerm.copyWith(canDelete: v);
+                                                    });
+                                                  },
+                                                ),
+                                                FilterChip(
+                                                  label: const Text('Modify schema', style: TextStyle(fontSize: 10)),
+                                                  selected: curPerm.canModifySchema,
+                                                  visualDensity: VisualDensity.compact,
+                                                  onSelected: (v) {
+                                                    setDlgState(() {
+                                                      tablePerms[t.name] = curPerm.copyWith(canModifySchema: v);
+                                                    });
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+
+                          const SizedBox(height: 16),
                           const Divider(),
                           const SizedBox(height: 8),
 
@@ -685,6 +906,18 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                             };
                           }).toList();
                           await widget.apiClient.setUserPermissions(targetId, permsList, database: widget.databaseName);
+
+                          // Save table permissions
+                          if (tablePerms.isNotEmpty) {
+                            try {
+                              await widget.apiClient.setUserTablePermissions(
+                                targetId,
+                                tablePerms.values.toList(),
+                                database: widget.databaseName,
+                              );
+                            } catch (_) {}
+                          }
+
                           widget.onModified?.call();
                           AutoSaveService.instance.markDirty();
 
@@ -739,7 +972,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'A duplicate will be created with the "${user.role.toUpperCase()}" role and the same layout privileges.',
+                  'A duplicate will be created with the "${user.role.toUpperCase()}" role and the same table and layout privileges.',
                   style: const TextStyle(fontSize: 12, color: Colors.grey),
                 ),
                 const SizedBox(height: 16),
@@ -798,7 +1031,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     database: widget.databaseName,
                   );
 
-                  // Copy permissions from original
+                  // Copy layout permissions from original
                   final originalPerms = _userPermissionsMap[user.id] ?? [];
                   if (originalPerms.isNotEmpty) {
                     final payload = originalPerms.map((p) => {
@@ -807,6 +1040,19 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     }).toList();
                     await widget.apiClient.setUserPermissions(newUser.id, payload, database: widget.databaseName);
                   }
+
+                  // Copy table permissions from original
+                  final originalTablePerms = _userTablePermissionsMap[user.id] ?? [];
+                  if (originalTablePerms.isNotEmpty) {
+                    try {
+                      await widget.apiClient.setUserTablePermissions(
+                        newUser.id,
+                        originalTablePerms,
+                        database: widget.databaseName,
+                      );
+                    } catch (_) {}
+                  }
+
                   widget.onModified?.call();
                   AutoSaveService.instance.markDirty();
 

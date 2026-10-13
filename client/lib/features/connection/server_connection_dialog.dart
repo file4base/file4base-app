@@ -40,9 +40,9 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
   @override
   void initState() {
     super.initState();
-    final uri = Uri.tryParse(widget.currentUrl) ?? Uri.parse('http://localhost:8080');
+    final uri = Uri.tryParse(widget.currentUrl) ?? Uri.parse('http://127.0.0.1:8080');
     _protocol = uri.scheme.isNotEmpty ? uri.scheme : 'http';
-    _hostController = TextEditingController(text: uri.host.isNotEmpty ? uri.host : 'localhost');
+    _hostController = TextEditingController(text: uri.host.isNotEmpty ? uri.host : '127.0.0.1');
     _portController = TextEditingController(text: uri.hasPort ? uri.port.toString() : '8080');
   }
 
@@ -116,7 +116,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Configure the File4Base Server connection. By default, desktop clients connect to localhost:8080.',
+              'Configure the File4Base Server connection. By default, clients connect to 127.0.0.1:8080.',
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 16),
@@ -143,7 +143,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                     controller: _hostController,
                     decoration: const InputDecoration(
                       labelText: 'Server Host / IP',
-                      hintText: 'localhost',
+                      hintText: '127.0.0.1',
                       isDense: true,
                     ),
                   ),
@@ -179,7 +179,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                   onPressed: () {
                     setState(() {
                       _protocol = 'http';
-                      _hostController.text = 'localhost';
+                      _hostController.text = '127.0.0.1';
                       _portController.text = '8080';
                       _testResult = null;
                     });

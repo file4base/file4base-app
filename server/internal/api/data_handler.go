@@ -57,11 +57,16 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 // caller's access level on the table. It writes the error response itself
 // and returns ok=false when the request must not proceed.
 func (h *DataHandler) authorize(w http.ResponseWriter, r *http.Request, table string, write bool) (*data.Service, bool) {
+	return h.authorizeAction(w, r, table, write, "")
+}
+
+func (h *DataHandler) authorizeAction(w http.ResponseWriter, r *http.Request, table string, write bool, action string) (*data.Service, bool) {
 	driver, _ := dbal.DriverFromContext(r.Context())
 	sess := currentSession(r)
 
 	if !sess.IsAdmin() {
-		level, err := schema.NewService(driver).TableAccess(r.Context(), sess.UserID, table)
+		svc := schema.NewService(driver)
+		level, err := svc.TableAccess(r.Context(), sess.UserID, table)
 		if err != nil {
 			telemetry.WriteInternalError(w, r, err)
 			return nil, false
@@ -73,6 +78,27 @@ func (h *DataHandler) authorize(w http.ResponseWriter, r *http.Request, table st
 		if write && level != schema.AccessReadWrite {
 			writeForbidden(w, r, "you have read-only access to this table")
 			return nil, false
+		}
+		if write && action != "" {
+			if tp, err := svc.TablePermissionFor(r.Context(), sess.UserID, table); err == nil && tp != nil {
+				switch action {
+				case "create":
+					if !tp.CanCreate {
+						writeForbidden(w, r, "you do not have permission to create records in this table")
+						return nil, false
+					}
+				case "edit":
+					if !tp.CanEdit {
+						writeForbidden(w, r, "you do not have permission to modify records in this table")
+						return nil, false
+					}
+				case "delete":
+					if !tp.CanDelete {
+						writeForbidden(w, r, "you do not have permission to delete records in this table")
+						return nil, false
+					}
+				}
+			}
 		}
 	}
 
@@ -252,7 +278,7 @@ func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
 
 func (h *DataHandler) InsertRow(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
-	svc, ok := h.authorize(w, r, table, true)
+	svc, ok := h.authorizeAction(w, r, table, true, "create")
 	if !ok {
 		return
 	}
@@ -295,7 +321,7 @@ func (h *DataHandler) GetRow(w http.ResponseWriter, r *http.Request) {
 func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 	id := chi.URLParam(r, "id")
-	svc, ok := h.authorize(w, r, table, true)
+	svc, ok := h.authorizeAction(w, r, table, true, "edit")
 	if !ok {
 		return
 	}
@@ -319,7 +345,7 @@ func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 func (h *DataHandler) DeleteRow(w http.ResponseWriter, r *http.Request) {
 	table := chi.URLParam(r, "table")
 	id := chi.URLParam(r, "id")
-	svc, ok := h.authorize(w, r, table, true)
+	svc, ok := h.authorizeAction(w, r, table, true, "delete")
 	if !ok {
 		return
 	}
