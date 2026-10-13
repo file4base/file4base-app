@@ -1,6 +1,6 @@
 # File4Base Functional Specification: Core Feature Mapping
 
-This specification maps functional database, layout, calculation, and scripting workflows—informed by functional observation of Claris *FileMaker Pro 14 User's Guide* and *FileMaker Pro 12–19 Help* (see [`docs/PROVENANCE.md`](../PROVENANCE.md) and [`docs/LEGAL.md`](../LEGAL.md))—into technical requirements for **File4Base**, built with **Go** (Backend DBAL & Metadata Engine) and **Flutter** (Desktop & Web Client Layout & Script Engine).
+This specification maps functional database, layout, calculation, and scripting workflows—informed by functional observation of Claris *FileMaker Pro 14 User's Guide* and *FileMaker Pro 12–19 Help* (see [`docs/PROVENANCE.md`](../PROVENANCE.md), [`docs/LEGAL.md`](../LEGAL.md), and [`CAPABILITY_PARITY_MATRIX.md`](CAPABILITY_PARITY_MATRIX.md))—into technical requirements for **File4Base**, built with **Go** (Backend DBAL, Control Store & Metadata Engine) and **Flutter** (Desktop & Web Client Layout & Script Engine).
 
 ---
 
@@ -8,17 +8,17 @@ This specification maps functional database, layout, calculation, and scripting 
 
 | Domain | Reference Feature (FileMaker Pro 14) | File4Base Technical Implementation | Target Layer |
 |---|---|---|---|
-| **Data Storage & Schema** | Tables, Fields, Types, Auto-Enter, Validation, Global storage, Indexes | Dynamic Metadata (`sys_tables`, `sys_columns`, `sys_table_occurrences`), DBAL (`internal/dbal`), dynamic SQL migrations | Go + PostgreSQL / MariaDB |
+| **Data Storage & Schema** | Tables, Fields, Types, Auto-Enter, Validation, Summary fields | Dynamic Metadata (`sys_tables`, `sys_columns`, `sys_table_occurrences`, `sys_value_lists`), DBAL (`internal/dbal`), dynamic SQL migrations | Go + PostgreSQL / MariaDB |
 | **Relational Model** | Relationships Graph, Match Fields, Comparative operators, Cascading delete, Related creation, Lookups | Relationship Catalog (`sys_relationships`), DBAL JOIN builder, Lookup Triggers, Flutter GraphView UI (`custom_painter`) | Go + Flutter |
-| **Operational Modes** | 4 Modes: Browse (`Cmd+B`), Find (`Cmd+F`), Layout (`Cmd+L`), Preview (`Cmd+U`) | Mode State Machine (Riverpod/Bloc), dynamic toolbar rendering, canvas mode switching | Flutter Client |
+| **Operational Modes** | 4 Modes: Browse (`Cmd+B`), Find (`Cmd+F`), Layout (`Cmd+L`), Preview (`Cmd+U`) | Mode State Machine (Riverpod), dynamic toolbar rendering, canvas mode switching, custom menu sets (`sys_menu_sets`) | Flutter Client |
 | **Data Views** | Form View, List View, Table View | Dynamic Grid/Table Widget, Paginated/Virtual ListView, Form Canvas with data binding | Flutter Client |
-| **Find & Search Engine** | Quick Find, Find Requests, Omit / Include, Wildcards (`*`, `...`, `=`, `!`, `<`, `>`), Found Sets | Query AST Parser in Go translating criteria to SQL `WHERE` clauses; snapshot links (JSON payload) | Go Backend + Flutter |
-| **Layout & Visual Forms** | Drag-and-drop Layout Designer, Parts (Header, Body, Subsummary, Footer, Nav), Inspector, Layout Themes | JSON Layout Engine (`docs/specs/layout_schema.json`), `InteractiveViewer` Canvas, Property Inspector Panel | Flutter Client |
+| **Find & Search Engine** | Quick Find, Find Requests, Omit / Include, Wildcards (`*`, `...`, `=`, `!`, `<`, `>`), Found Sets, Saved Finds | Query AST Parser in Go (`internal/data`) translating criteria (including related fields) to SQL `WHERE` clauses; `sys_saved_finds` | Go Backend + Flutter |
+| **Layout & Visual Forms** | Drag-and-drop Layout Designer, Parts (Header, Body, Subsummary, Footer, Nav), Inspector, Layout Themes | JSON Layout Engine (`docs/specs/layout_schema.json`), `InteractiveViewer` Canvas, Horizontal Part Rail, Property Inspector Panel | Flutter Client |
 | **Form Controls & Objects** | Fields (Edit Box, Dropdown, Pop-up, Checkbox, Radio, Calendar), Portals (1:N), Popovers, Tabs/Slides, Charts | Native Flutter component library dynamically rendered from JSON layout nodes | Flutter Client |
-| **Calculation Engine** | Calculation Fields, Formulas, Built-in Functions (Text, Math, Date, Logical, Aggregates) | Embedded Go Expression Engine (`expr` / custom recursive AST evaluator), Stored & Unstored virtual fields | Go Backend |
-| **Automation (Scripts)** | Script Workspace, Script Steps, Triggers (OnRecordLoad, OnFieldExit, etc.), Debugger, Data Viewer | Block-based action sequence runner in Go/Flutter, variable stack (`$local`, `$$global`), step-by-step debugger | Go + Flutter |
-| **Security & Access** | Accounts, Privilege Sets, Extended Privileges, Record-Level Access, Field Restrictions | RBAC engine (`sys_accounts`, `sys_privilege_sets`), JWT/Session auth, SQL row-level security predicates | Go Backend |
-| **Import / Export** | CSV, XLSX, JSON, XML, Merge, Matching Records Update | File import/export pipeline (`internal/importer`, `internal/exporter`) with column-mapping UI | Go Backend + Flutter |
+| **Calculation Engine** | Calculation Fields, Formulas, 20 Built-in Functions (Text, Math, Date, Logical, Row Aggregates) | Deterministic Go Expression Evaluator (`internal/calc`), Stored calculation columns & `internal/schema/summaries.go` | Go Backend |
+| **Automation (Scripts)** | Script Workspace, Script Steps, Triggers (`OnRecordLoad`, `OnLayoutEnter`, etc.), Debugger, Data Viewer | Ordered step catalog (`sys_scripts`, `sys_script_steps`), client `LayoutActionRunner`, step-by-step `ScriptDebugSession`, live Data Viewer | Go + Flutter |
+| **Security & Access** | Accounts, Roles & Privileges, Extended Privileges, Granular Table & Layout Access, Encrypted Web Channel | Per-session auth (`internal/auth`), SQLite API control store (`internal/control`), `sys_users` / `sys_role_privileges`, AES-256-GCM payload cipher (`internal/crypto`) | Go Backend + SQLite Control Store |
+| **Import / Export & Migration** | CSV, TSV, XLSX, `FMPXMLRESULT` XML, External SQL Sources, Solution Bundles, Assisted FileMaker Migration | Tabular pipeline (`internal/dataio`), External SQL (`internal/extsource`), Assisted DDR XML & `FMPXMLRESULT` converter (`internal/migration`) | Go Backend + Flutter |
 
 ---
 

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../core/api/api_client.dart';
 import '../../core/models/solution_models.dart';
 import '../../core/services/solution_storage.dart';
+import 'filemaker_migration_dialog.dart';
 
 enum OpenSolutionType { serverDatabase, localFile }
 
@@ -183,8 +184,20 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
     });
 
     try {
-      final file = await SolutionStorageService.pickFile(allowedExtensions: ['f4p', 'f4b']);
+      final file = await SolutionStorageService.pickFile(
+        allowedExtensions: ['f4p', 'f4b', 'fmp12'],
+      );
       if (file == null) return;
+
+      if (FileMakerMigrationDialog.isFmp12Binary(file.name, file.bytes)) {
+        if (!mounted) return;
+        await FileMakerMigrationDialog.show(
+          context,
+          widget.apiClient,
+          initialFmp12FileName: file.name,
+        );
+        return;
+      }
 
       final pkg = SolutionPackage.fromMsgPack(file.bytes);
 
@@ -668,6 +681,18 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
               ),
             ),
           ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              key: const Key('open_filemaker_migration_btn'),
+              onPressed: () {
+                FileMakerMigrationDialog.show(context, widget.apiClient);
+              },
+              icon: const Icon(Icons.transform_rounded, size: 16),
+              label: const Text('Assisted FileMaker Migration (DDR XML / FMPXMLRESULT)...'),
+            ),
+          ),
         ],
       ),
     );

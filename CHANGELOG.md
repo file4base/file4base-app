@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Assisted FileMaker Migration Path & Capability Parity Matrix**
+  ([#26](https://github.com/file4base/file4base-app/issues/26),
+  [#27](https://github.com/file4base/file4base-app/issues/27)):
+  - **Assisted FileMaker XML / DDR & `FMPXMLRESULT` Converter** (`server/internal/migration`, `POST /api/v1/solutions/migrate/preflight`, `POST /api/v1/solutions/migrate/apply`, `FileMakerMigrationDialog`, [`docs/specs/filemaker_migration.md`](docs/specs/filemaker_migration.md)): converts FileMaker Database Design Report (`<FMPReport>`) and Save-as-XML (`<FMPSaveAsXML>`) schemas, occurrences, relationships, value lists, layouts, scripts, accounts, and `FMPXMLRESULT` record exports into File4Base solutions with a read-only dry-run preflight `ConversionReport` (`preserved`, `translated`, `unsupported`, `rejected`, `manual_action_required`), automatic script-trigger quarantine (`triggers_quarantined: true`), and disabled-by-default migrated accounts (`accounts_disabled: true`).
+  - **Binary `.fmp12` detection and actionable guidance**: uploading or picking a proprietary binary `.fmp12` container (`HBAM2` header or `.fmp12` extension) in `POST /api/v1/solutions/import`, `POST /api/v1/solutions/import-data`, or `OpenSolutionDialog` returns `422 Unsupported Binary .fmp12 Format` / opens `FileMakerMigrationDialog` with clear DDR XML export instructions instead of an opaque MessagePack decoding error ([#26](https://github.com/file4base/file4base-app/issues/26)).
+  - **Measurable Capability Parity Matrix & Reconciled Roadmap** ([`docs/specs/CAPABILITY_PARITY_MATRIX.md`](docs/specs/CAPABILITY_PARITY_MATRIX.md), [`docs/specs/ROADMAP.md`](docs/specs/ROADMAP.md), [`docs/specs/FUNCTIONAL_SPECIFICATION.md`](docs/specs/FUNCTIONAL_SPECIFICATION.md)): documents verified UI/backend/test coverage across all domains, supported 20-function calculation catalog, executed vs. catalog-only script steps, script triggers, and explicit non-goals ([#27](https://github.com/file4base/file4base-app/issues/27)).
 - **Independent Tutorial Scenario, Provenance Ledger & Studio UI Redesign**
   ([#40](https://github.com/file4base/file4base-app/issues/40),
   [#41](https://github.com/file4base/file4base-app/issues/41),

@@ -9,14 +9,17 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/designreport"
+	"github.com/file4base/file4base-app/server/internal/migration"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // maxImportBytes bounds the size of an uploaded solution or data file.
@@ -106,6 +109,9 @@ func (h *SolutionHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Post("/clipboard/copy", h.CopyStructure)
 		r.With(RequireAdmin).Post("/clipboard/preview", h.PreviewClipboard)
 		r.With(RequireAdmin, RequireDesignUnlocked).Post("/clipboard/paste", h.PasteClipboard)
+		// Assisted FileMaker XML / DDR and FMPXMLRESULT migration (#26).
+		r.With(RequireAdmin).Post("/migrate/preflight", h.MigratePreflight)
+		r.With(RequireOwner, RequireDesignUnlocked).Post("/migrate/apply", h.MigrateApply)
 		// The design as a report to read, or as text for version control
 		// (#49). It carries no records and no secrets.
 		r.With(RequireAdmin).Get("/design-report", h.DesignReport)
@@ -521,6 +527,11 @@ func (h *SolutionHandler) ImportSolution(w http.ResponseWriter, r *http.Request)
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Read Error", "Failed reading request body")
 		return
 	}
+	fileName := strings.TrimSpace(r.URL.Query().Get("filename") + " " + r.Header.Get("X-File-Name"))
+	if migration.IsFMP12Binary(fileName, body) {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsupported Binary .fmp12 Format", migration.ErrBinaryFMP12.Error())
+		return
+	}
 
 	svc := schemaService(r)
 	report, err := svc.ImportSolution(r.Context(), body)
@@ -565,6 +576,11 @@ func (h *SolutionHandler) ImportDatabaseData(w http.ResponseWriter, r *http.Requ
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxImportBytes))
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Read Error", "Failed reading request body")
+		return
+	}
+	fileName := strings.TrimSpace(r.URL.Query().Get("filename") + " " + r.Header.Get("X-File-Name"))
+	if migration.IsFMP12Binary(fileName, body) {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsupported Binary .fmp12 Format", migration.ErrBinaryFMP12.Error())
 		return
 	}
 
@@ -1030,4 +1046,171 @@ func (h *SolutionHandler) PasteClipboard(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(report)
 }
+
+// MigratePreflight performs a read-only dry-run conversion of a FileMaker DDR /
+// Save-as-XML design document and optional FMPXMLRESULT record exports,
+// returning a structured ConversionReport without touching any database (#26).
+func (h *SolutionHandler) MigratePreflight(w http.ResponseWriter, r *http.Request) {
+	var req migration.MigrationRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	converted, err := migration.AnalyzeAndConvert(req)
+	if err != nil {
+		switch {
+		case errors.Is(err, migration.ErrBinaryFMP12):
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsupported Binary .fmp12 Format", err.Error())
+		case errors.Is(err, migration.ErrInvalidMigrationXML):
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid FileMaker XML", err.Error())
+		default:
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Preflight Error", err.Error())
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Status string                      `json:"status"`
+		Report *migration.ConversionReport `json:"report"`
+	}{
+		Status: "preflight_ok",
+		Report: converted.Report,
+	})
+}
+
+// MigrateApply converts a FileMaker DDR / Save-as-XML design document and
+// optional FMPXMLRESULT record exports and imports them atomically into either
+// a newly created isolated target_database or the active session database (#26).
+func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
+	var req migration.MigrationRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	converted, err := migration.AnalyzeAndConvert(req)
+	if err != nil {
+		switch {
+		case errors.Is(err, migration.ErrBinaryFMP12):
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsupported Binary .fmp12 Format", err.Error())
+		case errors.Is(err, migration.ErrInvalidMigrationXML):
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid FileMaker XML", err.Error())
+		default:
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Conversion Error", err.Error())
+		}
+		return
+	}
+
+	targetDB := strings.ToLower(strings.TrimSpace(req.TargetDatabase))
+	sess := currentSession(r)
+	createdNewDB := false
+	targetSvc := schemaService(r)
+
+	if targetDB != "" && !strings.EqualFold(targetDB, sess.Database) {
+		ownerUser := strings.ToLower(strings.TrimSpace(req.OwnerUser))
+		if ownerUser == "" {
+			ownerUser = sess.Username
+		}
+		if reason := ownerPasswordProblem(req.OwnerPassword, ownerUser, targetDB); reason != "" {
+			telemetry.WriteValidationProblem(w, r, "Creating a new target database requires a valid owner password", []telemetry.InvalidParam{
+				{Name: "owner_password", Reason: reason},
+			})
+			return
+		}
+		if err := h.dbMgr.CreateDatabase(r.Context(), targetDB); err != nil {
+			if errors.Is(err, dbal.ErrDatabaseExists) {
+				telemetry.WriteProblem(w, r, http.StatusConflict, "Database Already Exists",
+					"database '"+targetDB+"' already exists; choose a fresh target_database name or omit target_database to import into the current database")
+				return
+			}
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Database Creation Error", err.Error())
+			return
+		}
+		createdNewDB = true
+		driver, err := h.dbMgr.DriverFor(r.Context(), targetDB)
+		if err != nil {
+			_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+		targetSvc = schema.NewService(driver)
+		if err := targetSvc.EnsureSystemTablesWithCredentials(r.Context(), ownerUser, req.OwnerPassword); err != nil {
+			_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+	} else {
+		targetDB = sess.Database
+	}
+
+	bundleBytes, err := msgpack.Marshal(converted.Bundle)
+	if err != nil {
+		if createdNewDB {
+			_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+		}
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	importReport, err := targetSvc.ImportSolution(r.Context(), bundleBytes)
+	if err != nil {
+		if createdNewDB {
+			_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+		}
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error())
+		return
+	}
+
+	recordsInserted := 0
+	if len(converted.TableRows) > 0 {
+		dataBundle := schema.DatabaseDataBundle{
+			Format:       schema.DataFormat,
+			Version:      schema.DataVersion,
+			DatabaseName: targetDB,
+			ExportedAt:   time.Now().UTC(),
+			TablesData:   converted.TableRows,
+		}
+		dataBytes, err := msgpack.Marshal(dataBundle)
+		if err != nil {
+			if createdNewDB {
+				_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+			}
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+		dataReport, err := targetSvc.ImportDatabaseData(r.Context(), dataBytes)
+		if err != nil {
+			if createdNewDB {
+				_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+			}
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Data Import Error", err.Error())
+			return
+		}
+		recordsInserted = dataReport.RecordsInserted
+	}
+
+	if converted.Report.SolutionName != "" {
+		_, _ = targetSvc.RenameSolution(r.Context(), targetDB, converted.Report.SolutionName)
+	}
+	h.syncProjectRecord(r.Context(), targetDB, targetSvc, nil, nil)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(struct {
+		Status          string                      `json:"status"`
+		Database        string                      `json:"database"`
+		RecordsInserted int                         `json:"records_inserted"`
+		ImportReport    *schema.ImportReport        `json:"import_report"`
+		Report          *migration.ConversionReport `json:"report"`
+	}{
+		Status:          "migrated",
+		Database:        targetDB,
+		RecordsInserted: recordsInserted,
+		ImportReport:    importReport,
+		Report:          converted.Report,
+	})
+}
+
 

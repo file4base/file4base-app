@@ -2901,6 +2901,63 @@ class ApiClient {
     );
   }
 
+  /// Runs a read-only dry-run preflight conversion of a FileMaker DDR / XML
+  /// design document and optional FMPXMLRESULT data files (#26).
+  Future<MigrationReportModel> migratePreflight({
+    required String designXml,
+    String? solutionName,
+    Map<String, String> dataFiles = const {},
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/migrate/preflight'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'design_xml': designXml,
+        if (solutionName != null && solutionName.trim().isNotEmpty)
+          'solution_name': solutionName.trim(),
+        if (dataFiles.isNotEmpty) 'data_files': dataFiles,
+      }),
+    );
+    _checkResponse(response);
+    final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    final rawReport = decoded['report'];
+    return MigrationReportModel.fromJson(
+      rawReport is Map ? Map<String, dynamic>.from(rawReport) : decoded,
+    );
+  }
+
+  /// Applies an assisted FileMaker DDR / XML + FMPXMLRESULT migration into the
+  /// current database or a newly created isolated target database (#26).
+  Future<MigrationApplyResultModel> migrateApply({
+    required String designXml,
+    String? solutionName,
+    Map<String, String> dataFiles = const {},
+    String? targetDatabase,
+    String? ownerUser,
+    String? ownerPassword,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/solutions/migrate/apply'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'design_xml': designXml,
+        if (solutionName != null && solutionName.trim().isNotEmpty)
+          'solution_name': solutionName.trim(),
+        if (dataFiles.isNotEmpty) 'data_files': dataFiles,
+        if (targetDatabase != null && targetDatabase.trim().isNotEmpty)
+          'target_database': targetDatabase.trim(),
+        if (ownerUser != null && ownerUser.trim().isNotEmpty)
+          'owner_user': ownerUser.trim(),
+        if (ownerPassword != null && ownerPassword.isNotEmpty)
+          'owner_password': ownerPassword,
+      }),
+    );
+    _checkResponse(response);
+    return MigrationApplyResultModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
   void close() {
     _httpClient.close();
   }
@@ -3219,3 +3276,117 @@ class ClipboardPasteReportModel {
     );
   }
 }
+
+/// One item in a FileMaker conversion report (#26).
+class MigrationReportItemModel {
+  final String category;
+  final String domain;
+  final String sourceName;
+  final String targetName;
+  final String detail;
+
+  const MigrationReportItemModel({
+    required this.category,
+    required this.domain,
+    required this.sourceName,
+    this.targetName = '',
+    required this.detail,
+  });
+
+  factory MigrationReportItemModel.fromJson(Map<String, dynamic> json) {
+    return MigrationReportItemModel(
+      category: json['category'] as String? ?? '',
+      domain: json['domain'] as String? ?? '',
+      sourceName: json['source_name'] as String? ?? '',
+      targetName: json['target_name'] as String? ?? '',
+      detail: json['detail'] as String? ?? '',
+    );
+  }
+}
+
+/// Conversion report returned by FileMaker migration preflight and apply (#26).
+class MigrationReportModel {
+  final String sourceFormat;
+  final String solutionName;
+  final bool triggersQuarantined;
+  final bool accountsDisabled;
+  final Map<String, int> counts;
+  final List<MigrationReportItemModel> preserved;
+  final List<MigrationReportItemModel> translated;
+  final List<MigrationReportItemModel> unsupported;
+  final List<MigrationReportItemModel> rejected;
+  final List<MigrationReportItemModel> manualActionRequired;
+
+  const MigrationReportModel({
+    required this.sourceFormat,
+    required this.solutionName,
+    this.triggersQuarantined = true,
+    this.accountsDisabled = true,
+    this.counts = const {},
+    this.preserved = const [],
+    this.translated = const [],
+    this.unsupported = const [],
+    this.rejected = const [],
+    this.manualActionRequired = const [],
+  });
+
+  static List<MigrationReportItemModel> _parseList(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => MigrationReportItemModel.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  factory MigrationReportModel.fromJson(Map<String, dynamic> json) {
+    final rawCounts = json['counts'];
+    final countsMap = <String, int>{};
+    if (rawCounts is Map) {
+      for (final entry in rawCounts.entries) {
+        if (entry.value is num) {
+          countsMap[entry.key.toString()] = (entry.value as num).toInt();
+        }
+      }
+    }
+    return MigrationReportModel(
+      sourceFormat: json['source_format'] as String? ?? 'filemaker_ddr_xml',
+      solutionName: json['solution_name'] as String? ?? '',
+      triggersQuarantined: json['triggers_quarantined'] as bool? ?? true,
+      accountsDisabled: json['accounts_disabled'] as bool? ?? true,
+      counts: countsMap,
+      preserved: _parseList(json['preserved']),
+      translated: _parseList(json['translated']),
+      unsupported: _parseList(json['unsupported']),
+      rejected: _parseList(json['rejected']),
+      manualActionRequired: _parseList(json['manual_action_required']),
+    );
+  }
+}
+
+/// Response from `POST /api/v1/solutions/migrate/apply` (#26).
+class MigrationApplyResultModel {
+  final String status;
+  final String database;
+  final int recordsInserted;
+  final MigrationReportModel report;
+
+  const MigrationApplyResultModel({
+    required this.status,
+    required this.database,
+    required this.recordsInserted,
+    required this.report,
+  });
+
+  factory MigrationApplyResultModel.fromJson(Map<String, dynamic> json) {
+    final rawReport = json['report'];
+    return MigrationApplyResultModel(
+      status: json['status'] as String? ?? 'migrated',
+      database: json['database'] as String? ?? '',
+      recordsInserted: (json['records_inserted'] as num?)?.toInt() ?? 0,
+      report: MigrationReportModel.fromJson(
+        rawReport is Map ? Map<String, dynamic>.from(rawReport) : const {},
+      ),
+    );
+  }
+}
+

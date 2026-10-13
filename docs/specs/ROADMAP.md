@@ -1,10 +1,12 @@
 # File4Base Implementation Roadmap
 
+> **Capability Parity & Verification Reference:** For the complete domain-by-domain breakdown of UI availability, backend/runtime execution, supported calculation functions, script steps, triggers, and explicit non-goals, see [`CAPABILITY_PARITY_MATRIX.md`](CAPABILITY_PARITY_MATRIX.md) ([#27](https://github.com/file4base/file4base-app/issues/27)).
+
 ## Phase 1: Environment, DBAL Scaffolding & Foundation
 - [x] Create root `docker-compose.yml` (PostgreSQL 16) and `docker-compose.mariadb.yml` (MariaDB 11); the Go test suite runs against both engines in CI.
 - [x] Initialize Go server module (`server/go.mod`) with clean package structure.
 - [x] Implement DBAL interface (`internal/dbal`):
-  - [x] Agnostic types (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, `BOOLEAN`, `CONTAINER`, `CALCULATION`).
+  - [x] Agnostic types (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, `BOOLEAN`, `CONTAINER`, `CALCULATION`, `SUMMARY`).
   - [x] Dialect interface for DDL and DML generation.
   - [x] PostgreSQL dialect implementation (`internal/dbal/postgres`).
   - [x] MariaDB dialect implementation (`internal/dbal/mariadb`).
@@ -13,7 +15,7 @@
 
 
 ## Phase 2: Schema Engine & DDL (Backend Go)
-- [x] Implement system catalog tables (`sys_tables`, `sys_columns`, `sys_relationships`).
+- [x] Implement system catalog tables (`sys_tables`, `sys_columns`, `sys_relationships`, `sys_table_occurrences`, `sys_value_lists`, `sys_saved_finds`, `sys_external_sources`, `sys_menu_sets`).
 - [x] Implement Go dynamic DDL service:
   - [x] Create Table (generates metadata + executes dynamic DDL on target engine).
   - [x] Add Column / Drop Column (with type mapping per dialect).
@@ -52,7 +54,7 @@
   - [x] **Browse Mode** (`Cmd+B` / `Ctrl+B`): Form & Grid data viewing and inline editing.
   - [x] **Find Mode** (`Cmd+F` / `Ctrl+F`): Find requests, omit criteria, multi-request OR logic.
   - [x] **Layout Mode** (`Cmd+L` / `Ctrl+L`): Visual drag-and-drop WYSIWYG designer for forms and portals.
-    - [x] Multiple selection (Shift-click, marquee), 8-handle resizing.
+    - [x] Multiple selection (Shift-click, marquee), 8-handle resizing, horizontal part divider rail ([#40](https://github.com/file4base/file4base-app/issues/40)).
     - [x] Layout properties: size, background color and picture, OnLayoutEnter / OnLayoutExit script triggers, transition effect.
   - [x] **Preview Mode** (`Cmd+U` / `Ctrl+U`): Print and pagination preview, Page Setup dialog, paper formats, and printable boundaries calculation.
   - [x] **File Options** (`File > File Options...`): Startup credentials, startup layout selection, full-screen/toolbar suppression, and lifecycle script triggers.
@@ -68,12 +70,14 @@
   - [x] Charts: column, bar, line, area, pie and scatter ([#37](https://github.com/file4base/file4base-app/issues/37)).
   - [x] Related fields on a layout, through a named relationship ([#36](https://github.com/file4base/file4base-app/issues/36)).
   - [x] Layout backend REST persistence (`/api/v1/schemas/layouts`).
-  - [x] Official branding integration across macOS, Windows, Linux, and Web Client.
+  - [x] Official branding integration across macOS, Windows, Linux, and File4Base Web Client.
 
 ## Security & Multi-User Foundations (prerequisite for Phase 6)
 - [x] Session-based API authentication (`POST /api/v1/auth/login` bearer tokens, logout, session introspection).
 - [x] Per-session database binding (no server-wide active database).
-- [x] Server-side enforcement of roles (`owner`, `admin`, `user`) and per-layout permissions.
+- [x] Embedded SQLite API control store (`internal/control`) persisting project ↔ database mappings, file options, page setup, and granular per-table (`can_create`, `can_edit`, `can_delete`, `can_modify_schema`) and per-layout access permissions.
+- [x] Encrypted payload channel (`F4BE\x01` AES-256-GCM) between the File4Base Web Client / desktop client and the API server (`internal/crypto`), plus configurable API server connection URL in the login dialog (defaulting to `http://127.0.0.1:8080`).
+- [x] Server-side enforcement of roles (`owner`, `admin`, `user`) and per-layout / per-table permissions.
 - [x] Data API restricted to catalog tables and fields; system tables unreachable.
 - [x] Extended privileges: bulk record export and import granted per account role and enforced on every request ([#39](https://github.com/file4base/file4base-app/issues/39), [security_model.md](security_model.md)). Access is not restricted by client, and nothing claims it is.
 - [x] No default accounts; database creation provisions the first owner explicitly.
@@ -81,13 +85,14 @@
 - [ ] Sign-in rate limiting and account lockout.
 - [ ] Sessions shared across server replicas (required for horizontal scaling).
 
-## Tools
+## Tools & Interoperability
 - [x] Database Design Report: what the solution is made of, as a page to read, and the design as XML or JSON for version control ([#49](https://github.com/file4base/file4base-app/issues/49), [design_report.md](design_report.md)).
 - [x] Data Viewer: the fields of the record in hand and expressions evaluated by the engine that fills the calculation fields ([#50](https://github.com/file4base/file4base-app/issues/50), [data_viewer.md](data_viewer.md)). Variables wait on the script runner.
 - [x] Script Debugger: a script run one step at a time against the records on screen, with breakpoints, driving the same runner the layout buttons use ([#51](https://github.com/file4base/file4base-app/issues/51), [script_debugger.md](script_debugger.md)).
-- [ ] Custom menus defined by the solution ([#52](https://github.com/file4base/file4base-app/issues/52)).
-- [ ] Developer utilities: clone without records, rename, lock the design ([#53](https://github.com/file4base/file4base-app/issues/53)).
-- [ ] Copy and paste structure between solutions ([#54](https://github.com/file4base/file4base-app/issues/54)).
+- [x] Custom menus defined by the solution ([#52](https://github.com/file4base/file4base-app/issues/52), [custom_menus.md](custom_menus.md)).
+- [x] Developer utilities: clone without records, rename, lock the design ([#53](https://github.com/file4base/file4base-app/issues/53), [developer_utilities.md](developer_utilities.md)).
+- [x] Copy and paste structure between solutions ([#54](https://github.com/file4base/file4base-app/issues/54), [copy_paste_structure.md](copy_paste_structure.md)).
+- [x] Assisted FileMaker migration path: `.fmp12` detection with clear guidance, plus FileMaker DDR / Save as XML and `FMPXMLRESULT` conversion with dry-run preflight report and trigger quarantine ([#26](https://github.com/file4base/file4base-app/issues/26), [filemaker_migration.md](filemaker_migration.md)).
 
 ## Phase 6: Real-Time Sync & Multi-User Collaboration
 - [ ] Set up WebSocket hub in Go server.
@@ -98,13 +103,14 @@
 - [x] Implement script metadata and ordered step persistence in the system catalog (`sys_scripts`, `sys_script_steps`).
 - [x] Build the Script Workspace UI with script listing, create, duplicate, delete, and step editing.
 - [x] Add a calculation formula builder to the client for calculation fields.
-- [ ] Complete the three-panel Script Workspace described in `docs/specs/script_workspace_spec.md`:
+- [x] Complete the three-panel Script Workspace described in `docs/specs/script_workspace_spec.md`:
   - [x] Scripts Explorer with create, duplicate, and delete actions.
-  - [x] Sequential step editor with enabled/disabled steps.
-  - [ ] Contextual parameter inspector with formula constructor.
-  - [ ] Categorized step catalog for Navigation, Records, Control & Logic, and Integration & Data.
-- [ ] Implement drag-and-drop step reordering and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
+  - [x] Sequential step editor with enabled/disabled steps, reordering, and visual conditional indentation (`If/Else/End If`, `Loop/End Loop`).
+  - [x] Contextual parameter inspector with formula constructor.
+  - [x] Categorized step catalog for Navigation, Records, Found Sets, Control & Logic, and Integration & Data.
 - [x] Formula calculation engine in Go: arithmetic, text joining, logical tests, comparisons and 20 functions, evaluated by the server so both engines agree. Written by hand rather than with Google CEL, whose grammar is not FileMaker's ([#30](https://github.com/file4base/file4base-app/issues/30), [docs/specs/calculation_formulas.md](calculation_formulas.md)).
-- [ ] Script step runner executing actions deterministically with step-by-step debugging.
+- [x] Client-side script runner & step-by-step debugger ([#20](https://github.com/file4base/file4base-app/issues/20), [#51](https://github.com/file4base/file4base-app/issues/51)):
   - [x] Stepping through a script with breakpoints, over the client-side runner ([#51](https://github.com/file4base/file4base-app/issues/51)). A step the runner does not take stops the script and says so.
-  - [x] Client-side runner for layout buttons: single step actions and Perform Script for record, navigation, Set Field, dialog and URL steps. Control flow (`If`, `Loop`), variables and integration steps stop the script with a message until the calculation engine and server runner exist.
+  - [x] Client-side runner for layout buttons: single step actions and Perform Script for record, navigation, found set, Set Field, dialog and URL steps. Control flow (`If`, `Loop`), variables and integration steps stop the script with a message until the server-side script runner is added.
+- [ ] Server-side script step runner for unattended control flow (`If`, `Loop`), `$local`/`$$global` variable mutation, and background scheduled scripts.
+

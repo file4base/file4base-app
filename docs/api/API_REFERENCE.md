@@ -1770,3 +1770,56 @@ Returns the active project's `solution_name`, `design_locked` flag, `file_option
 
 ### `PUT /api/v1/security/users/{id}/table-permissions`
 *Requires `admin` or `owner` role.* Replaces the per-table access and modification permissions for user `{id}` in both `sys_table_permissions` and the SQLite control store. Enforced on `GET/POST/PUT/DELETE /api/v1/data/{table}`.
+
+---
+
+## 10. Assisted FileMaker Migration (`#26`)
+
+See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for the full conversion, trigger-quarantine, and disabled-account contract.
+
+### `POST /api/v1/solutions/migrate/preflight`
+*Requires `admin` or `owner` role.* Runs a read-only dry-run conversion of a FileMaker Database Design Report (`<FMPReport>`), Save a Copy as XML (`<FMPSaveAsXML>`), or File4Base design XML document and optional `FMPXMLRESULT` record exports, returning a structured `ConversionReport` without modifying any database.
+
+#### Request Body
+```json
+{
+  "solution_name": "HerbariumArchive",
+  "design_xml": "<FMPReport type=\"Report\" version=\"19.0\">...</FMPReport>",
+  "data_files": {
+    "Specimens": "<FMPXMLRESULT>...</FMPXMLRESULT>"
+  }
+}
+```
+
+#### Response `200 OK`
+```json
+{
+  "status": "preflight_ok",
+  "report": {
+    "source_format": "filemaker_ddr_xml",
+    "solution_name": "HerbariumArchive",
+    "triggers_quarantined": true,
+    "accounts_disabled": true,
+    "counts": {
+      "tables": 2,
+      "fields": 7,
+      "table_occurrences": 2,
+      "relationships": 1,
+      "value_lists": 1,
+      "layouts": 1,
+      "scripts": 1,
+      "accounts": 2,
+      "records_ready": 2
+    },
+    "preserved": [],
+    "translated": [],
+    "unsupported": [],
+    "rejected": [],
+    "manual_action_required": []
+  }
+}
+```
+
+### `POST /api/v1/solutions/migrate/apply`
+*Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report`, and the full `ConversionReport`.
+
