@@ -226,6 +226,30 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 	}
 	report.Counts.DataSources = len(report.DataSources)
 
+	for _, set := range bundle.MenuSets {
+		reported := designreport.MenuSet{
+			Name: set.Name, IsDefault: set.IsDefault,
+			Menus: make([]designreport.CustomMenu, 0, len(set.Menus)),
+		}
+		for _, menu := range set.Menus {
+			rm := designreport.CustomMenu{
+				Menu: menu.Menu, Mode: menu.Mode,
+				Items: make([]designreport.MenuItem, 0, len(menu.Items)),
+			}
+			for _, item := range menu.Items {
+				rm.Items = append(rm.Items, designreport.MenuItem{
+					Title:      item.Title,
+					Shortcut:   item.Shortcut,
+					Separator:  item.Separator,
+					ActionJSON: designreport.JSONValue{Value: nilWhenEmpty(item.Action)},
+				})
+			}
+			reported.Menus = append(reported.Menus, rm)
+		}
+		report.MenuSets = append(report.MenuSets, reported)
+	}
+	report.Counts.MenuSets = len(report.MenuSets)
+
 	report.Notes = designReportNotes()
 	return report, nil
 }

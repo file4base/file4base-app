@@ -1527,4 +1527,60 @@ Deletes a script and cascades removal of all associated steps.
 ### `POST /api/v1/schemas/scripts/{id}/duplicate`
 Clones an existing script and all its steps, appending `_copy` to the name.
 
+---
 
+## 9. Custom Menu Sets (`#52`)
+
+Custom menu sets are stored in `sys_menu_sets` and exposed at `/api/v1/menu-sets` (and `/api/v1/schemas/menu-sets`). Reading menu sets is allowed for any authenticated session so the client can render the menu bar; creating, updating, or deleting a menu set requires the `owner` or `admin` role.
+
+### `GET /api/v1/menu-sets`
+Lists all custom menu sets in the active database along with the canonical list of customizable menus (`File`, `Edit`, `View`, `Insert`, `Format`, `Records`, `Requests`, `Scripts`, `Tools`, `Window`) and the menus that may only be extended (`File`).
+
+#### Response `200 OK`
+```json
+{
+  "menus": ["File", "Edit", "View", "Insert", "Format", "Records", "Requests", "Scripts", "Tools", "Window"],
+  "extend_only": ["File"],
+  "menu_sets": [
+    {
+      "id": "b1f1c59a-4f32-48d8-9415-31523f6b8e04",
+      "name": "Bakery menus",
+      "is_default": true,
+      "menus": [
+        {
+          "menu": "Records",
+          "mode": "replace",
+          "items": [
+            {
+              "title": "Greet the customer",
+              "shortcut": "cmd+shift+G",
+              "action": {
+                "type": "perform_script",
+                "script_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+                "script_name": "Greet customer"
+              }
+            }
+          ]
+        }
+      ],
+      "created_at": "2026-10-13T12:00:00Z",
+      "updated_at": "2026-10-13T12:00:00Z"
+    }
+  ]
+}
+```
+
+### `POST /api/v1/menu-sets`
+Creates a custom menu set. Setting `is_default: true` clears the previous default menu set in the same transaction.
+- `File` may only use `mode: "extend"` (`422` if `replace`).
+- Shortcuts that shadow mode or quit shortcuts (`Cmd/Ctrl+B`, `F`, `L`, `U`, `Q`) or duplicate another item's shortcut within the same set are rejected (`422`).
+- Duplicate menu set names return `409 Conflict`.
+
+### `GET /api/v1/menu-sets/{id}`
+Retrieves a single custom menu set by ID.
+
+### `PUT /api/v1/menu-sets/{id}`
+Replaces a custom menu set's name, `is_default` flag, and menu definitions.
+
+### `DELETE /api/v1/menu-sets/{id}`
+Deletes a custom menu set (`204 No Content`). Layouts referencing the deleted menu set fall back to the solution's default or standard menu bar.

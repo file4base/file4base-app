@@ -113,6 +113,20 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		}
 	}
 
+	// Menu sets a solution installs over the standard bar (#52). Reading
+	// them is every signed-in user's business — the client needs the set to
+	// draw the bar — and changing them is design, like a layout.
+	menuSets := func(prefix string) func(r chi.Router) {
+		root := rootPath(prefix)
+		return func(r chi.Router) {
+			r.Get(root, h.ListMenuSets)
+			r.With(RequireAdmin).Post(root, h.CreateMenuSet)
+			r.Get(prefix+"/{id}", h.GetMenuSet)
+			r.With(RequireAdmin).Put(prefix+"/{id}", h.UpdateMenuSet)
+			r.With(RequireAdmin).Delete(prefix+"/{id}", h.DeleteMenuSet)
+		}
+	}
+
 	r.Route("/api/v1/schemas", func(r chi.Router) {
 		r.Use(RequireSession)
 		tables(r)
@@ -122,11 +136,17 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		scripts("/scripts")(r)
 		valueLists("/value-lists")(r)
 		savedFinds("/saved-finds")(r)
+		menuSets("/menu-sets")(r)
 	})
 
 	r.Route("/api/v1/saved-finds", func(r chi.Router) {
 		r.Use(RequireSession)
 		savedFinds("")(r)
+	})
+
+	r.Route("/api/v1/menu-sets", func(r chi.Router) {
+		r.Use(RequireSession)
+		menuSets("")(r)
 	})
 
 	// External SQL data sources (#47). Reading the list is an admin matter;
@@ -1158,6 +1178,84 @@ func writeDataSourceError(w http.ResponseWriter, r *http.Request, err error) {
 		// The source is another machine: unreachable is not our fault, and
 		// the driver's own words are what an owner needs to see.
 		telemetry.WriteProblem(w, r, http.StatusBadGateway, "Data Source Unreachable", err.Error())
+	default:
+		writeSchemaError(w, r, err)
+	}
+}
+
+// ─── Custom menus (#52) ──────────────────────────────────────────────────────
+
+func (h *SchemaHandler) ListMenuSets(w http.ResponseWriter, r *http.Request) {
+	sets, err := schemaService(r).ListMenuSets(r.Context())
+	if err != nil {
+		writeMenuSetError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"menus":       schema.CustomisableMenus,
+		"extend_only": schema.ExtendOnlyMenus,
+		"menu_sets":   sets,
+	})
+}
+
+func (h *SchemaHandler) GetMenuSet(w http.ResponseWriter, r *http.Request) {
+	set, err := schemaService(r).GetMenuSet(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeMenuSetError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(set)
+}
+
+func (h *SchemaHandler) CreateMenuSet(w http.ResponseWriter, r *http.Request) {
+	var in schema.MenuSetInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	set, err := schemaService(r).CreateMenuSet(r.Context(), in)
+	if err != nil {
+		writeMenuSetError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(set)
+}
+
+func (h *SchemaHandler) UpdateMenuSet(w http.ResponseWriter, r *http.Request) {
+	var in schema.MenuSetInput
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	set, err := schemaService(r).UpdateMenuSet(r.Context(), chi.URLParam(r, "id"), in)
+	if err != nil {
+		writeMenuSetError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(set)
+}
+
+func (h *SchemaHandler) DeleteMenuSet(w http.ResponseWriter, r *http.Request) {
+	if err := schemaService(r).DeleteMenuSet(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeMenuSetError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeMenuSetError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, schema.ErrMenuSetNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Menu Set Not Found", err.Error())
+	case errors.Is(err, schema.ErrMenuSetExists):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Menu Set Already Exists", err.Error())
+	case errors.Is(err, schema.ErrInvalidMenuSet):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Menu Set", err.Error())
 	default:
 		writeSchemaError(w, r, err)
 	}

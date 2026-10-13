@@ -110,6 +110,7 @@ type Report struct {
 	Privileges    []RolePrivilege `json:"privileges" xml:"privileges>role"`
 	SavedFinds    []SavedFind     `json:"saved_finds" xml:"saved_finds>saved_find"`
 	DataSources   []DataSource    `json:"data_sources" xml:"data_sources>data_source"`
+	MenuSets      []MenuSet       `json:"menu_sets,omitempty" xml:"menu_sets>menu_set,omitempty"`
 
 	// Notes say what this report does not describe, so a reader is not left
 	// to assume that what is absent does not exist.
@@ -129,6 +130,7 @@ type Counts struct {
 	Accounts      int `json:"accounts" xml:"accounts,attr"`
 	SavedFinds    int `json:"saved_finds" xml:"saved_finds,attr"`
 	DataSources   int `json:"data_sources" xml:"data_sources,attr"`
+	MenuSets      int `json:"menu_sets,omitempty" xml:"menu_sets,attr,omitempty"`
 }
 
 // Table is a base table and its fields.
@@ -315,6 +317,29 @@ type DataSource struct {
 	Schema      string `json:"schema,omitempty" xml:"schema,attr,omitempty"`
 	TLS         bool   `json:"tls" xml:"tls,attr"`
 	PasswordEnv string `json:"password_env,omitempty" xml:"password_env,attr,omitempty"`
+}
+
+// MenuSet is a named custom menu set (#52).
+type MenuSet struct {
+	Name      string       `json:"name" xml:"name,attr"`
+	IsDefault bool         `json:"is_default" xml:"is_default,attr"`
+	Menus     []CustomMenu `json:"menus" xml:"menus>menu"`
+}
+
+// CustomMenu is one menu redefined by a menu set.
+type CustomMenu struct {
+	Menu  string     `json:"menu" xml:"menu,attr"`
+	Mode  string     `json:"mode" xml:"mode,attr"`
+	Items []MenuItem `json:"items" xml:"items>item"`
+}
+
+// MenuItem is one entry of a custom menu.
+type MenuItem struct {
+	Title      string    `json:"title,omitempty" xml:"title,attr,omitempty"`
+	Shortcut   string    `json:"shortcut,omitempty" xml:"shortcut,attr,omitempty"`
+	Separator  bool      `json:"separator,omitempty" xml:"separator,attr,omitempty"`
+	Action     string    `json:"-" xml:"action,omitempty"`
+	ActionJSON JSONValue `json:"action,omitempty" xml:"-"`
 }
 
 // JSONValue carries a stored JSON document — a field's options, a script

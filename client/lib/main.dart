@@ -26,6 +26,8 @@ import 'features/data_io/manage_data_sources_dialog.dart';
 import 'features/script_workspace/script_debugger_dialog.dart';
 import 'features/tools/data_viewer_dialog.dart';
 import 'features/tools/design_report_dialog.dart';
+import 'features/tools/manage_custom_menus_dialog.dart';
+import 'features/layout_engine/layout_action_runner.dart';
 import 'features/layout_engine/models/layout_definition.dart';
 import 'core/models/file_options_model.dart';
 import 'core/models/page_setup_model.dart';
@@ -181,6 +183,31 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   /// them.
   List<SavedFindModel> _savedFinds = const [];
   String? _savedFindsTable;
+
+  /// The custom menu sets defined by the solution (#52).
+  List<MenuSetModel> _menuSets = const [];
+  bool _hasManualMenuSetOverride = false;
+  MenuSetModel? _manualMenuSetOverride;
+
+  MenuSetModel? get _effectiveMenuSet {
+    if (_hasManualMenuSetOverride) {
+      if (_manualMenuSetOverride == null) return null;
+      return _menuSets
+          .where((s) => s.id == _manualMenuSetOverride!.id)
+          .firstOrNull;
+    }
+    final activeLayoutModel = _serverLayouts
+        .where((l) => l.id == _activeLayout?.id)
+        .firstOrNull;
+    final layoutSetId =
+        activeLayoutModel?.definition['menu_set_id'] as String?;
+    if (layoutSetId != null && layoutSetId.isNotEmpty) {
+      final byLayout =
+          _menuSets.where((s) => s.id == layoutSetId).firstOrNull;
+      if (byLayout != null) return byLayout;
+    }
+    return _menuSets.where((s) => s.isDefault).firstOrNull;
+  }
 
   /// What the signed-in account may do beyond reading and writing records:
   /// the capabilities of its role (#39). The server enforces them; these are
@@ -418,6 +445,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       try {
         layouts = await client.listLayouts();
       } catch (_) {}
+      unawaited(_loadMenuSets());
 
       // Ensure every table has at least one layout on server
       if (tables.isNotEmpty) {
@@ -522,8 +550,39 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   void _selectLayout(LayoutModel layout) {
     setState(() {
+      _hasManualMenuSetOverride = false;
+      _manualMenuSetOverride = null;
       _applyLayout(layout);
     });
+  }
+
+  Future<void> _loadMenuSets() async {
+    if (_currentUser == null) return;
+    try {
+      final listing = await ref.read(apiClientProvider).listMenuSets();
+      if (!mounted) return;
+      setState(() => _menuSets = listing.menuSets);
+    } catch (_) {
+      if (mounted) setState(() => _menuSets = const []);
+    }
+  }
+
+  Future<void> _runCustomMenuItem(CustomMenuItemModel item) async {
+    final host = _dataBrowserKey.currentState;
+    if (host == null) return;
+    final action = ButtonActionModel.fromJson(item.action);
+    final result = await LayoutActionRunner(
+      apiClient: ref.read(apiClientProvider),
+      host: host,
+    ).run(action);
+    if (!result.completed && mounted && result.message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message!),
+          backgroundColor: Colors.orange.shade800,
+        ),
+      );
+    }
   }
 
   Future<void> _handleManageLayouts() async {
@@ -1587,6 +1646,24 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                             solutionName: _reportedSolutionName,
                             initialFormat: DesignReportFormat.xml,
                           ),
+                  onManageCustomMenus: _currentUser == null || !_currentUser!.isAdmin
+                      ? null
+                      : () => ManageCustomMenusDialog.show(
+                            context,
+                            apiClient: ref.read(apiClientProvider),
+                            layouts: _serverLayouts,
+                            onChanged: () {
+                              _loadMenuSets();
+                              _loadTables(targetLayoutId: _activeLayout?.id);
+                            },
+                          ),
+                  menuSets: _menuSets,
+                  activeMenuSet: _effectiveMenuSet,
+                  onSelectMenuSet: (set) => setState(() {
+                    _hasManualMenuSetOverride = true;
+                    _manualMenuSetOverride = set;
+                  }),
+                  onRunCustomMenuItem: _runCustomMenuItem,
                   onManageDataSources: _currentUser == null
                       ? null
                       : () => ManageDataSourcesDialog.show(

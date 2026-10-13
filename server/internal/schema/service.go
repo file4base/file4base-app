@@ -203,6 +203,18 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			CONSTRAINT uq_user_layout UNIQUE (user_id, layout_id)
 		);`,
+		// Menu sets a solution installs over the standard menu bar (#52).
+		// A set is a convenience, never a boundary: what an account may do
+		// is the role, the table and layout access and the privileges, and
+		// the server enforces those whatever the bar shows.
+		`CREATE TABLE IF NOT EXISTS sys_menu_sets (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL UNIQUE,
+			definition TEXT NOT NULL,
+			is_default BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at ` + ts + `,
+			updated_at ` + ts + `
+		);`,
 		// A named connection to another SQL database records can be
 		// imported from (#47). It holds no password: one is supplied with
 		// the request, or taken from the environment variable named here.

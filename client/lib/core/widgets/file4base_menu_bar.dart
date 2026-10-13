@@ -6,7 +6,8 @@ import '../../features/help/check_updates_dialog.dart';
 import '../../features/help/issues_guide_dialog.dart';
 import '../../main.dart';
 import '../../features/layout_engine/layout_object_visuals.dart' show LayoutMergeSymbols;
-import '../api/api_client.dart' show SavedFindModel;
+import '../api/api_client.dart'
+    show CustomMenuItemModel, MenuSetModel, SavedFindModel;
 
 class File4BaseMenuBar extends StatelessWidget {
   final OperationalMode activeMode;
@@ -90,6 +91,19 @@ class File4BaseMenuBar extends StatelessWidget {
 
   /// Tools > Script Debugger — a script run one step at a time (#51).
   final VoidCallback? onScriptDebugger;
+
+  /// Tools > Custom Menus (#52): the solution's custom menu sets, the one
+  /// currently active, the action to open the manager dialog, and the runner
+  /// for custom menu items.
+  final VoidCallback? onManageCustomMenus;
+  final List<MenuSetModel> menuSets;
+  final MenuSetModel? activeMenuSet;
+  final ValueChanged<MenuSetModel?>? onSelectMenuSet;
+  final ValueChanged<CustomMenuItemModel>? onRunCustomMenuItem;
+
+  /// Tools > Developer Utilities... (#53).
+  final VoidCallback? onDeveloperUtilities;
+
   final VoidCallback? onPrint;
   final VoidCallback? onQuit;
   final bool isAuthenticated;
@@ -136,6 +150,12 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onSaveDesignAsText,
     this.onDataViewer,
     this.onScriptDebugger,
+    this.onManageCustomMenus,
+    this.menuSets = const [],
+    this.activeMenuSet,
+    this.onSelectMenuSet,
+    this.onRunCustomMenuItem,
+    this.onDeveloperUtilities,
     this.onNewRecord,
     this.onDuplicateRecord,
     this.onDeleteRecord,
@@ -295,22 +315,132 @@ class File4BaseMenuBar extends StatelessWidget {
           shape: const WidgetStatePropertyAll(RoundedRectangleBorder()),
         ),
         children: [
-          _buildFileMenu(context),
-          _buildEditMenu(context),
-          _buildViewMenu(context),
-          _buildInsertMenu(context),
-          _buildFormatMenu(context),
+          _applyCustomMenu('File', _buildFileMenu(context), extendOnly: true),
+          _applyCustomMenu('Edit', _buildEditMenu(context)),
+          _applyCustomMenu('View', _buildViewMenu(context)),
+          _applyCustomMenu('Insert', _buildInsertMenu(context)),
+          _applyCustomMenu('Format', _buildFormatMenu(context)),
           if (activeMode == OperationalMode.find)
-            _buildRequestsMenu(context)
+            _applyCustomMenu('Requests', _buildRequestsMenu(context))
           else
-            _buildRecordsMenu(context),
-          _buildScriptsMenu(context),
-          _buildToolsMenu(context),
-          _buildWindowMenu(context),
+            _applyCustomMenu('Records', _buildRecordsMenu(context)),
+          _applyCustomMenu('Scripts', _buildScriptsMenu(context)),
+          _applyCustomMenu(
+            'Tools',
+            _buildToolsMenu(context),
+            preservedSuffix: [_buildCustomMenusSubmenu()],
+          ),
+          _applyCustomMenu('Window', _buildWindowMenu(context)),
           _buildHelpMenu(context),
         ],
       ),
     );
+  }
+
+  Widget _applyCustomMenu(
+    String menuName,
+    Widget standard, {
+    bool extendOnly = false,
+    List<Widget> preservedSuffix = const [],
+  }) {
+    if (standard is! SubmenuButton) return standard;
+    final custom = activeMenuSet?.menuFor(menuName);
+    if (custom == null || custom.items.isEmpty) return standard;
+
+    final customWidgets = <Widget>[
+      for (final item in custom.items)
+        if (item.separator)
+          const Divider(height: 1)
+        else
+          MenuItemButton(
+            onPressed: onRunCustomMenuItem == null
+                ? null
+                : () => onRunCustomMenuItem!(item),
+            shortcut: _parseShortcut(item.shortcut),
+            child: Text(item.title),
+          ),
+    ];
+
+    final replace = !extendOnly && custom.mode.toLowerCase() == 'replace';
+    final children = replace
+        ? <Widget>[
+            ...customWidgets,
+            if (preservedSuffix.isNotEmpty) ...[
+              const Divider(height: 1),
+              ...preservedSuffix,
+            ],
+          ]
+        : <Widget>[
+            ...standard.menuChildren,
+            const Divider(height: 1),
+            ...customWidgets,
+          ];
+
+    return SubmenuButton(
+      menuChildren: children,
+      child: standard.child,
+    );
+  }
+
+  SingleActivator? _parseShortcut(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    var meta = false;
+    var control = false;
+    var shift = false;
+    var alt = false;
+    LogicalKeyboardKey? key;
+    for (final part in trimmed.split('+')) {
+      final token = part.trim().toLowerCase();
+      switch (token) {
+        case 'cmd':
+        case 'command':
+        case 'meta':
+          meta = true;
+        case 'ctrl':
+        case 'control':
+          control = true;
+        case 'shift':
+          shift = true;
+        case 'alt':
+        case 'option':
+        case 'opt':
+          alt = true;
+        default:
+          key = _logicalKeyForToken(token);
+      }
+    }
+    if (key == null) return null;
+    // Do not bind reserved mode or quit shortcuts on a custom menu item.
+    if ((meta || control) && !shift && !alt) {
+      if (key == LogicalKeyboardKey.keyB ||
+          key == LogicalKeyboardKey.keyF ||
+          key == LogicalKeyboardKey.keyL ||
+          key == LogicalKeyboardKey.keyU ||
+          key == LogicalKeyboardKey.keyQ) {
+        return null;
+      }
+    }
+    return SingleActivator(
+      key,
+      meta: meta,
+      control: control,
+      shift: shift,
+      alt: alt,
+    );
+  }
+
+  LogicalKeyboardKey? _logicalKeyForToken(String token) {
+    if (token.length == 1) {
+      final code = token.codeUnitAt(0);
+      if (code >= 97 && code <= 122) {
+        return LogicalKeyboardKey(0x00000061 + (code - 97));
+      }
+      if (code >= 48 && code <= 57) {
+        return LogicalKeyboardKey(0x00000030 + (code - 48));
+      }
+    }
+    return null;
   }
 
   // 1. File Menu
@@ -1122,21 +1252,47 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Save Design as XML...'),
         ),
         const Divider(height: 1),
-        const SubmenuButton(
-          menuChildren: [
-            MenuItemButton(
-              onPressed: null, // #52: not implemented, shown disabled
-              child: Text('Manage Custom Menus...'),
-            ),
-          ],
-          child: Text('Custom Menus'),
-        ),
-        const MenuItemButton(
-          onPressed: null, // #53: not implemented, shown disabled
-          child: Text('Developer Utilities...'),
+        _buildCustomMenusSubmenu(),
+        MenuItemButton(
+          onPressed: onDeveloperUtilities,
+          child: const Text('Developer Utilities...'),
         ),
       ],
       child: const Text('Tools', style: TextStyle(fontSize: 13)),
+    );
+  }
+
+  Widget _buildCustomMenusSubmenu() {
+    return SubmenuButton(
+      menuChildren: [
+        MenuItemButton(
+          onPressed: onManageCustomMenus,
+          child: const Text('Manage Custom Menus...'),
+        ),
+        if (menuSets.isNotEmpty) ...[
+          const Divider(height: 1),
+          MenuItemButton(
+            leadingIcon: activeMenuSet == null
+                ? const Icon(Icons.check, size: 14)
+                : const SizedBox(width: 14),
+            onPressed: onSelectMenuSet == null
+                ? null
+                : () => onSelectMenuSet!(null),
+            child: const Text('[Standard File4Base Menus]'),
+          ),
+          for (final set in menuSets)
+            MenuItemButton(
+              leadingIcon: activeMenuSet?.id == set.id
+                  ? const Icon(Icons.check, size: 14)
+                  : const SizedBox(width: 14),
+              onPressed: onSelectMenuSet == null
+                  ? null
+                  : () => onSelectMenuSet!(set),
+              child: Text(set.name),
+            ),
+        ],
+      ],
+      child: const Text('Custom Menus'),
     );
   }
 

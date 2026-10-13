@@ -72,6 +72,14 @@ func flattenForXML(report *Report) {
 			step.Parameters = step.ParametersJSON.Text()
 		}
 	}
+	for i := range report.MenuSets {
+		for j := range report.MenuSets[i].Menus {
+			for k := range report.MenuSets[i].Menus[j].Items {
+				item := &report.MenuSets[i].Menus[j].Items[k]
+				item.Action = item.ActionJSON.Text()
+			}
+		}
+	}
 }
 
 // WriteHTML writes the report to read: one page, no scripts, no fonts to
@@ -111,6 +119,7 @@ func WriteHTML(report *Report) ([]byte, error) {
 		{"Accounts", strconv.Itoa(counts.Accounts)},
 		{"Saved finds", strconv.Itoa(counts.SavedFinds)},
 		{"Data sources", strconv.Itoa(counts.DataSources)},
+		{"Menu sets", strconv.Itoa(counts.MenuSets)},
 	} {
 		b.WriteString(`<li><b>` + pair[1] + `</b> ` + pair[0] + `</li>` + "\n")
 	}
@@ -370,6 +379,38 @@ func WriteHTML(report *Report) ([]byte, error) {
 				where + `</td><td>` + user + `</td></tr>` + "\n")
 		}
 		b.WriteString(`</tbody></table>` + "\n")
+	}
+
+	if len(report.MenuSets) > 0 {
+		b.WriteString(`<h2>Custom menu sets</h2>` + "\n")
+		for _, set := range report.MenuSets {
+			b.WriteString(`<h3>` + esc(set.Name))
+			if set.IsDefault {
+				b.WriteString(` <span class="sub">· solution default</span>`)
+			}
+			b.WriteString(`</h3>` + "\n")
+			b.WriteString(`<table><thead><tr><th>Menu</th><th>Mode</th><th>Items</th></tr></thead><tbody>` + "\n")
+			for _, menu := range set.Menus {
+				lines := []string{}
+				for _, item := range menu.Items {
+					if item.Separator {
+						lines = append(lines, "—")
+						continue
+					}
+					line := esc(item.Title)
+					if item.Shortcut != "" {
+						line += " (" + code(item.Shortcut) + ")"
+					}
+					if action := item.ActionJSON.Text(); action != "" {
+						line += " → " + code(action)
+					}
+					lines = append(lines, line)
+				}
+				b.WriteString(`<tr><td>` + esc(menu.Menu) + `</td><td>` + esc(menu.Mode) + `</td><td>` +
+					strings.Join(lines, "<br>") + `</td></tr>` + "\n")
+			}
+			b.WriteString(`</tbody></table>` + "\n")
+		}
 	}
 
 	// ─── What this report does not say ────────────────────────────────────

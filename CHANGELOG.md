@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Custom Menus defined by the solution**
+  ([#52](https://github.com/file4base/file4base-app/issues/52)). Solutions can
+  now store custom menu sets in `sys_menu_sets` (`/api/v1/menu-sets`), mark one
+  set as the solution default or assign a menu set per layout
+  (`definition.menu_set_id`), and manage them from **Tools > Custom Menus >
+  Manage Custom Menus...**.
+  - Custom menus can **extend** or **replace** standard menus, except **File**
+    (which is extend-only so `Sign Out` and `Open Solution` remain reachable)
+    and **Tools > Custom Menus** (which stays reachable so the standard menu
+    bar can always be restored).
+  - Keyboard shortcuts on custom menu items are checked against duplicates
+    within the set and reserved mode/quit shortcuts (`Cmd/Ctrl+B`, `F`, `L`,
+    `U`, `Q`).
+  - `.f4p` solution bundles and the Database Design Report (`#49`) carry custom
+    menu sets, remapping `script_id`, `layout_id`, and layout `menu_set_id`
+    references on import.
+
 ### Fixed
 - **Release workflow publishes multi-architecture Docker Hub images**
   ([#55](https://github.com/file4base/file4base-app/issues/55)). Tagging a `v*`

@@ -2386,8 +2386,242 @@ class ApiClient {
     return ScriptModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  // ==========================================
+  // Custom Menu Sets API (#52)
+  // ==========================================
+
+  Future<MenuSetsListingModel> listMenuSets({String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/menu-sets'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    return MenuSetsListingModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  Future<MenuSetModel> createMenuSet({
+    required String name,
+    required List<CustomMenuModel> menus,
+    bool isDefault = false,
+    String? database,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/menu-sets'),
+      headers: _headers(
+        contentType: 'application/json',
+        extra: database != null ? {'X-Database-Name': database} : null,
+      ),
+      body: jsonEncode({
+        'name': name,
+        'is_default': isDefault,
+        'menus': menus.map((m) => m.toJson()).toList(),
+      }),
+    );
+    _checkResponse(response);
+    return MenuSetModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  Future<MenuSetModel> updateMenuSet(
+    String id, {
+    required String name,
+    required List<CustomMenuModel> menus,
+    bool isDefault = false,
+    String? database,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/menu-sets/$id'),
+      headers: _headers(
+        contentType: 'application/json',
+        extra: database != null ? {'X-Database-Name': database} : null,
+      ),
+      body: jsonEncode({
+        'name': name,
+        'is_default': isDefault,
+        'menus': menus.map((m) => m.toJson()).toList(),
+      }),
+    );
+    _checkResponse(response);
+    return MenuSetModel.fromJson(
+      Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+    );
+  }
+
+  Future<void> deleteMenuSet(String id, {String? database}) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/menu-sets/$id'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+  }
+
   void close() {
     _httpClient.close();
+  }
+}
+
+/// One entry of a custom menu (#52).
+class CustomMenuItemModel {
+  final String title;
+  final String shortcut;
+  final Map<String, dynamic> action;
+  final bool separator;
+
+  const CustomMenuItemModel({
+    this.title = '',
+    this.shortcut = '',
+    this.action = const {},
+    this.separator = false,
+  });
+
+  factory CustomMenuItemModel.fromJson(Map<String, dynamic> json) {
+    final rawAction = json['action'];
+    return CustomMenuItemModel(
+      title: json['title'] as String? ?? '',
+      shortcut: json['shortcut'] as String? ?? '',
+      action: rawAction is Map ? Map<String, dynamic>.from(rawAction) : const {},
+      separator: json['separator'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    if (separator) {
+      return {'separator': true};
+    }
+    return {
+      'title': title,
+      if (shortcut.trim().isNotEmpty) 'shortcut': shortcut.trim(),
+      'action': action,
+    };
+  }
+}
+
+/// One menu of the bar, as a solution redefines it (#52).
+class CustomMenuModel {
+  final String menu;
+  final String mode;
+  final List<CustomMenuItemModel> items;
+
+  const CustomMenuModel({
+    required this.menu,
+    this.mode = 'extend',
+    this.items = const [],
+  });
+
+  factory CustomMenuModel.fromJson(Map<String, dynamic> json) {
+    final rawItems = json['items'] as List<dynamic>? ?? const [];
+    return CustomMenuModel(
+      menu: json['menu'] as String? ?? '',
+      mode: json['mode'] as String? ?? 'extend',
+      items: rawItems
+          .whereType<Map>()
+          .map((e) => CustomMenuItemModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'menu': menu,
+        'mode': mode,
+        'items': items.map((e) => e.toJson()).toList(),
+      };
+}
+
+/// A named set of custom menus stored in `sys_menu_sets` (#52).
+class MenuSetModel {
+  final String id;
+  final String name;
+  final bool isDefault;
+  final List<CustomMenuModel> menus;
+
+  const MenuSetModel({
+    required this.id,
+    required this.name,
+    this.isDefault = false,
+    this.menus = const [],
+  });
+
+  CustomMenuModel? menuFor(String name) {
+    final lower = name.toLowerCase();
+    for (final m in menus) {
+      if (m.menu.toLowerCase() == lower) {
+        return m;
+      }
+    }
+    return null;
+  }
+
+  factory MenuSetModel.fromJson(Map<String, dynamic> json) {
+    final rawMenus = json['menus'] as List<dynamic>? ?? const [];
+    return MenuSetModel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      isDefault: json['is_default'] as bool? ?? false,
+      menus: rawMenus
+          .whereType<Map>()
+          .map((e) => CustomMenuModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'is_default': isDefault,
+        'menus': menus.map((m) => m.toJson()).toList(),
+      };
+}
+
+/// Response from `GET /api/v1/menu-sets` (#52).
+class MenuSetsListingModel {
+  final List<String> menus;
+  final List<String> extendOnly;
+  final List<MenuSetModel> menuSets;
+
+  const MenuSetsListingModel({
+    this.menus = const [
+      'File',
+      'Edit',
+      'View',
+      'Insert',
+      'Format',
+      'Records',
+      'Requests',
+      'Scripts',
+      'Tools',
+      'Window',
+    ],
+    this.extendOnly = const ['File'],
+    this.menuSets = const [],
+  });
+
+  factory MenuSetsListingModel.fromJson(Map<String, dynamic> json) {
+    final rawMenus = json['menus'] as List<dynamic>?;
+    final rawExtend = json['extend_only'] as List<dynamic>?;
+    final rawSets = json['menu_sets'] as List<dynamic>? ?? const [];
+    return MenuSetsListingModel(
+      menus: rawMenus?.whereType<String>().toList() ??
+          const [
+            'File',
+            'Edit',
+            'View',
+            'Insert',
+            'Format',
+            'Records',
+            'Requests',
+            'Scripts',
+            'Tools',
+            'Window',
+          ],
+      extendOnly: rawExtend?.whereType<String>().toList() ?? const ['File'],
+      menuSets: rawSets
+          .whereType<Map>()
+          .map((e) => MenuSetModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList(),
+    );
   }
 }
 

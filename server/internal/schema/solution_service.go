@@ -158,6 +158,16 @@ type BundleDataSource struct {
 	PasswordEnv string `msgpack:"password_env,omitempty"`
 }
 
+// BundleMenuSet carries a menu set (#52). Its items name scripts and layouts
+// by id, and layouts may name a menu set by id, so those ids are remapped on
+// import like every other reference.
+type BundleMenuSet struct {
+	ID        string       `msgpack:"id,omitempty"`
+	Name      string       `msgpack:"name"`
+	IsDefault bool         `msgpack:"is_default"`
+	Menus     []CustomMenu `msgpack:"menus"`
+}
+
 type SolutionBundle struct {
 	Format             string                 `msgpack:"format"`
 	Version            string                 `msgpack:"version"`
@@ -174,6 +184,7 @@ type SolutionBundle struct {
 	Privileges         []RolePrivileges       `msgpack:"privileges,omitempty"`
 	SavedFinds         []BundleSavedFind      `msgpack:"saved_finds,omitempty"`
 	DataSources        []BundleDataSource     `msgpack:"data_sources,omitempty"`
+	MenuSets           []BundleMenuSet        `msgpack:"menu_sets,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
 }
@@ -250,6 +261,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("failed listing data sources: %w", err)
 	}
+	menuSets, err := s.ListMenuSets(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing menu sets: %w", err)
+	}
 
 	conn := opts.Connection
 	if conn.Engine == "" {
@@ -271,6 +286,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		Privileges:         privileges,
 		SavedFinds:         make([]BundleSavedFind, 0, len(savedFinds)),
 		DataSources:        make([]BundleDataSource, 0, len(dataSources)),
+		MenuSets:           make([]BundleMenuSet, 0, len(menuSets)),
 		FileOptions:        withoutSecrets(opts.FileOptions),
 		PageSetup:          opts.PageSetup,
 	}
@@ -323,6 +339,11 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	for _, f := range savedFinds {
 		b.SavedFinds = append(b.SavedFinds, BundleSavedFind{
 			Name: f.Name, TableName: f.TableName, Requests: f.Requests,
+		})
+	}
+	for _, m := range menuSets {
+		b.MenuSets = append(b.MenuSets, BundleMenuSet{
+			ID: m.ID, Name: m.Name, IsDefault: m.IsDefault, Menus: m.Menus,
 		})
 	}
 	for _, d := range dataSources {
@@ -419,6 +440,7 @@ type ImportReport struct {
 	PrivilegesUpdated       int      `json:"privileges_updated"`
 	SavedFindsCreated       int      `json:"saved_finds_created"`
 	DataSourcesCreated      int      `json:"data_sources_created"`
+	MenuSetsCreated         int      `json:"menu_sets_created"`
 	AccountsPendingPassword []string `json:"accounts_pending_password"`
 	// Totals in the bundle, kept for older clients.
 	TablesCount  int `json:"tables_count"`
@@ -802,7 +824,82 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		report.DataSourcesCreated++
 	}
 
-	// 9. Role privileges (#39). They are keyed by role, so there is nothing
+	// 9. Menu sets (#52), matched by name. The script or layout a menu item
+	// references is named by id, so those are rewritten to the destination's
+	// ids; layouts that name a menu set by id are rewritten to match.
+	menuSetIDs := map[string]string{}
+	for _, m := range b.MenuSets {
+		existing, err := s.ListMenuSets(ctx)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("reading the menu sets: %w", err))
+		}
+		var knownID string
+		for _, e := range existing {
+			if strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(m.Name)) {
+				knownID = e.ID
+				break
+			}
+		}
+		if knownID != "" {
+			if m.ID != "" {
+				menuSetIDs[m.ID] = knownID
+			}
+			continue
+		}
+		menus := make([]CustomMenu, 0, len(m.Menus))
+		for _, menu := range m.Menus {
+			items := make([]MenuItem, 0, len(menu.Items))
+			for _, item := range menu.Items {
+				if len(item.Action) > 0 {
+					rewritten, _ := rewriteRefs(item.Action, map[string]map[string]string{
+						"script_id": scriptIDs,
+						"layout_id": layoutIDs,
+					}).(map[string]interface{})
+					if rewritten != nil {
+						item.Action = rewritten
+					}
+				}
+				items = append(items, item)
+			}
+			menus = append(menus, CustomMenu{Menu: menu.Menu, Mode: menu.Mode, Items: items})
+		}
+		created, err := s.CreateMenuSet(ctx, MenuSetInput{
+			Name: m.Name, IsDefault: m.IsDefault, Menus: menus,
+		})
+		if err != nil {
+			return nil, rollback(fmt.Errorf("restoring the menu set %q: %w", m.Name, err))
+		}
+		if m.ID != "" {
+			menuSetIDs[m.ID] = created.ID
+		}
+		undo = append(undo, func() { _ = s.DeleteMenuSet(bg, created.ID) })
+		report.MenuSetsCreated++
+	}
+	if len(menuSetIDs) > 0 {
+		for _, l := range b.Layouts {
+			rawID, _ := l.Definition["menu_set_id"].(string)
+			if rawID == "" || menuSetIDs[rawID] == "" {
+				continue
+			}
+			dstLayoutID := layoutIDs[l.ID]
+			if dstLayoutID == "" {
+				continue
+			}
+			def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
+				"script_id":       scriptIDs,
+				"relationship_id": relIDs,
+				"menu_set_id":     menuSetIDs,
+			}))
+			if err != nil {
+				return nil, rollback(fmt.Errorf("layout %q menu set reference: %w", l.Name, err))
+			}
+			if _, err := s.UpdateLayout(ctx, dstLayoutID, l.Name, def); err != nil {
+				return nil, rollback(fmt.Errorf("updating layout %q menu set reference: %w", l.Name, err))
+			}
+		}
+	}
+
+	// 10. Role privileges (#39). They are keyed by role, so there is nothing
 	// to remap; a file written before they existed leaves them untouched.
 	if len(b.Privileges) > 0 {
 		previous, err := s.ListRolePrivileges(ctx)
