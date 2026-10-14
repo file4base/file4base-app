@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/data_browser/report_view.dart';
 import 'package:file4base_client/features/layout_engine/chart_view.dart';
@@ -10,6 +11,7 @@ import 'package:file4base_client/features/layout_engine/layout_action_runner.dar
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:file4base_client/main.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
@@ -27,6 +29,11 @@ class DataBrowserWidget extends StatefulWidget {
     this.currentUserName,
     this.onGoToLayout,
     this.onFoundSetChanged,
+    this.showPageMargins = false,
+    this.showTextRuler = false,
+    this.pageSetup = const PageSetupModel(),
+    this.onFocusedFieldChanged,
+    this.onObjectStyleChanged,
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -47,6 +54,12 @@ class DataBrowserWidget extends StatefulWidget {
   /// every record is showing. Preview needs them so the printed sheet is the
   /// found set rather than the whole table (#32).
   final ValueChanged<List<Map<String, dynamic>>>? onFoundSetChanged;
+
+  final bool showPageMargins;
+  final bool showTextRuler;
+  final PageSetupModel pageSetup;
+  final VoidCallback? onFocusedFieldChanged;
+  final void Function(String objectId, LayoutObjectStyle newStyle)? onObjectStyleChanged;
 
   @override
   State<DataBrowserWidget> createState() => DataBrowserWidgetState();
@@ -98,7 +111,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   int _currentIndex = 0;
   bool _isFoundSet = false;
   String? _lastFocusedFindField;
+  String? _lastFocusedBrowseField;
   String _viewMode = 'form'; // 'form' (layout), 'list' (record list) or 'table' (spreadsheet grid)
+
+  /// Name of the currently focused or last focused field in Browse or Find mode.
+  String? get activeFieldName => _lastFocusedBrowseField ?? _lastFocusedFindField;
+
+  /// Layout object bound to [activeFieldName], or the first field object on the layout.
+  LayoutObjectModel? get activeFieldObject {
+    final layout = widget.layout;
+    if (layout == null || layout.objects.isEmpty) return null;
+    final targetField = activeFieldName;
+    if (targetField != null) {
+      final match = layout.objects
+          .where((o) =>
+              o.type == 'field' &&
+              (o.fieldBinding?.fieldName.toLowerCase() == targetField.toLowerCase()))
+          .firstOrNull;
+      if (match != null) return match;
+    }
+    return layout.objects.where((o) => o.type == 'field').firstOrNull ??
+        layout.objects.first;
+  }
+
+  /// Active style of the focused field in Browse/Find mode.
+  LayoutObjectStyle get activeStyle =>
+      activeFieldObject?.style ?? const LayoutObjectStyle();
 
   // Found set bookkeeping for the record bar
   int _totalInTable = 0;
@@ -747,9 +785,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       _fieldSaving[col.name] = null;
 
       fn.addListener(() {
-        if (!fn.hasFocus) {
+        if (fn.hasFocus) {
+          _lastFocusedBrowseField = col.name;
+          if (mounted) setState(() {});
+          widget.onFocusedFieldChanged?.call();
+        } else {
           _fieldDebounceTimers[col.name]?.cancel();
           _saveField(col.name, ctrl.text);
+          if (mounted) setState(() {});
         }
       });
     }
@@ -1926,24 +1969,44 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           ),
         );
       }
-      final valText = col != null ? fieldText(col, rec[col.name]) : (rec[fieldName]?.toString() ?? '');
+      final rawVal = col != null ? rec[col.name] : rec[fieldName];
+      final effStyle = obj.style.effectiveForValue(rawVal);
+      final rawText = col != null ? fieldText(col, rawVal) : (rawVal?.toString() ?? '');
+      final hasCustomFormat = effStyle.numberFormat != 'general' ||
+          effStyle.dateFormat != 'as_entered' ||
+          effStyle.timeFormat != 'as_entered' ||
+          effStyle.textCase != 'normal';
+      final valText = hasCustomFormat
+          ? formatLayoutDisplayValue(rawVal ?? rawText, effStyle)
+          : rawText;
+      final fillColor = effStyle.fillColor != null
+          ? _parseColor(effStyle.fillColor!)
+          : (isDark ? const Color(0xFF0D1117) : Colors.white);
       return Container(
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        alignment: _parseAlignment(effStyle.textAlign),
+        padding: EdgeInsets.only(
+          left: 8 + effStyle.indentLeft,
+          right: 8 + effStyle.indentRight,
+          top: 4,
+          bottom: 4,
+        ),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF0D1117) : Colors.white,
+          color: fillColor,
           border: Border.all(
-            color: isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB),
+            color: effStyle.borderColor != null
+                ? _parseColor(effStyle.borderColor!)
+                : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
           ),
-          borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+          borderRadius: BorderRadius.circular(effStyle.cornerRadius),
         ),
         child: Text(
           valText,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
-            color: isDark ? Colors.white : Colors.black87,
+          textAlign: _parseTextAlign(effStyle.textAlign),
+          style: layoutTextStyle(
+            effStyle,
+            fallbackColor: isDark ? Colors.white : Colors.black87,
           ),
         ),
       );
@@ -2198,6 +2261,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (widget.showTextRuler)
+                SizedBox(
+                  width: canvasWidth,
+                  child: File4BaseTextRuler(
+                    style: activeStyle,
+                    width: activeFieldObject?.width ?? canvasWidth,
+                    onStyleChanged: (newStyle) {
+                      final activeObj = activeFieldObject;
+                      if (activeObj != null) {
+                        widget.onObjectStyleChanged?.call(activeObj.id, newStyle);
+                      }
+                    },
+                  ),
+                ),
               // Header banner above canvas (Find mode instructions; the record
               // bar above shows the record position in Browse mode)
               if (isFindMode)
@@ -2305,6 +2382,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       if (hasCustomBackground) Positioned.fill(child: LayoutBackgroundView(layout: layout)),
                       // Subtle part boundaries
                       ..._buildPartDividers(layout, canvasWidth, isDark),
+                      if (widget.showPageMargins)
+                        PageMarginsOverlay(
+                          canvasWidth: canvasWidth,
+                          canvasHeight: canvasHeight,
+                          pageSetup: widget.pageSetup,
+                        ),
 
                       // Render layout objects
                       ...topLevel.map((obj) {
@@ -2339,25 +2422,27 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       {List<LayoutObjectModel> portalContents = const []}) {
     switch (obj.type) {
       case 'label':
-        final resolvedText = isFindMode ? obj.text : _resolveTextForRecord(obj.text, record);
+        final resolvedText = applyLayoutTextCase(
+          isFindMode ? obj.text : _resolveTextForRecord(obj.text, record),
+          obj.style.textCase,
+        );
         final isMultilineLabel = obj.height > 36 || resolvedText.contains('\n');
         final textWidget = Text(
           resolvedText,
           textAlign: _parseTextAlign(obj.style.textAlign),
-          style: TextStyle(
-            fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
-            fontWeight: obj.style.fontWeight == 'bold'
-                ? FontWeight.bold
-                : FontWeight.normal,
-            height: isMultilineLabel ? 1.32 : null,
-            color: obj.style.textColor != null
-                ? _parseColor(obj.style.textColor!)
-                : (isDark ? Colors.white : Colors.black87),
+          style: layoutTextStyle(
+            obj.style,
+            fallbackColor: isDark ? Colors.white : Colors.black87,
           ),
         );
         return Container(
           alignment: isMultilineLabel ? Alignment.topLeft : _parseAlignment(obj.style.textAlign),
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          padding: EdgeInsets.only(
+            left: 4 + obj.style.indentLeft,
+            right: 4 + obj.style.indentRight,
+            top: 2,
+            bottom: 2,
+          ),
           child: isMultilineLabel
               ? SingleChildScrollView(child: textWidget)
               : textWidget,
@@ -2441,21 +2526,29 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           return TextField(
             controller: findCtrl,
             textAlign: _parseTextAlign(obj.style.textAlign),
-            style: TextStyle(
-              fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+            style: layoutTextStyle(
+              obj.style,
+              fallbackColor: isDark ? Colors.white : Colors.black87,
             ),
             decoration: InputDecoration(
               isDense: true,
               hintText: 'Search ${col.displayName}...',
               hintStyle: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              contentPadding: EdgeInsets.only(
+                left: 8 + obj.style.indentLeft,
+                right: 8 + obj.style.indentRight,
+                top: 8,
+                bottom: 8,
+              ),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(obj.style.cornerRadius),
               ),
               suffixIcon: const Icon(Icons.search, size: 14, color: Colors.grey),
             ),
-            onTap: () => setState(() => _lastFocusedFindField = col.name),
+            onTap: () {
+              setState(() => _lastFocusedFindField = col.name);
+              widget.onFocusedFieldChanged?.call();
+            },
             onSubmitted: (_) => _performFind(),
           );
         }
@@ -2539,39 +2632,89 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           );
         }
 
+        final rawVal = record[col.name] ?? ctrl?.text;
+        final effStyle = obj.style.effectiveForValue(rawVal);
+        final isFocused = fn?.hasFocus ?? false;
+        final hasDisplayFormatting = effStyle.numberFormat != 'general' ||
+            effStyle.dateFormat != 'as_entered' ||
+            effStyle.timeFormat != 'as_entered' ||
+            effStyle.textCase != 'normal';
+
         final isMultilineField = obj.height > 44;
+        if (!isFocused && hasDisplayFormatting) {
+          final formatted = formatLayoutDisplayValue(
+            rawVal ?? (ctrl?.text ?? ''),
+            effStyle,
+          );
+          return GestureDetector(
+            onTap: () => fn?.requestFocus(),
+            child: Container(
+              alignment: isMultilineField
+                  ? Alignment.topLeft
+                  : _parseAlignment(effStyle.textAlign),
+              padding: EdgeInsets.only(
+                left: 8 + effStyle.indentLeft,
+                right: 8 + effStyle.indentRight,
+                top: 6,
+                bottom: 6,
+              ),
+              decoration: BoxDecoration(
+                color: effStyle.fillColor != null
+                    ? _parseColor(effStyle.fillColor!)
+                    : (isDark ? const Color(0xFF0D1117) : Colors.white),
+                borderRadius: BorderRadius.circular(effStyle.cornerRadius),
+                border: Border.all(
+                  color: effStyle.borderColor != null
+                      ? _parseColor(effStyle.borderColor!)
+                      : Colors.grey.shade400,
+                  width: effStyle.borderWidth > 0 ? effStyle.borderWidth : 1,
+                ),
+              ),
+              child: Text(
+                formatted,
+                maxLines: isMultilineField ? null : 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: _parseTextAlign(effStyle.textAlign),
+                style: layoutTextStyle(
+                  effStyle,
+                  fallbackColor: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+            ),
+          );
+        }
+
         return TextField(
           controller: ctrl,
           focusNode: fn,
           readOnly: computed,
           maxLines: isMultilineField ? null : 1,
           expands: isMultilineField,
-          textAlign: _parseTextAlign(obj.style.textAlign),
+          textAlign: _parseTextAlign(effStyle.textAlign),
           textAlignVertical: isMultilineField ? TextAlignVertical.top : TextAlignVertical.center,
-          style: TextStyle(
-            fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
-            fontWeight: obj.style.fontWeight == 'bold'
-                ? FontWeight.bold
-                : FontWeight.normal,
-            color: obj.style.textColor != null
-                ? _parseColor(obj.style.textColor!)
-                : null,
+          style: layoutTextStyle(
+            effStyle,
+            fallbackColor: isDark ? Colors.white : Colors.black87,
           ),
           decoration: InputDecoration(
             isDense: true,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            fillColor: obj.style.fillColor != null
-                ? _parseColor(obj.style.fillColor!)
+            contentPadding: EdgeInsets.only(
+              left: 8 + effStyle.indentLeft,
+              right: 8 + effStyle.indentRight,
+              top: 8,
+              bottom: 8,
+            ),
+            fillColor: effStyle.fillColor != null
+                ? _parseColor(effStyle.fillColor!)
                 : null,
-            filled: obj.style.fillColor != null,
+            filled: effStyle.fillColor != null,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+              borderRadius: BorderRadius.circular(effStyle.cornerRadius),
               borderSide: BorderSide(
-                color: obj.style.borderColor != null
-                    ? _parseColor(obj.style.borderColor!)
+                color: effStyle.borderColor != null
+                    ? _parseColor(effStyle.borderColor!)
                     : Colors.grey,
-                width: obj.style.borderWidth,
+                width: effStyle.borderWidth,
               ),
             ),
             suffixIcon: computed

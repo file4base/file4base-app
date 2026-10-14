@@ -164,11 +164,146 @@ List<LayoutObjectModel> sortLayoutTabStops(Iterable<LayoutObjectModel> stops) {
 }
 
 TextStyle layoutTextStyle(LayoutObjectStyle style, {Color? fallbackColor}) {
+  final decorations = <TextDecoration>[
+    if (style.underline) TextDecoration.underline,
+    if (style.strikethrough) TextDecoration.lineThrough,
+  ];
   return TextStyle(
+    fontFamily: (style.fontFamily != null && style.fontFamily!.isNotEmpty)
+        ? style.fontFamily
+        : null,
     fontSize: style.fontSize > 0 ? style.fontSize : 13,
     fontWeight: style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.normal,
+    fontStyle: style.fontStyle == 'italic' ? FontStyle.italic : FontStyle.normal,
+    decoration: decorations.isEmpty
+        ? TextDecoration.none
+        : TextDecoration.combine(decorations),
+    height: (style.lineSpacing - 1.2).abs() > 0.01 ? style.lineSpacing : null,
     color: parseLayoutColor(style.textColor) ?? fallbackColor ?? Colors.black87,
   );
+}
+
+/// Applies text casing transformation (`none`, `upper`, `lower`, `title`).
+String applyLayoutTextCase(String text, String textCase) {
+  switch (textCase) {
+    case 'upper':
+      return text.toUpperCase();
+    case 'lower':
+      return text.toLowerCase();
+    case 'title':
+      return text
+          .split(' ')
+          .map((w) => w.isEmpty
+              ? w
+              : '${w[0].toUpperCase()}${w.substring(1).toLowerCase()}')
+          .join(' ');
+    default:
+      return text;
+  }
+}
+
+/// Formats a raw field value according to [style]'s Number, Date, Time, or
+/// Timestamp display format without altering the stored value.
+String formatLayoutDisplayValue(Object? rawValue, LayoutObjectStyle style) {
+  final raw = (rawValue?.toString() ?? '').trim();
+  if (raw.isEmpty) return '';
+
+  // 1. Number formatting
+  final numFmt = style.numberFormat;
+  if (numFmt != null && numFmt != 'general') {
+    if (numFmt == 'boolean') {
+      final lower = raw.toLowerCase();
+      if (lower == 'true' || lower == '1' || lower == 'yes' || lower == 't') {
+        return 'Yes';
+      }
+      if (lower == 'false' || lower == '0' || lower == 'no' || lower == 'f') {
+        return 'No';
+      }
+    }
+    final parsed = double.tryParse(raw.replaceAll(',', '.'));
+    if (parsed != null) {
+      final value = numFmt == 'percent' ? parsed * 100.0 : parsed;
+      final decimals = style.decimalPlaces.clamp(0, 8);
+      final fixed = value.abs().toStringAsFixed(decimals);
+      final parts = fixed.split('.');
+      var intPart = parts[0];
+      if (style.useThousandsSeparator) {
+        final buf = StringBuffer();
+        for (var i = 0; i < intPart.length; i++) {
+          if (i > 0 && (intPart.length - i) % 3 == 0) {
+            buf.write(',');
+          }
+          buf.write(intPart[i]);
+        }
+        intPart = buf.toString();
+      }
+      final sign = value < 0 ? '-' : '';
+      final decPart = parts.length > 1 && decimals > 0 ? '.${parts[1]}' : '';
+      final numberStr = '$sign$intPart$decPart';
+      if (numFmt == 'currency') {
+        return '${style.currencySymbol}$numberStr';
+      }
+      if (numFmt == 'percent') {
+        return '$numberStr%';
+      }
+      return numberStr;
+    }
+  }
+
+  // 2. Date / Time / Timestamp formatting
+  final dateFmt = style.dateFormat;
+  final timeFmt = style.timeFormat;
+  if ((dateFmt != null && dateFmt != 'as_entered') ||
+      (timeFmt != null && timeFmt != 'as_entered')) {
+    var dt = DateTime.tryParse(raw);
+    if (dt == null && RegExp(r'^\d{1,2}:\d{2}(:\d{2})?$').hasMatch(raw)) {
+      final padded = raw.indexOf(':') == 1 ? '0$raw' : raw;
+      dt = DateTime.tryParse('2000-01-01T$padded');
+    }
+    if (dt != null) {
+      const monthsShort = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      ];
+      const monthsFull = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December',
+      ];
+      const weekdays = [
+        'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+        'Friday', 'Saturday', 'Sunday',
+      ];
+      String pad2(int n) => n.toString().padLeft(2, '0');
+      String? datePart;
+      if (dateFmt != null && dateFmt != 'as_entered') {
+        datePart = switch (dateFmt) {
+          'dd/mm/yyyy' => '${pad2(dt.day)}/${pad2(dt.month)}/${dt.year}',
+          'mm/dd/yyyy' => '${pad2(dt.month)}/${pad2(dt.day)}/${dt.year}',
+          'yyyy-mm-dd' => '${dt.year}-${pad2(dt.month)}-${pad2(dt.day)}',
+          'd_mmm_yyyy' => '${dt.day} ${monthsShort[dt.month - 1]} ${dt.year}',
+          'full' =>
+            '${weekdays[dt.weekday - 1]}, ${dt.day} ${monthsFull[dt.month - 1]} ${dt.year}',
+          _ => '${dt.year}-${pad2(dt.month)}-${pad2(dt.day)}',
+        };
+      }
+      String? timePart;
+      if (timeFmt != null && timeFmt != 'as_entered') {
+        final h12 = dt.hour % 12 == 0 ? 12 : dt.hour % 12;
+        final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+        timePart = switch (timeFmt) {
+          '24h' => '${pad2(dt.hour)}:${pad2(dt.minute)}',
+          '24h_sec' => '${pad2(dt.hour)}:${pad2(dt.minute)}:${pad2(dt.second)}',
+          '12h' => '$h12:${pad2(dt.minute)} $ampm',
+          _ => '${pad2(dt.hour)}:${pad2(dt.minute)}',
+        };
+      }
+      if (datePart != null && timePart != null) return '$datePart $timePart';
+      if (datePart != null) return datePart;
+      if (timePart != null) return timePart;
+    }
+  }
+
+  return applyLayoutTextCase(raw, style.textCase);
 }
 
 TextAlign layoutTextAlign(String align) => switch (align) {

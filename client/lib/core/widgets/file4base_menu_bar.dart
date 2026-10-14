@@ -3,7 +3,12 @@ import 'package:file4base_client/core/api/api_client.dart'
 import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:file4base_client/features/help/check_updates_dialog.dart';
 import 'package:file4base_client/features/help/issues_guide_dialog.dart';
-import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart' show LayoutMergeSymbols;
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart'
+    show LayoutMergeSymbols, parseLayoutColor;
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart'
+    show LayoutObjectStyle;
+import 'package:file4base_client/features/layout_engine/view_format_tools.dart'
+    show kFormatColorSwatches, kLayoutFontFamilies, kLayoutFontSizes;
 import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -85,6 +90,23 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onClear,
     this.onSelectAll,
     this.onServerToolSelected,
+    this.isPageMarginsVisible = false,
+    this.onTogglePageMargins,
+    this.isFormattingBarVisible = false,
+    this.onToggleFormattingBar,
+    this.isTextRulerVisible = false,
+    this.onToggleTextRuler,
+    this.activeObjectStyle = const LayoutObjectStyle(),
+    this.onFormatStyleChanged,
+    this.onOpenTextFormat,
+    this.onOpenNumberFormat,
+    this.onOpenDateFormat,
+    this.onOpenTimeFormat,
+    this.onOpenTimestampFormat,
+    this.onOpenConditionalFormatting,
+    this.onAlignObjects,
+    this.onDistributeObjects,
+    this.onResizeObjects,
   });
   final OperationalMode activeMode;
   final ValueChanged<OperationalMode> onModeChanged;
@@ -206,6 +228,23 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onClear;
   final VoidCallback? onSelectAll;
   final ValueChanged<String>? onServerToolSelected;
+  final bool isPageMarginsVisible;
+  final ValueChanged<bool>? onTogglePageMargins;
+  final bool isFormattingBarVisible;
+  final ValueChanged<bool>? onToggleFormattingBar;
+  final bool isTextRulerVisible;
+  final ValueChanged<bool>? onToggleTextRuler;
+  final LayoutObjectStyle activeObjectStyle;
+  final ValueChanged<LayoutObjectStyle>? onFormatStyleChanged;
+  final VoidCallback? onOpenTextFormat;
+  final VoidCallback? onOpenNumberFormat;
+  final VoidCallback? onOpenDateFormat;
+  final VoidCallback? onOpenTimeFormat;
+  final VoidCallback? onOpenTimestampFormat;
+  final VoidCallback? onOpenConditionalFormatting;
+  final ValueChanged<String>? onAlignObjects;
+  final ValueChanged<String>? onDistributeObjects;
+  final ValueChanged<String>? onResizeObjects;
 
   /// Asks for a record number and goes there.
   Future<void> _promptGoToRecord(BuildContext context) async {
@@ -873,19 +912,31 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Preview Mode'),
         ),
         const Divider(height: 1),
-        const MenuItemButton(
-          child: Text('Page Margins'),
+        MenuItemButton(
+          leadingIcon: isPageMarginsVisible ? const Icon(Icons.check, size: 14) : null,
+          onPressed: onTogglePageMargins != null
+              ? () => onTogglePageMargins!(!isPageMarginsVisible)
+              : null,
+          child: const Text('Page Margins'),
         ),
         MenuItemButton(
           leadingIcon: isToolbarVisible ? const Icon(Icons.check, size: 14) : null,
           onPressed: () => onToggleToolbar(!isToolbarVisible),
           child: const Text('Status Toolbar'),
         ),
-        const MenuItemButton(
-          child: Text('Formatting Bar'),
+        MenuItemButton(
+          leadingIcon: isFormattingBarVisible ? const Icon(Icons.check, size: 14) : null,
+          onPressed: onToggleFormattingBar != null
+              ? () => onToggleFormattingBar!(!isFormattingBarVisible)
+              : null,
+          child: const Text('Formatting Bar'),
         ),
-        const MenuItemButton(
-          child: Text('Text Ruler'),
+        MenuItemButton(
+          leadingIcon: isTextRulerVisible ? const Icon(Icons.check, size: 14) : null,
+          onPressed: onToggleTextRuler != null
+              ? () => onToggleTextRuler!(!isTextRulerVisible)
+              : null,
+          child: const Text('Text Ruler'),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -1009,36 +1060,362 @@ class File4BaseMenuBar extends StatelessWidget {
 
   // 5. Format Menu
   Widget _buildFormatMenu(BuildContext context) {
+    final s = activeObjectStyle;
+    final apply = onFormatStyleChanged;
+
     return SubmenuButton(
       menuChildren: [
-        const MenuItemButton(
-          child: Text('Font'),
+        // 1. Font Submenu
+        SubmenuButton(
+          menuChildren: [
+            MenuItemButton(
+              leadingIcon: (s.fontFamily == null || s.fontFamily!.isEmpty)
+                  ? const Icon(Icons.check, size: 14)
+                  : null,
+              onPressed: apply != null
+                  ? () => apply(s.copyWith(clearFontFamily: true))
+                  : null,
+              child: const Text('System Default'),
+            ),
+            const Divider(height: 1),
+            for (final fam in kLayoutFontFamilies)
+              MenuItemButton(
+                leadingIcon: s.fontFamily == fam
+                    ? const Icon(Icons.check, size: 14)
+                    : null,
+                onPressed: apply != null
+                    ? () => apply(s.copyWith(fontFamily: fam))
+                    : null,
+                child: Text(fam, style: TextStyle(fontFamily: fam)),
+              ),
+          ],
+          child: const Text('Font'),
         ),
-        const MenuItemButton(
-          child: Text('Size'),
+
+        // 2. Size Submenu
+        SubmenuButton(
+          menuChildren: [
+            for (final sz in kLayoutFontSizes)
+              MenuItemButton(
+                leadingIcon: (s.fontSize - sz).abs() < 0.1
+                    ? const Icon(Icons.check, size: 14)
+                    : null,
+                onPressed: apply != null
+                    ? () => apply(s.copyWith(fontSize: sz))
+                    : null,
+                child: Text('${sz.round()} pt'),
+              ),
+          ],
+          child: const Text('Size'),
         ),
-        const MenuItemButton(
-          child: Text('Style'),
+
+        // 3. Style Submenu
+        SubmenuButton(
+          menuChildren: [
+            MenuItemButton(
+              leadingIcon: s.fontWeight != 'bold' &&
+                      s.fontStyle != 'italic' &&
+                      !s.underline &&
+                      !s.strikethrough &&
+                      s.textCase == 'none'
+                  ? const Icon(Icons.check, size: 14)
+                  : null,
+              onPressed: apply != null
+                  ? () => apply(
+                        s.copyWith(
+                          fontWeight: 'normal',
+                          fontStyle: 'normal',
+                          underline: false,
+                          strikethrough: false,
+                          textCase: 'none',
+                        ),
+                      )
+                  : null,
+              child: const Text('Plain Text'),
+            ),
+            const Divider(height: 1),
+            MenuItemButton(
+              leadingIcon: s.fontWeight == 'bold'
+                  ? const Icon(Icons.check, size: 14)
+                  : null,
+              onPressed: apply != null
+                  ? () => apply(
+                        s.copyWith(
+                          fontWeight: s.fontWeight == 'bold' ? 'normal' : 'bold',
+                        ),
+                      )
+                  : null,
+              child: const Text('Bold', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            MenuItemButton(
+              leadingIcon: s.fontStyle == 'italic'
+                  ? const Icon(Icons.check, size: 14)
+                  : null,
+              onPressed: apply != null
+                  ? () => apply(
+                        s.copyWith(
+                          fontStyle: s.fontStyle == 'italic' ? 'normal' : 'italic',
+                        ),
+                      )
+                  : null,
+              child: const Text('Italic', style: TextStyle(fontStyle: FontStyle.italic)),
+            ),
+            MenuItemButton(
+              leadingIcon: s.underline ? const Icon(Icons.check, size: 14) : null,
+              onPressed: apply != null
+                  ? () => apply(s.copyWith(underline: !s.underline))
+                  : null,
+              child: const Text(
+                'Underline',
+                style: TextStyle(decoration: TextDecoration.underline),
+              ),
+            ),
+            MenuItemButton(
+              leadingIcon: s.strikethrough ? const Icon(Icons.check, size: 14) : null,
+              onPressed: apply != null
+                  ? () => apply(s.copyWith(strikethrough: !s.strikethrough))
+                  : null,
+              child: const Text(
+                'Strikethrough',
+                style: TextStyle(decoration: TextDecoration.lineThrough),
+              ),
+            ),
+            const Divider(height: 1),
+            MenuItemButton(
+              leadingIcon: s.textCase == 'upper' ? const Icon(Icons.check, size: 14) : null,
+              onPressed: apply != null
+                  ? () => apply(
+                        s.copyWith(
+                          textCase: s.textCase == 'upper' ? 'none' : 'upper',
+                        ),
+                      )
+                  : null,
+              child: const Text('UPPERCASE'),
+            ),
+            MenuItemButton(
+              leadingIcon: s.textCase == 'lower' ? const Icon(Icons.check, size: 14) : null,
+              onPressed: apply != null
+                  ? () => apply(
+                        s.copyWith(
+                          textCase: s.textCase == 'lower' ? 'none' : 'lower',
+                        ),
+                      )
+                  : null,
+              child: const Text('lowercase'),
+            ),
+            MenuItemButton(
+              leadingIcon: s.textCase == 'title' ? const Icon(Icons.check, size: 14) : null,
+              onPressed: apply != null
+                  ? () => apply(
+                        s.copyWith(
+                          textCase: s.textCase == 'title' ? 'none' : 'title',
+                        ),
+                      )
+                  : null,
+              child: const Text('Title Case'),
+            ),
+          ],
+          child: const Text('Style'),
         ),
-        const MenuItemButton(
-          child: Text('Align Text'),
+
+        // 4. Align Text Submenu
+        SubmenuButton(
+          menuChildren: [
+            for (final entry in const [
+              ('left', 'Left', Icons.format_align_left),
+              ('center', 'Center', Icons.format_align_center),
+              ('right', 'Right', Icons.format_align_right),
+              ('justify', 'Full (Justify)', Icons.format_align_justify),
+            ])
+              MenuItemButton(
+                leadingIcon: s.textAlign == entry.$1
+                    ? const Icon(Icons.check, size: 14)
+                    : Icon(entry.$3, size: 14),
+                onPressed: apply != null
+                    ? () => apply(s.copyWith(textAlign: entry.$1))
+                    : null,
+                child: Text(entry.$2),
+              ),
+          ],
+          child: const Text('Align Text'),
         ),
-        const MenuItemButton(
-          child: Text('Line Spacing'),
+
+        // 5. Line Spacing Submenu
+        SubmenuButton(
+          menuChildren: [
+            for (final sp in const [
+              (1.0, 'Single (1.0x)'),
+              (1.15, '1.15x'),
+              (1.2, 'Standard (1.2x)'),
+              (1.5, 'One and a Half (1.5x)'),
+              (2.0, 'Double (2.0x)'),
+            ])
+              MenuItemButton(
+                leadingIcon: (s.lineSpacing - sp.$1).abs() < 0.02
+                    ? const Icon(Icons.check, size: 14)
+                    : null,
+                onPressed: apply != null
+                    ? () => apply(s.copyWith(lineSpacing: sp.$1))
+                    : null,
+                child: Text(sp.$2),
+              ),
+          ],
+          child: const Text('Line Spacing'),
         ),
-        const MenuItemButton(
-          child: Text('Text Color'),
+
+        // 6. Text Color Submenu
+        SubmenuButton(
+          menuChildren: [
+            MenuItemButton(
+              leadingIcon: s.textColor == null
+                  ? const Icon(Icons.check, size: 14)
+                  : const Icon(Icons.block, size: 14, color: Colors.red),
+              onPressed: apply != null
+                  ? () => apply(s.copyWith(clearTextColor: true))
+                  : null,
+              child: const Text('Default / Theme Color'),
+            ),
+            const Divider(height: 1),
+            for (final entry in kFormatColorSwatches.entries)
+              MenuItemButton(
+                leadingIcon: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: parseLayoutColor(entry.key),
+                    border: Border.all(
+                      color: s.textColor == entry.key
+                          ? const Color(0xFF0284C7)
+                          : Colors.black26,
+                      width: s.textColor == entry.key ? 2 : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+                onPressed: apply != null
+                    ? () => apply(s.copyWith(textColor: entry.key))
+                    : null,
+                child: Text(entry.value),
+              ),
+          ],
+          child: const Text('Text Color'),
         ),
+
+        const Divider(height: 1),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.font_download_outlined, size: 15),
+          onPressed: onOpenTextFormat,
+          child: const Text('Text...'),
+        ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.numbers, size: 15),
+          onPressed: onOpenNumberFormat,
+          child: const Text('Number...'),
+        ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.calendar_today_outlined, size: 15),
+          onPressed: onOpenDateFormat,
+          child: const Text('Date...'),
+        ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.access_time, size: 15),
+          onPressed: onOpenTimeFormat,
+          child: const Text('Time...'),
+        ),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.schedule_outlined, size: 15),
+          onPressed: onOpenTimestampFormat,
+          child: const Text('Timestamp...'),
+        ),
+        const Divider(height: 1),
+        MenuItemButton(
+          leadingIcon: const Icon(Icons.auto_fix_high, size: 15),
+          onPressed: onOpenConditionalFormatting,
+          child: const Text('Conditional...'),
+        ),
+
         if (activeMode == OperationalMode.layout) ...[
           const Divider(height: 1),
-          const MenuItemButton(
-            child: Text('Align Object (Layout Mode)'),
+          SubmenuButton(
+            menuChildren: [
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.align_horizontal_left, size: 15),
+                onPressed: onAlignObjects != null ? () => onAlignObjects!('left') : null,
+                child: const Text('Align Left Edges'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.align_horizontal_center, size: 15),
+                onPressed: onAlignObjects != null ? () => onAlignObjects!('center_h') : null,
+                child: const Text('Align Horizontal Centers'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.align_horizontal_right, size: 15),
+                onPressed: onAlignObjects != null ? () => onAlignObjects!('right') : null,
+                child: const Text('Align Right Edges'),
+              ),
+              const Divider(height: 1),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.align_vertical_top, size: 15),
+                onPressed: onAlignObjects != null ? () => onAlignObjects!('top') : null,
+                child: const Text('Align Top Edges'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.align_vertical_center, size: 15),
+                onPressed: onAlignObjects != null ? () => onAlignObjects!('center_v') : null,
+                child: const Text('Align Vertical Centers'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.align_vertical_bottom, size: 15),
+                onPressed: onAlignObjects != null ? () => onAlignObjects!('bottom') : null,
+                child: const Text('Align Bottom Edges'),
+              ),
+            ],
+            child: const Text('Align Object'),
           ),
-          const MenuItemButton(
-            child: Text('Distribute (Layout Mode)'),
+          SubmenuButton(
+            menuChildren: [
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.horizontal_distribute, size: 15),
+                onPressed: onDistributeObjects != null
+                    ? () => onDistributeObjects!('horizontal')
+                    : null,
+                child: const Text('Distribute Horizontally'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.vertical_distribute, size: 15),
+                onPressed: onDistributeObjects != null
+                    ? () => onDistributeObjects!('vertical')
+                    : null,
+                child: const Text('Distribute Vertically'),
+              ),
+            ],
+            child: const Text('Distribute'),
           ),
-          const MenuItemButton(
-            child: Text('Resize (Layout Mode)'),
+          SubmenuButton(
+            menuChildren: [
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.swap_horiz, size: 15),
+                onPressed: onResizeObjects != null ? () => onResizeObjects!('width') : null,
+                child: const Text('Match Smallest/Primary Width'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.swap_vert, size: 15),
+                onPressed: onResizeObjects != null ? () => onResizeObjects!('height') : null,
+                child: const Text('Match Smallest/Primary Height'),
+              ),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.aspect_ratio, size: 15),
+                onPressed: onResizeObjects != null ? () => onResizeObjects!('both') : null,
+                child: const Text('Match Both Width & Height'),
+              ),
+              const Divider(height: 1),
+              MenuItemButton(
+                leadingIcon: const Icon(Icons.grid_on, size: 15),
+                onPressed: onResizeObjects != null ? () => onResizeObjects!('grid') : null,
+                child: const Text('Snap Bounds to 8pt Grid'),
+              ),
+            ],
+            child: const Text('Resize'),
           ),
         ],
       ],

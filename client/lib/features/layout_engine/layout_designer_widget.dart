@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart' show LayoutTool;
 import 'package:file4base_client/features/data_browser/related_records.dart';
@@ -12,6 +13,7 @@ import 'package:file4base_client/features/layout_engine/layout_action_runner.dar
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior, kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -48,6 +50,10 @@ class LayoutDesignerWidget extends StatefulWidget {
     this.onLayoutChanged,
     this.activeTool = LayoutTool.pointer,
     this.onToolChanged,
+    this.showPageMargins = false,
+    this.showTextRuler = false,
+    this.pageSetup = const PageSetupModel(),
+    this.onSelectionChanged,
   });
   final TableModel table;
   final List<TableModel> tables;
@@ -69,6 +75,10 @@ class LayoutDesignerWidget extends StatefulWidget {
   final VoidCallback? onAutoSaveDirty;
   final ValueChanged<LayoutDefinitionModel>? onLayoutChanged;
   final LayoutTool activeTool;
+  final bool showPageMargins;
+  final bool showTextRuler;
+  final PageSetupModel pageSetup;
+  final VoidCallback? onSelectionChanged;
 
   /// Reports tool changes made inside the designer (toolbar picks, the
   /// automatic return to the pointer after placing an object) so other tool
@@ -98,6 +108,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   set _selectedObjectId(String? id) {
     _primarySelectedId = id;
     _multiIds = {};
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onSelectionChanged?.call();
+    });
   }
 
   /// Every selected object id (the single selection or the multi-selection).
@@ -115,6 +128,147 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         _selectedObjectId = ids.isEmpty ? null : ids.first;
       }
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onSelectionChanged?.call();
+    });
+  }
+
+  /// Current style of the selected object, or default style when nothing is selected.
+  LayoutObjectStyle get activeStyle =>
+      _selectedObject?.style ?? const LayoutObjectStyle();
+
+  /// Short label describing the currently selected target for the Formatting Bar.
+  String? get activeTargetLabel {
+    final ids = _selectedIds;
+    if (ids.length > 1) return '${ids.length} objects';
+    final sel = _selectedObject;
+    if (sel == null) return null;
+    if (sel.type == 'field') {
+      return '::${sel.fieldBinding?.qualifiedName ?? 'field'}';
+    }
+    return sel.text.isNotEmpty ? sel.text : sel.type;
+  }
+
+  /// Applies [newStyle] to every selected object in the designer.
+  void applyStyle(LayoutObjectStyle newStyle) {
+    final ids = _selectedIds;
+    if (ids.isEmpty) return;
+    _pushUndoState();
+    setState(() {
+      _layout = _layout.copyWith(
+        objects: _layout.objects
+            .map((o) => ids.contains(o.id) ? o.copyWith(style: newStyle) : o)
+            .toList(),
+      );
+    });
+    _markLayoutDirty();
+    widget.onSelectionChanged?.call();
+  }
+
+  /// Aligns the selected objects (`left`, `center`, `right`, `top`, `middle`, `bottom`).
+  void alignSelectedObjects(String alignment) {
+    final ids = _selectedIds;
+    if (ids.isEmpty) return;
+    if (ids.length == 1) {
+      _alignSelected(alignment);
+      return;
+    }
+    final selected = _layout.objects.where((o) => ids.contains(o.id)).toList();
+    if (selected.isEmpty) return;
+    _pushUndoState();
+    final minX = selected.map((o) => o.x).reduce(math.min);
+    final maxRight = selected.map((o) => o.x + o.width).reduce(math.max);
+    final centerX = (minX + maxRight) / 2;
+    final minY = selected.map((o) => o.y).reduce(math.min);
+    final maxBottom = selected.map((o) => o.y + o.height).reduce(math.max);
+    final centerY = (minY + maxBottom) / 2;
+
+    setState(() {
+      _layout = _layout.copyWith(
+        objects: _layout.objects.map((o) {
+          if (!ids.contains(o.id) || o.isLocked) return o;
+          return switch (alignment) {
+            'left' => o.copyWith(x: minX),
+            'center' => o.copyWith(x: _snap(centerX - o.width / 2)),
+            'right' => o.copyWith(x: _snap(maxRight - o.width)),
+            'top' => o.copyWith(y: minY),
+            'middle' => o.copyWith(y: _snap(centerY - o.height / 2)),
+            'bottom' => o.copyWith(y: _snap(maxBottom - o.height)),
+            _ => o,
+          };
+        }).toList(),
+      );
+    });
+    _markLayoutDirty();
+  }
+
+  /// Distributes selected objects evenly (`horizontal` or `vertical`).
+  void distributeSelectedObjects(String axis) {
+    final ids = _selectedIds;
+    final selected = _layout.objects
+        .where((o) => ids.contains(o.id) && !o.isLocked)
+        .toList();
+    if (selected.length < 3) return;
+    _pushUndoState();
+    final updatedPositions = <String, Offset>{};
+    if (axis == 'horizontal') {
+      selected.sort((a, b) => a.x.compareTo(b.x));
+      final firstX = selected.first.x;
+      final lastX = selected.last.x;
+      final step = (lastX - firstX) / (selected.length - 1);
+      for (var i = 0; i < selected.length; i++) {
+        updatedPositions[selected[i].id] =
+            Offset(_snap(firstX + step * i), selected[i].y);
+      }
+    } else {
+      selected.sort((a, b) => a.y.compareTo(b.y));
+      final firstY = selected.first.y;
+      final lastY = selected.last.y;
+      final step = (lastY - firstY) / (selected.length - 1);
+      for (var i = 0; i < selected.length; i++) {
+        updatedPositions[selected[i].id] =
+            Offset(selected[i].x, _snap(firstY + step * i));
+      }
+    }
+    setState(() {
+      _layout = _layout.copyWith(
+        objects: _layout.objects.map((o) {
+          final pos = updatedPositions[o.id];
+          return pos == null ? o : o.copyWith(x: pos.dx, y: pos.dy);
+        }).toList(),
+      );
+    });
+    _markLayoutDirty();
+  }
+
+  /// Resizes selected objects to match the smallest or largest dimension (`smallest_width`, `largest_width`, `smallest_height`, `largest_height`).
+  void resizeSelectedObjects(String mode) {
+    final ids = _selectedIds;
+    final selected = _layout.objects
+        .where((o) => ids.contains(o.id) && !o.isLocked)
+        .toList();
+    if (selected.length < 2) return;
+    _pushUndoState();
+    final minW = selected.map((o) => o.width).reduce(math.min);
+    final maxW = selected.map((o) => o.width).reduce(math.max);
+    final minH = selected.map((o) => o.height).reduce(math.min);
+    final maxH = selected.map((o) => o.height).reduce(math.max);
+
+    setState(() {
+      _layout = _layout.copyWith(
+        objects: _layout.objects.map((o) {
+          if (!ids.contains(o.id) || o.isLocked) return o;
+          return switch (mode) {
+            'smallest_width' => o.copyWith(width: minW),
+            'largest_width' => o.copyWith(width: maxW),
+            'smallest_height' => o.copyWith(height: minH),
+            'largest_height' => o.copyWith(height: maxH),
+            _ => o,
+          };
+        }).toList(),
+      );
+    });
+    _markLayoutDirty();
   }
 
   void _toggleInSelection(String id) {
@@ -2987,6 +3141,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                               ),
                             // Part Boundaries & Draggable Dividers
                             ..._buildPartDividers(),
+                            if (widget.showPageMargins)
+                              PageMarginsOverlay(
+                                canvasWidth: _layout.width,
+                                canvasHeight: _canvasHeight,
+                                pageSetup: widget.pageSetup,
+                              ),
                             // Layout Objects
                             ..._layout.objects.map((obj) => _buildCanvasObject(context, obj)),
                             if (_marqueeRect != null)
@@ -3073,11 +3233,17 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       ),
     );
 
-    if (!_isTabOrderMode) return canvas;
+    if (!_isTabOrderMode && !widget.showTextRuler) return canvas;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildTabOrderBar(isDark),
+        if (_isTabOrderMode) _buildTabOrderBar(isDark),
+        if (widget.showTextRuler)
+          File4BaseTextRuler(
+            style: activeStyle,
+            width: _selectedObject?.width ?? _layout.width,
+            onStyleChanged: applyStyle,
+          ),
         Expanded(child: canvas),
       ],
     );
@@ -3937,11 +4103,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     switch (obj.type) {
       case 'label':
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: EdgeInsets.only(
+            left: 4 + obj.style.indentLeft,
+            right: 4 + obj.style.indentRight,
+          ),
           child: Align(
             alignment: _getAlignment(obj.style.textAlign),
             child: Text(
-              obj.text.isEmpty ? '(Label)' : obj.text,
+              applyLayoutTextCase(obj.text.isEmpty ? '(Label)' : obj.text, obj.style.textCase),
               textAlign: layoutTextAlign(obj.style.textAlign),
               style: layoutTextStyle(obj.style),
               overflow: TextOverflow.clip,
@@ -3951,10 +4120,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
       case 'field':
         final cStyle = obj.fieldBinding?.controlStyle ?? 'edit_box';
+        final fill = parseLayoutColor(obj.style.fillColor) ?? Colors.white;
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          padding: EdgeInsets.only(
+            left: 8 + obj.style.indentLeft,
+            right: 8 + obj.style.indentRight,
+            top: 4,
+            bottom: 4,
+          ),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: fill,
             borderRadius: BorderRadius.circular(3),
             border: Border.all(color: Colors.black26),
           ),
@@ -3962,9 +4137,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             children: [
               Expanded(
                 child: Text(
-                  ':: ${obj.fieldBinding?.qualifiedName ?? "field"}',
-                  style: const TextStyle(
-                      fontSize: 12, color: Colors.blueGrey, fontStyle: FontStyle.italic),
+                  applyLayoutTextCase(
+                    ':: ${obj.fieldBinding?.qualifiedName ?? "field"}',
+                    obj.style.textCase,
+                  ),
+                  textAlign: layoutTextAlign(obj.style.textAlign),
+                  style: layoutTextStyle(obj.style, fallbackColor: Colors.blueGrey),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),

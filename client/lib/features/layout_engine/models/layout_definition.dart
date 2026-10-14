@@ -234,6 +234,116 @@ class FieldBindingModel {
       };
 }
 
+/// A conditional formatting rule evaluated on a layout field or text object.
+class ConditionalFormatRule {
+
+  const ConditionalFormatRule({
+    required this.operator,
+    this.value = '',
+    this.textColor,
+    this.fillColor,
+    this.bold = false,
+    this.italic = false,
+    this.underline = false,
+  });
+
+  factory ConditionalFormatRule.fromJson(Map<String, dynamic> json) {
+    return ConditionalFormatRule(
+      operator: json['operator']?.toString() ?? '<',
+      value: json['value']?.toString() ?? '',
+      textColor: json['text_color'] as String?,
+      fillColor: json['fill_color'] as String?,
+      bold: json['bold'] as bool? ?? false,
+      italic: json['italic'] as bool? ?? false,
+      underline: json['underline'] as bool? ?? false,
+    );
+  }
+  /// One of `<`, `<=`, `=`, `!=`, `>=`, `>`, `contains`, `is_empty`, `is_not_empty`.
+  final String operator;
+  final String value;
+  final String? textColor;
+  final String? fillColor;
+  final bool bold;
+  final bool italic;
+  final bool underline;
+
+  bool matches(Object? rawValue) {
+    final str = (rawValue?.toString() ?? '').trim();
+    switch (operator) {
+      case 'is_empty':
+        return str.isEmpty;
+      case 'is_not_empty':
+        return str.isNotEmpty;
+      case 'contains':
+        return str.toLowerCase().contains(value.trim().toLowerCase());
+      case '=':
+        final aNum = double.tryParse(str);
+        final bNum = double.tryParse(value.trim());
+        if (aNum != null && bNum != null) return (aNum - bNum).abs() < 1e-9;
+        return str.toLowerCase() == value.trim().toLowerCase();
+      case '!=':
+        return !copyWith(operator: '=').matches(rawValue);
+      case '<':
+      case '<=':
+      case '>':
+      case '>=':
+        final aNum = double.tryParse(str.replaceAll(',', '.'));
+        final bNum = double.tryParse(value.trim().replaceAll(',', '.'));
+        if (aNum != null && bNum != null) {
+          return switch (operator) {
+            '<' => aNum < bNum,
+            '<=' => aNum <= bNum,
+            '>' => aNum > bNum,
+            '>=' => aNum >= bNum,
+            _ => false,
+          };
+        }
+        final cmp = str.compareTo(value.trim());
+        return switch (operator) {
+          '<' => cmp < 0,
+          '<=' => cmp <= 0,
+          '>' => cmp > 0,
+          '>=' => cmp >= 0,
+          _ => false,
+        };
+      default:
+        return false;
+    }
+  }
+
+  ConditionalFormatRule copyWith({
+    String? operator,
+    String? value,
+    String? textColor,
+    String? fillColor,
+    bool? bold,
+    bool? italic,
+    bool? underline,
+    bool clearTextColor = false,
+    bool clearFillColor = false,
+  }) {
+    return ConditionalFormatRule(
+      operator: operator ?? this.operator,
+      value: value ?? this.value,
+      textColor: clearTextColor ? null : (textColor ?? this.textColor),
+      fillColor: clearFillColor ? null : (fillColor ?? this.fillColor),
+      bold: bold ?? this.bold,
+      italic: italic ?? this.italic,
+      underline: underline ?? this.underline,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'operator': operator,
+        'value': value,
+        if (textColor != null) 'text_color': textColor,
+        if (fillColor != null) 'fill_color': fillColor,
+        if (bold) 'bold': bold,
+        if (italic) 'italic': italic,
+        if (underline) 'underline': underline,
+      };
+}
+
 class LayoutObjectStyle {
 
   const LayoutObjectStyle({
@@ -241,42 +351,143 @@ class LayoutObjectStyle {
     this.borderColor,
     this.borderWidth = 1.0,
     this.cornerRadius = 4.0,
+    this.fontFamily,
     this.fontSize = 14.0,
     this.fontWeight = 'normal',
+    this.fontStyle = 'normal',
+    this.underline = false,
+    this.strikethrough = false,
+    this.textCase = 'none',
     this.textColor,
     this.textAlign = 'left',
+    this.lineSpacing = 1.2,
+    this.indentLeft = 0.0,
+    this.indentRight = 0.0,
+    this.firstLineIndent = 0.0,
+    this.tabStopsPt = const [],
+    this.numberFormat,
+    this.decimalPlaces = 2,
+    this.currencySymbol = '€',
+    this.useThousandsSeparator = true,
+    this.dateFormat,
+    this.timeFormat,
+    this.conditionalRules = const [],
   });
 
   factory LayoutObjectStyle.fromJson(Map<String, dynamic> json) {
+    final rawTabs = json['tab_stops_pt'];
+    final tabs = rawTabs is List
+        ? rawTabs.whereType<num>().map((e) => e.toDouble()).toList()
+        : const <double>[];
+    final rawRules = json['conditional_rules'];
+    final rules = rawRules is List
+        ? rawRules
+            .whereType<Map<String, dynamic>>()
+            .map(ConditionalFormatRule.fromJson)
+            .toList()
+        : const <ConditionalFormatRule>[];
+
     return LayoutObjectStyle(
       fillColor: json['fill_color'] as String?,
       borderColor: json['border_color'] as String?,
       borderWidth: (json['border_width'] as num?)?.toDouble() ?? 1.0,
       cornerRadius: (json['corner_radius'] as num?)?.toDouble() ?? 4.0,
+      fontFamily: json['font_family'] as String?,
       fontSize: (json['font_size'] as num?)?.toDouble() ?? 14.0,
       fontWeight: json['font_weight'] as String? ?? 'normal',
+      fontStyle: json['font_style'] as String? ?? 'normal',
+      underline: json['underline'] as bool? ?? false,
+      strikethrough: json['strikethrough'] as bool? ?? false,
+      textCase: json['text_case'] as String? ?? 'none',
       textColor: json['text_color'] as String?,
       textAlign: json['text_align'] as String? ?? 'left',
+      lineSpacing: (json['line_spacing'] as num?)?.toDouble() ?? 1.2,
+      indentLeft: (json['indent_left'] as num?)?.toDouble() ?? 0.0,
+      indentRight: (json['indent_right'] as num?)?.toDouble() ?? 0.0,
+      firstLineIndent: (json['first_line_indent'] as num?)?.toDouble() ?? 0.0,
+      tabStopsPt: tabs,
+      numberFormat: json['number_format'] as String?,
+      decimalPlaces: (json['decimal_places'] as num?)?.toInt() ?? 2,
+      currencySymbol: json['currency_symbol'] as String? ?? '€',
+      useThousandsSeparator: json['use_thousands_separator'] as bool? ?? true,
+      dateFormat: json['date_format'] as String?,
+      timeFormat: json['time_format'] as String?,
+      conditionalRules: rules,
     );
   }
   final String? fillColor;
   final String? borderColor;
   final double borderWidth;
   final double cornerRadius;
+  final String? fontFamily;
   final double fontSize;
   final String? fontWeight;
+  final String fontStyle;
+  final bool underline;
+  final bool strikethrough;
+  final String textCase;
   final String? textColor;
   final String textAlign;
+  final double lineSpacing;
+  final double indentLeft;
+  final double indentRight;
+  final double firstLineIndent;
+  final List<double> tabStopsPt;
+  final String? numberFormat;
+  final int decimalPlaces;
+  final String currencySymbol;
+  final bool useThousandsSeparator;
+  final String? dateFormat;
+  final String? timeFormat;
+  final List<ConditionalFormatRule> conditionalRules;
+
+  /// Evaluates [conditionalRules] against [rawValue] and returns an effective
+  /// style with the matching rule's overrides applied.
+  LayoutObjectStyle effectiveForValue(Object? rawValue) {
+    if (conditionalRules.isEmpty) return this;
+    var effective = this;
+    for (final rule in conditionalRules) {
+      if (rule.matches(rawValue)) {
+        effective = effective.copyWith(
+          textColor: rule.textColor ?? effective.textColor,
+          fillColor: rule.fillColor ?? effective.fillColor,
+          fontWeight: rule.bold ? 'bold' : effective.fontWeight,
+          fontStyle: rule.italic ? 'italic' : effective.fontStyle,
+          underline: rule.underline ? true : effective.underline,
+        );
+      }
+    }
+    return effective;
+  }
 
   Map<String, dynamic> toJson() => {
         if (fillColor != null) 'fill_color': fillColor,
         if (borderColor != null) 'border_color': borderColor,
         'border_width': borderWidth,
         'corner_radius': cornerRadius,
+        if (fontFamily != null && fontFamily!.isNotEmpty) 'font_family': fontFamily,
         'font_size': fontSize,
         'font_weight': fontWeight,
+        if (fontStyle != 'normal') 'font_style': fontStyle,
+        if (underline) 'underline': underline,
+        if (strikethrough) 'strikethrough': strikethrough,
+        if (textCase != 'none') 'text_case': textCase,
         if (textColor != null) 'text_color': textColor,
         'text_align': textAlign,
+        if ((lineSpacing - 1.2).abs() > 0.001) 'line_spacing': lineSpacing,
+        if (indentLeft > 0) 'indent_left': indentLeft,
+        if (indentRight > 0) 'indent_right': indentRight,
+        if (firstLineIndent != 0) 'first_line_indent': firstLineIndent,
+        if (tabStopsPt.isNotEmpty) 'tab_stops_pt': tabStopsPt,
+        if (numberFormat != null && numberFormat != 'general') 'number_format': numberFormat,
+        if (numberFormat != null && numberFormat != 'general') 'decimal_places': decimalPlaces,
+        if (numberFormat == 'currency') 'currency_symbol': currencySymbol,
+        if (numberFormat != null && numberFormat != 'general')
+          'use_thousands_separator': useThousandsSeparator,
+        if (dateFormat != null && dateFormat != 'as_entered') 'date_format': dateFormat,
+        if (timeFormat != null && timeFormat != 'as_entered') 'time_format': timeFormat,
+        if (conditionalRules.isNotEmpty)
+          'conditional_rules': conditionalRules.map((r) => r.toJson()).toList(),
       };
 
   /// Copies the style. The `clear*` flags reset a nullable color to "none",
@@ -286,23 +497,61 @@ class LayoutObjectStyle {
     String? borderColor,
     double? borderWidth,
     double? cornerRadius,
+    String? fontFamily,
     double? fontSize,
     String? fontWeight,
+    String? fontStyle,
+    bool? underline,
+    bool? strikethrough,
+    String? textCase,
     String? textColor,
     String? textAlign,
+    double? lineSpacing,
+    double? indentLeft,
+    double? indentRight,
+    double? firstLineIndent,
+    List<double>? tabStopsPt,
+    String? numberFormat,
+    int? decimalPlaces,
+    String? currencySymbol,
+    bool? useThousandsSeparator,
+    String? dateFormat,
+    String? timeFormat,
+    List<ConditionalFormatRule>? conditionalRules,
     bool clearFillColor = false,
     bool clearBorderColor = false,
     bool clearTextColor = false,
+    bool clearFontFamily = false,
+    bool clearNumberFormat = false,
+    bool clearDateFormat = false,
+    bool clearTimeFormat = false,
   }) {
     return LayoutObjectStyle(
       fillColor: clearFillColor ? null : (fillColor ?? this.fillColor),
       borderColor: clearBorderColor ? null : (borderColor ?? this.borderColor),
       borderWidth: borderWidth ?? this.borderWidth,
       cornerRadius: cornerRadius ?? this.cornerRadius,
+      fontFamily: clearFontFamily ? null : (fontFamily ?? this.fontFamily),
       fontSize: fontSize ?? this.fontSize,
       fontWeight: fontWeight ?? this.fontWeight,
+      fontStyle: fontStyle ?? this.fontStyle,
+      underline: underline ?? this.underline,
+      strikethrough: strikethrough ?? this.strikethrough,
+      textCase: textCase ?? this.textCase,
       textColor: clearTextColor ? null : (textColor ?? this.textColor),
       textAlign: textAlign ?? this.textAlign,
+      lineSpacing: lineSpacing ?? this.lineSpacing,
+      indentLeft: indentLeft ?? this.indentLeft,
+      indentRight: indentRight ?? this.indentRight,
+      firstLineIndent: firstLineIndent ?? this.firstLineIndent,
+      tabStopsPt: tabStopsPt ?? this.tabStopsPt,
+      numberFormat: clearNumberFormat ? null : (numberFormat ?? this.numberFormat),
+      decimalPlaces: decimalPlaces ?? this.decimalPlaces,
+      currencySymbol: currencySymbol ?? this.currencySymbol,
+      useThousandsSeparator: useThousandsSeparator ?? this.useThousandsSeparator,
+      dateFormat: clearDateFormat ? null : (dateFormat ?? this.dateFormat),
+      timeFormat: clearTimeFormat ? null : (timeFormat ?? this.timeFormat),
+      conditionalRules: conditionalRules ?? this.conditionalRules,
     );
   }
 }

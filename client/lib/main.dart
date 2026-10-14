@@ -26,6 +26,7 @@ import 'package:file4base_client/features/layout_engine/layout_preview_widget.da
 import 'package:file4base_client/features/layout_engine/manage_layouts_dialog.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/layout_engine/new_layout_assistant.dart';
+import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:file4base_client/features/preflight/preflight_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_database_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_value_lists_dialog.dart';
@@ -154,6 +155,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   LayoutDefinitionModel? _activeLayout;
   bool _isLoadingTables = false;
   bool _isToolbarVisible = true;
+  bool _isPageMarginsVisible = false;
+  bool _isFormattingBarVisible = false;
+  bool _isTextRulerVisible = false;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
 
   /// The find requests that define the found set, remembered while the data
@@ -1562,6 +1566,127 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  // ─── View & Format Menu Helpers ────────────────────────────────────────────
+
+  LayoutObjectStyle _currentActiveStyle(OperationalMode mode) {
+    if (mode == OperationalMode.layout) {
+      return _layoutDesignerKey.currentState?.activeStyle ??
+          const LayoutObjectStyle();
+    }
+    return _dataBrowserKey.currentState?.activeStyle ??
+        const LayoutObjectStyle();
+  }
+
+  String? _currentTargetLabel(OperationalMode mode) {
+    if (mode == OperationalMode.layout) {
+      return _layoutDesignerKey.currentState?.activeTargetLabel;
+    }
+    final activeField = _dataBrowserKey.currentState?.activeFieldName;
+    if (activeField != null) return '::$activeField';
+    final obj = _dataBrowserKey.currentState?.activeFieldObject;
+    if (obj != null) {
+      return obj.type == 'field'
+          ? '::${obj.fieldBinding?.fieldName ?? 'field'}'
+          : (obj.text.isNotEmpty ? obj.text : obj.type);
+    }
+    return null;
+  }
+
+  void _applyActiveStyle(OperationalMode mode, LayoutObjectStyle newStyle) {
+    if (mode == OperationalMode.layout) {
+      _layoutDesignerKey.currentState?.applyStyle(newStyle);
+      setState(() {});
+      return;
+    }
+    final browser = _dataBrowserKey.currentState;
+    final activeObj = browser?.activeFieldObject;
+    if (activeObj != null) {
+      _applyBrowseObjectStyle(activeObj.id, newStyle);
+    }
+  }
+
+  void _applyBrowseObjectStyle(String objectId, LayoutObjectStyle newStyle) {
+    final layout = _activeLayout;
+    if (layout == null) return;
+    final updated = layout.copyWith(
+      objects: layout.objects
+          .map((o) => o.id == objectId ? o.copyWith(style: newStyle) : o)
+          .toList(),
+    );
+    setState(() => _activeLayout = updated);
+    AutoSaveService.instance.markDirty();
+    if (!updated.id.startsWith('layout_')) {
+      final client = ref.read(apiClientProvider);
+      final toId = _selectedTable?.id ?? '';
+      unawaited(
+        client
+            .updateLayout(
+              updated.id,
+              updated.name,
+              updated.toJson(),
+            )
+            .catchError((_) => LayoutModel(
+                  id: updated.id,
+                  name: updated.name,
+                  tableOccurrenceId: toId,
+                  definition: updated.toJson(),
+                )),
+      );
+    }
+  }
+
+  Future<void> _openTextFormatModal(OperationalMode mode) async {
+    final next = await FormatDialogs.showTextFormatDialog(
+      context,
+      initialStyle: _currentActiveStyle(mode),
+      targetName: _currentTargetLabel(mode),
+    );
+    if (next != null && mounted) _applyActiveStyle(mode, next);
+  }
+
+  Future<void> _openNumberFormatModal(OperationalMode mode) async {
+    final next = await FormatDialogs.showNumberFormatDialog(
+      context,
+      initialStyle: _currentActiveStyle(mode),
+    );
+    if (next != null && mounted) _applyActiveStyle(mode, next);
+  }
+
+  Future<void> _openDateFormatModal(OperationalMode mode) async {
+    final next = await FormatDialogs.showDateFormatDialog(
+      context,
+      initialStyle: _currentActiveStyle(mode),
+    );
+    if (next != null && mounted) _applyActiveStyle(mode, next);
+  }
+
+  Future<void> _openTimeFormatModal(OperationalMode mode) async {
+    final next = await FormatDialogs.showTimeFormatDialog(
+      context,
+      initialStyle: _currentActiveStyle(mode),
+      includeDate: false,
+    );
+    if (next != null && mounted) _applyActiveStyle(mode, next);
+  }
+
+  Future<void> _openTimestampFormatModal(OperationalMode mode) async {
+    final next = await FormatDialogs.showTimeFormatDialog(
+      context,
+      initialStyle: _currentActiveStyle(mode),
+      includeDate: true,
+    );
+    if (next != null && mounted) _applyActiveStyle(mode, next);
+  }
+
+  Future<void> _openConditionalFormatModal(OperationalMode mode) async {
+    final next = await FormatDialogs.showConditionalFormattingDialog(
+      context,
+      initialStyle: _currentActiveStyle(mode),
+      targetName: _currentTargetLabel(mode),
+    );
+    if (next != null && mounted) _applyActiveStyle(mode, next);
+  }
+
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
@@ -1849,6 +1974,29 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onManageSavedFinds: _selectedTable == null ? null : _handleManageSavedFinds,
                   isToolbarVisible: _isToolbarVisible,
                   onToggleToolbar: (visible) => setState(() => _isToolbarVisible = visible),
+                  isPageMarginsVisible: _isPageMarginsVisible,
+                  onTogglePageMargins: (visible) => setState(() => _isPageMarginsVisible = visible),
+                  isFormattingBarVisible: _isFormattingBarVisible,
+                  onToggleFormattingBar: (visible) => setState(() => _isFormattingBarVisible = visible),
+                  isTextRulerVisible: _isTextRulerVisible,
+                  onToggleTextRuler: (visible) => setState(() => _isTextRulerVisible = visible),
+                  activeObjectStyle: _currentActiveStyle(mode),
+                  onFormatStyleChanged: (newStyle) => _applyActiveStyle(mode, newStyle),
+                  onOpenTextFormat: () => _openTextFormatModal(mode),
+                  onOpenNumberFormat: () => _openNumberFormatModal(mode),
+                  onOpenDateFormat: () => _openDateFormatModal(mode),
+                  onOpenTimeFormat: () => _openTimeFormatModal(mode),
+                  onOpenTimestampFormat: () => _openTimestampFormatModal(mode),
+                  onOpenConditionalFormatting: () => _openConditionalFormatModal(mode),
+                  onAlignObjects: mode == OperationalMode.layout
+                      ? (align) => _layoutDesignerKey.currentState?.alignSelectedObjects(align)
+                      : null,
+                  onDistributeObjects: mode == OperationalMode.layout
+                      ? (axis) => _layoutDesignerKey.currentState?.distributeSelectedObjects(axis)
+                      : null,
+                  onResizeObjects: mode == OperationalMode.layout
+                      ? (resizeMode) => _layoutDesignerKey.currentState?.resizeSelectedObjects(resizeMode)
+                      : null,
                   onZoomIn: () => ref.read(zoomProvider.notifier).zoomIn(),
                   onZoomOut: () => ref.read(zoomProvider.notifier).zoomOut(),
                   onResetZoom: () => ref.read(zoomProvider.notifier).resetZoom(),
@@ -1945,6 +2093,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     EditMenuFocusTracker.instance.selectAllActiveText(context);
                   },
                 ),
+                if (_isFormattingBarVisible && _currentUser != null)
+                  File4BaseFormattingBar(
+                    style: _currentActiveStyle(mode),
+                    targetLabel: _currentTargetLabel(mode),
+                    onStyleChanged: (newStyle) => _applyActiveStyle(mode, newStyle),
+                    onOpenTextFormatDialog: () => _openTextFormatModal(mode),
+                    onOpenNumberFormat: () => _openNumberFormatModal(mode),
+                    onOpenDateFormat: () => _openDateFormatModal(mode),
+                    onOpenTimeFormat: () => _openTimeFormatModal(mode),
+                    onOpenConditionalFormatting: () => _openConditionalFormatModal(mode),
+                  ),
                 // Main Workspace: Classic File4Base Left Status Sidebar + Content Area
                 Expanded(
                   child: Row(
@@ -2415,6 +2574,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           onModeChanged: _changeMode,
           onTableModified: _loadTables,
           currentUserName: _currentUser?.username,
+          showPageMargins: _isPageMarginsVisible,
+          showTextRuler: _isTextRulerVisible,
+          pageSetup: _pageSetup,
+          onFocusedFieldChanged: () {
+            if (mounted) setState(() {});
+          },
+          onObjectStyleChanged: _applyBrowseObjectStyle,
           onGoToLayout: (name) {
             final match = _serverLayouts
                 .where((l) => l.name.toLowerCase() == name.toLowerCase() || l.id == name)
@@ -2444,6 +2610,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 _selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
               ),
           layouts: _serverLayouts,
+          showPageMargins: _isPageMarginsVisible,
+          showTextRuler: _isTextRulerVisible,
+          pageSetup: _pageSetup,
+          onSelectionChanged: () {
+            if (mounted) setState(() {});
+          },
           onLayoutSelected: _selectLayout,
           onNewLayout: _handleNewLayout,
           onManageLayouts: _handleManageLayouts,
