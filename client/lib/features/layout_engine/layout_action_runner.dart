@@ -10,6 +10,7 @@ const kButtonActionSteps = <String, String>{
   'commit_records': 'Commit (Save) Record',
   'revert_record': 'Revert Record',
   'go_to_record': 'Go to Record',
+  'enter_browse_mode': 'Enter Browse Mode',
   'enter_find_mode': 'Enter Find Mode',
   'perform_find': 'Perform Find',
   'show_all_records': 'Show All Records',
@@ -18,6 +19,10 @@ const kButtonActionSteps = <String, String>{
   'set_field': 'Set Field',
   'show_dialog': 'Show Custom Dialog',
   'open_url': 'Open URL',
+  'adjust_window': 'Adjust Window',
+  're_login': 'Re-Login (Switch User)',
+  'close_file': 'Close File',
+  'exit_application': 'Exit Application',
 };
 
 /// Default parameters of a single step action when it is chosen.
@@ -27,6 +32,7 @@ Map<String, dynamic> defaultButtonStepParams(String stepType) => switch (stepTyp
       'set_field' => {'field': '', 'value': ''},
       'go_to_layout' => {'layout_name': ''},
       'open_url' => {'url': 'https://'},
+      'adjust_window' => {'window_action': 'Restore'},
       _ => <String, dynamic>{},
     };
 
@@ -42,6 +48,7 @@ String describeButtonAction(ButtonActionModel a) {
     'go_to_layout' => ' [${a.params['layout_name'] ?? ''}]',
     'set_field' => ' [${a.params['field'] ?? ''}]',
     'open_url' => ' [${a.params['url'] ?? ''}]',
+    'adjust_window' => ' [${a.params['window_action'] ?? 'Restore'}]',
     _ => '',
   };
   return '$label$detail';
@@ -63,6 +70,7 @@ abstract class LayoutActionHost {
   Future<void> actionPerformFind();
   Future<void> actionShowAllRecords();
   Future<void> actionEnterPreviewMode();
+  Future<void> actionEnterBrowseMode() async {}
 
   /// Returns false when no layout has that name.
   Future<bool> actionGoToLayout(String layoutName);
@@ -71,6 +79,12 @@ abstract class LayoutActionHost {
   Future<bool> actionSetField(String field, String value);
   Future<void> actionShowDialog(String title, String message);
   Future<void> actionOpenUrl(String url);
+
+  /// Window & Kiosk session lifecycle actions.
+  Future<void> actionAdjustWindow(String windowAction) async {}
+  Future<void> actionReLogin() async {}
+  Future<void> actionCloseFile() async {}
+  Future<void> actionExitApplication() async {}
 
   /// Resolves `{{field}}`, `{{CurrentDate}}`, ... in a step parameter.
   String actionResolveText(String text);
@@ -113,7 +127,7 @@ class LayoutActionRunner {
     if (bracketIdx > 0) {
       s = s.substring(0, bracketIdx).trim();
     }
-    s = s.toLowerCase().replaceAll(RegExp(r'[\s/]+'), '_');
+    s = s.toLowerCase().replaceAll(RegExp(r'[\s/-]+'), '_');
     return switch (s) {
       'new_record_request' => 'new_record',
       'duplicate_record_request' => 'duplicate_record',
@@ -122,6 +136,9 @@ class LayoutActionRunner {
       'revert_record_request' => 'revert_record',
       'go_to_record_request_page' => 'go_to_record',
       'show_custom_dialog' => 'show_dialog',
+      'pause_resume_script' => 'pause_script',
+      'move_resize_window' => 'adjust_window',
+      'relogin' => 're_login',
       _ => s,
     };
   }
@@ -236,7 +253,7 @@ class LayoutActionRunner {
       case 'end_if':
         return LayoutActionResult.stopped('Step "$stepType" is not supported on a button.');
       case 'set_variable':
-        if (!params.containsKey('value') && !params.containsKey('formula') && !params.containsKey('text')) {
+        if (!params.containsKey('value') && !params.containsKey('formula') && !params.containsKey('text') && !params.containsKey('calc')) {
           return LayoutActionResult.stopped('Step "$stepType" is not supported without a value.');
         }
         _execSetVariable(params, vars);
@@ -254,6 +271,8 @@ class LayoutActionRunner {
         await host.actionRevertRecord();
       case 'go_to_record':
         await host.actionGoToRecord(p('target', 'next'));
+      case 'enter_browse_mode':
+        await host.actionEnterBrowseMode();
       case 'enter_find_mode':
         await host.actionEnterFindMode();
       case 'perform_find':
@@ -262,6 +281,14 @@ class LayoutActionRunner {
         await host.actionShowAllRecords();
       case 'enter_preview_mode':
         await host.actionEnterPreviewMode();
+      case 'adjust_window':
+        await host.actionAdjustWindow(p('window_action', 'Restore'));
+      case 're_login':
+        await host.actionReLogin();
+      case 'close_file':
+        await host.actionCloseFile();
+      case 'exit_application':
+        await host.actionExitApplication();
       case 'go_to_layout':
         var rawTarget = params['layout_name']?.toString().trim() ?? '';
         if (rawTarget.isEmpty) {

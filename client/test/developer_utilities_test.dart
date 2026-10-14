@@ -193,4 +193,132 @@ void main() {
     expect(latestMeta?.designLocked, isTrue);
     expect(find.text('Design Locked'), findsOneWidget);
   });
+
+  testWidgets(
+      'DeveloperUtilitiesDialog configures Kiosk Primary Layout, audits dead-end layouts, injects Home/Exit buttons, and triggers Kiosk simulation',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final updatedLayouts = <String, Map<String, dynamic>>{};
+    Map<String, dynamic>? savedFileOptions;
+
+    final mockHttp = MockClient((request) async {
+      if (request.url.path.startsWith('/api/v1/schemas/layouts/') &&
+          request.method == 'PUT') {
+        final id = request.url.pathSegments.last;
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        updatedLayouts[id] = body;
+        return http.Response(
+          jsonEncode({
+            'id': id,
+            'name': body['name'],
+            'table_occurrence_id': 'to_1',
+            'definition': body['definition'],
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/api/v1/solutions/options' &&
+          request.method == 'PUT') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        savedFileOptions =
+            Map<String, dynamic>.from(body['file_options'] as Map);
+        return http.Response(
+          jsonEncode({
+            'database': 'kiosk_db',
+            'solution_name': 'Kiosk POS',
+            'design_locked': false,
+            'file_options': savedFileOptions,
+          }),
+          200,
+        );
+      }
+      return http.Response('Not Found', 404);
+    });
+
+    final client =
+        ApiClient(baseUrl: 'http://localhost:8080', httpClient: mockHttp);
+    var simulationTriggered = false;
+
+    final layouts = [
+      const LayoutModel(
+        id: 'lay_home',
+        name: 'Welcome Menu',
+        tableOccurrenceId: 'to_1',
+        definition: {
+          'id': 'lay_home',
+          'name': 'Welcome Menu',
+          'parts': [
+            {'id': 'p1', 'type': 'body', 'height': 400}
+          ],
+          'objects': [],
+        },
+      ),
+      const LayoutModel(
+        id: 'lay_orders',
+        name: 'Orders Detail',
+        tableOccurrenceId: 'to_1',
+        definition: {
+          'id': 'lay_orders',
+          'name': 'Orders Detail',
+          'parts': [
+            {'id': 'p1', 'type': 'body', 'height': 400}
+          ],
+          'objects': [],
+        },
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: DeveloperUtilitiesDialog(
+            apiClient: client,
+            initialMeta: const SolutionMetaModel(
+              database: 'kiosk_db',
+              solutionName: 'Kiosk POS',
+            ),
+            layouts: layouts,
+            onSimulateKiosk: () => simulationTriggered = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Enable Kiosk Mode
+    await tester.ensureVisible(find.byKey(const Key('dev_util_kiosk_switch')));
+    await tester.tap(find.byKey(const Key('dev_util_kiosk_switch')));
+    await tester.pumpAndSettle();
+
+    // Auto-inject Home & Exit buttons into layouts
+    final injectBtn = find.byKey(const Key('dev_util_kiosk_inject_buttons'));
+    expect(injectBtn, findsOneWidget);
+    await tester.ensureVisible(injectBtn);
+    await tester.tap(injectBtn);
+    await tester.pumpAndSettle();
+
+    expect(updatedLayouts.containsKey('lay_home'), isTrue);
+    expect(updatedLayouts.containsKey('lay_orders'), isTrue);
+
+    // Apply Kiosk & Encryption
+    final applyBtn = find.byKey(const Key('dev_util_save_protection_button'));
+    await tester.ensureVisible(applyBtn);
+    await tester.tap(applyBtn);
+    await tester.pumpAndSettle();
+
+    expect(savedFileOptions?['kiosk_mode'], isTrue);
+    expect(savedFileOptions?['kiosk_primary_layout_id'], equals('lay_home'));
+    expect(savedFileOptions?['kiosk_require_login'], isTrue);
+    expect(savedFileOptions?['auto_login_enabled'], isFalse);
+
+    // Trigger Kiosk Mode simulation
+    final simBtn = find.byKey(const Key('dev_util_kiosk_simulate_button'));
+    await tester.ensureVisible(simBtn);
+    await tester.tap(simBtn);
+    await tester.pumpAndSettle();
+    expect(simulationTriggered, isTrue);
+  });
 }

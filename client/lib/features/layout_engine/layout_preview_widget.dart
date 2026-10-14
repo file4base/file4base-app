@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
@@ -24,6 +25,9 @@ class LayoutPreviewWidget extends StatefulWidget {
     this.currentUserName,
     this.findRequests = const [],
     this.onAttach,
+    this.isKioskMode = false,
+    this.kioskAutoReturnSeconds = 10,
+    this.onReturnToBrowse,
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -40,6 +44,12 @@ class LayoutPreviewWidget extends StatefulWidget {
   /// goes away), so File > Print can print the previewed page.
   final ValueChanged<LayoutPreviewWidgetState?>? onAttach;
 
+  /// When true, hides the standard Preview toolbar and runs an auto-return
+  /// timer so Kiosk users are returned to interactive Browse mode automatically.
+  final bool isKioskMode;
+  final int kioskAutoReturnSeconds;
+  final VoidCallback? onReturnToBrowse;
+
   @override
   State<LayoutPreviewWidget> createState() => LayoutPreviewWidgetState();
 }
@@ -54,16 +64,39 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
   int _currentRecordIndex = 0;
+  Timer? _kioskCountdownTimer;
+  int _kioskSecondsRemaining = 0;
 
   @override
   void initState() {
     super.initState();
     widget.onAttach?.call(this);
     _fetchRecords();
+    _initKioskCountdown();
+  }
+
+  void _initKioskCountdown() {
+    _kioskCountdownTimer?.cancel();
+    if (widget.isKioskMode && widget.kioskAutoReturnSeconds > 0) {
+      _kioskSecondsRemaining = widget.kioskAutoReturnSeconds;
+      _kioskCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        if (_kioskSecondsRemaining <= 1) {
+          timer.cancel();
+          widget.onReturnToBrowse?.call();
+        } else {
+          setState(() => _kioskSecondsRemaining--);
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    _kioskCountdownTimer?.cancel();
     widget.onAttach?.call(null);
     super.dispose();
   }
@@ -73,6 +106,10 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.table.id != widget.table.id) {
       _fetchRecords();
+    }
+    if (oldWidget.isKioskMode != widget.isKioskMode ||
+        oldWidget.kioskAutoReturnSeconds != widget.kioskAutoReturnSeconds) {
+      _initKioskCountdown();
     }
   }
 
@@ -271,6 +308,56 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
 
     return Column(
       children: [
+        if (widget.isKioskMode)
+          Container(
+            height: 40,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            color: const Color(0xFF0F172A),
+            child: Row(
+              children: [
+                const Icon(Icons.visibility_outlined, size: 16, color: Color(0xFF38BDF8)),
+                const SizedBox(width: 8),
+                Text(
+                  'Kiosk Preview — ${widget.layout.name}',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 12),
+                if (_kioskSecondsRemaining > 0)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0284C7).withValues(alpha: 0.25),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'Auto-returning to Browse Mode in ${_kioskSecondsRemaining}s (Pause/Resume Script)',
+                      style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: 11),
+                    ),
+                  ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: () => printPages(allRecords: false, saveAsPdf: true),
+                  icon: const Icon(Icons.picture_as_pdf, size: 14, color: Colors.white70),
+                  label: const Text('Save PDF', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF0284C7),
+                    foregroundColor: Colors.white,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: () {
+                    _kioskCountdownTimer?.cancel();
+                    widget.onReturnToBrowse?.call();
+                  },
+                  icon: const Icon(Icons.arrow_back, size: 14),
+                  label: const Text('Return to Browse', style: TextStyle(fontSize: 11)),
+                ),
+              ],
+            ),
+          )
+        else
         // Preview control bar
         Container(
           height: 48,

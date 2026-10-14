@@ -80,13 +80,18 @@ class ScriptStepModel {
       case 'go_to_layout':
       case 'go_to_record':
       case 'enter_find_mode':
+      case 'enter_browse_mode':
+      case 'enter_preview_mode':
       case 'go_to_field':
+      case 'adjust_window':
         return 'navigation';
       case 'new_record':
       case 'commit_records':
       case 'delete_record':
       case 'revert_record':
       case 'duplicate_record':
+      case 'perform_find':
+      case 'show_all_records':
         return 'records';
       case 'if':
       case 'else':
@@ -97,6 +102,9 @@ class ScriptStepModel {
       case 'perform_script':
       case 'pause_script':
       case 'halt_script':
+      case 're_login':
+      case 'close_file':
+      case 'exit_application':
         return 'control';
       case 'set_variable':
       case 'set_field':
@@ -155,8 +163,14 @@ class ScriptStepModel {
         return 'Go to Record';
       case 'enter_find_mode':
         return 'Enter Find Mode';
+      case 'enter_browse_mode':
+        return 'Enter Browse Mode';
+      case 'enter_preview_mode':
+        return 'Enter Preview Mode';
       case 'go_to_field':
         return 'Go to Field';
+      case 'adjust_window':
+        return 'Adjust Window';
       case 'new_record':
         return 'New Record';
       case 'commit_records':
@@ -167,6 +181,10 @@ class ScriptStepModel {
         return 'Revert Record';
       case 'duplicate_record':
         return 'Duplicate Record';
+      case 'perform_find':
+        return 'Perform Find';
+      case 'show_all_records':
+        return 'Show All Records';
       case 'if':
         return 'If';
       case 'else':
@@ -191,6 +209,12 @@ class ScriptStepModel {
         return 'Pause / Resume Script';
       case 'halt_script':
         return 'Halt Script';
+      case 're_login':
+        return 'Re-Login';
+      case 'close_file':
+        return 'Close File';
+      case 'exit_application':
+        return 'Exit Application';
       case 'perform_rest_api':
         return 'Perform REST API (cURL)';
       case 'insert_from_url':
@@ -212,6 +236,15 @@ class ScriptStepModel {
         return '[${params['target'] ?? 'Next'}]';
       case 'enter_find_mode':
         return '[Pause: ${params['pause'] == true ? 'On' : 'Off'}]';
+      case 'enter_browse_mode':
+        return '[Interactive]';
+      case 'enter_preview_mode':
+        return '[Pause: ${params['pause'] == true ? 'On' : 'Off'}]';
+      case 'adjust_window':
+        return '[${params['window_action'] ?? 'Restore'}]';
+      case 'pause_script':
+        final s = params['duration_seconds'] ?? 10;
+        return '[Duration (seconds): $s]';
       case 'set_variable':
         final vName = params['variable']?.toString() ?? r'$var';
         final cExpr = params['calc']?.toString() ?? '';
@@ -234,6 +267,12 @@ class ScriptStepModel {
         return '[URL: ${params['url'] ?? 'https://...'}]';
       case 'send_webhook':
         return '[Endpoint: ${params['endpoint'] ?? ''}]';
+      case 're_login':
+        return '[With dialog: On]';
+      case 'close_file':
+        return '[Current File]';
+      case 'exit_application':
+        return '[Close session / Quit]';
       default:
         return '';
     }
@@ -332,20 +371,26 @@ class ScriptCatalogItem {
   final Map<String, dynamic> defaultParams;
 
   static const List<ScriptCatalogItem> catalog = [
-    // Navigation
+    // Navigation & Kiosk Modes
     ScriptCatalogItem(
       stepType: 'go_to_layout',
       label: '+ Go to Layout',
       category: 'NAVIGATION',
-      description: 'Switches to a specific database layout.',
+      description: 'Switches to a specific database layout (e.g., Home / Main Menu in Kiosk Mode).',
       defaultParams: {'layout_name': ''},
     ),
     ScriptCatalogItem(
       stepType: 'go_to_record',
       label: '+ Go to Record [ Next | ID ]',
       category: 'NAVIGATION',
-      description: 'Navigates to the first, last, next, or specified record.',
+      description: 'Navigates to the first, last, next, previous, or specified record.',
       defaultParams: {'target': 'Next'},
+    ),
+    ScriptCatalogItem(
+      stepType: 'enter_browse_mode',
+      label: '+ Enter Browse Mode',
+      category: 'NAVIGATION',
+      description: 'Returns to interactive Browse mode (essential after Preview or Find in Kiosk Mode).',
     ),
     ScriptCatalogItem(
       stepType: 'enter_find_mode',
@@ -353,6 +398,20 @@ class ScriptCatalogItem {
       category: 'NAVIGATION',
       description: 'Enters Find mode to specify search criteria.',
       defaultParams: {'pause': false},
+    ),
+    ScriptCatalogItem(
+      stepType: 'enter_preview_mode',
+      label: '+ Enter Preview Mode',
+      category: 'NAVIGATION',
+      description: 'Enters Preview mode to display reports or invoices (pair with Pause/Resume + Enter Browse Mode in Kiosk).',
+      defaultParams: {'pause': false},
+    ),
+    ScriptCatalogItem(
+      stepType: 'adjust_window',
+      label: '+ Adjust Window [ Restore | Resize to Fit ]',
+      category: 'NAVIGATION',
+      description: 'Centers and adapts the window to the native Kiosk display resolution.',
+      defaultParams: {'window_action': 'Restore'},
     ),
     ScriptCatalogItem(
       stepType: 'go_to_field',
@@ -389,8 +448,20 @@ class ScriptCatalogItem {
       category: 'RECORDS',
       description: 'Discards unsaved changes to the record.',
     ),
+    ScriptCatalogItem(
+      stepType: 'perform_find',
+      label: '+ Perform Find',
+      category: 'RECORDS',
+      description: 'Executes the active Find request.',
+    ),
+    ScriptCatalogItem(
+      stepType: 'show_all_records',
+      label: '+ Show All Records',
+      category: 'RECORDS',
+      description: 'Restores all records in the table to the found set.',
+    ),
 
-    // Control & Logic
+    // Control, Session & Kiosk Exit
     ScriptCatalogItem(
       stepType: 'if',
       label: '+ If / Else / End If',
@@ -429,8 +500,26 @@ class ScriptCatalogItem {
       stepType: 'pause_script',
       label: '+ Pause / Resume Script',
       category: 'CONTROL & LOGIC',
-      description: 'Pauses the script for N seconds or indefinitely.',
-      defaultParams: {'duration_seconds': 0},
+      description: 'Pauses the script for N seconds (e.g. 10s in Preview Mode before returning to Browse Mode).',
+      defaultParams: {'duration_seconds': 10},
+    ),
+    ScriptCatalogItem(
+      stepType: 're_login',
+      label: '+ Re-Login (Switch Account)',
+      category: 'CONTROL & LOGIC',
+      description: 'Prompts for credentials to switch user accounts (e.g. switch from Kiosk user to Administrator).',
+    ),
+    ScriptCatalogItem(
+      stepType: 'close_file',
+      label: '+ Close File',
+      category: 'CONTROL & LOGIC',
+      description: 'Closes the current solution file and returns to the sign-in screen (essential in Kiosk Mode).',
+    ),
+    ScriptCatalogItem(
+      stepType: 'exit_application',
+      label: '+ Exit Application',
+      category: 'CONTROL & LOGIC',
+      description: 'Ends the Kiosk session and exits the application (mandatory exit button in Kiosk Mode).',
     ),
 
     // Integration & Data

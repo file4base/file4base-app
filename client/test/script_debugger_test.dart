@@ -56,6 +56,16 @@ class _RecordingHost implements LayoutActionHost {
   @override
   Future<void> actionOpenUrl(String url) async => did.add('open_url:$url');
   @override
+  Future<void> actionEnterBrowseMode() async => did.add('enter_browse_mode');
+  @override
+  Future<void> actionAdjustWindow(String windowMode) async => did.add('adjust_window:$windowMode');
+  @override
+  Future<void> actionReLogin() async => did.add('re_login');
+  @override
+  Future<void> actionCloseFile() async => did.add('close_file');
+  @override
+  Future<void> actionExitApplication() async => did.add('exit_application');
+  @override
   String actionResolveText(String text) => text;
 }
 

@@ -217,6 +217,30 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   FileOptionsModel _fileOptions = const FileOptionsModel();
   PageSetupModel _pageSetup = const PageSetupModel();
 
+  /// Whether an Admin/Owner is currently simulating non-admin Kiosk Mode from
+  /// Tools > Developer Utilities.
+  bool _kioskSimulatedByAdmin = false;
+
+  /// Conditional Privilege rule: Kiosk Mode only locks out non-admin accounts
+  /// that do not hold [Full Access] (`owner` / `admin`) or layout/script
+  /// modification capabilities. Admin accounts open the file normally so they
+  /// can continue programming.
+  bool get _isKioskForCurrentUser {
+    if (_currentUser == null || !_fileOptions.kioskMode) return false;
+    if (_currentUser!.isAdmin) return false;
+    if (_capabilities.contains('manage_layouts') ||
+        _capabilities.contains('manage_scripts')) {
+      return false;
+    }
+    return true;
+  }
+
+  /// True when the active session should run in full Kiosk UI lockout (either
+  /// because a non-admin account opened a Kiosk solution or an Admin started
+  /// Kiosk simulation).
+  bool get _isKioskRuntimeActive =>
+      _currentUser != null && (_kioskSimulatedByAdmin || _isKioskForCurrentUser);
+
   @override
   void initState() {
     super.initState();
@@ -322,6 +346,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (!mounted || _currentUser == null) return;
     setState(() {
       _currentUser = null;
+      _kioskSimulatedByAdmin = false;
       _tables = [];
       _selectedTable = null;
       _activeLayout = null;
@@ -341,6 +366,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     ref.read(apiClientProvider).logout();
     setState(() {
       _currentUser = null;
+      _kioskSimulatedByAdmin = false;
       _tables = [];
       _selectedTable = null;
       _activeLayout = null;
@@ -582,9 +608,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         }
         if (meta.fileOptions != null && meta.fileOptions!.isNotEmpty) {
           _fileOptions = FileOptionsModel.fromJson(meta.fileOptions!);
-          final isKiosk = meta.fileOptions!['kiosk_mode'] == true;
-          if (_fileOptions.hideAllToolbars ||
-              (isKiosk && !(_currentUser?.isAdmin ?? false))) {
+          if (_fileOptions.hideAllToolbars || _isKioskForCurrentUser) {
             _isToolbarVisible = false;
           }
         }
@@ -592,8 +616,105 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           _pageSetup = PageSetupModel.fromJson(meta.pageSetup!);
         }
       });
+      if (_isKioskRuntimeActive) {
+        ref.read(operationalModeProvider.notifier).setMode(OperationalMode.browse);
+        _navigateToKioskHomeLayout();
+      }
     } catch (_) {
       if (mounted) setState(() => _designLocked = false);
+    }
+  }
+
+  /// Navigates to the Primary / Home layout configured for Kiosk Mode (or the
+  /// solution's startup layout / first layout).
+  void _navigateToKioskHomeLayout([List<LayoutModel>? layoutsList]) {
+    final layouts = layoutsList ?? _serverLayouts;
+    if (layouts.isEmpty) return;
+
+    LayoutModel? home;
+    if (_fileOptions.kioskPrimaryLayoutId.isNotEmpty) {
+      home = layouts
+          .where((l) => l.id == _fileOptions.kioskPrimaryLayoutId)
+          .firstOrNull;
+    }
+    if (home == null && _fileOptions.kioskPrimaryLayoutName.isNotEmpty) {
+      final targetName = _fileOptions.kioskPrimaryLayoutName.toLowerCase();
+      home = layouts
+          .where((l) => l.name.toLowerCase() == targetName)
+          .firstOrNull;
+    }
+    if (home == null && _fileOptions.startupLayoutId.isNotEmpty) {
+      home = layouts
+          .where((l) =>
+              l.id == _fileOptions.startupLayoutId ||
+              l.name.toLowerCase() ==
+                  _fileOptions.startupLayoutId.toLowerCase())
+          .firstOrNull;
+    }
+    home ??= layouts
+        .where((l) {
+          final n = l.name.toLowerCase();
+          return n.contains('home') ||
+              n.contains('menu') ||
+              n.contains('inicio') ||
+              n.contains('welcome');
+        })
+        .firstOrNull;
+    home ??= layouts.first;
+
+    _selectLayout(home);
+    if (ref.read(operationalModeProvider) != OperationalMode.browse) {
+      ref.read(operationalModeProvider.notifier).setMode(OperationalMode.browse);
+    }
+  }
+
+  void _enterKioskSimulation() {
+    if (!mounted) return;
+    setState(() {
+      _kioskSimulatedByAdmin = true;
+    });
+    _navigateToKioskHomeLayout();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Kiosk Mode Simulation active (Non-Admin lockout). Press Esc or click the top-right badge to return to Developer view.',
+        ),
+        backgroundColor: Colors.teal.shade800,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _exitKioskSimulation() {
+    if (!mounted || !_kioskSimulatedByAdmin) return;
+    setState(() {
+      _kioskSimulatedByAdmin = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Exited Kiosk Mode simulation. Admin menus and toolbars restored.',
+        ),
+        backgroundColor: Colors.blueGrey.shade800,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  void _handleAdjustWindow(String windowMode) {
+    final normalized = windowMode.toLowerCase();
+    if (normalized == 'restore' || normalized == 'resize_to_fit') {
+      ref.read(zoomProvider.notifier).resetZoom();
+    } else if (normalized == 'maximize') {
+      ref.read(zoomProvider.notifier).setZoom(1.0);
+    }
+    if (mounted && !_isKioskRuntimeActive) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Adjust Window [$windowMode] applied.'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
     }
   }
 
@@ -626,6 +747,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       context,
       apiClient: client,
       initialMeta: initialMeta,
+      layouts: _serverLayouts,
+      onLayoutsUpdated: () => _loadTables(targetLayoutId: _activeLayout?.id),
+      onSimulateKiosk: _enterKioskSimulation,
       onMetaChanged: (updated) {
         if (!mounted) return;
         setState(() {
@@ -645,7 +769,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       },
       onKioskModeChanged: (kioskEnabled) {
         if (!mounted) return;
-        if (kioskEnabled) {
+        // Conditional Privilege: Only hide toolbars automatically if the
+        // current user is a non-admin account affected by Kiosk Mode.
+        if (kioskEnabled && _isKioskForCurrentUser) {
           setState(() => _isToolbarVisible = false);
         }
       },
@@ -813,6 +939,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           }
         } catch (_) {}
       }
+    }
+
+    if (newMode == OperationalMode.layout && _isKioskRuntimeActive) {
+      return;
     }
 
     if (newMode == OperationalMode.layout && _designLocked) {
@@ -1690,19 +1820,25 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   @override
   Widget build(BuildContext context) {
     final mode = ref.watch(operationalModeProvider);
+    final isKiosk = _isKioskRuntimeActive;
     ref.listen<int>(sessionExpiredProvider, (previous, next) => _handleSessionExpired());
 
     return CallbackShortcuts(
       bindings: {
+        if (_kioskSimulatedByAdmin)
+          const SingleActivator(LogicalKeyboardKey.escape): _exitKioskSimulation,
         const SingleActivator(LogicalKeyboardKey.keyB, meta: true): () => _changeMode(OperationalMode.browse),
         const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () => _changeMode(OperationalMode.find),
-        const SingleActivator(LogicalKeyboardKey.keyL, meta: true): () => _changeMode(OperationalMode.layout),
+        if (!isKiosk)
+          const SingleActivator(LogicalKeyboardKey.keyL, meta: true): () => _changeMode(OperationalMode.layout),
         const SingleActivator(LogicalKeyboardKey.keyU, meta: true): () => _changeMode(OperationalMode.preview),
-        const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _handleSave,
-        const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): _handleSaveAs,
-        const SingleActivator(LogicalKeyboardKey.keyO, meta: true): _handleOpenSolution,
-        const SingleActivator(LogicalKeyboardKey.keyN, meta: true): _handleNewDatabase,
-        const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): _handlePageSetup,
+        if (!isKiosk) ...{
+          const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _handleSave,
+          const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): _handleSaveAs,
+          const SingleActivator(LogicalKeyboardKey.keyO, meta: true): _handleOpenSolution,
+          const SingleActivator(LogicalKeyboardKey.keyN, meta: true): _handleNewDatabase,
+          const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): _handlePageSetup,
+        },
         const SingleActivator(LogicalKeyboardKey.keyQ, meta: true): _handleQuit,
         const SingleActivator(LogicalKeyboardKey.keyQ, control: true): _handleQuit,
         const SingleActivator(LogicalKeyboardKey.equal, meta: true): () => ref.read(zoomProvider.notifier).zoomIn(),
@@ -1721,12 +1857,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                File4BaseMenuBar(
-                  activeMode: mode,
-                  isAuthenticated: _currentUser != null,
-                  onSignIn: _startAuthSequence,
-                  onSignOut: _handleSignOut,
-                  onModeChanged: _changeMode,
+                if (!isKiosk)
+                  File4BaseMenuBar(
+                    activeMode: mode,
+                    isAuthenticated: _currentUser != null,
+                    onSignIn: _startAuthSequence,
+                    onSignOut: _handleSignOut,
+                    onModeChanged: _changeMode,
                   onManageDatabase: () async {
                     if (_currentUser == null) {
                       _startAuthSequence();
@@ -2093,7 +2230,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     EditMenuFocusTracker.instance.selectAllActiveText(context);
                   },
                 ),
-                if (_isFormattingBarVisible && _currentUser != null)
+                if (!isKiosk && _isFormattingBarVisible && _currentUser != null)
                   File4BaseFormattingBar(
                     style: _currentActiveStyle(mode),
                     targetLabel: _currentTargetLabel(mode),
@@ -2106,82 +2243,132 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   ),
                 // Main Workspace: Classic File4Base Left Status Sidebar + Content Area
                 Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                  child: Stack(
                     children: [
-                      if (_isToolbarVisible && mode != OperationalMode.layout && _currentUser != null)
-                        File4BaseStatusSidebar(
-                          layouts: _serverLayouts,
-                          selectedLayout: _serverLayouts.where((l) => l.id == _activeLayout?.id).firstOrNull ??
-                              (_serverLayouts.isNotEmpty ? _serverLayouts.first : null),
-                          onLayoutSelected: _selectLayout,
-                          onNewLayout: _handleNewLayout,
-                          onManageLayouts: _handleManageLayouts,
-                          onRenameLayout: _handleRenameActiveLayout,
-                          tables: _tables,
-                          selectedTable: _selectedTable,
-                          onTableSelected: (newTable) {
-                            if (newTable != null) {
-                              setState(() {
-                                _selectedTable = newTable;
-                                unawaited(_loadSavedFinds());
-                                final matchLayout = _serverLayouts.where((l) {
-                                  final toName = l.definition['table_occurrence']?.toString().toLowerCase();
-                                  return toName == newTable.name.toLowerCase() ||
-                                      toName == newTable.displayName.toLowerCase() ||
-                                      l.tableOccurrenceId == newTable.id;
-                                }).firstOrNull;
-                                if (matchLayout != null) {
-                                  _applyLayout(matchLayout);
-                                } else {
-                                  _activeLayout = LayoutDefinitionModel.defaultForTable(
-                                    newTable.displayName,
-                                    newTable.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
-                                  );
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (!isKiosk && _isToolbarVisible && mode != OperationalMode.layout && _currentUser != null)
+                            File4BaseStatusSidebar(
+                              layouts: _serverLayouts,
+                              selectedLayout: _serverLayouts.where((l) => l.id == _activeLayout?.id).firstOrNull ??
+                                  (_serverLayouts.isNotEmpty ? _serverLayouts.first : null),
+                              onLayoutSelected: _selectLayout,
+                              onNewLayout: _handleNewLayout,
+                              onManageLayouts: _handleManageLayouts,
+                              onRenameLayout: _handleRenameActiveLayout,
+                              tables: _tables,
+                              selectedTable: _selectedTable,
+                              onTableSelected: (newTable) {
+                                if (newTable != null) {
+                                  setState(() {
+                                    _selectedTable = newTable;
+                                    unawaited(_loadSavedFinds());
+                                    final matchLayout = _serverLayouts.where((l) {
+                                      final toName = l.definition['table_occurrence']?.toString().toLowerCase();
+                                      return toName == newTable.name.toLowerCase() ||
+                                          toName == newTable.displayName.toLowerCase() ||
+                                          l.tableOccurrenceId == newTable.id;
+                                    }).firstOrNull;
+                                    if (matchLayout != null) {
+                                      _applyLayout(matchLayout);
+                                    } else {
+                                      _activeLayout = LayoutDefinitionModel.defaultForTable(
+                                        newTable.displayName,
+                                        newTable.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
+                                      );
+                                    }
+                                  });
                                 }
-                              });
-                            }
-                          },
-                          mode: mode,
-                          currentRecordIndex: _currentRecordIndex,
-                          totalRecords: _totalRecords,
-                          onPreviousRecord: () => _dataBrowserKey.currentState?.previousRecord(),
-                          onNextRecord: () => _dataBrowserKey.currentState?.nextRecord(),
-                          onGoToRecord: (index) => _dataBrowserKey.currentState?.goToRecord(index),
-                          onManageDatabase: () async {
-                            await ManageDatabaseDialog.show(context);
-                            _loadTables();
-                          },
-                          isFindOmit: _isFindOmit,
-                          onToggleOmit: (val) {
-                            setState(() => _isFindOmit = val);
-                            _dataBrowserKey.currentState?.toggleOmit(val);
-                          },
-                          onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
-                          onShowAllRecords: () {
-                            _changeMode(OperationalMode.browse);
-                            _dataBrowserKey.currentState?.fetchRecords();
-                          },
-                          onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
-                          onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
-                          selectedTool: _activeLayoutTool,
-                          onToolSelected: (tool) => setState(() => _activeLayoutTool = tool),
-                          strokeWidth: _layoutStrokeWidth,
-                          pageSetup: _pageSetup,
-                          onPageSetup: _handlePageSetup,
-                          onStrokeWidthChanged: (w) {
-                            setState(() => _layoutStrokeWidth = w);
-                            _layoutDesignerKey.currentState?.applyStrokeWidth(w);
-                          },
-                        ),
-                      Expanded(
-                        child: _buildZoomableBody(context, mode, ref.watch(zoomProvider)),
+                              },
+                              mode: mode,
+                              currentRecordIndex: _currentRecordIndex,
+                              totalRecords: _totalRecords,
+                              onPreviousRecord: () => _dataBrowserKey.currentState?.previousRecord(),
+                              onNextRecord: () => _dataBrowserKey.currentState?.nextRecord(),
+                              onGoToRecord: (index) => _dataBrowserKey.currentState?.goToRecord(index),
+                              onManageDatabase: () async {
+                                await ManageDatabaseDialog.show(context);
+                                _loadTables();
+                              },
+                              isFindOmit: _isFindOmit,
+                              onToggleOmit: (val) {
+                                setState(() => _isFindOmit = val);
+                                _dataBrowserKey.currentState?.toggleOmit(val);
+                              },
+                              onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
+                              onShowAllRecords: () {
+                                _changeMode(OperationalMode.browse);
+                                _dataBrowserKey.currentState?.fetchRecords();
+                              },
+                              onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
+                              onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                              selectedTool: _activeLayoutTool,
+                              onToolSelected: (tool) => setState(() => _activeLayoutTool = tool),
+                              strokeWidth: _layoutStrokeWidth,
+                              pageSetup: _pageSetup,
+                              onPageSetup: _handlePageSetup,
+                              onStrokeWidthChanged: (w) {
+                                setState(() => _layoutStrokeWidth = w);
+                                _layoutDesignerKey.currentState?.applyStrokeWidth(w);
+                              },
+                            ),
+                          Expanded(
+                            child: _buildZoomableBody(context, mode, ref.watch(zoomProvider)),
+                          ),
+                        ],
                       ),
+                      if (_kioskSimulatedByAdmin)
+                        Positioned(
+                          top: 8,
+                          right: 12,
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              key: const Key('kiosk_exit_simulation_badge'),
+                              onTap: _exitKioskSimulation,
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF0F172A).withValues(alpha: 0.9),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: Colors.tealAccent.withValues(alpha: 0.6),
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.25),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.fullscreen_exit, size: 15, color: Colors.tealAccent),
+                                    SizedBox(width: 6),
+                                    Text(
+                                      'Kiosk Preview (Non-Admin) • Exit (Esc)',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
                 // Bottom Status Bar (Mode indicator, Zoom 100%, and Server status)
-                _buildBottomStatusBar(context, mode),
+                if (!isKiosk)
+                  _buildBottomStatusBar(context, mode),
               ],
             ),
           ),
@@ -2574,8 +2761,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           onModeChanged: _changeMode,
           onTableModified: _loadTables,
           currentUserName: _currentUser?.username,
-          showPageMargins: _isPageMarginsVisible,
-          showTextRuler: _isTextRulerVisible,
+          showPageMargins: !_isKioskRuntimeActive && _isPageMarginsVisible,
+          showTextRuler: !_isKioskRuntimeActive && _isTextRulerVisible,
           pageSetup: _pageSetup,
           onFocusedFieldChanged: () {
             if (mounted) setState(() {});
@@ -2588,6 +2775,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             if (match != null) _selectLayout(match);
             return match != null;
           },
+          onReLogin: _startAuthSequence,
+          onCloseFile: _handleSignOut,
+          onExitApplication: _handleQuit,
+          onAdjustWindow: _handleAdjustWindow,
+          onGoHome: _navigateToKioskHomeLayout,
           onFoundSetChanged: (requests) => _foundSetRequests = requests,
           onRecordChanged: (idx, total) {
             if (mounted) {
@@ -2687,6 +2879,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           // The sheet is the found set, not the whole table (#32).
           findRequests: _foundSetRequests,
           onAttach: (state) => _previewState = state,
+          isKioskMode: _isKioskRuntimeActive,
+          kioskAutoReturnSeconds: _fileOptions.kioskPreviewTimeoutSeconds,
+          onReturnToBrowse: () => _changeMode(OperationalMode.browse),
         );
     }
   }

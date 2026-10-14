@@ -34,6 +34,11 @@ class DataBrowserWidget extends StatefulWidget {
     this.pageSetup = const PageSetupModel(),
     this.onFocusedFieldChanged,
     this.onObjectStyleChanged,
+    this.onReLogin,
+    this.onCloseFile,
+    this.onExitApplication,
+    this.onAdjustWindow,
+    this.onGoHome,
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -60,6 +65,11 @@ class DataBrowserWidget extends StatefulWidget {
   final PageSetupModel pageSetup;
   final VoidCallback? onFocusedFieldChanged;
   final void Function(String objectId, LayoutObjectStyle newStyle)? onObjectStyleChanged;
+  final VoidCallback? onReLogin;
+  final VoidCallback? onCloseFile;
+  final VoidCallback? onExitApplication;
+  final ValueChanged<String>? onAdjustWindow;
+  final VoidCallback? onGoHome;
 
   @override
   State<DataBrowserWidget> createState() => DataBrowserWidgetState();
@@ -3196,6 +3206,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<void> actionEnterFindMode() async => widget.onModeChanged?.call(OperationalMode.find);
 
   @override
+  Future<void> actionEnterBrowseMode() async => widget.onModeChanged?.call(OperationalMode.browse);
+
+  @override
   Future<void> actionPerformFind() => _performFind();
 
   @override
@@ -3206,6 +3219,19 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionEnterPreviewMode() async => widget.onModeChanged?.call(OperationalMode.preview);
+
+  @override
+  Future<void> actionAdjustWindow(String windowAction) async =>
+      widget.onAdjustWindow?.call(windowAction);
+
+  @override
+  Future<void> actionReLogin() async => widget.onReLogin?.call();
+
+  @override
+  Future<void> actionCloseFile() async => widget.onCloseFile?.call();
+
+  @override
+  Future<void> actionExitApplication() async => widget.onExitApplication?.call();
 
   @override
   Future<bool> actionGoToLayout(String layoutName) async => widget.onGoToLayout?.call(layoutName) ?? false;
@@ -3270,6 +3296,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       widget.onModeChanged?.call(OperationalMode.preview);
     } else if (lower.contains('save') || lower.contains('guardar')) {
       _saveCurrentRecord();
+    } else if (lower.contains('home') ||
+        lower.contains('inicio') ||
+        lower.contains('volver') ||
+        lower.contains('regresar')) {
+      widget.onGoHome?.call();
+    } else if (lower.contains('re-login') ||
+        lower.contains('relogin') ||
+        lower.contains('switch user') ||
+        lower.contains('cambiar usuario')) {
+      widget.onReLogin?.call();
+    } else if (lower.contains('exit') ||
+        lower.contains('salir') ||
+        lower.contains('close') ||
+        lower.contains('cerrar') ||
+        lower.contains('logout')) {
+      (widget.onExitApplication ?? widget.onCloseFile)?.call();
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

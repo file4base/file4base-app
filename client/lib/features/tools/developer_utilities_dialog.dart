@@ -1,45 +1,64 @@
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
 
 /// Developer Utilities dialog (`Tools > Developer Utilities...`, #53).
 ///
 /// Gives the owner of a solution server-backed utilities to prepare a copy for
-/// distribution or a new environment:
+/// distribution or a Kiosk environment:
 /// 1. Clone the solution without records into a new database on the server.
 /// 2. Rename the solution and update internal references to the old name.
-/// 3. Configure Kiosk Mode (full-screen mode hiding toolbars/menus for standard users)
-///    and AES-256-GCM solution package encryption.
+/// 3. Configure Kiosk Mode (full UI lockout hiding menu bar, status sidebar,
+///    formatting bar, and bottom status bar for non-admin accounts; conditional
+///    privilege preserving normal mode for Admin/Owner accounts; primary Home
+///    layout; forced credential login; Preview Mode auto-return; and Kiosk
+///    navigation/exit button readiness audit) and AES-256-GCM encryption.
 /// 4. Permanently lock the solution's design (either on the clone or in place).
 class DeveloperUtilitiesDialog extends StatefulWidget {
 
   const DeveloperUtilitiesDialog({
-    required this.apiClient, required this.initialMeta, super.key,
+    required this.apiClient,
+    required this.initialMeta,
+    super.key,
+    this.layouts = const [],
     this.onMetaChanged,
     this.onSolutionCloned,
     this.onKioskModeChanged,
+    this.onSimulateKiosk,
+    this.onLayoutsUpdated,
   });
+
   final ApiClient apiClient;
   final SolutionMetaModel initialMeta;
+  final List<LayoutModel> layouts;
   final ValueChanged<SolutionMetaModel>? onMetaChanged;
   final ValueChanged<CloneResultModel>? onSolutionCloned;
   final ValueChanged<bool>? onKioskModeChanged;
+  final VoidCallback? onSimulateKiosk;
+  final VoidCallback? onLayoutsUpdated;
 
   static Future<void> show(
     BuildContext context, {
     required ApiClient apiClient,
     required SolutionMetaModel initialMeta,
+    List<LayoutModel> layouts = const [],
     ValueChanged<SolutionMetaModel>? onMetaChanged,
     ValueChanged<CloneResultModel>? onSolutionCloned,
     ValueChanged<bool>? onKioskModeChanged,
+    VoidCallback? onSimulateKiosk,
+    VoidCallback? onLayoutsUpdated,
   }) {
     return showDialog<void>(
       context: context,
       builder: (_) => DeveloperUtilitiesDialog(
         apiClient: apiClient,
         initialMeta: initialMeta,
+        layouts: layouts,
         onMetaChanged: onMetaChanged,
         onSolutionCloned: onSolutionCloned,
         onKioskModeChanged: onKioskModeChanged,
+        onSimulateKiosk: onSimulateKiosk,
+        onLayoutsUpdated: onLayoutsUpdated,
       ),
     );
   }
@@ -51,6 +70,7 @@ class DeveloperUtilitiesDialog extends StatefulWidget {
 
 class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
   late SolutionMetaModel _meta;
+  late List<LayoutModel> _layouts;
   late final TextEditingController _renameCtrl;
   late final TextEditingController _cloneDbCtrl;
   late final TextEditingController _cloneNameCtrl;
@@ -58,6 +78,9 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
   bool _lockCloneDesign = false;
   bool _confirmLockCurrent = false;
   bool _kioskMode = false;
+  bool _kioskRequireLogin = true;
+  String _kioskPrimaryLayoutId = '';
+  int _kioskPreviewTimeoutSeconds = 10;
   bool _encryptionEnabled = true;
   bool _busy = false;
   String? _statusMessage;
@@ -67,11 +90,19 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
   void initState() {
     super.initState();
     _meta = widget.initialMeta;
+    _layouts = List<LayoutModel>.from(widget.layouts);
     _renameCtrl = TextEditingController(text: _meta.solutionName);
     _cloneDbCtrl = TextEditingController(text: '${_meta.database}_copy');
     _cloneNameCtrl = TextEditingController(text: '${_meta.solutionName} Copy');
     final opts = _meta.fileOptions ?? const <String, dynamic>{};
     _kioskMode = opts['kiosk_mode'] == true;
+    _kioskRequireLogin = opts['kiosk_require_login'] as bool? ?? true;
+    _kioskPrimaryLayoutId =
+        opts['kiosk_primary_layout_id']?.toString() ??
+        opts['startup_layout_id']?.toString() ??
+        (_layouts.isNotEmpty ? _layouts.first.id : '');
+    _kioskPreviewTimeoutSeconds =
+        (opts['kiosk_preview_timeout_seconds'] as num?)?.toInt() ?? 10;
     _encryptionEnabled = opts['encryption_enabled'] != false;
     _encryptionPassphraseCtrl = TextEditingController(
       text: opts['encryption_hint'] as String? ?? '',
@@ -85,6 +116,194 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
     _cloneNameCtrl.dispose();
     _encryptionPassphraseCtrl.dispose();
     super.dispose();
+  }
+
+  LayoutModel? get _selectedPrimaryLayout {
+    if (_layouts.isEmpty) return null;
+    return _layouts
+            .where((l) => l.id == _kioskPrimaryLayoutId)
+            .firstOrNull ??
+        _layouts.first;
+  }
+
+  /// Inspects layouts for Kiosk navigation readiness:
+  /// - Whether at least one layout has an Exit / Close / Re-Login button.
+  /// - Which secondary layouts lack a `go_to_layout` button to return Home.
+  ({bool hasExitButton, List<String> deadEndLayouts}) _auditKioskLayouts() {
+    if (_layouts.isEmpty) {
+      return (hasExitButton: false, deadEndLayouts: const <String>[]);
+    }
+    var hasExit = false;
+    final deadEnds = <String>[];
+    final primaryId = _selectedPrimaryLayout?.id ?? _layouts.first.id;
+
+    for (final l in _layouts) {
+      final def = LayoutDefinitionModel.fromJson(l.definition);
+      var hasNav = false;
+      for (final obj in def.objects) {
+        final action = obj.action;
+        if (action != null) {
+          final step = (action.stepType ?? '').toLowerCase();
+          if (step == 'exit_application' ||
+              step == 'close_file' ||
+              step == 're_login' ||
+              action.isPerformScript) {
+            hasExit = true;
+          }
+          if (step == 'go_to_layout' || action.isPerformScript) {
+            hasNav = true;
+          }
+        }
+        final label = obj.text.toLowerCase();
+        if (label.contains('exit') ||
+            label.contains('salir') ||
+            label.contains('close') ||
+            label.contains('cerrar') ||
+            label.contains('re-login') ||
+            label.contains('switch user')) {
+          hasExit = true;
+        }
+        if (label.contains('home') ||
+            label.contains('inicio') ||
+            label.contains('volver') ||
+            label.contains('regresar') ||
+            label.contains('back')) {
+          hasNav = true;
+        }
+      }
+      if (l.id != primaryId && _layouts.length > 1 && !hasNav) {
+        deadEnds.add(l.name);
+      }
+    }
+    return (hasExitButton: hasExit, deadEndLayouts: deadEnds);
+  }
+
+  /// Automatically injects Kiosk navigation (`Home`) and session exit
+  /// (`Switch User` / `Exit Kiosk`) buttons into layouts that need them.
+  Future<void> _injectKioskNavigationAndExitButtons() async {
+    if (_layouts.isEmpty) return;
+    setState(() {
+      _busy = true;
+      _statusMessage = null;
+    });
+    try {
+      final primary = _selectedPrimaryLayout ?? _layouts.first;
+      final updatedLayouts = <LayoutModel>[];
+
+      for (final l in _layouts) {
+        final def = LayoutDefinitionModel.fromJson(l.definition);
+        final nextObjects = List<LayoutObjectModel>.from(def.objects);
+        var modified = false;
+
+        if (l.id == primary.id) {
+          final hasExitObj = nextObjects.any(
+            (o) =>
+                o.action?.stepType == 'exit_application' ||
+                o.action?.stepType == 'close_file' ||
+                o.action?.stepType == 're_login',
+          );
+          if (!hasExitObj) {
+            nextObjects.addAll([
+              const LayoutObjectModel(
+                id: 'kiosk_btn_relogin',
+                type: 'button',
+                x: 540,
+                y: 14,
+                width: 120,
+                height: 30,
+                text: 'Switch Account',
+                style: LayoutObjectStyle(
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  fillColor: '#1E293B',
+                  textColor: '#FFFFFF',
+                  cornerRadius: 6,
+                ),
+                action: ButtonActionModel.singleStep('re_login'),
+              ),
+              const LayoutObjectModel(
+                id: 'kiosk_btn_exit',
+                type: 'button',
+                x: 668,
+                y: 14,
+                width: 96,
+                height: 30,
+                text: 'Exit Kiosk',
+                style: LayoutObjectStyle(
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  fillColor: '#DC2626',
+                  textColor: '#FFFFFF',
+                  cornerRadius: 6,
+                ),
+                action: ButtonActionModel.singleStep('exit_application'),
+              ),
+            ]);
+            modified = true;
+          }
+        } else {
+          final hasHomeObj = nextObjects.any(
+            (o) =>
+                o.action?.stepType == 'go_to_layout' &&
+                o.action?.params['layout_name'] == primary.name,
+          );
+          if (!hasHomeObj) {
+            nextObjects.add(
+              LayoutObjectModel(
+                id: 'kiosk_btn_home_${l.id}',
+                type: 'button',
+                x: 640,
+                y: 14,
+                width: 124,
+                height: 30,
+                text: 'Home (${primary.name})',
+                style: const LayoutObjectStyle(
+                  fontSize: 11,
+                  fontWeight: 'bold',
+                  fillColor: '#0284C7',
+                  textColor: '#FFFFFF',
+                  cornerRadius: 6,
+                ),
+                action: ButtonActionModel.singleStep(
+                  'go_to_layout',
+                  params: {'layout_name': primary.name},
+                ),
+              ),
+            );
+            modified = true;
+          }
+        }
+
+        if (modified) {
+          final nextDef = def.copyWith(objects: nextObjects).toJson();
+          final saved = await widget.apiClient.updateLayout(
+            l.id,
+            l.name,
+            nextDef,
+          );
+          updatedLayouts.add(saved);
+        } else {
+          updatedLayouts.add(l);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _layouts = updatedLayouts;
+        _busy = false;
+        _isError = false;
+        _statusMessage =
+            'Added Kiosk Home ("${primary.name}"), Switch Account (Re-Login), and Exit Kiosk buttons across layouts.';
+      });
+      widget.onLayoutsUpdated?.call();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _isError = true;
+        _statusMessage = 'Could not add Kiosk buttons: $e';
+      });
+    }
   }
 
   Future<void> _renameSolution() async {
@@ -159,13 +378,26 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
     }
   }
 
-  Future<void> _saveKioskAndEncryptionOptions() async {
-    setState(() {
-      _busy = true;
-      _statusMessage = null;
-    });
+  Map<String, dynamic> _buildNextFileOptions() {
     final nextOpts = Map<String, dynamic>.from(_meta.fileOptions ?? const {});
     nextOpts['kiosk_mode'] = _kioskMode;
+    nextOpts['kiosk_require_login'] = _kioskRequireLogin;
+    nextOpts['kiosk_preview_timeout_seconds'] = _kioskPreviewTimeoutSeconds;
+    final primary = _selectedPrimaryLayout;
+    if (primary != null) {
+      nextOpts['kiosk_primary_layout_id'] = primary.id;
+      nextOpts['kiosk_primary_layout_name'] = primary.name;
+      if (_kioskMode) {
+        nextOpts['switch_layout_on_open'] = true;
+        nextOpts['startup_layout_id'] = primary.id;
+        nextOpts['startup_layout_name'] = primary.name;
+      }
+    }
+    if (_kioskMode && _kioskRequireLogin) {
+      // Uncheck "Log in using..." so credentials are always requested on open.
+      nextOpts['auto_login_enabled'] = false;
+      nextOpts['is_guest_login'] = false;
+    }
     nextOpts['encryption_enabled'] = _encryptionEnabled;
     nextOpts['encryption_cipher'] = 'AES-256-GCM';
     final hint = _encryptionPassphraseCtrl.text.trim();
@@ -174,6 +406,15 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
     } else {
       nextOpts.remove('encryption_hint');
     }
+    return nextOpts;
+  }
+
+  Future<void> _saveKioskAndEncryptionOptions() async {
+    setState(() {
+      _busy = true;
+      _statusMessage = null;
+    });
+    final nextOpts = _buildNextFileOptions();
     try {
       final updated = await widget.apiClient.updateSolutionOptions(
         fileOptions: nextOpts,
@@ -185,7 +426,7 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
         _busy = false;
         _isError = false;
         _statusMessage =
-            'Saved Kiosk Mode (${_kioskMode ? "enabled" : "disabled"}) and AES-256-GCM encryption (${_encryptionEnabled ? "enabled" : "disabled"}).';
+            'Saved Kiosk Mode (${_kioskMode ? "enabled for non-admin accounts" : "disabled"}) and AES-256-GCM encryption (${_encryptionEnabled ? "enabled" : "disabled"}).';
       });
       widget.onMetaChanged?.call(updated);
       widget.onKioskModeChanged?.call(_kioskMode);
@@ -230,6 +471,7 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final locked = _meta.designLocked;
+    final audit = _auditKioskLayouts();
 
     return AlertDialog(
       title: Row(
@@ -247,7 +489,7 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
         ],
       ),
       content: SizedBox(
-        width: 580,
+        width: 620,
         child: SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -372,9 +614,9 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
 
               // 3. Kiosk Mode & Solution Encryption
               _SectionCard(
-                title: 'Kiosk Mode & Solution Encryption',
+                title: 'Kiosk Mode & Solution Encryption (Solution Options)',
                 subtitle:
-                    'Configure Kiosk Mode (opens the solution hiding File4Base toolbars and menus for non-admin users) and AES-256-GCM encryption for solution packages and API transport.',
+                    'When Kiosk Mode is enabled, non-admin accounts open in full-screen layout mode with the top Menu Bar, Status Sidebar, Formatting Bar, and Bottom Status Bar completely hidden. Accounts with Full Access (Owner / Admin) open normally for programming.',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -387,10 +629,160 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
                           ? null
                           : (v) => setState(() => _kioskMode = v),
                       title: const Text(
-                        'Activate Kiosk Mode (hide toolbars and menu bar for non-admin accounts)',
-                        style: TextStyle(fontSize: 13),
+                        'Enable Kiosk Mode for non-admin accounts',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: const Text(
+                        'Hides Menu Bar, Status Toolbar, and Mode Bar for limited privilege accounts. Admin accounts open normally.',
+                        style: TextStyle(fontSize: 11),
                       ),
                     ),
+                    if (_kioskMode) ...[
+                      const SizedBox(height: 8),
+                      CheckboxListTile(
+                        key: const Key('dev_util_kiosk_require_login_checkbox'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        value: _kioskRequireLogin,
+                        onChanged: _busy
+                            ? null
+                            : (v) => setState(() => _kioskRequireLogin = v ?? true),
+                        title: const Text(
+                          'Require login credentials on startup (disable "Log in using..." in File Options)',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          if (_layouts.isNotEmpty)
+                            Expanded(
+                              flex: 2,
+                              child: DropdownButtonFormField<String>(
+                                isExpanded: true,
+                                initialValue: _selectedPrimaryLayout?.id,
+                                decoration: const InputDecoration(
+                                  labelText: 'Primary / Home Layout (opens first in Kiosk)',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                items: [
+                                  for (final l in _layouts)
+                                    DropdownMenuItem(
+                                      value: l.id,
+                                      child: Text(
+                                        l.name,
+                                        style: const TextStyle(fontSize: 12),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                ],
+                                onChanged: _busy
+                                    ? null
+                                    : (id) {
+                                        if (id != null) {
+                                          setState(() => _kioskPrimaryLayoutId = id);
+                                        }
+                                      },
+                              ),
+                            ),
+                          if (_layouts.isNotEmpty) const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              isExpanded: true,
+                              initialValue: const [5, 10, 15, 30]
+                                      .contains(_kioskPreviewTimeoutSeconds)
+                                  ? _kioskPreviewTimeoutSeconds
+                                  : 10,
+                              decoration: const InputDecoration(
+                                labelText: 'Preview Auto-Return',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 5, child: Text('5 sec (Pause)', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 10, child: Text('10 sec (Default)', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 15, child: Text('15 sec', overflow: TextOverflow.ellipsis)),
+                                DropdownMenuItem(value: 30, child: Text('30 sec', overflow: TextOverflow.ellipsis)),
+                              ],
+                              onChanged: _busy
+                                  ? null
+                                  : (s) {
+                                      if (s != null) {
+                                        setState(() => _kioskPreviewTimeoutSeconds = s);
+                                      }
+                                    },
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (_layouts.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.45),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: (!audit.hasExitButton ||
+                                      audit.deadEndLayouts.isNotEmpty)
+                                  ? Colors.amber.withValues(alpha: 0.6)
+                                  : Colors.green.withValues(alpha: 0.5),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Icon(
+                                    (!audit.hasExitButton ||
+                                            audit.deadEndLayouts.isNotEmpty)
+                                        ? Icons.warning_amber_rounded
+                                        : Icons.check_circle_outline,
+                                    size: 16,
+                                    color: (!audit.hasExitButton ||
+                                            audit.deadEndLayouts.isNotEmpty)
+                                        ? Colors.amber.shade700
+                                        : Colors.green,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Expanded(
+                                    child: Text(
+                                      'Kiosk Navigation & Exit Readiness Check',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  TextButton.icon(
+                                    key: const Key('dev_util_kiosk_inject_buttons'),
+                                    onPressed: _busy
+                                        ? null
+                                        : _injectKioskNavigationAndExitButtons,
+                                    icon: const Icon(Icons.auto_fix_high, size: 14),
+                                    label: const Text(
+                                      'Auto-Add Home & Exit Buttons',
+                                      style: TextStyle(fontSize: 11),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '• Home Layout: "${_selectedPrimaryLayout?.name ?? "Default"}"\n'
+                                '• Exit / Close / Re-Login Button: ${audit.hasExitButton ? "Present ✓" : "Missing — add an Exit Application, Close File, or Re-Login button so users can exit Kiosk Mode"}\n'
+                                '• Return-to-Home Navigation: ${audit.deadEndLayouts.isEmpty ? "All secondary layouts have navigation ✓" : "Missing on: ${audit.deadEndLayouts.join(", ")}"}',
+                                style: const TextStyle(fontSize: 11, height: 1.4),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                    const Divider(height: 16),
                     SwitchListTile(
                       key: const Key('dev_util_encryption_switch'),
                       contentPadding: EdgeInsets.zero,
@@ -417,15 +809,35 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton.tonalIcon(
-                        key: const Key('dev_util_save_protection_button'),
-                        onPressed: _busy ? null : _saveKioskAndEncryptionOptions,
-                        icon: const Icon(Icons.shield_outlined, size: 16),
-                        label: const Text('Apply Kiosk & Encryption'),
-                      ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      alignment: WrapAlignment.end,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (widget.onSimulateKiosk != null)
+                          OutlinedButton.icon(
+                            key: const Key('dev_util_kiosk_simulate_button'),
+                            onPressed: _busy
+                                ? null
+                                : () async {
+                                    await _saveKioskAndEncryptionOptions();
+                                    if (!context.mounted) return;
+                                    if (Navigator.of(context).canPop()) {
+                                      Navigator.of(context).pop();
+                                    }
+                                    widget.onSimulateKiosk?.call();
+                                  },
+                            icon: const Icon(Icons.fullscreen, size: 16),
+                            label: const Text('Test Kiosk Mode Now (Simulate Non-Admin)'),
+                          ),
+                        FilledButton.tonalIcon(
+                          key: const Key('dev_util_save_protection_button'),
+                          onPressed: _busy ? null : _saveKioskAndEncryptionOptions,
+                          icon: const Icon(Icons.shield_outlined, size: 16),
+                          label: const Text('Apply Kiosk & Encryption'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -515,7 +927,7 @@ class _SectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         border: Border.all(color: theme.dividerColor),
         borderRadius: BorderRadius.circular(8),
@@ -525,16 +937,12 @@ class _SectionCard extends StatelessWidget {
         children: [
           Text(
             title,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 4),
           Text(
             subtitle,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 12, color: theme.hintColor),
           ),
           const SizedBox(height: 12),
           child,

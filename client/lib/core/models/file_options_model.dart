@@ -1,5 +1,6 @@
 /// FileOptionsModel defines startup credentials, initial layout, toolbar visibility,
-/// and script triggers (OnFirstWindowOpen, OnLastWindowClose, etc.) for File4Base File Options.
+/// Kiosk Mode settings, and script triggers (OnFirstWindowOpen, OnLastWindowClose, etc.)
+/// for File4Base File Options and Developer Utilities.
 class FileOptionsModel {
 
   const FileOptionsModel({
@@ -11,6 +12,14 @@ class FileOptionsModel {
     this.startupLayoutId = '',
     this.startupLayoutName = '',
     this.hideAllToolbars = false,
+    this.kioskMode = false,
+    this.kioskPrimaryLayoutId = '',
+    this.kioskPrimaryLayoutName = '',
+    this.kioskRequireLogin = true,
+    this.kioskPreviewTimeoutSeconds = 10,
+    this.encryptionEnabled = true,
+    this.encryptionCipher = 'AES-256-GCM',
+    this.encryptionHint = '',
     this.onFirstWindowOpenEnabled = false,
     this.onFirstWindowOpenScript = '',
     this.onFirstWindowOpenParam = '',
@@ -38,6 +47,15 @@ class FileOptionsModel {
       startupLayoutId: json['startup_layout_id']?.toString() ?? '',
       startupLayoutName: json['startup_layout_name']?.toString() ?? '',
       hideAllToolbars: json['hide_all_toolbars'] as bool? ?? false,
+      kioskMode: json['kiosk_mode'] as bool? ?? false,
+      kioskPrimaryLayoutId: json['kiosk_primary_layout_id']?.toString() ?? '',
+      kioskPrimaryLayoutName: json['kiosk_primary_layout_name']?.toString() ?? '',
+      kioskRequireLogin: json['kiosk_require_login'] as bool? ?? true,
+      kioskPreviewTimeoutSeconds:
+          (json['kiosk_preview_timeout_seconds'] as num?)?.toInt() ?? 10,
+      encryptionEnabled: json['encryption_enabled'] as bool? ?? true,
+      encryptionCipher: json['encryption_cipher']?.toString() ?? 'AES-256-GCM',
+      encryptionHint: json['encryption_hint']?.toString() ?? '',
       onFirstWindowOpenEnabled: json['on_first_window_open_enabled'] as bool? ?? false,
       onFirstWindowOpenScript: json['on_first_window_open_script']?.toString() ?? '',
       onFirstWindowOpenParam: json['on_first_window_open_param']?.toString() ?? '',
@@ -65,6 +83,16 @@ class FileOptionsModel {
   final String startupLayoutId;
   final String startupLayoutName;
   final bool hideAllToolbars;
+
+  // --- Kiosk Mode & Solution Protection (Developer Utilities) ---
+  final bool kioskMode;
+  final String kioskPrimaryLayoutId;
+  final String kioskPrimaryLayoutName;
+  final bool kioskRequireLogin;
+  final int kioskPreviewTimeoutSeconds;
+  final bool encryptionEnabled;
+  final String encryptionCipher;
+  final String encryptionHint;
 
   // --- Script Triggers tab ---
   final bool onFirstWindowOpenEnabled;
@@ -96,6 +124,14 @@ class FileOptionsModel {
     String? startupLayoutId,
     String? startupLayoutName,
     bool? hideAllToolbars,
+    bool? kioskMode,
+    String? kioskPrimaryLayoutId,
+    String? kioskPrimaryLayoutName,
+    bool? kioskRequireLogin,
+    int? kioskPreviewTimeoutSeconds,
+    bool? encryptionEnabled,
+    String? encryptionCipher,
+    String? encryptionHint,
     bool? onFirstWindowOpenEnabled,
     String? onFirstWindowOpenScript,
     String? onFirstWindowOpenParam,
@@ -121,6 +157,15 @@ class FileOptionsModel {
       startupLayoutId: startupLayoutId ?? this.startupLayoutId,
       startupLayoutName: startupLayoutName ?? this.startupLayoutName,
       hideAllToolbars: hideAllToolbars ?? this.hideAllToolbars,
+      kioskMode: kioskMode ?? this.kioskMode,
+      kioskPrimaryLayoutId: kioskPrimaryLayoutId ?? this.kioskPrimaryLayoutId,
+      kioskPrimaryLayoutName: kioskPrimaryLayoutName ?? this.kioskPrimaryLayoutName,
+      kioskRequireLogin: kioskRequireLogin ?? this.kioskRequireLogin,
+      kioskPreviewTimeoutSeconds:
+          kioskPreviewTimeoutSeconds ?? this.kioskPreviewTimeoutSeconds,
+      encryptionEnabled: encryptionEnabled ?? this.encryptionEnabled,
+      encryptionCipher: encryptionCipher ?? this.encryptionCipher,
+      encryptionHint: encryptionHint ?? this.encryptionHint,
       onFirstWindowOpenEnabled: onFirstWindowOpenEnabled ?? this.onFirstWindowOpenEnabled,
       onFirstWindowOpenScript: onFirstWindowOpenScript ?? this.onFirstWindowOpenScript,
       onFirstWindowOpenParam: onFirstWindowOpenParam ?? this.onFirstWindowOpenParam,
@@ -147,6 +192,14 @@ class FileOptionsModel {
     'startup_layout_id': startupLayoutId,
     'startup_layout_name': startupLayoutName,
     'hide_all_toolbars': hideAllToolbars,
+    'kiosk_mode': kioskMode,
+    'kiosk_primary_layout_id': kioskPrimaryLayoutId,
+    'kiosk_primary_layout_name': kioskPrimaryLayoutName,
+    'kiosk_require_login': kioskRequireLogin,
+    'kiosk_preview_timeout_seconds': kioskPreviewTimeoutSeconds,
+    'encryption_enabled': encryptionEnabled,
+    'encryption_cipher': encryptionCipher,
+    if (encryptionHint.isNotEmpty) 'encryption_hint': encryptionHint,
     'on_first_window_open_enabled': onFirstWindowOpenEnabled,
     'on_first_window_open_script': onFirstWindowOpenScript,
     'on_first_window_open_param': onFirstWindowOpenParam,

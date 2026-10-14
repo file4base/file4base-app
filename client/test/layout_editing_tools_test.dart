@@ -454,4 +454,14 @@ class _FakeHost implements LayoutActionHost {
   Future<void> actionShowDialog(String title, String message) async => calls.add('dialog:$title');
   @override
   Future<void> actionOpenUrl(String url) async => calls.add('url:$url');
+  @override
+  Future<void> actionEnterBrowseMode() async => calls.add('browse');
+  @override
+  Future<void> actionAdjustWindow(String windowMode) async => calls.add('window:$windowMode');
+  @override
+  Future<void> actionReLogin() async => calls.add('re_login');
+  @override
+  Future<void> actionCloseFile() async => calls.add('close_file');
+  @override
+  Future<void> actionExitApplication() async => calls.add('exit_app');
 }
