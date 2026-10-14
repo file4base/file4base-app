@@ -71,6 +71,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
 
   // Local File State
   PickedSolutionFile? _pickedFile;
+  PickedSolutionFile? _pickedDataFile;
   SolutionPackage? _parsedPkg;
   bool _isOpeningFile = false;
   String? _fileError;
@@ -217,6 +218,25 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
     }
   }
 
+  Future<void> _handlePickDataFile() async {
+    setState(() {
+      _fileError = null;
+    });
+    try {
+      final file = await SolutionStorageService.pickFile(
+        allowedExtensions: ['f4data'],
+      );
+      if (file == null) return;
+      setState(() {
+        _pickedDataFile = file;
+      });
+    } catch (e) {
+      setState(() {
+        _fileError = 'Invalid database data file: $e';
+      });
+    }
+  }
+
   Future<void> _handleOpenFile() async {
     if (_pickedFile == null || _parsedPkg == null) return;
 
@@ -252,6 +272,15 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
         await widget.apiClient.importSolution(_pickedFile!.bytes);
       } on ApiException catch (e) {
         if (e.statusCode != 403) rethrow;
+      }
+
+      // 4. If a companion .f4data file was selected, import table records too.
+      if (_pickedDataFile != null) {
+        try {
+          await widget.apiClient.importDatabaseData(_pickedDataFile!.bytes);
+        } on ApiException catch (e) {
+          if (e.statusCode != 403) rethrow;
+        }
       }
 
       if (mounted) {
@@ -610,6 +639,40 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
           ),
 
           if (_parsedPkg != null) ...[
+            const SizedBox(height: 12),
+            const Text('COMPANION DATABASE DATA FILE (.f4data, OPTIONAL)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5)),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                border: Border.all(color: _pickedDataFile != null ? const Color(0xFF43A047) : Colors.grey.withValues(alpha: 0.3)),
+                borderRadius: BorderRadius.circular(8),
+                color: _pickedDataFile != null ? const Color(0xFF43A047).withValues(alpha: 0.08) : Colors.black12,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _pickedDataFile != null ? Icons.storage_rounded : Icons.dataset_outlined,
+                    color: _pickedDataFile != null ? const Color(0xFF43A047) : Colors.grey,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _pickedDataFile != null ? _pickedDataFile!.name : 'No .f4data file selected (only schema/config will be imported)',
+                      style: TextStyle(fontWeight: _pickedDataFile != null ? FontWeight.bold : FontWeight.normal, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: _handlePickDataFile,
+                    icon: const Icon(Icons.folder_open, size: 15),
+                    label: Text(_pickedDataFile == null ? 'Choose .f4data...' : 'Change...'),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 18),
             Text(
               'DATABASE ACCESS CREDENTIALS FOR: "${_parsedPkg!.databaseConnection.database}"',

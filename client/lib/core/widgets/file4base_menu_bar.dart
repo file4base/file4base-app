@@ -30,6 +30,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onSaveAs,
     this.onSaveCopyAs,
     this.onExportData,
+    this.onImportData,
     this.onFileOptions,
     this.onChangePassword,
     this.onPageSetup,
@@ -127,6 +128,7 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onSaveAs;
   final VoidCallback? onSaveCopyAs;
   final VoidCallback? onExportData;
+  final VoidCallback? onImportData;
   final VoidCallback? onFileOptions;
   final VoidCallback? onPageSetup;
   final VoidCallback? onNewRecord;
@@ -585,6 +587,12 @@ class File4BaseMenuBar extends StatelessWidget {
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export database data.')
               : onExportData,
           child: const Text('Export Data...'),
+        ),
+        MenuItemButton(
+          onPressed: !isAuthenticated
+              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to import database data.')
+              : onImportData,
+          child: const Text('Import Data (.f4data)...'),
         ),
         const Divider(height: 1),
         const SubmenuButton(

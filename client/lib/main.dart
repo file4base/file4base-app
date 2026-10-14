@@ -1392,6 +1392,38 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  /// Import database row data (.f4data) into the active database.
+  Future<void> _handleImportData() async {
+    final client = ref.read(apiClientProvider);
+    try {
+      final file = await SolutionStorageService.pickFile(
+        allowedExtensions: ['f4data'],
+      );
+      if (file == null) return;
+      final res = await client.importDatabaseData(file.bytes);
+      final inserted = res['records_inserted'] ?? res['records_count'] ?? 0;
+      final tablesRestored = res['tables_restored'] ?? 0;
+      _dataBrowserKey.currentState?.fetchRecords();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Imported $inserted record(s) across $tablesRestored table(s) from "${file.name}".'),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Data import failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _handleFileOptions() async {
     final client = ref.read(apiClientProvider);
     final updated = await FileOptionsDialog.show(
@@ -1968,6 +2000,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onSaveAs: _handleSaveAs,
                   onSaveCopyAs: _handleSaveCopyAs,
                   onExportData: _handleExportData,
+                  onImportData: _handleImportData,
                   onFileOptions: _handleFileOptions,
                   onChangePassword: _handleChangePassword,
                   onPageSetup: _handlePageSetup,

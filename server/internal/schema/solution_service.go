@@ -633,6 +633,18 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			if existing.BaseTableID != dstTable {
 				return nil, rollback(fmt.Errorf("table occurrence %q already exists for another table", o.Name))
 			}
+			if existing.XPos != o.XPos || existing.YPos != o.YPos {
+				newX, newY := o.XPos, o.YPos
+				prevX, prevY := existing.XPos, existing.YPos
+				exID := existing.ID
+				if _, err := s.UpdateTableOccurrence(ctx, exID, UpdateOccurrenceInput{XPos: &newX, YPos: &newY}); err != nil {
+					return nil, rollback(fmt.Errorf("updating table occurrence %q position: %w", o.Name, err))
+				}
+				undo = append(undo, func() {
+					px, py := prevX, prevY
+					_, _ = s.UpdateTableOccurrence(bg, exID, UpdateOccurrenceInput{XPos: &px, YPos: &py})
+				})
+			}
 			occIDs[o.ID] = existing.ID
 			continue
 		}
@@ -711,6 +723,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 
 	// 5. Layouts
 	layoutIDs := map[string]string{}
+	layoutDefs := map[string]string{}
 	for _, l := range b.Layouts {
 		def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
 			"script_id":       scriptIDs,
@@ -719,6 +732,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		if err != nil {
 			return nil, rollback(fmt.Errorf("layout %q: %w", l.Name, err))
 		}
+		layoutDefs[l.ID] = string(def)
 		if prev := plan.layoutFor(l); prev != nil {
 			if _, err := s.UpdateLayout(ctx, prev.ID, l.Name, def); err != nil {
 				return nil, rollback(fmt.Errorf("updating layout %q: %w", l.Name, err))
@@ -736,6 +750,26 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		undo = append(undo, func() { _ = s.DeleteLayout(bg, created.ID) })
 		report.LayoutsCreated++
 		layoutIDs[l.ID] = created.ID
+	}
+	for _, l := range b.Layouts {
+		dstLayoutID := layoutIDs[l.ID]
+		if dstLayoutID == "" {
+			continue
+		}
+		def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
+			"script_id":        scriptIDs,
+			"relationship_id":  relIDs,
+			"layout_id":        layoutIDs,
+			"target_layout_id": layoutIDs,
+		}))
+		if err != nil {
+			return nil, rollback(fmt.Errorf("layout %q cross-layout reference: %w", l.Name, err))
+		}
+		if string(def) != layoutDefs[l.ID] {
+			if _, err := s.UpdateLayout(ctx, dstLayoutID, l.Name, def); err != nil {
+				return nil, rollback(fmt.Errorf("updating layout %q cross-layout reference: %w", l.Name, err))
+			}
+		}
 	}
 
 	// 5b. Value lists (#31). A list is matched by name, so importing the same
@@ -781,23 +815,16 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 
 	// 6. Accounts: missing ones are created disabled, without a usable
 	// password, with their role and layout/table permissions. Existing accounts
-	// are never changed.
-	for _, a := range b.Users {
-		if plan.users[strings.ToLower(strings.TrimSpace(a.Username))] {
-			continue
-		}
-		created, err := s.CreateUser(ctx, strings.TrimSpace(a.Username), randomSecret(), a.Role, false)
-		if err != nil {
-			return nil, rollback(fmt.Errorf("creating account %q: %w", a.Username, err))
-		}
-		undo = append(undo, func() { _ = s.DeleteUser(bg, created.ID) })
+	// keep their active status and password while restoring any layout/table
+	// permissions carried by the bundle.
+	restoreAccountPermissions := func(userID, username string, a BundleAccount) error {
 		perms := make([]UserLayoutPermission, 0, len(a.Permissions))
 		for _, p := range a.Permissions {
 			perms = append(perms, UserLayoutPermission{LayoutID: layoutIDs[p.LayoutID], AccessLevel: p.AccessLevel})
 		}
 		if len(perms) > 0 {
-			if err := s.SetUserPermissions(ctx, created.ID, perms); err != nil {
-				return nil, rollback(fmt.Errorf("restoring permissions of %q: %w", a.Username, err))
+			if err := s.SetUserPermissions(ctx, userID, perms); err != nil {
+				return fmt.Errorf("restoring permissions of %q: %w", username, err)
 			}
 		}
 		tablePerms := make([]UserTablePermission, 0, len(a.TablePermissions))
@@ -812,14 +839,43 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			})
 		}
 		if len(tablePerms) > 0 {
-			if err := s.SetUserTablePermissions(ctx, created.ID, tablePerms); err != nil {
-				return nil, rollback(fmt.Errorf("restoring table permissions of %q: %w", a.Username, err))
+			if err := s.SetUserTablePermissions(ctx, userID, tablePerms); err != nil {
+				return fmt.Errorf("restoring table permissions of %q: %w", username, err)
 			}
+		}
+		return nil
+	}
+	for _, a := range b.Users {
+		if existingID := plan.userIDs[strings.ToLower(strings.TrimSpace(a.Username))]; existingID != "" {
+			if err := restoreAccountPermissions(existingID, a.Username, a); err != nil {
+				return nil, rollback(err)
+			}
+			continue
+		}
+		created, err := s.CreateUser(ctx, strings.TrimSpace(a.Username), randomSecret(), a.Role, false)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("creating account %q: %w", a.Username, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteUser(bg, created.ID) })
+		if err := restoreAccountPermissions(created.ID, a.Username, a); err != nil {
+			return nil, rollback(err)
 		}
 		report.AccountsCreated++
 		report.AccountsPendingPassword = append(report.AccountsPendingPassword, created.Username)
 	}
-	report.FileOptions = withoutSecrets(b.FileOptions)
+	if fo := withoutSecrets(b.FileOptions); fo != nil {
+		if rewritten, ok := rewriteRefs(fo, map[string]map[string]string{
+			"startup_layout_id":       layoutIDs,
+			"kiosk_primary_layout_id": layoutIDs,
+			"layout_id":               layoutIDs,
+			"target_layout_id":        layoutIDs,
+			"script_id":               scriptIDs,
+		}).(map[string]interface{}); ok {
+			report.FileOptions = rewritten
+		} else {
+			report.FileOptions = fo
+		}
+	}
 	report.PageSetup = b.PageSetup
 
 	// 7. Saved finds (#34). They are matched by table and name, so importing
@@ -982,6 +1038,7 @@ type importPlan struct {
 	scriptsByName map[string]*ScriptMetadata
 	valueLists    map[string]*ValueList // by lower-case name
 	users         map[string]bool       // lower-case usernames
+	userIDs       map[string]string     // lower-case username -> user id
 }
 
 func (p *importPlan) layoutFor(l BundleLayout) *LayoutMetadata {
@@ -1122,7 +1179,7 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 	plan := &importPlan{
 		tables: map[string]*TableMetadata{}, layoutsByID: map[string]*LayoutMetadata{}, layoutsByName: map[string]*LayoutMetadata{},
 		scriptsByID: map[string]*ScriptMetadata{}, scriptsByName: map[string]*ScriptMetadata{},
-		valueLists: map[string]*ValueList{}, users: map[string]bool{},
+		valueLists: map[string]*ValueList{}, users: map[string]bool{}, userIDs: map[string]string{},
 	}
 	existingValueLists, err := s.ListValueLists(ctx)
 	if err != nil {
@@ -1213,7 +1270,9 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 		return nil, err
 	}
 	for _, u := range users {
-		plan.users[strings.ToLower(u.Username)] = true
+		uname := strings.ToLower(u.Username)
+		plan.users[uname] = true
+		plan.userIDs[uname] = u.ID
 	}
 	return plan, nil
 }
@@ -1447,14 +1506,14 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	if err != nil {
 		return nil, fmt.Errorf("failed listing tables: %w", err)
 	}
-	userTables := make(map[string]map[string]bool, len(registered))
+	userTables := make(map[string]map[string]dbal.AgnosticFieldType, len(registered))
 	for _, t := range registered {
 		if dbal.IsReservedTableName(t.Name) {
 			continue
 		}
-		cols := make(map[string]bool, len(t.Columns))
+		cols := make(map[string]dbal.AgnosticFieldType, len(t.Columns))
 		for _, c := range t.Columns {
-			cols[c.Name] = true
+			cols[c.Name] = c.FieldType
 		}
 		userTables[t.Name] = cols
 	}
@@ -1469,7 +1528,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		tableNames = append(tableNames, tableName)
 		for i, row := range rows {
 			for k := range row {
-				if !cols[k] {
+				if _, exists := cols[k]; !exists {
 					return nil, fmt.Errorf("record %d of table %s has field '%s', which is not a field of that table", i+1, tableName, k)
 				}
 			}
@@ -1483,6 +1542,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	defer tx.Rollback()
 
 	for _, tableName := range tableNames {
+		cols := userTables[tableName]
 		// Validation rules whose timing is "always" apply to imports (#15)
 		fields, err := validation.LoadFields(ctx, tx, dialect, tableName)
 		if err != nil {
@@ -1501,6 +1561,13 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			vals := make([]interface{}, 0, len(row))
 			idx := 1
 			for k, v := range row {
+				colType := cols[k]
+				if strVal, ok := v.(string); ok && strVal == "" {
+					switch colType {
+					case dbal.FieldTypeNumber, dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
+						v = nil
+					}
+				}
 				colNames = append(colNames, dialect.QuoteIdentifier(k))
 				placeholders = append(placeholders, dialect.Placeholder(idx))
 				vals = append(vals, v)
