@@ -23,16 +23,19 @@ class ServerToolsDialog extends StatefulWidget {
     required this.apiClient, super.key,
     this.initialSection = ServerToolSection.containers,
     this.activeDatabase,
+    this.onDatabaseRestored,
   });
   final ApiClient apiClient;
   final ServerToolSection initialSection;
   final String? activeDatabase;
+  final VoidCallback? onDatabaseRestored;
 
   static Future<void> show(
     BuildContext context,
     ApiClient apiClient, {
     ServerToolSection initialSection = ServerToolSection.containers,
     String? activeDatabase,
+    VoidCallback? onDatabaseRestored,
   }) {
     return showDialog<void>(
       context: context,
@@ -41,6 +44,7 @@ class ServerToolsDialog extends StatefulWidget {
         apiClient: apiClient,
         initialSection: initialSection,
         activeDatabase: activeDatabase,
+        onDatabaseRestored: onDatabaseRestored,
       ),
     );
   }
@@ -937,13 +941,42 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Database Backups & Snapshots',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              const Text(
+                'Database Backups & Snapshots',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: _primaryBlue.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: _primaryBlue.withValues(alpha: 0.3)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.folder_outlined, size: 13, color: _primaryBlue),
+                    SizedBox(width: 5),
+                    SelectableText(
+                      './data/backups/  (container: /app/data/backups/)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: 'monospace',
+                        fontWeight: FontWeight.w600,
+                        color: _primaryBlue,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 2),
           Text(
-            'Create on-demand snapshots of schemas, layouts, scripts, value lists, and accounts stored in /data/backups.',
+            'Create point-in-time snapshots of tables, fields, layouts, scripts, value lists, and records stored in ./data/backups.',
             style: TextStyle(fontSize: 12, color: _mutedText),
           ),
           const SizedBox(height: 12),
@@ -1108,8 +1141,14 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                                               ),
                                               onPressed: () async {
                                                 try {
-                                                  await widget.apiClient.restoreServerBackup(id);
-                                                  _toast('Verified & restored snapshot $filename');
+                                                  final res = await widget.apiClient.restoreServerBackup(id);
+                                                  widget.onDatabaseRestored?.call();
+                                                  final layouts = res['layouts_restored'] ?? 0;
+                                                  final colsDropped = res['columns_dropped'] ?? 0;
+                                                  final colsCreated = res['columns_created'] ?? 0;
+                                                  _toast(
+                                                    'Restored $filename ($layouts layouts, -$colsDropped/+$colsCreated fields)',
+                                                  );
                                                 } catch (e) {
                                                   _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
                                                 }

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -30,6 +31,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 // AuditEvent represents a security or administrative event in the server audit log.
@@ -623,10 +625,17 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 
 	svc := schema.NewService(driver)
 	tables, _ := svc.ListTables(r.Context())
+	occurrences, _ := svc.ListTableOccurrences(r.Context())
+	relationships, _ := svc.ListRelationships(r.Context())
 	layouts, _ := svc.ListLayouts(r.Context())
 	scripts, _ := svc.ListScripts(r.Context())
 	valueLists, _ := svc.ListValueLists(r.Context())
 	users, _ := svc.ListUsers(r.Context())
+
+	solutionBytes, _ := svc.ExportSolution(r.Context(), schema.ExportOptions{
+		SolutionName: dbName,
+	})
+	dataBytes, _ := svc.ExportDatabaseData(r.Context(), dbName)
 
 	tableData := make(map[string]interface{}, len(tables))
 	for _, t := range tables {
@@ -645,19 +654,23 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 	}
 
 	payload := map[string]interface{}{
-		"id":           backupID,
-		"database":     dbName,
-		"engine":       string(h.dbMgr.Engine()),
-		"created_at":   now.Format(time.RFC3339),
-		"created_by":   sess.Username,
-		"notes":        req.Notes,
-		"type":         bkpType,
-		"tables_count": len(tables),
-		"tables":       tableData,
-		"layouts":      layouts,
-		"scripts":      scripts,
-		"value_lists":  valueLists,
-		"users":        users,
+		"id":                  backupID,
+		"database":            dbName,
+		"engine":              string(h.dbMgr.Engine()),
+		"created_at":          now.Format(time.RFC3339),
+		"created_by":          sess.Username,
+		"notes":               req.Notes,
+		"type":                bkpType,
+		"tables_count":        len(tables),
+		"tables":              tableData,
+		"table_occurrences":   occurrences,
+		"relationships":       relationships,
+		"layouts":             layouts,
+		"scripts":             scripts,
+		"value_lists":         valueLists,
+		"users":               users,
+		"solution_bundle_b64": base64.StdEncoding.EncodeToString(solutionBytes),
+		"data_bundle_b64":     base64.StdEncoding.EncodeToString(dataBytes),
 	}
 
 	encoded, err := json.MarshalIndent(payload, "", "  ")
@@ -708,7 +721,12 @@ func (h *ServerAdminHandler) DownloadBackup(w http.ResponseWriter, r *http.Reque
 	_, _ = w.Write(raw)
 }
 
-// RestoreBackup verifies a snapshot file and ensures system catalog tables on the target database.
+type backupTableSnapshot struct {
+	Metadata schema.TableMetadata    `json:"metadata"`
+	Columns  []schema.ColumnMetadata `json:"columns"`
+}
+
+// RestoreBackup performs a point-in-time restoration of tables, columns, layouts, scripts, value lists, and records from a snapshot file.
 func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
 	id := filepath.Base(chi.URLParam(r, "id"))
 	sess := currentSession(r)
@@ -724,23 +742,338 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 	}
 
 	var snap struct {
-		Database    string `json:"database"`
-		TablesCount int    `json:"tables_count"`
+		Database          string                         `json:"database"`
+		TablesCount       int                            `json:"tables_count"`
+		Tables            map[string]backupTableSnapshot `json:"tables"`
+		Layouts           []schema.LayoutMetadata        `json:"layouts"`
+		Scripts           []schema.ScriptMetadata        `json:"scripts"`
+		ValueLists        []schema.ValueList             `json:"value_lists"`
+		SolutionBundleB64 string                         `json:"solution_bundle_b64"`
+		DataBundleB64     string                         `json:"data_bundle_b64"`
 	}
 	if err := json.Unmarshal(raw, &snap); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Corrupt Backup", err.Error())
 		return
 	}
 
-	h.recordAudit("backup", "Restore Backup", sess.Username, sess.Database, id, "success", fmt.Sprintf("Verified and restored snapshot %s for database %s", id, snap.Database))
+	targetDB := strings.TrimSpace(snap.Database)
+	if targetDB == "" {
+		targetDB = sess.Database
+	}
+	driver, err := h.dbMgr.DriverFor(r.Context(), targetDB)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Restore Failed", err.Error())
+		return
+	}
+
+	ctx := r.Context()
+	svc := schema.NewService(driver)
+	if err := svc.EnsureSystemTables(ctx); err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+
+	tablesDropped := 0
+	tablesCreated := 0
+	columnsDropped := 0
+	columnsCreated := 0
+	layoutsRestored := 0
+	scriptsRestored := 0
+
+	// 1. Reconcile tables and columns against the snapshot (point-in-time DDL restoration)
+	if len(snap.Tables) > 0 {
+		snapTables := make(map[string]backupTableSnapshot, len(snap.Tables))
+		for rawName, entry := range snap.Tables {
+			normName := dbal.NormalizeIdentifier(rawName)
+			if normName == "" {
+				normName = dbal.NormalizeIdentifier(entry.Metadata.Name)
+			}
+			if normName != "" {
+				snapTables[normName] = entry
+			}
+		}
+
+		currentTables, err := svc.ListTables(ctx)
+		if err == nil {
+			for _, curTbl := range currentTables {
+				normCur := dbal.NormalizeIdentifier(curTbl.Name)
+				if _, existsInSnap := snapTables[normCur]; !existsInSnap {
+					if delErr := svc.DeleteTable(ctx, curTbl.ID); delErr == nil {
+						tablesDropped++
+					}
+				}
+			}
+		}
+
+		currentTables, _ = svc.ListTables(ctx)
+		curTableByName := make(map[string]schema.TableMetadata, len(currentTables))
+		for _, ct := range currentTables {
+			curTableByName[dbal.NormalizeIdentifier(ct.Name)] = ct
+		}
+
+		for normName, snapEntry := range snapTables {
+			curTbl, exists := curTableByName[normName]
+			if !exists {
+				disp := snapEntry.Metadata.DisplayName
+				if disp == "" {
+					disp = normName
+				}
+				created, createErr := svc.CreateTable(ctx, disp, normName)
+				if createErr != nil {
+					continue
+				}
+				curTbl = *created
+				tablesCreated++
+			}
+
+			cols := snapEntry.Columns
+			if len(cols) == 0 {
+				cols = snapEntry.Metadata.Columns
+			}
+			snapColsByName := make(map[string]schema.ColumnMetadata, len(cols))
+			for _, sc := range cols {
+				snapColsByName[dbal.NormalizeIdentifier(sc.Name)] = sc
+			}
+
+			curColsByName := make(map[string]schema.ColumnMetadata, len(curTbl.Columns))
+			for _, cc := range curTbl.Columns {
+				normCol := dbal.NormalizeIdentifier(cc.Name)
+				curColsByName[normCol] = cc
+				if !cc.IsPrimaryKey {
+					if _, keep := snapColsByName[normCol]; !keep {
+						if delErr := svc.DeleteColumn(ctx, curTbl.ID, cc.ID); delErr == nil {
+							columnsDropped++
+							delete(curColsByName, normCol)
+						}
+					}
+				}
+			}
+
+			// Add missing columns (non-calculations first, then calculations) and update existing columns
+			for _, calcPass := range []bool{false, true} {
+				for _, sc := range cols {
+					isCalc := strings.EqualFold(string(sc.FieldType), string(dbal.FieldTypeCalculation))
+					if isCalc != calcPass {
+						continue
+					}
+					normCol := dbal.NormalizeIdentifier(sc.Name)
+					if existingCol, found := curColsByName[normCol]; found {
+						if !sc.IsPrimaryKey && !calcPass {
+							_, _ = svc.UpdateColumn(ctx, curTbl.ID, existingCol.ID, schema.UpdateColumnOptions{
+								DisplayName:        sc.DisplayName,
+								DefaultValue:       sc.DefaultValue,
+								UpdateDefaultValue: true,
+								CalculationFormula: sc.CalculationFormula,
+								UpdateCalculation:  sc.CalculationFormula != nil,
+								ValidationRules:    sc.ValidationRules,
+								UpdateValidation:   sc.ValidationRules != nil,
+							})
+						}
+						continue
+					}
+					if sc.IsPrimaryKey {
+						continue
+					}
+					added, addErr := svc.AddColumn(ctx, curTbl.ID, schema.ColumnMetadata{
+						Name:               normCol,
+						DisplayName:        sc.DisplayName,
+						FieldType:          sc.FieldType,
+						IsNullable:         sc.IsNullable,
+						DefaultValue:       sc.DefaultValue,
+						CalculationFormula: sc.CalculationFormula,
+						ValidationRules:    sc.ValidationRules,
+					})
+					if addErr == nil && added != nil {
+						columnsCreated++
+						curColsByName[normCol] = *added
+					}
+				}
+			}
+		}
+	}
+
+	// 2. If a binary solution bundle is embedded, import occurrences, relationships, menu sets, and saved finds
+	if snap.SolutionBundleB64 != "" {
+		if solBytes, decErr := base64.StdEncoding.DecodeString(snap.SolutionBundleB64); decErr == nil && len(solBytes) > 0 {
+			_, _ = svc.ImportSolution(ctx, solBytes)
+		}
+	}
+
+	// 3. Reconcile scripts to match the snapshot exactly
+	if snap.Scripts != nil {
+		snapScriptIDs := make(map[string]bool, len(snap.Scripts))
+		snapScriptNames := make(map[string]bool, len(snap.Scripts))
+		for _, sc := range snap.Scripts {
+			snapScriptIDs[sc.ID] = true
+			snapScriptNames[sc.Name] = true
+		}
+
+		currentScripts, _ := svc.ListScripts(ctx)
+		curScriptByID := make(map[string]schema.ScriptMetadata, len(currentScripts))
+		curScriptByName := make(map[string]schema.ScriptMetadata, len(currentScripts))
+		for _, cs := range currentScripts {
+			if len(snap.Scripts) > 0 && !snapScriptIDs[cs.ID] && !snapScriptNames[cs.Name] {
+				_ = svc.DeleteScript(ctx, cs.ID)
+				continue
+			}
+			curScriptByID[cs.ID] = cs
+			curScriptByName[cs.Name] = cs
+		}
+
+		for _, sc := range snap.Scripts {
+			remappedSteps := make([]schema.ScriptStepMetadata, 0, len(sc.Steps))
+			stepIDMap := make(map[string]string, len(sc.Steps))
+			for _, st := range sc.Steps {
+				if st.ID != "" {
+					stepIDMap[st.ID] = uuid.NewString()
+				}
+			}
+			for i, st := range sc.Steps {
+				newID := stepIDMap[st.ID]
+				if newID == "" {
+					newID = uuid.NewString()
+				}
+				seq := st.SequenceIdx
+				if seq <= 0 {
+					seq = i + 1
+				}
+				var parentID *string
+				if st.ParentStepID != nil && *st.ParentStepID != "" {
+					if mapped, ok := stepIDMap[*st.ParentStepID]; ok {
+						parentID = &mapped
+					}
+				}
+				params := st.Params
+				if len(params) == 0 {
+					params = json.RawMessage(`{}`)
+				}
+				remappedSteps = append(remappedSteps, schema.ScriptStepMetadata{
+					ID:           newID,
+					SequenceIdx:  seq,
+					StepType:     st.StepType,
+					Params:       params,
+					IsEnabled:    st.IsEnabled,
+					ParentStepID: parentID,
+				})
+			}
+
+			if existing, ok := curScriptByID[sc.ID]; ok {
+				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, remappedSteps); err == nil {
+					scriptsRestored++
+				}
+			} else if existing, ok := curScriptByName[sc.Name]; ok {
+				if _, err := svc.UpdateScript(ctx, existing.ID, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, remappedSteps); err == nil {
+					scriptsRestored++
+				}
+			} else {
+				if _, err := svc.CreateScript(ctx, sc.Name, sc.ContextTable, sc.FolderID, sc.IsActive, remappedSteps); err == nil {
+					scriptsRestored++
+				}
+			}
+		}
+	}
+
+	// 4. Reconcile layouts to match the snapshot exactly (removing extra layouts or fields added after the backup)
+	if len(snap.Layouts) > 0 {
+		snapLayoutIDs := make(map[string]bool, len(snap.Layouts))
+		snapLayoutNames := make(map[string]bool, len(snap.Layouts))
+		for _, sl := range snap.Layouts {
+			snapLayoutIDs[sl.ID] = true
+			snapLayoutNames[sl.Name] = true
+		}
+
+		currentLayouts, _ := svc.ListLayouts(ctx)
+		curLayoutByID := make(map[string]schema.LayoutMetadata, len(currentLayouts))
+		curLayoutByName := make(map[string]schema.LayoutMetadata, len(currentLayouts))
+		for _, cl := range currentLayouts {
+			if !snapLayoutIDs[cl.ID] && !snapLayoutNames[cl.Name] {
+				_ = svc.DeleteLayout(ctx, cl.ID)
+				continue
+			}
+			curLayoutByID[cl.ID] = cl
+			curLayoutByName[cl.Name] = cl
+		}
+
+		currentOccs, _ := svc.ListTableOccurrences(ctx)
+		occByID := make(map[string]string, len(currentOccs))
+		occByName := make(map[string]string, len(currentOccs))
+		var defaultOccID string
+		for _, o := range currentOccs {
+			occByID[o.ID] = o.ID
+			occByName[strings.ToLower(o.Name)] = o.ID
+			if defaultOccID == "" {
+				defaultOccID = o.ID
+			}
+		}
+
+		for _, sl := range snap.Layouts {
+			if existing, ok := curLayoutByID[sl.ID]; ok {
+				if _, err := svc.UpdateLayout(ctx, existing.ID, sl.Name, sl.Definition); err == nil {
+					layoutsRestored++
+				}
+				continue
+			}
+			if existing, ok := curLayoutByName[sl.Name]; ok {
+				if _, err := svc.UpdateLayout(ctx, existing.ID, sl.Name, sl.Definition); err == nil {
+					layoutsRestored++
+				}
+				continue
+			}
+
+			targetOccID := occByID[sl.TableOccurrenceID]
+			if targetOccID == "" {
+				var defObj map[string]interface{}
+				if json.Unmarshal(sl.Definition, &defObj) == nil {
+					if occName, ok := defObj["table_occurrence"].(string); ok && occName != "" {
+						targetOccID = occByName[strings.ToLower(occName)]
+					}
+				}
+			}
+			if targetOccID == "" {
+				targetOccID = defaultOccID
+			}
+			if targetOccID != "" {
+				if _, err := svc.CreateLayout(ctx, sl.Name, targetOccID, sl.Definition); err == nil {
+					layoutsRestored++
+				}
+			}
+		}
+	}
+
+	// 5. Reconcile table row data if present in the snapshot
+	recordsRestored := 0
+	if snap.DataBundleB64 != "" {
+		if dataBytes, decErr := base64.StdEncoding.DecodeString(snap.DataBundleB64); decErr == nil && len(dataBytes) > 0 {
+			currentTables, _ := svc.ListTables(ctx)
+			for _, ct := range currentTables {
+				_ = svc.TruncateTable(ctx, ct.ID)
+			}
+			if dataReport, impErr := svc.ImportDatabaseData(ctx, dataBytes); impErr == nil && dataReport != nil {
+				recordsRestored = dataReport.RecordsInserted
+			}
+		}
+	}
+
+	details := fmt.Sprintf(
+		"Restored snapshot %s on %s (%d layouts, %d cols dropped, %d cols added, %d tables dropped, %d rows restored)",
+		id, targetDB, layoutsRestored, columnsDropped, columnsCreated, tablesDropped, recordsRestored,
+	)
+	h.recordAudit("backup", "Restore Backup", sess.Username, targetDB, id, "success", details)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":           id,
-		"database":     snap.Database,
-		"tables_count": snap.TablesCount,
-		"status":       "restored",
-		"restored_at":  time.Now().UTC().Format(time.RFC3339),
+		"id":               id,
+		"database":         targetDB,
+		"tables_count":     snap.TablesCount,
+		"tables_dropped":   tablesDropped,
+		"tables_created":   tablesCreated,
+		"columns_dropped":  columnsDropped,
+		"columns_created":  columnsCreated,
+		"layouts_restored": layoutsRestored,
+		"scripts_restored": scriptsRestored,
+		"records_restored": recordsRestored,
+		"status":           "restored",
+		"restored_at":      time.Now().UTC().Format(time.RFC3339),
 	})
 }
 

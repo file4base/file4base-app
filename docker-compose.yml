@@ -66,6 +66,7 @@ services:
       FILE4BASE_CHANNEL_SECRET: "${FILE4BASE_CHANNEL_SECRET:-}"
     volumes:
       - api_data:/app/data
+      - ./data/backups:/app/data/backups
     depends_on:
       postgres:
         condition: service_healthy

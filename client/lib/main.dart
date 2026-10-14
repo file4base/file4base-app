@@ -2089,6 +2089,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ref.read(apiClientProvider),
                       initialSection: section,
                       activeDatabase: _activeDatabaseName,
+                      onDatabaseRestored: _loadTables,
                     );
                   },
                   menuSets: _menuSets,
