@@ -1830,7 +1830,7 @@ See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for t
 
 File4Base supports RFC 6238 Time-Based One-Time Password (TOTP) two-factor authentication compatible with Google Authenticator, Authy, 1Password, and any standard `otpauth://totp/` authenticator app.
 
-When `mfa_enabled` is `true` for an account, `POST /api/v1/security/login` requires `"totp_code": "123456"` in addition to `username` and `password`. If `totp_code` is omitted when MFA is enabled, `POST /api/v1/security/login` returns `401 Unauthorized` with `"mfa_required": true`.
+When `mfa_enabled` is `true` for an account, `POST /api/v1/auth/login` requires `"totp_code": "123456"` in addition to `username` and `password`. If `totp_code` is omitted when MFA is enabled, `POST /api/v1/auth/login` returns `401 Unauthorized` with `"mfa_required": true`.
 
 ### `POST /api/v1/security/users/{id}/mfa/setup`
 *Requires `admin` or `owner` role (or the user's own session).* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.

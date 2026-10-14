@@ -1166,13 +1166,38 @@
         }
       }
     },
-    "/api/v1/solutions/save-copy": {
+    "/api/v1/solutions/export": {
+      "get": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Export Solution Package (.f4p)",
+        "description": "Exports the solution design (tables, columns, occurrences, relationships, layouts, scripts, value lists, accounts, and file options) as a MessagePack (.f4p) archive.",
+        "responses": {
+          "200": {
+            "description": "Binary MessagePack (.f4p) solution file",
+            "content": {
+              "application/x-msgpack": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
       "post": {
         "tags": [
           "Solutions & Backup"
         ],
-        "summary": "Save Copy as MessagePack Solution Archive",
-        "description": "Generates a complete standalone solution snapshot including tables, columns, occurrences, relationships, layouts, users, permissions, and data records.",
+        "summary": "Export Solution Package (.f4p) with Custom Options",
         "responses": {
           "200": {
             "description": "Binary MessagePack (.f4p) solution file",
@@ -1194,13 +1219,13 @@
         }
       }
     },
-    "/api/v1/solutions/load-copy": {
+    "/api/v1/solutions/import": {
       "post": {
         "tags": [
           "Solutions & Backup"
         ],
-        "summary": "Load MessagePack Solution Archive",
-        "description": "Restores or imports a full database solution package into the active catalog.",
+        "summary": "Import Solution Package (.f4p)",
+        "description": "Restores or merges a MessagePack (.f4p) solution package into the active database.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1214,13 +1239,217 @@
         },
         "responses": {
           "200": {
-            "description": "Solution loaded successfully"
+            "description": "Solution imported successfully"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/export-data": {
+      "get": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Export Database Data (.f4data)",
+        "description": "Exports all rows from all user tables as a MessagePack (.f4data) data bundle.",
+        "responses": {
+          "200": {
+            "description": "Binary MessagePack (.f4data) data file",
+            "content": {
+              "application/x-msgpack": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/import-data": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Import Database Data (.f4data)",
+        "description": "Restores table records from a MessagePack (.f4data) data bundle into the active database.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-msgpack": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Database data restored successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/security/users/{id}/mfa/setup": {
+      "post": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Provision RFC 6238 TOTP MFA Secret & QR URI",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "TOTP secret and otpauth:// URI"
+          }
+        }
+      }
+    },
+    "/api/v1/security/users/{id}/mfa/enable": {
+      "post": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Verify TOTP Code and Enable MFA",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "MFA enabled"
+          }
+        }
+      }
+    },
+    "/api/v1/security/users/{id}/mfa/disable": {
+      "post": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Disable MFA for User",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "MFA disabled"
+          }
+        }
+      }
+    },
+    "/api/v1/server/telemetry": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Get Rolling 60-Minute API Telemetry & Runtime Metrics",
+        "responses": {
+          "200": {
+            "description": "Live telemetry snapshot"
+          }
+        }
+      }
+    },
+    "/api/v1/server/containers": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "List Docker Containers & Version Update Status",
+        "responses": {
+          "200": {
+            "description": "Container health and version comparison"
+          }
+        }
+      }
+    },
+    "/api/v1/server/containers/check-updates": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Check GitHub Releases & Docker Hub for Newer Container Versions",
+        "responses": {
+          "200": {
+            "description": "Update check results"
+          }
+        }
+      }
+    },
+    "/api/v1/server/containers/update": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Create Pre-Update Snapshot and Trigger Container Update",
+        "responses": {
+          "200": {
+            "description": "Pre-update snapshot created and update prepared"
+          }
+        }
+      }
+    },
+    "/api/v1/server/backups": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "List Stored Point-in-Time Server Snapshots",
+        "responses": {
+          "200": {
+            "description": "List of server snapshots"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Create On-Demand Point-in-Time Server Snapshot",
+        "responses": {
+          "201": {
+            "description": "Snapshot created"
           }
         }
       }
