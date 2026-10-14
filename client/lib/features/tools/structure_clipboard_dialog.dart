@@ -1,8 +1,8 @@
 import 'dart:convert';
+
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
-import '../../core/api/api_client.dart';
 
 /// Helper and preview dialog for copying and pasting design objects (`table`,
 /// `columns`, `layout`, `script`) between solutions as reviewable JSON text on
@@ -90,7 +90,7 @@ class StructureClipboardService {
       rawText = _lastCopiedJson;
     }
 
-    Map<String, dynamic>? envelope = _tryParseEnvelope(rawText);
+    var envelope = _tryParseEnvelope(rawText);
     if (envelope == null && context.mounted) {
       rawText = await _promptForEnvelopeText(context, initialText: rawText);
       if (rawText == null) return null;
@@ -134,7 +134,7 @@ class StructureClipboardService {
         database: database,
       );
 
-      String onCollision = 'rename';
+      var onCollision = 'rename';
       if (preview.hasCollision || preview.missingDependencies.isNotEmpty) {
         if (!context.mounted) return null;
         final decision = await StructurePastePreviewDialog.show(
@@ -228,14 +228,12 @@ class StructureClipboardService {
 /// Dialog shown before pasting when the destination solution has a name
 /// collision or missing dependencies (#54).
 class StructurePastePreviewDialog extends StatefulWidget {
-  final ClipboardPreviewModel preview;
-  final String envelopeJson;
 
   const StructurePastePreviewDialog({
-    super.key,
-    required this.preview,
-    required this.envelopeJson,
+    required this.preview, required this.envelopeJson, super.key,
   });
+  final ClipboardPreviewModel preview;
+  final String envelopeJson;
 
   /// Returns `'rename'`, `'replace'`, or `null` if cancelled.
   static Future<String?> show(

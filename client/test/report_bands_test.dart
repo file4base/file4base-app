@@ -1,10 +1,10 @@
 // #32 — a report lays the found set out as bands: a sub-summary before (or
 // after) the records of each group, and grand summaries around the lot.
 
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/report_view.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 /// A report layout: header, optional leading sub-summary, body, optional
 /// trailing sub-summary, optional trailing grand summary, footer.
@@ -231,11 +231,11 @@ void main() {
   });
 
   test('a sub-summary whose break field is not set summarizes nothing', () {
-    final layout = LayoutDefinitionModel(
+    const layout = LayoutDefinitionModel(
       id: 'r',
       name: 'r',
       tableOccurrence: 'customers',
-      parts: const [
+      parts: [
         LayoutPartModel(id: 'sub', type: LayoutPartType.subSummary, height: 24),
         LayoutPartModel(id: 'body', type: LayoutPartType.body, height: 24),
       ],
@@ -307,7 +307,7 @@ void main() {
       expect(formatSummaryValue('700.0000', SummaryType.total), '700');
     });
 
-    test('an average is shown to two decimals, not to the engine\'s precision', () {
+    test("an average is shown to two decimals, not to the engine's precision", () {
       expect(formatSummaryValue('133.3333333333333333', SummaryType.average), '133.33');
       expect(formatSummaryValue('12.5', SummaryType.standardDeviation), '12.50');
     });

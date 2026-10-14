@@ -8,7 +8,7 @@ import 'package:http/testing.dart';
 
 void main() {
   group('PayloadCipher (AES-256-GCM)', () {
-    test('encrypts and decrypts binary and JSON payloads with F4BE\\x01 envelope', () {
+    test(r'encrypts and decrypts binary and JSON payloads with F4BE\x01 envelope', () {
       final cipher = PayloadCipher(secret: 'test-channel-secret-2026');
       expect(cipher.keyFingerprint.length, 16);
 
@@ -68,7 +68,6 @@ void main() {
       });
 
       final api = ApiClient(
-        baseUrl: 'http://127.0.0.1:8080',
         httpClient: mockHttp,
         channelSecret: 'shared-api-secret',
         encryptRequests: true,

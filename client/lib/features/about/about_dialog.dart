@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
 class AboutFile4BaseDialog extends StatefulWidget {
-  final String serverStatus;
 
-  const AboutFile4BaseDialog({super.key, required this.serverStatus});
+  const AboutFile4BaseDialog({required this.serverStatus, super.key});
+  final String serverStatus;
 
   static void show(BuildContext context, {required String serverStatus}) {
     showDialog(
@@ -21,7 +21,7 @@ class _AboutFile4BaseDialogState extends State<AboutFile4BaseDialog>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  static const String _version = '0.12.1';
+  static const String _version = '0.13.0';
 
   @override
   void initState() {
@@ -601,7 +601,7 @@ class _AboutFile4BaseDialogState extends State<AboutFile4BaseDialog>
             child: Image.asset(
               'assets/branding/file4base-icon-256.png',
               fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => const Icon(
+              errorBuilder: (_, _, _) => const Icon(
                 Icons.folder_special,
                 size: 64,
                 color: Color(0xFF1E88E5),

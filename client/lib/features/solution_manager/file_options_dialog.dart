@@ -1,21 +1,19 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/file_options_model.dart';
+import 'package:file4base_client/features/security/change_password_dialog.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/models/file_options_model.dart';
-import '../security/change_password_dialog.dart';
 
 class FileOptionsDialog extends StatefulWidget {
+
+  const FileOptionsDialog({
+    required this.initialOptions, required this.layouts, super.key,
+    this.currentUser,
+    this.apiClient,
+  });
   final FileOptionsModel initialOptions;
   final List<LayoutModel> layouts;
   final UserModel? currentUser;
   final ApiClient? apiClient;
-
-  const FileOptionsDialog({
-    super.key,
-    required this.initialOptions,
-    required this.layouts,
-    this.currentUser,
-    this.apiClient,
-  });
 
   static Future<FileOptionsModel?> show(
     BuildContext context, {
@@ -26,7 +24,6 @@ class FileOptionsDialog extends StatefulWidget {
   }) {
     return showDialog<FileOptionsModel>(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => FileOptionsDialog(
         initialOptions: initialOptions,
         layouts: layouts,
@@ -164,7 +161,7 @@ class _FileOptionsDialogState extends State<FileOptionsDialog> with SingleTicker
   }
 
   void _onSave() {
-    String startupLayoutName = '';
+    var startupLayoutName = '';
     if (_switchLayoutOnOpen && _selectedLayoutId != null) {
       final found = widget.layouts.where((l) => l.id == _selectedLayoutId).firstOrNull;
       if (found != null) {

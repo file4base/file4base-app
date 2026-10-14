@@ -1,13 +1,13 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/export_records_dialog.dart';
+import 'package:file4base_client/features/security/change_password_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/features/security/change_password_dialog.dart';
-import 'package:file4base_client/features/data_browser/export_records_dialog.dart';
 
 void main() {
-  testWidgets('ChangePasswordDialog renders inputs and validates matching password', (WidgetTester tester) async {
+  testWidgets('ChangePasswordDialog renders inputs and validates matching password', (tester) async {
     final client = ApiClient(baseUrl: 'http://localhost:8080');
-    final user = UserModel(id: 'usr-1', username: 'admin', role: 'admin');
+    const user = UserModel(id: 'usr-1', username: 'admin', role: 'admin');
 
     await tester.pumpWidget(
       MaterialApp(
@@ -46,13 +46,13 @@ void main() {
     expect(find.text('Change Password'), findsNothing);
   });
 
-  testWidgets('ExportRecordsDialog renders table selection and export formats', (WidgetTester tester) async {
+  testWidgets('ExportRecordsDialog renders table selection and export formats', (tester) async {
     final client = ApiClient(baseUrl: 'http://localhost:8080');
-    final table = TableModel(
+    const table = TableModel(
       id: 'tbl-1',
       name: 'customers',
       displayName: 'Customers',
-      columns: const [
+      columns: [
         ColumnModel(id: 'c1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'VARCHAR'),
         ColumnModel(id: 'c2', tableId: 'tbl-1', name: 'name', displayName: 'Name', fieldType: 'VARCHAR'),
       ],

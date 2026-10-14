@@ -22,15 +22,20 @@ jobs:
       checks: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: '1.25.1'
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Go Vet Static Analysis
+        working-directory: server
+        run: go vet ./...
 
       - name: Qodana Go Scan
         uses: JetBrains/qodana-action@v2024.3
@@ -52,7 +57,7 @@ jobs:
         working-directory: client
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.Ref || github.ref_name }}
 

@@ -1,21 +1,21 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
 import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('File4BaseMenuBar renders 10 canonical menus and switches Records to Requests in Find mode',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    OperationalMode currentMode = OperationalMode.browse;
-    bool manageDatabaseCalled = false;
-    bool openRemoteCalled = false;
-    bool aboutCalled = false;
-    bool toolbarVisible = true;
+    var currentMode = OperationalMode.browse;
+    var manageDatabaseCalled = false;
+    var openRemoteCalled = false;
+    var aboutCalled = false;
+    var toolbarVisible = true;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -86,13 +86,13 @@ void main() {
   });
 
   testWidgets('File4BaseMenuBar displays Sign In when unauthenticated and Sign Out when authenticated',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    bool signInCalled = false;
-    bool signOutCalled = false;
+    var signInCalled = false;
+    var signOutCalled = false;
 
     // 1. Unauthenticated test
     await tester.pumpWidget(
@@ -133,7 +133,6 @@ void main() {
         home: Scaffold(
           body: File4BaseMenuBar(
             activeMode: OperationalMode.browse,
-            isAuthenticated: true,
             onSignIn: () => signInCalled = true,
             onSignOut: () => signOutCalled = true,
             onModeChanged: (_) {},
@@ -162,19 +161,18 @@ void main() {
   });
 
   testWidgets('File4BaseMenuBar Help menu renders all functional items and opens dialogs',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    bool aboutCalled = false;
+    var aboutCalled = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: File4BaseMenuBar(
             activeMode: OperationalMode.browse,
-            isAuthenticated: true,
             onSignIn: () {},
             onSignOut: () {},
             onModeChanged: (_) {},
@@ -242,17 +240,16 @@ void main() {
     expect(find.text('Check for Updates'), findsNothing);
   });
 
-  testWidgets('File menu has removed Close, Sharing, and Save/Send Records As, and triggers callbacks', (WidgetTester tester) async {
-    bool changePasswordCalled = false;
-    bool exportRecordsCalled = false;
-    bool printCalled = false;
+  testWidgets('File menu has removed Close, Sharing, and Save/Send Records As, and triggers callbacks', (tester) async {
+    var changePasswordCalled = false;
+    var exportRecordsCalled = false;
+    var printCalled = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: File4BaseMenuBar(
             activeMode: OperationalMode.browse,
-            isAuthenticated: true,
             onChangePassword: () => changePasswordCalled = true,
             onExportRecords: () => exportRecordsCalled = true,
             onPrint: () => printCalled = true,
@@ -302,15 +299,14 @@ void main() {
     expect(printCalled, isTrue);
   });
 
-  testWidgets('File menu has Quit item and triggers onQuit callback', (WidgetTester tester) async {
-    bool quitCalled = false;
+  testWidgets('File menu has Quit item and triggers onQuit callback', (tester) async {
+    var quitCalled = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: File4BaseMenuBar(
             activeMode: OperationalMode.browse,
-            isAuthenticated: true,
             onQuit: () => quitCalled = true,
             onModeChanged: (_) {},
             onManageDatabase: () {},
@@ -338,7 +334,7 @@ void main() {
   });
 
   testWidgets('AboutFile4BaseDialog uses File4Base Web Client name and surfaces third-party license notices',
-      (WidgetTester tester) async {
+      (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
         home: Scaffold(
@@ -363,5 +359,143 @@ void main() {
     expect(find.textContaining('THIRD_PARTY_NOTICES/pdfium/LICENSE'), findsOneWidget);
     expect(find.text('View Open-Source Licenses'), findsOneWidget);
     expect(find.textContaining('WebDirect'), findsNothing);
+  });
+
+  testWidgets('Edit menu Undo, Redo, Cut, Copy, Paste, Clear, and Select All operate on focused TextField',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final controller = TextEditingController(text: 'Hello File4Base');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              File4BaseMenuBar(
+                activeMode: OperationalMode.browse,
+                onModeChanged: (_) {},
+                onManageDatabase: () {},
+                onOpenRemote: () {},
+                onAbout: () {},
+                isToolbarVisible: true,
+                onToggleToolbar: (_) {},
+              ),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: TextField(
+                  key: const ValueKey('test-field'),
+                  controller: controller,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Focus the text field and type new text
+    await tester.tap(find.byKey(const ValueKey('test-field')));
+    await tester.pumpAndSettle();
+    controller.text = 'Updated Recipe';
+    await tester.pump();
+
+    // 1. Undo restores 'Hello File4Base'
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+    expect(controller.text, 'Hello File4Base');
+
+    // 2. Redo restores 'Updated Recipe'
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Redo'));
+    await tester.pumpAndSettle();
+    expect(controller.text, 'Updated Recipe');
+
+    // 3. Select All selects the entire text
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Select All'));
+    await tester.pumpAndSettle();
+    expect(controller.selection.baseOffset, 0);
+    expect(controller.selection.extentOffset, 'Updated Recipe'.length);
+
+    // 4. Cut removes the selected text and stores it in clipboard
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cut'));
+    await tester.pumpAndSettle();
+    expect(controller.text, isEmpty);
+
+    // 5. Paste restores the cut text
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Paste'));
+    await tester.pumpAndSettle();
+    expect(controller.text, 'Updated Recipe');
+
+    // 6. Clear empties the text field
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clear'));
+    await tester.pumpAndSettle();
+    expect(controller.text, isEmpty);
+  });
+
+  testWidgets('Server Tools menu appears after Tools and dispatches onServerToolSelected for all 9 tools',
+      (tester) async {
+    tester.view.physicalSize = const Size(1440, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final selectedTools = <String>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: File4BaseMenuBar(
+            activeMode: OperationalMode.browse,
+            onModeChanged: (_) {},
+            onManageDatabase: () {},
+            onOpenRemote: () {},
+            onAbout: () {},
+            isToolbarVisible: true,
+            onToggleToolbar: (_) {},
+            onServerToolSelected: selectedTools.add,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Tools'), findsOneWidget);
+    expect(find.text('Server Tools'), findsOneWidget);
+
+    final menuItems = <(String, String)>[
+      ('Containers & Services...', 'containers'),
+      ('Backups & Snapshots...', 'backups'),
+      ('Domain & SSL/TLS Certificates (ACME)...', 'domain_tls'),
+      ('API Telemetry & Live Metrics...', 'telemetry'),
+      ('Connected Clients & Sessions...', 'sessions'),
+      ('Scheduled Tasks & Cron Scripts...', 'schedules'),
+      ('Audit & Security Logs...', 'audit_logs'),
+      ('Database Maintenance & Optimizer...', 'maintenance'),
+      ('Server Notifications, SMTP & Webhooks...', 'notifications'),
+    ];
+
+    for (final (label, key) in menuItems) {
+      await tester.tap(find.text('Server Tools'));
+      await tester.pumpAndSettle();
+      expect(find.text(label), findsOneWidget);
+      await tester.tap(find.text(label));
+      await tester.pumpAndSettle();
+      expect(selectedTools.last, key);
+    }
+    expect(selectedTools.length, 9);
   });
 }

@@ -1,21 +1,30 @@
 import 'dart:math' as math;
 
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
+import 'package:file4base_client/features/data_browser/report_view.dart';
+import 'package:file4base_client/features/layout_engine/chart_view.dart';
+import 'package:file4base_client/features/layout_engine/label_sheet_view.dart';
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:file4base_client/features/layout_engine/layout_print_service.dart';
+import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_blueprint.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import '../../core/api/api_client.dart';
-import '../../core/models/page_setup_model.dart';
-import 'layout_object_visuals.dart';
-import 'layout_print_service.dart';
-import 'models/layout_definition.dart';
-import 'models/layout_blueprint.dart';
-import 'models/chart_definition.dart';
-import 'chart_view.dart';
-import 'label_sheet_view.dart';
-import '../data_browser/report_view.dart';
-import '../data_browser/data_browser_widget.dart';
 
 class LayoutPreviewWidget extends StatefulWidget {
+
+  const LayoutPreviewWidget({
+    required this.table, required this.apiClient, required this.layout, super.key,
+    this.pageSetup = const PageSetupModel(),
+    this.onPageSetup,
+    this.currentUserName,
+    this.findRequests = const [],
+    this.onAttach,
+  });
   final TableModel table;
   final ApiClient apiClient;
   final LayoutDefinitionModel layout;
@@ -30,18 +39,6 @@ class LayoutPreviewWidget extends StatefulWidget {
   /// Receives this preview's state while it is on screen (null when it
   /// goes away), so File > Print can print the previewed page.
   final ValueChanged<LayoutPreviewWidgetState?>? onAttach;
-
-  const LayoutPreviewWidget({
-    super.key,
-    required this.table,
-    required this.apiClient,
-    required this.layout,
-    this.pageSetup = const PageSetupModel(),
-    this.onPageSetup,
-    this.currentUserName,
-    this.findRequests = const [],
-    this.onAttach,
-  });
 
   @override
   State<LayoutPreviewWidget> createState() => LayoutPreviewWidgetState();
@@ -109,7 +106,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
   Map<String, SummarySpecModel> get _summarySpecs => {
         for (final col in widget.table.columns)
           if (col.fieldType == 'SUMMARY')
-            if (SummarySpecModel.tryParse(col.calculationFormula) case final spec?) col.name: spec,
+            col.name: ?SummarySpecModel.tryParse(col.calculationFormula),
       };
 
   Future<void> _fetchRecords() async {
@@ -409,7 +406,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         const Divider(height: 1),
         // Document Page Preview (Simulating Sheet paper)
         Expanded(
-          child: Container(
+          child: ColoredBox(
             color: Theme.of(context).colorScheme.surfaceContainerLowest,
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(32),
@@ -507,7 +504,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         ? _records[_currentRecordIndex]
         : <String, dynamic>{};
 
-    double maxObjY = 0.0;
+    var maxObjY = 0.0;
     for (final obj in widget.layout.objects) {
       final bottom = obj.y + obj.height;
       if (bottom > maxObjY) maxObjY = bottom;
@@ -748,7 +745,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
           'assets/branding/file4base-icon-64.png',
           width: 36,
           height: 36,
-          errorBuilder: (_, __, ___) => const Icon(Icons.table_chart, size: 36, color: Colors.blue),
+          errorBuilder: (_, _, _) => const Icon(Icons.table_chart, size: 36, color: Colors.blue),
         ),
       ],
     );

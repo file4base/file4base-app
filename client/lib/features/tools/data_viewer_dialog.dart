@@ -2,22 +2,29 @@
 // the fields of the record in hand, and expressions you watch, evaluated by
 // the same engine that fills the calculation fields.
 
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
-
-import '../../core/api/api_client.dart';
 
 /// One watched expression and what it last came to.
 class WatchedExpression {
-  final String expression;
-  final EvaluationModel? result;
 
   const WatchedExpression({required this.expression, this.result});
+  final String expression;
+  final EvaluationModel? result;
 
   WatchedExpression withResult(EvaluationModel? result) =>
       WatchedExpression(expression: expression, result: result);
 }
 
 class DataViewerDialog extends StatefulWidget {
+
+  const DataViewerDialog({
+    required this.apiClient, required this.table, super.key,
+    this.record,
+    this.recordId,
+    this.initialWatches = const [],
+    this.onWatchesChanged,
+  });
   final ApiClient apiClient;
   final TableModel? table;
 
@@ -31,16 +38,6 @@ class DataViewerDialog extends StatefulWidget {
   /// closing the dialog.
   final List<String> initialWatches;
   final ValueChanged<List<String>>? onWatchesChanged;
-
-  const DataViewerDialog({
-    super.key,
-    required this.apiClient,
-    required this.table,
-    this.record,
-    this.recordId,
-    this.initialWatches = const [],
-    this.onWatchesChanged,
-  });
 
   static Future<void> show(
     BuildContext context, {
@@ -324,7 +321,7 @@ class _DataViewerDialogState extends State<DataViewerDialog> with SingleTickerPr
                 )
               : ListView.separated(
                   itemCount: _watches.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) => _watchRow(index, _watches[index]),
                 ),
         ),

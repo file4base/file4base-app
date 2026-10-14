@@ -1,7 +1,8 @@
 import 'dart:typed_data';
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/services/solution_storage.dart';
 
 enum SaveCopyType {
   bothFiles,    // .f4p + .f4data (Recommended)
@@ -10,18 +11,14 @@ enum SaveCopyType {
 }
 
 class SaveCopyDialog extends StatefulWidget {
+
+  const SaveCopyDialog({
+    required this.apiClient, required this.activeSolutionName, required this.activeDatabaseName, required this.onExportSolution, super.key,
+  });
   final ApiClient apiClient;
   final String activeSolutionName;
   final String activeDatabaseName;
   final Future<Uint8List> Function() onExportSolution;
-
-  const SaveCopyDialog({
-    super.key,
-    required this.apiClient,
-    required this.activeSolutionName,
-    required this.activeDatabaseName,
-    required this.onExportSolution,
-  });
 
   static Future<void> show(
     BuildContext context, {

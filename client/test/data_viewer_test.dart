@@ -18,7 +18,7 @@ const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers',
   ColumnModel(id: 'c2', tableId: 't1', name: 'fee_paid', displayName: 'Fee Paid', fieldType: 'NUMBER'),
 ]);
 
-const _record = {'id': 'r1', 'last_name': 'Durand', 'fee_paid': 100};
+const Map<String, Object> _record = {'id': 'r1', 'last_name': 'Durand', 'fee_paid': 100};
 
 /// Answers each expression with something recognisable, and records what was
 /// asked for.

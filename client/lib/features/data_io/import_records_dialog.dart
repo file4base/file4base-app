@@ -4,10 +4,9 @@
 
 import 'dart:typed_data';
 
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:flutter/material.dart';
-
-import '../../core/api/api_client.dart';
-import '../../core/services/solution_storage.dart';
 
 /// How a date like 03/04/2011 is to be read. There is no telling from the
 /// value, so the reader says rather than the import guessing.
@@ -34,6 +33,13 @@ class ImportAction {
 enum ImportSourceKind { file, external }
 
 class ImportRecordsDialog extends StatefulWidget {
+
+  const ImportRecordsDialog({
+    required this.table, required this.apiClient, super.key,
+    this.fileName,
+    this.bytes,
+    this.initialSource = ImportSourceKind.file,
+  });
   final TableModel table;
   final ApiClient apiClient;
 
@@ -43,15 +49,6 @@ class ImportRecordsDialog extends StatefulWidget {
 
   /// Which kind of source the dialog opens on.
   final ImportSourceKind initialSource;
-
-  const ImportRecordsDialog({
-    super.key,
-    required this.table,
-    required this.apiClient,
-    this.fileName,
-    this.bytes,
-    this.initialSource = ImportSourceKind.file,
-  });
 
   /// Shows the dialog. Returns the report when records were imported, so the
   /// caller can refresh, or null when nothing was.
@@ -257,7 +254,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
   void _guessMapping() {
     final preview = _preview;
     if (preview == null) return;
-    String key(String s) => s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
+    String key(String s) => s.toLowerCase().replaceAll(RegExp('[^a-z0-9]'), '');
 
     final taken = <String>{};
     setState(() {
@@ -696,7 +693,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
             child: DropdownButtonFormField<String>(
               key: const ValueKey('import-sheet'),
               isExpanded: true,
-              value: _sheet,
+              initialValue: _sheet,
               decoration: const InputDecoration(
                   labelText: 'Sheet', border: OutlineInputBorder(), isDense: true),
               items: [
@@ -717,7 +714,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
           child: DropdownButtonFormField<String>(
             key: const ValueKey('import-date-order'),
             isExpanded: true,
-            value: _dateOrder,
+            initialValue: _dateOrder,
             decoration: const InputDecoration(
                 labelText: 'Dates are written', border: OutlineInputBorder(), isDense: true),
             items: [
@@ -802,7 +799,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
                       child: DropdownButtonFormField<String>(
                         key: ValueKey('import-map-$i'),
                         isExpanded: true,
-                        value: chosen,
+                        initialValue: chosen,
                         decoration:
                             const InputDecoration(border: OutlineInputBorder(), isDense: true),
                         hint: const Text('(leave out)', style: TextStyle(fontSize: 11)),

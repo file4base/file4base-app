@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
+
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:flutter/foundation.dart';
-import 'solution_storage.dart';
 
 /// Status of the auto-save process for display in the status bar.
 enum AutoSaveStatus {

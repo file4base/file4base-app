@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.13.0] - 2026-10-14
+
+### Added
+- **Server Tools Menu & Administration Console** (`client/lib/features/server_tools/server_tools_dialog.dart`, `client/lib/core/widgets/file4base_menu_bar.dart`, `server/internal/api/server_admin_handler.go`, `server/internal/telemetry/collector.go`, [`docs/specs/server_tools_and_mfa.md`](docs/specs/server_tools_and_mfa.md)):
+  - Added top-level **Server Tools** menu right after `Tools` with 9 integrated server administration modules:
+    1. **Containers & Services**: Live health, version, uptime, resource usage, log viewer, and graceful service restart for `file4base-api`, `file4base-web`, and `file4base-postgres`.
+    2. **Backups & Snapshots**: On-demand server snapshots of schemas, layouts, scripts, and table records, with 1-click download, point-in-time restore, and deletion.
+    3. **Domain & SSL/TLS Certificates (ACME / Custom PEM)**: Configure the public Web/API domain, automatic Let's Encrypt / ZeroSSL ACME certificate provisioning (`http-01` / `tls-alpn-01`), or custom PEM certificate chain + private key upload with X.509 issuer/expiry inspection.
+    4. **API Telemetry & Live Metrics**: Rolling 60-minute in-memory telemetry ring buffer with live Requests Per Minute (RPM) bar charts, Average vs P95 Latency line charts, HTTP `2xx`/`4xx`/`5xx` status distribution, Go runtime memory/goroutines, DB ping latency, and top endpoints table.
+    5. **Connected Clients & Sessions**: Real-time table of authenticated sessions across databases with 1-click session revocation (`Force Disconnect`).
+    6. **Scheduled Tasks & Cron Scripts**: Cron scheduler (`0 2 * * *`, `*/15 * * * *`) for automated backups and server-side script execution with `Run Now` support.
+    7. **Audit & Security Logs**: Filterable security and administrative event log (`auth`, `mfa`, `backup`, `tls`, `container`, `maintenance`, `schedule`).
+    8. **Database Maintenance & Optimizer**: Live per-table column and row counts with 1-click `VACUUM ANALYZE`, `ANALYZE`, and `REINDEX DATABASE` execution.
+    9. **Server Notifications, SMTP & Webhooks**: Outbound SMTP email and Slack/Discord/Teams/Generic JSON webhook alerting with threshold triggers and test dispatch.
+- **Multi-Factor Authentication (MFA / 2FA) with Google Authenticator (RFC 6238 TOTP)** (`server/internal/schema/mfa.go`, `server/internal/api/security_handler.go`, `client/lib/features/security/manage_security_dialog.dart`, `client/lib/features/auth/database_login_dialog.dart`):
+  - Added an **MFA (Google Authenticator)** action icon and `2FA` status badge in the `OPTIONS` column of the `Accounts` table in **Manage Security**.
+  - Generates a 160-bit Base32 TOTP secret and renders an offline `otpauth://totp/` QR code (`package:qr`) for scanning with Google Authenticator, Authy, or 1Password, requiring a 6-digit verification code to activate.
+  - Enforces 6-digit TOTP verification during sign-in (`POST /api/v1/auth/login` returns `mfa_required: true` and reveals the 6-digit authenticator input in `DatabaseLoginDialog`).
+- **Functional `Edit` Menu (`Undo`, `Redo`, `Cut`, `Copy`, `Paste`, `Clear`, `Select All`)** (`client/lib/core/widgets/file4base_menu_bar.dart`, `client/lib/features/layout_engine/layout_designer_widget.dart`, `client/lib/main.dart`):
+  - Added `EditMenuFocusTracker` to preserve the active `EditableTextState` and per-controller undo/redo stacks when clicking the top menu bar in Browse and Find modes, with automatic fallback to `revertRecord()` on `Undo`.
+  - Added `cutSelected()`, `clearSelected()`, and `selectAllObjects()` in `LayoutDesignerWidgetState` so all 7 `Edit` menu commands work seamlessly on layout objects in Layout mode and text inputs across the application.
+
+---
+
 ## [0.12.1] - 2026-10-13
 
 ### Added

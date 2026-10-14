@@ -107,9 +107,9 @@ void main() {
 
   group('File4BaseMenuBar Zoom Items Widget Tests', () {
     testWidgets('renders Zoom In, Zoom Out, Actual Size, and Zoom Level submenu', (tester) async {
-      bool zoomInCalled = false;
-      bool zoomOutCalled = false;
-      bool resetZoomCalled = false;
+      var zoomInCalled = false;
+      var zoomOutCalled = false;
+      var resetZoomCalled = false;
 
       await tester.pumpWidget(
         MaterialApp(

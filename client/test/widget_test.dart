@@ -1,8 +1,8 @@
+import 'package:file4base_client/core/system/environment_checker.dart';
+import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:file4base_client/core/system/environment_checker.dart';
-import 'package:file4base_client/main.dart';
 
 void main() {
   setUp(() {
@@ -14,7 +14,7 @@ void main() {
   });
 
   testWidgets('App uses English when the host locale is Spanish',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.binding.platformDispatcher.localesTestValue = const [Locale('es')];
     addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
     tester.view.physicalSize = const Size(1440, 900);
@@ -34,7 +34,7 @@ void main() {
   });
 
   testWidgets('App renders canonical menu, left status sidebar, and switches mode',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);

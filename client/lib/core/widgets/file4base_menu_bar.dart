@@ -1,15 +1,91 @@
+import 'package:file4base_client/core/api/api_client.dart'
+    show CustomMenuItemModel, MenuSetModel, SavedFindModel;
+import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/features/help/check_updates_dialog.dart';
+import 'package:file4base_client/features/help/issues_guide_dialog.dart';
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart' show LayoutMergeSymbols;
+import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../services/solution_storage.dart';
-import '../../features/help/check_updates_dialog.dart';
-import '../../features/help/issues_guide_dialog.dart';
-import '../../main.dart';
-import '../../features/layout_engine/layout_object_visuals.dart' show LayoutMergeSymbols;
-import '../api/api_client.dart'
-    show CustomMenuItemModel, MenuSetModel, SavedFindModel;
 
 class File4BaseMenuBar extends StatelessWidget {
+
+  const File4BaseMenuBar({
+    required this.activeMode, required this.onModeChanged, required this.onManageDatabase, required this.onOpenRemote, required this.onAbout, required this.isToolbarVisible, required this.onToggleToolbar, super.key,
+    this.onManageLayouts,
+    this.onManageSecurity,
+    this.onManageScripts,
+    this.onScriptWorkspace,
+    this.onManageThemes,
+    this.onManageValueLists,
+    this.onNewDatabase,
+    this.onOpenSolution,
+    this.onSave,
+    this.onSaveAs,
+    this.onSaveCopyAs,
+    this.onExportData,
+    this.onFileOptions,
+    this.onChangePassword,
+    this.onPageSetup,
+    this.onPrint,
+    this.onQuit,
+    this.onExportRecords,
+    this.onImportRecords,
+    this.onImportFromDataSource,
+    this.onManageDataSources,
+    this.onDesignReport,
+    this.onSaveDesignAsText,
+    this.onDataViewer,
+    this.onScriptDebugger,
+    this.onManageCustomMenus,
+    this.menuSets = const [],
+    this.activeMenuSet,
+    this.onSelectMenuSet,
+    this.onRunCustomMenuItem,
+    this.onDeveloperUtilities,
+    this.onNewRecord,
+    this.onDuplicateRecord,
+    this.onDeleteRecord,
+    this.onSortRecords,
+    this.onUnsortRecords,
+    this.onCommitRecord,
+    this.onRevertRecord,
+    this.onGoToRecord,
+    this.onShowAllRecords,
+    this.onPerformFind,
+    this.onNewFindRequest,
+    this.onDuplicateFindRequest,
+    this.onDeleteFindRequest,
+    this.onDeleteAllFindRequests,
+    this.onToggleFindOmit,
+    this.onGoToFindRequest,
+    this.savedFinds = const [],
+    this.onRunSavedFind,
+    this.onSaveCurrentFind,
+    this.onManageSavedFinds,
+    this.onSaveLayout,
+    this.onZoomIn,
+    this.onZoomOut,
+    this.onResetZoom,
+    this.onSelectZoom,
+    this.zoomLevel,
+    this.isAuthenticated = true,
+    this.onSignIn,
+    this.onSignOut,
+    this.onInsertMedia,
+    this.onInsertSymbol,
+    this.onInsertMergeField,
+    this.currentUserName,
+    this.onUndo,
+    this.onRedo,
+    this.onCut,
+    this.onCopy,
+    this.onPaste,
+    this.onClear,
+    this.onSelectAll,
+    this.onServerToolSelected,
+  });
   final OperationalMode activeMode;
   final ValueChanged<OperationalMode> onModeChanged;
   final VoidCallback onManageDatabase;
@@ -118,80 +194,18 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onInsertMergeField;
   final String? currentUserName;
 
-  const File4BaseMenuBar({
-    super.key,
-    required this.activeMode,
-    required this.onModeChanged,
-    required this.onManageDatabase,
-    this.onManageLayouts,
-    this.onManageSecurity,
-    this.onManageScripts,
-    this.onScriptWorkspace,
-    this.onManageThemes,
-    this.onManageValueLists,
-    required this.onOpenRemote,
-    required this.onAbout,
-    this.onNewDatabase,
-    this.onOpenSolution,
-    this.onSave,
-    this.onSaveAs,
-    this.onSaveCopyAs,
-    this.onExportData,
-    this.onFileOptions,
-    this.onChangePassword,
-    this.onPageSetup,
-    this.onPrint,
-    this.onQuit,
-    this.onExportRecords,
-    this.onImportRecords,
-    this.onImportFromDataSource,
-    this.onManageDataSources,
-    this.onDesignReport,
-    this.onSaveDesignAsText,
-    this.onDataViewer,
-    this.onScriptDebugger,
-    this.onManageCustomMenus,
-    this.menuSets = const [],
-    this.activeMenuSet,
-    this.onSelectMenuSet,
-    this.onRunCustomMenuItem,
-    this.onDeveloperUtilities,
-    this.onNewRecord,
-    this.onDuplicateRecord,
-    this.onDeleteRecord,
-    this.onSortRecords,
-    this.onUnsortRecords,
-    this.onCommitRecord,
-    this.onRevertRecord,
-    this.onGoToRecord,
-    this.onShowAllRecords,
-    this.onPerformFind,
-    this.onNewFindRequest,
-    this.onDuplicateFindRequest,
-    this.onDeleteFindRequest,
-    this.onDeleteAllFindRequests,
-    this.onToggleFindOmit,
-    this.onGoToFindRequest,
-    this.savedFinds = const [],
-    this.onRunSavedFind,
-    this.onSaveCurrentFind,
-    this.onManageSavedFinds,
-    this.onSaveLayout,
-    required this.isToolbarVisible,
-    required this.onToggleToolbar,
-    this.onZoomIn,
-    this.onZoomOut,
-    this.onResetZoom,
-    this.onSelectZoom,
-    this.zoomLevel,
-    this.isAuthenticated = true,
-    this.onSignIn,
-    this.onSignOut,
-    this.onInsertMedia,
-    this.onInsertSymbol,
-    this.onInsertMergeField,
-    this.currentUserName,
-  });
+  /// Edit menu actions (`Undo`, `Redo`, `Cut`, `Copy`, `Paste`, `Clear`,
+  /// `Select All`). When omitted, `File4BaseMenuBar` dispatches directly to the
+  /// active or most recently focused `EditableTextState` via
+  /// `EditMenuFocusTracker`.
+  final VoidCallback? onUndo;
+  final VoidCallback? onRedo;
+  final VoidCallback? onCut;
+  final VoidCallback? onCopy;
+  final VoidCallback? onPaste;
+  final VoidCallback? onClear;
+  final VoidCallback? onSelectAll;
+  final ValueChanged<String>? onServerToolSelected;
 
   /// Asks for a record number and goes there.
   Future<void> _promptGoToRecord(BuildContext context) async {
@@ -260,7 +274,7 @@ class File4BaseMenuBar extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E88E5).withOpacity(0.12),
+                color: const Color(0xFF1E88E5).withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -288,6 +302,7 @@ class File4BaseMenuBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    EditMenuFocusTracker.instance.ensureListening(context);
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
@@ -300,7 +315,6 @@ class File4BaseMenuBar extends StatelessWidget {
         border: Border(
           bottom: BorderSide(
             color: isDark ? const Color(0xFF30363D) : const Color(0xFFE5E7EB),
-            width: 1.0,
           ),
         ),
       ),
@@ -338,6 +352,8 @@ class File4BaseMenuBar extends StatelessWidget {
             _buildToolsMenu(context),
             preservedSuffix: [_buildCustomMenusSubmenu()],
           ),
+          if (!_isMenuHidden('Server Tools'))
+            _applyCustomMenu('Server Tools', _buildServerToolsMenu(context)),
           if (!_isMenuHidden('Window'))
             _applyCustomMenu('Window', _buildWindowMenu(context)),
           _buildHelpMenu(context),
@@ -504,47 +520,45 @@ class File4BaseMenuBar extends StatelessWidget {
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
-              : (onSave),
+              : onSave,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
           child: const Text('Save'),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
-              : (onSaveAs),
+              : onSaveAs,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
           child: const Text('Save As...'),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save a copy.')
-              : (onSaveCopyAs),
+              : onSaveCopyAs,
           child: const Text('Save a Copy As...'),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export database data.')
-              : (onExportData),
+              : onExportData,
           child: const Text('Export Data...'),
         ),
         const Divider(height: 1),
-        SubmenuButton(
+        const SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Local Host (localhost:8080)'),
+              child: Text('Local Host (localhost:8080)'),
             ),
           ],
-          child: const Text('Open Favorite'),
+          child: Text('Open Favorite'),
         ),
-        SubmenuButton(
+        const SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('default_workspace (PostgreSQL)'),
+              child: Text('default_workspace (PostgreSQL)'),
             ),
           ],
-          child: const Text('Open Recent'),
+          child: Text('Open Recent'),
         ),
         const Divider(height: 1),
         if (isAuthenticated && onSignOut != null) ...[
@@ -613,7 +627,7 @@ class File4BaseMenuBar extends StatelessWidget {
         MenuItemButton(
           onPressed: !isAuthenticated
               ? () => _showNotice(context, 'Authentication Required', 'Please sign in to change password.')
-              : (onChangePassword),
+              : onChangePassword,
           child: const Text('Change Password...'),
         ),
         const Divider(height: 1),
@@ -641,7 +655,6 @@ class File4BaseMenuBar extends StatelessWidget {
             // separate piece of work; the item is shown disabled rather than
             // opening a dialog that does nothing (#38).
             const MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
               child: Text('Folder...'),
             ),
             MenuItemButton(
@@ -669,13 +682,12 @@ class File4BaseMenuBar extends StatelessWidget {
               : onExportRecords,
           child: const Text('Export Records...'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Recover...'),
+        const MenuItemButton(
+          child: Text('Recover...'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: onQuit ?? () => SolutionStorageService.triggerQuit(),
+          onPressed: onQuit ?? SolutionStorageService.triggerQuit,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyQ, meta: true),
           child: const Row(
             children: [
@@ -695,37 +707,79 @@ class File4BaseMenuBar extends StatelessWidget {
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: () {
+            if (onUndo != null) {
+              onUndo!();
+            } else {
+              EditMenuFocusTracker.instance.undoActiveText(context);
+            }
+          },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyZ, meta: true),
           child: const Text('Undo'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: () {
+            if (onRedo != null) {
+              onRedo!();
+            } else {
+              EditMenuFocusTracker.instance.redoActiveText(context);
+            }
+          },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true),
           child: const Text('Redo'),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: () {
+            if (onCut != null) {
+              onCut!();
+            } else {
+              EditMenuFocusTracker.instance.cutActiveText(context);
+            }
+          },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyX, meta: true),
           child: const Text('Cut'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: () {
+            if (onCopy != null) {
+              onCopy!();
+            } else {
+              EditMenuFocusTracker.instance.copyActiveText(context);
+            }
+          },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyC, meta: true),
           child: const Text('Copy'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: () {
+            if (onPaste != null) {
+              onPaste!();
+            } else {
+              EditMenuFocusTracker.instance.pasteActiveText(context);
+            }
+          },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyV, meta: true),
           child: const Text('Paste'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: () {
+            if (onClear != null) {
+              onClear!();
+            } else {
+              EditMenuFocusTracker.instance.clearActiveText(context);
+            }
+          },
           child: const Text('Clear'),
         ),
         MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
+          onPressed: () {
+            if (onSelectAll != null) {
+              onSelectAll!();
+            } else {
+              EditMenuFocusTracker.instance.selectAllActiveText(context);
+            }
+          },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyA, meta: true),
           child: const Text('Select All'),
         ),
@@ -736,45 +790,37 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: () => onModeChanged(OperationalMode.find),
               child: const Text('Find/Replace...'),
             ),
-            MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Find Next'),
+            const MenuItemButton(
+              child: Text('Find Next'),
             ),
-            MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Find Previous'),
+            const MenuItemButton(
+              child: Text('Find Previous'),
             ),
           ],
           child: const Text('Find/Replace'),
         ),
-        SubmenuButton(
+        const SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Check Selection...'),
+              child: Text('Check Selection...'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Check Record...'),
+              child: Text('Check Record...'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Correct Word...'),
+              child: Text('Correct Word...'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Dictionaries...'),
+              child: Text('Dictionaries...'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Edit User Dictionary...'),
+              child: Text('Edit User Dictionary...'),
             ),
             MenuItemButton(
-              onPressed: null, // not implemented: shown disabled
-              child: const Text('Options...'),
+              child: Text('Options...'),
             ),
           ],
-          child: const Text('Spelling'),
+          child: Text('Spelling'),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -827,22 +873,19 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Preview Mode'),
         ),
         const Divider(height: 1),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Page Margins'),
+        const MenuItemButton(
+          child: Text('Page Margins'),
         ),
         MenuItemButton(
           leadingIcon: isToolbarVisible ? const Icon(Icons.check, size: 14) : null,
           onPressed: () => onToggleToolbar(!isToolbarVisible),
           child: const Text('Status Toolbar'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Formatting Bar'),
+        const MenuItemButton(
+          child: Text('Formatting Bar'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Text Ruler'),
+        const MenuItemButton(
+          child: Text('Text Ruler'),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -946,21 +989,18 @@ class File4BaseMenuBar extends StatelessWidget {
             child: const Text('Page Number'),
           ),
         const Divider(height: 1),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('From Index...'),
+        const MenuItemButton(
+          child: Text('From Index...'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('From Last Visited Record'),
+        const MenuItemButton(
+          child: Text('From Last Visited Record'),
         ),
         MenuItemButton(
           onPressed: onInsertMergeField,
           child: const Text('Merge Field...'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Merge Variable...'),
+        const MenuItemButton(
+          child: Text('Merge Variable...'),
         ),
       ],
       child: const Text('Insert', style: TextStyle(fontSize: 13)),
@@ -971,43 +1011,34 @@ class File4BaseMenuBar extends StatelessWidget {
   Widget _buildFormatMenu(BuildContext context) {
     return SubmenuButton(
       menuChildren: [
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Font'),
+        const MenuItemButton(
+          child: Text('Font'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Size'),
+        const MenuItemButton(
+          child: Text('Size'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Style'),
+        const MenuItemButton(
+          child: Text('Style'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Align Text'),
+        const MenuItemButton(
+          child: Text('Align Text'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Line Spacing'),
+        const MenuItemButton(
+          child: Text('Line Spacing'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Text Color'),
+        const MenuItemButton(
+          child: Text('Text Color'),
         ),
         if (activeMode == OperationalMode.layout) ...[
           const Divider(height: 1),
-          MenuItemButton(
-            onPressed: null, // not implemented: shown disabled
-            child: const Text('Align Object (Layout Mode)'),
+          const MenuItemButton(
+            child: Text('Align Object (Layout Mode)'),
           ),
-          MenuItemButton(
-            onPressed: null, // not implemented: shown disabled
-            child: const Text('Distribute (Layout Mode)'),
+          const MenuItemButton(
+            child: Text('Distribute (Layout Mode)'),
           ),
-          MenuItemButton(
-            onPressed: null, // not implemented: shown disabled
-            child: const Text('Resize (Layout Mode)'),
+          const MenuItemButton(
+            child: Text('Resize (Layout Mode)'),
           ),
         ],
       ],
@@ -1034,9 +1065,8 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.keyE, meta: true),
           child: const Text('Delete Record...'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Delete All Records...'),
+        const MenuItemButton(
+          child: Text('Delete All Records...'),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -1080,18 +1110,15 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Show All Records'),
         ),
         _buildSavedFindsMenu(),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Show Omitted Only'),
+        const MenuItemButton(
+          child: Text('Show Omitted Only'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          shortcut: const SingleActivator(LogicalKeyboardKey.keyM, meta: true),
-          child: const Text('Omit Record'),
+        const MenuItemButton(
+          shortcut: SingleActivator(LogicalKeyboardKey.keyM, meta: true),
+          child: Text('Omit Record'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Omit Multiple...'),
+        const MenuItemButton(
+          child: Text('Omit Multiple...'),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -1109,9 +1136,8 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.equal, meta: true),
           child: const Text('Replace Field Contents...'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Relookup Field Contents'),
+        const MenuItemButton(
+          child: Text('Relookup Field Contents'),
         ),
       ],
       child: const Text('Records', style: TextStyle(fontSize: 13)),
@@ -1136,7 +1162,6 @@ class File4BaseMenuBar extends StatelessWidget {
         const Divider(height: 1),
         if (savedFinds.isEmpty)
           const MenuItemButton(
-            onPressed: null,
             child: Text('No saved finds for this table'),
           )
         else
@@ -1242,9 +1267,8 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Script Workspace...'),
         ),
         const Divider(height: 1),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('[Custom User Scripts List]'),
+        const MenuItemButton(
+          child: Text('[Custom User Scripts List]'),
         ),
       ],
       child: const Text('Scripts', style: TextStyle(fontSize: 13)),
@@ -1324,40 +1348,93 @@ class File4BaseMenuBar extends StatelessWidget {
     );
   }
 
+  // 8b. Server Tools Menu
+  Widget _buildServerToolsMenu(BuildContext context) {
+    VoidCallback? trigger(String key) {
+      if (!isAuthenticated || onServerToolSelected == null) return null;
+      return () => onServerToolSelected!(key);
+    }
+
+    return SubmenuButton(
+      menuChildren: [
+        MenuItemButton(
+          onPressed: trigger('containers'),
+          leadingIcon: const Icon(Icons.view_in_ar_outlined, size: 18),
+          child: const Text('Containers & Services...'),
+        ),
+        MenuItemButton(
+          onPressed: trigger('backups'),
+          leadingIcon: const Icon(Icons.backup_outlined, size: 18),
+          child: const Text('Backups & Snapshots...'),
+        ),
+        MenuItemButton(
+          onPressed: trigger('domain_tls'),
+          leadingIcon: const Icon(Icons.https_outlined, size: 18),
+          child: const Text('Domain & SSL/TLS Certificates (ACME)...'),
+        ),
+        MenuItemButton(
+          onPressed: trigger('telemetry'),
+          leadingIcon: const Icon(Icons.insights_outlined, size: 18),
+          child: const Text('API Telemetry & Live Metrics...'),
+        ),
+        const Divider(height: 1),
+        MenuItemButton(
+          onPressed: trigger('sessions'),
+          leadingIcon: const Icon(Icons.people_alt_outlined, size: 18),
+          child: const Text('Connected Clients & Sessions...'),
+        ),
+        MenuItemButton(
+          onPressed: trigger('schedules'),
+          leadingIcon: const Icon(Icons.schedule_outlined, size: 18),
+          child: const Text('Scheduled Tasks & Cron Scripts...'),
+        ),
+        MenuItemButton(
+          onPressed: trigger('audit_logs'),
+          leadingIcon: const Icon(Icons.policy_outlined, size: 18),
+          child: const Text('Audit & Security Logs...'),
+        ),
+        MenuItemButton(
+          onPressed: trigger('maintenance'),
+          leadingIcon: const Icon(Icons.build_circle_outlined, size: 18),
+          child: const Text('Database Maintenance & Optimizer...'),
+        ),
+        MenuItemButton(
+          onPressed: trigger('notifications'),
+          leadingIcon: const Icon(Icons.notifications_active_outlined, size: 18),
+          child: const Text('Server Notifications, SMTP & Webhooks...'),
+        ),
+      ],
+      child: const Text('Server Tools', style: TextStyle(fontSize: 13)),
+    );
+  }
+
   // 9. Window Menu
   Widget _buildWindowMenu(BuildContext context) {
     return SubmenuButton(
       menuChildren: [
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          shortcut: const SingleActivator(LogicalKeyboardKey.keyM, meta: true),
-          child: const Text('Minimize'),
+        const MenuItemButton(
+          shortcut: SingleActivator(LogicalKeyboardKey.keyM, meta: true),
+          child: Text('Minimize'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Zoom'),
+        const MenuItemButton(
+          child: Text('Zoom'),
         ),
         const Divider(height: 1),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Tile Horizontally'),
+        const MenuItemButton(
+          child: Text('Tile Horizontally'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Tile Vertically'),
+        const MenuItemButton(
+          child: Text('Tile Vertically'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Cascade'),
+        const MenuItemButton(
+          child: Text('Cascade'),
         ),
         const Divider(height: 1),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('New Window'),
+        const MenuItemButton(
+          child: Text('New Window'),
         ),
-        MenuItemButton(
-          onPressed: null, // not implemented: shown disabled
-          child: const Text('Show Window'),
+        const MenuItemButton(
+          child: Text('Show Window'),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -1422,3 +1499,374 @@ class File4BaseMenuBar extends StatelessWidget {
     );
   }
 }
+
+class _ControllerUndoHistory {
+  _ControllerUndoHistory(TextEditingValue initial) : lastValue = initial;
+
+  TextEditingValue lastValue;
+  final List<TextEditingValue> undoStack = [];
+  final List<TextEditingValue> redoStack = [];
+  bool isApplying = false;
+}
+
+/// Tracks the currently or most recently focused [EditableTextState] so that
+/// clicking items in the top `Edit` menu (`Undo`, `Redo`, `Cut`, `Copy`,
+/// `Paste`, `Clear`, `Select All`) still acts on the text field even after the
+/// menu bar button takes primary focus.
+class EditMenuFocusTracker {
+  EditMenuFocusTracker._();
+
+  static final EditMenuFocusTracker instance = EditMenuFocusTracker._();
+
+  FocusManager? _boundFocusManager;
+  EditableTextState? _lastEditable;
+  bool _editableWasLastNonMenuFocus = false;
+  String? _lastClipboardText;
+  final Expando<_ControllerUndoHistory> _histories =
+      Expando<_ControllerUndoHistory>('EditMenuUndoHistory');
+
+  void ensureListening([BuildContext? context]) {
+    final manager = FocusManager.instance;
+    if (!identical(_boundFocusManager, manager)) {
+      _boundFocusManager?.removeListener(_onFocusChanged);
+      _boundFocusManager = manager;
+      manager.addListener(_onFocusChanged);
+    }
+    _onFocusChanged();
+    if (context != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) {
+          _scanEditablesInTree(context);
+        }
+      });
+    }
+  }
+
+  void _scanEditablesInTree(BuildContext context) {
+    final root =
+        context.findRootAncestorStateOfType<ScaffoldState>()?.context ?? context;
+    void visit(Element el) {
+      if (el is StatefulElement && el.state is EditableTextState) {
+        final st = el.state as EditableTextState;
+        if (st.mounted) {
+          _ensureControllerHistory(st.widget.controller);
+          if (st.widget.focusNode.hasFocus) {
+            _lastEditable = st;
+            _editableWasLastNonMenuFocus = true;
+          }
+        }
+      }
+      el.visitChildren(visit);
+    }
+
+    if (root is Element) {
+      root.visitChildren(visit);
+    }
+  }
+
+  /// True when an [EditableTextState] currently has focus or had focus right
+  /// before the user opened a menu in the menu bar.
+  bool get hasActiveEditableFocus {
+    _syncCurrentFocus();
+    return _editableWasLastNonMenuFocus &&
+        _lastEditable != null &&
+        _lastEditable!.mounted;
+  }
+
+  void _onFocusChanged() {
+    _syncCurrentFocus();
+  }
+
+  void _syncCurrentFocus() {
+    final node = FocusManager.instance.primaryFocus;
+    final ctx = node?.context;
+    if (ctx == null) return;
+
+    final editable = _findEditableInContext(ctx);
+    if (editable != null && editable.mounted) {
+      _registerEditable(editable);
+      _editableWasLastNonMenuFocus = true;
+      return;
+    }
+
+    if (!_isMenuContext(ctx)) {
+      _editableWasLastNonMenuFocus = false;
+    }
+  }
+
+  void _registerEditable(EditableTextState editable) {
+    _lastEditable = editable;
+    _ensureControllerHistory(editable.widget.controller);
+  }
+
+  void _ensureControllerHistory(TextEditingController controller) {
+    if (_histories[controller] == null) {
+      final history = _ControllerUndoHistory(controller.value);
+      _histories[controller] = history;
+      controller.addListener(() {
+        if (history.isApplying) return;
+        final current = controller.value;
+        if (current.text != history.lastValue.text) {
+          history.undoStack.add(history.lastValue);
+          if (history.undoStack.length > 50) {
+            history.undoStack.removeAt(0);
+          }
+          history.redoStack.clear();
+          history.lastValue = current;
+        } else {
+          history.lastValue = current;
+        }
+      });
+    }
+  }
+
+  static EditableTextState? _findEditableInContext(BuildContext ctx) {
+    if (ctx is StatefulElement && ctx.state is EditableTextState) {
+      return ctx.state as EditableTextState;
+    }
+    final ancestor = ctx.findAncestorStateOfType<EditableTextState>();
+    if (ancestor != null) return ancestor;
+
+    EditableTextState? found;
+    void visit(Element el) {
+      if (found != null) return;
+      if (el is StatefulElement && el.state is EditableTextState) {
+        found = el.state as EditableTextState;
+        return;
+      }
+      el.visitChildren(visit);
+    }
+
+    if (ctx is Element) {
+      ctx.visitChildren(visit);
+    }
+    return found;
+  }
+
+  static bool _isMenuContext(BuildContext ctx) {
+    var isMenu = false;
+    ctx.visitAncestorElements((el) {
+      final type = el.widget.runtimeType.toString();
+      if (type.contains('Menu') || type.contains('Submenu')) {
+        isMenu = true;
+        return false;
+      }
+      return true;
+    });
+    return isMenu;
+  }
+
+  EditableTextState? resolveEditable([BuildContext? fallbackContext]) {
+    _syncCurrentFocus();
+    if (_lastEditable != null && _lastEditable!.mounted) {
+      return _lastEditable;
+    }
+    if (fallbackContext != null) {
+      final root = fallbackContext.findRootAncestorStateOfType<ScaffoldState>()?.context ??
+          fallbackContext;
+      EditableTextState? firstEditable;
+      void search(Element el) {
+        if (firstEditable != null) return;
+        if (el is StatefulElement && el.state is EditableTextState) {
+          final st = el.state as EditableTextState;
+          if (st.mounted) {
+            firstEditable = st;
+            return;
+          }
+        }
+        el.visitChildren(search);
+      }
+
+      if (root is Element) {
+        root.visitChildren(search);
+      }
+      if (firstEditable != null) {
+        _registerEditable(firstEditable!);
+        return firstEditable;
+      }
+    }
+    return null;
+  }
+
+  bool undoActiveText([BuildContext? fallbackContext]) {
+    final editable = resolveEditable(fallbackContext);
+    if (editable == null || !editable.mounted || editable.widget.readOnly) {
+      return false;
+    }
+    final controller = editable.widget.controller;
+    final history = _histories[controller];
+    if (history != null && history.undoStack.isNotEmpty) {
+      history.isApplying = true;
+      try {
+        history.redoStack.add(controller.value);
+        final prev = history.undoStack.removeLast();
+        history.lastValue = prev;
+        editable.userUpdateTextEditingValue(prev, SelectionChangedCause.keyboard);
+      } finally {
+        history.isApplying = false;
+      }
+      editable.widget.focusNode.requestFocus();
+      return true;
+    }
+    return false;
+  }
+
+  bool redoActiveText([BuildContext? fallbackContext]) {
+    final editable = resolveEditable(fallbackContext);
+    if (editable == null || !editable.mounted || editable.widget.readOnly) {
+      return false;
+    }
+    final controller = editable.widget.controller;
+    final history = _histories[controller];
+    if (history != null && history.redoStack.isNotEmpty) {
+      history.isApplying = true;
+      try {
+        history.undoStack.add(controller.value);
+        final next = history.redoStack.removeLast();
+        history.lastValue = next;
+        editable.userUpdateTextEditingValue(next, SelectionChangedCause.keyboard);
+      } finally {
+        history.isApplying = false;
+      }
+      editable.widget.focusNode.requestFocus();
+      return true;
+    }
+    return false;
+  }
+
+  bool cutActiveText([BuildContext? fallbackContext]) {
+    final editable = resolveEditable(fallbackContext);
+    if (editable == null || !editable.mounted) return false;
+    final val = editable.textEditingValue;
+    final hasSelection = val.selection.isValid && !val.selection.isCollapsed;
+    final textToCopy = hasSelection ? val.selection.textInside(val.text) : val.text;
+    if (textToCopy.isNotEmpty) {
+      _lastClipboardText = textToCopy;
+      Clipboard.setData(ClipboardData(text: textToCopy));
+    }
+    if (!editable.widget.readOnly) {
+      final newValue = hasSelection
+          ? TextEditingValue(
+              text: val.selection.textBefore(val.text) + val.selection.textAfter(val.text),
+              selection: TextSelection.collapsed(offset: val.selection.start),
+            )
+          : TextEditingValue.empty;
+      editable.userUpdateTextEditingValue(newValue, SelectionChangedCause.toolbar);
+    }
+    editable.widget.focusNode.requestFocus();
+    return true;
+  }
+
+  bool copyActiveText([BuildContext? fallbackContext]) {
+    final editable = resolveEditable(fallbackContext);
+    if (editable == null || !editable.mounted) return false;
+    final val = editable.textEditingValue;
+    final hasSelection = val.selection.isValid && !val.selection.isCollapsed;
+    final textToCopy = hasSelection ? val.selection.textInside(val.text) : val.text;
+    if (textToCopy.isNotEmpty) {
+      _lastClipboardText = textToCopy;
+      Clipboard.setData(ClipboardData(text: textToCopy));
+    }
+    editable.widget.focusNode.requestFocus();
+    return true;
+  }
+
+  Future<bool> pasteActiveText([BuildContext? fallbackContext]) async {
+    final editable = resolveEditable(fallbackContext);
+    if (editable == null || !editable.mounted || editable.widget.readOnly) {
+      return false;
+    }
+    final baseVal = editable.textEditingValue;
+    final inAppClip = _lastClipboardText;
+    if (inAppClip != null && inAppClip.isNotEmpty) {
+      _insertIntoEditable(editable, baseVal, inAppClip);
+      try {
+        final data = await Clipboard.getData(Clipboard.kTextPlain);
+        final osText = data?.text;
+        if (osText != null &&
+            osText.isNotEmpty &&
+            osText != inAppClip &&
+            editable.mounted) {
+          _lastClipboardText = osText;
+          _insertIntoEditable(editable, baseVal, osText);
+        }
+      } catch (_) {}
+      return true;
+    }
+
+    String? clipText;
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      clipText = data?.text;
+    } catch (_) {}
+    if (clipText == null || clipText.isEmpty || !editable.mounted) {
+      return false;
+    }
+    _lastClipboardText = clipText;
+    _insertIntoEditable(editable, editable.textEditingValue, clipText);
+    return true;
+  }
+
+  void _insertIntoEditable(
+    EditableTextState editable,
+    TextEditingValue val,
+    String clipText,
+  ) {
+    if (val.selection.isValid) {
+      final before = val.selection.textBefore(val.text);
+      final after = val.selection.textAfter(val.text);
+      final nextText = '$before$clipText$after';
+      final nextOffset = before.length + clipText.length;
+      editable.userUpdateTextEditingValue(
+        TextEditingValue(
+          text: nextText,
+          selection: TextSelection.collapsed(offset: nextOffset),
+        ),
+        SelectionChangedCause.toolbar,
+      );
+    } else {
+      final nextText = '${val.text}$clipText';
+      editable.userUpdateTextEditingValue(
+        TextEditingValue(
+          text: nextText,
+          selection: TextSelection.collapsed(offset: nextText.length),
+        ),
+        SelectionChangedCause.toolbar,
+      );
+    }
+    editable.widget.focusNode.requestFocus();
+  }
+
+  bool clearActiveText([BuildContext? fallbackContext]) {
+    final editable = resolveEditable(fallbackContext);
+    if (editable == null || !editable.mounted || editable.widget.readOnly) {
+      return false;
+    }
+    final val = editable.textEditingValue;
+    final hasSelection = val.selection.isValid && !val.selection.isCollapsed;
+    final newValue = hasSelection
+        ? TextEditingValue(
+            text: val.selection.textBefore(val.text) + val.selection.textAfter(val.text),
+            selection: TextSelection.collapsed(offset: val.selection.start),
+          )
+        : TextEditingValue.empty;
+    editable.userUpdateTextEditingValue(newValue, SelectionChangedCause.toolbar);
+    editable.widget.focusNode.requestFocus();
+    return true;
+  }
+
+  bool selectAllActiveText([BuildContext? fallbackContext]) {
+    final editable = resolveEditable(fallbackContext);
+    if (editable == null || !editable.mounted) return false;
+    final val = editable.textEditingValue;
+    editable.userUpdateTextEditingValue(
+      val.copyWith(
+        selection: TextSelection(baseOffset: 0, extentOffset: val.text.length),
+      ),
+      SelectionChangedCause.toolbar,
+    );
+    editable.widget.focusNode.requestFocus();
+    return true;
+  }
+}
+

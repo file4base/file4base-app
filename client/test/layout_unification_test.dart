@@ -1,20 +1,20 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart';
-import 'package:file4base_client/main.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
-import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/layout_engine/layout_preview_widget.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('File4BaseStatusSidebar displays LAYOUT dropdown and responds to selection',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    final mockLayout1 = LayoutModel(
+    const mockLayout1 = LayoutModel(
       id: 'layout-1',
       name: 'Customers Form',
       tableOccurrenceId: 'to-1',
@@ -25,7 +25,7 @@ void main() {
         'objects': [],
       },
     );
-    final mockLayout2 = LayoutModel(
+    const mockLayout2 = LayoutModel(
       id: 'layout-2',
       name: 'Customers List',
       tableOccurrenceId: 'to-1',
@@ -37,13 +37,13 @@ void main() {
       },
     );
 
-    final mockTable = TableModel(
+    const mockTable = TableModel(
       id: 'tbl-1',
       name: 'customers',
       displayName: 'Customers',
       columns: [
-        const ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
-        const ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'name', displayName: 'Name', fieldType: 'varchar'),
+        ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
+        ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'name', displayName: 'Name', fieldType: 'varchar'),
       ],
     );
 
@@ -55,12 +55,12 @@ void main() {
           body: StatefulBuilder(
             builder: (context, setState) {
               return File4BaseStatusSidebar(
-                layouts: [mockLayout1, mockLayout2],
+                layouts: const [mockLayout1, mockLayout2],
                 selectedLayout: selectedLayout,
                 onLayoutSelected: (layout) {
                   setState(() => selectedLayout = layout);
                 },
-                tables: [mockTable],
+                tables: const [mockTable],
                 selectedTable: mockTable,
                 onTableSelected: (_) {},
                 mode: OperationalMode.browse,
@@ -99,33 +99,32 @@ void main() {
   });
 
   testWidgets('DataBrowserWidget renders custom layout objects in Browse Mode and Find Mode',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    final mockTable = TableModel(
+    const mockTable = TableModel(
       id: 'tbl-1',
       name: 'customers',
       displayName: 'Customers',
       columns: [
-        const ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
-        const ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'company_name', displayName: 'Company', fieldType: 'varchar'),
+        ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
+        ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'company_name', displayName: 'Company', fieldType: 'varchar'),
       ],
     );
 
-    final mockLayout = LayoutDefinitionModel(
+    const mockLayout = LayoutDefinitionModel(
       id: 'layout-custom-1',
       name: 'Custom Invoice Form',
       tableOccurrence: 'customers',
       width: 800,
       theme: 'Classic',
-      defaultView: 'form',
       parts: [
-        const LayoutPartModel(id: 'part-1', type: 'body', height: 400),
+        LayoutPartModel(id: 'part-1', type: 'body', height: 400),
       ],
       objects: [
-        const LayoutObjectModel(
+        LayoutObjectModel(
           id: 'obj-lbl-1',
           type: 'label',
           x: 40,
@@ -134,7 +133,7 @@ void main() {
           height: 30,
           text: 'CUSTOMER PROFILE HEADER',
         ),
-        const LayoutObjectModel(
+        LayoutObjectModel(
           id: 'obj-fld-1',
           type: 'field',
           x: 40,
@@ -143,7 +142,7 @@ void main() {
           height: 36,
           fieldBinding: FieldBindingModel(fieldName: 'company_name'),
         ),
-        const LayoutObjectModel(
+        LayoutObjectModel(
           id: 'obj-btn-1',
           type: 'button',
           x: 40,
@@ -200,33 +199,32 @@ void main() {
   });
 
   testWidgets('LayoutPreviewWidget renders custom layout objects on printed page',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    final mockTable = TableModel(
+    const mockTable = TableModel(
       id: 'tbl-1',
       name: 'customers',
       displayName: 'Customers',
       columns: [
-        const ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
-        const ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'company_name', displayName: 'Company', fieldType: 'varchar'),
+        ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
+        ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'company_name', displayName: 'Company', fieldType: 'varchar'),
       ],
     );
 
-    final mockLayout = LayoutDefinitionModel(
+    const mockLayout = LayoutDefinitionModel(
       id: 'layout-custom-1',
       name: 'Printable Invoice Layout',
       tableOccurrence: 'customers',
       width: 700,
       theme: 'Classic',
-      defaultView: 'form',
       parts: [
-        const LayoutPartModel(id: 'part-1', type: 'body', height: 400),
+        LayoutPartModel(id: 'part-1', type: 'body', height: 400),
       ],
       objects: [
-        const LayoutObjectModel(
+        LayoutObjectModel(
           id: 'obj-lbl-1',
           type: 'label',
           x: 20,
@@ -235,7 +233,7 @@ void main() {
           height: 30,
           text: 'OFFICIAL TAX INVOICE',
         ),
-        const LayoutObjectModel(
+        LayoutObjectModel(
           id: 'obj-fld-1',
           type: 'field',
           x: 20,

@@ -18,7 +18,7 @@ class ZoomNotifier extends Notifier<double> {
   }
 
   void zoomOut() {
-    for (int i = zoomSteps.length - 1; i >= 0; i--) {
+    for (var i = zoomSteps.length - 1; i >= 0; i--) {
       if (zoomSteps[i] < state - 0.01) {
         state = zoomSteps[i];
         return;

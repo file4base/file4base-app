@@ -114,6 +114,9 @@ func (h *SecurityHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Put("/users/{id}/permissions", h.SetUserPermissions)
 		r.Get("/users/{id}/table-permissions", h.GetUserTablePermissions) // admins, or the user themselves
 		r.With(RequireAdmin).Put("/users/{id}/table-permissions", h.SetUserTablePermissions)
+		r.Post("/users/{id}/mfa/setup", h.SetupUserMFA)
+		r.Post("/users/{id}/mfa/enable", h.EnableUserMFA)
+		r.Post("/users/{id}/mfa/disable", h.DisableUserMFA)
 		r.With(RequireAdmin).Get("/privileges", h.GetRolePrivileges)
 		// Granting a capability to a role is a change to the security
 		// policy of the database, so only an owner may make it.
@@ -125,6 +128,7 @@ type LoginRequest struct {
 	Database string `json:"database"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	TOTPCode string `json:"totp_code,omitempty"`
 }
 
 // Login authenticates a user against one database and opens a session bound
@@ -172,8 +176,20 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := svc.Authenticate(r.Context(), req.Username, req.Password)
+	user, err := svc.Authenticate(r.Context(), req.Username, req.Password, req.TOTPCode)
 	if err != nil {
+		if errors.Is(err, schema.ErrMFARequired) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"type":         "about:blank",
+				"title":        "MFA Required",
+				"status":       http.StatusUnauthorized,
+				"detail":       err.Error(),
+				"mfa_required": true,
+			})
+			return
+		}
 		telemetry.WriteProblem(w, r, http.StatusUnauthorized, "Authentication Failed", err.Error())
 		return
 	}
@@ -185,6 +201,8 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteInternalError(w, r, errors.New("failed creating session"))
 		return
 	}
+	clientIP, webContainer, userAgent := extractClientSessionMeta(r)
+	h.sessions.TouchMeta(token, clientIP, webContainer, userAgent)
 
 	// The capabilities of the account's role travel with the sign-in so a
 	// client can tell a user what they may do before they try it. They are
@@ -554,3 +572,96 @@ func (h *SecurityHandler) SetRolePrivileges(w http.ResponseWriter, r *http.Reque
 	}
 	h.GetRolePrivileges(w, r)
 }
+
+func (h *SecurityHandler) canManageUserMFA(w http.ResponseWriter, r *http.Request, targetID string) (*schema.UserMetadata, bool) {
+	sess := currentSession(r)
+	svc := schemaService(r)
+	target, err := svc.GetUser(r.Context(), targetID)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Not Found", err.Error())
+		return nil, false
+	}
+	isSelf := sess.UserID == target.ID
+	switch {
+	case sess.IsOwner():
+		return target, true
+	case sess.IsAdmin():
+		if target.Role == auth.RoleOwner {
+			writeForbidden(w, r, "only an owner can manage owner accounts")
+			return nil, false
+		}
+		return target, true
+	case isSelf:
+		return target, true
+	default:
+		writeForbidden(w, r, "your role does not allow this operation")
+		return nil, false
+	}
+}
+
+// SetupUserMFA generates a TOTP secret and otpauth:// URI for Google Authenticator.
+func (h *SecurityHandler) SetupUserMFA(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if _, ok := h.canManageUserMFA(w, r, id); !ok {
+		return
+	}
+	svc := schemaService(r)
+	issuer := "File4Base (" + currentSession(r).Database + ")"
+	resp, err := svc.SetupUserMFA(r.Context(), id, issuer)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "MFA Setup Error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+type enableMFARequest struct {
+	Code   string `json:"code"`
+	Secret string `json:"secret,omitempty"`
+}
+
+// EnableUserMFA verifies a 6-digit TOTP code and enables MFA on the account.
+func (h *SecurityHandler) EnableUserMFA(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if _, ok := h.canManageUserMFA(w, r, id); !ok {
+		return
+	}
+	var req enableMFARequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	svc := schemaService(r)
+	if err := svc.EnableUserMFA(r.Context(), id, req.Code, req.Secret); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "MFA Verification Failed", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":          id,
+		"mfa_enabled": true,
+		"status":      "enabled",
+	})
+}
+
+// DisableUserMFA turns off MFA and clears the TOTP secret on the account.
+func (h *SecurityHandler) DisableUserMFA(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if _, ok := h.canManageUserMFA(w, r, id); !ok {
+		return
+	}
+	svc := schemaService(r)
+	if err := svc.DisableUserMFA(r.Context(), id); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "MFA Disable Error", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":          id,
+		"mfa_enabled": false,
+		"status":      "disabled",
+	})
+}
+

@@ -1,10 +1,10 @@
 // #33 — merge fields inside layout text. A line whose fields are all empty
 // collapses, which is what lets a three-line address print as two.
 
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-const _record = {
+const Map<String, String?> _record = {
   'first_name': 'Marie',
   'last_name': 'Durand',
   'home_address_1': '14 Avenue Foch',

@@ -1,12 +1,12 @@
 // #37 — a chart draws the figures #32 works out. These check what it takes
 // from them, and that it draws.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/chart_view.dart';
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _figures = SummaryResultModel(
   count: 16,
@@ -27,7 +27,6 @@ const _figures = SummaryResultModel(
 );
 
 const _config = ChartConfigModel(
-  chartType: ChartType.column,
   title: 'Fees by customer type',
   categoryField: 'customer_type',
   series: [
@@ -305,8 +304,8 @@ void main() {
           ],
         },
       );
-      final layout = LayoutDefinitionModel(
-        id: 'l', name: 'l', tableOccurrence: 'customers', objects: const [object]);
+      const layout = LayoutDefinitionModel(
+        id: 'l', name: 'l', tableOccurrence: 'customers', objects: [object]);
 
       final back = LayoutDefinitionModel.fromJson(layout.toJson());
       final chart = back.objects.single.chart;

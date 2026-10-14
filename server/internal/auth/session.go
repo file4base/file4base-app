@@ -27,12 +27,17 @@ const DefaultSessionTTL = 12 * time.Hour
 
 // Session describes an authenticated caller.
 type Session struct {
-	UserID    string
-	Username  string
-	Role      string
-	Database  string
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	UserID        string
+	Username      string
+	Role          string
+	Database      string
+	CreatedAt     time.Time
+	LastSeenAt    time.Time
+	ExpiresAt     time.Time
+	ClientIP      string
+	WebContainer  string
+	UserAgent     string
+	RequestsCount int64
 	// Stamp is the account state the session was opened with. Requests are
 	// rejected once the account's current stamp differs (password, role or
 	// active state changed, account deleted), even for a session created
@@ -90,16 +95,43 @@ func (s *Store) Create(userID, username, role, database, stamp string) (string, 
 	s.pruneLocked(now)
 
 	sess := &Session{
-		UserID:    userID,
-		Username:  username,
-		Role:      role,
-		Database:  database,
-		Stamp:     stamp,
-		CreatedAt: now,
-		ExpiresAt: now.Add(s.ttl),
+		UserID:        userID,
+		Username:      username,
+		Role:          role,
+		Database:      database,
+		Stamp:         stamp,
+		CreatedAt:     now,
+		LastSeenAt:    now,
+		ExpiresAt:     now.Add(s.ttl),
+		RequestsCount: 1,
 	}
 	s.sessions[digest(token)] = sess
 	return token, *sess, nil
+}
+
+// TouchMeta records client origin metadata (IP, web container hostname, user-agent)
+// and increments the request counter for the session.
+func (s *Store) TouchMeta(token, clientIP, webContainer, userAgent string) {
+	if token == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[digest(token)]
+	if !ok {
+		return
+	}
+	sess.LastSeenAt = s.now()
+	sess.RequestsCount++
+	if clientIP != "" {
+		sess.ClientIP = clientIP
+	}
+	if webContainer != "" {
+		sess.WebContainer = webContainer
+	}
+	if userAgent != "" {
+		sess.UserAgent = userAgent
+	}
 }
 
 // Get returns the session for a token and extends its idle lifetime.
@@ -121,6 +153,7 @@ func (s *Store) Get(token string) (Session, bool) {
 		delete(s.sessions, key)
 		return Session{}, false
 	}
+	sess.LastSeenAt = now
 	sess.ExpiresAt = now.Add(s.ttl)
 	return *sess, true
 }
@@ -174,6 +207,74 @@ func (s *Store) RevokeDatabase(database string) {
 			delete(s.sessions, key)
 		}
 	}
+}
+
+// SessionInfo is a safe, serializable view of an active session (never exposes raw tokens).
+type SessionInfo struct {
+	SessionID     string `json:"session_id"`
+	UserID        string `json:"user_id"`
+	Username      string `json:"username"`
+	Role          string `json:"role"`
+	Database      string `json:"database"`
+	ClientIP      string `json:"client_ip"`
+	WebContainer  string `json:"web_container"`
+	UserAgent     string `json:"user_agent"`
+	RequestsCount int64  `json:"requests_count"`
+	CreatedAt     string `json:"created_at"`
+	LastSeenAt    string `json:"last_seen_at"`
+	ExpiresAt     string `json:"expires_at"`
+	IsCurrent     bool   `json:"is_current"`
+}
+
+// ListSessions returns all active, non-expired sessions in the store.
+func (s *Store) ListSessions(currentToken string) []SessionInfo {
+	currentKey := ""
+	if currentToken != "" {
+		currentKey = digest(currentToken)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	s.pruneLocked(now)
+	out := make([]SessionInfo, 0, len(s.sessions))
+	for key, sess := range s.sessions {
+		lastSeen := sess.LastSeenAt
+		if lastSeen.IsZero() {
+			lastSeen = sess.CreatedAt
+		}
+		out = append(out, SessionInfo{
+			SessionID:     key[:16],
+			UserID:        sess.UserID,
+			Username:      sess.Username,
+			Role:          sess.Role,
+			Database:      sess.Database,
+			ClientIP:      sess.ClientIP,
+			WebContainer:  sess.WebContainer,
+			UserAgent:     sess.UserAgent,
+			RequestsCount: sess.RequestsCount,
+			CreatedAt:     sess.CreatedAt.UTC().Format(time.RFC3339),
+			LastSeenAt:    lastSeen.UTC().Format(time.RFC3339),
+			ExpiresAt:     sess.ExpiresAt.UTC().Format(time.RFC3339),
+			IsCurrent:     key == currentKey,
+		})
+	}
+	return out
+}
+
+// RevokeByID revokes a session matching the full or 16-char prefix session digest.
+func (s *Store) RevokeByID(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key := range s.sessions {
+		if key == sessionID || (len(sessionID) >= 8 && len(key) >= len(sessionID) && key[:len(sessionID)] == sessionID) {
+			delete(s.sessions, key)
+			return true
+		}
+	}
+	return false
 }
 
 // Len returns the number of live sessions.

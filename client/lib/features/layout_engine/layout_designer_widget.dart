@@ -1,22 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart' show LayoutTool;
+import 'package:file4base_client/features/data_browser/related_records.dart';
+import 'package:file4base_client/features/layout_engine/button_setup_dialog.dart';
+import 'package:file4base_client/features/layout_engine/chart_view.dart';
+import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
+import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior, kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../core/api/api_client.dart';
-import '../../core/services/solution_storage.dart';
-import '../../core/widgets/file4base_status_sidebar.dart' show LayoutTool;
-import 'button_setup_dialog.dart';
-import 'layout_action_runner.dart';
-import 'layout_object_visuals.dart';
-import '../schema_manager/manage_database_dialog.dart';
-import '../theme_manager/manage_themes_dialog.dart';
-import 'manage_layouts_dialog.dart';
-import 'models/layout_definition.dart';
-import 'models/chart_definition.dart';
-import 'chart_view.dart';
-import '../data_browser/related_records.dart';
 
 enum _ResizeHandle {
   topLeft,
@@ -32,6 +30,25 @@ enum _ResizeHandle {
 enum _LayoutSaveStatus { idle, dirty, saving, saved, error }
 
 class LayoutDesignerWidget extends StatefulWidget {
+
+  const LayoutDesignerWidget({
+    required this.table, required this.apiClient, required this.initialLayout, required this.onSaved, super.key,
+    this.tables = const [],
+    this.layouts = const [],
+    this.onLayoutSelected,
+    this.onNewLayout,
+    this.onManageLayouts,
+    this.onRenameLayout,
+    this.onExitLayout,
+    this.onManageDatabase,
+    this.onManageSecurity,
+    this.onManageScripts,
+    this.onManageThemes,
+    this.onAutoSaveDirty,
+    this.onLayoutChanged,
+    this.activeTool = LayoutTool.pointer,
+    this.onToolChanged,
+  });
   final TableModel table;
   final List<TableModel> tables;
   final ApiClient apiClient;
@@ -58,32 +75,9 @@ class LayoutDesignerWidget extends StatefulWidget {
   /// palettes can follow.
   final ValueChanged<LayoutTool>? onToolChanged;
 
-  const LayoutDesignerWidget({
-    super.key,
-    required this.table,
-    this.tables = const [],
-    required this.apiClient,
-    required this.initialLayout,
-    this.layouts = const [],
-    this.onLayoutSelected,
-    this.onNewLayout,
-    this.onManageLayouts,
-    this.onRenameLayout,
-    this.onExitLayout,
-    this.onManageDatabase,
-    this.onManageSecurity,
-    this.onManageScripts,
-    this.onManageThemes,
-    required this.onSaved,
-    this.onAutoSaveDirty,
-    this.onLayoutChanged,
-    this.activeTool = LayoutTool.pointer,
-    this.onToolChanged,
-  });
-
   /// Largest file accepted by Insert > Picture / PDF / Audio-Video / File.
   /// Media is stored inline in the layout definition.
-  static const maxMediaBytes = 2 * 1024 * 1024;
+  static const int maxMediaBytes = 2 * 1024 * 1024;
 
   @override
   State<LayoutDesignerWidget> createState() => LayoutDesignerWidgetState();
@@ -108,7 +102,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   /// Every selected object id (the single selection or the multi-selection).
   Set<String> get _selectedIds =>
-      _multiIds.isNotEmpty ? _multiIds : {if (_primarySelectedId != null) _primarySelectedId!};
+      _multiIds.isNotEmpty ? _multiIds : {?_primarySelectedId};
 
   bool get _isShiftHeld => HardwareKeyboard.instance.isShiftPressed;
 
@@ -134,7 +128,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   Rect? _marqueeRect;
   Set<String> _marqueeBase = {};
   bool _snapToGrid = true;
-  bool _showGrid = true;
+  final bool _showGrid = true;
   bool _isSaving = false;
   bool _isPersisted = false;
 
@@ -331,9 +325,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       ];
       return def.copyWith(parts: parts);
     }
-    bool hasHeader = parts.any((p) => p.type == 'header');
-    bool hasBody = parts.any((p) => p.type == 'body');
-    bool hasFooter = parts.any((p) => p.type == 'footer');
+    final hasHeader = parts.any((p) => p.type == 'header');
+    final hasBody = parts.any((p) => p.type == 'body');
+    final hasFooter = parts.any((p) => p.type == 'footer');
 
     if (!hasHeader) {
       parts.insert(0, const LayoutPartModel(id: 'header_part', type: 'header', height: 60.0));
@@ -506,6 +500,18 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     return (value / 8.0).roundToDouble() * 8.0;
   }
 
+  // Clipboard for layout objects across layouts within the session
+  static List<LayoutObjectModel> _copiedObjects = const [];
+
+  bool get isEditingInlineText => _editingTextObjectId != null;
+  bool get hasSelection => _selectedIds.isNotEmpty;
+  bool get canUndo => _undoStack.isNotEmpty;
+  bool get canRedo => _redoStack.isNotEmpty;
+  bool get canPasteObjects => _copiedObjects.isNotEmpty;
+
+  void undo() => _undo();
+  void redo() => _redo();
+
   void _pushUndoState() {
     _undoStack.add(_layout);
     if (_undoStack.length > 50) _undoStack.removeAt(0);
@@ -645,7 +651,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     if (part == null) return;
 
     final delta = details.globalPosition.dy - _partResizeStartY;
-    double newHeight = _clampPartHeight(part.type, _partResizeStartHeight + delta);
+    var newHeight = _clampPartHeight(part.type, _partResizeStartHeight + delta);
     if (_snapToGrid) {
       newHeight = (newHeight / 8.0).roundToDouble() * 8.0;
     }
@@ -673,7 +679,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     if (part == null) return;
 
     final heightCtrl = TextEditingController(text: part.height.round().toString());
-    String? breakField = part.breakField;
+    var breakField = part.breakField;
     final breakable = _currentTable.columns.where((c) => !c.isPrimaryKey).toList();
 
     final result = await showDialog<String>(
@@ -712,7 +718,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                   const SizedBox(height: 4),
                   DropdownButtonFormField<String>(
                     key: const ValueKey('part-break-field'),
-                    value: breakable.any((c) => c.name == breakField) ? breakField : null,
+                    initialValue: breakable.any((c) => c.name == breakField) ? breakField : null,
                     decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
                     hint: const Text('Choose a field', style: TextStyle(fontSize: 12)),
                     items: [
@@ -875,9 +881,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         newObj = LayoutObjectModel(
           id: newId, type: 'label', x: x, y: y, width: 140, height: 26,
           text: 'Text Label',
-          style: const LayoutObjectStyle(fontSize: 13, fontWeight: 'normal'),
+          style: const LayoutObjectStyle(fontSize: 13),
         );
-        break;
       case LayoutTool.line:
         final r = _lineBox(bounds ?? Rect.fromLTWH(localPos.dx - 80, localPos.dy, 160, 0), stroke);
         newObj = LayoutObjectModel(
@@ -885,28 +890,24 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           width: r.width, height: r.height,
           style: LayoutObjectStyle(borderColor: '#616161', borderWidth: stroke),
         );
-        break;
       case LayoutTool.rectangle:
         final r = box(140, 70);
         newObj = LayoutObjectModel(
           id: newId, type: 'rect', x: r.left, y: r.top, width: r.width, height: r.height,
           style: LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: stroke, cornerRadius: 0, textAlign: 'center'),
         );
-        break;
       case LayoutTool.roundedRect:
         final r = box(140, 70);
         newObj = LayoutObjectModel(
           id: newId, type: 'rounded_rect', x: r.left, y: r.top, width: r.width, height: r.height,
           style: LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: stroke, cornerRadius: 8, textAlign: 'center'),
         );
-        break;
       case LayoutTool.oval:
         final r = box(90, 90);
         newObj = LayoutObjectModel(
           id: newId, type: 'oval', x: r.left, y: r.top, width: r.width, height: r.height,
           style: LayoutObjectStyle(borderColor: '#9E9E9E', borderWidth: stroke, textAlign: 'center'),
         );
-        break;
       case LayoutTool.field:
         final cols = _currentTable.columns.where((c) => !c.isPrimaryKey).toList();
         final defaultCol = cols.isNotEmpty ? cols.first.name : 'field';
@@ -914,35 +915,30 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           id: newId, type: 'field', x: x, y: y, width: 220, height: 32,
           fieldBinding: FieldBindingModel(fieldName: defaultCol),
         );
-        break;
       case LayoutTool.button:
         newObj = LayoutObjectModel(
           id: newId, type: 'button', x: x, y: y, width: 130, height: 34,
           text: 'Button',
           style: const LayoutObjectStyle(fillColor: '#1E88E5', textColor: '#FFFFFF', cornerRadius: 5),
         );
-        break;
       case LayoutTool.popoverButton:
         newObj = LayoutObjectModel(
           id: newId, type: 'popover_button', x: x, y: y, width: 140, height: 34,
           text: 'Popover',
           style: const LayoutObjectStyle(fillColor: '#ECEFF1', textColor: '#263238', cornerRadius: 5),
         );
-        break;
       case LayoutTool.buttonBar:
         newObj = LayoutObjectModel(
           id: newId, type: 'button_bar', x: x, y: y, width: 270, height: 34,
           text: 'Segment 1 | Segment 2 | Segment 3',
-          style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#B0BEC5', cornerRadius: 4),
+          style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#B0BEC5'),
         );
-        break;
       case LayoutTool.tabControl:
         newObj = LayoutObjectModel(
           id: newId, type: 'tab_control', x: x, y: y, width: 340, height: 180,
           text: 'Tab 1 | Tab 2',
-          style: const LayoutObjectStyle(fillColor: '#FAFAFA', borderColor: '#CFD8DC', cornerRadius: 4),
+          style: const LayoutObjectStyle(fillColor: '#FAFAFA', borderColor: '#CFD8DC'),
         );
-        break;
       case LayoutTool.portal:
         newObj = LayoutObjectModel(
           id: newId, type: 'portal', x: x, y: y, width: 440, height: 180,
@@ -950,10 +946,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           // A new portal shows nothing until Portal Setup names a
           // relationship; the defaults are there so the panel has values to
           // show (#36).
-          portalConfig: const PortalConfigModel(rowCount: 5).toJson(),
-          style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#90CAF9', cornerRadius: 4),
+          portalConfig: const PortalConfigModel().toJson(),
+          style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#90CAF9'),
         );
-        break;
       case LayoutTool.chart:
         newObj = LayoutObjectModel(
           id: newId, type: 'chart', x: x, y: y, width: 320, height: 200,
@@ -963,14 +958,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           chartConfig: const ChartConfigModel().toJson(),
           style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#B0BEC5', cornerRadius: 6),
         );
-        break;
       case LayoutTool.webViewer:
         newObj = LayoutObjectModel(
           id: newId, type: 'web_viewer', x: x, y: y, width: 380, height: 220,
           text: 'https://example.com',
-          style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#90A4AE', cornerRadius: 4),
+          style: const LayoutObjectStyle(fillColor: '#FFFFFF', borderColor: '#90A4AE'),
         );
-        break;
       default:
         newObj = LayoutObjectModel(
           id: newId, type: 'label', x: x, y: y, width: 140, height: 26, text: 'Label',
@@ -990,7 +983,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _pushUndoState();
     final x = _snap(pos.dx).clamp(0.0, _layout.width - 240);
     final y = _snap(pos.dy).clamp(0.0, 3000.0);
-    final List<LayoutObjectModel> newObjects = [];
+    final newObjects = <LayoutObjectModel>[];
 
     if (_dragIncludeLabel) {
       if (_dragPlacement == 'horizontal') {
@@ -1036,7 +1029,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             width: 220,
             height: 20,
             text: column.displayName,
-            style: const LayoutObjectStyle(fontSize: 12, fontWeight: 'bold', textAlign: 'left'),
+            style: const LayoutObjectStyle(fontSize: 12, fontWeight: 'bold'),
           ),
         );
         newObjects.add(
@@ -1078,6 +1071,47 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       _selectedObjectId = newObjects.last.id;
     });
     _markLayoutDirty();
+  }
+
+  void clearSelected() => _deleteSelectedObject();
+
+  void copySelected() {
+    final ids = _selectedIds;
+    final sources = _layout.objects.where((o) => ids.contains(o.id)).toList();
+    if (sources.isEmpty) return;
+    _copiedObjects = List<LayoutObjectModel>.unmodifiable(sources);
+  }
+
+  void cutSelected() {
+    final ids = _selectedIds;
+    final sources = _layout.objects.where((o) => ids.contains(o.id)).toList();
+    if (sources.isEmpty) return;
+    _copiedObjects = List<LayoutObjectModel>.unmodifiable(sources);
+    _deleteSelectedObject();
+  }
+
+  void pasteObjects() {
+    if (_copiedObjects.isEmpty) return;
+    _pushUndoState();
+    final stamp = DateTime.now().millisecondsSinceEpoch;
+    final pasted = [
+      for (var i = 0; i < _copiedObjects.length; i++)
+        _copiedObjects[i].copyWith(
+          id: 'obj_${stamp}_$i',
+          x: _snap(_copiedObjects[i].x + 16),
+          y: _snap(_copiedObjects[i].y + 16),
+        ),
+    ];
+    setState(() {
+      _layout = _layout.copyWith(objects: [..._layout.objects, ...pasted]);
+    });
+    _setSelection(pasted.map((o) => o.id).toSet());
+    _markLayoutDirty();
+  }
+
+  void selectAllObjects() {
+    if (_layout.objects.isEmpty) return;
+    _setSelection(_layout.objects.map((o) => o.id).toSet());
   }
 
   void _deleteSelectedObject() {
@@ -1140,28 +1174,22 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     final sel = _selectedObject;
     if (sel == null) return;
     _pushUndoState();
-    double newX = sel.x;
-    double newY = sel.y;
+    var newX = sel.x;
+    var newY = sel.y;
 
     switch (alignment) {
       case 'left':
         newX = 24.0;
-        break;
       case 'center':
         newX = _snap((_layout.width - sel.width) / 2);
-        break;
       case 'right':
         newX = _snap(_layout.width - sel.width - 24);
-        break;
       case 'top':
         newY = 16.0;
-        break;
       case 'middle':
         newY = _snap(_headerPart.height + (_bodyPart.height - sel.height) / 2);
-        break;
       case 'bottom':
         newY = _snap(_headerPart.height + _bodyPart.height - sel.height - 16);
-        break;
     }
 
     setState(() {
@@ -1487,7 +1515,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       return;
     }
 
-    var w = 200.0, h = 150.0;
+    var w = 200.0;
+    var h = 150.0;
     if (resolvedKind == 'image') {
       try {
         final img = await decodeImageFromList(picked.bytes);
@@ -1606,7 +1635,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   Future<void> _showObjectContextMenu(LayoutObjectModel obj, Offset globalPosition) async {
     setState(() => _selectedObjectId = obj.id);
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox;
+    final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(globalPosition & const Size(1, 1), Offset.zero & overlay.size),
@@ -1660,7 +1689,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
   Future<void> _showNewFieldDialog() async {
     final nameCtrl = TextEditingController();
-    String selectedType = 'varchar';
+    var selectedType = 'varchar';
     final formKey = GlobalKey<FormState>();
 
     final confirmed = await showDialog<bool>(
@@ -1698,7 +1727,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                   ),
                   const SizedBox(height: 14),
                   DropdownButtonFormField<String>(
-                    value: selectedType,
+                    initialValue: selectedType,
                     decoration: const InputDecoration(
                       labelText: 'Field Type',
                       border: OutlineInputBorder(),
@@ -1860,6 +1889,21 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           } else if (event.logicalKey == LogicalKeyboardKey.keyD &&
               (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
             _duplicateSelectedObject();
+          } else if (event.logicalKey == LogicalKeyboardKey.keyC &&
+              (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
+            copySelected();
+          } else if (event.logicalKey == LogicalKeyboardKey.keyX &&
+              (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
+            cutSelected();
+          } else if (event.logicalKey == LogicalKeyboardKey.keyV &&
+              (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
+            pasteObjects();
+          } else if (event.logicalKey == LogicalKeyboardKey.keyA &&
+              (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
+            selectAllObjects();
+          } else if (event.logicalKey == LogicalKeyboardKey.keyY &&
+              (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
+            _redo();
           } else if (event.logicalKey == LogicalKeyboardKey.keyZ &&
               (HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed)) {
             if (HardwareKeyboard.instance.isShiftPressed) {
@@ -1870,7 +1914,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           }
         }
       },
-      child: Container(
+      child: ColoredBox(
         color: isDark ? const Color(0xFF1A1E24) : const Color(0xFFE5E5E7),
         child: Column(
           children: [
@@ -1991,19 +2035,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               switch (val) {
                 case 'db':
                   widget.onManageDatabase?.call();
-                  break;
                 case 'layouts':
                   widget.onManageLayouts?.call();
-                  break;
                 case 'security':
                   widget.onManageSecurity?.call();
-                  break;
                 case 'scripts':
                   _openScriptWorkspace();
-                  break;
                 case 'themes':
                   widget.onManageThemes?.call();
-                  break;
               }
             },
             itemBuilder: (ctx) => const [
@@ -2121,7 +2160,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           margin: const EdgeInsets.symmetric(horizontal: 1.5),
           decoration: BoxDecoration(
             color: isActive
-                ? (isDark ? const Color(0xFF1E88E5).withOpacity(0.35) : const Color(0xFF1E88E5).withOpacity(0.18))
+                ? (isDark ? const Color(0xFF1E88E5).withValues(alpha: 0.35) : const Color(0xFF1E88E5).withValues(alpha: 0.18))
                 : Colors.transparent,
             borderRadius: BorderRadius.circular(4),
             border: Border.all(
@@ -2252,7 +2291,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
                 decoration: BoxDecoration(
-                  color: _snapToGrid ? const Color(0xFF1E88E5).withOpacity(0.15) : Colors.transparent,
+                  color: _snapToGrid ? const Color(0xFF1E88E5).withValues(alpha: 0.15) : Colors.transparent,
                   borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: _snapToGrid ? const Color(0xFF1E88E5) : Colors.transparent),
                 ),
@@ -2314,7 +2353,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   Widget _buildLeftPane(BuildContext context, bool isDark) {
     final bg = isDark ? const Color(0xFF1E232B) : const Color(0xFFF9F9FA);
 
-    return Container(
+    return ColoredBox(
       color: bg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2566,9 +2605,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Tooltip(
+                  const Tooltip(
                     message: 'Drag & Drop Help:\nDrag any field to the canvas to place it at that location with your configured label & control preferences.',
-                    child: const Icon(Icons.help_outline, size: 16, color: Colors.grey),
+                    child: Icon(Icons.help_outline, size: 16, color: Colors.grey),
                   ),
                 ],
               ),
@@ -2697,7 +2736,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
       decoration: BoxDecoration(
-        color: isSelected ? Colors.white24 : color.withOpacity(0.12),
+        color: isSelected ? Colors.white24 : color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(3),
       ),
       child: Text(
@@ -2810,7 +2849,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
                   color: isSelected
-                      ? const Color(0xFF1E88E5).withOpacity(0.15)
+                      ? const Color(0xFF1E88E5).withValues(alpha: 0.15)
                       : Colors.transparent,
                   border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.black12, width: 0.5)),
                 ),
@@ -2873,13 +2912,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
     final canvas = MouseRegion(
       cursor: cursorForTool,
-      child: Container(
+      child: ColoredBox(
         color: isDark ? const Color(0xFF171A1E) : const Color(0xFFD6D6D8),
         child: InteractiveViewer(
           constrained: false,
           boundaryMargin: const EdgeInsets.all(120),
           minScale: 0.4,
-          maxScale: 2.5,
           panEnabled: _activeTool == LayoutTool.pointer && _selectedObjectId == null && _editingTextObjectId == null,
           child: Padding(
             padding: const EdgeInsets.all(28.0),
@@ -2958,7 +2996,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                                   child: Container(
                                     decoration: BoxDecoration(
                                       color: const Color(0x141E88E5),
-                                      border: Border.all(color: const Color(0xFF1E88E5), width: 1),
+                                      border: Border.all(color: const Color(0xFF1E88E5)),
                                     ),
                                   ),
                                 ),
@@ -3207,7 +3245,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                         DropdownButtonFormField<String>(
                           key: const ValueKey('chart-category'),
                           isExpanded: true,
-                          value: categoryChoices.any((c) => c.name == config.categoryField)
+                          initialValue: categoryChoices.any((c) => c.name == config.categoryField)
                               ? config.categoryField
                               : null,
                           decoration:
@@ -3491,7 +3529,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                   height: 1.5,
                   color: isResizing
                       ? const Color(0xFF1E88E5)
-                      : const Color(0xFF64B5F6).withOpacity(0.8),
+                      : const Color(0xFF64B5F6).withValues(alpha: 0.8),
                 ),
               ),
               // Draggable Handle Tag on the line
@@ -3503,7 +3541,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                   decoration: BoxDecoration(
                     color: isResizing ? const Color(0xFF1E88E5) : const Color(0xFFBBDEFB),
                     borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: const Color(0xFF1976D2), width: 1),
+                    border: Border.all(color: const Color(0xFF1976D2)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -3616,7 +3654,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 child: IgnorePointer(
                   child: Container(
                     decoration: BoxDecoration(
-                      border: Border.all(color: const Color(0xFF1E88E5), width: 1),
+                      border: Border.all(color: const Color(0xFF1E88E5)),
                     ),
                   ),
                 ),
@@ -3745,40 +3783,35 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     const pad = _handlePad;
 
     Widget handle(_ResizeHandle handleType, Alignment alignment, MouseCursor cursor) {
-      double? left, right, top, bottom;
+      double? left;
+      double? right;
+      double? top;
+      double? bottom;
       switch (handleType) {
         case _ResizeHandle.topLeft:
           left = pad - half;
           top = pad - half;
-          break;
         case _ResizeHandle.topCenter:
           left = pad + obj.width / 2 - half;
           top = pad - half;
-          break;
         case _ResizeHandle.topRight:
           right = pad - half;
           top = pad - half;
-          break;
         case _ResizeHandle.middleRight:
           right = pad - half;
           top = pad + obj.height / 2 - half;
-          break;
         case _ResizeHandle.bottomRight:
           right = pad - half;
           bottom = pad - half;
-          break;
         case _ResizeHandle.bottomCenter:
           left = pad + obj.width / 2 - half;
           bottom = pad - half;
-          break;
         case _ResizeHandle.bottomLeft:
           left = pad - half;
           bottom = pad - half;
-          break;
         case _ResizeHandle.middleLeft:
           left = pad - half;
           top = pad + obj.height / 2 - half;
-          break;
       }
 
       return Positioned(
@@ -3804,10 +3837,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               if (_activeResizeHandle != handleType || _objResizeStartBounds == null) return;
               final delta = details.globalPosition - _objResizeStart;
               final b = _objResizeStartBounds!;
-              double newX = b.left;
-              double newY = b.top;
-              double newW = b.width;
-              double newH = b.height;
+              var newX = b.left;
+              var newY = b.top;
+              var newW = b.width;
+              var newH = b.height;
 
               switch (handleType) {
                 case _ResizeHandle.topLeft:
@@ -3815,35 +3848,27 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                   newY = _snap(math.min(b.bottom - 10, b.top + delta.dy));
                   newW = b.right - newX;
                   newH = b.bottom - newY;
-                  break;
                 case _ResizeHandle.topCenter:
                   newY = _snap(math.min(b.bottom - 10, b.top + delta.dy));
                   newH = b.bottom - newY;
-                  break;
                 case _ResizeHandle.topRight:
                   newY = _snap(math.min(b.bottom - 10, b.top + delta.dy));
                   newW = _snap(math.max(16.0, b.width + delta.dx));
                   newH = b.bottom - newY;
-                  break;
                 case _ResizeHandle.middleRight:
                   newW = _snap(math.max(16.0, b.width + delta.dx));
-                  break;
                 case _ResizeHandle.bottomRight:
                   newW = _snap(math.max(16.0, b.width + delta.dx));
                   newH = _snap(math.max(10.0, b.height + delta.dy));
-                  break;
                 case _ResizeHandle.bottomCenter:
                   newH = _snap(math.max(10.0, b.height + delta.dy));
-                  break;
                 case _ResizeHandle.bottomLeft:
                   newX = _snap(math.min(b.right - 16, b.left + delta.dx));
                   newW = b.right - newX;
                   newH = _snap(math.max(10.0, b.height + delta.dy));
-                  break;
                 case _ResizeHandle.middleLeft:
                   newX = _snap(math.min(b.right - 16, b.left + delta.dx));
                   newW = b.right - newX;
-                  break;
               }
 
               setState(() {
@@ -3867,7 +3892,6 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               decoration: BoxDecoration(
                 color: const Color(0xFF1E88E5),
                 border: Border.all(color: Colors.white, width: 1.2),
-                shape: BoxShape.rectangle,
               ),
             ),
           ),
@@ -3888,7 +3912,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   }
 
   BoxDecoration _objectDecoration(LayoutObjectModel obj, bool isSelected) {
-    Color bg = Colors.transparent;
+    var bg = Colors.transparent;
     final fill = parseLayoutColor(obj.style.fillColor);
     if (fill != null) {
       bg = fill;
@@ -3990,13 +4014,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         );
 
       case 'button_bar':
-        return Row(
+        return const Row(
           children: [
-            Expanded(child: Center(child: Text('Segment 1', style: const TextStyle(fontSize: 11)))),
-            const VerticalDivider(width: 1),
-            Expanded(child: Center(child: Text('Segment 2', style: const TextStyle(fontSize: 11)))),
-            const VerticalDivider(width: 1),
-            Expanded(child: Center(child: Text('Segment 3', style: const TextStyle(fontSize: 11)))),
+            Expanded(child: Center(child: Text('Segment 1', style: TextStyle(fontSize: 11)))),
+            VerticalDivider(width: 1),
+            Expanded(child: Center(child: Text('Segment 2', style: TextStyle(fontSize: 11)))),
+            VerticalDivider(width: 1),
+            Expanded(child: Center(child: Text('Segment 3', style: TextStyle(fontSize: 11)))),
           ],
         );
 
@@ -4100,7 +4124,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         );
 
       case 'web_viewer':
-        return Container(
+        return ColoredBox(
           color: Colors.white,
           child: Column(
             children: [
@@ -4149,7 +4173,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     final sel = _selectedObject;
     final bg = isDark ? const Color(0xFF1E232B) : const Color(0xFFF9F9FA);
 
-    return Container(
+    return ColoredBox(
       color: bg,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4390,7 +4414,6 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     return DropdownButtonFormField<T>(
       key: ValueKey('${_layout.id}-dd-$label-$value'),
       initialValue: value,
-      isDense: true,
       isExpanded: true,
       style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface),
       decoration: InputDecoration(
@@ -4453,7 +4476,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E88E5).withOpacity(0.15),
+                color: const Color(0xFF1E88E5).withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
@@ -4637,7 +4660,6 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             Expanded(
               child: Slider(
                 value: sel.style.borderWidth.clamp(0.0, 12.0),
-                min: 0,
                 max: 12,
                 divisions: 24,
                 label: '${sel.style.borderWidth} pt',
@@ -4690,7 +4712,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             ),
             if (sel.media!.isImage)
               DropdownButtonFormField<String>(
-                value: sel.media!.fit,
+                initialValue: sel.media!.fit,
                 decoration: const InputDecoration(labelText: 'Fit', border: OutlineInputBorder(), isDense: true),
                 items: const [
                   DropdownMenuItem(value: 'contain', child: Text('Fit inside (keep proportions)', style: TextStyle(fontSize: 11))),
@@ -4805,7 +4827,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       const SizedBox(height: 4),
       DropdownButtonFormField<String>(
         key: const ValueKey('inspector-value-list'),
-        value: known ? selected : null,
+        initialValue: known ? selected : null,
         decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
         hint: const Text('Choose a value list', style: TextStyle(fontSize: 11)),
         items: [
@@ -4863,7 +4885,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const SizedBox(height: 4),
         DropdownButtonFormField<String>(
           key: const ValueKey('inspector-field-occurrence'),
-          value: danglingRelationship ? null : selectedTarget,
+          initialValue: danglingRelationship ? null : selectedTarget,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           hint: const Text('Choose an occurrence', style: TextStyle(fontSize: 11)),
           items: [
@@ -4938,7 +4960,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const Text('Bound Column:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         DropdownButtonFormField<String>(
-          value: cols.any((c) => c.name == binding?.fieldName) ? binding?.fieldName : null,
+          initialValue: cols.any((c) => c.name == binding?.fieldName) ? binding?.fieldName : null,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           items: cols.map((c) {
             return DropdownMenuItem<String>(
@@ -4962,7 +4984,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const Divider(height: 24),
         _inspectorSectionTitle('CONTROL STYLE'),
         DropdownButtonFormField<String>(
-          value: sel.fieldBinding?.controlStyle ?? FieldControlStyle.editBox,
+          initialValue: sel.fieldBinding?.controlStyle ?? FieldControlStyle.editBox,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           items: [
             for (final entry in FieldControlStyle.labels.entries)
@@ -5033,7 +5055,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       const SizedBox(height: 4),
       DropdownButtonFormField<String>(
         key: const ValueKey('inspector-portal-relationship'),
-        value: dangling || target == null ? null : _targetKey(target),
+        initialValue: dangling || target == null ? null : _targetKey(target),
         decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
         hint: const Text('Choose an occurrence', style: TextStyle(fontSize: 11)),
         items: [
@@ -5481,13 +5503,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 // ─── Grid Painter ─────────────────────────────────────────────────────────────
 
 class _GridPainter extends CustomPainter {
-  final bool isDark;
   _GridPainter({required this.isDark});
+  final bool isDark;
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.05)
+      ..color = isDark ? Colors.white.withValues(alpha: 0.04) : Colors.black.withValues(alpha: 0.05)
       ..strokeWidth = 0.5;
 
     for (double x = 0; x < size.width; x += 16) {
@@ -5509,22 +5531,20 @@ class _GridPainter extends CustomPainter {
 /// nor moves the cursor. External changes to [value] are shown while the
 /// field is not being edited. [onSubmitted] also runs when focus leaves.
 class _InspectorTextField extends StatefulWidget {
+
+  const _InspectorTextField({
+    required this.value, required this.label, super.key,
+    this.multiline = false,
+    this.numeric = false,
+    this.onChanged,
+    this.onSubmitted,
+  });
   final String value;
   final String label;
   final bool multiline;
   final bool numeric;
   final ValueChanged<String>? onChanged;
   final ValueChanged<String>? onSubmitted;
-
-  const _InspectorTextField({
-    super.key,
-    required this.value,
-    required this.label,
-    this.multiline = false,
-    this.numeric = false,
-    this.onChanged,
-    this.onSubmitted,
-  });
 
   @override
   State<_InspectorTextField> createState() => _InspectorTextFieldState();
@@ -5576,9 +5596,9 @@ class _InspectorTextFieldState extends State<_InspectorTextField> {
 /// Draws a portal's row boundaries on the layout canvas, so it is clear which
 /// band the fields inside it are drawn in (#36).
 class _PortalRowsPainter extends CustomPainter {
-  final double rowHeight;
 
   const _PortalRowsPainter({required this.rowHeight});
+  final double rowHeight;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -5586,7 +5606,7 @@ class _PortalRowsPainter extends CustomPainter {
     final line = Paint()
       ..color = Colors.indigo.withValues(alpha: 0.25)
       ..strokeWidth = 1;
-    for (double y = rowHeight; y < size.height; y += rowHeight) {
+    for (var y = rowHeight; y < size.height; y += rowHeight) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
     }
   }

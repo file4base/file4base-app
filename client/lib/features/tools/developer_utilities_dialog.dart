@@ -1,6 +1,5 @@
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
-
-import '../../core/api/api_client.dart';
 
 /// Developer Utilities dialog (`Tools > Developer Utilities...`, #53).
 ///
@@ -12,20 +11,18 @@ import '../../core/api/api_client.dart';
 ///    and AES-256-GCM solution package encryption.
 /// 4. Permanently lock the solution's design (either on the clone or in place).
 class DeveloperUtilitiesDialog extends StatefulWidget {
+
+  const DeveloperUtilitiesDialog({
+    required this.apiClient, required this.initialMeta, super.key,
+    this.onMetaChanged,
+    this.onSolutionCloned,
+    this.onKioskModeChanged,
+  });
   final ApiClient apiClient;
   final SolutionMetaModel initialMeta;
   final ValueChanged<SolutionMetaModel>? onMetaChanged;
   final ValueChanged<CloneResultModel>? onSolutionCloned;
   final ValueChanged<bool>? onKioskModeChanged;
-
-  const DeveloperUtilitiesDialog({
-    super.key,
-    required this.apiClient,
-    required this.initialMeta,
-    this.onMetaChanged,
-    this.onSolutionCloned,
-    this.onKioskModeChanged,
-  });
 
   static Future<void> show(
     BuildContext context, {
@@ -209,7 +206,7 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
       _statusMessage = null;
     });
     try {
-      final updated = await widget.apiClient.lockSolutionDesign(confirm: true);
+      final updated = await widget.apiClient.lockSolutionDesign();
       if (!mounted) return;
       setState(() {
         _meta = updated;
@@ -504,15 +501,15 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
 }
 
 class _SectionCard extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final Widget child;
 
   const _SectionCard({
     required this.title,
     required this.subtitle,
     required this.child,
   });
+  final String title;
+  final String subtitle;
+  final Widget child;
 
   @override
   Widget build(BuildContext context) {

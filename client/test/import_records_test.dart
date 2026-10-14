@@ -4,10 +4,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_io/import_records_dialog.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers', columns: [
   ColumnModel(id: 'c0', tableId: 't1', name: 'id', displayName: 'ID', fieldType: 'TEXT', isPrimaryKey: true),
@@ -25,11 +25,11 @@ const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers',
 ]);
 
 class _ImportApi extends ApiClient {
+
+  _ImportApi({required this.preview}) : super(baseUrl: 'http://localhost:1');
   final ImportPreviewModel preview;
   final List<Map<String, dynamic>> imports = [];
   Object? importError;
-
-  _ImportApi({required this.preview}) : super(baseUrl: 'http://localhost:1');
 
   @override
   Future<ImportPreviewModel> previewImport(
@@ -48,9 +48,8 @@ class _ImportApi extends ApiClient {
   @override
   Future<ImportReportModel> importRecords(
     String table, {
-    String fileName = '',
+    required Map<String, dynamic> options, String fileName = '',
     Uint8List? bytes,
-    required Map<String, dynamic> options,
     String? format,
     bool hasHeader = true,
     String? delimiter,
@@ -136,7 +135,7 @@ void main() {
 
     expect(find.text('City (TEXT)'), findsWidgets);
     expect(find.textContaining('Annual Fee'), findsNothing,
-        reason: 'a calculation\'s formula owns its value');
+        reason: "a calculation's formula owns its value");
     expect(find.textContaining('Total Fees'), findsNothing,
         reason: 'a summary has no value in a record');
   });
@@ -193,7 +192,7 @@ void main() {
 
     testWidgets('a file with no rows', (tester) async {
       await _pump(tester,
-          preview: const ImportPreviewModel(columns: ['a'], rows: [], rowCount: 0));
+          preview: const ImportPreviewModel(columns: ['a']));
       expect(find.text('The file holds no rows.'), findsOneWidget);
     });
 

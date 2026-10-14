@@ -1,24 +1,24 @@
 import 'dart:convert';
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
 import 'package:file4base_client/features/tools/manage_custom_menus_dialog.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 void main() {
   testWidgets(
       'File4BaseMenuBar applies custom menu sets while keeping File recovery items and Tools > Custom Menus reachable',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
     CustomMenuItemModel? executedItem;
-    bool manageCustomMenusCalled = false;
+    var manageCustomMenusCalled = false;
 
     const customSet = MenuSetModel(
       id: 'set-1',
@@ -61,7 +61,6 @@ void main() {
         CustomMenuModel(
           menu: 'Format',
           mode: 'hide',
-          items: [],
         ),
       ],
     );
@@ -71,7 +70,6 @@ void main() {
         home: Scaffold(
           body: File4BaseMenuBar(
             activeMode: OperationalMode.browse,
-            isAuthenticated: true,
             onSignOut: () {},
             onModeChanged: (_) {},
             onManageDatabase: () {},
@@ -126,7 +124,7 @@ void main() {
   });
 
   testWidgets('ManageCustomMenusDialog lists, creates, and deletes custom menu sets',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 900);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -204,7 +202,7 @@ void main() {
           body: ManageCustomMenusDialog(
             apiClient: apiClient,
             scripts: const [
-              ScriptModel(id: 'sc-1', name: 'Welcome Script', isActive: true),
+              ScriptModel(id: 'sc-1', name: 'Welcome Script'),
             ],
             layouts: const [
               LayoutModel(

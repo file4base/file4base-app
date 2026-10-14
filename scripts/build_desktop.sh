@@ -49,6 +49,10 @@ build_macos() {
         cp "${ROOT_DIR}/LICENSE" "${APP_PATH}/Contents/Resources/LICENSE"
         ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${DIST_DIR}/File4Base-macOS-universal.zip"
         "${SCRIPT_DIR}/verify_desktop_archive.sh" "${DIST_DIR}/File4Base-macOS-universal.zip"
+        if command -v hdiutil >/dev/null 2>&1; then
+            hdiutil create -volname "File4Base" -srcfolder "${APP_PATH}" -ov -format UDZO "${DIST_DIR}/File4Base-macOS.dmg"
+            echo "macOS DMG installer created: ${DIST_DIR}/File4Base-macOS.dmg"
+        fi
         echo "Packaging complete: ${DIST_DIR}/File4Base-macOS-universal.zip"
     else
         echo "Error: File4Base.app not found at ${APP_PATH}"
@@ -67,6 +71,35 @@ build_linux() {
         "${SCRIPT_DIR}/verify_desktop_archive.sh" \
             "${DIST_DIR}/File4Base-Linux-x64.tar.gz" \
             "${CLIENT_DIR}/build/linux/x64/release/pdfium-src"
+        if command -v dpkg-deb >/dev/null 2>&1; then
+            VERSION="$(tr -d '[:space:]' < "${ROOT_DIR}/VERSION")"
+            DEB_ROOT="${DIST_DIR}/deb-pkg"
+            mkdir -p "${DEB_ROOT}/DEBIAN" "${DEB_ROOT}/opt/file4base" "${DEB_ROOT}/usr/bin" "${DEB_ROOT}/usr/share/applications"
+            cp -r "${BUNDLE_DIR}/"* "${DEB_ROOT}/opt/file4base/"
+            ln -sf /opt/file4base/file4base_client "${DEB_ROOT}/usr/bin/file4base"
+            cat > "${DEB_ROOT}/DEBIAN/control" <<EOF
+Package: file4base
+Version: ${VERSION}
+Section: database
+Priority: optional
+Architecture: amd64
+Depends: libgtk-3-0
+Maintainer: File4Base Team <support@file4base.io>
+Description: File4Base Native Desktop Client
+EOF
+            cat > "${DEB_ROOT}/usr/share/applications/file4base.desktop" <<EOF
+[Desktop Entry]
+Name=File4Base
+Comment=File4Base Relational Database Platform
+Exec=/opt/file4base/file4base_client
+Terminal=false
+Type=Application
+Categories=Development;Database;Office;
+EOF
+            dpkg-deb --build --root-owner-group "${DEB_ROOT}" "${DIST_DIR}/File4Base-Linux-x64.deb"
+            rm -rf "${DEB_ROOT}"
+            echo "Linux DEB installer created: ${DIST_DIR}/File4Base-Linux-x64.deb"
+        fi
         echo "Packaging complete: ${DIST_DIR}/File4Base-Linux-x64.tar.gz"
     else
         echo "Error: Linux release bundle not found at ${BUNDLE_DIR}"

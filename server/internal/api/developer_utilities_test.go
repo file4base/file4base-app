@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -82,6 +83,9 @@ func TestAPI_DeveloperUtilities(t *testing.T) {
 
 	// 4. Clone the solution without records into a new database, locking the clone's design.
 	cloneDB := uniqueDB("f4b_clone")
+	t.Cleanup(func() {
+		_ = h.mgr.DropDatabase(context.Background(), cloneDB)
+	})
 	var cloneRes struct {
 		Status        string `json:"status"`
 		Database      string `json:"database"`

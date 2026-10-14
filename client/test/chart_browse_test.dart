@@ -1,14 +1,13 @@
 // #37 — a chart on a layout, rendered in real Browse mode, drawing the figures
 // the server worked out over the found set.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
-import 'package:file4base_client/features/layout_engine/chart_view.dart';
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers', columns: [
   ColumnModel(id: 'c0', tableId: 't1', name: 'id', displayName: 'ID', fieldType: 'TEXT', isPrimaryKey: true),
@@ -22,9 +21,9 @@ const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers',
 ]);
 
 class _ChartApi extends ApiClient {
-  final List<({List<String> fields, List<String> groupBy})> summaryCalls = [];
 
   _ChartApi() : super(baseUrl: 'http://localhost:1');
+  final List<({List<String> fields, List<String> groupBy})> summaryCalls = [];
 
   @override
   Future<List<ValueListModel>> listValueLists() async => const [];
@@ -78,7 +77,6 @@ LayoutDefinitionModel _layoutWithChart({ChartConfigModel? config}) => LayoutDefi
           height: 260,
           chartConfig: (config ??
                   const ChartConfigModel(
-                    chartType: ChartType.column,
                     title: 'Fees by customer type',
                     categoryField: 'customer_type',
                     series: [ChartSeriesModel(field: 'fee_total', label: 'Total Fees')],
@@ -153,13 +151,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
 
     final api = _ChartApi();
-    final plain = LayoutDefinitionModel(
+    const plain = LayoutDefinitionModel(
       id: 'plain',
       name: 'Plain',
       tableOccurrence: 'customers',
       width: 700,
-      parts: const [LayoutPartModel(id: 'b', type: LayoutPartType.body, height: 200)],
-      objects: const [
+      parts: [LayoutPartModel(id: 'b', type: LayoutPartType.body, height: 200)],
+      objects: [
         LayoutObjectModel(
           id: 'f1', type: 'field', x: 20, y: 20, width: 200, height: 24,
           fieldBinding: FieldBindingModel(fieldName: 'last_name'),

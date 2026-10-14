@@ -9,7 +9,7 @@ import 'package:http/testing.dart';
 void main() {
   group('UserModel tests', () {
     test('serializes and deserializes isActive properly', () {
-      final user = UserModel(
+      const user = UserModel(
         id: 'user-1',
         username: 'john_doe',
         role: 'admin',
@@ -39,7 +39,7 @@ void main() {
     });
 
     test('copyWith updates isActive', () {
-      final user = UserModel(id: '1', username: 'test', role: 'user', isActive: true);
+      const user = UserModel(id: '1', username: 'test', role: 'user');
       final updated = user.copyWith(isActive: false);
       expect(updated.isActive, false);
       expect(updated.username, 'test');
@@ -90,7 +90,7 @@ void main() {
       });
 
       final apiClient = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
-      const currentUser = UserModel(id: 'owner-1', username: 'admin_root', role: 'owner', isActive: true);
+      const currentUser = UserModel(id: 'owner-1', username: 'admin_root', role: 'owner');
 
       await tester.pumpWidget(
         MaterialApp(
@@ -150,7 +150,7 @@ void main() {
 
       String? requestedDbParam;
       String? requestedHeaderDb;
-      bool onModifiedCalled = false;
+      var onModifiedCalled = false;
 
       final mockClient = MockClient((request) async {
         if (request.url.path == '/api/v1/security/users') {
@@ -188,7 +188,7 @@ void main() {
       });
 
       final apiClient = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
-      const currentUser = UserModel(id: 'owner-1', username: 'admin_root', role: 'owner', isActive: true);
+      const currentUser = UserModel(id: 'owner-1', username: 'admin_root', role: 'owner');
 
       await tester.pumpWidget(
         MaterialApp(
@@ -274,7 +274,7 @@ void main() {
           home: Scaffold(
             body: ManageSecurityDialog(
               apiClient: apiClient,
-              currentUser: UserModel(id: 'owner-1', username: 'admin_root', role: role, isActive: true),
+              currentUser: UserModel(id: 'owner-1', username: 'admin_root', role: role),
               databaseName: 'bakery',
             ),
           ),

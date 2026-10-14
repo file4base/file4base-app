@@ -4,7 +4,6 @@
 import 'dart:convert';
 
 import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger_dialog.dart';
@@ -280,7 +279,7 @@ void main() {
 
       // With the session finished, Step and Continue are off and Start over
       // is offered.
-      MenuOrButton(Key key) => tester.widget(find.byKey(key));
+      Widget MenuOrButton(Key key) => tester.widget(find.byKey(key));
       expect((MenuOrButton(const ValueKey('debug-step')) as OutlinedButton).onPressed, isNull);
       expect((MenuOrButton(const ValueKey('debug-continue')) as FilledButton).onPressed, isNull);
       expect((MenuOrButton(const ValueKey('debug-restart')) as TextButton).onPressed, isNotNull);

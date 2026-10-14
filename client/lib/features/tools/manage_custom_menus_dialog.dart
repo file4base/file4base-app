@@ -2,23 +2,21 @@
 // Allows a solution's owner or administrator to define custom menu sets,
 // choose the solution's default menu set, and assign a menu set per layout.
 
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/api/api_client.dart';
-
 class ManageCustomMenusDialog extends StatefulWidget {
-  final ApiClient apiClient;
-  final List<ScriptModel> scripts;
-  final List<LayoutModel> layouts;
-  final VoidCallback? onChanged;
 
   const ManageCustomMenusDialog({
-    super.key,
-    required this.apiClient,
+    required this.apiClient, super.key,
     this.scripts = const [],
     this.layouts = const [],
     this.onChanged,
   });
+  final ApiClient apiClient;
+  final List<ScriptModel> scripts;
+  final List<LayoutModel> layouts;
+  final VoidCallback? onChanged;
 
   static Future<void> show(
     BuildContext context, {
@@ -149,7 +147,6 @@ class _ManageCustomMenusDialogState extends State<ManageCustomMenusDialog> {
     _editingMenus = [
       CustomMenuModel(
         menu: 'Records',
-        mode: 'extend',
         items: [
           CustomMenuItemModel(
             title: _scripts.isNotEmpty ? _scripts.first.name : 'New Record',
@@ -273,7 +270,6 @@ class _ManageCustomMenusDialogState extends State<ManageCustomMenusDialog> {
       _editingMenus.add(
         CustomMenuModel(
           menu: available.first,
-          mode: 'extend',
           items: const [
             CustomMenuItemModel(
               title: 'New Command',

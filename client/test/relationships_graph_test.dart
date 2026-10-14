@@ -1,9 +1,9 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/schema_manager/widgets/relationship_graph_widget.dart';
+import 'package:file4base_client/features/schema_manager/widgets/specify_relationship_dialog.dart';
+import 'package:file4base_client/features/schema_manager/widgets/specify_table_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/features/schema_manager/widgets/specify_table_dialog.dart';
-import 'package:file4base_client/features/schema_manager/widgets/specify_relationship_dialog.dart';
-import 'package:file4base_client/features/schema_manager/widgets/relationship_graph_widget.dart';
 
 class MockApiClient extends ApiClient {
   MockApiClient() : super(baseUrl: 'http://localhost:8080');
@@ -99,7 +99,7 @@ class MockApiClient extends ApiClient {
 void main() {
   group('Relationship Models Unit Tests', () {
     test('TableOccurrenceModel serialization, copyWith, and json conversion', () {
-      final occ = TableOccurrenceModel(
+      const occ = TableOccurrenceModel(
         id: 'occ-123',
         baseTableId: 'tbl-456',
         name: 'CLIENTES 2',
@@ -127,16 +127,14 @@ void main() {
     });
 
     test('RelationshipModel serialization and defaults', () {
-      final rel = RelationshipModel(
+      const rel = RelationshipModel(
         id: 'rel-1',
         name: 'Clientes_Facturas',
         leftOccurrenceId: 'occ-1',
         leftColumnId: 'col-1',
         rightOccurrenceId: 'occ-2',
         rightColumnId: 'col-2',
-        operator: '=',
         allowCreation: true,
-        cascadeDelete: false,
         sortRelated: 'asc',
       );
 
@@ -156,7 +154,7 @@ void main() {
 
   group('SpecifyTableDialog Widget Tests', () {
     final testTables = [
-      TableModel(
+      const TableModel(
         id: 'tbl-1',
         name: 'clientes',
         displayName: 'Clientes',
@@ -172,7 +170,7 @@ void main() {
           ),
         ],
       ),
-      TableModel(
+      const TableModel(
         id: 'tbl-2',
         name: 'facturas',
         displayName: 'Facturas',
@@ -191,7 +189,7 @@ void main() {
     ];
 
     final existingOccs = [
-      TableOccurrenceModel(
+      const TableOccurrenceModel(
         id: 'occ-1',
         baseTableId: 'tbl-1',
         name: 'Clientes',
@@ -248,7 +246,7 @@ void main() {
 
   group('SpecifyRelationshipDialog Widget Tests', () {
     final testTables = [
-      TableModel(
+      const TableModel(
         id: 'tbl-1',
         name: 'clientes',
         displayName: 'Clientes',
@@ -264,7 +262,7 @@ void main() {
           ),
         ],
       ),
-      TableModel(
+      const TableModel(
         id: 'tbl-2',
         name: 'facturas',
         displayName: 'Facturas',
@@ -282,8 +280,8 @@ void main() {
     ];
 
     final occs = [
-      TableOccurrenceModel(id: 'occ-1', baseTableId: 'tbl-1', name: 'CLIENTES', xPos: 100, yPos: 100),
-      TableOccurrenceModel(id: 'occ-2', baseTableId: 'tbl-2', name: 'clientes_FACTURAS', xPos: 350, yPos: 100),
+      const TableOccurrenceModel(id: 'occ-1', baseTableId: 'tbl-1', name: 'CLIENTES', xPos: 100, yPos: 100),
+      const TableOccurrenceModel(id: 'occ-2', baseTableId: 'tbl-2', name: 'clientes_FACTURAS', xPos: 350, yPos: 100),
     ];
 
     testWidgets('renders dialog with occurrences, fields, criteria, and canonical options', (tester) async {
@@ -323,7 +321,7 @@ void main() {
 
   group('RelationshipGraphWidget Canvas Tests', () {
     final testTables = [
-      TableModel(
+      const TableModel(
         id: 'tbl-1',
         name: 'clientes',
         displayName: 'Clientes',
@@ -339,7 +337,7 @@ void main() {
           ),
         ],
       ),
-      TableModel(
+      const TableModel(
         id: 'tbl-2',
         name: 'facturas',
         displayName: 'Facturas',
@@ -357,20 +355,19 @@ void main() {
     ];
 
     final occs = [
-      TableOccurrenceModel(id: 'occ-1', baseTableId: 'tbl-1', name: 'CLIENTES', xPos: 80, yPos: 80),
-      TableOccurrenceModel(id: 'occ-2', baseTableId: 'tbl-2', name: 'clientes_FACTURAS', xPos: 320, yPos: 80),
-      TableOccurrenceModel(id: 'occ-3', baseTableId: 'tbl-1', name: 'CLIENTES 2', xPos: 200, yPos: 250),
+      const TableOccurrenceModel(id: 'occ-1', baseTableId: 'tbl-1', name: 'CLIENTES', xPos: 80, yPos: 80),
+      const TableOccurrenceModel(id: 'occ-2', baseTableId: 'tbl-2', name: 'clientes_FACTURAS', xPos: 320, yPos: 80),
+      const TableOccurrenceModel(id: 'occ-3', baseTableId: 'tbl-1', name: 'CLIENTES 2', xPos: 200, yPos: 250),
     ];
 
     final rels = [
-      RelationshipModel(
+      const RelationshipModel(
         id: 'rel-1',
         name: 'Clientes_Facturas',
         leftOccurrenceId: 'occ-1',
         leftColumnId: 'col-1',
         rightOccurrenceId: 'occ-2',
         rightColumnId: 'col-2',
-        operator: '=',
       ),
     ];
 

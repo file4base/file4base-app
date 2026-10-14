@@ -2,18 +2,17 @@
 // database records can be imported from. It holds no password: one is typed
 // when the import runs, or taken from an environment variable of the server.
 
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/api/api_client.dart';
-
 class ManageDataSourcesDialog extends StatefulWidget {
+
+  const ManageDataSourcesDialog({required this.apiClient, required this.canEdit, super.key});
   final ApiClient apiClient;
 
   /// Only an owner may add, change or remove a source; everyone who may see
   /// the list can still test a connection.
   final bool canEdit;
-
-  const ManageDataSourcesDialog({super.key, required this.apiClient, required this.canEdit});
 
   static Future<void> show(BuildContext context, {required ApiClient apiClient, required bool canEdit}) {
     return showDialog<void>(
@@ -104,7 +103,7 @@ class _ManageDataSourcesDialogState extends State<ManageDataSourcesDialog> {
                         )
                       : ListView.separated(
                           itemCount: _sources.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          separatorBuilder: (_, _) => const Divider(height: 1),
                           itemBuilder: (context, index) {
                             final source = _sources[index];
                             return ListTile(
@@ -257,9 +256,9 @@ class _ManageDataSourcesDialogState extends State<ManageDataSourcesDialog> {
 
 /// Asks for the password of one connection, for one use.
 class _PasswordPrompt extends StatefulWidget {
-  final String sourceName;
 
   const _PasswordPrompt({required this.sourceName});
+  final String sourceName;
 
   @override
   State<_PasswordPrompt> createState() => _PasswordPromptState();
@@ -304,10 +303,10 @@ class _PasswordPromptState extends State<_PasswordPrompt> {
 /// The settings of one connection. There is no password field: the catalog
 /// stores none.
 class _DataSourceEditor extends StatefulWidget {
-  final DataSourceModel? source;
-  final List<DataSourceEngine> engines;
 
   const _DataSourceEditor({required this.source, required this.engines});
+  final DataSourceModel? source;
+  final List<DataSourceEngine> engines;
 
   @override
   State<_DataSourceEditor> createState() => _DataSourceEditorState();

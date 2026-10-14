@@ -1,13 +1,8 @@
+import 'package:file4base_client/core/theme/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/theme/theme_model.dart';
-import '../../core/theme/theme_provider.dart';
 
 class CalculationBuilderDialog extends ConsumerStatefulWidget {
-  final String initialFormula;
-  final String? contextTable;
-  final List<String> availableTables;
-  final Map<String, List<String>> fieldsByTable;
 
   const CalculationBuilderDialog({
     super.key,
@@ -16,6 +11,10 @@ class CalculationBuilderDialog extends ConsumerStatefulWidget {
     this.availableTables = const [],
     this.fieldsByTable = const {},
   });
+  final String initialFormula;
+  final String? contextTable;
+  final List<String> availableTables;
+  final Map<String, List<String>> fieldsByTable;
 
   static Future<String?> show(
     BuildContext context, {
@@ -131,7 +130,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
   }
 
   List<Map<String, String>> _getFilteredFunctions() {
-    List<Map<String, String>> list = [];
+    var list = <Map<String, String>>[];
     if (_functionCategory == 'All') {
       for (final cat in _functionsByCategory.values) {
         list.addAll(cat);

@@ -1,7 +1,16 @@
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
-import '../../../core/api/api_client.dart';
 
 class SpecifyRelationshipDialog extends StatefulWidget {
+
+  const SpecifyRelationshipDialog({
+    required this.occurrences, required this.tables, super.key,
+    this.initialRelationship,
+    this.preselectedLeftOccurrenceId,
+    this.preselectedRightOccurrenceId,
+    this.preselectedLeftColumnId,
+    this.preselectedRightColumnId,
+  });
   final List<TableOccurrenceModel> occurrences;
   final List<TableModel> tables;
   final RelationshipModel? initialRelationship;
@@ -9,17 +18,6 @@ class SpecifyRelationshipDialog extends StatefulWidget {
   final String? preselectedRightOccurrenceId;
   final String? preselectedLeftColumnId;
   final String? preselectedRightColumnId;
-
-  const SpecifyRelationshipDialog({
-    super.key,
-    required this.occurrences,
-    required this.tables,
-    this.initialRelationship,
-    this.preselectedLeftOccurrenceId,
-    this.preselectedRightOccurrenceId,
-    this.preselectedLeftColumnId,
-    this.preselectedRightColumnId,
-  });
 
   static Future<Map<String, dynamic>?> show(
     BuildContext context, {
@@ -33,7 +31,6 @@ class SpecifyRelationshipDialog extends StatefulWidget {
   }) {
     return showDialog<Map<String, dynamic>>(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => SpecifyRelationshipDialog(
         occurrences: occurrences,
         tables: tables,
@@ -137,7 +134,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   String _generateName() {
     final lName = _leftOccurrence?.name ?? 'left';
     final rName = _rightOccurrence?.name ?? 'right';
-    return '${lName}_to_${rName}';
+    return '${lName}_to_$rName';
   }
 
   Widget _buildFieldList(
@@ -169,7 +166,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                 return InkWell(
                   onTap: () => onSelected(col),
                   child: Container(
-                    color: isSelected ? theme.colorScheme.primary.withOpacity(0.15) : Colors.transparent,
+                    color: isSelected ? theme.colorScheme.primary.withValues(alpha: 0.15) : Colors.transparent,
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     child: Row(
                       children: [
@@ -290,9 +287,9 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.primary.withOpacity(0.1),
+                          color: theme.colorScheme.primary.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: theme.colorScheme.primary.withOpacity(0.3)),
+                          border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
                         ),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String>(
@@ -423,7 +420,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
             child: const Text('Delete relationship'),
           ),
         OutlinedButton(
-          onPressed: () => Navigator.of(context).pop(null),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         ElevatedButton(

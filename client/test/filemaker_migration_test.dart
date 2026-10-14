@@ -1,11 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/solution_manager/filemaker_migration_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/features/solution_manager/filemaker_migration_dialog.dart';
 
 void main() {
   test('isFmp12Binary detects .fmp12 extension and HBAM2 header', () {

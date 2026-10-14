@@ -43,6 +43,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		AllowPublicDatabaseCreation: opts.AllowPublicDatabaseCreation,
 		ControlStore:                controlStore,
 	})
+	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore)
 
 	r.Get("/api/v1/crypto/handshake", crypto.HandshakeHandler(opts.ChannelSecret))
 
@@ -60,6 +61,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		dataHandler.RegisterRoutes(r)
 		securityHandler.RegisterRoutes(r)
 		solutionHandler.RegisterRoutes(r)
+		serverAdminHandler.RegisterRoutes(r)
 	})
 }
 

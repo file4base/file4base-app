@@ -1,19 +1,19 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/services/solution_storage.dart';
 
 /// Assisted FileMaker DDR / Save-as-XML & FMPXMLRESULT Migration Dialog (#26).
 class FileMakerMigrationDialog extends StatefulWidget {
-  final ApiClient apiClient;
-  final String? initialFmp12FileName;
 
   const FileMakerMigrationDialog({
-    super.key,
-    required this.apiClient,
+    required this.apiClient, super.key,
     this.initialFmp12FileName,
   });
+  final ApiClient apiClient;
+  final String? initialFmp12FileName;
 
   static Future<MigrationApplyResultModel?> show(
     BuildContext context,
@@ -22,7 +22,6 @@ class FileMakerMigrationDialog extends StatefulWidget {
   }) {
     return showDialog<MigrationApplyResultModel>(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => FileMakerMigrationDialog(
         apiClient: apiClient,
         initialFmp12FileName: initialFmp12FileName,
@@ -353,20 +352,29 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            ),
                             onPressed: _pickDataXmlFile,
-                            icon: const Icon(Icons.dataset_outlined, size: 15),
-                            label: const Text('Attach FMPXMLRESULT...'),
+                            icon: const Icon(Icons.dataset_outlined, size: 14),
+                            label: const Text('Attach FMPXMLRESULT...', style: TextStyle(fontSize: 11.5)),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            ),
                             onPressed: _pickFmp12DataFile,
-                            icon: const Icon(Icons.storage_outlined, size: 15),
+                            icon: const Icon(Icons.storage_outlined, size: 14),
                             label: Text(
                               _fmp12FileName == null
                                   ? 'Attach .fmp12 Data...'
                                   : '.fmp12: $_fmp12FileName',
+                              style: const TextStyle(fontSize: 11.5),
                             ),
                           ),
                         ],

@@ -3,14 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 class ServerConnectionDialog extends StatefulWidget {
-  final String currentUrl;
-  final ValueChanged<String> onConnect;
 
   const ServerConnectionDialog({
-    super.key,
-    required this.currentUrl,
-    required this.onConnect,
+    required this.currentUrl, required this.onConnect, super.key,
   });
+  final String currentUrl;
+  final ValueChanged<String> onConnect;
 
   static Future<void> show(BuildContext context, {
     required String currentUrl,
@@ -125,7 +123,7 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                 SizedBox(
                   width: 90,
                   child: DropdownButtonFormField<String>(
-                    value: _protocol,
+                    initialValue: _protocol,
                     decoration: const InputDecoration(labelText: 'Proto', isDense: true),
                     items: const [
                       DropdownMenuItem(value: 'http', child: Text('http://')),
@@ -193,10 +191,10 @@ class _ServerConnectionDialogState extends State<ServerConnectionDialog> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: _testSuccess ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+                  color: _testSuccess ? Colors.green.withValues(alpha: 0.1) : Colors.orange.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: _testSuccess ? Colors.green.withOpacity(0.4) : Colors.orange.withOpacity(0.4),
+                    color: _testSuccess ? Colors.green.withValues(alpha: 0.4) : Colors.orange.withValues(alpha: 0.4),
                   ),
                 ),
                 child: Row(

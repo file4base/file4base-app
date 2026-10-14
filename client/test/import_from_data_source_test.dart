@@ -25,8 +25,8 @@ const _source = DataSourceModel(
 );
 
 class _SourceApi extends ApiClient {
-  _SourceApi({this.sources = const [_source], this.tables = const ['people', 'orders']})
-      : super(baseUrl: 'http://localhost:1');
+  _SourceApi({this.sources = const [_source]})
+      : tables = const ['people', 'orders'], super(baseUrl: 'http://localhost:1');
 
   final List<DataSourceModel> sources;
   final List<String> tables;
@@ -79,9 +79,8 @@ class _SourceApi extends ApiClient {
   @override
   Future<ImportReportModel> importRecords(
     String table, {
-    String fileName = '',
+    required Map<String, dynamic> options, String fileName = '',
     Uint8List? bytes,
-    required Map<String, dynamic> options,
     String? format,
     bool hasHeader = true,
     String? delimiter,

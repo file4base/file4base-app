@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('Theme Models and Definitions Unit Tests', () {
     test('Default theme is Light (Clean Slate) with white canvas', () {
-      final defaultTheme = AppThemes.light;
+      const defaultTheme = AppThemes.light;
       expect(defaultTheme.id, AppThemeId.light);
       expect(defaultTheme.isDark, false);
       expect(defaultTheme.background, const Color(0xFFF8FAFC));

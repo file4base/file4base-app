@@ -2,22 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
+
+import 'package:file4base_client/core/crypto/payload_cipher.dart';
+import 'package:file4base_client/core/models/script_models.dart';
 import 'package:http/http.dart' as http;
-import '../crypto/payload_cipher.dart';
-import '../models/script_models.dart';
 
 export '../crypto/payload_cipher.dart';
 export '../models/script_models.dart';
 
 /// RFC 9457 Problem Details Exception
 class ApiException implements Exception {
-  final int statusCode;
-  final String title;
-  final String detail;
-  final String? type;
-  final String? instance;
-  final String? traceId;
-  final Map<String, dynamic> raw;
 
   ApiException({
     required this.statusCode,
@@ -30,12 +24,12 @@ class ApiException implements Exception {
   });
 
   factory ApiException.fromResponse(http.Response response) {
-    String title = 'HTTP ${response.statusCode} Error';
-    String detail = response.body;
+    var title = 'HTTP ${response.statusCode} Error';
+    var detail = response.body;
     String? type;
     String? instance;
-    String? traceId = response.headers['x-trace-id'];
-    Map<String, dynamic> raw = {};
+    var traceId = response.headers['x-trace-id'];
+    var raw = <String, dynamic>{};
 
     if (response.body.isNotEmpty) {
       try {
@@ -61,6 +55,13 @@ class ApiException implements Exception {
       raw: raw,
     );
   }
+  final int statusCode;
+  final String title;
+  final String detail;
+  final String? type;
+  final String? instance;
+  final String? traceId;
+  final Map<String, dynamic> raw;
 
   @override
   String toString() {
@@ -71,10 +72,17 @@ class ApiException implements Exception {
 
 /// W3C TraceContext implementation (W3C Recommendation / OpenTelemetry compliant)
 class TraceContext {
-  final String traceId;
-  final String spanId;
 
   TraceContext({required this.traceId, required this.spanId});
+
+  factory TraceContext.create() {
+    return TraceContext(
+      traceId: _generateHex(16), // 16 bytes = 32 hex chars
+      spanId: _generateHex(8),   // 8 bytes = 16 hex chars
+    );
+  }
+  final String traceId;
+  final String spanId;
 
   static String _generateHex(int byteCount) {
     math.Random rng;
@@ -84,17 +92,10 @@ class TraceContext {
       rng = math.Random();
     }
     final buffer = StringBuffer();
-    for (int i = 0; i < byteCount; i++) {
+    for (var i = 0; i < byteCount; i++) {
       buffer.write(rng.nextInt(256).toRadixString(16).padLeft(2, '0'));
     }
     return buffer.toString();
-  }
-
-  factory TraceContext.create() {
-    return TraceContext(
-      traceId: _generateHex(16), // 16 bytes = 32 hex chars
-      spanId: _generateHex(8),   // 8 bytes = 16 hex chars
-    );
   }
 
   String get traceparent => '00-$traceId-$spanId-01';
@@ -106,11 +107,6 @@ class TraceContext {
 }
 
 class TableModel {
-  final String id;
-  final String name;
-  final String displayName;
-  final String? description;
-  final List<ColumnModel> columns;
 
   const TableModel({
     required this.id,
@@ -121,7 +117,7 @@ class TableModel {
   });
 
   factory TableModel.fromJson(Map<String, dynamic> json) {
-    var rawCols = json['columns'] as List<dynamic>? ?? [];
+    final rawCols = json['columns'] as List<dynamic>? ?? [];
     return TableModel(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -130,19 +126,14 @@ class TableModel {
       columns: rawCols.map((c) => ColumnModel.fromJson(c as Map<String, dynamic>)).toList(),
     );
   }
+  final String id;
+  final String name;
+  final String displayName;
+  final String? description;
+  final List<ColumnModel> columns;
 }
 
 class ColumnModel {
-  final String id;
-  final String tableId;
-  final String name;
-  final String displayName;
-  final String fieldType;
-  final bool isNullable;
-  final bool isPrimaryKey;
-  final String? defaultValue;
-  final String? calculationFormula;
-  final String? validationRules;
 
   const ColumnModel({
     required this.id,
@@ -156,6 +147,31 @@ class ColumnModel {
     this.calculationFormula,
     this.validationRules,
   });
+
+  factory ColumnModel.fromJson(Map<String, dynamic> json) {
+    return ColumnModel(
+      id: json['id'] as String,
+      tableId: json['table_id'] as String,
+      name: json['name'] as String,
+      displayName: json['display_name'] as String,
+      fieldType: json['field_type'] as String,
+      isNullable: json['is_nullable'] as bool? ?? true,
+      isPrimaryKey: json['is_primary_key'] as bool? ?? false,
+      defaultValue: json['default_value'] as String?,
+      calculationFormula: json['calculation_formula'] as String?,
+      validationRules: json['validation_rules'] as String?,
+    );
+  }
+  final String id;
+  final String tableId;
+  final String name;
+  final String displayName;
+  final String fieldType;
+  final bool isNullable;
+  final bool isPrimaryKey;
+  final String? defaultValue;
+  final String? calculationFormula;
+  final String? validationRules;
 
   /// What the column physically stores, which is its own type except for a
   /// calculation, held as whatever its formula produces. A numeric
@@ -176,21 +192,6 @@ class ColumnModel {
     } catch (_) {
       return 'TEXT';
     }
-  }
-
-  factory ColumnModel.fromJson(Map<String, dynamic> json) {
-    return ColumnModel(
-      id: json['id'] as String,
-      tableId: json['table_id'] as String,
-      name: json['name'] as String,
-      displayName: json['display_name'] as String,
-      fieldType: json['field_type'] as String,
-      isNullable: json['is_nullable'] as bool? ?? true,
-      isPrimaryKey: json['is_primary_key'] as bool? ?? false,
-      defaultValue: json['default_value'] as String?,
-      calculationFormula: json['calculation_formula'] as String?,
-      validationRules: json['validation_rules'] as String?,
-    );
   }
 
   ColumnModel copyWith({
@@ -225,6 +226,24 @@ class ColumnModel {
 /// A value list only decides what a field *offers*. It does not restrict what
 /// can be stored: that is the "existing value" validation rule.
 class ValueListModel {
+
+  const ValueListModel({
+    required this.id,
+    required this.name,
+    this.kind = kindCustom,
+    this.customValues = '',
+    this.sourceTableId,
+    this.sourceColumnId,
+  });
+
+  factory ValueListModel.fromJson(Map<String, dynamic> json) => ValueListModel(
+        id: json['id'] as String,
+        name: json['name'] as String? ?? '',
+        kind: json['kind'] as String? ?? kindCustom,
+        customValues: json['custom_values'] as String? ?? '',
+        sourceTableId: json['source_table_id'] as String?,
+        sourceColumnId: json['source_column_id'] as String?,
+      );
   /// A fixed list the designer typed.
   static const String kindCustom = 'custom';
 
@@ -241,15 +260,6 @@ class ValueListModel {
   final String? sourceTableId;
   final String? sourceColumnId;
 
-  const ValueListModel({
-    required this.id,
-    required this.name,
-    this.kind = kindCustom,
-    this.customValues = '',
-    this.sourceTableId,
-    this.sourceColumnId,
-  });
-
   bool get isFromField => kind == kindFromField;
 
   /// The values of a custom list, in order, without blanks or repeats. A list
@@ -264,15 +274,6 @@ class ValueListModel {
     }
     return values;
   }
-
-  factory ValueListModel.fromJson(Map<String, dynamic> json) => ValueListModel(
-        id: json['id'] as String,
-        name: json['name'] as String? ?? '',
-        kind: json['kind'] as String? ?? kindCustom,
-        customValues: json['custom_values'] as String? ?? '',
-        sourceTableId: json['source_table_id'] as String?,
-        sourceColumnId: json['source_column_id'] as String?,
-      );
 
   Map<String, dynamic> toJson() => {
         'name': name,
@@ -300,11 +301,6 @@ class ValueListModel {
 }
 
 class TableOccurrenceModel {
-  final String id;
-  final String baseTableId;
-  final String name;
-  final double xPos;
-  final double yPos;
 
   const TableOccurrenceModel({
     required this.id,
@@ -323,6 +319,11 @@ class TableOccurrenceModel {
       yPos: (json['y_pos'] as num?)?.toDouble() ?? 100.0,
     );
   }
+  final String id;
+  final String baseTableId;
+  final String name;
+  final double xPos;
+  final double yPos;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -350,16 +351,6 @@ class TableOccurrenceModel {
 }
 
 class RelationshipModel {
-  final String id;
-  final String name;
-  final String leftOccurrenceId;
-  final String leftColumnId;
-  final String rightOccurrenceId;
-  final String rightColumnId;
-  final String operator;
-  final bool allowCreation;
-  final bool cascadeDelete;
-  final String? sortRelated;
 
   const RelationshipModel({
     required this.id,
@@ -388,6 +379,16 @@ class RelationshipModel {
       sortRelated: json['sort_related'] as String?,
     );
   }
+  final String id;
+  final String name;
+  final String leftOccurrenceId;
+  final String leftColumnId;
+  final String rightOccurrenceId;
+  final String rightColumnId;
+  final String operator;
+  final bool allowCreation;
+  final bool cascadeDelete;
+  final String? sortRelated;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -404,10 +405,6 @@ class RelationshipModel {
 }
 
 class LayoutModel {
-  final String id;
-  final String name;
-  final String tableOccurrenceId;
-  final Map<String, dynamic> definition;
 
   const LayoutModel({
     required this.id,
@@ -417,8 +414,8 @@ class LayoutModel {
   });
 
   factory LayoutModel.fromJson(Map<String, dynamic> json) {
-    var rawDef = json['definition'];
-    Map<String, dynamic> defMap = {};
+    final rawDef = json['definition'];
+    var defMap = <String, dynamic>{};
     if (rawDef is Map<String, dynamic>) {
       defMap = rawDef;
     } else if (rawDef is String) {
@@ -433,14 +430,13 @@ class LayoutModel {
       definition: defMap,
     );
   }
+  final String id;
+  final String name;
+  final String tableOccurrenceId;
+  final Map<String, dynamic> definition;
 }
 
-class UserLayoutPermissionModel {
-  final String id;
-  final String userId;
-  final String layoutId;
-  final String layoutName;
-  final String accessLevel; // 'read_write', 'read_only', 'none'
+class UserLayoutPermissionModel { // 'read_write', 'read_only', 'none'
 
   const UserLayoutPermissionModel({
     required this.id,
@@ -459,6 +455,11 @@ class UserLayoutPermissionModel {
       accessLevel: json['access_level'] as String? ?? 'read_write',
     );
   }
+  final String id;
+  final String userId;
+  final String layoutId;
+  final String layoutName;
+  final String accessLevel;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -469,19 +470,10 @@ class UserLayoutPermissionModel {
 }
 
 class UserTablePermissionModel {
-  final String id;
-  final String userId;
-  final String tableName;
-  final String accessLevel; // 'read_write', 'read_only', 'none'
-  final bool canCreate;
-  final bool canEdit;
-  final bool canDelete;
-  final bool canModifySchema;
 
   const UserTablePermissionModel({
-    this.id = '',
+    required this.tableName, this.id = '',
     this.userId = '',
-    required this.tableName,
     this.accessLevel = 'read_write',
     this.canCreate = true,
     this.canEdit = true,
@@ -503,6 +495,14 @@ class UserTablePermissionModel {
       canModifySchema: json['can_modify_schema'] as bool? ?? false,
     );
   }
+  final String id;
+  final String userId;
+  final String tableName;
+  final String accessLevel; // 'read_write', 'read_only', 'none'
+  final bool canCreate;
+  final bool canEdit;
+  final bool canDelete;
+  final bool canModifySchema;
 
   UserTablePermissionModel copyWith({
     String? id,
@@ -538,55 +538,52 @@ class UserTablePermissionModel {
       };
 }
 
-class UserModel {
-  final String id;
+class MfaSetupModel {
+
+  const MfaSetupModel({
+    required this.userId,
+    required this.username,
+    required this.secret,
+    required this.otpAuthUri,
+    required this.issuer,
+    this.mfaEnabled = false,
+  });
+
+  factory MfaSetupModel.fromJson(Map<String, dynamic> json) {
+    return MfaSetupModel(
+      userId: json['user_id'] as String? ?? '',
+      username: json['username'] as String? ?? '',
+      secret: json['secret'] as String? ?? '',
+      otpAuthUri: json['otpauth_uri'] as String? ?? '',
+      issuer: json['issuer'] as String? ?? 'File4Base',
+      mfaEnabled: json['mfa_enabled'] as bool? ?? false,
+    );
+  }
+  final String userId;
   final String username;
-  final String role; // 'owner', 'admin', 'user'
-  final bool isActive;
-  final DateTime? createdAt;
-  final DateTime? updatedAt;
-  final List<UserLayoutPermissionModel> permissions;
-  final List<UserTablePermissionModel> tablePermissions;
+  final String secret;
+  final String otpAuthUri;
+  final String issuer;
+  final bool mfaEnabled;
+}
+
+class UserModel {
 
   const UserModel({
     required this.id,
     required this.username,
     required this.role,
     this.isActive = true,
+    this.mfaEnabled = false,
     this.createdAt,
     this.updatedAt,
     this.permissions = const [],
     this.tablePermissions = const [],
   });
 
-  bool get isOwner => role == 'owner';
-  bool get isAdmin => role == 'admin' || role == 'owner';
-
-  UserModel copyWith({
-    String? id,
-    String? username,
-    String? role,
-    bool? isActive,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-    List<UserLayoutPermissionModel>? permissions,
-    List<UserTablePermissionModel>? tablePermissions,
-  }) {
-    return UserModel(
-      id: id ?? this.id,
-      username: username ?? this.username,
-      role: role ?? this.role,
-      isActive: isActive ?? this.isActive,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      permissions: permissions ?? this.permissions,
-      tablePermissions: tablePermissions ?? this.tablePermissions,
-    );
-  }
-
   factory UserModel.fromJson(Map<String, dynamic> json) {
     final rawPerms = json['permissions'];
-    List<UserLayoutPermissionModel> perms = [];
+    var perms = <UserLayoutPermissionModel>[];
     if (rawPerms is List) {
       perms = rawPerms
           .whereType<Map>()
@@ -594,7 +591,7 @@ class UserModel {
           .toList();
     }
     final rawTablePerms = json['table_permissions'];
-    List<UserTablePermissionModel> tblPerms = [];
+    var tblPerms = <UserTablePermissionModel>[];
     if (rawTablePerms is List) {
       tblPerms = rawTablePerms
           .whereType<Map>()
@@ -607,10 +604,47 @@ class UserModel {
       username: json['username'] as String? ?? '',
       role: json['role'] as String? ?? 'user',
       isActive: json['is_active'] as bool? ?? true,
+      mfaEnabled: json['mfa_enabled'] as bool? ?? false,
       createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
       updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
       permissions: perms,
       tablePermissions: tblPerms,
+    );
+  }
+  final String id;
+  final String username;
+  final String role; // 'owner', 'admin', 'user'
+  final bool isActive;
+  final bool mfaEnabled;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final List<UserLayoutPermissionModel> permissions;
+  final List<UserTablePermissionModel> tablePermissions;
+
+  bool get isOwner => role == 'owner';
+  bool get isAdmin => role == 'admin' || role == 'owner';
+
+  UserModel copyWith({
+    String? id,
+    String? username,
+    String? role,
+    bool? isActive,
+    bool? mfaEnabled,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    List<UserLayoutPermissionModel>? permissions,
+    List<UserTablePermissionModel>? tablePermissions,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      username: username ?? this.username,
+      role: role ?? this.role,
+      isActive: isActive ?? this.isActive,
+      mfaEnabled: mfaEnabled ?? this.mfaEnabled,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      permissions: permissions ?? this.permissions,
+      tablePermissions: tablePermissions ?? this.tablePermissions,
     );
   }
 
@@ -619,6 +653,7 @@ class UserModel {
     'username': username,
     'role': role,
     'is_active': isActive,
+    'mfa_enabled': mfaEnabled,
     if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
     if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
     'permissions': permissions.map((p) => p.toJson()).toList(),
@@ -629,12 +664,6 @@ class UserModel {
 /// What one watched expression came to (#50): a value, or the reason it has
 /// none.
 class EvaluationModel {
-  final String expression;
-  final String text;
-  final String resultType;
-  final List<String> fields;
-  final List<String> unknownFields;
-  final String error;
 
   const EvaluationModel({
     required this.expression,
@@ -644,12 +673,6 @@ class EvaluationModel {
     this.unknownFields = const [],
     this.error = '',
   });
-
-  bool get failed => error.isNotEmpty;
-
-  /// True when the expression came to nothing, which is not a failure: an
-  /// empty field read as empty.
-  bool get isEmpty => !failed && text.isEmpty;
 
   factory EvaluationModel.fromJson(Map<String, dynamic> json) {
     List<String> strings(String key) =>
@@ -663,22 +686,24 @@ class EvaluationModel {
       error: json['error'] as String? ?? '',
     );
   }
+  final String expression;
+  final String text;
+  final String resultType;
+  final List<String> fields;
+  final List<String> unknownFields;
+  final String error;
+
+  bool get failed => error.isNotEmpty;
+
+  /// True when the expression came to nothing, which is not a failure: an
+  /// empty field read as empty.
+  bool get isEmpty => !failed && text.isEmpty;
 }
 
 /// A registered connection to another SQL database records can be imported
 /// from (#47). It holds no password: one is given per read, or taken from an
 /// environment variable of the server.
 class DataSourceModel {
-  final String id;
-  final String name;
-  final String engine;
-  final String host;
-  final int port;
-  final String database;
-  final String username;
-  final String schema;
-  final bool tls;
-  final String passwordEnv;
 
   const DataSourceModel({
     required this.id,
@@ -707,6 +732,16 @@ class DataSourceModel {
       passwordEnv: json['password_env'] as String? ?? '',
     );
   }
+  final String id;
+  final String name;
+  final String engine;
+  final String host;
+  final int port;
+  final String database;
+  final String username;
+  final String schema;
+  final bool tls;
+  final String passwordEnv;
 
   Map<String, dynamic> toJson() => {
         'name': name,
@@ -744,9 +779,6 @@ class DataSourceModel {
 
 /// The engines an external data source can use, as the server reports them.
 class DataSourceEngine {
-  final String engine;
-  final String label;
-  final int defaultPort;
 
   const DataSourceEngine({required this.engine, required this.label, required this.defaultPort});
 
@@ -755,15 +787,14 @@ class DataSourceEngine {
         label: json['label'] as String? ?? '',
         defaultPort: (json['default_port'] as num?)?.toInt() ?? 0,
       );
+  final String engine;
+  final String label;
+  final int defaultPort;
 }
 
 /// Where an import reads from: a registered data source, a table or a
 /// statement, and the password for this read only.
 class ExternalSourceRef {
-  final String id;
-  final String table;
-  final String query;
-  final String password;
 
   const ExternalSourceRef({
     required this.id,
@@ -771,6 +802,10 @@ class ExternalSourceRef {
     this.query = '',
     this.password = '',
   });
+  final String id;
+  final String table;
+  final String query;
+  final String password;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -783,8 +818,6 @@ class ExternalSourceRef {
 /// One request of a saved find: what was typed into each field, and whether
 /// the request omits what it matches (#34).
 class SavedFindRequestModel {
-  final Map<String, String> values;
-  final bool omit;
 
   const SavedFindRequestModel({required this.values, this.omit = false});
 
@@ -795,6 +828,8 @@ class SavedFindRequestModel {
       omit: json['omit'] as bool? ?? false,
     );
   }
+  final Map<String, String> values;
+  final bool omit;
 
   Map<String, dynamic> toJson() => {'values': values, 'omit': omit};
 }
@@ -802,14 +837,6 @@ class SavedFindRequestModel {
 /// A named set of find requests on one table, stored in the database and
 /// carried in the solution file (#34).
 class SavedFindModel {
-  final String id;
-  final String name;
-  final String tableName;
-  final List<SavedFindRequestModel> requests;
-
-  /// The account that saved it; empty for a find that came from a solution
-  /// file. Only that account, or an admin, may rename or delete it.
-  final String createdBy;
 
   const SavedFindModel({
     required this.id,
@@ -832,6 +859,14 @@ class SavedFindModel {
       createdBy: json['created_by'] as String? ?? '',
     );
   }
+  final String id;
+  final String name;
+  final String tableName;
+  final List<SavedFindRequestModel> requests;
+
+  /// The account that saved it; empty for a find that came from a solution
+  /// file. Only that account, or an admin, may rename or delete it.
+  final String createdBy;
 
   /// A one-line summary of what the find searches, for a menu or a list.
   String get summary {
@@ -848,6 +883,8 @@ class SavedFindModel {
 /// They are actions the server performs, so the server is what enforces them;
 /// a client only uses them to say what an account may do before it tries.
 class Capability {
+
+  const Capability._();
   static const String bulkExport = 'bulk_export';
   static const String bulkImport = 'bulk_import';
 
@@ -878,21 +915,27 @@ class Capability {
         return '';
     }
   }
-
-  const Capability._();
 }
 
 /// The capabilities one account role holds.
 class RolePrivilegesModel {
-  final String role;
-  final bool bulkExport;
-  final bool bulkImport;
 
   const RolePrivilegesModel({
     required this.role,
     this.bulkExport = true,
     this.bulkImport = true,
   });
+
+  factory RolePrivilegesModel.fromJson(Map<String, dynamic> json) {
+    return RolePrivilegesModel(
+      role: json['role'] as String? ?? '',
+      bulkExport: json['bulk_export'] as bool? ?? true,
+      bulkImport: json['bulk_import'] as bool? ?? true,
+    );
+  }
+  final String role;
+  final bool bulkExport;
+  final bool bulkImport;
 
   bool allows(String capability) {
     switch (capability) {
@@ -913,14 +956,6 @@ class RolePrivilegesModel {
     );
   }
 
-  factory RolePrivilegesModel.fromJson(Map<String, dynamic> json) {
-    return RolePrivilegesModel(
-      role: json['role'] as String? ?? '',
-      bulkExport: json['bulk_export'] as bool? ?? true,
-      bulkImport: json['bulk_import'] as bool? ?? true,
-    );
-  }
-
   Map<String, dynamic> toJson() => {
         'role': role,
         'bulk_export': bulkExport,
@@ -929,20 +964,6 @@ class RolePrivilegesModel {
 }
 
 class AuthResult {
-  final String status;
-  final String database;
-  final UserModel user;
-
-  /// What the account's role may do, as the server reports it at sign-in.
-  final List<String> capabilities;
-
-  /// Bearer token of the session opened by the server for this sign-in.
-  final String? token;
-  final String? fileName;
-  final String? solutionName;
-  final Map<String, dynamic>? fileOptions;
-  final Map<String, dynamic>? pageSetup;
-  final dynamic directoryRef;
 
   const AuthResult({
     required this.status,
@@ -973,6 +994,20 @@ class AuthResult {
       pageSetup: rawPageSetup is Map ? Map<String, dynamic>.from(rawPageSetup) : null,
     );
   }
+  final String status;
+  final String database;
+  final UserModel user;
+
+  /// What the account's role may do, as the server reports it at sign-in.
+  final List<String> capabilities;
+
+  /// Bearer token of the session opened by the server for this sign-in.
+  final String? token;
+  final String? fileName;
+  final String? solutionName;
+  final Map<String, dynamic>? fileOptions;
+  final Map<String, dynamic>? pageSetup;
+  final dynamic directoryRef;
 
   AuthResult copyWith({
     String? status,
@@ -1031,15 +1066,15 @@ class SummaryType {
 
 /// A summary field's definition, as it is stored in the field's formula.
 class SummarySpecModel {
-  final String summaryType;
-  final String field;
-  final bool running;
 
   const SummarySpecModel({
     required this.summaryType,
     required this.field,
     this.running = false,
   });
+  final String summaryType;
+  final String field;
+  final bool running;
 
   /// Reads a stored definition, or null when there is none to read.
   ///
@@ -1084,9 +1119,6 @@ class SummarySpecModel {
 /// One group of a report: the values its break fields hold, how many records
 /// are in it, and what each summary field comes to over them.
 class SummaryGroupModel {
-  final Map<String, dynamic> values;
-  final int count;
-  final Map<String, dynamic> summaries;
 
   const SummaryGroupModel({
     required this.values,
@@ -1099,15 +1131,14 @@ class SummaryGroupModel {
         count: (json['count'] as num?)?.toInt() ?? 0,
         summaries: Map<String, dynamic>.from(json['summaries'] as Map? ?? const {}),
       );
+  final Map<String, dynamic> values;
+  final int count;
+  final Map<String, dynamic> summaries;
 }
 
 /// The figures of a report: one per summary field over the whole found set,
 /// and one per group.
 class SummaryResultModel {
-  final int count;
-  final Map<String, dynamic> grand;
-  final List<String> groupBy;
-  final List<SummaryGroupModel> groups;
 
   const SummaryResultModel({
     this.count = 0,
@@ -1125,6 +1156,10 @@ class SummaryResultModel {
             SummaryGroupModel.fromJson(Map<String, dynamic>.from(g as Map)),
         ],
       );
+  final int count;
+  final Map<String, dynamic> grand;
+  final List<String> groupBy;
+  final List<SummaryGroupModel> groups;
 
   /// The key that identifies a group among the records: its break values in
   /// the order the report groups by.
@@ -1145,18 +1180,6 @@ class SummaryResultModel {
 
 /// What a file holds, read without writing anything (#38).
 class ImportPreviewModel {
-  final List<String> columns;
-
-  /// The sheets of a workbook, so another one can be chosen.
-  final List<String> sheets;
-
-  /// The first rows, for showing what is about to be brought in.
-  final List<List<String>> rows;
-
-  final int rowCount;
-
-  /// True when the file held more rows than the limit allowed.
-  final bool truncated;
 
   const ImportPreviewModel({
     this.columns = const [],
@@ -1176,6 +1199,18 @@ class ImportPreviewModel {
         rowCount: (json['row_count'] as num?)?.toInt() ?? 0,
         truncated: json['truncated'] as bool? ?? false,
       );
+  final List<String> columns;
+
+  /// The sheets of a workbook, so another one can be chosen.
+  final List<String> sheets;
+
+  /// The first rows, for showing what is about to be brought in.
+  final List<List<String>> rows;
+
+  final int rowCount;
+
+  /// True when the file held more rows than the limit allowed.
+  final bool truncated;
 
   /// The value at a position, or "" when the row is short.
   String cell(int row, int column) {
@@ -1187,12 +1222,6 @@ class ImportPreviewModel {
 
 /// What an import did.
 class ImportReportModel {
-  final int rows;
-  final int added;
-  final int updated;
-  final int skipped;
-  final List<String> fields;
-  final bool truncated;
 
   const ImportReportModel({
     this.rows = 0,
@@ -1211,27 +1240,33 @@ class ImportReportModel {
         fields: [for (final f in (json['fields'] as List? ?? const [])) f as String],
         truncated: json['truncated'] as bool? ?? false,
       );
+  final int rows;
+  final int added;
+  final int updated;
+  final int skipped;
+  final List<String> fields;
+  final bool truncated;
 }
 
 /// Transparent HTTP client wrapper that negotiates AES-256-GCM envelope
 /// encryption (`Accept-Encryption: aes-256-gcm` / `X-File4Base-Encrypted`)
 /// between the Web/Desktop client and `file4base-api`.
 class _EncryptedHttpClient extends http.BaseClient {
-  final http.Client _inner;
-  PayloadCipher cipher;
-  bool encryptRequests;
 
   _EncryptedHttpClient(
     this._inner, {
     required this.cipher,
     this.encryptRequests = false,
   });
+  final http.Client _inner;
+  PayloadCipher cipher;
+  bool encryptRequests;
 
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     request.headers.putIfAbsent(PayloadCipher.headerAcceptEncryption, () => PayloadCipher.cipherName);
 
-    http.BaseRequest outgoing = request;
+    var outgoing = request;
     if (encryptRequests && request is http.Request && request.bodyBytes.isNotEmpty) {
       final sealed = cipher.encrypt(request.bodyBytes);
       final encReq = http.Request(request.method, request.url)
@@ -1293,16 +1328,6 @@ class _EncryptedHttpClient extends http.BaseClient {
 }
 
 class ApiClient {
-  String baseUrl;
-  late final _EncryptedHttpClient _httpClient;
-
-  /// Bearer token of the current server session (set by [login]).
-  /// It is kept in memory only and sent on every request.
-  String? _authToken;
-
-  /// Invoked when the server answers 401 to a request other than sign-in,
-  /// i.e. the session expired or was revoked and the user must sign in again.
-  void Function()? onUnauthorized;
 
   ApiClient({
     this.baseUrl = 'http://127.0.0.1:8080',
@@ -1316,6 +1341,16 @@ class ApiClient {
       encryptRequests: encryptRequests,
     );
   }
+  String baseUrl;
+  late final _EncryptedHttpClient _httpClient;
+
+  /// Bearer token of the current server session (set by [login]).
+  /// It is kept in memory only and sent on every request.
+  String? _authToken;
+
+  /// Invoked when the server answers 401 to a request other than sign-in,
+  /// i.e. the session expired or was revoked and the user must sign in again.
+  void Function()? onUnauthorized;
 
   /// Updates the AES-256-GCM channel secret used to encrypt/decrypt API payloads.
   void setChannelSecret(String secret, {bool? encryptRequests}) {
@@ -1517,7 +1552,7 @@ class ApiClient {
     String? validationRules,
     bool updateValidationRules = false,
   }) async {
-    final Map<String, dynamic> payload = {
+    final payload = <String, dynamic>{
       'display_name': displayName,
     };
     if (updateDefaultValue) {
@@ -1556,7 +1591,7 @@ class ApiClient {
     final uri = Uri.parse('$baseUrl/api/v1/data/$table').replace(queryParameters: {
       'limit': limit.toString(),
       'offset': offset.toString(),
-      if (sortBy != null) 'sort_by': sortBy,
+      'sort_by': ?sortBy,
       'sort_asc': sortAsc.toString(),
       if (sort != null && sort.isNotEmpty) 'sort': sort.join(','),
     });
@@ -1576,7 +1611,7 @@ class ApiClient {
   Future<List<Map<String, dynamic>>> listAllRows(String table, {void Function(int fetched)? onProgress}) async {
     final all = <Map<String, dynamic>>[];
     while (true) {
-      final page = await listRows(table, limit: maxPageSize, offset: all.length, sortBy: 'id', sortAsc: true);
+      final page = await listRows(table, limit: maxPageSize, offset: all.length, sortBy: 'id');
       all.addAll(page);
       onProgress?.call(all.length);
       if (page.length < maxPageSize) return all;
@@ -1626,7 +1661,7 @@ class ApiClient {
         'options': {
           'limit': limit,
           'offset': offset,
-          if (sortBy != null) 'sort_by': sortBy,
+          'sort_by': ?sortBy,
           'sort_asc': true,
         },
       }),
@@ -1727,11 +1762,11 @@ class ApiClient {
       body: jsonEncode({
         'file_name': fileName,
         if (bytes != null) 'content': base64Encode(bytes),
-        if (format != null) 'format': format,
+        'format': ?format,
         'has_header': hasHeader,
-        if (delimiter != null) 'delimiter': delimiter,
-        if (sheet != null) 'sheet': sheet,
-        if (recordElement != null) 'record_element': recordElement,
+        'delimiter': ?delimiter,
+        'sheet': ?sheet,
+        'record_element': ?recordElement,
         if (dataSource != null) 'data_source': dataSource.toJson(),
       }),
     );
@@ -1745,9 +1780,8 @@ class ApiClient {
   /// with it, and the error says which row it was.
   Future<ImportReportModel> importRecords(
     String table, {
-    String fileName = '',
+    required Map<String, dynamic> options, String fileName = '',
     Uint8List? bytes,
-    required Map<String, dynamic> options,
     String? format,
     bool hasHeader = true,
     String? delimiter,
@@ -1761,11 +1795,11 @@ class ApiClient {
       body: jsonEncode({
         'file_name': fileName,
         if (bytes != null) 'content': base64Encode(bytes),
-        if (format != null) 'format': format,
+        'format': ?format,
         'has_header': hasHeader,
-        if (delimiter != null) 'delimiter': delimiter,
-        if (sheet != null) 'sheet': sheet,
-        if (recordElement != null) 'record_element': recordElement,
+        'delimiter': ?delimiter,
+        'sheet': ?sheet,
+        'record_element': ?recordElement,
         if (dataSource != null) 'data_source': dataSource.toJson(),
         'options': options,
       }),
@@ -1790,7 +1824,7 @@ class ApiClient {
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'format': format,
-        if (name != null) 'name': name,
+        'name': ?name,
         'requests': requests,
         'fields': fields,
         'headings': headings,
@@ -1927,9 +1961,9 @@ class ApiClient {
       Uri.parse('$baseUrl/api/v1/schemas/occurrences/$id'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
-        if (name != null) 'name': name,
-        if (xPos != null) 'x_pos': xPos,
-        if (yPos != null) 'y_pos': yPos,
+        'name': ?name,
+        'x_pos': ?xPos,
+        'y_pos': ?yPos,
       }),
     );
     _checkResponse(response);
@@ -1974,10 +2008,10 @@ class ApiClient {
         'right_occurrence_id': rightOccurrenceId,
         'right_column_id': rightColumnId,
         'operator': operator,
-        if (name != null) 'name': name,
+        'name': ?name,
         'allow_creation': allowCreation,
         'cascade_delete': cascadeDelete,
-        if (sortRelated != null) 'sort_related': sortRelated,
+        'sort_related': ?sortRelated,
       }),
     );
     _checkResponse(response);
@@ -1996,11 +2030,11 @@ class ApiClient {
       Uri.parse('$baseUrl/api/v1/schemas/relationships/$id'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
-        if (name != null) 'name': name,
-        if (operator != null) 'operator': operator,
-        if (allowCreation != null) 'allow_creation': allowCreation,
-        if (cascadeDelete != null) 'cascade_delete': cascadeDelete,
-        if (sortRelated != null) 'sort_related': sortRelated,
+        'name': ?name,
+        'operator': ?operator,
+        'allow_creation': ?allowCreation,
+        'cascade_delete': ?cascadeDelete,
+        'sort_related': ?sortRelated,
       }),
     );
     _checkResponse(response);
@@ -2129,8 +2163,8 @@ class ApiClient {
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'solution_name': solutionName,
-        if (fileOptions != null) 'file_options': fileOptions,
-        if (pageSetup != null) 'page_setup': pageSetup,
+        'file_options': ?fileOptions,
+        'page_setup': ?pageSetup,
       }),
     );
     _checkResponse(response);
@@ -2172,6 +2206,7 @@ class ApiClient {
     required String username,
     required String password,
     String? database,
+    String? totpCode,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/auth/login'),
@@ -2180,6 +2215,8 @@ class ApiClient {
         'username': username,
         'password': password,
         'database': database ?? '',
+        if (totpCode != null && totpCode.trim().isNotEmpty)
+          'totp_code': totpCode.trim(),
       }),
     );
     _checkResponse(response, isSignIn: true);
@@ -2193,6 +2230,320 @@ class ApiClient {
       unawaited(_revokeToken(previousToken));
     }
     return result;
+  }
+
+  /// Generates a Google Authenticator TOTP secret and otpauth:// URI for [userId].
+  Future<MfaSetupModel> setupUserMfa(String userId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/mfa/setup'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(const <String, dynamic>{}),
+    );
+    _checkResponse(response);
+    return MfaSetupModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Verifies [code] (6 digits from Google Authenticator) and enables MFA on [userId].
+  Future<void> enableUserMfa(
+    String userId, {
+    required String code,
+    String? secret,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/mfa/enable'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'code': code.trim(),
+        if (secret != null && secret.trim().isNotEmpty) 'secret': secret.trim(),
+      }),
+    );
+    _checkResponse(response);
+  }
+
+  /// Disables MFA and clears the TOTP secret on [userId].
+  Future<void> disableUserMfa(String userId) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/security/users/$userId/mfa/disable'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(const <String, dynamic>{}),
+    );
+    _checkResponse(response);
+  }
+
+  // ─── Server Tools & Administration (/api/v1/server) ────────────────────────
+
+  Future<Map<String, dynamic>> getServerTelemetry({int minutes = 30}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/telemetry?minutes=$minutes'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> listServerContainers() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/containers'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> restartServerContainer(String name) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/containers/${Uri.encodeComponent(name)}/restart'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(const <String, dynamic>{}),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<List<String>> getServerContainerLogs(String name) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/containers/${Uri.encodeComponent(name)}/logs'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['lines'] as List<dynamic>? ?? const []).whereType<String>().toList();
+  }
+
+  Future<List<Map<String, dynamic>>> listServerBackups() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/backups'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['backups'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map(Map<String, dynamic>.from)
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> createServerBackup({
+    String? database,
+    String notes = '',
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/backups'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (database != null && database.isNotEmpty) 'database': database,
+        'notes': notes,
+        'type': 'manual',
+      }),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<String> downloadServerBackup(String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/backups/${Uri.encodeComponent(id)}/download'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return response.body;
+  }
+
+  Future<Map<String, dynamic>> restoreServerBackup(String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/backups/${Uri.encodeComponent(id)}/restore'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(const <String, dynamic>{}),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<void> deleteServerBackup(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/server/backups/${Uri.encodeComponent(id)}'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  Future<Map<String, dynamic>> getServerTlsConfig() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/tls'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> updateServerTlsConfig(Map<String, dynamic> config) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/server/tls'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(config),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> renewServerTlsCertificate() async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/tls/renew'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(const <String, dynamic>{}),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<List<Map<String, dynamic>>> listServerSessions() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/sessions'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['sessions'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map(Map<String, dynamic>.from)
+        .toList();
+  }
+
+  Future<void> revokeServerSession(String sessionId) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/server/sessions/${Uri.encodeComponent(sessionId)}'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  Future<List<Map<String, dynamic>>> listServerSchedules() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/schedules'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['schedules'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map(Map<String, dynamic>.from)
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> createServerSchedule(Map<String, dynamic> schedule) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/schedules'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(schedule),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> updateServerSchedule(String id, Map<String, dynamic> patch) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/server/schedules/${Uri.encodeComponent(id)}'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(patch),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> runServerScheduleNow(String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/schedules/${Uri.encodeComponent(id)}/run'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(const <String, dynamic>{}),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<void> deleteServerSchedule(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/server/schedules/${Uri.encodeComponent(id)}'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  Future<List<Map<String, dynamic>>> listServerAuditLogs() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/audit-logs'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['events'] as List<dynamic>? ?? const [])
+        .whereType<Map>()
+        .map(Map<String, dynamic>.from)
+        .toList();
+  }
+
+  Future<void> clearServerAuditLogs() async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/server/audit-logs'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  Future<Map<String, dynamic>> getServerDatabaseMaintenance({String? database}) async {
+    final query = (database != null && database.isNotEmpty)
+        ? '?database=${Uri.encodeComponent(database)}'
+        : '';
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/maintenance$query'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> runServerDatabaseOptimize({
+    String? database,
+    String operation = 'vacuum_analyze',
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/maintenance/optimize'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (database != null && database.isNotEmpty) 'database': database,
+        'operation': operation,
+      }),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> getServerNotifications() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/notifications'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> updateServerNotifications(Map<String, dynamic> config) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/server/notifications'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(config),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> testServerNotification() async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/notifications/test'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(const <String, dynamic>{}),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
   /// Signs out: closes the server session and forgets the token.
@@ -2256,12 +2607,11 @@ class ApiClient {
 
   Future<void> updateUser(
     String id, {
-    String? password,
-    required String role,
+    required String role, String? password,
     bool? isActive,
     String? database,
   }) async {
-    final Map<String, dynamic> body = {'role': role};
+    final body = <String, dynamic>{'role': role};
     if (database != null && database.isNotEmpty) {
       body['database'] = database;
     }
@@ -2397,7 +2747,7 @@ class ApiClient {
     // the solution's name and the format.
     var name = 'solution_design.$format';
     final disposition = response.headers['content-disposition'] ?? '';
-    final match = RegExp(r'filename="([^"]+)"').firstMatch(disposition);
+    final match = RegExp('filename="([^"]+)"').firstMatch(disposition);
     if (match != null) name = match.group(1)!;
     return (bytes: response.bodyBytes, fileName: name);
   }
@@ -2742,8 +3092,8 @@ class ApiClient {
       ),
       body: jsonEncode({
         if (solutionName != null && solutionName.trim().isNotEmpty) 'solution_name': solutionName.trim(),
-        if (fileOptions != null) 'file_options': fileOptions,
-        if (pageSetup != null) 'page_setup': pageSetup,
+        'file_options': ?fileOptions,
+        'page_setup': ?pageSetup,
       }),
     );
     _checkResponse(response);
@@ -2845,10 +3195,10 @@ class ApiClient {
       ),
       body: jsonEncode({
         'kind': kind,
-        if (tableId != null) 'table_id': tableId,
-        if (columnIds != null) 'column_ids': columnIds,
-        if (layoutId != null) 'layout_id': layoutId,
-        if (scriptId != null) 'script_id': scriptId,
+        'table_id': ?tableId,
+        'column_ids': ?columnIds,
+        'layout_id': ?layoutId,
+        'script_id': ?scriptId,
       }),
     );
     _checkResponse(response);
@@ -2868,7 +3218,7 @@ class ApiClient {
       ),
       body: jsonEncode({
         'envelope': envelope,
-        if (targetTableId != null) 'target_table_id': targetTableId,
+        'target_table_id': ?targetTableId,
       }),
     );
     _checkResponse(response);
@@ -2891,7 +3241,7 @@ class ApiClient {
       ),
       body: jsonEncode({
         'envelope': envelope,
-        if (targetTableId != null) 'target_table_id': targetTableId,
+        'target_table_id': ?targetTableId,
         'on_collision': onCollision,
       }),
     );
@@ -2971,10 +3321,6 @@ class ApiClient {
 
 /// One entry of a custom menu (#52).
 class CustomMenuItemModel {
-  final String title;
-  final String shortcut;
-  final Map<String, dynamic> action;
-  final bool separator;
 
   const CustomMenuItemModel({
     this.title = '',
@@ -2992,6 +3338,10 @@ class CustomMenuItemModel {
       separator: json['separator'] as bool? ?? false,
     );
   }
+  final String title;
+  final String shortcut;
+  final Map<String, dynamic> action;
+  final bool separator;
 
   Map<String, dynamic> toJson() {
     if (separator) {
@@ -3007,9 +3357,6 @@ class CustomMenuItemModel {
 
 /// One menu of the bar, as a solution redefines it (#52).
 class CustomMenuModel {
-  final String menu;
-  final String mode;
-  final List<CustomMenuItemModel> items;
 
   const CustomMenuModel({
     required this.menu,
@@ -3028,6 +3375,9 @@ class CustomMenuModel {
           .toList(),
     );
   }
+  final String menu;
+  final String mode;
+  final List<CustomMenuItemModel> items;
 
   Map<String, dynamic> toJson() => {
         'menu': menu,
@@ -3038,10 +3388,6 @@ class CustomMenuModel {
 
 /// A named set of custom menus stored in `sys_menu_sets` (#52).
 class MenuSetModel {
-  final String id;
-  final String name;
-  final bool isDefault;
-  final List<CustomMenuModel> menus;
 
   const MenuSetModel({
     required this.id,
@@ -3049,16 +3395,6 @@ class MenuSetModel {
     this.isDefault = false,
     this.menus = const [],
   });
-
-  CustomMenuModel? menuFor(String name) {
-    final lower = name.toLowerCase();
-    for (final m in menus) {
-      if (m.menu.toLowerCase() == lower) {
-        return m;
-      }
-    }
-    return null;
-  }
 
   factory MenuSetModel.fromJson(Map<String, dynamic> json) {
     final rawMenus = json['menus'] as List<dynamic>? ?? const [];
@@ -3072,6 +3408,20 @@ class MenuSetModel {
           .toList(),
     );
   }
+  final String id;
+  final String name;
+  final bool isDefault;
+  final List<CustomMenuModel> menus;
+
+  CustomMenuModel? menuFor(String name) {
+    final lower = name.toLowerCase();
+    for (final m in menus) {
+      if (m.menu.toLowerCase() == lower) {
+        return m;
+      }
+    }
+    return null;
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -3083,9 +3433,6 @@ class MenuSetModel {
 
 /// Response from `GET /api/v1/menu-sets` (#52).
 class MenuSetsListingModel {
-  final List<String> menus;
-  final List<String> extendOnly;
-  final List<MenuSetModel> menuSets;
 
   const MenuSetsListingModel({
     this.menus = const [
@@ -3129,15 +3476,13 @@ class MenuSetsListingModel {
           .toList(),
     );
   }
+  final List<String> menus;
+  final List<String> extendOnly;
+  final List<MenuSetModel> menuSets;
 }
 
 /// Solution metadata, design lock state, and project options (#53).
 class SolutionMetaModel {
-  final String database;
-  final String solutionName;
-  final bool designLocked;
-  final Map<String, dynamic>? fileOptions;
-  final Map<String, dynamic>? pageSetup;
 
   const SolutionMetaModel({
     required this.database,
@@ -3158,18 +3503,15 @@ class SolutionMetaModel {
       pageSetup: rawPageSetup is Map ? Map<String, dynamic>.from(rawPageSetup) : null,
     );
   }
+  final String database;
+  final String solutionName;
+  final bool designLocked;
+  final Map<String, dynamic>? fileOptions;
+  final Map<String, dynamic>? pageSetup;
 }
 
 /// Response from `POST /api/v1/solutions/clone` (#53).
 class CloneResultModel {
-  final String status;
-  final String database;
-  final String solutionName;
-  final bool designLocked;
-  final String ownerUser;
-  final int tablesCreated;
-  final int layoutsCreated;
-  final int scriptsCreated;
 
   const CloneResultModel({
     required this.status,
@@ -3194,13 +3536,18 @@ class CloneResultModel {
       scriptsCreated: (json['scripts_created'] as num?)?.toInt() ?? 0,
     );
   }
+  final String status;
+  final String database;
+  final String solutionName;
+  final bool designLocked;
+  final String ownerUser;
+  final int tablesCreated;
+  final int layoutsCreated;
+  final int scriptsCreated;
 }
 
 /// Missing dependency reported when previewing or pasting structure (#54).
 class ClipboardDependencyModel {
-  final String kind;
-  final String name;
-  final String detail;
 
   const ClipboardDependencyModel({
     required this.kind,
@@ -3215,15 +3562,13 @@ class ClipboardDependencyModel {
       detail: json['detail'] as String? ?? '',
     );
   }
+  final String kind;
+  final String name;
+  final String detail;
 }
 
 /// Response from `POST /api/v1/solutions/clipboard/preview` (#54).
 class ClipboardPreviewModel {
-  final String kind;
-  final String objectName;
-  final bool hasCollision;
-  final List<String> collisions;
-  final List<ClipboardDependencyModel> missingDependencies;
 
   const ClipboardPreviewModel({
     required this.kind,
@@ -3247,21 +3592,19 @@ class ClipboardPreviewModel {
           .toList(),
     );
   }
+  final String kind;
+  final String objectName;
+  final bool hasCollision;
+  final List<String> collisions;
+  final List<ClipboardDependencyModel> missingDependencies;
 }
 
 /// Response from `POST /api/v1/solutions/clipboard/paste` (#54).
 class ClipboardPasteReportModel {
-  final String kind;
-  final String createdId;
-  final String createdName;
-  final int createdCount;
-  final String collisionResolved;
-  final List<ClipboardDependencyModel> missingDependencies;
 
   const ClipboardPasteReportModel({
     required this.kind,
-    this.createdId = '',
-    required this.createdName,
+    required this.createdName, this.createdId = '',
     this.createdCount = 1,
     this.collisionResolved = '',
     this.missingDependencies = const [],
@@ -3281,22 +3624,22 @@ class ClipboardPasteReportModel {
           .toList(),
     );
   }
+  final String kind;
+  final String createdId;
+  final String createdName;
+  final int createdCount;
+  final String collisionResolved;
+  final List<ClipboardDependencyModel> missingDependencies;
 }
 
 /// One item in a FileMaker conversion report (#26).
 class MigrationReportItemModel {
-  final String category;
-  final String domain;
-  final String sourceName;
-  final String targetName;
-  final String detail;
 
   const MigrationReportItemModel({
     required this.category,
     required this.domain,
     required this.sourceName,
-    this.targetName = '',
-    required this.detail,
+    required this.detail, this.targetName = '',
   });
 
   factory MigrationReportItemModel.fromJson(Map<String, dynamic> json) {
@@ -3308,20 +3651,15 @@ class MigrationReportItemModel {
       detail: json['detail'] as String? ?? '',
     );
   }
+  final String category;
+  final String domain;
+  final String sourceName;
+  final String targetName;
+  final String detail;
 }
 
 /// Conversion report returned by FileMaker migration preflight and apply (#26).
 class MigrationReportModel {
-  final String sourceFormat;
-  final String solutionName;
-  final bool triggersQuarantined;
-  final bool accountsDisabled;
-  final Map<String, int> counts;
-  final List<MigrationReportItemModel> preserved;
-  final List<MigrationReportItemModel> translated;
-  final List<MigrationReportItemModel> unsupported;
-  final List<MigrationReportItemModel> rejected;
-  final List<MigrationReportItemModel> manualActionRequired;
 
   const MigrationReportModel({
     required this.sourceFormat,
@@ -3335,14 +3673,6 @@ class MigrationReportModel {
     this.rejected = const [],
     this.manualActionRequired = const [],
   });
-
-  static List<MigrationReportItemModel> _parseList(dynamic raw) {
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map((e) => MigrationReportItemModel.fromJson(Map<String, dynamic>.from(e)))
-        .toList();
-  }
 
   factory MigrationReportModel.fromJson(Map<String, dynamic> json) {
     final rawCounts = json['counts'];
@@ -3367,14 +3697,28 @@ class MigrationReportModel {
       manualActionRequired: _parseList(json['manual_action_required']),
     );
   }
+  final String sourceFormat;
+  final String solutionName;
+  final bool triggersQuarantined;
+  final bool accountsDisabled;
+  final Map<String, int> counts;
+  final List<MigrationReportItemModel> preserved;
+  final List<MigrationReportItemModel> translated;
+  final List<MigrationReportItemModel> unsupported;
+  final List<MigrationReportItemModel> rejected;
+  final List<MigrationReportItemModel> manualActionRequired;
+
+  static List<MigrationReportItemModel> _parseList(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => MigrationReportItemModel.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
 }
 
 /// Response from `POST /api/v1/solutions/migrate/apply` (#26).
 class MigrationApplyResultModel {
-  final String status;
-  final String database;
-  final int recordsInserted;
-  final MigrationReportModel report;
 
   const MigrationApplyResultModel({
     required this.status,
@@ -3394,5 +3738,9 @@ class MigrationApplyResultModel {
       ),
     );
   }
+  final String status;
+  final String database;
+  final int recordsInserted;
+  final MigrationReportModel report;
 }
 

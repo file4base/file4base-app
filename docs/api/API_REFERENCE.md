@@ -1824,3 +1824,55 @@ See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for t
 ### `POST /api/v1/solutions/migrate/apply`
 *Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report`, and the full `ConversionReport`.
 
+---
+
+## 14. Multi-Factor Authentication (TOTP / Google Authenticator)
+
+File4Base supports RFC 6238 Time-Based One-Time Password (TOTP) two-factor authentication compatible with Google Authenticator, Authy, 1Password, and any standard `otpauth://totp/` authenticator app.
+
+When `mfa_enabled` is `true` for an account, `POST /api/v1/security/login` requires `"totp_code": "123456"` in addition to `username` and `password`. If `totp_code` is omitted when MFA is enabled, `POST /api/v1/security/login` returns `401 Unauthorized` with `"mfa_required": true`.
+
+### `POST /api/v1/security/users/{id}/mfa/setup`
+*Requires `admin` or `owner` role (or the user's own session).* Generates a fresh 160-bit Base32 TOTP secret and `otpauth://totp/` URI for QR code provisioning without enabling enforcement until verified.
+
+### `POST /api/v1/security/users/{id}/mfa/enable`
+*Requires `admin` or `owner` role (or the user's own session).* Verifies a 6-digit TOTP code (`{"code": "123456", "secret": "..."}`) and activates MFA (`mfa_enabled = true`) on the account.
+
+### `POST /api/v1/security/users/{id}/mfa/disable`
+*Requires `admin` or `owner` role (or the user's own session).* Disables MFA (`mfa_enabled = false`) and clears the stored TOTP secret for account `{id}`.
+
+---
+
+## 15. Server Tools & Operations (`/api/v1/server/*`)
+
+*Requires `admin` or `owner` role (destructive operations require `owner`).* Powers the top-level **Server Tools** administration console (`ServerToolsDialog`).
+
+| Method and path | Role | Summary |
+| --- | --- | --- |
+| `GET /api/v1/server/telemetry` | admin / owner | Rolling 60-minute API telemetry (`minute_series`, `current_rpm`, `avg_latency_ms`, `p95_latency_ms`, `status_2xx`/`4xx`/`5xx`, `top_endpoints`, Go runtime memory/goroutines, and DB ping latency). |
+| `GET /api/v1/server/containers` | admin / owner | Health, uptime, version, and resource metrics for `file4base-api`, `file4base-web`, and `file4base-postgres` / `file4base-mariadb`. |
+| `POST /api/v1/server/containers/{name}/restart` | admin / owner | Triggers a graceful service reload/connection pool refresh for `{name}` and records an audit event. |
+| `GET /api/v1/server/containers/{name}/logs` | admin / owner | Returns recent structured log lines for `{name}`. |
+| `GET /api/v1/server/backups` | admin / owner | Lists stored server snapshots (`.f4b.json`) with size, table count, and timestamp. |
+| `POST /api/v1/server/backups` | admin / owner | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, and accounts. |
+| `GET /api/v1/server/backups/{id}/download` | admin / owner | Downloads a stored backup snapshot archive. |
+| `POST /api/v1/server/backups/{id}/restore` | admin / owner | Verifies and restores a stored snapshot into the target database. |
+| `DELETE /api/v1/server/backups/{id}` | admin / owner | Deletes a stored backup snapshot. |
+| `GET /api/v1/server/tls` | admin / owner | Returns the current Web/API domain, HTTPS/HSTS state, TLS mode (`acme`, `custom`, `self_signed`, `http_only`), ACME email/challenge type, and X.509 certificate metadata (`cert_issuer`, `cert_subject`, `cert_not_after`, `cert_days_left`, `cert_sha256`). |
+| `PUT /api/v1/server/tls` | admin / owner | Updates the domain, HTTPS/HSTS flags, ACME settings, or custom PEM certificate configuration. |
+| `POST /api/v1/server/tls/renew` | admin / owner | Rotates or renews the server's active X.509 TLS certificate on demand. |
+| `GET /api/v1/server/sessions` | admin / owner | Lists active authenticated sessions across databases (`session_id`, `username`, `role`, `database`, `created_at`, `expires_at`, `is_current`). |
+| `DELETE /api/v1/server/sessions/{id}` | admin / owner | Revokes session `{id}` immediately. |
+| `GET /api/v1/server/schedules` | admin / owner | Lists scheduled cron jobs (`backup`, `script`, or `maintenance`). |
+| `POST /api/v1/server/schedules` | admin / owner | Creates a new scheduled cron job. |
+| `PUT /api/v1/server/schedules/{id}` | admin / owner | Updates or toggles `enabled` (`true`/`false`) on an existing scheduled cron job. |
+| `POST /api/v1/server/schedules/{id}/run` | admin / owner | Executes a scheduled job immediately and updates `last_run_at` / `last_status`. |
+| `DELETE /api/v1/server/schedules/{id}` | admin / owner | Deletes a scheduled cron job. |
+| `GET /api/v1/server/audit-logs` | admin / owner | Lists security and administrative audit events. |
+| `DELETE /api/v1/server/audit-logs` | admin / owner | Rotates/clears the audit log buffer and records a new audit entry. |
+| `GET /api/v1/server/maintenance` | admin / owner | Lists user tables, column counts, live row counts, and catalog health for the target database. |
+| `POST /api/v1/server/maintenance/optimize` | admin / owner | Runs `VACUUM ANALYZE` or `ANALYZE` and verifies `_f4b_*` system catalog tables, returning execution duration. |
+| `GET /api/v1/server/notifications` | admin / owner | Returns SMTP and Webhook alert settings and subscribed `alert_events`. |
+| `PUT /api/v1/server/notifications` | admin / owner | Saves SMTP and Webhook alert settings and subscribed `alert_events`. |
+| `POST /api/v1/server/notifications/test` | admin / owner | Dispatches a test alert notification and records an audit event. |
+

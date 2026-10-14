@@ -2,12 +2,12 @@
 // being typed into. These render the real Browse mode and look at what came
 // out.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _customerTypes = ValueListModel(
   id: 'vl-types',
@@ -21,11 +21,11 @@ const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers',
 ]);
 
 class _ValueListApi extends ApiClient {
+
+  _ValueListApi({required this.lists, required this.rows}) : super(baseUrl: 'http://localhost:1');
   final List<ValueListModel> lists;
   final List<Map<String, dynamic>> rows;
   final List<Map<String, dynamic>> updates = [];
-
-  _ValueListApi({required this.lists, required this.rows}) : super(baseUrl: 'http://localhost:1');
 
   @override
   Future<List<ValueListModel>> listValueLists() async => lists;

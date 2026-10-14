@@ -1,24 +1,20 @@
 import 'dart:math' as math;
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/schema_manager/widgets/specify_relationship_dialog.dart';
+import 'package:file4base_client/features/schema_manager/widgets/specify_table_dialog.dart';
 import 'package:flutter/material.dart';
-import '../../../core/api/api_client.dart';
-import 'specify_relationship_dialog.dart';
-import 'specify_table_dialog.dart';
 
 class RelationshipGraphWidget extends StatefulWidget {
+
+  const RelationshipGraphWidget({
+    required this.tables, required this.occurrences, required this.relationships, required this.apiClient, required this.onSchemaChanged, super.key,
+  });
   final List<TableModel> tables;
   final List<TableOccurrenceModel> occurrences;
   final List<RelationshipModel> relationships;
   final ApiClient apiClient;
   final VoidCallback onSchemaChanged;
-
-  const RelationshipGraphWidget({
-    super.key,
-    required this.tables,
-    required this.occurrences,
-    required this.relationships,
-    required this.apiClient,
-    required this.onSchemaChanged,
-  });
 
   @override
   State<RelationshipGraphWidget> createState() => _RelationshipGraphWidgetState();
@@ -64,19 +60,10 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     return widget.tables.where((t) => t.id == baseTableId).firstOrNull;
   }
 
-  double _getCardHeight(TableOccurrenceModel occ) {
-    if (_collapsedOccurrences.contains(occ.id)) {
-      return _headerHeight;
-    }
-    final tbl = _getTable(occ.baseTableId);
-    final count = tbl?.columns.length ?? 0;
-    return _headerHeight + (count * _rowHeight) + 8.0;
-  }
-
   Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, bool isExit) {
     final tbl = _getTable(occ.baseTableId);
     final cols = tbl?.columns ?? [];
-    int colIndex = cols.indexWhere((c) => c.id == columnId);
+    var colIndex = cols.indexWhere((c) => c.id == columnId);
     if (colIndex < 0) colIndex = 0;
 
     final isCollapsed = _collapsedOccurrences.contains(occ.id);
@@ -95,8 +82,8 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     if (res != null && mounted) {
       try {
         // Position new occurrence near center or offset from existing
-        double newX = 100.0;
-        double newY = 100.0;
+        var newX = 100.0;
+        var newY = 100.0;
         if (_occurrences.isNotEmpty) {
           final last = _occurrences.last;
           newX = last.xPos + 60.0;
@@ -329,7 +316,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
 
               // + Add Relationship Button
               OutlinedButton.icon(
-                onPressed: _occurrences.length >= 2 ? () => _showAddRelationshipDialog() : null,
+                onPressed: _occurrences.length >= 2 ? _showAddRelationshipDialog : null,
                 icon: const Icon(Icons.add_link, size: 16),
                 label: const Text('Relationship...'),
                 style: OutlinedButton.styleFrom(
@@ -378,14 +365,13 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                 _selectedRelationshipId = null;
               });
             },
-            child: Container(
+            child: ColoredBox(
               color: isDark ? const Color(0xFF191B20) : const Color(0xFFF9FAFB),
               child: ClipRect(
                 child: InteractiveViewer(
                   transformationController: _transformController,
                   boundaryMargin: const EdgeInsets.all(1000.0),
                   minScale: 0.2,
-                  maxScale: 2.5,
                   child: SizedBox(
                     width: 3000,
                     height: 2000,
@@ -396,7 +382,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                         Positioned.fill(
                           child: CustomPaint(
                             painter: _GridBackgroundPainter(
-                              dotColor: isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.05),
+                              dotColor: isDark ? Colors.white.withValues(alpha: 0.04) : Colors.black.withValues(alpha: 0.05),
                             ),
                           ),
                         ),
@@ -677,12 +663,6 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
 }
 
 class _RelationshipLinesPainter extends CustomPainter {
-  final List<TableOccurrenceModel> occurrences;
-  final List<RelationshipModel> relationships;
-  final List<TableModel> tables;
-  final String? selectedRelationshipId;
-  final Set<String> collapsedOccurrences;
-  final bool isDark;
 
   _RelationshipLinesPainter({
     required this.occurrences,
@@ -692,6 +672,12 @@ class _RelationshipLinesPainter extends CustomPainter {
     required this.collapsedOccurrences,
     required this.isDark,
   });
+  final List<TableOccurrenceModel> occurrences;
+  final List<RelationshipModel> relationships;
+  final List<TableModel> tables;
+  final String? selectedRelationshipId;
+  final Set<String> collapsedOccurrences;
+  final bool isDark;
 
   TableModel? _getTable(String baseTableId) {
     return tables.where((t) => t.id == baseTableId).firstOrNull;
@@ -700,7 +686,7 @@ class _RelationshipLinesPainter extends CustomPainter {
   Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, bool isExit) {
     final tbl = _getTable(occ.baseTableId);
     final cols = tbl?.columns ?? [];
-    int colIndex = cols.indexWhere((c) => c.id == columnId);
+    var colIndex = cols.indexWhere((c) => c.id == columnId);
     if (colIndex < 0) colIndex = 0;
 
     final isCollapsed = collapsedOccurrences.contains(occ.id);
@@ -765,9 +751,9 @@ class _RelationshipLinesPainter extends CustomPainter {
 }
 
 class _GridBackgroundPainter extends CustomPainter {
-  final Color dotColor;
 
   _GridBackgroundPainter({required this.dotColor});
+  final Color dotColor;
 
   @override
   void paint(Canvas canvas, Size size) {

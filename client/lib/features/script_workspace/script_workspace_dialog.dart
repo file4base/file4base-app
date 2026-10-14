@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/api/api_client.dart';
-import '../../core/theme/theme_model.dart';
-import '../../core/theme/theme_provider.dart';
-import '../tools/structure_clipboard_dialog.dart';
-import 'calculation_builder_dialog.dart';
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/theme/theme_model.dart';
+import 'package:file4base_client/core/theme/theme_provider.dart';
+import 'package:file4base_client/features/tools/structure_clipboard_dialog.dart';
+import 'package:file4base_client/features/script_workspace/calculation_builder_dialog.dart';
 
 class ScriptWorkspaceDialog extends ConsumerStatefulWidget {
-  final ApiClient apiClient;
-  final String? databaseName;
 
   const ScriptWorkspaceDialog({
-    super.key,
-    required this.apiClient,
+    required this.apiClient, super.key,
     this.databaseName,
   });
+  final ApiClient apiClient;
+  final String? databaseName;
 
   static Future<void> show(
     BuildContext context,
@@ -77,7 +76,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
         widget.apiClient.listLayouts().catchError((_) => <LayoutModel>[]),
       ]);
 
-      var scriptsList = results[0] as List<ScriptModel>;
+      final scriptsList = results[0] as List<ScriptModel>;
       final tablesList = results[1] as List<TableModel>;
       final layoutsList = results[2] as List<LayoutModel>;
 
@@ -163,7 +162,6 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
       id: newId,
       name: 'New_Script_${_scripts.length + 1}',
       contextTable: _tables.isNotEmpty ? _tables.first.name : '',
-      isActive: true,
       steps: [
         const ScriptStepModel(
           id: 'step-1',
@@ -230,11 +228,10 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
       sequenceIdx: script.steps.length + 1,
       stepType: item.stepType,
       params: Map<String, dynamic>.from(item.defaultParams),
-      isEnabled: true,
     );
 
     final updatedSteps = List<ScriptStepModel>.from(script.steps);
-    int insertIndex = updatedSteps.length;
+    var insertIndex = updatedSteps.length;
     if (_selectedStepIdx != null && _selectedStepIdx! >= 0 && _selectedStepIdx! < updatedSteps.length) {
       insertIndex = _selectedStepIdx! + 1;
       updatedSteps.insert(insertIndex, newStep);
@@ -254,7 +251,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
 
     // Normalize sequence indices
     final normalized = <ScriptStepModel>[];
-    for (int i = 0; i < updatedSteps.length; i++) {
+    for (var i = 0; i < updatedSteps.length; i++) {
       normalized.add(updatedSteps[i].copyWith(sequenceIdx: i + 1));
     }
 
@@ -328,7 +325,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
 
     final initialVal = step.params[paramKey]?.toString() ?? '';
     final tables = _tables.map((t) => t.name).toList();
-    final Map<String, List<String>> fieldsMap = {};
+    final fieldsMap = <String, List<String>>{};
     for (final t in _tables) {
       fieldsMap[t.name] = t.columns.map((c) => c.name).toList();
     }
@@ -463,7 +460,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
     if (script == null) return;
     final theme = ref.read(appThemeProvider);
 
-    int debugStep = 0;
+    var debugStep = 0;
     final activeSteps = script.steps.where((s) => s.isEnabled).toList();
 
     showDialog(
@@ -591,8 +588,8 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
 
   // Calculate indentation depth based on if/loop nesting
   int _calculateStepIndent(List<ScriptStepModel> steps, int index) {
-    int depth = 0;
-    for (int i = 0; i < index; i++) {
+    var depth = 0;
+    for (var i = 0; i < index; i++) {
       final t = steps[i].stepType;
       if (t == 'if' || t == 'loop') {
         depth++;
@@ -1126,7 +1123,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
 
                                 // Sequential Steps Reorderable List
                                 Expanded(
-                                  child: Container(
+                                  child: ColoredBox(
                                     color: theme.background,
                                     child: script.steps.isEmpty
                                         ? Center(
@@ -1526,8 +1523,8 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                   ),
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<String>(
-                      value: _layouts.any((l) => l.name == step.params['layout_name'])
-                          ? step.params['layout_name']
+                      value: _layouts.any((l) => l.name == step.params['layout_name']?.toString())
+                          ? step.params['layout_name']?.toString()
                           : (_layouts.isNotEmpty ? _layouts.first.name : null),
                       hint: Text('Select layout...', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
                       dropdownColor: theme.surface,
@@ -1678,7 +1675,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
 
   // Build Catalog categorized list
   List<Widget> _buildCatalogItems(AppThemeDefinition theme) {
-    final Map<String, List<ScriptCatalogItem>> categorized = {};
+    final categorized = <String, List<ScriptCatalogItem>>{};
     for (final item in ScriptCatalogItem.catalog) {
       if (_catalogFilter.isNotEmpty &&
           !item.label.toLowerCase().contains(_catalogFilter.toLowerCase()) &&
@@ -1688,7 +1685,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
       categorized.putIfAbsent(item.category, () => []).add(item);
     }
 
-    final List<Widget> widgets = [];
+    final widgets = <Widget>[];
     for (final entry in categorized.entries) {
       widgets.add(
         Container(

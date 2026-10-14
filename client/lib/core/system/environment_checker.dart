@@ -1,5 +1,5 @@
 import 'dart:convert' show jsonDecode, utf8;
-import 'dart:io' show Directory, File, FileSystemEntity, HttpClient, Link, Platform, Process;
+import 'dart:io' show Directory, File, HttpClient, Link, Platform, Process;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 enum RequirementStatus {
@@ -11,12 +11,6 @@ enum RequirementStatus {
 }
 
 class SystemRequirement {
-  final String title;
-  final String description;
-  final RequirementStatus status;
-  final String? detail;
-  final String? actionLabel;
-  final String? downloadUrl;
 
   const SystemRequirement({
     required this.title,
@@ -26,6 +20,12 @@ class SystemRequirement {
     this.actionLabel,
     this.downloadUrl,
   });
+  final String title;
+  final String description;
+  final RequirementStatus status;
+  final String? detail;
+  final String? actionLabel;
+  final String? downloadUrl;
 
   SystemRequirement copyWith({
     String? title,
@@ -132,7 +132,7 @@ class EnvironmentChecker {
       if (response.statusCode == 200) {
         final body = await response.transform(utf8.decoder).join();
         client.close();
-        final Map<String, dynamic> data = jsonDecode(body);
+        final data = jsonDecode(body) as Map<String, dynamic>;
         final engine = data['engine']?.toString() ?? 'database';
         final dbStatus = data['database']?.toString() ?? 'connected';
         return SystemRequirement(
@@ -323,7 +323,7 @@ class EnvironmentChecker {
         await Process.run('open', ['-a', 'Docker']);
         return true;
       } else if (Platform.isWindows) {
-        await Process.run('cmd', ['/c', 'start', '', 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe']);
+        await Process.run('cmd', ['/c', 'start', '', r'C:\Program Files\Docker\Docker\Docker Desktop.exe']);
         return true;
       } else if (Platform.isLinux) {
         await Process.run('systemctl', ['start', 'docker']);
@@ -345,7 +345,7 @@ class EnvironmentChecker {
         final res = await Process.run(dockerExe, ['info']);
         if (res.exitCode == 0) return true;
       } catch (_) {}
-      await Future.delayed(const Duration(seconds: 2));
+      await Future<void>.delayed(const Duration(seconds: 2));
     }
     return false;
   }
@@ -359,7 +359,7 @@ class EnvironmentChecker {
       if (dockerExe == null) return false;
 
       // Locate project directory containing docker-compose.yml if not provided
-      String? targetDir = projectDir;
+      var targetDir = projectDir;
       if (targetDir == null) {
         final candidates = [
           Directory.current.path,
@@ -388,7 +388,7 @@ class EnvironmentChecker {
 
   /// Launches Docker Desktop, waits for the daemon to start, and runs the project containers.
   static Future<bool> startDockerAndContainers({
-    Function(String status)? onProgress,
+    void Function(String status)? onProgress,
     String? projectDir,
   }) async {
     if (kIsWeb) return false;
@@ -396,7 +396,7 @@ class EnvironmentChecker {
     await startDockerDesktop();
 
     onProgress?.call('Waiting for Docker daemon to initialize...');
-    final isReady = await waitForDockerDaemon(maxWaitSeconds: 30);
+    final isReady = await waitForDockerDaemon();
     if (!isReady) {
       onProgress?.call('Docker daemon did not respond within timeout.');
       return false;

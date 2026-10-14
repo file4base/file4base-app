@@ -1,9 +1,9 @@
 // #33 — the layout assistant makes five different layouts from the same
 // ingredients. These check what comes out, without opening a dialog.
 
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_blueprint.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _fields = <BlueprintField>[
   (name: 'last_name', label: 'Last Name', isSummary: false),
@@ -212,7 +212,7 @@ void main() {
     });
 
     test('it changes how the generated objects look', () {
-      final boxed = _blueprint(LayoutKind.form, theme: LayoutTheme.enlightened).build();
+      final boxed = _blueprint(LayoutKind.form).build();
       final bare = _blueprint(LayoutKind.form, theme: LayoutTheme.minimal).build();
 
       final boxedField = boxed.objects.firstWhere((o) => o.type == 'field');

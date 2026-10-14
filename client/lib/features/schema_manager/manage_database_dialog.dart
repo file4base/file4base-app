@@ -1,11 +1,10 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/schema_manager/field_options_dialog.dart';
+import 'package:file4base_client/features/schema_manager/widgets/relationship_graph_widget.dart';
+import 'package:file4base_client/features/tools/structure_clipboard_dialog.dart';
+import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/api/api_client.dart';
-import '../../main.dart';
-import '../tools/structure_clipboard_dialog.dart';
-import 'field_options_dialog.dart';
-
-import 'widgets/relationship_graph_widget.dart';
 
 class ManageDatabaseDialog extends ConsumerStatefulWidget {
   const ManageDatabaseDialog({super.key});
@@ -13,7 +12,6 @@ class ManageDatabaseDialog extends ConsumerStatefulWidget {
   static Future<void> show(BuildContext context) async {
     await showDialog(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => const ManageDatabaseDialog(),
     );
   }
@@ -176,8 +174,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     final ownerPassword = ownerPasswordController.text;
 
     final client = ref.read(apiClientProvider);
-    int successCount = 0;
-    final List<String> errors = [];
+    var successCount = 0;
+    final errors = <String>[];
 
     for (final dbName in toDelete) {
       try {
@@ -212,7 +210,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     final userController = TextEditingController(text: 'admin');
     final passwordController = TextEditingController();
 
-    bool obscurePassword = true;
+    var obscurePassword = true;
 
     await showDialog(
       context: context,
@@ -406,7 +404,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     if (_selectedTable == null) return;
     final nameController = TextEditingController();
     final dispController = TextEditingController();
-    String selectedType = 'TEXT';
+    var selectedType = 'TEXT';
     String? fieldError;
 
     await showDialog(
@@ -439,7 +437,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: selectedType,
+                initialValue: selectedType,
                 decoration: const InputDecoration(labelText: 'Field Type'),
                 items: const [
                   DropdownMenuItem(value: 'TEXT', child: Text('Text')),
@@ -458,13 +456,13 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                 },
               ),
               if (selectedType == 'CALCULATION')
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
+                const Padding(
+                  padding: EdgeInsets.only(top: 12),
                   child: Row(
                     children: [
-                      const Icon(Icons.functions, size: 16, color: Colors.blueGrey),
-                      const SizedBox(width: 8),
-                      const Expanded(
+                      Icon(Icons.functions, size: 16, color: Colors.blueGrey),
+                      SizedBox(width: 8),
+                      Expanded(
                         child: Text(
                           'Write the formula in Field Options once the field exists. '
                           'The field is filled in from it and cannot be typed into.',
@@ -834,8 +832,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     if (confirmed != true) return;
 
     final client = ref.read(apiClientProvider);
-    int successCount = 0;
-    final List<String> errors = [];
+    var successCount = 0;
+    final errors = <String>[];
 
     for (final tbl in targets) {
       try {
@@ -893,8 +891,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     if (confirmed != true) return;
 
     final client = ref.read(apiClientProvider);
-    int successCount = 0;
-    final List<String> errors = [];
+    var successCount = 0;
+    final errors = <String>[];
 
     for (final tbl in targets) {
       try {
@@ -951,8 +949,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     if (confirmed != true) return;
 
     final client = ref.read(apiClientProvider);
-    int successCount = 0;
-    final List<String> errors = [];
+    var successCount = 0;
+    final errors = <String>[];
 
     for (final tbl in targets) {
       try {
@@ -1223,7 +1221,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                         ),
                         const SizedBox(width: 4),
                         InkWell(
-                          onTap: () => setState(() => _selectedTableIds.clear()),
+                          onTap: () => setState(_selectedTableIds.clear),
                           child: Icon(Icons.close, size: 14, color: Theme.of(context).colorScheme.primary),
                         ),
                       ],
@@ -1317,7 +1315,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                 )
               : ListView.separated(
                   itemCount: filteredTables.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, idx) {
                     final tbl = filteredTables[idx];
                     final isChecked = _selectedTableIds.contains(tbl.id);
@@ -1639,7 +1637,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
         Expanded(
           child: ListView.separated(
             itemCount: _selectedTable!.columns.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
+            separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (context, idx) {
               final col = _selectedTable!.columns[idx];
               return ListTile(
@@ -1724,8 +1722,8 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
       return d.toLowerCase().contains(_databaseSearchFilter.toLowerCase());
     }).toList();
 
-    final allFilteredSelected = filtered.isNotEmpty && filtered.every((d) => _selectedDatabaseNames.contains(d));
-    final someFilteredSelected = filtered.any((d) => _selectedDatabaseNames.contains(d));
+    final allFilteredSelected = filtered.isNotEmpty && filtered.every(_selectedDatabaseNames.contains);
+    final someFilteredSelected = filtered.any(_selectedDatabaseNames.contains);
 
     return Column(
       children: [
@@ -1779,7 +1777,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                       ),
                       const SizedBox(width: 4),
                       InkWell(
-                        onTap: () => setState(() => _selectedDatabaseNames.clear()),
+                        onTap: () => setState(_selectedDatabaseNames.clear),
                         child: Icon(Icons.close, size: 14, color: Theme.of(context).colorScheme.onPrimaryContainer),
                       ),
                     ],
@@ -1867,7 +1865,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                     final dbName = filtered[index - 1];
                     final isChecked = _selectedDatabaseNames.contains(dbName);
                     final isActive = (dbName == _activeDatabase);
-                    final isProtected = (dbName == 'postgres' || dbName == 'mysql');
+                    final isProtected = dbName == 'postgres' || dbName == 'mysql';
 
                     return InkWell(
                       onTap: () {

@@ -1,12 +1,12 @@
 // #32 — these render the real Browse mode on a report layout and look at the
 // bands that came out, and at what the client asked the server to total.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers', columns: [
   ColumnModel(id: 'c0', tableId: 't1', name: 'id', displayName: 'ID', fieldType: 'TEXT', isPrimaryKey: true),
@@ -25,17 +25,17 @@ const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers',
 
 /// One recorded call to the summary endpoint.
 class SummaryCall {
+  const SummaryCall(this.fields, this.groupBy, this.requests);
   final List<String> fields;
   final List<String> groupBy;
   final List<Map<String, dynamic>> requests;
-  const SummaryCall(this.fields, this.groupBy, this.requests);
 }
 
 class _ReportApi extends ApiClient {
-  final List<Map<String, dynamic>> rows;
-  final List<SummaryCall> summaryCalls = [];
 
   _ReportApi(this.rows) : super(baseUrl: 'http://localhost:1');
+  final List<Map<String, dynamic>> rows;
+  final List<SummaryCall> summaryCalls = [];
 
   @override
   Future<List<ValueListModel>> listValueLists() async => const [];
@@ -317,7 +317,7 @@ void main() {
 
     test('it survives being written out and read back', () {
       const spec = SummarySpecModel(
-          summaryType: SummaryType.fractionOfTotal, field: 'fee_paid', running: false);
+          summaryType: SummaryType.fractionOfTotal, field: 'fee_paid');
       final back = SummarySpecModel.tryParse(
           '{"summary_type":"${spec.summaryType}","field":"${spec.field}","running":false}');
       expect(back?.summaryType, SummaryType.fractionOfTotal);

@@ -1,14 +1,5 @@
 /// PageSetupModel defines print, paper size, orientation, margins, and printable area calculations.
 class PageSetupModel {
-  final String printer;
-  final String paperSizeName; // 'A4', 'US Letter', 'US Legal', 'A3', 'A5', 'B5'
-  final double paperWidthMm;
-  final double paperHeightMm;
-  final bool isLandscape;
-  final double marginTopMm;
-  final double marginBottomMm;
-  final double marginLeftMm;
-  final double marginRightMm;
 
   const PageSetupModel({
     this.printer = 'Any Printer',
@@ -21,6 +12,29 @@ class PageSetupModel {
     this.marginLeftMm = 15.0,
     this.marginRightMm = 15.0,
   });
+
+  factory PageSetupModel.fromJson(Map<String, dynamic> json) {
+    return PageSetupModel(
+      printer: json['printer']?.toString() ?? 'Any Printer',
+      paperSizeName: json['paper_size_name']?.toString() ?? 'A4',
+      paperWidthMm: (json['paper_width_mm'] as num?)?.toDouble() ?? 210.0,
+      paperHeightMm: (json['paper_height_mm'] as num?)?.toDouble() ?? 297.0,
+      isLandscape: json['is_landscape'] as bool? ?? false,
+      marginTopMm: (json['margin_top_mm'] as num?)?.toDouble() ?? 15.0,
+      marginBottomMm: (json['margin_bottom_mm'] as num?)?.toDouble() ?? 15.0,
+      marginLeftMm: (json['margin_left_mm'] as num?)?.toDouble() ?? 15.0,
+      marginRightMm: (json['margin_right_mm'] as num?)?.toDouble() ?? 15.0,
+    );
+  }
+  final String printer;
+  final String paperSizeName; // 'A4', 'US Letter', 'US Legal', 'A3', 'A5', 'B5'
+  final double paperWidthMm;
+  final double paperHeightMm;
+  final bool isLandscape;
+  final double marginTopMm;
+  final double marginBottomMm;
+  final double marginLeftMm;
+  final double marginRightMm;
 
   // Effective dimensions in mm based on orientation
   double get effectiveWidthMm => isLandscape ? paperHeightMm : paperWidthMm;
@@ -80,18 +94,4 @@ class PageSetupModel {
     'margin_left_mm': marginLeftMm,
     'margin_right_mm': marginRightMm,
   };
-
-  factory PageSetupModel.fromJson(Map<String, dynamic> json) {
-    return PageSetupModel(
-      printer: json['printer']?.toString() ?? 'Any Printer',
-      paperSizeName: json['paper_size_name']?.toString() ?? 'A4',
-      paperWidthMm: (json['paper_width_mm'] as num?)?.toDouble() ?? 210.0,
-      paperHeightMm: (json['paper_height_mm'] as num?)?.toDouble() ?? 297.0,
-      isLandscape: json['is_landscape'] as bool? ?? false,
-      marginTopMm: (json['margin_top_mm'] as num?)?.toDouble() ?? 15.0,
-      marginBottomMm: (json['margin_bottom_mm'] as num?)?.toDouble() ?? 15.0,
-      marginLeftMm: (json['margin_left_mm'] as num?)?.toDouble() ?? 15.0,
-      marginRightMm: (json['margin_right_mm'] as num?)?.toDouble() ?? 15.0,
-    );
-  }
 }

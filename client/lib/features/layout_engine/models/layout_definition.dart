@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'chart_definition.dart';
+import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 /// The kinds of band a layout is divided into (#32).
 ///
 /// A report is these parts in order: the header, a leading grand summary, then
@@ -49,17 +49,6 @@ class LayoutPartType {
 }
 
 class LayoutPartModel {
-  final String id;
-
-  /// One of [LayoutPartType]. Older layouts may also hold `top_navigation` or
-  /// `title_header`, which render as a header.
-  final String type;
-
-  final double height;
-
-  /// For a sub-summary, the field whose change starts a new group. A
-  /// sub-summary without one summarizes nothing and says so.
-  final String? breakField;
 
   const LayoutPartModel({
     required this.id,
@@ -76,6 +65,17 @@ class LayoutPartModel {
       breakField: json['break_field'] as String?,
     );
   }
+  final String id;
+
+  /// One of [LayoutPartType]. Older layouts may also hold `top_navigation` or
+  /// `title_header`, which render as a header.
+  final String type;
+
+  final double height;
+
+  /// For a sub-summary, the field whose change starts a new group. A
+  /// sub-summary without one summarizes nothing and says so.
+  final String? breakField;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -131,6 +131,27 @@ class FieldControlStyle {
 }
 
 class FieldBindingModel {
+
+  const FieldBindingModel({
+    required this.fieldName, this.tableOccurrence,
+    this.relationshipId,
+    this.controlStyle = FieldControlStyle.editBox,
+    this.valueListId,
+    this.allowBrowseEntry = true,
+    this.allowFindEntry = true,
+  });
+
+  factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
+    return FieldBindingModel(
+      tableOccurrence: json['table_occurrence'] as String?,
+      relationshipId: json['relationship_id'] as String?,
+      fieldName: json['field_name'] as String? ?? '',
+      controlStyle: json['control_style'] as String? ?? FieldControlStyle.editBox,
+      valueListId: json['value_list_id'] as String?,
+      allowBrowseEntry: json['allow_browse_entry'] as bool? ?? true,
+      allowFindEntry: json['allow_find_entry'] as bool? ?? true,
+    );
+  }
   /// The table occurrence the field is read from. Null, or the layout's own
   /// occurrence, means the record in hand; any other occurrence makes this a
   /// **related field**, read through [relationshipId] (#36).
@@ -151,16 +172,6 @@ class FieldBindingModel {
 
   final bool allowBrowseEntry;
   final bool allowFindEntry;
-
-  const FieldBindingModel({
-    this.tableOccurrence,
-    this.relationshipId,
-    required this.fieldName,
-    this.controlStyle = FieldControlStyle.editBox,
-    this.valueListId,
-    this.allowBrowseEntry = true,
-    this.allowFindEntry = true,
-  });
 
   /// True when the field is read through a relationship rather than from the
   /// record in hand.
@@ -212,18 +223,6 @@ class FieldBindingModel {
         allowFindEntry: allowFindEntry ?? this.allowFindEntry,
       );
 
-  factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
-    return FieldBindingModel(
-      tableOccurrence: json['table_occurrence'] as String?,
-      relationshipId: json['relationship_id'] as String?,
-      fieldName: json['field_name'] as String? ?? '',
-      controlStyle: json['control_style'] as String? ?? FieldControlStyle.editBox,
-      valueListId: json['value_list_id'] as String?,
-      allowBrowseEntry: json['allow_browse_entry'] as bool? ?? true,
-      allowFindEntry: json['allow_find_entry'] as bool? ?? true,
-    );
-  }
-
   Map<String, dynamic> toJson() => {
         if (tableOccurrence != null) 'table_occurrence': tableOccurrence,
         if (relationshipId != null) 'relationship_id': relationshipId,
@@ -236,14 +235,6 @@ class FieldBindingModel {
 }
 
 class LayoutObjectStyle {
-  final String? fillColor;
-  final String? borderColor;
-  final double borderWidth;
-  final double cornerRadius;
-  final double fontSize;
-  final String? fontWeight;
-  final String? textColor;
-  final String textAlign;
 
   const LayoutObjectStyle({
     this.fillColor,
@@ -268,6 +259,14 @@ class LayoutObjectStyle {
       textAlign: json['text_align'] as String? ?? 'left',
     );
   }
+  final String? fillColor;
+  final String? borderColor;
+  final double borderWidth;
+  final double cornerRadius;
+  final double fontSize;
+  final String? fontWeight;
+  final String? textColor;
+  final String textAlign;
 
   Map<String, dynamic> toJson() => {
         if (fillColor != null) 'fill_color': fillColor,
@@ -315,12 +314,6 @@ class LayoutObjectStyle {
 /// (a stored script referenced by `scriptId` / `scriptName`, with an optional
 /// `parameter`).
 class ButtonActionModel {
-  final String type;
-  final String? stepType;
-  final Map<String, dynamic> params;
-  final String? scriptId;
-  final String? scriptName;
-  final String? parameter;
 
   const ButtonActionModel({
     required this.type,
@@ -337,8 +330,6 @@ class ButtonActionModel {
   const ButtonActionModel.performScript({required String id, required String name, String? parameter})
       : this(type: 'perform_script', scriptId: id, scriptName: name, parameter: parameter);
 
-  bool get isPerformScript => type == 'perform_script';
-
   factory ButtonActionModel.fromJson(Map<String, dynamic> json) {
     return ButtonActionModel(
       type: json['type'] as String? ?? 'single_step',
@@ -349,6 +340,14 @@ class ButtonActionModel {
       parameter: json['parameter'] as String?,
     );
   }
+  final String type;
+  final String? stepType;
+  final Map<String, dynamic> params;
+  final String? scriptId;
+  final String? scriptName;
+  final String? parameter;
+
+  bool get isPerformScript => type == 'perform_script';
 
   Map<String, dynamic> toJson() => {
         'type': type,
@@ -366,12 +365,6 @@ class ButtonActionModel {
 /// self-contained, or referenced by `url`. `fit` applies to pictures:
 /// `contain`, `cover` or `fill`.
 class LayoutMediaModel {
-  final String kind; // 'image', 'pdf', 'video', 'audio', 'file'
-  final String name;
-  final String? mimeType;
-  final String? data;
-  final String? url;
-  final String fit;
 
   const LayoutMediaModel({
     required this.kind,
@@ -381,8 +374,6 @@ class LayoutMediaModel {
     this.url,
     this.fit = 'contain',
   });
-
-  bool get isImage => kind == 'image';
 
   factory LayoutMediaModel.fromJson(Map<String, dynamic> json) {
     return LayoutMediaModel(
@@ -394,6 +385,14 @@ class LayoutMediaModel {
       fit: json['fit'] as String? ?? 'contain',
     );
   }
+  final String kind; // 'image', 'pdf', 'video', 'audio', 'file'
+  final String name;
+  final String? mimeType;
+  final String? data;
+  final String? url;
+  final String fit;
+
+  bool get isImage => kind == 'image';
 
   Map<String, dynamic> toJson() => {
         'kind': kind,
@@ -421,6 +420,32 @@ class LayoutMediaModel {
 /// as they are in FileMaker: the portal's first row is the band they are
 /// placed in, and each row redraws them against its own record.
 class PortalConfigModel {
+
+  const PortalConfigModel({
+    this.relationshipId,
+    this.occurrence,
+    this.initialRow = 1,
+    this.rowCount = 5,
+    this.rowHeight,
+    this.showScrollBar = true,
+    this.allowCreation = false,
+    this.allowDeletion = false,
+    this.sort = '',
+  });
+
+  factory PortalConfigModel.fromJson(Map<String, dynamic> json) {
+    return PortalConfigModel(
+      relationshipId: json['relationship_id'] as String?,
+      occurrence: json['occurrence'] as String?,
+      initialRow: (json['initial_row'] as num?)?.toInt() ?? 1,
+      rowCount: (json['row_count'] as num?)?.toInt() ?? 5,
+      rowHeight: (json['row_height'] as num?)?.toDouble(),
+      showScrollBar: json['show_scroll_bar'] as bool? ?? true,
+      allowCreation: json['allow_creation'] as bool? ?? false,
+      allowDeletion: json['allow_deletion'] as bool? ?? false,
+      sort: json['sort'] as String? ?? '',
+    );
+  }
   /// The relationship followed to reach the records the rows show.
   final String? relationshipId;
 
@@ -453,18 +478,6 @@ class PortalConfigModel {
   /// `-fee_paid`). Empty means the relationship's own "Sort related records".
   final String sort;
 
-  const PortalConfigModel({
-    this.relationshipId,
-    this.occurrence,
-    this.initialRow = 1,
-    this.rowCount = 5,
-    this.rowHeight,
-    this.showScrollBar = true,
-    this.allowCreation = false,
-    this.allowDeletion = false,
-    this.sort = '',
-  });
-
   /// True when the portal knows which records to show.
   bool get isBound => relationshipId != null && relationshipId!.isNotEmpty;
 
@@ -477,20 +490,6 @@ class PortalConfigModel {
     if (rowHeight != null && rowHeight! > 0) return rowHeight!;
     final rows = rowCount > 0 ? rowCount : 1;
     return math.max(24.0, portalHeight / rows);
-  }
-
-  factory PortalConfigModel.fromJson(Map<String, dynamic> json) {
-    return PortalConfigModel(
-      relationshipId: json['relationship_id'] as String?,
-      occurrence: json['occurrence'] as String?,
-      initialRow: (json['initial_row'] as num?)?.toInt() ?? 1,
-      rowCount: (json['row_count'] as num?)?.toInt() ?? 5,
-      rowHeight: (json['row_height'] as num?)?.toDouble(),
-      showScrollBar: json['show_scroll_bar'] as bool? ?? true,
-      allowCreation: json['allow_creation'] as bool? ?? false,
-      allowDeletion: json['allow_deletion'] as bool? ?? false,
-      sort: json['sort'] as String? ?? '',
-    );
   }
 
   Map<String, dynamic> toJson() => {
@@ -532,27 +531,7 @@ class PortalConfigModel {
   }
 }
 
-class LayoutObjectModel {
-  final String id;
-  final String type; // 'field', 'label', 'button', 'button_bar', 'portal', 'tab_control', 'slide_control', 'popover_button', 'chart', 'web_viewer', 'rect', 'rounded_rect', 'oval', 'line', 'media'
-  final double x;
-  final double y;
-  final double width;
-  final double height;
-  final String text; // label or button text
-  final String? name; // object name / identifier
-  final String? tooltip;
-  final FieldBindingModel? fieldBinding;
-  final LayoutObjectStyle style;
-  final Map<String, bool>? anchors; // top, bottom, left, right
-  final bool isLocked;
-  final Map<String, dynamic>? portalConfig;
-
-  /// For an object of type `chart`, what it draws (#37).
-  final Map<String, dynamic>? chartConfig;
-  final ButtonActionModel? action; // buttons: what a click runs in Browse mode
-  final int? tabOrder; // position in the Tab key sequence (1-based); null = reading order
-  final LayoutMediaModel? media; // picture / document shown inside the object
+class LayoutObjectModel { // picture / document shown inside the object
 
   const LayoutObjectModel({
     required this.id,
@@ -574,33 +553,6 @@ class LayoutObjectModel {
     this.tabOrder,
     this.media,
   });
-
-  /// Objects that take keyboard focus in Browse mode and so have a tab order.
-  bool get isTabStop => type == 'field' || type == 'button' || type == 'popover_button';
-
-  /// The portal's setup, for an object of type `portal` (#36).
-  PortalConfigModel get portal => PortalConfigModel.fromJson(portalConfig ?? const {});
-
-  /// The chart's setup, for an object of type `chart` (#37).
-  ChartConfigModel get chart => ChartConfigModel.fromJson(chartConfig ?? const {});
-
-  double get right => x + width;
-  double get bottom => y + height;
-
-  /// True when [other] is drawn inside this object, which is what puts a field
-  /// in a portal's row.
-  bool contains(LayoutObjectModel other) =>
-      other.id != id &&
-      other.x >= x &&
-      other.y >= y &&
-      other.right <= right &&
-      other.bottom <= bottom;
-
-  /// Objects that display their `text` (labels, buttons and drawn shapes).
-  bool get hasEditableText =>
-      type == 'label' || type == 'button' || type == 'popover_button' || isShape;
-
-  bool get isShape => type == 'rect' || type == 'rounded_rect' || type == 'oval';
 
   factory LayoutObjectModel.fromJson(Map<String, dynamic> json) {
     return LayoutObjectModel(
@@ -636,6 +588,53 @@ class LayoutObjectModel {
           : null,
     );
   }
+  final String id;
+  final String type; // 'field', 'label', 'button', 'button_bar', 'portal', 'tab_control', 'slide_control', 'popover_button', 'chart', 'web_viewer', 'rect', 'rounded_rect', 'oval', 'line', 'media'
+  final double x;
+  final double y;
+  final double width;
+  final double height;
+  final String text; // label or button text
+  final String? name; // object name / identifier
+  final String? tooltip;
+  final FieldBindingModel? fieldBinding;
+  final LayoutObjectStyle style;
+  final Map<String, bool>? anchors; // top, bottom, left, right
+  final bool isLocked;
+  final Map<String, dynamic>? portalConfig;
+
+  /// For an object of type `chart`, what it draws (#37).
+  final Map<String, dynamic>? chartConfig;
+  final ButtonActionModel? action; // buttons: what a click runs in Browse mode
+  final int? tabOrder; // position in the Tab key sequence (1-based); null = reading order
+  final LayoutMediaModel? media;
+
+  /// Objects that take keyboard focus in Browse mode and so have a tab order.
+  bool get isTabStop => type == 'field' || type == 'button' || type == 'popover_button';
+
+  /// The portal's setup, for an object of type `portal` (#36).
+  PortalConfigModel get portal => PortalConfigModel.fromJson(portalConfig ?? const {});
+
+  /// The chart's setup, for an object of type `chart` (#37).
+  ChartConfigModel get chart => ChartConfigModel.fromJson(chartConfig ?? const {});
+
+  double get right => x + width;
+  double get bottom => y + height;
+
+  /// True when [other] is drawn inside this object, which is what puts a field
+  /// in a portal's row.
+  bool contains(LayoutObjectModel other) =>
+      other.id != id &&
+      other.x >= x &&
+      other.y >= y &&
+      other.right <= right &&
+      other.bottom <= bottom;
+
+  /// Objects that display their `text` (labels, buttons and drawn shapes).
+  bool get hasEditableText =>
+      type == 'label' || type == 'button' || type == 'popover_button' || isShape;
+
+  bool get isShape => type == 'rect' || type == 'rounded_rect' || type == 'oval';
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -717,6 +716,124 @@ const kLayoutTransitions = <String, String>{
 };
 
 class LayoutDefinitionModel {
+
+  const LayoutDefinitionModel({
+    required this.id,
+    required this.name,
+    required this.tableOccurrence,
+    this.width = 1024.0,
+    this.theme = 'Enlightened',
+    this.defaultView = 'form',
+    this.parts = const [],
+    this.objects = const [],
+    this.backgroundColor,
+    this.backgroundImage,
+    this.onLayoutEnter,
+    this.onLayoutExit,
+    this.transition = 'none',
+    this.labelStock,
+  });
+
+  /// First layout of a table: one row per field, labelled with the field's
+  /// label (what the user typed in New Field), not its SQL column name.
+  ///
+  /// [fields] carries both, so the layout shows "Home Address 1" while it binds
+  /// to `home_address_1`. The body is sized to the rows it has to hold, so the
+  /// fields of a wide table do not spill into the footer.
+  factory LayoutDefinitionModel.defaultForTable(
+    String toName,
+    List<({String name, String label})> fields,
+  ) {
+    const headerHeight = 60.0;
+    const footerHeight = 40.0;
+    const firstRowY = 20.0;
+    const rowHeight = 48.0;
+
+    final rows = fields.where((f) => f.name != 'id').toList();
+    final bodyHeight = math.max(120.0, firstRowY * 2 + rows.length * rowHeight);
+
+    final parts = [
+      const LayoutPartModel(id: 'header_part', type: 'header', height: headerHeight),
+      LayoutPartModel(id: 'body_part', type: 'body', height: bodyHeight),
+      const LayoutPartModel(id: 'footer_part', type: 'footer', height: footerHeight),
+    ];
+
+    final objects = <LayoutObjectModel>[
+      LayoutObjectModel(
+        id: 'title_label',
+        type: 'label',
+        x: 24,
+        y: 16,
+        width: 300,
+        height: 28,
+        text: '$toName Details',
+        style: const LayoutObjectStyle(fontSize: 20, fontWeight: 'bold'),
+      ),
+    ];
+
+    var currentY = headerHeight + firstRowY;
+    for (final field in rows) {
+      objects.add(LayoutObjectModel(
+        id: 'lbl_${field.name}',
+        type: 'label',
+        x: 40,
+        y: currentY + 6,
+        width: 140,
+        height: 24,
+        text: field.label,
+        style: const LayoutObjectStyle(fontSize: 13, fontWeight: 'bold', textAlign: 'right'),
+      ));
+      objects.add(LayoutObjectModel(
+        id: 'fld_${field.name}',
+        type: 'field',
+        x: 190,
+        y: currentY,
+        width: 280,
+        height: 36,
+        fieldBinding: FieldBindingModel(fieldName: field.name),
+      ));
+      currentY += rowHeight;
+    }
+
+    return LayoutDefinitionModel(
+      id: 'layout_${DateTime.now().millisecondsSinceEpoch}',
+      name: '$toName Form',
+      tableOccurrence: toName,
+      width: 900.0,
+      parts: parts,
+      objects: objects,
+    );
+  }
+
+  factory LayoutDefinitionModel.fromJson(Map<String, dynamic> json) {
+    final rawParts = json['parts'] as List<dynamic>? ?? [];
+    final rawObjs = json['objects'] as List<dynamic>? ?? [];
+
+    return LayoutDefinitionModel(
+      id: json['id'] as String? ?? 'layout_default',
+      name: json['name'] as String? ?? 'Default Layout',
+      tableOccurrence: json['table_occurrence'] as String? ?? '',
+      width: (json['width'] as num?)?.toDouble() ?? 1024.0,
+      theme: json['theme'] as String? ?? 'Enlightened',
+      defaultView: json['default_view'] as String? ?? 'form',
+      parts: rawParts.map((p) => LayoutPartModel.fromJson(p as Map<String, dynamic>)).toList(),
+      objects: rawObjs.map((o) => LayoutObjectModel.fromJson(o as Map<String, dynamic>)).toList(),
+      backgroundColor: json['background_color'] as String?,
+      backgroundImage: json['background_image'] is Map
+          ? LayoutMediaModel.fromJson(Map<String, dynamic>.from(json['background_image'] as Map))
+          : null,
+      onLayoutEnter: json['on_layout_enter'] is Map
+          ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_enter'] as Map))
+          : null,
+      onLayoutExit: json['on_layout_exit'] is Map
+          ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_exit'] as Map))
+          : null,
+      transition: json['transition'] as String? ?? 'none',
+      labelStock: json['label_stock'] is Map
+          ? Map<String, dynamic>.from(json['label_stock'] as Map)
+          : null,
+    );
+  }
   final String id;
   final String name;
   final String tableOccurrence;
@@ -745,23 +862,6 @@ class LayoutDefinitionModel {
   /// and how many sit across and down the page (#33). Null for every other
   /// kind of layout.
   final Map<String, dynamic>? labelStock;
-
-  const LayoutDefinitionModel({
-    required this.id,
-    required this.name,
-    required this.tableOccurrence,
-    this.width = 1024.0,
-    this.theme = 'Enlightened',
-    this.defaultView = 'form',
-    this.parts = const [],
-    this.objects = const [],
-    this.backgroundColor,
-    this.backgroundImage,
-    this.onLayoutEnter,
-    this.onLayoutExit,
-    this.transition = 'none',
-    this.labelStock,
-  });
 
   /// True when this layout is a sheet of labels rather than something browsed.
   bool get isLabels => labelStock != null;
@@ -857,107 +957,6 @@ class LayoutDefinitionModel {
   /// A report over records sorted any other way interleaves groups, so the
   /// renderer checks this rather than printing nonsense.
   List<String> get requiredSortOrder => breakFields;
-
-  /// First layout of a table: one row per field, labelled with the field's
-  /// label (what the user typed in New Field), not its SQL column name.
-  ///
-  /// [fields] carries both, so the layout shows "Home Address 1" while it binds
-  /// to `home_address_1`. The body is sized to the rows it has to hold, so the
-  /// fields of a wide table do not spill into the footer.
-  factory LayoutDefinitionModel.defaultForTable(
-    String toName,
-    List<({String name, String label})> fields,
-  ) {
-    const headerHeight = 60.0;
-    const footerHeight = 40.0;
-    const firstRowY = 20.0;
-    const rowHeight = 48.0;
-
-    final rows = fields.where((f) => f.name != 'id').toList();
-    final bodyHeight = math.max(120.0, firstRowY * 2 + rows.length * rowHeight);
-
-    final parts = [
-      const LayoutPartModel(id: 'header_part', type: 'header', height: headerHeight),
-      LayoutPartModel(id: 'body_part', type: 'body', height: bodyHeight),
-      const LayoutPartModel(id: 'footer_part', type: 'footer', height: footerHeight),
-    ];
-
-    final objects = <LayoutObjectModel>[
-      LayoutObjectModel(
-        id: 'title_label',
-        type: 'label',
-        x: 24,
-        y: 16,
-        width: 300,
-        height: 28,
-        text: '$toName Details',
-        style: const LayoutObjectStyle(fontSize: 20, fontWeight: 'bold'),
-      ),
-    ];
-
-    double currentY = headerHeight + firstRowY;
-    for (final field in rows) {
-      objects.add(LayoutObjectModel(
-        id: 'lbl_${field.name}',
-        type: 'label',
-        x: 40,
-        y: currentY + 6,
-        width: 140,
-        height: 24,
-        text: field.label,
-        style: const LayoutObjectStyle(fontSize: 13, fontWeight: 'bold', textAlign: 'right'),
-      ));
-      objects.add(LayoutObjectModel(
-        id: 'fld_${field.name}',
-        type: 'field',
-        x: 190,
-        y: currentY,
-        width: 280,
-        height: 36,
-        fieldBinding: FieldBindingModel(fieldName: field.name),
-      ));
-      currentY += rowHeight;
-    }
-
-    return LayoutDefinitionModel(
-      id: 'layout_${DateTime.now().millisecondsSinceEpoch}',
-      name: '$toName Form',
-      tableOccurrence: toName,
-      width: 900.0,
-      parts: parts,
-      objects: objects,
-    );
-  }
-
-  factory LayoutDefinitionModel.fromJson(Map<String, dynamic> json) {
-    var rawParts = json['parts'] as List<dynamic>? ?? [];
-    var rawObjs = json['objects'] as List<dynamic>? ?? [];
-
-    return LayoutDefinitionModel(
-      id: json['id'] as String? ?? 'layout_default',
-      name: json['name'] as String? ?? 'Default Layout',
-      tableOccurrence: json['table_occurrence'] as String? ?? '',
-      width: (json['width'] as num?)?.toDouble() ?? 1024.0,
-      theme: json['theme'] as String? ?? 'Enlightened',
-      defaultView: json['default_view'] as String? ?? 'form',
-      parts: rawParts.map((p) => LayoutPartModel.fromJson(p as Map<String, dynamic>)).toList(),
-      objects: rawObjs.map((o) => LayoutObjectModel.fromJson(o as Map<String, dynamic>)).toList(),
-      backgroundColor: json['background_color'] as String?,
-      backgroundImage: json['background_image'] is Map
-          ? LayoutMediaModel.fromJson(Map<String, dynamic>.from(json['background_image'] as Map))
-          : null,
-      onLayoutEnter: json['on_layout_enter'] is Map
-          ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_enter'] as Map))
-          : null,
-      onLayoutExit: json['on_layout_exit'] is Map
-          ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_exit'] as Map))
-          : null,
-      transition: json['transition'] as String? ?? 'none',
-      labelStock: json['label_stock'] is Map
-          ? Map<String, dynamic>.from(json['label_stock'] as Map)
-          : null,
-    );
-  }
 
   Map<String, dynamic> toJson() => {
         'id': id,

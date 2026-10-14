@@ -3,15 +3,15 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 
 class PlatformDirectoryResult {
+  const PlatformDirectoryResult({required this.displayName, required this.handleOrPath});
   final String displayName;
   final dynamic handleOrPath;
-  const PlatformDirectoryResult({required this.displayName, required this.handleOrPath});
 }
 
 class PlatformFileResult {
+  const PlatformFileResult({required this.name, required this.bytes});
   final String name;
   final Uint8List bytes;
-  const PlatformFileResult({required this.name, required this.bytes});
 }
 
 void triggerBrowserDownload(Uint8List bytes, String filename) {

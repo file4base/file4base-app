@@ -1,18 +1,17 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/solution_models.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/features/solution_manager/new_database_dialog.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/models/solution_models.dart';
-import '../../core/services/solution_storage.dart';
-import '../solution_manager/new_database_dialog.dart';
 
 class DatabaseLoginDialog extends StatefulWidget {
-  final ApiClient apiClient;
-  final ValueChanged<String>? onServerUrlChanged;
 
   const DatabaseLoginDialog({
-    super.key,
-    required this.apiClient,
+    required this.apiClient, super.key,
     this.onServerUrlChanged,
   });
+  final ApiClient apiClient;
+  final ValueChanged<String>? onServerUrlChanged;
 
   static Future<AuthResult?> show(
     BuildContext context,
@@ -21,7 +20,6 @@ class DatabaseLoginDialog extends StatefulWidget {
   }) {
     return showDialog<AuthResult>(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => DatabaseLoginDialog(
         apiClient: apiClient,
         onServerUrlChanged: onServerUrlChanged,
@@ -38,12 +36,14 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   late final TextEditingController _apiUrlController;
   final _usernameController = TextEditingController(text: 'admin');
   final _passwordController = TextEditingController();
+  final _totpController = TextEditingController();
   List<String> _databases = [];
   Map<String, String> _projectNamesByDatabase = {};
   String? _selectedDatabase;
   bool _isLoadingDatabases = true;
   bool _isLoggingIn = false;
   bool _obscurePassword = true;
+  bool _mfaRequired = false;
   String? _errorMessage;
 
   @override
@@ -61,6 +61,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
     _apiUrlController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
+    _totpController.dispose();
     super.dispose();
   }
 
@@ -83,12 +84,12 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
 
     try {
       final res = await widget.apiClient.listDatabases();
-      final List<String> dbs = (res['databases'] as List<dynamic>?)
+      final dbs = (res['databases'] as List<dynamic>?)
               ?.map((e) => e.toString())
               .toList() ??
           [];
-      final String? active = res['active']?.toString();
-      final Map<String, String> projectMap = {};
+      final active = res['active']?.toString();
+      final projectMap = <String, String>{};
       final rawProjects = res['projects'] as List<dynamic>?;
       if (rawProjects != null) {
         for (final item in rawProjects) {
@@ -118,6 +119,8 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           }
           // Never prefill password — always require user entry
           _passwordController.clear();
+          _totpController.clear();
+          _mfaRequired = false;
           _isLoadingDatabases = false;
         });
       }
@@ -131,6 +134,8 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
             _usernameController.text = 'admin';
           }
           _passwordController.clear();
+          _totpController.clear();
+          _mfaRequired = false;
           _isLoadingDatabases = false;
         });
       }
@@ -208,6 +213,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
     try {
       final username = _usernameController.text.trim();
       final password = _passwordController.text.trim();
+      final totpCode = _totpController.text.trim();
       final database = _selectedDatabase;
       if (database == null || database.isEmpty) {
         setState(() {
@@ -221,6 +227,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
         username: username,
         password: password,
         database: database,
+        totpCode: totpCode.isNotEmpty ? totpCode : null,
       );
 
       if (mounted) {
@@ -234,6 +241,14 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
       }
     } catch (e) {
       if (mounted) {
+        if (e is ApiException && (e.raw['mfa_required'] == true || e.title == 'MFA Required')) {
+          setState(() {
+            _isLoggingIn = false;
+            _mfaRequired = true;
+            _errorMessage = 'Enter the 6-digit code from your Google Authenticator app.';
+          });
+          return;
+        }
         setState(() {
           _isLoggingIn = false;
           _errorMessage = e.toString().replaceFirst('Exception: ', '').replaceFirst('Authentication failed: ', '');
@@ -299,7 +314,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                   IconButton(
                     tooltip: 'Cancel',
                     icon: const Icon(Icons.close, size: 20),
-                    onPressed: () => Navigator.of(context).pop(null),
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
               ),
@@ -383,7 +398,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                           child: _isLoadingDatabases
                               ? const LinearProgressIndicator()
                               : DropdownButtonFormField<String>(
-                                  value: _selectedDatabase,
+                                  initialValue: _selectedDatabase,
                                   isExpanded: true,
                                   decoration: InputDecoration(
                                     border: const OutlineInputBorder(),
@@ -462,6 +477,29 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                       validator: (v) => (v == null || v.trim().isEmpty) ? 'Password is required' : null,
                       onFieldSubmitted: (_) => _handleLogin(),
                     ),
+                    if (_mfaRequired) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        key: const Key('login_totp_code_field'),
+                        controller: _totpController,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        decoration: const InputDecoration(
+                          labelText: 'Google Authenticator Code (6 digits)',
+                          hintText: '123456',
+                          counterText: '',
+                          helperText: 'Enter the 6-digit verification code from your authenticator app',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                          prefixIcon: Icon(Icons.phonelink_lock_outlined, size: 20, color: Colors.tealAccent),
+                        ),
+                        validator: (v) => (_mfaRequired && (v == null || v.trim().length != 6))
+                            ? '6-digit MFA code required'
+                            : null,
+                        onFieldSubmitted: (_) => _handleLogin(),
+                      ),
+                    ],
 
                     const SizedBox(height: 12),
                     Container(
@@ -528,7 +566,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                         ),
                         const SizedBox(width: 8),
                         TextButton(
-                          onPressed: () => Navigator.of(context).pop(null),
+                          onPressed: () => Navigator.of(context).pop(),
                           style: TextButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                           ),

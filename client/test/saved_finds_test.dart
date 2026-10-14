@@ -128,7 +128,6 @@ void main() {
           onAbout: () {},
           isToolbarVisible: true,
           onToggleToolbar: (_) {},
-          savedFinds: const [],
           onSaveCurrentFind: () {},
           onManageSavedFinds: () {},
         ),

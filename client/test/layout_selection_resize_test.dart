@@ -1,13 +1,12 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart';
-import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
-import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 
-final _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: const [
+const _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: [
   ColumnModel(id: 'c0', tableId: 't1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
 ]);
 
@@ -23,12 +22,11 @@ Future<LayoutDefinitionModel? Function()> _pump(WidgetTester tester, List<Layout
     home: Scaffold(
       body: LayoutDesignerWidget(
         table: _table,
-        tables: [_table],
+        tables: const [_table],
         apiClient: ApiClient(baseUrl: 'http://localhost:1'),
         initialLayout: LayoutDefinitionModel(id: 'l1', name: 'Contacts', tableOccurrence: 'contacts', objects: objects),
         onSaved: () {},
         onLayoutChanged: (l) => last = l,
-        activeTool: LayoutTool.pointer,
       ),
     ),
   ));

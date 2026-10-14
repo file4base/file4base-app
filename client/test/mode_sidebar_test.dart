@@ -1,13 +1,13 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart';
 import 'package:file4base_client/main.dart' show OperationalMode;
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-final _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: const []);
+const _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts');
 final _layouts = [
-  LayoutModel(id: 'l1', name: 'Contacts Form', tableOccurrenceId: 'o1', definition: const {}),
+  const LayoutModel(id: 'l1', name: 'Contacts Form', tableOccurrenceId: 'o1', definition: {}),
 ];
 
 Future<_Probe> _pumpSidebar(WidgetTester tester, {bool omit = false}) async {
@@ -22,7 +22,7 @@ Future<_Probe> _pumpSidebar(WidgetTester tester, {bool omit = false}) async {
           layouts: _layouts,
           selectedLayout: _layouts.first,
           onLayoutSelected: (_) {},
-          tables: [_table],
+          tables: const [_table],
           selectedTable: _table,
           onTableSelected: (_) {},
           mode: OperationalMode.find,
@@ -33,7 +33,7 @@ Future<_Probe> _pumpSidebar(WidgetTester tester, {bool omit = false}) async {
           onGoToRecord: (_) {},
           onManageDatabase: () {},
           isFindOmit: omit,
-          onToggleOmit: (v) => probe.omitToggles.add(v),
+          onToggleOmit: probe.omitToggles.add,
           onPerformFind: () => probe.finds++,
           onShowAllRecords: () => probe.cancels++,
         ),
@@ -111,7 +111,7 @@ void main() {
             layouts: _layouts,
             selectedLayout: _layouts.first,
             onLayoutSelected: (_) {},
-            tables: [_table],
+            tables: const [_table],
             selectedTable: _table,
             onTableSelected: (_) {},
             mode: OperationalMode.preview,

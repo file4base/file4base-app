@@ -1,20 +1,20 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/auto_save_service.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/services/auto_save_service.dart';
+import 'package:flutter/services.dart';
+import 'package:qr/qr.dart';
 
 class ManageSecurityDialog extends StatefulWidget {
+
+  const ManageSecurityDialog({
+    required this.apiClient, required this.currentUser, super.key,
+    this.databaseName,
+    this.onModified,
+  });
   final ApiClient apiClient;
   final UserModel currentUser;
   final String? databaseName;
   final VoidCallback? onModified;
-
-  const ManageSecurityDialog({
-    super.key,
-    required this.apiClient,
-    required this.currentUser,
-    this.databaseName,
-    this.onModified,
-  });
 
   static Future<void> show(
     BuildContext context,
@@ -83,7 +83,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     try {
       final users = await widget.apiClient.listUsers(database: widget.databaseName);
       final layouts = await widget.apiClient.listLayouts();
-      List<TableModel> tables = [];
+      var tables = <TableModel>[];
       try {
         tables = await widget.apiClient.listTables();
       } catch (_) {}
@@ -226,7 +226,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   Future<void> _showChangePasswordDialog(UserModel user) async {
     final passwordController = TextEditingController();
     final confirmController = TextEditingController();
-    bool obscure = true;
+    var obscure = true;
     String? dialogError;
 
     await showDialog(
@@ -348,10 +348,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     final isNew = userToEdit == null;
     final usernameController = TextEditingController(text: userToEdit?.username ?? '');
     final passwordController = TextEditingController();
-    String selectedRole = userToEdit?.role ?? 'user';
-    bool isActive = userToEdit?.isActive ?? true;
-    Map<String, String> layoutPerms = {};
-    Map<String, UserTablePermissionModel> tablePerms = {};
+    var selectedRole = userToEdit?.role ?? 'user';
+    var isActive = userToEdit?.isActive ?? true;
+    final layoutPerms = <String, String>{};
+    final tablePerms = <String, UserTablePermissionModel>{};
 
     // Load initial layout permissions
     for (final l in _layouts) {
@@ -367,10 +367,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     for (final t in _tables) {
       tablePerms[t.name] = UserTablePermissionModel(
         tableName: t.name,
-        accessLevel: 'read_write',
-        canCreate: true,
-        canEdit: true,
-        canDelete: true,
         canModifySchema: selectedRole == 'owner' || selectedRole == 'admin',
       );
     }
@@ -381,8 +377,8 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     }
 
     String? dialogError;
-    bool isSaving = false;
-    bool obscurePassword = true;
+    var isSaving = false;
+    var obscurePassword = true;
 
     await showDialog(
       context: context,
@@ -461,7 +457,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               Expanded(
                                 flex: 3,
                                 child: DropdownButtonFormField<String>(
-                                  value: selectedRole,
+                                  initialValue: selectedRole,
                                   decoration: const InputDecoration(
                                     labelText: 'Privilege set *',
                                     border: OutlineInputBorder(),
@@ -537,7 +533,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                       ),
                                       Switch(
                                         value: isActive,
-                                        activeColor: Colors.green,
+                                        activeThumbColor: Colors.green,
                                         onChanged: (!isNew && _isCurrentUser(userToEdit))
                                             ? null
                                             : (v) => setDlgState(() => isActive = v),
@@ -569,10 +565,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                     for (final t in _tables) {
                                       tablePerms[t.name] = UserTablePermissionModel(
                                         tableName: t.name,
-                                        accessLevel: 'read_write',
-                                        canCreate: true,
-                                        canEdit: true,
-                                        canDelete: true,
                                         canModifySchema: selectedRole == 'owner' || selectedRole == 'admin',
                                       );
                                     }
@@ -590,7 +582,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                         canCreate: false,
                                         canEdit: false,
                                         canDelete: false,
-                                        canModifySchema: false,
                                       );
                                     }
                                   });
@@ -623,7 +614,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                 shrinkWrap: true,
                                 physics: const NeverScrollableScrollPhysics(),
                                 itemCount: _tables.length,
-                                separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade800),
+                                separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade800),
                                 itemBuilder: (ctx, i) {
                                   final t = _tables[i];
                                   final curPerm = tablePerms[t.name] ??
@@ -797,7 +788,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                 shrinkWrap: true,
                                 physics: const NeverScrollableScrollPhysics(),
                                 itemCount: _layouts.length,
-                                separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade800),
+                                separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade800),
                                 itemBuilder: (ctx, i) {
                                   final l = _layouts[i];
                                   final curPerm = layoutPerms[l.id] ?? 'read_write';
@@ -951,7 +942,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     final cloneName = '${user.username}_copy';
     final passwordController = TextEditingController();
     String? dialogError;
-    bool obscurePassword = true;
+    var obscurePassword = true;
 
     await showDialog(
       context: context,
@@ -1027,7 +1018,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     username: cloneName,
                     password: pass,
                     role: user.role,
-                    isActive: true,
                     database: widget.databaseName,
                   );
 
@@ -1106,8 +1096,8 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: Row(
-          children: const [
+        title: const Row(
+          children: [
             Icon(Icons.warning_amber_rounded, color: Colors.red, size: 24),
             SizedBox(width: 8),
             Text('Delete user account'),
@@ -1166,13 +1156,11 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
         fg = Colors.amber.shade400;
         label = '[Full Access] Owner';
         icon = Icons.verified_user_outlined;
-        break;
       case 'admin':
         bg = Colors.blue.shade900.withValues(alpha: 0.25);
         fg = Colors.blue.shade300;
         label = '[Data Entry and Design] Admin';
         icon = Icons.design_services_outlined;
-        break;
       default:
         bg = Colors.teal.shade900.withValues(alpha: 0.25);
         fg = Colors.teal.shade300;
@@ -1448,7 +1436,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
               // New Account Button
               ElevatedButton.icon(
-                onPressed: () => _showAccountDialog(),
+                onPressed: _showAccountDialog,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1E88E5),
                   foregroundColor: Colors.white,
@@ -1477,14 +1465,14 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     Container(
                       color: Colors.black26,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      child: Row(
-                        children: const [
+                      child: const Row(
+                        children: [
                           SizedBox(width: 40, child: Text('#', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           SizedBox(width: 140, child: Text('STATUS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           Expanded(flex: 3, child: Text('ACCOUNT NAME', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           Expanded(flex: 3, child: Text('PRIVILEGE SET', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           Expanded(flex: 2, child: Text('LAYOUTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
-                          SizedBox(width: 180, child: Text('OPTIONS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          SizedBox(width: 225, child: Text('OPTIONS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                         ],
                       ),
                     ),
@@ -1508,7 +1496,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                             )
                           : ListView.separated(
                               itemCount: filtered.length,
-                              separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade900),
+                              separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade900),
                               itemBuilder: (ctx, idx) {
                                 final user = filtered[idx];
                                 final isCurrent = _isCurrentUser(user);
@@ -1539,10 +1527,9 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               width: 44,
                                               height: 28,
                                               child: FittedBox(
-                                                fit: BoxFit.contain,
                                                 child: Switch(
                                                   value: user.isActive,
-                                                  activeColor: Colors.green,
+                                                  activeThumbColor: Colors.green,
                                                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                                   onChanged: (isCurrent || (user.isActive && isLastOwner))
                                                       ? null
@@ -1612,6 +1599,28 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                           ),
                                                         ),
                                                       ],
+                                                      if (user.mfaEnabled) ...[
+                                                        const SizedBox(width: 6),
+                                                        Container(
+                                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                                          decoration: BoxDecoration(
+                                                            color: Colors.teal.shade900.withValues(alpha: 0.35),
+                                                            borderRadius: BorderRadius.circular(10),
+                                                            border: Border.all(color: Colors.tealAccent.shade400, width: 0.8),
+                                                          ),
+                                                          child: const Row(
+                                                            mainAxisSize: MainAxisSize.min,
+                                                            children: [
+                                                              Icon(Icons.verified_user, size: 10, color: Colors.tealAccent),
+                                                              SizedBox(width: 3),
+                                                              Text(
+                                                                '2FA / MFA',
+                                                                style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.tealAccent),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        ),
+                                                      ],
                                                     ],
                                                   ),
                                                   if (user.createdAt != null)
@@ -1650,10 +1659,27 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
                                       // 6. Action Icons
                                       SizedBox(
-                                        width: 180,
+                                        width: 225,
                                         child: Row(
                                           mainAxisAlignment: MainAxisAlignment.end,
                                           children: [
+                                            // Google Authenticator MFA
+                                            IconButton(
+                                              visualDensity: VisualDensity.compact,
+                                              padding: const EdgeInsets.all(4),
+                                              constraints: const BoxConstraints(),
+                                              icon: Icon(
+                                                user.mfaEnabled ? Icons.phonelink_lock : Icons.qr_code_2_outlined,
+                                                size: 18,
+                                                color: user.mfaEnabled ? Colors.tealAccent : null,
+                                              ),
+                                              tooltip: user.mfaEnabled
+                                                  ? 'MFA Active (Google Authenticator) — Click to manage'
+                                                  : 'Activate MFA with Google Authenticator',
+                                              onPressed: () => _showMfaDialog(user),
+                                            ),
+                                            const SizedBox(width: 2),
+
                                             // Change Password
                                             IconButton(
                                               visualDensity: VisualDensity.compact,
@@ -1663,7 +1689,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               tooltip: 'Change password',
                                               onPressed: () => _showChangePasswordDialog(user),
                                             ),
-                                            const SizedBox(width: 4),
+                                            const SizedBox(width: 2),
 
                                             // Edit Account
                                             IconButton(
@@ -1674,7 +1700,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               tooltip: 'Edit account and privileges',
                                               onPressed: () => _showAccountDialog(userToEdit: user),
                                             ),
-                                            const SizedBox(width: 4),
+                                            const SizedBox(width: 2),
 
                                             // Duplicate Account
                                             IconButton(
@@ -1685,7 +1711,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               tooltip: 'Duplicate account',
                                               onPressed: () => _duplicateUser(user),
                                             ),
-                                            const SizedBox(width: 4),
+                                            const SizedBox(width: 2),
 
                                             // Delete Account
                                             IconButton(
@@ -1761,7 +1787,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     ),
                     child: ListView.separated(
                       itemCount: _layouts.length,
-                      separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade800),
+                      separatorBuilder: (_, _) => Divider(height: 1, color: Colors.grey.shade800),
                       itemBuilder: (ctx, i) {
                         final l = _layouts[i];
                         return ExpansionTile(
@@ -1781,7 +1807,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                   );
 
                                   Color badgeColor = Colors.green;
-                                  String badgeText = 'Read and Write';
+                                  var badgeText = 'Read and Write';
                                   if (p.accessLevel == 'read_only') {
                                     badgeColor = Colors.blue;
                                     badgeText = 'Read Only';
@@ -1831,8 +1857,8 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: const [
+          const Row(
+            children: [
               Icon(Icons.shield_outlined, size: 20, color: Color(0xFF1E88E5)),
               SizedBox(width: 8),
               Text(
@@ -2063,4 +2089,300 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     }
   }
 
+  /// Opens the Google Authenticator (TOTP RFC 6238) setup / management modal for [user].
+  Future<void> _showMfaDialog(UserModel user) async {
+    MfaSetupModel? setup;
+    String? loadError;
+    try {
+      setup = await widget.apiClient.setupUserMfa(user.id);
+    } catch (e) {
+      loadError = e.toString().replaceFirst('Exception: ', '');
+    }
+    if (!mounted) return;
+
+    final codeCtrl = TextEditingController();
+    var errorText = loadError;
+    var busy = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final isEnabled = user.mfaEnabled;
+          final uri = setup?.otpAuthUri ?? '';
+          final secret = setup?.secret ?? '';
+
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1A1E24),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: Colors.grey.shade800),
+            ),
+            title: Row(
+              children: [
+                Icon(
+                  isEnabled ? Icons.verified_user : Icons.phonelink_lock_outlined,
+                  color: isEnabled ? Colors.tealAccent : Colors.blueAccent,
+                  size: 22,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Google Authenticator (MFA) — ${user.username}',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+            content: SizedBox(
+              width: 440,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: (isEnabled ? Colors.teal : Colors.blueGrey).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: isEnabled ? Colors.tealAccent.withValues(alpha: 0.5) : Colors.blueGrey.shade700,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            isEnabled ? Icons.check_circle : Icons.info_outline,
+                            size: 18,
+                            color: isEnabled ? Colors.tealAccent : Colors.amberAccent,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              isEnabled
+                                  ? 'Multi-Factor Authentication (TOTP) is currently ACTIVE for this account.'
+                                  : 'Scan the QR code below with Google Authenticator (or Authy / 1Password) and enter the 6-digit code to activate MFA.',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    if (uri.isNotEmpty) ...[
+                      Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: CustomPaint(
+                            size: const Size(188, 188),
+                            painter: _QrCodePainter(uri),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Manual Setup Key (Base32):',
+                        style: TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black38,
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.grey.shade800),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: SelectableText(
+                                secret,
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 1.4,
+                                  color: Colors.tealAccent,
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.copy, size: 16),
+                              tooltip: 'Copy secret key',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: secret));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('MFA Base32 secret copied to clipboard')),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: codeCtrl,
+                        autofocus: true,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 6,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: '6-Digit Verification Code',
+                          hintText: '123456',
+                          counterText: '',
+                          prefixIcon: const Icon(Icons.pin_outlined),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                      ),
+                    ],
+                    if (errorText != null) ...[
+                      const SizedBox(height: 10),
+                      Text(
+                        errorText!,
+                        style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: busy ? null : () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel'),
+              ),
+              if (isEnabled)
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.redAccent,
+                    side: const BorderSide(color: Colors.redAccent),
+                  ),
+                  onPressed: busy
+                      ? null
+                      : () async {
+                          setDialogState(() {
+                            busy = true;
+                            errorText = null;
+                          });
+                          try {
+                            await widget.apiClient.disableUserMfa(user.id);
+                            if (!ctx.mounted) return;
+                            Navigator.of(ctx).pop();
+                            await _loadData();
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('MFA disabled for ${user.username}.'),
+                                backgroundColor: Colors.orange.shade800,
+                              ),
+                            );
+                          } catch (e) {
+                            setDialogState(() {
+                              busy = false;
+                              errorText = e.toString().replaceFirst('Exception: ', '');
+                            });
+                          }
+                        },
+                  icon: const Icon(Icons.lock_open, size: 16),
+                  label: const Text('Disable MFA'),
+                ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.teal.shade600,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: busy || setup == null
+                    ? null
+                    : () async {
+                        final code = codeCtrl.text.trim();
+                        if (code.length != 6) {
+                          setDialogState(() {
+                            errorText = 'Please enter the 6-digit code from Google Authenticator.';
+                          });
+                          return;
+                        }
+                        setDialogState(() {
+                          busy = true;
+                          errorText = null;
+                        });
+                        try {
+                          await widget.apiClient.enableUserMfa(
+                            user.id,
+                            code: code,
+                            secret: secret,
+                          );
+                          if (!ctx.mounted) return;
+                          Navigator.of(ctx).pop();
+                          await _loadData();
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Google Authenticator MFA activated for ${user.username}!'),
+                              backgroundColor: Colors.teal.shade700,
+                            ),
+                          );
+                        } catch (e) {
+                          setDialogState(() {
+                            busy = false;
+                            errorText = e.toString().replaceFirst('Exception: ', '');
+                          });
+                        }
+                      },
+                icon: const Icon(Icons.verified_user, size: 16),
+                label: Text(isEnabled ? 'Verify & Update MFA' : 'Verify & Activate MFA'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
+
+class _QrCodePainter extends CustomPainter {
+
+  _QrCodePainter(this.data);
+  final String data;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final qrCode = QrCode.fromData(
+      data: data,
+      errorCorrectLevel: QrErrorCorrectLevel.M,
+    );
+    final qrImage = QrImage(qrCode);
+    final moduleCount = qrImage.moduleCount;
+    if (moduleCount <= 0) return;
+
+    final cellSize = size.width / moduleCount;
+    final darkPaint = Paint()
+      ..color = const Color(0xFF111827)
+      ..style = PaintingStyle.fill;
+
+    for (var r = 0; r < moduleCount; r++) {
+      for (var c = 0; c < moduleCount; c++) {
+        if (qrImage.isDark(r, c)) {
+          canvas.drawRect(
+            Rect.fromLTWH(c * cellSize, r * cellSize, cellSize + 0.4, cellSize + 0.4),
+            darkPaint,
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _QrCodePainter oldDelegate) => oldDelegate.data != data;
+}
+

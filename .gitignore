@@ -33,6 +33,7 @@ server/dist/
 go.work
 
 # Frontend: Flutter & Dart
+.dart_tool/
 client/.dart_tool/
 client/.flutter-plugins
 client/.flutter-plugins-dependencies

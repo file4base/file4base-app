@@ -1,19 +1,17 @@
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
-import '../../../core/api/api_client.dart';
 
 class SpecifyTableDialog extends StatefulWidget {
+
+  const SpecifyTableDialog({
+    required this.tables, required this.existingOccurrences, super.key,
+    this.activeDatabaseName = 'Current file',
+    this.initialOccurrence,
+  });
   final List<TableModel> tables;
   final List<TableOccurrenceModel> existingOccurrences;
   final String activeDatabaseName;
   final TableOccurrenceModel? initialOccurrence;
-
-  const SpecifyTableDialog({
-    super.key,
-    required this.tables,
-    required this.existingOccurrences,
-    this.activeDatabaseName = 'Current file',
-    this.initialOccurrence,
-  });
 
   static Future<Map<String, dynamic>?> show(
     BuildContext context, {
@@ -24,7 +22,6 @@ class SpecifyTableDialog extends StatefulWidget {
   }) {
     return showDialog<Map<String, dynamic>>(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => SpecifyTableDialog(
         tables: tables,
         existingOccurrences: existingOccurrences,
@@ -71,7 +68,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
     if (!existsExact) {
       return baseName;
     }
-    int count = 2;
+    var count = 2;
     while (widget.existingOccurrences.any((o) => o.name.toLowerCase() == '$baseName $count'.toLowerCase())) {
       count++;
     }
@@ -161,7 +158,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
                         return InkWell(
                           onTap: () => _onTableSelected(tbl),
                           child: Container(
-                            color: isSelected ? theme.colorScheme.primary.withOpacity(0.15) : Colors.transparent,
+                            color: isSelected ? theme.colorScheme.primary.withValues(alpha: 0.15) : Colors.transparent,
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                             child: Row(
                               children: [
@@ -217,7 +214,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
       ),
       actions: [
         OutlinedButton(
-          onPressed: () => Navigator.of(context).pop(null),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         ElevatedButton(

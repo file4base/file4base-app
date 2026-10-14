@@ -7,8 +7,8 @@
 // runner's own message: a debugger that pretended to run what the runner
 // will not would be worse than none.
 
-import '../../core/models/script_models.dart';
-import '../layout_engine/layout_action_runner.dart';
+import 'package:file4base_client/core/models/script_models.dart';
+import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 
 /// What has happened to one step of the script being debugged.
 enum DebugStepState {
@@ -30,11 +30,11 @@ enum DebugStepState {
 
 /// One step, as the debugger shows it.
 class DebugStep {
+
+  DebugStep(this.step, {this.state = DebugStepState.pending, this.breakpoint = false});
   final ScriptStepModel step;
   DebugStepState state;
   bool breakpoint;
-
-  DebugStep(this.step, {this.state = DebugStepState.pending, this.breakpoint = false});
 
   int get sequence => step.sequenceIdx;
   String get type => step.stepType;
@@ -49,15 +49,15 @@ class DebugStep {
 
 /// A script being stepped through.
 class ScriptDebugSession {
-  final ScriptModel script;
-  final LayoutActionRunner runner;
-  final List<DebugStep> steps;
 
   ScriptDebugSession({required this.script, required this.runner})
       : steps = (List<ScriptStepModel>.from(script.steps)
               ..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx)))
             .map(DebugStep.new)
             .toList();
+  final ScriptModel script;
+  final LayoutActionRunner runner;
+  final List<DebugStep> steps;
 
   /// Where the session is: the index into [steps] of the step about to run.
   int _index = 0;

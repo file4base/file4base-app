@@ -1,52 +1,53 @@
 import 'dart:async';
 import 'dart:math' as math;
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/file_options_model.dart';
+import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/core/providers/zoom_provider.dart';
+import 'package:file4base_client/core/services/auto_save_service.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/core/system/environment_checker.dart';
+import 'package:file4base_client/core/theme/theme_model.dart';
+import 'package:file4base_client/core/theme/theme_provider.dart';
+import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
+import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart' show File4BaseStatusSidebar, LayoutTool;
+import 'package:file4base_client/features/about/about_dialog.dart';
+import 'package:file4base_client/features/auth/database_login_dialog.dart';
+import 'package:file4base_client/features/connection/server_connection_dialog.dart';
+import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
+import 'package:file4base_client/features/data_browser/export_records_dialog.dart';
+import 'package:file4base_client/features/data_browser/saved_finds_dialog.dart';
+import 'package:file4base_client/features/data_io/import_records_dialog.dart';
+import 'package:file4base_client/features/data_io/manage_data_sources_dialog.dart';
+import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
+import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
+import 'package:file4base_client/features/layout_engine/layout_preview_widget.dart';
+import 'package:file4base_client/features/layout_engine/manage_layouts_dialog.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/new_layout_assistant.dart';
+import 'package:file4base_client/features/preflight/preflight_dialog.dart';
+import 'package:file4base_client/features/schema_manager/manage_database_dialog.dart';
+import 'package:file4base_client/features/schema_manager/manage_value_lists_dialog.dart';
+import 'package:file4base_client/features/script_workspace/script_debugger_dialog.dart';
+import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
+import 'package:file4base_client/features/security/change_password_dialog.dart';
+import 'package:file4base_client/features/security/manage_security_dialog.dart';
+import 'package:file4base_client/features/server_tools/server_tools_dialog.dart';
+import 'package:file4base_client/features/solution_manager/file_options_dialog.dart';
+import 'package:file4base_client/features/solution_manager/new_database_dialog.dart';
+import 'package:file4base_client/features/solution_manager/open_solution_dialog.dart';
+import 'package:file4base_client/features/solution_manager/page_setup_dialog.dart';
+import 'package:file4base_client/features/solution_manager/save_copy_dialog.dart';
+import 'package:file4base_client/features/theme_manager/manage_themes_dialog.dart';
+import 'package:file4base_client/features/tools/data_viewer_dialog.dart';
+import 'package:file4base_client/features/tools/design_report_dialog.dart';
+import 'package:file4base_client/features/tools/developer_utilities_dialog.dart';
+import 'package:file4base_client/features/tools/manage_custom_menus_dialog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'core/api/api_client.dart';
-import 'core/providers/zoom_provider.dart';
-import 'core/models/solution_models.dart';
-import 'core/services/auto_save_service.dart';
-import 'core/services/solution_storage.dart';
-import 'core/system/environment_checker.dart';
-import 'core/widgets/file4base_menu_bar.dart';
-import 'core/widgets/file4base_status_sidebar.dart' show File4BaseStatusSidebar, LayoutTool;
-import 'features/about/about_dialog.dart';
-import 'features/auth/database_login_dialog.dart';
-import 'features/connection/server_connection_dialog.dart';
-import 'features/data_browser/data_browser_widget.dart';
-import 'features/data_browser/saved_finds_dialog.dart';
-import 'features/layout_engine/layout_designer_widget.dart';
-import 'features/layout_engine/layout_preview_widget.dart';
-import 'features/layout_engine/manage_layouts_dialog.dart';
-import 'features/layout_engine/new_layout_assistant.dart';
-import 'features/data_io/import_records_dialog.dart';
-import 'features/data_io/manage_data_sources_dialog.dart';
-import 'features/script_workspace/script_debugger_dialog.dart';
-import 'features/tools/data_viewer_dialog.dart';
-import 'features/tools/design_report_dialog.dart';
-import 'features/tools/developer_utilities_dialog.dart';
-import 'features/tools/manage_custom_menus_dialog.dart';
-import 'features/layout_engine/layout_action_runner.dart';
-import 'features/layout_engine/models/layout_definition.dart';
-import 'core/models/file_options_model.dart';
-import 'core/models/page_setup_model.dart';
-import 'core/theme/theme_model.dart';
-import 'core/theme/theme_provider.dart';
-import 'features/preflight/preflight_dialog.dart';
-import 'features/schema_manager/manage_database_dialog.dart';
-import 'features/schema_manager/manage_value_lists_dialog.dart';
-import 'features/script_workspace/script_workspace_dialog.dart';
-import 'features/security/change_password_dialog.dart';
-import 'features/security/manage_security_dialog.dart';
-import 'features/data_browser/export_records_dialog.dart';
-import 'features/solution_manager/file_options_dialog.dart';
-import 'features/solution_manager/new_database_dialog.dart';
-import 'features/solution_manager/open_solution_dialog.dart';
-import 'features/solution_manager/page_setup_dialog.dart';
-import 'features/solution_manager/save_copy_dialog.dart';
-import 'features/theme_manager/manage_themes_dialog.dart';
 
 enum OperationalMode {
   browse,
@@ -223,9 +224,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final serverUrl = ref.read(serverUrlProvider);
-      PreflightDialog.showIfNeeded(context, serverUrl: serverUrl, onProceed: () {
-        _startAuthSequence();
-      });
+      PreflightDialog.showIfNeeded(context, serverUrl: serverUrl, onProceed: _startAuthSequence);
     });
   }
 
@@ -239,7 +238,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (EnvironmentChecker.isTestMode) {
       if (mounted) {
         setState(() {
-          _currentUser = UserModel(id: 'test-owner', username: 'admin', role: 'owner');
+          _currentUser = const UserModel(id: 'test-owner', username: 'admin', role: 'owner');
           _activeDatabaseName = 'test_db';
           _serverStatus = 'Online (Test)';
         });
@@ -329,7 +328,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Your session has expired. Please sign in again.'),
-        duration: Duration(seconds: 4),
       ),
     );
   }
@@ -441,7 +439,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     setState(() => _isLoadingTables = true);
     try {
       final tables = await client.listTables();
-      List<LayoutModel> layouts = [];
+      var layouts = <LayoutModel>[];
       try {
         layouts = await client.listLayouts();
       } catch (_) {}
@@ -609,7 +607,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       return;
     }
     final client = ref.read(apiClientProvider);
-    SolutionMetaModel initialMeta = SolutionMetaModel(
+    var initialMeta = SolutionMetaModel(
       database: _activeDatabaseName,
       solutionName: _reportedSolutionName ?? _activeDatabaseName,
       designLocked: _designLocked,
@@ -677,7 +675,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       layouts: _serverLayouts,
       tables: _tables,
       activeLayout: currentModel,
-      onSelectLayout: (l) => _selectLayout(l),
+      onSelectLayout: _selectLayout,
       onLayoutsChanged: () => _loadTables(targetLayoutId: _activeLayout?.id),
     );
   }
@@ -1081,7 +1079,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   Future<void> _handleSaveAs() async {
     final initialName = _activeSolutionFileName.replaceAll(RegExp(r'\.(f4p|f4b|f4data)$'), '');
     final ctrl = TextEditingController(text: initialName == 'Untitled' ? 'MySolution' : initialName);
-    StorageDirectoryRef? pickedDir = _activeSolutionDirectory ?? SolutionStorageService.defaultDirectory;
+    var pickedDir = _activeSolutionDirectory ?? SolutionStorageService.defaultDirectory;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1226,7 +1224,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           SnackBar(
             content: Text('Database data exported as "$filename" in MessagePack format.'),
             backgroundColor: Colors.green.shade700,
-            duration: const Duration(seconds: 4),
           ),
         );
       }
@@ -1576,13 +1573,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         const SingleActivator(LogicalKeyboardKey.keyF, meta: true): () => _changeMode(OperationalMode.find),
         const SingleActivator(LogicalKeyboardKey.keyL, meta: true): () => _changeMode(OperationalMode.layout),
         const SingleActivator(LogicalKeyboardKey.keyU, meta: true): () => _changeMode(OperationalMode.preview),
-        const SingleActivator(LogicalKeyboardKey.keyS, meta: true): () => _handleSave(),
-        const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): () => _handleSaveAs(),
-        const SingleActivator(LogicalKeyboardKey.keyO, meta: true): () => _handleOpenSolution(),
-        const SingleActivator(LogicalKeyboardKey.keyN, meta: true): () => _handleNewDatabase(),
-        const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): () => _handlePageSetup(),
-        const SingleActivator(LogicalKeyboardKey.keyQ, meta: true): () => _handleQuit(),
-        const SingleActivator(LogicalKeyboardKey.keyQ, control: true): () => _handleQuit(),
+        const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _handleSave,
+        const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): _handleSaveAs,
+        const SingleActivator(LogicalKeyboardKey.keyO, meta: true): _handleOpenSolution,
+        const SingleActivator(LogicalKeyboardKey.keyN, meta: true): _handleNewDatabase,
+        const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): _handlePageSetup,
+        const SingleActivator(LogicalKeyboardKey.keyQ, meta: true): _handleQuit,
+        const SingleActivator(LogicalKeyboardKey.keyQ, control: true): _handleQuit,
         const SingleActivator(LogicalKeyboardKey.equal, meta: true): () => ref.read(zoomProvider.notifier).zoomIn(),
         const SingleActivator(LogicalKeyboardKey.equal, control: true): () => ref.read(zoomProvider.notifier).zoomIn(),
         const SingleActivator(LogicalKeyboardKey.add, meta: true): () => ref.read(zoomProvider.notifier).zoomIn(),
@@ -1808,6 +1805,30 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           );
                         },
                   onDeveloperUtilities: _handleDeveloperUtilities,
+                  onServerToolSelected: (toolKey) {
+                    if (_currentUser == null) {
+                      _startAuthSequence();
+                      return;
+                    }
+                    final section = switch (toolKey) {
+                      'containers' => ServerToolSection.containers,
+                      'backups' => ServerToolSection.backups,
+                      'domain_tls' || 'tls' => ServerToolSection.domainTls,
+                      'telemetry' => ServerToolSection.telemetry,
+                      'sessions' => ServerToolSection.sessions,
+                      'schedules' => ServerToolSection.schedules,
+                      'audit_logs' || 'audit' => ServerToolSection.auditLogs,
+                      'maintenance' => ServerToolSection.maintenance,
+                      'notifications' => ServerToolSection.notifications,
+                      _ => ServerToolSection.containers,
+                    };
+                    ServerToolsDialog.show(
+                      context,
+                      ref.read(apiClientProvider),
+                      initialSection: section,
+                      activeDatabase: _activeDatabaseName,
+                    );
+                  },
                   menuSets: _menuSets,
                   activeMenuSet: _effectiveMenuSet,
                   onSelectMenuSet: (set) => setState(() {
@@ -1843,6 +1864,86 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onInsertMergeField: mode == OperationalMode.layout
                       ? () => _layoutDesignerKey.currentState?.insertMergeField()
                       : null,
+                  onUndo: () {
+                    final designer = _layoutDesignerKey.currentState;
+                    if (mode == OperationalMode.layout &&
+                        designer != null &&
+                        !designer.isEditingInlineText &&
+                        !EditMenuFocusTracker.instance.hasActiveEditableFocus) {
+                      designer.undo();
+                      return;
+                    }
+                    if (!EditMenuFocusTracker.instance.undoActiveText(context) &&
+                        mode == OperationalMode.browse) {
+                      _dataBrowserKey.currentState?.revertRecord();
+                    }
+                  },
+                  onRedo: () {
+                    final designer = _layoutDesignerKey.currentState;
+                    if (mode == OperationalMode.layout &&
+                        designer != null &&
+                        !designer.isEditingInlineText &&
+                        !EditMenuFocusTracker.instance.hasActiveEditableFocus) {
+                      designer.redo();
+                      return;
+                    }
+                    EditMenuFocusTracker.instance.redoActiveText(context);
+                  },
+                  onCut: () {
+                    final designer = _layoutDesignerKey.currentState;
+                    if (mode == OperationalMode.layout &&
+                        designer != null &&
+                        !designer.isEditingInlineText &&
+                        !EditMenuFocusTracker.instance.hasActiveEditableFocus) {
+                      designer.cutSelected();
+                      return;
+                    }
+                    EditMenuFocusTracker.instance.cutActiveText(context);
+                  },
+                  onCopy: () {
+                    final designer = _layoutDesignerKey.currentState;
+                    if (mode == OperationalMode.layout &&
+                        designer != null &&
+                        !designer.isEditingInlineText &&
+                        !EditMenuFocusTracker.instance.hasActiveEditableFocus) {
+                      designer.copySelected();
+                      return;
+                    }
+                    EditMenuFocusTracker.instance.copyActiveText(context);
+                  },
+                  onPaste: () {
+                    final designer = _layoutDesignerKey.currentState;
+                    if (mode == OperationalMode.layout &&
+                        designer != null &&
+                        !designer.isEditingInlineText &&
+                        !EditMenuFocusTracker.instance.hasActiveEditableFocus) {
+                      designer.pasteObjects();
+                      return;
+                    }
+                    EditMenuFocusTracker.instance.pasteActiveText(context);
+                  },
+                  onClear: () {
+                    final designer = _layoutDesignerKey.currentState;
+                    if (mode == OperationalMode.layout &&
+                        designer != null &&
+                        !designer.isEditingInlineText &&
+                        !EditMenuFocusTracker.instance.hasActiveEditableFocus) {
+                      designer.clearSelected();
+                      return;
+                    }
+                    EditMenuFocusTracker.instance.clearActiveText(context);
+                  },
+                  onSelectAll: () {
+                    final designer = _layoutDesignerKey.currentState;
+                    if (mode == OperationalMode.layout &&
+                        designer != null &&
+                        !designer.isEditingInlineText &&
+                        !EditMenuFocusTracker.instance.hasActiveEditableFocus) {
+                      designer.selectAllObjects();
+                      return;
+                    }
+                    EditMenuFocusTracker.instance.selectAllActiveText(context);
+                  },
                 ),
                 // Main Workspace: Classic File4Base Left Status Sidebar + Content Area
                 Expanded(
@@ -1854,7 +1955,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           layouts: _serverLayouts,
                           selectedLayout: _serverLayouts.where((l) => l.id == _activeLayout?.id).firstOrNull ??
                               (_serverLayouts.isNotEmpty ? _serverLayouts.first : null),
-                          onLayoutSelected: (layout) => _selectLayout(layout),
+                          onLayoutSelected: _selectLayout,
                           onNewLayout: _handleNewLayout,
                           onManageLayouts: _handleManageLayouts,
                           onRenameLayout: _handleRenameActiveLayout,
@@ -1885,7 +1986,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           mode: mode,
                           currentRecordIndex: _currentRecordIndex,
                           totalRecords: _totalRecords,
-                          isUnsorted: true,
                           onPreviousRecord: () => _dataBrowserKey.currentState?.previousRecord(),
                           onNextRecord: () => _dataBrowserKey.currentState?.nextRecord(),
                           onGoToRecord: (index) => _dataBrowserKey.currentState?.goToRecord(index),
@@ -1948,7 +2048,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF161B22) : const Color(0xFFEBE9E4),
-        border: Border(top: BorderSide(color: borderColor, width: 1.0)),
+        border: Border(top: BorderSide(color: borderColor)),
       ),
       child: Row(
         children: [
@@ -2264,7 +2364,6 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             child: Scrollbar(
               thumbVisibility: true,
               child: SingleChildScrollView(
-                scrollDirection: Axis.vertical,
                 child: SizedBox(
                   width: math.max(constraints.maxWidth, scaledWidth),
                   height: math.max(constraints.maxHeight, scaledHeight),
@@ -2345,7 +2444,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                 _selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
               ),
           layouts: _serverLayouts,
-          onLayoutSelected: (layout) => _selectLayout(layout),
+          onLayoutSelected: _selectLayout,
           onNewLayout: _handleNewLayout,
           onManageLayouts: _handleManageLayouts,
           onRenameLayout: _handleRenameActiveLayout,
@@ -2426,8 +2525,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         ? 'assets/branding/file4base-dark.png'
         : 'assets/branding/file4base-light.png';
 
-    return Container(
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withOpacity(0.3),
+    return ColoredBox(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
       child: Center(
         child: Card(
           elevation: 3,
@@ -2445,11 +2544,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     width: 72,
                     height: 72,
                     fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => Image.asset(
+                    errorBuilder: (_, _, _) => Image.asset(
                       'assets/branding/file4base-icon-128.png',
                       width: 72,
                       height: 72,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.table_chart, size: 64, color: Colors.blue),
+                      errorBuilder: (_, _, _) => const Icon(Icons.table_chart, size: 64, color: Colors.blue),
                     ),
                   ),
                 ),
@@ -2502,9 +2601,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: Colors.grey.withOpacity(0.15),
+            color: Colors.grey.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: Colors.grey.withOpacity(0.3)),
+            border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
           ),
           child: Text(shortcut, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
         ),
@@ -2518,8 +2617,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return Container(
-      color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.2),
+    return ColoredBox(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.2),
       child: Center(
         child: SingleChildScrollView(
           child: Card(
@@ -2540,10 +2639,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     width: 72,
                     height: 72,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1E88E5).withOpacity(0.12),
+                      color: const Color(0xFF1E88E5).withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: const Color(0xFF1E88E5).withOpacity(0.35),
+                        color: const Color(0xFF1E88E5).withValues(alpha: 0.35),
                         width: 2,
                       ),
                     ),

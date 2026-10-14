@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
+
+import 'package:file4base_client/core/models/file_options_model.dart';
+import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:msgpack_dart/msgpack_dart.dart' as msgpack;
-import 'file_options_model.dart';
-import 'page_setup_model.dart';
 
 /// Solution files (.f4p) follow docs/specs/solution_bundle_format.md, the
 /// contract shared with the Go server. The server writes them (File > Save);
@@ -13,32 +14,14 @@ const kSolutionVersion = '2.0';
 /// The database a solution belongs to. It never carries a password: files are
 /// portable and anyone holding one could read it.
 class DatabaseConnectionConfig {
-  final String engine;
-  final String host;
-  final int port;
-  final String database;
-
-  /// Account that saved the file, used to prefill sign-in.
-  final String user;
-  final String sslMode;
 
   const DatabaseConnectionConfig({
-    this.engine = 'postgres',
+    required this.database, this.engine = 'postgres',
     this.host = 'localhost',
     this.port = 5432,
-    required this.database,
     this.user = '',
     this.sslMode = 'disable',
   });
-
-  Map<String, dynamic> toMap() => {
-        'engine': engine,
-        'host': host,
-        'port': port,
-        'database': database,
-        'user': user,
-        'ssl_mode': sslMode,
-      };
 
   /// Reads the connection of a file. A password in an old (1.0) file is
   /// ignored.
@@ -52,6 +35,23 @@ class DatabaseConnectionConfig {
       sslMode: map['ssl_mode']?.toString() ?? 'disable',
     );
   }
+  final String engine;
+  final String host;
+  final int port;
+  final String database;
+
+  /// Account that saved the file, used to prefill sign-in.
+  final String user;
+  final String sslMode;
+
+  Map<String, dynamic> toMap() => {
+        'engine': engine,
+        'host': host,
+        'port': port,
+        'database': database,
+        'user': user,
+        'ssl_mode': sslMode,
+      };
 
   /// 1.0 files obfuscated the username with a fixed key ("enc:" prefix).
   static String _legacyDecode(String value) {
@@ -70,25 +70,10 @@ class DatabaseConnectionConfig {
 /// relationships, layouts, scripts, accounts without passwords) plus the
 /// client settings (File Options, Page Setup).
 class SolutionPackage {
-  final String format;
-  final String version;
-  final String solutionName;
-  final DatabaseConnectionConfig databaseConnection;
-  final List<Map<String, dynamic>> tables;
-  final List<Map<String, dynamic>> tableOccurrences;
-  final List<Map<String, dynamic>> relationships;
-  final List<Map<String, dynamic>> layouts;
-  final List<Map<String, dynamic>> scripts;
-  final List<Map<String, dynamic>> users;
-  final FileOptionsModel fileOptions;
-  final PageSetupModel pageSetup;
-  final String exportedAt;
 
   SolutionPackage({
-    this.format = kSolutionFormat,
+    required this.solutionName, required this.databaseConnection, this.format = kSolutionFormat,
     this.version = kSolutionVersion,
-    required this.solutionName,
-    required this.databaseConnection,
     this.tables = const [],
     this.tableOccurrences = const [],
     this.relationships = const [],
@@ -100,24 +85,6 @@ class SolutionPackage {
     String? exportedAt,
   }) : exportedAt = exportedAt ?? DateTime.now().toUtc().toIso8601String();
 
-  Map<String, dynamic> toMap() {
-    return {
-      'format': format,
-      'version': version,
-      'solution_name': solutionName,
-      'exported_at': exportedAt,
-      'database_connection': databaseConnection.toMap(),
-      'tables': tables,
-      'table_occurrences': tableOccurrences,
-      'relationships': relationships,
-      'layouts': layouts,
-      'scripts': scripts,
-      'users': users,
-      'file_options': fileOptions.toJson(),
-      'page_setup': pageSetup.toJson(),
-    };
-  }
-
   factory SolutionPackage.fromMap(Map<dynamic, dynamic> map) {
     final format = map['format']?.toString() ?? '';
     if (format != kSolutionFormat) {
@@ -126,7 +93,7 @@ class SolutionPackage {
     final rawDb = map['database_connection'];
     List<Map<String, dynamic>> parseList(dynamic raw) {
       if (raw is List) {
-        return raw.whereType<Map>().map((item) => _stringKeyed(item)).toList();
+        return raw.whereType<Map>().map(_stringKeyed).toList();
       }
       return [];
     }
@@ -153,6 +120,53 @@ class SolutionPackage {
     );
   }
 
+  /// The initial file of a new database: no tables yet, and its first owner
+  /// account (enabled, without a password; the server never restores one).
+  factory SolutionPackage.newDatabase({
+    required String solutionName,
+    required DatabaseConnectionConfig connection,
+    required String ownerUsername,
+  }) {
+    return SolutionPackage(
+      solutionName: solutionName,
+      databaseConnection: connection,
+      users: [
+        {'id': 'owner', 'username': ownerUsername, 'role': 'owner', 'is_active': true, 'permissions': <dynamic>[]},
+      ],
+    );
+  }
+  final String format;
+  final String version;
+  final String solutionName;
+  final DatabaseConnectionConfig databaseConnection;
+  final List<Map<String, dynamic>> tables;
+  final List<Map<String, dynamic>> tableOccurrences;
+  final List<Map<String, dynamic>> relationships;
+  final List<Map<String, dynamic>> layouts;
+  final List<Map<String, dynamic>> scripts;
+  final List<Map<String, dynamic>> users;
+  final FileOptionsModel fileOptions;
+  final PageSetupModel pageSetup;
+  final String exportedAt;
+
+  Map<String, dynamic> toMap() {
+    return {
+      'format': format,
+      'version': version,
+      'solution_name': solutionName,
+      'exported_at': exportedAt,
+      'database_connection': databaseConnection.toMap(),
+      'tables': tables,
+      'table_occurrences': tableOccurrences,
+      'relationships': relationships,
+      'layouts': layouts,
+      'scripts': scripts,
+      'users': users,
+      'file_options': fileOptions.toJson(),
+      'page_setup': pageSetup.toJson(),
+    };
+  }
+
   /// Nested maps decoded from MessagePack have dynamic keys.
   static Map<String, dynamic> _stringKeyed(Map<dynamic, dynamic> m) => {
         for (final e in m.entries) e.key.toString(): _normalize(e.value),
@@ -172,21 +186,5 @@ class SolutionPackage {
       return SolutionPackage.fromMap(decoded);
     }
     throw const FormatException('Invalid MessagePack solution payload');
-  }
-
-  /// The initial file of a new database: no tables yet, and its first owner
-  /// account (enabled, without a password; the server never restores one).
-  factory SolutionPackage.newDatabase({
-    required String solutionName,
-    required DatabaseConnectionConfig connection,
-    required String ownerUsername,
-  }) {
-    return SolutionPackage(
-      solutionName: solutionName,
-      databaseConnection: connection,
-      users: [
-        {'id': 'owner', 'username': ownerUsername, 'role': 'owner', 'is_active': true, 'permissions': <dynamic>[]},
-      ],
-    );
   }
 }

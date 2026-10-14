@@ -1,48 +1,20 @@
 import 'dart:convert';
+
+import 'package:file4base_client/core/theme/theme_model.dart';
 import 'package:flutter/material.dart';
-import '../theme/theme_model.dart';
 
 class ScriptStepModel {
-  final String id;
-  final String scriptId;
-  final int sequenceIdx;
-  final String stepType;
-  final Map<String, dynamic> params;
-  final bool isEnabled;
-  final String? parentStepId;
 
   const ScriptStepModel({
     required this.id,
-    this.scriptId = '',
-    required this.sequenceIdx,
-    required this.stepType,
+    required this.sequenceIdx, required this.stepType, this.scriptId = '',
     this.params = const {},
     this.isEnabled = true,
     this.parentStepId,
   });
 
-  ScriptStepModel copyWith({
-    String? id,
-    String? scriptId,
-    int? sequenceIdx,
-    String? stepType,
-    Map<String, dynamic>? params,
-    bool? isEnabled,
-    String? parentStepId,
-  }) {
-    return ScriptStepModel(
-      id: id ?? this.id,
-      scriptId: scriptId ?? this.scriptId,
-      sequenceIdx: sequenceIdx ?? this.sequenceIdx,
-      stepType: stepType ?? this.stepType,
-      params: params ?? this.params,
-      isEnabled: isEnabled ?? this.isEnabled,
-      parentStepId: parentStepId ?? this.parentStepId,
-    );
-  }
-
   factory ScriptStepModel.fromJson(Map<String, dynamic> json) {
-    Map<String, dynamic> parsedParams = {};
+    var parsedParams = <String, dynamic>{};
     final rawParams = json['params'];
     if (rawParams is Map) {
       parsedParams = Map<String, dynamic>.from(rawParams);
@@ -63,6 +35,33 @@ class ScriptStepModel {
       params: parsedParams,
       isEnabled: json['is_enabled'] as bool? ?? true,
       parentStepId: json['parent_step_id'] as String?,
+    );
+  }
+  final String id;
+  final String scriptId;
+  final int sequenceIdx;
+  final String stepType;
+  final Map<String, dynamic> params;
+  final bool isEnabled;
+  final String? parentStepId;
+
+  ScriptStepModel copyWith({
+    String? id,
+    String? scriptId,
+    int? sequenceIdx,
+    String? stepType,
+    Map<String, dynamic>? params,
+    bool? isEnabled,
+    String? parentStepId,
+  }) {
+    return ScriptStepModel(
+      id: id ?? this.id,
+      scriptId: scriptId ?? this.scriptId,
+      sequenceIdx: sequenceIdx ?? this.sequenceIdx,
+      stepType: stepType ?? this.stepType,
+      params: params ?? this.params,
+      isEnabled: isEnabled ?? this.isEnabled,
+      parentStepId: parentStepId ?? this.parentStepId,
     );
   }
 
@@ -242,14 +241,6 @@ class ScriptStepModel {
 }
 
 class ScriptModel {
-  final String id;
-  final String name;
-  final String contextTable;
-  final String? folderId;
-  final bool isActive;
-  final List<ScriptStepModel> steps;
-  final DateTime? createdAt;
-  final DateTime? updatedAt;
 
   const ScriptModel({
     required this.id,
@@ -261,6 +252,35 @@ class ScriptModel {
     this.createdAt,
     this.updatedAt,
   });
+
+  factory ScriptModel.fromJson(Map<String, dynamic> json) {
+    var stepList = <ScriptStepModel>[];
+    final rawSteps = json['steps'];
+    if (rawSteps is List) {
+      stepList = rawSteps
+          .map((s) => ScriptStepModel.fromJson(Map<String, dynamic>.from(s as Map)))
+          .toList();
+    }
+
+    return ScriptModel(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      contextTable: json['context_table'] as String? ?? '',
+      folderId: json['folder_id'] as String?,
+      isActive: json['is_active'] as bool? ?? true,
+      steps: stepList,
+      createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
+      updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
+    );
+  }
+  final String id;
+  final String name;
+  final String contextTable;
+  final String? folderId;
+  final bool isActive;
+  final List<ScriptStepModel> steps;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   ScriptModel copyWith({
     String? id,
@@ -284,27 +304,6 @@ class ScriptModel {
     );
   }
 
-  factory ScriptModel.fromJson(Map<String, dynamic> json) {
-    List<ScriptStepModel> stepList = [];
-    final rawSteps = json['steps'];
-    if (rawSteps is List) {
-      stepList = rawSteps
-          .map((s) => ScriptStepModel.fromJson(Map<String, dynamic>.from(s as Map)))
-          .toList();
-    }
-
-    return ScriptModel(
-      id: json['id'] as String? ?? '',
-      name: json['name'] as String? ?? '',
-      contextTable: json['context_table'] as String? ?? '',
-      folderId: json['folder_id'] as String?,
-      isActive: json['is_active'] as bool? ?? true,
-      steps: stepList,
-      createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
-      updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
-    );
-  }
-
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -318,11 +317,6 @@ class ScriptModel {
 }
 
 class ScriptCatalogItem {
-  final String stepType;
-  final String label;
-  final String category;
-  final String description;
-  final Map<String, dynamic> defaultParams;
 
   const ScriptCatalogItem({
     required this.stepType,
@@ -331,6 +325,11 @@ class ScriptCatalogItem {
     required this.description,
     this.defaultParams = const {},
   });
+  final String stepType;
+  final String label;
+  final String category;
+  final String description;
+  final Map<String, dynamic> defaultParams;
 
   static const List<ScriptCatalogItem> catalog = [
     // Navigation

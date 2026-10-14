@@ -1,12 +1,12 @@
 // #33 — the assistant asks what kind of layout, which fields and in which
 // order, and builds that. These drive the real dialog.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_blueprint.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/layout_engine/new_layout_assistant.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers', columns: [
   ColumnModel(id: 'c0', tableId: 't1', name: 'id', displayName: 'ID', fieldType: 'TEXT', isPrimaryKey: true),
@@ -252,7 +252,7 @@ void main() {
 
     expect(result, isNotNull);
     final layout = result!.blueprint.build();
-    expect(result!.table.name, 'customers');
+    expect(result.table.name, 'customers');
     expect(layout.name, 'Customers List');
     expect(layout.defaultView, 'list');
 

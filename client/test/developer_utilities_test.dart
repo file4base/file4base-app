@@ -1,30 +1,29 @@
 import 'dart:convert';
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
-import 'package:http/http.dart' as http;
-import 'package:http/testing.dart';
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
 import 'package:file4base_client/features/tools/developer_utilities_dialog.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 void main() {
   testWidgets(
       'Tools > Developer Utilities... triggers onDeveloperUtilities callback',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    bool devUtilitiesCalled = false;
+    var devUtilitiesCalled = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: File4BaseMenuBar(
             activeMode: OperationalMode.browse,
-            isAuthenticated: true,
             onSignOut: () {},
             onModeChanged: (_) {},
             onManageDatabase: () {},
@@ -49,7 +48,7 @@ void main() {
 
   testWidgets(
       'DeveloperUtilitiesDialog renames, clones without records, and permanently locks design',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1440, 1200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -129,7 +128,6 @@ void main() {
             initialMeta: const SolutionMetaModel(
               database: 'bakery_db',
               solutionName: 'Bakery',
-              designLocked: false,
             ),
             onMetaChanged: (m) => latestMeta = m,
             onSolutionCloned: (c) => clonedResult = c,

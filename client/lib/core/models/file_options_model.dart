@@ -1,6 +1,60 @@
 /// FileOptionsModel defines startup credentials, initial layout, toolbar visibility,
 /// and script triggers (OnFirstWindowOpen, OnLastWindowClose, etc.) for File4Base File Options.
 class FileOptionsModel {
+
+  const FileOptionsModel({
+    this.autoLoginEnabled = false,
+    this.isGuestLogin = false,
+    this.defaultUsername = 'admin',
+    this.defaultPassword = '',
+    this.switchLayoutOnOpen = false,
+    this.startupLayoutId = '',
+    this.startupLayoutName = '',
+    this.hideAllToolbars = false,
+    this.onFirstWindowOpenEnabled = false,
+    this.onFirstWindowOpenScript = '',
+    this.onFirstWindowOpenParam = '',
+    this.onLastWindowCloseEnabled = false,
+    this.onLastWindowCloseScript = '',
+    this.onLastWindowCloseParam = '',
+    this.onWindowOpenEnabled = false,
+    this.onWindowOpenScript = '',
+    this.onWindowOpenParam = '',
+    this.onWindowCloseEnabled = false,
+    this.onWindowCloseScript = '',
+    this.onWindowCloseParam = '',
+    this.onFileAVPlayerChangeEnabled = false,
+    this.onFileAVPlayerChangeScript = '',
+    this.onFileAVPlayerChangeParam = '',
+  });
+
+  factory FileOptionsModel.fromJson(Map<String, dynamic> json) {
+    return FileOptionsModel(
+      autoLoginEnabled: json['auto_login_enabled'] as bool? ?? false,
+      isGuestLogin: json['is_guest_login'] as bool? ?? false,
+      defaultUsername: json['default_username']?.toString() ?? 'admin',
+      // A remembered password is never read from a file (#10).
+      switchLayoutOnOpen: json['switch_layout_on_open'] as bool? ?? false,
+      startupLayoutId: json['startup_layout_id']?.toString() ?? '',
+      startupLayoutName: json['startup_layout_name']?.toString() ?? '',
+      hideAllToolbars: json['hide_all_toolbars'] as bool? ?? false,
+      onFirstWindowOpenEnabled: json['on_first_window_open_enabled'] as bool? ?? false,
+      onFirstWindowOpenScript: json['on_first_window_open_script']?.toString() ?? '',
+      onFirstWindowOpenParam: json['on_first_window_open_param']?.toString() ?? '',
+      onLastWindowCloseEnabled: json['on_last_window_close_enabled'] as bool? ?? false,
+      onLastWindowCloseScript: json['on_last_window_close_script']?.toString() ?? '',
+      onLastWindowCloseParam: json['on_last_window_close_param']?.toString() ?? '',
+      onWindowOpenEnabled: json['on_window_open_enabled'] as bool? ?? false,
+      onWindowOpenScript: json['on_window_open_script']?.toString() ?? '',
+      onWindowOpenParam: json['on_window_open_param']?.toString() ?? '',
+      onWindowCloseEnabled: json['on_window_close_enabled'] as bool? ?? false,
+      onWindowCloseScript: json['on_window_close_script']?.toString() ?? '',
+      onWindowCloseParam: json['on_window_close_param']?.toString() ?? '',
+      onFileAVPlayerChangeEnabled: json['on_file_av_player_change_enabled'] as bool? ?? false,
+      onFileAVPlayerChangeScript: json['on_file_av_player_change_script']?.toString() ?? '',
+      onFileAVPlayerChangeParam: json['on_file_av_player_change_param']?.toString() ?? '',
+    );
+  }
   // --- Open tab ---
   final bool autoLoginEnabled;
   final bool isGuestLogin;
@@ -32,32 +86,6 @@ class FileOptionsModel {
   final bool onFileAVPlayerChangeEnabled;
   final String onFileAVPlayerChangeScript;
   final String onFileAVPlayerChangeParam;
-
-  const FileOptionsModel({
-    this.autoLoginEnabled = false,
-    this.isGuestLogin = false,
-    this.defaultUsername = 'admin',
-    this.defaultPassword = '',
-    this.switchLayoutOnOpen = false,
-    this.startupLayoutId = '',
-    this.startupLayoutName = '',
-    this.hideAllToolbars = false,
-    this.onFirstWindowOpenEnabled = false,
-    this.onFirstWindowOpenScript = '',
-    this.onFirstWindowOpenParam = '',
-    this.onLastWindowCloseEnabled = false,
-    this.onLastWindowCloseScript = '',
-    this.onLastWindowCloseParam = '',
-    this.onWindowOpenEnabled = false,
-    this.onWindowOpenScript = '',
-    this.onWindowOpenParam = '',
-    this.onWindowCloseEnabled = false,
-    this.onWindowCloseScript = '',
-    this.onWindowCloseParam = '',
-    this.onFileAVPlayerChangeEnabled = false,
-    this.onFileAVPlayerChangeScript = '',
-    this.onFileAVPlayerChangeParam = '',
-  });
 
   FileOptionsModel copyWith({
     bool? autoLoginEnabled,
@@ -135,32 +163,4 @@ class FileOptionsModel {
     'on_file_av_player_change_script': onFileAVPlayerChangeScript,
     'on_file_av_player_change_param': onFileAVPlayerChangeParam,
   };
-
-  factory FileOptionsModel.fromJson(Map<String, dynamic> json) {
-    return FileOptionsModel(
-      autoLoginEnabled: json['auto_login_enabled'] as bool? ?? false,
-      isGuestLogin: json['is_guest_login'] as bool? ?? false,
-      defaultUsername: json['default_username']?.toString() ?? 'admin',
-      // A remembered password is never read from a file (#10).
-      switchLayoutOnOpen: json['switch_layout_on_open'] as bool? ?? false,
-      startupLayoutId: json['startup_layout_id']?.toString() ?? '',
-      startupLayoutName: json['startup_layout_name']?.toString() ?? '',
-      hideAllToolbars: json['hide_all_toolbars'] as bool? ?? false,
-      onFirstWindowOpenEnabled: json['on_first_window_open_enabled'] as bool? ?? false,
-      onFirstWindowOpenScript: json['on_first_window_open_script']?.toString() ?? '',
-      onFirstWindowOpenParam: json['on_first_window_open_param']?.toString() ?? '',
-      onLastWindowCloseEnabled: json['on_last_window_close_enabled'] as bool? ?? false,
-      onLastWindowCloseScript: json['on_last_window_close_script']?.toString() ?? '',
-      onLastWindowCloseParam: json['on_last_window_close_param']?.toString() ?? '',
-      onWindowOpenEnabled: json['on_window_open_enabled'] as bool? ?? false,
-      onWindowOpenScript: json['on_window_open_script']?.toString() ?? '',
-      onWindowOpenParam: json['on_window_open_param']?.toString() ?? '',
-      onWindowCloseEnabled: json['on_window_close_enabled'] as bool? ?? false,
-      onWindowCloseScript: json['on_window_close_script']?.toString() ?? '',
-      onWindowCloseParam: json['on_window_close_param']?.toString() ?? '',
-      onFileAVPlayerChangeEnabled: json['on_file_av_player_change_enabled'] as bool? ?? false,
-      onFileAVPlayerChangeScript: json['on_file_av_player_change_script']?.toString() ?? '',
-      onFileAVPlayerChangeParam: json['on_file_av_player_change_param']?.toString() ?? '',
-    );
-  }
 }

@@ -167,22 +167,62 @@ jobs:
         working-directory: client
         run: flutter build linux --release
 
-      - name: Package and verify Linux Bundle
+      - name: Package and verify Linux Bundle (.tar.gz + .deb Installer)
         run: |
           mkdir -p dist
+          VERSION="$(tr -d '[:space:]' < VERSION)"
           tar -czf dist/File4Base-Linux-x64.tar.gz -C client/build/linux/x64/release/bundle .
           ./scripts/verify_desktop_archive.sh \
             dist/File4Base-Linux-x64.tar.gz \
             client/build/linux/x64/release/pdfium-src
 
-      - name: Upload Linux Artifact
+          # Build Debian/Ubuntu native installer (.deb)
+          DEB_ROOT="dist/deb-pkg"
+          mkdir -p "${DEB_ROOT}/DEBIAN"
+          mkdir -p "${DEB_ROOT}/opt/file4base"
+          mkdir -p "${DEB_ROOT}/usr/bin"
+          mkdir -p "${DEB_ROOT}/usr/share/applications"
+          cp -r client/build/linux/x64/release/bundle/* "${DEB_ROOT}/opt/file4base/"
+          ln -sf /opt/file4base/file4base_client "${DEB_ROOT}/usr/bin/file4base"
+          cat > "${DEB_ROOT}/DEBIAN/control" <<EOF
+          Package: file4base
+          Version: ${VERSION}
+          Section: database
+          Priority: optional
+          Architecture: amd64
+          Depends: libgtk-3-0
+          Maintainer: File4Base Team <support@file4base.io>
+          Description: File4Base Native Desktop Client
+           Multi-engine relational database & low-code solution platform.
+          EOF
+          cat > "${DEB_ROOT}/usr/share/applications/file4base.desktop" <<EOF
+          [Desktop Entry]
+          Name=File4Base
+          Comment=File4Base Relational Database Platform
+          Exec=/opt/file4base/file4base_client
+          Terminal=false
+          Type=Application
+          Categories=Development;Database;Office;
+          EOF
+          dpkg-deb --build --root-owner-group "${DEB_ROOT}" dist/File4Base-Linux-x64.deb
+          rm -rf "${DEB_ROOT}"
+
+      - name: Upload Linux Tarball Artifact
         uses: actions/upload-artifact@v7
         with:
+          name: File4Base-Linux-x64.tar.gz
           path: dist/File4Base-Linux-x64.tar.gz
           archive: false
 
+      - name: Upload Linux DEB Installer Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: File4Base-Linux-x64.deb
+          path: dist/File4Base-Linux-x64.deb
+          archive: false
+
   build-windows:
-    name: Build Windows Desktop (x64)
+    name: Build Windows Desktop (x64 Installer + Zip)
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -202,11 +242,45 @@ jobs:
         working-directory: client
         run: flutter build windows --release
 
-      - name: Package Windows Bundle
+      - name: Package Windows Bundle (.zip + Setup.exe Installer)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist
+          $Version = (Get-Content VERSION -Raw).Trim()
           Compress-Archive -Path "client/build/windows/x64/runner/Release/*" -DestinationPath "dist/File4Base-Windows-x64.zip" -Force
+
+          $IssContent = @"
+          [Setup]
+          AppId={{D4B8A4E2-9F4B-4C7A-8B5D-1E2F3A4B5C6D}
+          AppName=File4Base
+          AppVersion=$Version
+          AppPublisher=File4Base
+          DefaultDirName={autopf}\File4Base
+          DefaultGroupName=File4Base
+          DisableProgramGroupPage=yes
+          OutputDir=dist
+          OutputBaseFilename=File4Base-Windows-x64-Setup
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          ArchitecturesInstallIn64BitMode=x64compatible
+
+          [Tasks]
+          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+
+          [Files]
+          Source: "client\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{autoprograms}\File4Base"; Filename: "{app}\file4base_client.exe"
+          Name: "{autodesktop}\File4Base"; Filename: "{app}\file4base_client.exe"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\file4base_client.exe"; Description: "Launch File4Base"; Flags: nowait postinstall skipifsilent
+          "@
+          Set-Content -Path "dist/installer.iss" -Value $IssContent
+          iscc "dist/installer.iss"
+          Remove-Item "dist/installer.iss" -Force
 
       - name: Verify Windows Bundle Licenses and PDFium Notices
         shell: bash
@@ -215,16 +289,24 @@ jobs:
             dist/File4Base-Windows-x64.zip \
             client/build/windows/x64/pdfium-src
 
-      - name: Upload Windows Artifact
+      - name: Upload Windows Zip Artifact
         uses: actions/upload-artifact@v7
         with:
+          name: File4Base-Windows-x64.zip
           path: dist/File4Base-Windows-x64.zip
+          archive: false
+
+      - name: Upload Windows Setup.exe Installer Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: File4Base-Windows-x64-Setup.exe
+          path: dist/File4Base-Windows-x64-Setup.exe
           archive: false
 
   publish-docker:
     name: Publish Docker Hub Images (linux/amd64, linux/arm64, linux/arm/v7)
     needs: [test-server, test-server-mariadb]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository (with tags)
@@ -232,70 +314,91 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check Docker Hub credentials and tag version
+      - name: Check Docker Hub credentials and version
+        id: docker_check
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]] && [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
             echo "ERROR: git tag '${GITHUB_REF_NAME}' does not match VERSION file ('${VERSION}'; expected 'v${VERSION}')." >&2
             exit 1
           fi
           if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
-            echo "ERROR: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets must be configured to publish release images." >&2
-            exit 1
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Notice: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN not set; skipping remote Docker Hub push."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up QEMU
+        if: steps.docker_check.outputs.skip != 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
+        if: steps.docker_check.outputs.skip != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
+        if: steps.docker_check.outputs.skip != 'true'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push file4base-api and file4base-web images
+        if: steps.docker_check.outputs.skip != 'true'
         env:
-          EXPECTED_TAG: ${{ github.ref_name }}
+          EXPECTED_TAG: "v${{ steps.docker_check.outputs.version }}"
           NO_LATEST: ${{ inputs.no_latest && '1' || '' }}
         run: ./scripts/publish_images.sh
 
   publish-release:
-    name: Publish GitHub Release
-    needs: [test-server, test-server-mariadb, build-macos, build-linux, build-windows, publish-docker]
-    if: startsWith(github.ref, 'refs/tags/v')
+    name: Publish GitHub Release (macOS DMG/ZIP, Windows EXE/ZIP, Linux DEB/TAR.GZ)
+    needs: [test-server, test-server-mariadb, build-macos, build-linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
-      - name: Verify tag matches VERSION file
-        run: |
-          VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
-            echo "ERROR: git tag '${GITHUB_REF_NAME}' does not match VERSION file ('${VERSION}'; expected 'v${VERSION}')." >&2
-            exit 1
-          fi
-
-      - name: Download all release artifacts
+      - name: Download all desktop installer & bundle artifacts
         uses: actions/download-artifact@v8
         with:
           path: release-assets
           skip-decompress: true
           merge-multiple: true
 
-      - name: Create GitHub Release
+      - name: Ensure Git Tag and Publish/Update GitHub Release for VERSION
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            release-assets/* \
-            --title "File4Base ${{ github.ref_name }}" \
-            --generate-notes
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          TAG="v${VERSION}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]] && [ "${GITHUB_REF_NAME}" != "${TAG}" ]; then
+            echo "ERROR: git tag '${GITHUB_REF_NAME}' does not match VERSION file ('${VERSION}'; expected '${TAG}')." >&2
+            exit 1
+          fi
+
+          # Ensure tag exists on remote when triggered by version bump on main
+          if ! git rev-parse "${TAG}" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "${TAG}" || true
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" release-assets/* --clobber
+          else
+            gh release create "${TAG}" \
+              release-assets/* \
+              --title "File4Base ${TAG}" \
+              --generate-notes
+          fi

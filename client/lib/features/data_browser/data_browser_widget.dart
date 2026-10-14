@@ -549,9 +549,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   // ─── Value lists (#31) ─────────────────────────────────────────────────────
 
-  /// The value lists of this database, by id, loaded once.
-  Map<String, ValueListModel> _valueLists = const {};
-
   /// The values each list offers, resolved on demand. A list taken from a
   /// field is resolved by the server, so it reflects the data as it is now.
   final Map<String, List<String>> _valueListValues = {};
@@ -560,7 +557,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     try {
       final lists = await widget.apiClient.listValueLists();
       if (!mounted) return;
-      setState(() => _valueLists = {for (final list in lists) list.id: list});
       for (final list in lists) {
         unawaited(_resolveValueList(list));
       }

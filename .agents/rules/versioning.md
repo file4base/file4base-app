@@ -41,3 +41,12 @@ The AI and developers must keep project documentation synchronized with code:
 2. **Schema & DBAL**: Any new dialect, data type, or catalog table MUST be documented in `docs/specs/DBAL_SPECIFICATION.md` or `docs/specs/layout_schema.json`.
 3. **Roadmap**: Ticked progress checkboxes in `docs/specs/ROADMAP.md` MUST match actual merged code.
 4. **Desktop & Platforms**: Changes in platform targets, ports, or preflight logic MUST be documented in `README.md` and `docs/specs/ARCHITECTURE.md`.
+
+---
+
+## 5. Mandatory Multi-Platform Desktop Installers (macOS, Windows, Linux)
+Every new version release (`VERSION` update on `main` or `vX.Y.Z` tag) MUST build and publish native desktop installers and portable bundles for all three desktop operating systems via `.github/workflows/desktop_release.yml` and `scripts/build_desktop.sh`:
+1. **macOS (Macintosh)**: `File4Base-macOS.dmg` (native disk image installer) and `File4Base-macOS.zip`.
+2. **Windows (x64)**: `File4Base-Windows-x64-Setup.exe` (Inno Setup installer with Start Menu/Desktop shortcuts) and `File4Base-Windows-x64.zip`.
+3. **Linux (x64)**: `File4Base-Linux-x64.deb` (Debian/Ubuntu `.deb` installer package with `/usr/bin/file4base` and `.desktop` launcher) and `File4Base-Linux-x64.tar.gz`.
+

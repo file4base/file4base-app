@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class CheckUpdatesDialog extends StatelessWidget {
-  final String currentVersion;
 
-  const CheckUpdatesDialog({super.key, required this.currentVersion});
+  const CheckUpdatesDialog({required this.currentVersion, super.key});
+  final String currentVersion;
 
   static Future<void> show(BuildContext context, {String currentVersion = '0.4.25'}) {
     return showDialog(

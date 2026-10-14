@@ -1,15 +1,15 @@
 // Regression tests covering core workflow behaviors verified in
 // docs/tutorials/seed_archive.md. Each test fails without its fix.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-const _customerFields = [
+const List<({String label, String name})> _customerFields = [
   (name: 'id', label: 'ID'),
   (name: 'first_name', label: 'First Name'),
   (name: 'last_name', label: 'Last Name'),
@@ -250,8 +250,8 @@ void sortOrderTests() {
         ..sort((a, b) {
           for (final level in order) {
             final cmp = level.ascending
-                ? (a[level.field] as String).compareTo(b[level.field] as String)
-                : (b[level.field] as String).compareTo(a[level.field] as String);
+                ? (a[level.field]!).compareTo(b[level.field]!)
+                : (b[level.field]!).compareTo(a[level.field]!);
             if (cmp != 0) return cmp;
           }
           return 0;
@@ -590,7 +590,7 @@ void borealSeedArchiveDatasetTests() {
       expect(accessions.where((r) => r['tier'] == 'Cryogenic').length, 6);
       expect(accessions.where((r) => r['tier'] == 'Standard').length, 10);
       expect(accessions.where((r) => upkeepFor(r) >= 180).length, 6);
-      expect(accessions.where((r) => (r['genus'] as String).startsWith('Bet')).length, 2);
+      expect(accessions.where((r) => (r['genus']! as String).startsWith('Bet')).length, 2);
       expect(
         accessions.where((r) => r['bioregion'] == 'Bergen' || r['bioregion'] == 'Uppsala').length,
         6,

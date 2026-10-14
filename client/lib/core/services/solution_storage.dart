@@ -1,23 +1,24 @@
+import 'package:file4base_client/core/services/auto_save_service.dart' show AutoSaveService;
+import 'package:file4base_client/core/services/solution_storage_stub.dart'
+    if (dart.library.js_interop) 'solution_storage_web.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
-import 'solution_storage_stub.dart'
-    if (dart.library.js_interop) 'solution_storage_web.dart';
 
 class PickedSolutionFile {
-  final String name;
-  final Uint8List bytes;
 
   const PickedSolutionFile({required this.name, required this.bytes});
+  final String name;
+  final Uint8List bytes;
 }
 
 class StorageDirectoryRef {
-  final String displayName;
-  final dynamic handleOrPath;
 
   const StorageDirectoryRef({
     required this.displayName,
     required this.handleOrPath,
   });
+  final String displayName;
+  final dynamic handleOrPath;
 }
 
 class SolutionStorageService {
@@ -73,7 +74,7 @@ class SolutionStorageService {
     final effectiveDir = directoryRef ?? _defaultDirectoryRef;
     if (effectiveDir != null) {
       _defaultDirectoryRef = effectiveDir;
-      return await platformSaveFilesToDirectory(
+      return platformSaveFilesToDirectory(
         directoryHandleOrPath: effectiveDir.handleOrPath,
         files: files,
       );
@@ -82,7 +83,7 @@ class SolutionStorageService {
     // Prompt user to select destination folder (and remember it)
     final pickedDir = await pickDirectory();
     if (pickedDir != null) {
-      return await platformSaveFilesToDirectory(
+      return platformSaveFilesToDirectory(
         directoryHandleOrPath: pickedDir.handleOrPath,
         files: files,
       );
@@ -160,7 +161,7 @@ class SolutionStorageService {
           rawPath = savedUri.path;
         }
         if (rawPath.isNotEmpty) {
-          final normalized = rawPath.replaceAll('\\', '/');
+          final normalized = rawPath.replaceAll(r'\', '/');
           final slashIdx = normalized.lastIndexOf('/');
           if (slashIdx > 0) {
             final dirPath = rawPath.substring(0, slashIdx);

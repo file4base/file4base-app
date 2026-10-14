@@ -1,18 +1,17 @@
 import 'dart:convert';
+
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/api/api_client.dart';
-import '../../main.dart';
 
 class FieldOptionsDialog extends ConsumerStatefulWidget {
-  final TableModel table;
-  final ColumnModel column;
 
   const FieldOptionsDialog({
-    super.key,
-    required this.table,
-    required this.column,
+    required this.table, required this.column, super.key,
   });
+  final TableModel table;
+  final ColumnModel column;
 
   static Future<ColumnModel?> show(
     BuildContext context, {
@@ -21,7 +20,6 @@ class FieldOptionsDialog extends ConsumerStatefulWidget {
   }) async {
     return showDialog<ColumnModel>(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => FieldOptionsDialog(table: table, column: column),
     );
   }
@@ -100,7 +98,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   void initState() {
     super.initState();
     // Default to tab 3 if Calculation or Summary field, else Auto-Enter (tab 0)
-    int initialIndex = 0;
+    var initialIndex = 0;
     if (widget.column.fieldType == 'CALCULATION' || widget.column.fieldType == 'SUMMARY') {
       initialIndex = 3;
     }
@@ -112,7 +110,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     // 1. Auto-Enter & Storage from defaultValue
     if (widget.column.defaultValue != null && widget.column.defaultValue!.isNotEmpty) {
       try {
-        final Map<String, dynamic> data = jsonDecode(widget.column.defaultValue!);
+        final data = jsonDecode(widget.column.defaultValue!) as Map<String, dynamic>;
         _creationEnabled = data['creation_enabled'] as bool? ?? false;
         _creationType = data['creation_type'] as String? ?? 'Date';
         _modificationEnabled = data['modification_enabled'] as bool? ?? false;
@@ -146,7 +144,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     // 2. Validation from validationRules
     if (widget.column.validationRules != null && widget.column.validationRules!.isNotEmpty) {
       try {
-        final Map<String, dynamic> rules = jsonDecode(widget.column.validationRules!);
+        final rules = jsonDecode(widget.column.validationRules!) as Map<String, dynamic>;
         _notEmptyEnabled = rules['not_empty'] as bool? ?? false;
         _notEmptyTiming = rules['not_empty_timing'] as String? ?? 'always';
         _uniqueValueEnabled = rules['unique'] as bool? ?? false;
@@ -169,7 +167,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     // 3. Calculation & Summary from calculationFormula
     if (widget.column.calculationFormula != null && widget.column.calculationFormula!.isNotEmpty) {
       try {
-        final Map<String, dynamic> calc = jsonDecode(widget.column.calculationFormula!);
+        final calc = jsonDecode(widget.column.calculationFormula!) as Map<String, dynamic>;
         // A summary's definition, in either the shape saved now or the one
         // saved before they were computed (#32).
         final summary = SummarySpecModel.tryParse(widget.column.calculationFormula);
@@ -337,12 +335,11 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
             color: isDark ? const Color(0xFF1E2024) : const Color(0xFFF7F8FA),
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: isDark ? Colors.white.withOpacity(0.12) : Colors.black.withOpacity(0.15),
-              width: 1,
+              color: isDark ? Colors.white.withValues(alpha: 0.12) : Colors.black.withValues(alpha: 0.15),
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.6 : 0.25),
+                color: Colors.black.withValues(alpha: isDark ? 0.6 : 0.25),
                 blurRadius: 28,
                 offset: const Offset(0, 14),
               ),
@@ -361,7 +358,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                     color: isDark ? const Color(0xFF282B30) : Colors.white,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08),
+                      color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.08),
                     ),
                   ),
                   child: TabBarView(
@@ -391,7 +388,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         borderRadius: const BorderRadius.vertical(top: Radius.circular(13)),
         border: Border(
           bottom: BorderSide(
-            color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08),
+            color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.08),
           ),
         ),
       ),
@@ -408,7 +405,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: theme.colorScheme.primary.withOpacity(0.12),
+              color: theme.colorScheme.primary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
@@ -445,14 +442,14 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
               borderRadius: BorderRadius.circular(6),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
+                  color: Colors.black.withValues(alpha: 0.08),
                   blurRadius: 4,
                   offset: const Offset(0, 1),
                 ),
               ],
             ),
             labelColor: theme.colorScheme.onSurface,
-            unselectedLabelColor: theme.colorScheme.onSurface.withOpacity(0.6),
+            unselectedLabelColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
             labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
             tabs: const [
               Tab(text: 'Auto-Enter'),
@@ -495,8 +492,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 width: 180,
                 height: 32,
                 child: DropdownButtonFormField<String>(
-                  value: _creationType,
-                  isDense: true,
+                  initialValue: _creationType,
                   decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     border: OutlineInputBorder(),
@@ -521,8 +517,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 width: 180,
                 height: 32,
                 child: DropdownButtonFormField<String>(
-                  value: _modificationType,
-                  isDense: true,
+                  initialValue: _modificationType,
                   decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     border: OutlineInputBorder(),
@@ -839,8 +834,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 width: 160,
                 height: 32,
                 child: DropdownButtonFormField<String>(
-                  value: _strictDataType,
-                  isDense: true,
+                  initialValue: _strictDataType,
                   decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     border: OutlineInputBorder(),
@@ -985,10 +979,10 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: isDark ? Colors.black.withOpacity(0.2) : Colors.black.withOpacity(0.02),
+              color: isDark ? Colors.black.withValues(alpha: 0.2) : Colors.black.withValues(alpha: 0.02),
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: isDark ? Colors.white.withOpacity(0.06) : Colors.black.withOpacity(0.06),
+                color: isDark ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.06),
               ),
             ),
             child: Column(
@@ -1202,8 +1196,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 width: 140,
                 height: 32,
                 child: DropdownButtonFormField<String>(
-                  value: _calculationResultType,
-                  isDense: true,
+                  initialValue: _calculationResultType,
                   decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     border: OutlineInputBorder(),
@@ -1220,7 +1213,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
           // Section 2: Summary Field
           Row(
             children: [
-              Icon(Icons.query_stats, size: 18, color: Colors.teal),
+              const Icon(Icons.query_stats, size: 18, color: Colors.teal),
               const SizedBox(width: 8),
               Text(
                 'Summary Aggregate Options',
@@ -1251,8 +1244,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 width: 160,
                 height: 32,
                 child: DropdownButtonFormField<String>(
-                  value: _summaryOperation,
-                  isDense: true,
+                  initialValue: _summaryOperation,
                   decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     border: OutlineInputBorder(),
@@ -1286,8 +1278,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 child: SizedBox(
                   height: 32,
                   child: DropdownButtonFormField<String>(
-                    value: _summaryTargetColumn,
-                    isDense: true,
+                    initialValue: _summaryTargetColumn,
                     decoration: const InputDecoration(
                       contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       border: OutlineInputBorder(),
@@ -1363,7 +1354,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(13)),
         border: Border(
           top: BorderSide(
-            color: isDark ? Colors.white.withOpacity(0.08) : Colors.black.withOpacity(0.08),
+            color: isDark ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.08),
           ),
         ),
       ),

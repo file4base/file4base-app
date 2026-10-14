@@ -1,41 +1,38 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('LayoutDesignerWidget renders full FileMaker-style Layout Studio with tools, parts, and inspector',
-      (WidgetTester tester) async {
+      (tester) async {
     tester.view.physicalSize = const Size(1600, 1000);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
 
-    final mockTable = TableModel(
+    const mockTable = TableModel(
       id: 'tbl-1',
       name: 'customers',
       displayName: 'Customers',
       columns: [
-        const ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
-        const ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'company_name', displayName: 'Company', fieldType: 'varchar'),
-        const ColumnModel(id: 'col-3', tableId: 'tbl-1', name: 'balance', displayName: 'Balance', fieldType: 'numeric'),
+        ColumnModel(id: 'col-1', tableId: 'tbl-1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
+        ColumnModel(id: 'col-2', tableId: 'tbl-1', name: 'company_name', displayName: 'Company', fieldType: 'varchar'),
+        ColumnModel(id: 'col-3', tableId: 'tbl-1', name: 'balance', displayName: 'Balance', fieldType: 'numeric'),
       ],
     );
 
-    final mockLayoutDef = LayoutDefinitionModel(
+    const mockLayoutDef = LayoutDefinitionModel(
       id: 'layout-1',
       name: 'Customers Form',
       tableOccurrence: 'customers',
-      width: 1024,
-      theme: 'Enlightened',
-      defaultView: 'form',
       parts: [
-        const LayoutPartModel(id: 'header_part', type: 'header', height: 60),
-        const LayoutPartModel(id: 'body_part', type: 'body', height: 400),
-        const LayoutPartModel(id: 'footer_part', type: 'footer', height: 40),
+        LayoutPartModel(id: 'header_part', type: 'header', height: 60),
+        LayoutPartModel(id: 'body_part', type: 'body', height: 400),
+        LayoutPartModel(id: 'footer_part', type: 'footer', height: 40),
       ],
       objects: [
-        const LayoutObjectModel(
+        LayoutObjectModel(
           id: 'title_lbl',
           type: 'label',
           x: 24,
@@ -44,7 +41,7 @@ void main() {
           height: 28,
           text: 'Customer Details',
         ),
-        const LayoutObjectModel(
+        LayoutObjectModel(
           id: 'field_company',
           type: 'field',
           x: 40,
@@ -57,14 +54,14 @@ void main() {
     );
 
     final mockApiClient = ApiClient(baseUrl: 'http://localhost:8080');
-    bool exitLayoutCalled = false;
+    var exitLayoutCalled = false;
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: LayoutDesignerWidget(
             table: mockTable,
-            tables: [mockTable],
+            tables: const [mockTable],
             apiClient: mockApiClient,
             initialLayout: mockLayoutDef,
             layouts: [

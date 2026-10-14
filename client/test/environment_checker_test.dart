@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter_test/flutter_test.dart';
+
 import 'package:file4base_client/core/system/environment_checker.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('EnvironmentChecker Tests', () {
@@ -29,7 +30,7 @@ void main() {
     test('checkDocker fast-path succeeds when server returns 200 health', () async {
       // Spawn a lightweight local HTTP server simulating File4Base /healthz
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      server.listen((HttpRequest request) {
+      server.listen((request) {
         if (request.uri.path == '/healthz') {
           request.response
             ..statusCode = HttpStatus.ok
@@ -62,7 +63,7 @@ void main() {
 
     test('checkDocker fast-path succeeds when server returns 200 health with MariaDB', () async {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      server.listen((HttpRequest request) {
+      server.listen((request) {
         if (request.uri.path == '/healthz') {
           request.response
             ..statusCode = HttpStatus.ok

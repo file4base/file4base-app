@@ -1,11 +1,11 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/models/file_options_model.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
 import 'package:file4base_client/features/solution_manager/file_options_dialog.dart';
 import 'package:file4base_client/features/solution_manager/page_setup_dialog.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('FileOptionsModel tests', () {
@@ -42,7 +42,6 @@ void main() {
     test('toJson and fromJson roundtrip', () {
       const original = FileOptionsModel(
         autoLoginEnabled: true,
-        isGuestLogin: false,
         defaultUsername: 'poweruser',
         defaultPassword: 'secretpassword',
         switchLayoutOnOpen: true,
@@ -81,15 +80,8 @@ void main() {
   group('PageSetupModel calculations', () {
     test('A4 portrait calculations', () {
       const setup = PageSetupModel(
-        printer: 'Any Printer',
-        paperSizeName: 'A4',
-        paperWidthMm: 210.0,
-        paperHeightMm: 297.0,
-        isLandscape: false,
         marginTopMm: 20.0,
         marginBottomMm: 20.0,
-        marginLeftMm: 15.0,
-        marginRightMm: 15.0,
       );
 
       expect(setup.effectiveWidthMm, 210.0);
@@ -105,9 +97,6 @@ void main() {
     test('Landscape orientation swaps width and height', () {
       const setup = PageSetupModel(
         printer: 'Office LaserJet',
-        paperSizeName: 'A4',
-        paperWidthMm: 210.0,
-        paperHeightMm: 297.0,
         isLandscape: true,
         marginTopMm: 10.0,
         marginBottomMm: 10.0,
@@ -153,8 +142,8 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
 
-      bool fileOptionsClicked = false;
-      bool pageSetupClicked = false;
+      var fileOptionsClicked = false;
+      var pageSetupClicked = false;
 
       await tester.pumpWidget(
         MaterialApp(

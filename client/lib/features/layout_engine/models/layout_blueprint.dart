@@ -7,7 +7,7 @@
 
 import 'dart:math' as math;
 
-import 'layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 
 /// The kinds of layout the assistant can make.
 enum LayoutKind {
@@ -64,6 +64,21 @@ extension LayoutKindInfo on LayoutKind {
 /// not the application themes in Manage Themes, which colour the window
 /// File4Base itself is drawn in.
 class LayoutTheme {
+
+  const LayoutTheme({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.headerFill,
+    required this.headerText,
+    this.titleSize = 18,
+    this.headingSize = 11,
+    this.bodySize = 12,
+    this.fieldBorder,
+    this.fieldBorderWidth = 1,
+    this.cornerRadius = 4,
+    this.summaryFill = '#F2F5F9',
+  });
   final String id;
   final String name;
   final String description;
@@ -84,21 +99,6 @@ class LayoutTheme {
 
   /// Fill of a summary band, so a subtotal stands out from the rows.
   final String summaryFill;
-
-  const LayoutTheme({
-    required this.id,
-    required this.name,
-    required this.description,
-    required this.headerFill,
-    required this.headerText,
-    this.titleSize = 18,
-    this.headingSize = 11,
-    this.bodySize = 12,
-    this.fieldBorder,
-    this.fieldBorderWidth = 1,
-    this.cornerRadius = 4,
-    this.summaryFill = '#F2F5F9',
-  });
 
   static const enlightened = LayoutTheme(
     id: 'Enlightened',
@@ -140,13 +140,12 @@ class LayoutTheme {
     headerFill: '#FFFFFF',
     headerText: '#333333',
     titleSize: 16,
-    fieldBorder: null,
     fieldBorderWidth: 0,
     cornerRadius: 0,
     summaryFill: '#F5F5F5',
   );
 
-  static const all = [enlightened, coolGrey, classic, minimal];
+  static const List<LayoutTheme> all = [enlightened, coolGrey, classic, minimal];
 
   static LayoutTheme byId(String? id) =>
       all.where((t) => t.id == id).firstOrNull ?? enlightened;
@@ -156,19 +155,6 @@ class LayoutTheme {
 ///
 /// Sizes are in millimetres, as the stock is sold.
 class LabelStock {
-  final String id;
-  final String name;
-
-  final double pageWidthMm;
-  final double pageHeightMm;
-  final double labelWidthMm;
-  final double labelHeightMm;
-  final int across;
-  final int down;
-  final double marginLeftMm;
-  final double marginTopMm;
-  final double gutterXMm;
-  final double gutterYMm;
 
   const LabelStock({
     required this.id,
@@ -184,6 +170,36 @@ class LabelStock {
     this.gutterXMm = 0,
     this.gutterYMm = 0,
   });
+
+  /// A stock of a size the user typed in, laid out to fill an A4 sheet.
+  factory LabelStock.custom({required double widthMm, required double heightMm}) {
+    const pageWidth = 210.0;
+    const pageHeight = 297.0;
+    const margin = 8.0;
+    final across = math.max(1, ((pageWidth - margin * 2) / widthMm).floor());
+    final down = math.max(1, ((pageHeight - margin * 2) / heightMm).floor());
+    return LabelStock(
+      id: 'custom',
+      name: 'Custom size',
+      pageWidthMm: pageWidth, pageHeightMm: pageHeight,
+      labelWidthMm: widthMm, labelHeightMm: heightMm,
+      across: across, down: down,
+      marginLeftMm: margin, marginTopMm: margin,
+    );
+  }
+  final String id;
+  final String name;
+
+  final double pageWidthMm;
+  final double pageHeightMm;
+  final double labelWidthMm;
+  final double labelHeightMm;
+  final int across;
+  final int down;
+  final double marginLeftMm;
+  final double marginTopMm;
+  final double gutterXMm;
+  final double gutterYMm;
 
   static const double mmToPt = 72.0 / 25.4;
 
@@ -207,7 +223,7 @@ class LabelStock {
     pageWidthMm: 210, pageHeightMm: 297,
     labelWidthMm: 63.5, labelHeightMm: 38.1,
     across: 3, down: 7,
-    marginLeftMm: 7.2, marginTopMm: 15.1, gutterXMm: 2.5, gutterYMm: 0,
+    marginLeftMm: 7.2, marginTopMm: 15.1, gutterXMm: 2.5,
   );
 
   static const averyL7163 = LabelStock(
@@ -216,7 +232,7 @@ class LabelStock {
     pageWidthMm: 210, pageHeightMm: 297,
     labelWidthMm: 99.1, labelHeightMm: 38.1,
     across: 2, down: 7,
-    marginLeftMm: 5.0, marginTopMm: 15.1, gutterXMm: 2.5, gutterYMm: 0,
+    marginLeftMm: 5.0, marginTopMm: 15.1, gutterXMm: 2.5,
   );
 
   static const avery5160 = LabelStock(
@@ -225,7 +241,7 @@ class LabelStock {
     pageWidthMm: 215.9, pageHeightMm: 279.4,
     labelWidthMm: 66.7, labelHeightMm: 25.4,
     across: 3, down: 10,
-    marginLeftMm: 4.8, marginTopMm: 12.7, gutterXMm: 3.2, gutterYMm: 0,
+    marginLeftMm: 4.8, marginTopMm: 12.7, gutterXMm: 3.2,
   );
 
   static const avery5163 = LabelStock(
@@ -234,29 +250,13 @@ class LabelStock {
     pageWidthMm: 215.9, pageHeightMm: 279.4,
     labelWidthMm: 101.6, labelHeightMm: 50.8,
     across: 2, down: 5,
-    marginLeftMm: 4.2, marginTopMm: 12.7, gutterXMm: 4.8, gutterYMm: 0,
+    marginLeftMm: 4.2, marginTopMm: 12.7, gutterXMm: 4.8,
   );
 
-  static const all = [averyL7160, averyL7163, avery5160, avery5163];
+  static const List<LabelStock> all = [averyL7160, averyL7163, avery5160, avery5163];
 
   static LabelStock byId(String? id) =>
       all.where((s) => s.id == id).firstOrNull ?? averyL7160;
-
-  /// A stock of a size the user typed in, laid out to fill an A4 sheet.
-  factory LabelStock.custom({required double widthMm, required double heightMm}) {
-    const pageWidth = 210.0, pageHeight = 297.0;
-    const margin = 8.0;
-    final across = math.max(1, ((pageWidth - margin * 2) / widthMm).floor());
-    final down = math.max(1, ((pageHeight - margin * 2) / heightMm).floor());
-    return LabelStock(
-      id: 'custom',
-      name: 'Custom size',
-      pageWidthMm: pageWidth, pageHeightMm: pageHeight,
-      labelWidthMm: widthMm, labelHeightMm: heightMm,
-      across: across, down: down,
-      marginLeftMm: margin, marginTopMm: margin,
-    );
-  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -299,6 +299,17 @@ typedef BlueprintField = ({String name, String label, bool isSummary});
 
 /// Everything the assistant was asked for.
 class LayoutBlueprint {
+
+  const LayoutBlueprint({
+    required this.name,
+    required this.kind,
+    required this.tableOccurrence,
+    this.fields = const [],
+    this.theme = LayoutTheme.enlightened,
+    this.breakField,
+    this.summaryFields = const [],
+    this.stock,
+  });
   final String name;
   final LayoutKind kind;
   final String tableOccurrence;
@@ -316,17 +327,6 @@ class LayoutBlueprint {
 
   /// Labels: the stock the sheet is cut from.
   final LabelStock? stock;
-
-  const LayoutBlueprint({
-    required this.name,
-    required this.kind,
-    required this.tableOccurrence,
-    this.fields = const [],
-    this.theme = LayoutTheme.enlightened,
-    this.breakField,
-    this.summaryFields = const [],
-    this.stock,
-  });
 
   LayoutDefinitionModel build() => switch (kind) {
         LayoutKind.form => _buildForm(),
@@ -655,7 +655,7 @@ class LayoutBlueprint {
           width: width - 16,
           height: height - 12,
           text: text,
-          style: LayoutObjectStyle(fontSize: theme.bodySize, textAlign: 'left'),
+          style: LayoutObjectStyle(fontSize: theme.bodySize),
         ),
       ],
     );

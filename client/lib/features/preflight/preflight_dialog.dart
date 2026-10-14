@@ -1,13 +1,13 @@
+import 'package:file4base_client/core/system/environment_checker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../../core/system/environment_checker.dart';
 
 
 class PreflightDialog extends StatefulWidget {
+
+  const PreflightDialog({required this.onProceed, super.key, this.serverUrl});
   final VoidCallback onProceed;
   final String? serverUrl;
-
-  const PreflightDialog({super.key, required this.onProceed, this.serverUrl});
 
   static Future<void> showIfNeeded(
     BuildContext context, {
@@ -183,12 +183,11 @@ class _PreflightDialogState extends State<PreflightDialog> {
     required IconData icon,
     required String title,
     required String description,
-    String? detail,
-    required bool isOk,
+    required bool isOk, String? detail,
     bool isWarning = false,
   }) {
-    Color color = isOk ? Colors.green : (isWarning ? Colors.orange : Colors.red);
-    IconData statusIcon = isOk ? Icons.check_circle : (isWarning ? Icons.warning : Icons.error);
+    final Color color = isOk ? Colors.green : (isWarning ? Colors.orange : Colors.red);
+    final statusIcon = isOk ? Icons.check_circle : (isWarning ? Icons.warning : Icons.error);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,

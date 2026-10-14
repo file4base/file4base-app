@@ -1,20 +1,12 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/solution_models.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/features/solution_manager/filemaker_migration_dialog.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/models/solution_models.dart';
-import '../../core/services/solution_storage.dart';
-import 'filemaker_migration_dialog.dart';
 
 enum OpenSolutionType { serverDatabase, localFile }
 
 class OpenSolutionResult {
-  final OpenSolutionType type;
-  final String databaseName;
-  final UserModel user;
-  final AuthResult auth;
-  final String? fileName;
-  final String? solutionName;
-  final StorageDirectoryRef? directoryRef;
-  final SolutionPackage? package;
 
   const OpenSolutionResult({
     required this.type,
@@ -26,17 +18,24 @@ class OpenSolutionResult {
     this.directoryRef,
     this.package,
   });
+  final OpenSolutionType type;
+  final String databaseName;
+  final UserModel user;
+  final AuthResult auth;
+  final String? fileName;
+  final String? solutionName;
+  final StorageDirectoryRef? directoryRef;
+  final SolutionPackage? package;
 }
 
-class OpenSolutionDialog extends StatefulWidget {
-  final ApiClient apiClient;
-  final int initialTab; // 0: Server Databases, 1: Local File
+class OpenSolutionDialog extends StatefulWidget { // 0: Server Databases, 1: Local File
 
   const OpenSolutionDialog({
-    super.key,
-    required this.apiClient,
+    required this.apiClient, super.key,
     this.initialTab = 0,
   });
+  final ApiClient apiClient;
+  final int initialTab;
 
   static Future<OpenSolutionResult?> show(
     BuildContext context,
@@ -45,7 +44,6 @@ class OpenSolutionDialog extends StatefulWidget {
   }) {
     return showDialog<OpenSolutionResult>(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => OpenSolutionDialog(
         apiClient: apiClient,
         initialTab: initialTab,
@@ -105,11 +103,11 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
 
     try {
       final res = await widget.apiClient.listDatabases();
-      final List<String> dbs = (res['databases'] as List<dynamic>?)
+      final dbs = (res['databases'] as List<dynamic>?)
               ?.map((e) => e.toString())
               .toList() ??
           [];
-      final String? active = res['active']?.toString();
+      final active = res['active']?.toString();
 
       if (mounted) {
         setState(() {
@@ -437,7 +435,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
               child: ListView.separated(
                 shrinkWrap: true,
                 itemCount: _databases.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
+                separatorBuilder: (_, _) => const Divider(height: 1),
                 itemBuilder: (context, idx) {
                   final db = _databases[idx];
                   final isSelected = _selectedServerDb == db;

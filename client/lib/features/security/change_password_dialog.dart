@@ -1,21 +1,19 @@
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
 
 class ChangePasswordDialog extends StatefulWidget {
+
+  const ChangePasswordDialog({
+    required this.apiClient, required this.currentUser, super.key,
+    this.databaseName,
+    this.onPasswordChanged,
+  });
   final ApiClient apiClient;
   final UserModel currentUser;
   final String? databaseName;
 
   /// Called with the new password once the server has accepted it.
   final ValueChanged<String>? onPasswordChanged;
-
-  const ChangePasswordDialog({
-    super.key,
-    required this.apiClient,
-    required this.currentUser,
-    this.databaseName,
-    this.onPasswordChanged,
-  });
 
   static Future<bool?> show(
     BuildContext context, {

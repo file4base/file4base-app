@@ -11,13 +11,12 @@ import 'package:http/testing.dart';
 void main() {
   group('Script Models Unit Tests', () {
     test('ScriptStepModel serialization and category assignment', () {
-      final step = ScriptStepModel(
+      const step = ScriptStepModel(
         id: 's-100',
         scriptId: 'scr-1',
         sequenceIdx: 1,
         stepType: 'go_to_layout',
         params: {'layout_name': 'Invoices_Detail'},
-        isEnabled: true,
       );
 
       expect(step.category, 'navigation');
@@ -36,19 +35,18 @@ void main() {
     });
 
     test('ScriptModel serialization and steps list', () {
-      final script = ScriptModel(
+      const script = ScriptModel(
         id: 'scr-100',
         name: 'test_script',
         contextTable: 'Invoices',
-        isActive: true,
         steps: [
-          const ScriptStepModel(
+          ScriptStepModel(
             id: 'st-1',
             sequenceIdx: 1,
             stepType: 'set_variable',
             params: {'variable': r'$subtotal', 'calc': '100'},
           ),
-          const ScriptStepModel(
+          ScriptStepModel(
             id: 'st-2',
             sequenceIdx: 2,
             stepType: 'commit_records',
@@ -70,7 +68,7 @@ void main() {
     });
 
     test('ScriptCatalogItem contains categories and script instructions', () {
-      final catalog = ScriptCatalogItem.catalog;
+      const catalog = ScriptCatalogItem.catalog;
       expect(catalog.isNotEmpty, true);
 
       final categories = catalog.map((c) => c.category).toSet();

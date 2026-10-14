@@ -1,16 +1,15 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/main.dart' show OperationalMode;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-final _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: const [
+const _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: [
   ColumnModel(id: 'c0', tableId: 't1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
   ColumnModel(id: 'c1', tableId: 't1', name: 'first_name', displayName: 'First name', fieldType: 'varchar'),
   ColumnModel(id: 'c2', tableId: 't1', name: 'city', displayName: 'City', fieldType: 'varchar'),
@@ -36,7 +35,7 @@ Future<LayoutDefinitionModel? Function()> _pumpDesigner(
       body: LayoutDesignerWidget(
         key: key,
         table: _table,
-        tables: [_table],
+        tables: const [_table],
         apiClient: ApiClient(baseUrl: 'http://localhost:1'),
         initialLayout: LayoutDefinitionModel(id: 'l1', name: 'Contacts', tableOccurrence: 'contacts', objects: objects),
         onSaved: () {},
@@ -64,7 +63,7 @@ void main() {
             height: 900,
             child: File4BaseStatusSidebar(
               onLayoutSelected: (_) {},
-              tables: [_table],
+              tables: const [_table],
               selectedTable: _table,
               onTableSelected: (_) {},
               mode: OperationalMode.layout,
@@ -110,7 +109,7 @@ void main() {
       expect(oval.height, closeTo(80, 8));
       final shape = tester.widget<Container>(
           find.descendant(of: find.byType(LayoutShapeView), matching: find.byType(Container)).first);
-      expect((shape.decoration as ShapeDecoration).shape, isA<OvalBorder>());
+      expect((shape.decoration! as ShapeDecoration).shape, isA<OvalBorder>());
       await _settleAutoSave(tester);
     });
 
@@ -155,7 +154,7 @@ void main() {
     });
 
     testWidgets('typing in the inspector text field keeps the cursor and does not delete the object', (tester) async {
-      const label = LayoutObjectModel(id: 'l1', type: 'label', x: 100, y: 120, width: 160, height: 26, text: '');
+      const label = LayoutObjectModel(id: 'l1', type: 'label', x: 100, y: 120, width: 160, height: 26);
       final last = await _pumpDesigner(tester, objects: [label]);
       await tester.tap(find.text('(Label)'));
       await tester.pump();
@@ -371,7 +370,7 @@ void main() {
 
     test('Perform Script runs the script steps in order and stops at unsupported steps', () async {
       final host = _FakeHost();
-      final api = _FakeScriptsApi(ScriptModel(id: 's1', name: 'Save and next', steps: const [
+      final api = _FakeScriptsApi(const ScriptModel(id: 's1', name: 'Save and next', steps: [
         ScriptStepModel(id: '2', sequenceIdx: 2, stepType: 'go_to_record', params: {'target': 'Siguiente'}),
         ScriptStepModel(id: '1', sequenceIdx: 1, stepType: 'commit_records'),
         ScriptStepModel(id: '3', sequenceIdx: 3, stepType: 'set_field', params: {'field': 'city', 'value': '{{first_name}}'}),
@@ -389,8 +388,8 @@ void main() {
 }
 
 class _FakeScriptsApi extends ApiClient {
-  final ScriptModel script;
   _FakeScriptsApi(this.script) : super(baseUrl: 'http://localhost:1');
+  final ScriptModel script;
 
   @override
   Future<ScriptModel> getScript(String id, {String? database}) async => script;
@@ -400,8 +399,8 @@ class _FakeScriptsApi extends ApiClient {
 }
 
 class _MutableScriptsApi extends ApiClient {
-  final scripts = <ScriptModel>[];
   _MutableScriptsApi() : super(baseUrl: 'http://localhost:1');
+  final scripts = <ScriptModel>[];
 
   @override
   Future<List<ScriptModel>> listScripts({String? database}) async => List.of(scripts);

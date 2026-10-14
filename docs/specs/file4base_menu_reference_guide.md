@@ -151,6 +151,18 @@ file_4_base_menu_bar:
       - Developer Utilities...
       - Layout Themes...
 
+  - menu: Server Tools
+    items:
+      - Containers & Services...
+      - Backups & Snapshots...
+      - Domain & SSL/TLS Certificates (ACME)...
+      - API Telemetry & Live Metrics...
+      - Connected Clients & Sessions...
+      - Scheduled Tasks & Cron Scripts...
+      - Audit & Security Logs...
+      - Database Maintenance & Optimizer...
+      - Server Notifications, SMTP & Webhooks...
+
   - menu: Window
     items:
       - Minimize
@@ -379,7 +391,24 @@ Provides advanced debugging, structural auditing, custom menu bar management, de
 
 ---
 
-## 10. "Window" Menu
+## 10. "Server Tools" Menu
+
+Provides a unified server administration and observability console ([`server_tools_and_mfa.md`](server_tools_and_mfa.md)):
+
+* **Containers & Services...** (`GET/POST /api/v1/server/containers`) -> Live health, version, uptime, resource usage, log viewer, and graceful service reload for `file4base-api`, `file4base-web`, and `file4base-postgres`.
+* **Backups & Snapshots...** (`GET/POST/DELETE /api/v1/server/backups`) -> On-demand full snapshots of the active database, with 1-click download, point-in-time restore, and deletion.
+* **Domain & SSL/TLS Certificates (ACME)...** (`GET/PUT/POST /api/v1/server/tls`) -> Public Web/API domain configuration, automatic Let's Encrypt / ZeroSSL ACME certificate provisioning (`http-01` / `tls-alpn-01`), or custom PEM certificate chain + private key upload with X.509 issuer/expiry inspection.
+* **API Telemetry & Live Metrics...** (`GET /api/v1/server/telemetry`) -> Rolling 60-minute telemetry charts (**Requests Per Minute (RPM)** bar chart, **Average vs P95 Latency** line chart, HTTP `2xx`/`4xx`/`5xx` status distribution, Go runtime memory/goroutines, DB ping latency, and top endpoints).
+* ---
+* **Connected Clients & Sessions...** (`GET/DELETE /api/v1/server/sessions`) -> Real-time table of authenticated sessions across databases with 1-click session revocation (`Force Disconnect`).
+* **Scheduled Tasks & Cron Scripts...** (`GET/POST/DELETE /api/v1/server/schedules`) -> Cron job scheduler (`0 2 * * *`, `*/15 * * * *`) for automated backups and server-side script execution with `Run Now`.
+* **Audit & Security Logs...** (`GET/POST /api/v1/server/audit-logs`) -> Filterable security and administrative event log (`auth`, `mfa`, `backup`, `tls`, `container`, `maintenance`, `schedule`).
+* **Database Maintenance & Optimizer...** (`GET/POST /api/v1/server/maintenance`) -> Live per-table column and row counts with 1-click `VACUUM ANALYZE`, `ANALYZE`, and `REINDEX DATABASE`.
+* **Server Notifications, SMTP & Webhooks...** (`GET/PUT/POST /api/v1/server/notifications`) -> Outbound SMTP email and Slack/Discord/Teams/Generic JSON webhook alerting with threshold triggers and test dispatch.
+
+---
+
+## 11. "Window" Menu
 
 * **New Window** (Open independent parallel view with its own context state).
 * **Show/Hide Status Toolbar**
@@ -388,7 +417,7 @@ Provides advanced debugging, structural auditing, custom menu bar management, de
 
 ---
 
-## 11. "Help" Menu
+## 12. "Help" Menu
 
 * **File4Base Help**
 * **Product Documentation & API Specs**

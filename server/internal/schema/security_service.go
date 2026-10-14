@@ -17,12 +17,13 @@ import (
 )
 
 type UserMetadata struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Role      string    `json:"role"` // "owner", "admin", "user"
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Username   string    `json:"username"`
+	Role       string    `json:"role"` // "owner", "admin", "user"
+	IsActive   bool      `json:"is_active"`
+	MFAEnabled bool      `json:"mfa_enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type UserLayoutPermission struct {
@@ -49,6 +50,7 @@ type AuthUser struct {
 	Username         string                 `json:"username"`
 	Role             string                 `json:"role"`
 	IsActive         bool                   `json:"is_active"`
+	MFAEnabled       bool                   `json:"mfa_enabled"`
 	Permissions      []UserLayoutPermission `json:"permissions"`
 	TablePermissions []UserTablePermission  `json:"table_permissions,omitempty"`
 	// Stamp identifies the account state the user signed in with (see
@@ -120,8 +122,10 @@ func isValidAccessLevel(level string) bool {
 }
 
 // Authenticate verifies user credentials and returns the user with layout permissions.
-// Both the username and the password must match the same account.
-func (s *Service) Authenticate(ctx context.Context, username, password string) (*AuthUser, error) {
+// Both the username and the password must match the same account. When the
+// account has Google Authenticator MFA enabled, a valid 6-digit TOTP code must
+// also be supplied in totpCode.
+func (s *Service) Authenticate(ctx context.Context, username, password string, totpCode ...string) (*AuthUser, error) {
 	if strings.TrimSpace(password) == "" {
 		return nil, errors.New("password is required")
 	}
@@ -133,16 +137,23 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
-	var id, uName, hash, role string
-	var isActive bool
+	var id, uName, hash, role, mfaSecret string
+	var isActive, mfaEnabled bool
 
-	q := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
+	q := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(mfa_secret, '') FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
 	if dialect.Engine() != dbal.EnginePostgres {
-		q = `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
+		q = `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(mfa_secret, '') FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
 	}
-	if err := db.QueryRowContext(ctx, q, cleanUser).Scan(&id, &uName, &hash, &role, &isActive); err != nil {
-		burnPasswordCheck(password)
-		return nil, ErrInvalidCredentials
+	if err := db.QueryRowContext(ctx, q, cleanUser).Scan(&id, &uName, &hash, &role, &isActive, &mfaEnabled, &mfaSecret); err != nil {
+		// Fallback for older unmigrated catalog tables in tests
+		qLegacy := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
+		if dialect.Engine() != dbal.EnginePostgres {
+			qLegacy = `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
+		}
+		if errLegacy := db.QueryRowContext(ctx, qLegacy, cleanUser).Scan(&id, &uName, &hash, &role, &isActive); errLegacy != nil {
+			burnPasswordCheck(password)
+			return nil, ErrInvalidCredentials
+		}
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
@@ -151,6 +162,19 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 
 	if !isActive {
 		return nil, errors.New("user account is deactivated")
+	}
+
+	if mfaEnabled && strings.TrimSpace(mfaSecret) != "" {
+		code := ""
+		if len(totpCode) > 0 {
+			code = strings.TrimSpace(totpCode[0])
+		}
+		if code == "" {
+			return nil, ErrMFARequired
+		}
+		if !VerifyTOTP(mfaSecret, code, time.Now().UTC()) {
+			return nil, ErrInvalidMFACode
+		}
 	}
 
 	// Fetch permissions
@@ -168,6 +192,7 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 		Username:         uName,
 		Role:             role,
 		IsActive:         isActive,
+		MFAEnabled:       mfaEnabled,
 		Permissions:      perms,
 		TablePermissions: tablePerms,
 		Stamp:            AccountStamp(hash, role, isActive),
@@ -191,13 +216,19 @@ func (s *Service) HasSystemCatalog(ctx context.Context) bool {
 
 // GetUser returns a single user account by id.
 func (s *Service) GetUser(ctx context.Context, id string) (*UserMetadata, error) {
-	q := `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = $1`
+	q := `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), created_at, updated_at FROM sys_users WHERE id = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = ?`
+		q = `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), created_at, updated_at FROM sys_users WHERE id = ?`
 	}
 	var u UserMetadata
-	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
-		return nil, errors.New("user not found")
+	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.MFAEnabled, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		qLegacy := `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = $1`
+		if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+			qLegacy = `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = ?`
+		}
+		if errLegacy := s.driver.DB().QueryRowContext(ctx, qLegacy, id).Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); errLegacy != nil {
+			return nil, errors.New("user not found")
+		}
 	}
 	return &u, nil
 }
@@ -322,17 +353,28 @@ func (s *Service) TableAccess(ctx context.Context, userID, tableName string) (st
 // ListUsers returns all registered users
 func (s *Service) ListUsers(ctx context.Context) ([]UserMetadata, error) {
 	db := s.driver.DB()
-	rows, err := db.QueryContext(ctx, `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users ORDER BY username ASC`)
+	rows, err := db.QueryContext(ctx, `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), created_at, updated_at FROM sys_users ORDER BY username ASC`)
+	hasMFA := true
 	if err != nil {
-		return nil, fmt.Errorf("failed listing users: %w", err)
+		hasMFA = false
+		rows, err = db.QueryContext(ctx, `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users ORDER BY username ASC`)
+		if err != nil {
+			return nil, fmt.Errorf("failed listing users: %w", err)
+		}
 	}
 	defer rows.Close()
 
 	users := make([]UserMetadata, 0)
 	for rows.Next() {
 		var u UserMetadata
-		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
-			continue
+		if hasMFA {
+			if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.MFAEnabled, &u.CreatedAt, &u.UpdatedAt); err != nil {
+				continue
+			}
+		} else {
+			if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt); err != nil {
+				continue
+			}
 		}
 		users = append(users, u)
 	}

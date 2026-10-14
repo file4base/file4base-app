@@ -2,13 +2,13 @@
 // Browse mode and look at what came out, and at what the client asked the
 // server for.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/main.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 const _companies = TableModel(id: 't-companies', name: 'companies', displayName: 'Companies', columns: [
   ColumnModel(id: 'cc0', tableId: 't-companies', name: 'id', displayName: 'ID', fieldType: 'TEXT', isPrimaryKey: true),
@@ -39,15 +39,21 @@ const _relationship = RelationshipModel(
 
 /// One recorded call to the related-records endpoint.
 class RelatedCall {
+  const RelatedCall(this.table, this.id, this.relationshipId, this.occurrence, this.sort);
   final String table;
   final String id;
   final String relationshipId;
   final String? occurrence;
   final List<String>? sort;
-  const RelatedCall(this.table, this.id, this.relationshipId, this.occurrence, this.sort);
 }
 
 class _RelatedApi extends ApiClient {
+
+  _RelatedApi({
+    required this.parents,
+    required this.children,
+    this.relationships = const [_relationship],
+  }) : super(baseUrl: 'http://localhost:1');
   final List<Map<String, dynamic>> parents;
   final List<Map<String, dynamic>> children;
   final List<RelationshipModel> relationships;
@@ -56,12 +62,6 @@ class _RelatedApi extends ApiClient {
   final List<Map<String, dynamic>> created = [];
   final List<(String, String, Map<String, dynamic>)> updates = [];
   final List<String> deletes = [];
-
-  _RelatedApi({
-    required this.parents,
-    required this.children,
-    this.relationships = const [_relationship],
-  }) : super(baseUrl: 'http://localhost:1');
 
   @override
   Future<List<RelationshipModel>> listRelationships() async => relationships;
@@ -294,7 +294,7 @@ void main() {
     expect(find.byKey(const ValueKey('portal-new-row')), findsNothing);
   });
 
-  testWidgets('a portal that allows deletion deletes the row\'s related record', (tester) async {
+  testWidgets("a portal that allows deletion deletes the row's related record", (tester) async {
     final api = await _pump(tester,
         layout: _layoutWithPortal(
           portal: const PortalConfigModel(
@@ -447,8 +447,8 @@ void main() {
 
   group('portal setup', () {
     test('the row height falls back to the portal divided by its rows', () {
-      expect(const PortalConfigModel(rowCount: 5).effectiveRowHeight(150), 30);
-      expect(const PortalConfigModel(rowCount: 5, rowHeight: 40).effectiveRowHeight(150), 40);
+      expect(const PortalConfigModel().effectiveRowHeight(150), 30);
+      expect(const PortalConfigModel(rowHeight: 40).effectiveRowHeight(150), 40);
       expect(const PortalConfigModel(rowCount: 0).effectiveRowHeight(10), 24,
           reason: 'a row never collapses to nothing');
     });

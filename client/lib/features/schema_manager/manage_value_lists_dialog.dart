@@ -1,8 +1,7 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/main.dart' show apiClientProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import '../../core/api/api_client.dart';
-import '../../main.dart' show apiClientProvider;
 
 /// File > Manage > Value Lists (#31).
 ///
@@ -160,7 +159,7 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
                   FilledButton.icon(
                     icon: const Icon(Icons.add, size: 16),
                     label: const Text('New Value List...'),
-                    onPressed: () => _edit(),
+                    onPressed: _edit,
                   ),
                 ],
               ),
@@ -263,10 +262,10 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
 
 /// Creating or changing one value list.
 class _ValueListEditor extends StatefulWidget {
-  final ValueListModel? existing;
-  final List<TableModel> tables;
 
   const _ValueListEditor({required this.existing, required this.tables});
+  final ValueListModel? existing;
+  final List<TableModel> tables;
 
   @override
   State<_ValueListEditor> createState() => _ValueListEditorState();

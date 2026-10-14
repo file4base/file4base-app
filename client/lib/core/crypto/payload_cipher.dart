@@ -10,6 +10,18 @@ import 'dart:typed_data';
 /// Associated Data (AAD):
 ///   "F4BE\x01"
 class PayloadCipher {
+
+  /// Creates an AES-256-GCM cipher from a channel secret string.
+  factory PayloadCipher({String secret = ''}) {
+    final normalized = secret.trim().isEmpty ? defaultChannelSecret : secret.trim();
+    final key = sha256(Uint8List.fromList(utf8.encode('file4base-channel-v1:$normalized')));
+    final roundKeys = _expandKey256(key);
+    final zeroBlock = Uint8List(16);
+    final h = _aesEncryptBlock(zeroBlock, roundKeys);
+    return PayloadCipher._(key, roundKeys, h);
+  }
+
+  PayloadCipher._(this._key, this._roundKeys, this._h);
   static const String headerEncrypted = 'X-File4Base-Encrypted';
   static const String headerAcceptEncryption = 'Accept-Encryption';
   static const String headerOriginalContentType = 'X-Original-Content-Type';
@@ -24,24 +36,12 @@ class PayloadCipher {
   final Uint8List _roundKeys;
   final Uint8List _h;
 
-  PayloadCipher._(this._key, this._roundKeys, this._h);
-
-  /// Creates an AES-256-GCM cipher from a channel secret string.
-  factory PayloadCipher({String secret = ''}) {
-    final normalized = secret.trim().isEmpty ? defaultChannelSecret : secret.trim();
-    final key = sha256(Uint8List.fromList(utf8.encode('file4base-channel-v1:$normalized')));
-    final roundKeys = _expandKey256(key);
-    final zeroBlock = Uint8List(16);
-    final h = _aesEncryptBlock(zeroBlock, roundKeys);
-    return PayloadCipher._(key, roundKeys, h);
-  }
-
   /// Non-secret 16-hex-character key fingerprint matching the server's
   /// `/api/v1/crypto/handshake` `key_fingerprint`.
   String get keyFingerprint {
     final digest = sha256(_key);
     final sb = StringBuffer();
-    for (int i = 0; i < 8; i++) {
+    for (var i = 0; i < 8; i++) {
       sb.write(digest[i].toRadixString(16).padLeft(2, '0'));
     }
     return sb.toString();
@@ -52,7 +52,7 @@ class PayloadCipher {
     if (payload.length < _envelopeMagic.length + _nonceSize + _tagSize) {
       return false;
     }
-    for (int i = 0; i < _envelopeMagic.length; i++) {
+    for (var i = 0; i < _envelopeMagic.length; i++) {
       if (payload[i] != _envelopeMagic[i]) return false;
     }
     return true;
@@ -77,12 +77,12 @@ class PayloadCipher {
     final tagMask = _aesEncryptBlock(j0, _roundKeys);
     final s = _ghash(_envelopeMagic, ciphertext);
     final tag = Uint8List(16);
-    for (int i = 0; i < 16; i++) {
+    for (var i = 0; i < 16; i++) {
       tag[i] = s[i] ^ tagMask[i];
     }
 
     final out = Uint8List(_envelopeMagic.length + _nonceSize + ciphertext.length + _tagSize);
-    int offset = 0;
+    var offset = 0;
     out.setRange(offset, offset + _envelopeMagic.length, _envelopeMagic);
     offset += _envelopeMagic.length;
     out.setRange(offset, offset + _nonceSize, iv);
@@ -96,7 +96,7 @@ class PayloadCipher {
   /// Opens an `F4BE\x01` AES-256-GCM envelope (raw binary or base64-encoded)
   /// and verifies its authentication tag in constant time.
   Uint8List decrypt(Uint8List payload) {
-    Uint8List raw = payload;
+    var raw = payload;
     if (!isEncryptedEnvelope(raw)) {
       try {
         final decoded = base64.decode(utf8.decode(payload).trim());
@@ -123,8 +123,8 @@ class PayloadCipher {
 
     final tagMask = _aesEncryptBlock(j0, _roundKeys);
     final s = _ghash(_envelopeMagic, ciphertext);
-    int diff = 0;
-    for (int i = 0; i < 16; i++) {
+    var diff = 0;
+    for (var i = 0; i < 16; i++) {
       final expected = s[i] ^ tagMask[i];
       diff |= expected ^ receivedTag[i];
     }
@@ -138,7 +138,7 @@ class PayloadCipher {
   static Uint8List _randomNonce() {
     final rng = Random.secure();
     final out = Uint8List(_nonceSize);
-    for (int i = 0; i < _nonceSize; i++) {
+    for (var i = 0; i < _nonceSize; i++) {
       out[i] = rng.nextInt(256);
     }
     return out;
@@ -146,7 +146,7 @@ class PayloadCipher {
 
   static Uint8List _inc32(Uint8List counterBlock) {
     final out = Uint8List.fromList(counterBlock);
-    int c = ((out[12] << 24) | (out[13] << 16) | (out[14] << 8) | out[15]) & 0xffffffff;
+    var c = ((out[12] << 24) | (out[13] << 16) | (out[14] << 8) | out[15]) & 0xffffffff;
     c = (c + 1) & 0xffffffff;
     out[12] = (c >> 24) & 0xff;
     out[13] = (c >> 16) & 0xff;
@@ -159,10 +159,10 @@ class PayloadCipher {
     if (input.isEmpty) return Uint8List(0);
     final out = Uint8List(input.length);
     var cb = Uint8List.fromList(icb);
-    for (int offset = 0; offset < input.length; offset += 16) {
+    for (var offset = 0; offset < input.length; offset += 16) {
       final keystream = _aesEncryptBlock(cb, _roundKeys);
       final chunk = min(16, input.length - offset);
-      for (int i = 0; i < chunk; i++) {
+      for (var i = 0; i < chunk; i++) {
         out[offset + i] = input[offset + i] ^ keystream[i];
       }
       cb = _inc32(cb);
@@ -174,9 +174,9 @@ class PayloadCipher {
     var y = Uint8List(16);
 
     void processBytes(Uint8List data) {
-      for (int offset = 0; offset < data.length; offset += 16) {
+      for (var offset = 0; offset < data.length; offset += 16) {
         final chunk = min(16, data.length - offset);
-        for (int i = 0; i < chunk; i++) {
+        for (var i = 0; i < chunk; i++) {
           y[i] ^= data[offset + i];
         }
         y = _gfMul(y, _h);
@@ -189,13 +189,13 @@ class PayloadCipher {
     final lenBlock = ByteData(16);
     final aadBits = aad.length * 8;
     final ctBits = ciphertext.length * 8;
-    lenBlock.setUint32(0, (aadBits ~/ 0x100000000) & 0xffffffff, Endian.big);
-    lenBlock.setUint32(4, aadBits & 0xffffffff, Endian.big);
-    lenBlock.setUint32(8, (ctBits ~/ 0x100000000) & 0xffffffff, Endian.big);
-    lenBlock.setUint32(12, ctBits & 0xffffffff, Endian.big);
+    lenBlock.setUint32(0, (aadBits ~/ 0x100000000) & 0xffffffff);
+    lenBlock.setUint32(4, aadBits & 0xffffffff);
+    lenBlock.setUint32(8, (ctBits ~/ 0x100000000) & 0xffffffff);
+    lenBlock.setUint32(12, ctBits & 0xffffffff);
 
     final lenBytes = lenBlock.buffer.asUint8List();
-    for (int i = 0; i < 16; i++) {
+    for (var i = 0; i < 16; i++) {
       y[i] ^= lenBytes[i];
     }
     return _gfMul(y, _h);
@@ -206,16 +206,16 @@ class PayloadCipher {
     final z = Uint8List(16);
     final v = Uint8List.fromList(y);
 
-    for (int i = 0; i < 128; i++) {
+    for (var i = 0; i < 128; i++) {
       final byteIdx = i >> 3;
       final bitIdx = 7 - (i & 7);
       if (((x[byteIdx] >> bitIdx) & 1) != 0) {
-        for (int j = 0; j < 16; j++) {
+        for (var j = 0; j < 16; j++) {
           z[j] ^= v[j];
         }
       }
       final lsb = v[15] & 1;
-      for (int j = 15; j > 0; j--) {
+      for (var j = 15; j > 0; j--) {
         v[j] = ((v[j] >> 1) | ((v[j - 1] & 1) << 7)) & 0xff;
       }
       v[0] = (v[0] >> 1) & 0xff;
@@ -242,14 +242,14 @@ class PayloadCipher {
   static int _rotr(int x, int n) => ((x & 0xffffffff) >>> n) | ((x << (32 - n)) & 0xffffffff);
 
   static Uint8List sha256(Uint8List data) {
-    int h0 = 0x6a09e667;
-    int h1 = 0xbb67ae85;
-    int h2 = 0x3c6ef372;
-    int h3 = 0xa54ff53a;
-    int h4 = 0x510e527f;
-    int h5 = 0x9b05688c;
-    int h6 = 0x1f83d9ab;
-    int h7 = 0x5be0cd19;
+    var h0 = 0x6a09e667;
+    var h1 = 0xbb67ae85;
+    var h2 = 0x3c6ef372;
+    var h3 = 0xa54ff53a;
+    var h4 = 0x510e527f;
+    var h5 = 0x9b05688c;
+    var h6 = 0x1f83d9ab;
+    var h7 = 0x5be0cd19;
 
     final bitLen = data.length * 8;
     final padLen = ((data.length + 9 + 63) ~/ 64) * 64;
@@ -257,22 +257,29 @@ class PayloadCipher {
     padded.setRange(0, data.length, data);
     padded[data.length] = 0x80;
     final bd = ByteData.sublistView(padded);
-    bd.setUint32(padLen - 8, (bitLen ~/ 0x100000000) & 0xffffffff, Endian.big);
-    bd.setUint32(padLen - 4, bitLen & 0xffffffff, Endian.big);
+    bd.setUint32(padLen - 8, (bitLen ~/ 0x100000000) & 0xffffffff);
+    bd.setUint32(padLen - 4, bitLen & 0xffffffff);
 
     final w = Uint32List(64);
-    for (int chunkOffset = 0; chunkOffset < padLen; chunkOffset += 64) {
-      for (int i = 0; i < 16; i++) {
-        w[i] = bd.getUint32(chunkOffset + i * 4, Endian.big);
+    for (var chunkOffset = 0; chunkOffset < padLen; chunkOffset += 64) {
+      for (var i = 0; i < 16; i++) {
+        w[i] = bd.getUint32(chunkOffset + i * 4);
       }
-      for (int i = 16; i < 64; i++) {
+      for (var i = 16; i < 64; i++) {
         final s0 = _rotr(w[i - 15], 7) ^ _rotr(w[i - 15], 18) ^ ((w[i - 15] & 0xffffffff) >>> 3);
         final s1 = _rotr(w[i - 2], 17) ^ _rotr(w[i - 2], 19) ^ ((w[i - 2] & 0xffffffff) >>> 10);
         w[i] = (w[i - 16] + s0 + w[i - 7] + s1) & 0xffffffff;
       }
 
-      int a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
-      for (int i = 0; i < 64; i++) {
+      var a = h0;
+      var b = h1;
+      var c = h2;
+      var d = h3;
+      var e = h4;
+      var f = h5;
+      var g = h6;
+      var h = h7;
+      for (var i = 0; i < 64; i++) {
         final s1 = _rotr(e, 6) ^ _rotr(e, 11) ^ _rotr(e, 25);
         final ch = (e & f) ^ ((~e & 0xffffffff) & g);
         final temp1 = (h + s1 + ch + _sha256K[i] + w[i]) & 0xffffffff;
@@ -301,14 +308,14 @@ class PayloadCipher {
     }
 
     final out = ByteData(32);
-    out.setUint32(0, h0, Endian.big);
-    out.setUint32(4, h1, Endian.big);
-    out.setUint32(8, h2, Endian.big);
-    out.setUint32(12, h3, Endian.big);
-    out.setUint32(16, h4, Endian.big);
-    out.setUint32(20, h5, Endian.big);
-    out.setUint32(24, h6, Endian.big);
-    out.setUint32(28, h7, Endian.big);
+    out.setUint32(0, h0);
+    out.setUint32(4, h1);
+    out.setUint32(8, h2);
+    out.setUint32(12, h3);
+    out.setUint32(16, h4);
+    out.setUint32(20, h5);
+    out.setUint32(24, h6);
+    out.setUint32(28, h7);
     return out.buffer.asUint8List();
   }
 
@@ -342,11 +349,11 @@ class PayloadCipher {
     w.setRange(0, 32, key);
 
     final temp = Uint8List(4);
-    int bytesGenerated = 32;
-    int rconIteration = 1;
+    var bytesGenerated = 32;
+    var rconIteration = 1;
 
     while (bytesGenerated < 240) {
-      for (int i = 0; i < 4; i++) {
+      for (var i = 0; i < 4; i++) {
         temp[i] = w[bytesGenerated - 4 + i];
       }
 
@@ -358,12 +365,12 @@ class PayloadCipher {
         temp[3] = _sbox[t];
         rconIteration++;
       } else if (bytesGenerated % 32 == 16) {
-        for (int i = 0; i < 4; i++) {
+        for (var i = 0; i < 4; i++) {
           temp[i] = _sbox[temp[i]];
         }
       }
 
-      for (int i = 0; i < 4; i++) {
+      for (var i = 0; i < 4; i++) {
         w[bytesGenerated] = w[bytesGenerated - 32] ^ temp[i];
         bytesGenerated++;
       }
@@ -377,14 +384,14 @@ class PayloadCipher {
     final s = Uint8List.fromList(input);
 
     // AddRoundKey(0)
-    for (int i = 0; i < 16; i++) {
+    for (var i = 0; i < 16; i++) {
       s[i] ^= roundKeys[i];
     }
 
     final tmp = Uint8List(16);
-    for (int round = 1; round <= 14; round++) {
+    for (var round = 1; round <= 14; round++) {
       // SubBytes
-      for (int i = 0; i < 16; i++) {
+      for (var i = 0; i < 16; i++) {
         s[i] = _sbox[s[i]];
       }
 
@@ -407,8 +414,11 @@ class PayloadCipher {
 
       // MixColumns (skip on final round 14)
       if (round < 14) {
-        for (int c = 0; c < 16; c += 4) {
-          final a0 = s[c], a1 = s[c + 1], a2 = s[c + 2], a3 = s[c + 3];
+        for (var c = 0; c < 16; c += 4) {
+          final a0 = s[c];
+          final a1 = s[c + 1];
+          final a2 = s[c + 2];
+          final a3 = s[c + 3];
           final t = a0 ^ a1 ^ a2 ^ a3;
           s[c] ^= t ^ _xtime(a0 ^ a1);
           s[c + 1] ^= t ^ _xtime(a1 ^ a2);
@@ -419,7 +429,7 @@ class PayloadCipher {
 
       // AddRoundKey(round)
       final rkOffset = round * 16;
-      for (int i = 0; i < 16; i++) {
+      for (var i = 0; i < 16; i++) {
         s[i] ^= roundKeys[rkOffset + i];
       }
     }

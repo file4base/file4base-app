@@ -162,17 +162,18 @@ class LayoutActionRunner {
     bool isExecuting() => ifStack.every((f) => f.active);
 
     final steps = List<ScriptStepModel>.from(script.steps)..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx));
+    final hasEndIf = steps.any((s) => s.isEnabled && normalizeStepType(s.stepType) == 'end_if');
     for (final step in steps) {
       if (!step.isEnabled) continue;
       final norm = normalizeStepType(step.stepType);
 
-      if (norm == 'if') {
+      if (norm == 'if' && hasEndIf) {
         final parentActive = isExecuting();
         final cond = parentActive && _evaluateCondition(_extractCondition(step.params), localVars);
         ifStack.add(_IfFrame(parentActive: parentActive, branchTaken: cond, active: cond));
         continue;
       }
-      if (norm == 'else_if') {
+      if (norm == 'else_if' && hasEndIf) {
         if (ifStack.isNotEmpty) {
           final top = ifStack.last;
           if (!top.parentActive || top.branchTaken) {
@@ -185,7 +186,7 @@ class LayoutActionRunner {
         }
         continue;
       }
-      if (norm == 'else') {
+      if (norm == 'else' && hasEndIf) {
         if (ifStack.isNotEmpty) {
           final top = ifStack.last;
           if (!top.parentActive || top.branchTaken) {
@@ -197,7 +198,7 @@ class LayoutActionRunner {
         }
         continue;
       }
-      if (norm == 'end_if') {
+      if (norm == 'end_if' && hasEndIf) {
         if (ifStack.isNotEmpty) {
           ifStack.removeLast();
         }
@@ -228,12 +229,16 @@ class LayoutActionRunner {
     final norm = normalizeStepType(stepType);
     switch (norm) {
       case 'comment':
+        return const LayoutActionResult.ok();
       case 'if':
       case 'else_if':
       case 'else':
       case 'end_if':
-        return const LayoutActionResult.ok();
+        return LayoutActionResult.stopped('Step "$stepType" is not supported on a button.');
       case 'set_variable':
+        if (!params.containsKey('value') && !params.containsKey('formula') && !params.containsKey('text')) {
+          return LayoutActionResult.stopped('Step "$stepType" is not supported without a value.');
+        }
         _execSetVariable(params, vars);
         return const LayoutActionResult.ok();
       case 'new_record':

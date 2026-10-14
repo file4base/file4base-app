@@ -1,7 +1,7 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/solution_models.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:flutter/material.dart';
-import '../../core/api/api_client.dart';
-import '../../core/models/solution_models.dart';
-import '../../core/services/solution_storage.dart';
 
 /// Shortest password accepted for the first owner of a new database (the
 /// server enforces the same rule).
@@ -24,12 +24,6 @@ String? ownerPasswordProblem(String password, {required String user, required St
 }
 
 class NewDatabaseDialogResult {
-  final String fileName;
-  final String databaseName;
-  final String databasePassword;
-  final String user;
-  final SolutionPackage package;
-  final StorageDirectoryRef? directoryRef;
 
   const NewDatabaseDialogResult({
     required this.fileName,
@@ -39,12 +33,18 @@ class NewDatabaseDialogResult {
     required this.package,
     this.directoryRef,
   });
+  final String fileName;
+  final String databaseName;
+  final String databasePassword;
+  final String user;
+  final SolutionPackage package;
+  final StorageDirectoryRef? directoryRef;
 }
 
 class NewDatabaseDialog extends StatefulWidget {
-  final ApiClient apiClient;
 
-  const NewDatabaseDialog({super.key, required this.apiClient});
+  const NewDatabaseDialog({required this.apiClient, super.key});
+  final ApiClient apiClient;
 
   static Future<NewDatabaseDialogResult?> show(BuildContext context, ApiClient apiClient) {
     return showDialog<NewDatabaseDialogResult>(
@@ -86,7 +86,7 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
   }
 
   void _onSolutionNameChanged(String val) {
-    final sanitized = val.toLowerCase().trim().replaceAll(RegExp(r'[^a-z0-9_]'), '_');
+    final sanitized = val.toLowerCase().trim().replaceAll(RegExp('[^a-z0-9_]'), '_');
     if (sanitized.isNotEmpty) {
       _fileNameController.text = '$sanitized.f4p';
       _dbNameController.text = '${sanitized}_db';
@@ -130,7 +130,6 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
       final pkg = SolutionPackage.newDatabase(
         solutionName: solutionName,
         connection: DatabaseConnectionConfig(
-          engine: 'postgres',
           host: host,
           port: port,
           database: dbName,
@@ -351,7 +350,6 @@ class _NewDatabaseDialogState extends State<NewDatabaseDialog> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      flex: 1,
                       child: TextFormField(
                         controller: _portController,
                         decoration: const InputDecoration(

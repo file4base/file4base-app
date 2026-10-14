@@ -1,8 +1,8 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/tools/structure_clipboard_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:file4base_client/core/api/api_client.dart';
-import 'package:file4base_client/features/tools/structure_clipboard_dialog.dart';
 
 void main() {
   testWidgets(

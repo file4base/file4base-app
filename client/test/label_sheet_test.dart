@@ -1,20 +1,20 @@
 // #33 — a labels layout is one label; the sheet lays them out across and down
 // the page, one record each.
 
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/features/layout_engine/label_sheet_view.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_blueprint.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-final _stock = LabelStock.averyL7160; // 3 across, 7 down = 21 to a sheet
+const LabelStock _stock = LabelStock.averyL7160; // 3 across, 7 down = 21 to a sheet
 
-LayoutDefinitionModel _labelLayout() => LayoutBlueprint(
+LayoutDefinitionModel _labelLayout() => const LayoutBlueprint(
       name: 'Mailing Labels',
       kind: LayoutKind.labels,
       tableOccurrence: 'customers',
       stock: _stock,
-      fields: const [
+      fields: [
         (name: 'last_name', label: 'Last Name', isSummary: false),
         (name: 'home_address_1', label: 'Home Address 1', isSummary: false),
         (name: 'home_address_2', label: 'Home Address 2', isSummary: false),

@@ -1,7 +1,7 @@
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
-import '../api/api_client.dart';
-import '../models/page_setup_model.dart';
-import '../../main.dart';
 
 // ─── Layout Tool Enum ─────────────────────────────────────────────────────────
 
@@ -29,6 +29,31 @@ enum LayoutTool {
 // ─── Main Sidebar Widget (StatefulWidget for tool selection) ──────────────────
 
 class File4BaseStatusSidebar extends StatefulWidget {
+
+  const File4BaseStatusSidebar({
+    required this.onLayoutSelected, required this.tables, required this.selectedTable, required this.onTableSelected, required this.mode, required this.currentRecordIndex, required this.totalRecords, required this.onPreviousRecord, required this.onNextRecord, required this.onGoToRecord, required this.onManageDatabase, super.key,
+    this.layouts = const [],
+    this.selectedLayout,
+    this.onNewLayout,
+    this.onManageLayouts,
+    this.onRenameLayout,
+    this.isUnsorted = true,
+    this.isFindOmit = false,
+    this.onToggleOmit,
+    this.onPerformFind,
+    this.onShowAllRecords,
+    this.onNewRecord,
+    this.onDeleteRecord,
+    this.layoutCount = 1,
+    this.currentLayoutIndex = 0,
+    this.onLayoutChanged,
+    this.selectedTool = LayoutTool.pointer,
+    this.onToolSelected,
+    this.strokeWidth = 1.0,
+    this.onStrokeWidthChanged,
+    this.pageSetup = const PageSetupModel(),
+    this.onPageSetup,
+  });
   final List<LayoutModel> layouts;
   final LayoutModel? selectedLayout;
   final ValueChanged<LayoutModel> onLayoutSelected;
@@ -69,42 +94,6 @@ class File4BaseStatusSidebar extends StatefulWidget {
   final PageSetupModel pageSetup;
   final VoidCallback? onPageSetup;
 
-  const File4BaseStatusSidebar({
-    super.key,
-    this.layouts = const [],
-    this.selectedLayout,
-    required this.onLayoutSelected,
-    this.onNewLayout,
-    this.onManageLayouts,
-    this.onRenameLayout,
-    required this.tables,
-    required this.selectedTable,
-    required this.onTableSelected,
-    required this.mode,
-    required this.currentRecordIndex,
-    required this.totalRecords,
-    this.isUnsorted = true,
-    required this.onPreviousRecord,
-    required this.onNextRecord,
-    required this.onGoToRecord,
-    required this.onManageDatabase,
-    this.isFindOmit = false,
-    this.onToggleOmit,
-    this.onPerformFind,
-    this.onShowAllRecords,
-    this.onNewRecord,
-    this.onDeleteRecord,
-    this.layoutCount = 1,
-    this.currentLayoutIndex = 0,
-    this.onLayoutChanged,
-    this.selectedTool = LayoutTool.pointer,
-    this.onToolSelected,
-    this.strokeWidth = 1.0,
-    this.onStrokeWidthChanged,
-    this.pageSetup = const PageSetupModel(),
-    this.onPageSetup,
-  });
-
   @override
   State<File4BaseStatusSidebar> createState() => _File4BaseStatusSidebarState();
 }
@@ -124,7 +113,7 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
       width: 120,
       decoration: BoxDecoration(
         color: bgColor,
-        border: Border(right: BorderSide(color: borderColor, width: 1.0)),
+        border: Border(right: BorderSide(color: borderColor)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -256,13 +245,13 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
                     ),
                   );
                 }),
-                DropdownMenuItem<String>(
+                const DropdownMenuItem<String>(
                   value: '__manage__',
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.settings, size: 12, color: Color(0xFF1E88E5)),
-                      const SizedBox(width: 4),
+                      Icon(Icons.settings, size: 12, color: Color(0xFF1E88E5)),
+                      SizedBox(width: 4),
                       Expanded(
                         child: Text(
                           'Manage Layouts...',
@@ -270,7 +259,7 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 10,
-                            color: const Color(0xFF1E88E5),
+                            color: Color(0xFF1E88E5),
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -278,13 +267,13 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
                     ],
                   ),
                 ),
-                DropdownMenuItem<String>(
+                const DropdownMenuItem<String>(
                   value: '__new__',
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.add, size: 12, color: Colors.green),
-                      const SizedBox(width: 4),
+                      Icon(Icons.add, size: 12, color: Colors.green),
+                      SizedBox(width: 4),
                       Expanded(
                         child: Text(
                           'New Layout...',
@@ -437,33 +426,33 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
           child: Column(
             children: [
               _buildToolRow([
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.pointer,
                     icon: Icons.near_me,
                     label: 'Pointer'),
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.text,
-                    iconWidget: const Text('A',
+                    iconWidget: Text('A',
                         style: TextStyle(
                             fontSize: 15, fontWeight: FontWeight.bold)),
                     label: 'Text'),
               ], isDark),
               _buildToolRow([
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.line,
                     icon: Icons.remove,
                     label: 'Line'),
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.rectangle,
                     icon: Icons.crop_square,
                     label: 'Rectangle'),
               ], isDark),
               _buildToolRow([
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.roundedRect,
                     icon: Icons.rounded_corner,
                     label: 'Rounded Rect'),
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.oval,
                     icon: Icons.circle_outlined,
                     label: 'Oval'),
@@ -478,32 +467,32 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
           child: Column(
             children: [
               _buildToolRow([
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.field,
                     icon: Icons.input,
                     label: 'Field'),
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.part,
-                    iconWidget: const Text('☰',
+                    iconWidget: Text('☰',
                         style: TextStyle(fontSize: 14)),
                     label: 'Part'),
               ], isDark),
               _buildToolRow([
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.button,
                     icon: Icons.smart_button,
                     label: 'Button'),
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.portal,
                     icon: Icons.table_rows,
                     label: 'Portal'),
               ], isDark),
               _buildToolRow([
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.format,
                     icon: Icons.format_color_fill,
                     label: 'Format'),
-                _ToolDef(
+                const _ToolDef(
                     tool: LayoutTool.tabOrder,
                     icon: Icons.keyboard_tab,
                     label: 'Set Tab Order'),
@@ -745,104 +734,22 @@ class _File4BaseStatusSidebarState extends State<File4BaseStatusSidebar> {
 // ─── Tool Definition Helper ───────────────────────────────────────────────────
 
 class _ToolDef {
+
+  const _ToolDef(
+      {required this.tool, required this.label, this.icon, this.iconWidget});
   final LayoutTool tool;
   final IconData? icon;
   final Widget? iconWidget;
   final String label;
-
-  const _ToolDef(
-      {required this.tool, this.icon, this.iconWidget, required this.label});
 }
 
 // ─── Painters ─────────────────────────────────────────────────────────────────
 
-class _File4BaseBookPainter extends CustomPainter {
-  final bool isDark;
-  final bool hasBookmark;
-
-  const _File4BaseBookPainter({required this.isDark, this.hasBookmark = true});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final pageBg = isDark ? const Color(0xFF2D3748) : Colors.white;
-    final pageBorder =
-        isDark ? const Color(0xFF4A5568) : const Color(0xFF718096);
-    final ringColor =
-        isDark ? const Color(0xFFCBD5E0) : const Color(0xFF2D3748);
-    final lineRuleColor =
-        isDark ? const Color(0xFF4A5568) : const Color(0xFFE2E8F0);
-    const bookmarkColor = Color(0xFF3182CE);
-
-    const leftOffset = 10.0;
-    final pageWidth = size.width - leftOffset - (hasBookmark ? 8 : 2);
-    final pageRect = Rect.fromLTWH(leftOffset, 2, pageWidth, size.height - 4);
-
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          pageRect.translate(2, 2), const Radius.circular(2)),
-      Paint()..color = Colors.black.withValues(alpha: 0.12),
-    );
-
-    final pageRRect =
-        RRect.fromRectAndRadius(pageRect, const Radius.circular(2));
-    canvas.drawRRect(pageRRect, Paint()..color = pageBg);
-
-    final linePaint = Paint()
-      ..color = lineRuleColor
-      ..strokeWidth = 1.0;
-    for (double y = pageRect.top + 10; y < pageRect.bottom - 4; y += 8) {
-      canvas.drawLine(Offset(pageRect.left + 4, y),
-          Offset(pageRect.right - 4, y), linePaint);
-    }
-
-    if (hasBookmark) {
-      final tabPath = Path()
-        ..moveTo(pageRect.right - 1, pageRect.top + 10)
-        ..lineTo(pageRect.right + 7, pageRect.top + 14)
-        ..lineTo(pageRect.right + 7, pageRect.top + 28)
-        ..lineTo(pageRect.right - 1, pageRect.top + 24)
-        ..close();
-      canvas.drawPath(tabPath, Paint()..color = bookmarkColor);
-    }
-
-    canvas.drawRRect(
-        pageRRect,
-        Paint()
-          ..color = pageBorder
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.0);
-
-    final ringPaint = Paint()
-      ..color = ringColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.6;
-    final holePaint = Paint()
-      ..color = isDark ? Colors.black : const Color(0xFF4A5568);
-
-    const ringCount = 5;
-    final step = (pageRect.height - 10) / (ringCount - 1);
-    for (int i = 0; i < ringCount; i++) {
-      final y = pageRect.top + 5 + i * step;
-      canvas.drawCircle(Offset(pageRect.left + 3, y), 1.5, holePaint);
-      canvas.drawPath(
-          Path()
-            ..moveTo(pageRect.left - 4, y - 2)
-            ..cubicTo(pageRect.left - 8, y - 3, pageRect.left - 4, y + 3,
-                pageRect.left + 3, y + 1),
-          ringPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _File4BaseBookPainter old) =>
-      old.isDark != isDark || old.hasBookmark != hasBookmark;
-}
-
 /// Layout thumbnail preview painter
 class _LayoutThumbnailPainter extends CustomPainter {
-  final bool isDark;
 
   const _LayoutThumbnailPainter({required this.isDark});
+  final bool isDark;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -861,9 +768,9 @@ class _LayoutThumbnailPainter extends CustomPainter {
     canvas.drawRect(
         Rect.fromLTWH(0, 0, size.width, 12),
         Paint()..color = headerColor);
-    canvas.drawLine(Offset(0, 12), Offset(size.width, 12),
+    canvas.drawLine(const Offset(0, 12), Offset(size.width, 12),
         Paint()..color = lineColor..strokeWidth = 0.5);
-    for (int i = 0; i < 3; i++) {
+    for (var i = 0; i < 3; i++) {
       canvas.drawRRect(
           RRect.fromRectAndRadius(
               Rect.fromLTWH(6, 16.0 + i * 10, size.width - 12, 7),

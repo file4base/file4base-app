@@ -46,6 +46,29 @@ func writeUnauthorized(w http.ResponseWriter, r *http.Request, detail string) {
 	telemetry.WriteProblem(w, r, http.StatusUnauthorized, "Authentication Required", detail)
 }
 
+func extractClientSessionMeta(r *http.Request) (clientIP, webContainer, userAgent string) {
+	clientIP = strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
+	if idx := strings.Index(clientIP, ","); idx != -1 {
+		clientIP = strings.TrimSpace(clientIP[:idx])
+	}
+	if clientIP == "" {
+		clientIP = strings.TrimSpace(r.Header.Get("X-Real-IP"))
+	}
+	if clientIP == "" {
+		clientIP = r.RemoteAddr
+	}
+	webContainer = strings.TrimSpace(r.Header.Get("X-Web-Container"))
+	if webContainer == "" {
+		if strings.Contains(strings.ToLower(r.UserAgent()), "dart") {
+			webContainer = "desktop-native"
+		} else {
+			webContainer = "direct-api"
+		}
+	}
+	userAgent = strings.TrimSpace(r.UserAgent())
+	return clientIP, webContainer, userAgent
+}
+
 // attach loads the session for the request's bearer token into the context.
 // It returns the request unchanged (ok=false) when there is no valid session.
 func (m *AuthMiddleware) attach(w http.ResponseWriter, r *http.Request) (*http.Request, bool, bool) {
@@ -78,6 +101,9 @@ func (m *AuthMiddleware) attach(w http.ResponseWriter, r *http.Request) (*http.R
 		m.sessions.Revoke(token)
 		return r, false, false
 	}
+
+	clientIP, webContainer, userAgent := extractClientSessionMeta(r)
+	m.sessions.TouchMeta(token, clientIP, webContainer, userAgent)
 
 	ctx := auth.WithSession(r.Context(), sess)
 	ctx = auth.WithToken(ctx, token)

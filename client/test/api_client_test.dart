@@ -128,7 +128,7 @@ void main() {
 
       final client = ApiClient(baseUrl: 'http://test-server:8080', httpClient: mockClient);
       expect(
-        () => client.listTables(),
+        client.listTables,
         throwsA(isA<ApiException>().having(
           (e) => e.detail,
           'detail',

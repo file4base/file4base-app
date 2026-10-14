@@ -1,10 +1,11 @@
 import 'dart:convert';
+
+import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/core/theme/theme_model.dart';
+import 'package:file4base_client/core/theme/theme_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/services/solution_storage.dart';
-import '../../core/theme/theme_model.dart';
-import '../../core/theme/theme_provider.dart';
 
 class ManageThemesDialog extends ConsumerStatefulWidget {
   const ManageThemesDialog({super.key});
@@ -12,7 +13,6 @@ class ManageThemesDialog extends ConsumerStatefulWidget {
   static Future<void> show(BuildContext context) {
     return showDialog(
       context: context,
-      barrierDismissible: true,
       builder: (ctx) => const ManageThemesDialog(),
     );
   }
@@ -83,7 +83,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
         ref.read(appThemeProvider.notifier).copyThemeToJson(_selectedTheme);
     final safeName = _selectedTheme.name
         .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp('[^a-z0-9]+'), '_')
         .replaceAll(RegExp(r'^_+|_+$'), '');
     await SolutionStorageService.saveFile(
       filename: '${safeName.isEmpty ? "theme" : safeName}.f4theme.json',
@@ -172,7 +172,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
                   onPressed: () {
                     try {
                       final imported =
-                          notifier.importThemeFromJson(draftJson, apply: true);
+                          notifier.importThemeFromJson(draftJson);
                       setState(() => _selectedTheme = imported);
                       Navigator.of(dialogCtx).pop();
                     } catch (e) {
@@ -576,7 +576,7 @@ class _ManageThemesDialogState extends ConsumerState<ManageThemesDialog> {
         decoration: BoxDecoration(
           color: color,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.black26, width: 1),
+          border: Border.all(color: Colors.black26),
         ),
       ),
     );

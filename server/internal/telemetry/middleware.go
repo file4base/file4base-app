@@ -123,6 +123,8 @@ func Middleware(serviceName, version string) func(next http.Handler) http.Handle
 				UserAgent:      r.UserAgent(),
 			}
 
+			DefaultCollector().Record(entry)
+
 			jsonBytes, err := json.Marshal(entry)
 			if err == nil {
 				_, _ = fmt.Fprintln(os.Stdout, string(jsonBytes))

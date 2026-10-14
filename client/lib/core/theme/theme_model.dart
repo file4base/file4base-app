@@ -12,6 +12,62 @@ enum AppThemeId {
 }
 
 class AppThemeDefinition {
+
+  const AppThemeDefinition({
+    required this.id,
+    required this.name, required this.description, required this.category, required this.isDark, required this.background, required this.surface, required this.surfaceContainer, required this.border, required this.textPrimary, required this.textSecondary, required this.primaryAccent, required this.secondaryAccent, required this.navColor, required this.recordsColor, required this.controlColor, required this.fieldsColor, required this.integrationColor, this.customKey,
+    this.successColor = const Color(0xFF10B981),
+    this.warningColor = const Color(0xFFF59E0B),
+    this.errorColor = const Color(0xFFEF4444),
+  });
+
+  factory AppThemeDefinition.fromJson(Map<String, dynamic> json) {
+    final isDark = json['is_dark'] as bool? ?? false;
+    final base = isDark ? AppThemes.dark : AppThemes.light;
+    final rawColors = json['colors'];
+    final colors = rawColors is Map
+        ? Map<String, dynamic>.from(rawColors)
+        : const <String, dynamic>{};
+    final name = (json['name'] as String?)?.trim();
+    if (name == null || name.isEmpty) {
+      throw const FormatException('Theme JSON must include a non-empty "name".');
+    }
+    final rawId = (json['id'] as String?)?.trim() ??
+        name.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_');
+    return AppThemeDefinition(
+      id: AppThemeId.custom,
+      customKey: 'custom_$rawId',
+      name: name,
+      description: (json['description'] as String?)?.trim().isNotEmpty == true
+          ? (json['description'] as String).trim()
+          : 'Imported custom layout theme.',
+      category: (json['category'] as String?)?.trim().isNotEmpty == true
+          ? (json['category'] as String).trim()
+          : 'Custom & Imported',
+      isDark: isDark,
+      background: _colorFromHex(colors['background'], base.background),
+      surface: _colorFromHex(colors['surface'], base.surface),
+      surfaceContainer:
+          _colorFromHex(colors['surface_container'], base.surfaceContainer),
+      border: _colorFromHex(colors['border'], base.border),
+      textPrimary: _colorFromHex(colors['text_primary'], base.textPrimary),
+      textSecondary:
+          _colorFromHex(colors['text_secondary'], base.textSecondary),
+      primaryAccent:
+          _colorFromHex(colors['primary_accent'], base.primaryAccent),
+      secondaryAccent:
+          _colorFromHex(colors['secondary_accent'], base.secondaryAccent),
+      successColor: _colorFromHex(colors['success'], base.successColor),
+      warningColor: _colorFromHex(colors['warning'], base.warningColor),
+      errorColor: _colorFromHex(colors['error'], base.errorColor),
+      navColor: _colorFromHex(colors['nav'], base.navColor),
+      recordsColor: _colorFromHex(colors['records'], base.recordsColor),
+      controlColor: _colorFromHex(colors['control'], base.controlColor),
+      fieldsColor: _colorFromHex(colors['fields'], base.fieldsColor),
+      integrationColor:
+          _colorFromHex(colors['integration'], base.integrationColor),
+    );
+  }
   final AppThemeId id;
   final String? customKey;
   final String name;
@@ -42,31 +98,6 @@ class AppThemeDefinition {
   final Color controlColor;
   final Color fieldsColor;
   final Color integrationColor;
-
-  const AppThemeDefinition({
-    required this.id,
-    this.customKey,
-    required this.name,
-    required this.description,
-    required this.category,
-    required this.isDark,
-    required this.background,
-    required this.surface,
-    required this.surfaceContainer,
-    required this.border,
-    required this.textPrimary,
-    required this.textSecondary,
-    required this.primaryAccent,
-    required this.secondaryAccent,
-    this.successColor = const Color(0xFF10B981),
-    this.warningColor = const Color(0xFFF59E0B),
-    this.errorColor = const Color(0xFFEF4444),
-    required this.navColor,
-    required this.recordsColor,
-    required this.controlColor,
-    required this.fieldsColor,
-    required this.integrationColor,
-  });
 
   String get uniqueKey => customKey ?? id.name;
 
@@ -112,54 +143,6 @@ class AppThemeDefinition {
           'integration': _colorToHex(integrationColor),
         },
       };
-
-  factory AppThemeDefinition.fromJson(Map<String, dynamic> json) {
-    final isDark = json['is_dark'] as bool? ?? false;
-    final base = isDark ? AppThemes.dark : AppThemes.light;
-    final rawColors = json['colors'];
-    final colors = rawColors is Map
-        ? Map<String, dynamic>.from(rawColors)
-        : const <String, dynamic>{};
-    final name = (json['name'] as String?)?.trim();
-    if (name == null || name.isEmpty) {
-      throw const FormatException('Theme JSON must include a non-empty "name".');
-    }
-    final rawId = (json['id'] as String?)?.trim() ??
-        name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
-    return AppThemeDefinition(
-      id: AppThemeId.custom,
-      customKey: 'custom_$rawId',
-      name: name,
-      description: (json['description'] as String?)?.trim().isNotEmpty == true
-          ? (json['description'] as String).trim()
-          : 'Imported custom layout theme.',
-      category: (json['category'] as String?)?.trim().isNotEmpty == true
-          ? (json['category'] as String).trim()
-          : 'Custom & Imported',
-      isDark: isDark,
-      background: _colorFromHex(colors['background'], base.background),
-      surface: _colorFromHex(colors['surface'], base.surface),
-      surfaceContainer:
-          _colorFromHex(colors['surface_container'], base.surfaceContainer),
-      border: _colorFromHex(colors['border'], base.border),
-      textPrimary: _colorFromHex(colors['text_primary'], base.textPrimary),
-      textSecondary:
-          _colorFromHex(colors['text_secondary'], base.textSecondary),
-      primaryAccent:
-          _colorFromHex(colors['primary_accent'], base.primaryAccent),
-      secondaryAccent:
-          _colorFromHex(colors['secondary_accent'], base.secondaryAccent),
-      successColor: _colorFromHex(colors['success'], base.successColor),
-      warningColor: _colorFromHex(colors['warning'], base.warningColor),
-      errorColor: _colorFromHex(colors['error'], base.errorColor),
-      navColor: _colorFromHex(colors['nav'], base.navColor),
-      recordsColor: _colorFromHex(colors['records'], base.recordsColor),
-      controlColor: _colorFromHex(colors['control'], base.controlColor),
-      fieldsColor: _colorFromHex(colors['fields'], base.fieldsColor),
-      integrationColor:
-          _colorFromHex(colors['integration'], base.integrationColor),
-    );
-  }
 
   ThemeData toThemeData() {
     final brightness = isDark ? Brightness.dark : Brightness.light;
@@ -241,9 +224,6 @@ class AppThemes {
     textSecondary: Color(0xFF94A3B8), // Slate 400
     primaryAccent: Color(0xFF38BDF8), // Cyan 400
     secondaryAccent: Color(0xFF60A5FA), // Blue 400
-    successColor: Color(0xFF10B981),
-    warningColor: Color(0xFFF59E0B),
-    errorColor: Color(0xFFEF4444),
     navColor: Color(0xFFA855F7),    // Violet 500
     recordsColor: Color(0xFF10B981),// Emerald 500
     controlColor: Color(0xFFF59E0B),// Amber 500

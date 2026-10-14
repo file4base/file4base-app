@@ -3,10 +3,9 @@
 
 import 'dart:typed_data';
 
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:flutter/material.dart';
-
-import '../../core/api/api_client.dart';
-import '../../core/services/solution_storage.dart';
 
 /// The forms the report takes.
 enum DesignReportFormat { html, xml, json }
@@ -38,6 +37,13 @@ extension DesignReportFormatInfo on DesignReportFormat {
 }
 
 class DesignReportDialog extends StatefulWidget {
+
+  const DesignReportDialog({
+    required this.apiClient, super.key,
+    this.solutionName,
+    this.initialFormat = DesignReportFormat.html,
+    this.save,
+  });
   final ApiClient apiClient;
   final String? solutionName;
   final DesignReportFormat initialFormat;
@@ -45,14 +51,6 @@ class DesignReportDialog extends StatefulWidget {
   /// Where the document goes. The platform's own save dialog by default;
   /// a test supplies its own, since there is no file system to save to.
   final Future<void> Function(String fileName, Uint8List bytes)? save;
-
-  const DesignReportDialog({
-    super.key,
-    required this.apiClient,
-    this.solutionName,
-    this.initialFormat = DesignReportFormat.html,
-    this.save,
-  });
 
   static Future<void> show(
     BuildContext context, {

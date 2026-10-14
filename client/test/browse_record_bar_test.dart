@@ -1,10 +1,10 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/main.dart' show OperationalMode;
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
 
-final _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: const [
+const _table = TableModel(id: 't1', name: 'contacts', displayName: 'Contacts', columns: [
   ColumnModel(id: 'c0', tableId: 't1', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
   ColumnModel(id: 'c1', tableId: 't1', name: 'first_name', displayName: 'First name', fieldType: 'varchar'),
   ColumnModel(id: 'c2', tableId: 't1', name: 'city', displayName: 'City', fieldType: 'varchar'),

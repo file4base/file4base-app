@@ -2,21 +2,19 @@
 // the records on screen, marks the step about to run, and says where it
 // stopped.
 
+import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
+import 'package:file4base_client/features/script_workspace/script_debugger.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/api/api_client.dart';
-import '../../core/models/script_models.dart';
-import '../layout_engine/layout_action_runner.dart';
-import 'script_debugger.dart';
-
 class ScriptDebuggerDialog extends StatefulWidget {
+
+  const ScriptDebuggerDialog({required this.apiClient, required this.host, super.key});
   final ApiClient apiClient;
 
   /// What the steps act on: the data browser, the same host the layout
   /// buttons run against, so debugging a script does what running it does.
   final LayoutActionHost? host;
-
-  const ScriptDebuggerDialog({super.key, required this.apiClient, required this.host});
 
   static Future<void> show(
     BuildContext context, {
