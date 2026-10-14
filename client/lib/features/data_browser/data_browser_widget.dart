@@ -655,9 +655,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             .where((v) => v.isNotEmpty)
             .toSet();
         return SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               for (final value in values)
                 InkWell(
@@ -690,9 +691,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
       case FieldControlStyle.radioButtonSet:
         return SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 2,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               for (final value in values)
                 InkWell(
@@ -1981,6 +1983,50 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       }
       final rawVal = col != null ? rec[col.name] : rec[fieldName];
       final effStyle = obj.style.effectiveForValue(rawVal);
+      if (col != null &&
+          recordIndex == _currentIndex &&
+          !col.isPrimaryKey &&
+          !_isComputed(col.name) &&
+          (obj.fieldBinding?.allowBrowseEntry ?? true)) {
+        final ctrl = _fieldControllers[col.name];
+        final fn = _fieldFocusNodes[col.name];
+        return TextField(
+          controller: ctrl,
+          focusNode: fn,
+          textAlign: _parseTextAlign(effStyle.textAlign),
+          style: layoutTextStyle(
+            effStyle,
+            fallbackColor: isDark ? Colors.white : Colors.black87,
+          ),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: EdgeInsets.only(
+              left: 6 + effStyle.indentLeft,
+              right: 6 + effStyle.indentRight,
+              top: 3,
+              bottom: 3,
+            ),
+            fillColor: effStyle.fillColor != null
+                ? _parseColor(effStyle.fillColor!)
+                : (isDark ? const Color(0xFF0D1117) : Colors.white),
+            filled: true,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(effStyle.cornerRadius),
+              borderSide: BorderSide(
+                color: effStyle.borderColor != null
+                    ? _parseColor(effStyle.borderColor!)
+                    : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
+              ),
+            ),
+          ),
+          onChanged: (v) => _onFieldChanged(col.name, v),
+          onEditingComplete: () {
+            _fieldDebounceTimers[col.name]?.cancel();
+            _saveField(col.name, ctrl?.text ?? '');
+            fn?.nextFocus();
+          },
+        );
+      }
       final rawText = col != null ? fieldText(col, rawVal) : (rawVal?.toString() ?? '');
       final hasCustomFormat = effStyle.numberFormat != 'general' ||
           effStyle.dateFormat != 'as_entered' ||
@@ -1992,31 +2038,41 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       final fillColor = effStyle.fillColor != null
           ? _parseColor(effStyle.fillColor!)
           : (isDark ? const Color(0xFF0D1117) : Colors.white);
-      return Container(
-        alignment: _parseAlignment(effStyle.textAlign),
-        padding: EdgeInsets.only(
-          left: 8 + effStyle.indentLeft,
-          right: 8 + effStyle.indentRight,
-          top: 4,
-          bottom: 4,
-        ),
-        decoration: BoxDecoration(
-          color: fillColor,
-          border: Border.all(
-            color: effStyle.borderColor != null
-                ? _parseColor(effStyle.borderColor!)
-                : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
+      return GestureDetector(
+        onTap: col == null || _isComputed(col.name)
+            ? null
+            : () {
+                _goToRecordIndex(recordIndex);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  _fieldFocusNodes[col.name]?.requestFocus();
+                });
+              },
+        child: Container(
+          alignment: _parseAlignment(effStyle.textAlign),
+          padding: EdgeInsets.only(
+            left: 8 + effStyle.indentLeft,
+            right: 8 + effStyle.indentRight,
+            top: 4,
+            bottom: 4,
           ),
-          borderRadius: BorderRadius.circular(effStyle.cornerRadius),
-        ),
-        child: Text(
-          valText,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: _parseTextAlign(effStyle.textAlign),
-          style: layoutTextStyle(
-            effStyle,
-            fallbackColor: isDark ? Colors.white : Colors.black87,
+          decoration: BoxDecoration(
+            color: fillColor,
+            border: Border.all(
+              color: effStyle.borderColor != null
+                  ? _parseColor(effStyle.borderColor!)
+                  : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
+            ),
+            borderRadius: BorderRadius.circular(effStyle.cornerRadius),
+          ),
+          child: Text(
+            valText,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: _parseTextAlign(effStyle.textAlign),
+            style: layoutTextStyle(
+              effStyle,
+              fallbackColor: isDark ? Colors.white : Colors.black87,
+            ),
           ),
         ),
       );
@@ -2138,13 +2194,52 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                               child: Text('${i + 1}', style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
                             ),
                           ),
-                          ...cols.map((c) => Container(
+                          ...cols.map((c) {
+                            final computed = _isComputed(c.name);
+                            if (selected && !computed) {
+                              final ctrl = _fieldControllers[c.name];
+                              final fn = _fieldFocusNodes[c.name];
+                              return Container(
+                                width: colWidth,
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                                alignment: Alignment.centerLeft,
+                                child: TextField(
+                                  controller: ctrl,
+                                  focusNode: fn,
+                                  style: const TextStyle(fontSize: 12),
+                                  decoration: const InputDecoration(
+                                    isDense: true,
+                                    contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  onChanged: (v) => _onFieldChanged(c.name, v),
+                                  onEditingComplete: () {
+                                    _fieldDebounceTimers[c.name]?.cancel();
+                                    _saveField(c.name, ctrl?.text ?? '');
+                                    fn?.nextFocus();
+                                  },
+                                ),
+                              );
+                            }
+                            return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () {
+                                _goToRecordIndex(i);
+                                if (!computed) {
+                                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                                    _fieldFocusNodes[c.name]?.requestFocus();
+                                  });
+                                }
+                              },
+                              child: Container(
                                 width: colWidth,
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 alignment: Alignment.centerLeft,
                                 child: Text(_columnText(c.name, r[c.name]),
                                     style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
-                              )),
+                              ),
+                            );
+                          }),
                         ]),
                       ),
                     );
@@ -2283,6 +2378,57 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         widget.onObjectStyleChanged?.call(activeObj.id, newStyle);
                       }
                     },
+                  ),
+                ),
+              if (!isFindMode &&
+                  !layout.objects.any((o) =>
+                      o.type == 'field' &&
+                      (o.fieldBinding?.allowBrowseEntry ?? true) &&
+                      !_isComputed(o.fieldBinding?.fieldName ?? o.text)))
+                Container(
+                  width: math.max<double>(canvasWidth, 560.0),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.blue.shade400, width: 0.8),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 16, color: Color(0xFF1E88E5)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '"${layout.name}" is a read-only / print / chart layout. Switch to a Form layout or Table View to enter and edit data.',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: const Size(0, 26),
+                        ),
+                        icon: const Icon(Icons.table_chart_outlined, size: 14),
+                        label: const Text('Table View', style: TextStyle(fontSize: 11)),
+                        onPressed: () => setState(() => _viewMode = 'table'),
+                      ),
+                      if (widget.onGoToLayout != null)
+                        FilledButton.tonalIcon(
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            minimumSize: const Size(0, 26),
+                          ),
+                          icon: const Icon(Icons.edit_note, size: 14),
+                          label: Text('${widget.table.displayName} Form',
+                              style: const TextStyle(fontSize: 11)),
+                          onPressed: () {
+                            final ok = widget.onGoToLayout!.call('${widget.table.displayName} Form');
+                            if (!ok) setState(() => _viewMode = 'table');
+                          },
+                        ),
+                    ],
                   ),
                 ),
               // Header banner above canvas (Find mode instructions; the record
@@ -2565,7 +2711,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
         if (_records.isEmpty) {
           return InkWell(
-            onTap: _createNewRecord,
+            onTap: () async {
+              await _createNewRecord();
+              if (!mounted) return;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                _fieldFocusNodes[col.name]?.requestFocus();
+              });
+            },
             borderRadius: BorderRadius.circular(obj.style.cornerRadius),
             child: IgnorePointer(
               child: TextField(
@@ -2651,50 +2803,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             effStyle.textCase != 'normal';
 
         final isMultilineField = obj.height > 44;
-        if (!isFocused && hasDisplayFormatting) {
-          final formatted = formatLayoutDisplayValue(
-            rawVal ?? (ctrl?.text ?? ''),
-            effStyle,
-          );
-          return GestureDetector(
-            onTap: () => fn?.requestFocus(),
-            child: Container(
-              alignment: isMultilineField
-                  ? Alignment.topLeft
-                  : _parseAlignment(effStyle.textAlign),
-              padding: EdgeInsets.only(
-                left: 8 + effStyle.indentLeft,
-                right: 8 + effStyle.indentRight,
-                top: 6,
-                bottom: 6,
-              ),
-              decoration: BoxDecoration(
-                color: effStyle.fillColor != null
-                    ? _parseColor(effStyle.fillColor!)
-                    : (isDark ? const Color(0xFF0D1117) : Colors.white),
-                borderRadius: BorderRadius.circular(effStyle.cornerRadius),
-                border: Border.all(
-                  color: effStyle.borderColor != null
-                      ? _parseColor(effStyle.borderColor!)
-                      : Colors.grey.shade400,
-                  width: effStyle.borderWidth > 0 ? effStyle.borderWidth : 1,
-                ),
-              ),
-              child: Text(
-                formatted,
-                maxLines: isMultilineField ? null : 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: _parseTextAlign(effStyle.textAlign),
-                style: layoutTextStyle(
-                  effStyle,
-                  fallbackColor: isDark ? Colors.white : Colors.black87,
-                ),
-              ),
-            ),
-          );
-        }
+        final verticalPad = obj.height < 32
+            ? math.max(1.0, (obj.height - 16.0) / 2.0)
+            : 8.0;
 
-        return TextField(
+        final textField = TextField(
           controller: ctrl,
           focusNode: fn,
           readOnly: computed,
@@ -2711,8 +2824,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             contentPadding: EdgeInsets.only(
               left: 8 + effStyle.indentLeft,
               right: 8 + effStyle.indentRight,
-              top: 8,
-              bottom: 8,
+              top: verticalPad,
+              bottom: verticalPad,
             ),
             fillColor: effStyle.fillColor != null
                 ? _parseColor(effStyle.fillColor!)
@@ -2754,6 +2867,60 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                   fn?.nextFocus();
                 },
         );
+
+        if (!isFocused && hasDisplayFormatting) {
+          final formatted = formatLayoutDisplayValue(
+            rawVal ?? (ctrl?.text ?? ''),
+            effStyle,
+          );
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Opacity(opacity: 0, child: IgnorePointer(child: textField)),
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  if (!computed) fn?.requestFocus();
+                },
+                child: Container(
+                  alignment: isMultilineField
+                      ? Alignment.topLeft
+                      : _parseAlignment(effStyle.textAlign),
+                  padding: EdgeInsets.only(
+                    left: 8 + effStyle.indentLeft,
+                    right: 8 + effStyle.indentRight,
+                    top: verticalPad,
+                    bottom: verticalPad,
+                  ),
+                  decoration: BoxDecoration(
+                    color: effStyle.fillColor != null
+                        ? _parseColor(effStyle.fillColor!)
+                        : (isDark ? const Color(0xFF0D1117) : Colors.white),
+                    borderRadius: BorderRadius.circular(effStyle.cornerRadius),
+                    border: Border.all(
+                      color: effStyle.borderColor != null
+                          ? _parseColor(effStyle.borderColor!)
+                          : Colors.grey.shade400,
+                      width: effStyle.borderWidth > 0 ? effStyle.borderWidth : 1,
+                    ),
+                  ),
+                  child: Text(
+                    formatted,
+                    maxLines: isMultilineField ? null : 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: _parseTextAlign(effStyle.textAlign),
+                    style: layoutTextStyle(
+                      effStyle,
+                      fallbackColor: isDark ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+
+        return textField;
 
       case 'button':
       case 'popover_button':

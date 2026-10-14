@@ -524,12 +524,100 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                 Navigator.pop(ctx);
                 try {
                   final client = ref.read(apiClientProvider);
+                  final table = _selectedTable!;
                   await client.addColumn(
-                    _selectedTable!.id,
+                    table.id,
                     name: name,
                     displayName: disp,
                     fieldType: selectedType,
                   );
+                  // Auto-place newly defined field onto the table's default Form
+                  // layout (just like FileMaker Pro) so it is immediately ready
+                  // for data entry in Browse Mode.
+                  try {
+                    final layouts = await client.listLayouts();
+                    final defaultForm = layouts.where((l) {
+                      final toName = l.definition['table_occurrence']?.toString().toLowerCase();
+                      final isForTable = toName == table.name.toLowerCase() ||
+                          toName == table.displayName.toLowerCase() ||
+                          l.tableOccurrenceId == table.id;
+                      final view = l.definition['default_view']?.toString() ?? 'form';
+                      return isForTable &&
+                          view == 'form' &&
+                          (l.name.toLowerCase() == '${table.displayName} form'.toLowerCase() ||
+                              l.name.toLowerCase() == table.displayName.toLowerCase());
+                    }).firstOrNull;
+                    if (defaultForm != null) {
+                      final def = Map<String, dynamic>.from(defaultForm.definition);
+                      final rawObjs = List<Map<String, dynamic>>.from(
+                        (def['objects'] as List<dynamic>? ?? const [])
+                            .whereType<Map>()
+                            .map(Map<String, dynamic>.from),
+                      );
+                      final alreadyPlaced = rawObjs.any((o) {
+                        if (o['type'] != 'field') return false;
+                        final fb = o['field_binding'];
+                        return fb is Map &&
+                            fb['field_name']?.toString().toLowerCase() == name.toLowerCase();
+                      });
+                      if (!alreadyPlaced) {
+                        var nextY = 80.0;
+                        for (final o in rawObjs) {
+                          if (o['type'] == 'field') {
+                            final oy = (o['y'] as num?)?.toDouble() ?? 80.0;
+                            final oh = (o['height'] as num?)?.toDouble() ?? 36.0;
+                            if (oy + oh + 12.0 > nextY) nextY = oy + oh + 12.0;
+                          }
+                        }
+                        rawObjs.add({
+                          'id': 'lbl_$name',
+                          'type': 'label',
+                          'x': 40.0,
+                          'y': nextY + 6.0,
+                          'width': 140.0,
+                          'height': 24.0,
+                          'text': disp,
+                          'style': {
+                            'font_size': 13.0,
+                            'font_weight': 'bold',
+                            'text_align': 'right',
+                          },
+                        });
+                        rawObjs.add({
+                          'id': 'fld_$name',
+                          'type': 'field',
+                          'x': 190.0,
+                          'y': nextY,
+                          'width': 280.0,
+                          'height': 36.0,
+                          'field_binding': {
+                            'field_name': name,
+                            'control_style': 'edit_box',
+                            'allow_browse_entry': selectedType != 'CALCULATION' && selectedType != 'SUMMARY',
+                            'allow_find_entry': true,
+                          },
+                        });
+                        def['objects'] = rawObjs;
+                        final rawParts = List<Map<String, dynamic>>.from(
+                          (def['parts'] as List<dynamic>? ?? const [])
+                              .whereType<Map>()
+                              .map(Map<String, dynamic>.from),
+                        );
+                        for (final p in rawParts) {
+                          if (p['type'] == 'body') {
+                            final curH = (p['height'] as num?)?.toDouble() ?? 120.0;
+                            if (nextY + 60.0 > curH) p['height'] = nextY + 60.0;
+                          }
+                        }
+                        if (rawParts.isNotEmpty) def['parts'] = rawParts;
+                        await client.updateLayout(
+                          defaultForm.id,
+                          defaultForm.name,
+                          def,
+                        );
+                      }
+                    }
+                  } catch (_) {}
                   await _loadTables();
                 } catch (e) {
                   if (mounted) {

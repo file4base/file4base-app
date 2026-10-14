@@ -49,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated `client/nginx.conf` in `file4base-web` (`client_max_body_size 64m`, prioritized `location ^~ /api/`, `location ~ ^/(swagger|docs|openapi\.json)(/|$)`, and `location ~ ^/(healthz|livez|readyz|startupz)(/|$)` before static `.js` regex rules) so Swagger UI assets (`/swagger/swagger-ui-bundle.js`, `/swagger/swagger-ui-standalone-preset.js`) and large `.f4p`/`.f4data` uploads proxy cleanly to `http://api:8080`.
 
 ### Fixed
+- **Browse Mode Field Entry, Formatted Field Focus, Inline List/Table Editing & Default Form Sync** (`client/lib/features/data_browser/data_browser_widget.dart`, `client/lib/features/schema_manager/manage_database_dialog.dart`, `client/lib/main.dart`):
+  - Fixed formatted fields (`Fee Paid`, currency/date/time/text formatted fields) so the underlying `TextField` stays mounted in a `Stack` while unfocused, allowing `FocusNode.requestFocus()` to immediately enter edit mode when clicked.
+  - Enabled direct inline `TextField` data entry in **Table View** (`View as Table`) and **List View** (`View as List`) in addition to **Form View**, and added dynamic vertical padding for compact field boxes (`height < 32`).
+  - Automatically places newly created columns in **Manage > Database** onto the table's default `<Table> Form` layout and prefers editable Form layouts (or `startup_layout_id`) over Report/Chart/Label layouts when opening a database.
 - **Wildcard (`*`, `@`, `?`) and Date (`//`) Find Expression Routing (`server/internal/data/service.go`)**: Fixed `buildFindClauses` so find requests containing FileMaker wildcard tokens (`Sm*`, `*Rue de la Paix*`, `@`, `?`, `//`) without pre-converted SQL `%` wildcards are routed through `parseFindValueExpr` instead of matching literal asterisks.
 - **Script Step Primary Key Collision Across Scripts (`server/internal/schema/script_service.go`)**: Fixed `CreateScript` and `UpdateScript` to detect when a caller-supplied step ID (such as `"step_1"`) already exists in `sys_script_steps` across another script, automatically generating a fresh UUID and remapping `parent_step_id` references.
 

@@ -495,22 +495,29 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       unawaited(_loadMenuSets());
       unawaited(_loadSolutionMeta());
 
-      // Ensure every table has at least one layout on server
+      // Ensure every table has at least one layout on server, and if its
+      // auto-created default Form layout still has 0 field objects after the
+      // user added columns in Manage > Database, populate its fields automatically.
       if (tables.isNotEmpty) {
         for (final table in tables) {
-          final hasLayout = layouts.any((l) {
+          final matchingLayouts = layouts.where((l) {
             final toName = l.definition['table_occurrence']?.toString().toLowerCase();
             return toName == table.name.toLowerCase() ||
                 toName == table.displayName.toLowerCase() ||
                 l.tableOccurrenceId == table.id ||
                 l.name.toLowerCase() == '${table.displayName} form'.toLowerCase() ||
                 l.name.toLowerCase() == table.displayName.toLowerCase();
-          });
+          }).toList();
 
-          if (!hasLayout) {
+          final nonPkCols = table.columns
+              .where((c) => !c.isPrimaryKey)
+              .map((c) => (name: c.name, label: c.displayName))
+              .toList();
+
+          if (matchingLayouts.isEmpty) {
             final defaultDef = LayoutDefinitionModel.defaultForTable(
               table.displayName,
-              table.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
+              nonPkCols,
             );
             try {
               final created = await client.createLayout(
@@ -520,6 +527,29 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
               );
               layouts.add(created);
             } catch (_) {}
+          } else if (nonPkCols.isNotEmpty) {
+            for (var i = 0; i < layouts.length; i++) {
+              final l = layouts[i];
+              final isDefaultForm = l.name.toLowerCase() == '${table.displayName} form'.toLowerCase() ||
+                  l.name.toLowerCase() == table.displayName.toLowerCase();
+              if (!isDefaultForm) continue;
+              final rawObjs = l.definition['objects'] as List<dynamic>? ?? const [];
+              final hasAnyField = rawObjs.any((o) => o is Map && o['type'] == 'field');
+              if (!hasAnyField && rawObjs.length <= 2) {
+                final updatedDef = LayoutDefinitionModel.defaultForTable(
+                  table.displayName,
+                  nonPkCols,
+                ).copyWith(id: l.id, name: l.name);
+                try {
+                  final updated = await client.updateLayout(
+                    l.id,
+                    l.name,
+                    updatedDef.toJson(),
+                  );
+                  layouts[i] = updated;
+                } catch (_) {}
+              }
+            }
           }
         }
       }
@@ -538,6 +568,45 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             selectedLayoutModel ??= (_activeLayout != null
                 ? layouts.where((l) => l.id == _activeLayout!.id).firstOrNull
                 : null);
+            if (selectedLayoutModel == null &&
+                (_fileOptions.startupLayoutId.isNotEmpty || _fileOptions.startupLayoutName.isNotEmpty)) {
+              selectedLayoutModel = layouts
+                  .where((l) =>
+                      l.id == _fileOptions.startupLayoutId ||
+                      l.name == _fileOptions.startupLayoutName)
+                  .firstOrNull;
+            }
+            // Prefer a primary Form layout with editable field objects (e.g.
+            // "Customers Form") over Reports, Labels, or Chart Dashboards.
+            selectedLayoutModel ??= layouts.where((l) {
+              final def = l.definition;
+              final view = def['default_view']?.toString() ?? 'form';
+              final parts = def['parts'] as List<dynamic>? ?? const [];
+              final isReport = parts.any((p) =>
+                  p is Map &&
+                  (p['type'] == 'subsummary' ||
+                      p['type'] == 'leading_grand_summary' ||
+                      p['type'] == 'trailing_grand_summary'));
+              final objs = def['objects'] as List<dynamic>? ?? const [];
+              final hasEditableFields = objs.any((o) => o is Map && o['type'] == 'field');
+              return view == 'form' &&
+                  !isReport &&
+                  hasEditableFields &&
+                  l.name.toLowerCase().contains('customers form');
+            }).firstOrNull;
+            selectedLayoutModel ??= layouts.where((l) {
+              final def = l.definition;
+              final view = def['default_view']?.toString() ?? 'form';
+              final parts = def['parts'] as List<dynamic>? ?? const [];
+              final isReport = parts.any((p) =>
+                  p is Map &&
+                  (p['type'] == 'subsummary' ||
+                      p['type'] == 'leading_grand_summary' ||
+                      p['type'] == 'trailing_grand_summary'));
+              final objs = def['objects'] as List<dynamic>? ?? const [];
+              final hasEditableFields = objs.any((o) => o is Map && o['type'] == 'field');
+              return view == 'form' && !isReport && hasEditableFields;
+            }).firstOrNull;
             selectedLayoutModel ??= layouts.first;
 
             _applyLayout(selectedLayoutModel, tables);
