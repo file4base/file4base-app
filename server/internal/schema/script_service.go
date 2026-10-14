@@ -165,12 +165,26 @@ func (s *Service) CreateScript(ctx context.Context, name, contextTable string, f
 		return nil, fmt.Errorf("failed inserting script: %w", err)
 	}
 
-	// Insert steps
+	// Insert steps (remapping any colliding step IDs so callers can pass short IDs like "step_1")
 	insertedSteps := make([]ScriptStepMetadata, 0, len(steps))
+	stepIDRemap := make(map[string]string, len(steps))
 	for idx, st := range steps {
-		stepID := st.ID
+		origStepID := st.ID
+		stepID := origStepID
 		if stepID == "" {
 			stepID = uuid.NewString()
+		} else {
+			checkQ := `SELECT COUNT(1) FROM sys_script_steps WHERE id = $1`
+			if dialect.Engine() != dbal.EnginePostgres {
+				checkQ = `SELECT COUNT(1) FROM sys_script_steps WHERE id = ?`
+			}
+			var existing int
+			if err := db.QueryRowContext(ctx, checkQ, stepID).Scan(&existing); err == nil && existing > 0 {
+				stepID = uuid.NewString()
+			}
+		}
+		if origStepID != "" {
+			stepIDRemap[origStepID] = stepID
 		}
 		paramsStr := string(st.Params)
 		if paramsStr == "" || paramsStr == "null" {
@@ -179,7 +193,11 @@ func (s *Service) CreateScript(ctx context.Context, name, contextTable string, f
 
 		var pID sql.NullString
 		if st.ParentStepID != nil && *st.ParentStepID != "" {
-			pID = sql.NullString{String: *st.ParentStepID, Valid: true}
+			parentVal := *st.ParentStepID
+			if mapped, ok := stepIDRemap[parentVal]; ok {
+				parentVal = mapped
+			}
+			pID = sql.NullString{String: parentVal, Valid: true}
 		}
 
 		iq := `INSERT INTO sys_script_steps (id, script_id, sequence_idx, step_type, params, is_enabled, parent_step_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
@@ -255,10 +273,24 @@ func (s *Service) UpdateScript(ctx context.Context, id, name, contextTable strin
 	}
 
 	updatedSteps := make([]ScriptStepMetadata, 0, len(steps))
+	stepIDRemap := make(map[string]string, len(steps))
 	for idx, st := range steps {
-		stepID := st.ID
+		origStepID := st.ID
+		stepID := origStepID
 		if stepID == "" {
 			stepID = uuid.NewString()
+		} else {
+			checkQ := `SELECT COUNT(1) FROM sys_script_steps WHERE id = $1`
+			if dialect.Engine() != dbal.EnginePostgres {
+				checkQ = `SELECT COUNT(1) FROM sys_script_steps WHERE id = ?`
+			}
+			var existing int
+			if err := db.QueryRowContext(ctx, checkQ, stepID).Scan(&existing); err == nil && existing > 0 {
+				stepID = uuid.NewString()
+			}
+		}
+		if origStepID != "" {
+			stepIDRemap[origStepID] = stepID
 		}
 		paramsStr := string(st.Params)
 		if paramsStr == "" || paramsStr == "null" {
@@ -267,7 +299,11 @@ func (s *Service) UpdateScript(ctx context.Context, id, name, contextTable strin
 
 		var pID sql.NullString
 		if st.ParentStepID != nil && *st.ParentStepID != "" {
-			pID = sql.NullString{String: *st.ParentStepID, Valid: true}
+			parentVal := *st.ParentStepID
+			if mapped, ok := stepIDRemap[parentVal]; ok {
+				parentVal = mapped
+			}
+			pID = sql.NullString{String: parentVal, Valid: true}
 		}
 
 		iq := `INSERT INTO sys_script_steps (id, script_id, sequence_idx, step_type, params, is_enabled, parent_step_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`

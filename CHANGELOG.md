@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Synchronized all **103 REST API paths** under `/api/v1/...` called by `ApiClient` (`client/lib/core/api/api_client.dart`) into `server/internal/api/swagger/ui/openapi.json` and `docs/api/API_REFERENCE.md`.
   - Updated `client/nginx.conf` in `file4base-web` (`client_max_body_size 64m`, prioritized `location ^~ /api/`, `location ~ ^/(swagger|docs|openapi\.json)(/|$)`, and `location ~ ^/(healthz|livez|readyz|startupz)(/|$)` before static `.js` regex rules) so Swagger UI assets (`/swagger/swagger-ui-bundle.js`, `/swagger/swagger-ui-standalone-preset.js`) and large `.f4p`/`.f4data` uploads proxy cleanly to `http://api:8080`.
 
+### Fixed
+- **Wildcard (`*`, `@`, `?`) and Date (`//`) Find Expression Routing (`server/internal/data/service.go`)**: Fixed `buildFindClauses` so find requests containing FileMaker wildcard tokens (`Sm*`, `*Rue de la Paix*`, `@`, `?`, `//`) without pre-converted SQL `%` wildcards are routed through `parseFindValueExpr` instead of matching literal asterisks.
+- **Script Step Primary Key Collision Across Scripts (`server/internal/schema/script_service.go`)**: Fixed `CreateScript` and `UpdateScript` to detect when a caller-supplied step ID (such as `"step_1"`) already exists in `sys_script_steps` across another script, automatically generating a fresh UUID and remapping `parent_step_id` references.
+
 ---
 
 ## [0.12.1] - 2026-10-13

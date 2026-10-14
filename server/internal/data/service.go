@@ -767,10 +767,12 @@ func buildFindClauses(
 			// If operator is empty or not parsed, parse it with ParseFile4BaseFindCriteria
 			if (crit.Operator == "" || crit.Operator == "LIKE") && crit.Value != nil {
 				strVal := strings.TrimSpace(fmt.Sprintf("%v", crit.Value))
-				// If user entered explicit operator inside string
+				// If user entered explicit operator or wildcard inside string
 				if strings.HasPrefix(strVal, "=") || strings.HasPrefix(strVal, "!") ||
 					strings.HasPrefix(strVal, ">") || strings.HasPrefix(strVal, "<") ||
-					strings.Contains(strVal, "...") || strVal == "*" || strVal == "//" {
+					strings.Contains(strVal, "...") || strings.Contains(strVal, "*") ||
+					strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
+					strings.Contains(strVal, "//") {
 					parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
 					parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
 					crit = parsed
