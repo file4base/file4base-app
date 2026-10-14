@@ -573,6 +573,33 @@
             "$ref": "#/components/responses/Forbidden"
           }
         }
+      },
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Layout Definition by ID",
+        "responses": {
+          "200": {
+            "description": "Get Layout Definition by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/v1/data/{table}": {
@@ -813,6 +840,51 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Partially Update Record",
+        "responses": {
+          "200": {
+            "description": "Partially Update Record"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
           }
         }
       }
@@ -1453,6 +1525,3182 @@
           }
         }
       }
+    },
+    "/api/v1/crypto/handshake": {
+      "get": {
+        "tags": [
+          "Authentication & Session"
+        ],
+        "summary": "Perform ECDH / AES-256-GCM Channel Handshake",
+        "responses": {
+          "200": {
+            "description": "Perform ECDH / AES-256-GCM Channel Handshake"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "tags": [
+          "Databases & Projects"
+        ],
+        "summary": "List Registered Solutions / Projects",
+        "responses": {
+          "200": {
+            "description": "List Registered Solutions / Projects"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/databases/switch": {
+      "post": {
+        "tags": [
+          "Databases & Projects"
+        ],
+        "summary": "Switch Active Database Context",
+        "responses": {
+          "200": {
+            "description": "Switch Active Database Context"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/tables/{id}": {
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Table Metadata",
+        "responses": {
+          "200": {
+            "description": "Update Table Metadata"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Drop Table and Catalog Metadata",
+        "responses": {
+          "204": {
+            "description": "Drop Table and Catalog Metadata"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/tables/{id}/rename": {
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Rename Table",
+        "responses": {
+          "200": {
+            "description": "Rename Table"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Rename Table (POST)",
+        "responses": {
+          "200": {
+            "description": "Rename Table (POST)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/tables/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Duplicate Table Schema and Optional Rows",
+        "responses": {
+          "201": {
+            "description": "Duplicate Table Schema and Optional Rows"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/tables/{id}/truncate": {
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Truncate All Rows in Table",
+        "responses": {
+          "200": {
+            "description": "Truncate All Rows in Table"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/occurrences/{id}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Table Occurrence by ID",
+        "responses": {
+          "200": {
+            "description": "Get Table Occurrence by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Table Occurrence Position or Name",
+        "responses": {
+          "200": {
+            "description": "Update Table Occurrence Position or Name"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Table Occurrence",
+        "responses": {
+          "204": {
+            "description": "Delete Table Occurrence"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/relationships/{id}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Relationship by ID",
+        "responses": {
+          "200": {
+            "description": "Get Relationship by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Relationship Join Definition",
+        "responses": {
+          "200": {
+            "description": "Update Relationship Join Definition"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Relationship",
+        "responses": {
+          "204": {
+            "description": "Delete Relationship"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/scripts": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Automation Scripts",
+        "responses": {
+          "200": {
+            "description": "List Automation Scripts"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Automation Script",
+        "responses": {
+          "201": {
+            "description": "Create Automation Script"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/scripts/{id}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Automation Script by ID",
+        "responses": {
+          "200": {
+            "description": "Get Automation Script by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Automation Script",
+        "responses": {
+          "200": {
+            "description": "Update Automation Script"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Automation Script",
+        "responses": {
+          "204": {
+            "description": "Delete Automation Script"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/scripts/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Duplicate Automation Script",
+        "responses": {
+          "201": {
+            "description": "Duplicate Automation Script"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/value-lists": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Value Lists",
+        "responses": {
+          "200": {
+            "description": "List Value Lists"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Value List",
+        "responses": {
+          "201": {
+            "description": "Create Value List"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/value-lists/{id}": {
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Value List",
+        "responses": {
+          "200": {
+            "description": "Update Value List"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Value List",
+        "responses": {
+          "204": {
+            "description": "Delete Value List"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/value-lists/{id}/values": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Resolve Dynamic or Static Value List Items",
+        "responses": {
+          "200": {
+            "description": "Resolve Dynamic or Static Value List Items"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/saved-finds": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Saved Finds",
+        "responses": {
+          "200": {
+            "description": "List Saved Finds"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Saved Find",
+        "responses": {
+          "201": {
+            "description": "Create Saved Find"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/saved-finds/{id}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Saved Find by ID",
+        "responses": {
+          "200": {
+            "description": "Get Saved Find by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Saved Find",
+        "responses": {
+          "200": {
+            "description": "Update Saved Find"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Saved Find",
+        "responses": {
+          "204": {
+            "description": "Delete Saved Find"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/menu-sets": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Custom Menu Sets",
+        "responses": {
+          "200": {
+            "description": "List Custom Menu Sets"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Custom Menu Set",
+        "responses": {
+          "201": {
+            "description": "Create Custom Menu Set"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/menu-sets/{id}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Custom Menu Set by ID",
+        "responses": {
+          "200": {
+            "description": "Get Custom Menu Set by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Custom Menu Set",
+        "responses": {
+          "200": {
+            "description": "Update Custom Menu Set"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Custom Menu Set",
+        "responses": {
+          "204": {
+            "description": "Delete Custom Menu Set"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/data-sources": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List External SQL Data Sources",
+        "responses": {
+          "200": {
+            "description": "List External SQL Data Sources"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Register External SQL Data Source",
+        "responses": {
+          "201": {
+            "description": "Register External SQL Data Source"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data-sources/{id}": {
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update External SQL Data Source",
+        "responses": {
+          "200": {
+            "description": "Update External SQL Data Source"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete External SQL Data Source",
+        "responses": {
+          "204": {
+            "description": "Delete External SQL Data Source"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/data-sources/{id}/tables": {
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Introspect External Data Source Tables",
+        "responses": {
+          "200": {
+            "description": "Introspect External Data Source Tables"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/value-lists": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Value Lists",
+        "responses": {
+          "200": {
+            "description": "List Value Lists"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Value List",
+        "responses": {
+          "201": {
+            "description": "Create Value List"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/value-lists/{id}": {
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Value List",
+        "responses": {
+          "200": {
+            "description": "Update Value List"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Value List",
+        "responses": {
+          "204": {
+            "description": "Delete Value List"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/value-lists/{id}/values": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Resolve Dynamic or Static Value List Items",
+        "responses": {
+          "200": {
+            "description": "Resolve Dynamic or Static Value List Items"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/saved-finds": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Saved Finds",
+        "responses": {
+          "200": {
+            "description": "List Saved Finds"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Saved Find",
+        "responses": {
+          "201": {
+            "description": "Create Saved Find"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/saved-finds/{id}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Saved Find by ID",
+        "responses": {
+          "200": {
+            "description": "Get Saved Find by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Saved Find",
+        "responses": {
+          "200": {
+            "description": "Update Saved Find"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Saved Find",
+        "responses": {
+          "204": {
+            "description": "Delete Saved Find"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/menu-sets": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Custom Menu Sets",
+        "responses": {
+          "200": {
+            "description": "List Custom Menu Sets"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Custom Menu Set",
+        "responses": {
+          "201": {
+            "description": "Create Custom Menu Set"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/menu-sets/{id}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Custom Menu Set by ID",
+        "responses": {
+          "200": {
+            "description": "Get Custom Menu Set by ID"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Custom Menu Set",
+        "responses": {
+          "200": {
+            "description": "Update Custom Menu Set"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Custom Menu Set",
+        "responses": {
+          "204": {
+            "description": "Delete Custom Menu Set"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/data-sources": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List External SQL Data Sources",
+        "responses": {
+          "200": {
+            "description": "List External SQL Data Sources"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Register External SQL Data Source",
+        "responses": {
+          "201": {
+            "description": "Register External SQL Data Source"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/schemas/data-sources/{id}": {
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update External SQL Data Source",
+        "responses": {
+          "200": {
+            "description": "Update External SQL Data Source"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete External SQL Data Source",
+        "responses": {
+          "204": {
+            "description": "Delete External SQL Data Source"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/schemas/data-sources/{id}/tables": {
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Introspect External Data Source Tables",
+        "responses": {
+          "200": {
+            "description": "Introspect External Data Source Tables"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/{id}/related": {
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "List Related Portal Records",
+        "responses": {
+          "200": {
+            "description": "List Related Portal Records"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Create Related Portal Record",
+        "responses": {
+          "201": {
+            "description": "Create Related Portal Record"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/evaluate": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Evaluate Calculation Formula in Record Context",
+        "responses": {
+          "200": {
+            "description": "Evaluate Calculation Formula in Record Context"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/summary": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Compute Summary Aggregations Across Found Set",
+        "responses": {
+          "200": {
+            "description": "Compute Summary Aggregations Across Found Set"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/export": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Export Found Set Records (CSV / TSV / JSON / XLSX)",
+        "responses": {
+          "200": {
+            "description": "Export Found Set Records (CSV / TSV / JSON / XLSX)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/import": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Bulk Import Records into Table",
+        "responses": {
+          "200": {
+            "description": "Bulk Import Records into Table"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/import/preview": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Preview and Map Columns Before Bulk Record Import",
+        "responses": {
+          "200": {
+            "description": "Preview and Map Columns Before Bulk Record Import"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/users/{id}": {
+      "put": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Update User Account or Password",
+        "responses": {
+          "200": {
+            "description": "Update User Account or Password"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Delete User Account",
+        "responses": {
+          "204": {
+            "description": "Delete User Account"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/security/users/{id}/permissions": {
+      "get": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Get User Layout Permissions",
+        "responses": {
+          "200": {
+            "description": "Get User Layout Permissions"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Set User Layout Permissions",
+        "responses": {
+          "200": {
+            "description": "Set User Layout Permissions"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/users/{id}/table-permissions": {
+      "get": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Get User Table Granular CRUD Permissions",
+        "responses": {
+          "200": {
+            "description": "Get User Table Granular CRUD Permissions"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Set User Table Granular CRUD Permissions",
+        "responses": {
+          "200": {
+            "description": "Set User Table Granular CRUD Permissions"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/security/privileges": {
+      "get": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "List Role Capability Privileges",
+        "responses": {
+          "200": {
+            "description": "List Role Capability Privileges"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Update Role Capability Privileges",
+        "responses": {
+          "200": {
+            "description": "Update Role Capability Privileges"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/meta": {
+      "get": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Get Active Solution Metadata",
+        "responses": {
+          "200": {
+            "description": "Get Active Solution Metadata"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/options": {
+      "get": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Get Solution File Options and Page Setup",
+        "responses": {
+          "200": {
+            "description": "Get Solution File Options and Page Setup"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Update Solution File Options and Page Setup",
+        "responses": {
+          "200": {
+            "description": "Update Solution File Options and Page Setup"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/clone": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Clone Solution Structure Without Records",
+        "responses": {
+          "200": {
+            "description": "Clone Solution Structure Without Records"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/rename": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Rename Active Solution",
+        "responses": {
+          "200": {
+            "description": "Rename Active Solution"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/lock-design": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Permanently Lock Solution Design",
+        "responses": {
+          "200": {
+            "description": "Permanently Lock Solution Design"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/design-report": {
+      "get": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Generate Database Design Report (DDR)",
+        "responses": {
+          "200": {
+            "description": "Generate Database Design Report (DDR)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/clipboard/copy": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Copy Schema / Layout Objects to Solution Clipboard",
+        "responses": {
+          "200": {
+            "description": "Copy Schema / Layout Objects to Solution Clipboard"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/clipboard/preview": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Preview Solution Clipboard Paste Plan",
+        "responses": {
+          "200": {
+            "description": "Preview Solution Clipboard Paste Plan"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/clipboard/paste": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Paste Solution Clipboard into Active Database",
+        "responses": {
+          "200": {
+            "description": "Paste Solution Clipboard into Active Database"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/migrate/preflight": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Analyze FileMaker DDR XML / FMPXMLRESULT Migration Bundle",
+        "responses": {
+          "200": {
+            "description": "Analyze FileMaker DDR XML / FMPXMLRESULT Migration Bundle"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/solutions/migrate/apply": {
+      "post": {
+        "tags": [
+          "Solutions & Backup"
+        ],
+        "summary": "Execute FileMaker DDR XML / FMPXMLRESULT Migration",
+        "responses": {
+          "201": {
+            "description": "Execute FileMaker DDR XML / FMPXMLRESULT Migration"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/containers/{name}/restart": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Gracefully Restart or Refresh Service Container",
+        "responses": {
+          "200": {
+            "description": "Gracefully Restart or Refresh Service Container"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/containers/{name}/logs": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Fetch Recent Structured Container Logs",
+        "responses": {
+          "200": {
+            "description": "Fetch Recent Structured Container Logs"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/backups/{id}/download": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Download Stored Server Snapshot (.f4b.json)",
+        "responses": {
+          "200": {
+            "description": "Download Stored Server Snapshot (.f4b.json)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/backups/{id}/restore": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Restore Point-in-Time Server Snapshot",
+        "responses": {
+          "200": {
+            "description": "Restore Point-in-Time Server Snapshot"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/backups/{id}": {
+      "delete": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Delete Stored Server Snapshot",
+        "responses": {
+          "200": {
+            "description": "Delete Stored Server Snapshot"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/tls": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Get Domain, HTTPS/HSTS, ACME, and X.509 Certificate Status",
+        "responses": {
+          "200": {
+            "description": "Get Domain, HTTPS/HSTS, ACME, and X.509 Certificate Status"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Update Domain, ACME, or Custom PEM TLS Configuration",
+        "responses": {
+          "200": {
+            "description": "Update Domain, ACME, or Custom PEM TLS Configuration"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/tls/renew": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Renew or Rotate Active X.509 TLS Certificate",
+        "responses": {
+          "200": {
+            "description": "Renew or Rotate Active X.509 TLS Certificate"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/server/sessions": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "List Active Authenticated Client Sessions",
+        "responses": {
+          "200": {
+            "description": "List Active Authenticated Client Sessions"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/server/sessions/{id}": {
+      "delete": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Revoke Active Client Session (Force Disconnect)",
+        "responses": {
+          "200": {
+            "description": "Revoke Active Client Session (Force Disconnect)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/schedules": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "List Scheduled Cron Tasks",
+        "responses": {
+          "200": {
+            "description": "List Scheduled Cron Tasks"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Create Scheduled Cron Task",
+        "responses": {
+          "201": {
+            "description": "Create Scheduled Cron Task"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/schedules/{id}": {
+      "put": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Update or Toggle Scheduled Cron Task",
+        "responses": {
+          "200": {
+            "description": "Update or Toggle Scheduled Cron Task"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Delete Scheduled Cron Task",
+        "responses": {
+          "200": {
+            "description": "Delete Scheduled Cron Task"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/schedules/{id}/run": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Execute Scheduled Cron Task Immediately",
+        "responses": {
+          "200": {
+            "description": "Execute Scheduled Cron Task Immediately"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/server/audit-logs": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "List Security and Administrative Audit Events",
+        "responses": {
+          "200": {
+            "description": "List Security and Administrative Audit Events"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Rotate and Clear Audit Log Buffer",
+        "responses": {
+          "200": {
+            "description": "Rotate and Clear Audit Log Buffer"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/server/maintenance": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Get User Table Statistics and Catalog Health",
+        "responses": {
+          "200": {
+            "description": "Get User Table Statistics and Catalog Health"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/server/maintenance/optimize": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Run VACUUM ANALYZE / REINDEX Database Optimization",
+        "responses": {
+          "200": {
+            "description": "Run VACUUM ANALYZE / REINDEX Database Optimization"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/notifications": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Get Outbound SMTP and Webhook Alert Settings",
+        "responses": {
+          "200": {
+            "description": "Get Outbound SMTP and Webhook Alert Settings"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Update Outbound SMTP and Webhook Alert Settings",
+        "responses": {
+          "200": {
+            "description": "Update Outbound SMTP and Webhook Alert Settings"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/server/notifications/test": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Dispatch Test Alert Notification",
+        "responses": {
+          "200": {
+            "description": "Dispatch Test Alert Notification"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1843,11 +5091,11 @@
           },
           "version": {
             "type": "string",
-            "example": "0.4.7"
+            "example": "0.13.0"
           },
           "release_id": {
             "type": "string",
-            "example": "file4base-api-v0.4.7"
+            "example": "file4base-api-v0.13.0"
           },
           "uptime_seconds": {
             "type": "integer"
