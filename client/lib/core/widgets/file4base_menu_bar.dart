@@ -107,6 +107,8 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onAlignObjects,
     this.onDistributeObjects,
     this.onResizeObjects,
+    this.containerUpdateAvailable = false,
+    this.containerLatestVersion,
   });
   final OperationalMode activeMode;
   final ValueChanged<OperationalMode> onModeChanged;
@@ -245,6 +247,8 @@ class File4BaseMenuBar extends StatelessWidget {
   final ValueChanged<String>? onAlignObjects;
   final ValueChanged<String>? onDistributeObjects;
   final ValueChanged<String>? onResizeObjects;
+  final bool containerUpdateAvailable;
+  final String? containerLatestVersion;
 
   /// Asks for a record number and goes there.
   Future<void> _promptGoToRecord(BuildContext context) async {
@@ -1732,11 +1736,32 @@ class File4BaseMenuBar extends StatelessWidget {
       return () => onServerToolSelected!(key);
     }
 
+    final latestLabel = (containerLatestVersion != null && containerLatestVersion!.isNotEmpty)
+        ? 'v$containerLatestVersion'
+        : 'NEW';
+
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
           onPressed: trigger('containers'),
-          leadingIcon: const Icon(Icons.view_in_ar_outlined, size: 18),
+          leadingIcon: Icon(
+            containerUpdateAvailable ? Icons.system_update_alt : Icons.view_in_ar_outlined,
+            size: 18,
+            color: containerUpdateAvailable ? Colors.amber.shade800 : null,
+          ),
+          trailingIcon: containerUpdateAvailable
+              ? Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade700,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    'UPDATE $latestLabel',
+                    style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.white),
+                  ),
+                )
+              : null,
           child: const Text('Containers & Services...'),
         ),
         MenuItemButton(
@@ -1781,7 +1806,30 @@ class File4BaseMenuBar extends StatelessWidget {
           child: const Text('Server Notifications, SMTP & Webhooks...'),
         ),
       ],
-      child: const Text('Server Tools', style: TextStyle(fontSize: 13)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Server Tools', style: TextStyle(fontSize: 13)),
+          if (containerUpdateAvailable) ...[
+            const SizedBox(width: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade700,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                latestLabel,
+                style: const TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

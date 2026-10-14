@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -49,25 +50,25 @@ type AuditEvent struct {
 
 // DomainTLSConfig stores the server's domain and SSL/TLS certificate configuration.
 type DomainTLSConfig struct {
-	Domain         string   `json:"domain"`
-	PublicURL      string   `json:"public_url"`
-	Mode           string   `json:"mode"` // "acme", "custom", "self_signed", "http_only"
-	ACMEEmail      string   `json:"acme_email"`
-	ACMEProvider   string   `json:"acme_provider"` // "letsencrypt_prod", "letsencrypt_staging", "zerossl"
-	ACMEChallenge  string   `json:"acme_challenge"` // "http-01", "tls-alpn-01"
-	AutoRenew      bool     `json:"auto_renew"`
-	ForceHTTPS     bool     `json:"force_https"`
-	HSTSEnabled    bool     `json:"hsts_enabled"`
-	CertSubject    string   `json:"cert_subject"`
-	CertIssuer     string   `json:"cert_issuer"`
-	CertSANs       []string `json:"cert_sans"`
-	CertNotBefore  string   `json:"cert_not_before"`
-	CertNotAfter   string   `json:"cert_not_after"`
-	CertDaysLeft   int      `json:"cert_days_left"`
-	CertSHA256     string   `json:"cert_sha256"`
-	CustomCertPEM  string   `json:"custom_cert_pem,omitempty"`
-	CustomKeyPEM   string   `json:"custom_key_pem,omitempty"`
-	LastUpdatedAt  string   `json:"last_updated_at"`
+	Domain        string   `json:"domain"`
+	PublicURL     string   `json:"public_url"`
+	Mode          string   `json:"mode"` // "acme", "custom", "self_signed", "http_only"
+	ACMEEmail     string   `json:"acme_email"`
+	ACMEProvider  string   `json:"acme_provider"`  // "letsencrypt_prod", "letsencrypt_staging", "zerossl"
+	ACMEChallenge string   `json:"acme_challenge"` // "http-01", "tls-alpn-01"
+	AutoRenew     bool     `json:"auto_renew"`
+	ForceHTTPS    bool     `json:"force_https"`
+	HSTSEnabled   bool     `json:"hsts_enabled"`
+	CertSubject   string   `json:"cert_subject"`
+	CertIssuer    string   `json:"cert_issuer"`
+	CertSANs      []string `json:"cert_sans"`
+	CertNotBefore string   `json:"cert_not_before"`
+	CertNotAfter  string   `json:"cert_not_after"`
+	CertDaysLeft  int      `json:"cert_days_left"`
+	CertSHA256    string   `json:"cert_sha256"`
+	CustomCertPEM string   `json:"custom_cert_pem,omitempty"`
+	CustomKeyPEM  string   `json:"custom_key_pem,omitempty"`
+	LastUpdatedAt string   `json:"last_updated_at"`
 }
 
 // BackupRecord describes a stored database snapshot in ./data/backups.
@@ -108,9 +109,11 @@ type NotificationConfig struct {
 	WebhookEnabled    bool     `json:"webhook_enabled"`
 	WebhookURL        string   `json:"webhook_url"`
 	WebhookSecret     string   `json:"webhook_secret"`
-	AlertEvents       []string `json:"alert_events"` // e.g., ["backup_failed", "high_error_rate", "mfa_changed", "tls_expiring"]
+	AlertEvents       []string `json:"alert_events"` // e.g., ["backup_failed", "high_error_rate", "mfa_changed", "tls_expiring", "update_available"]
 	LastTestTimestamp string   `json:"last_test_timestamp"`
 }
+
+const CurrentStackVersion = "0.13.0"
 
 // ServerAdminHandler serves all endpoints backing the "Server Tools" top-level menu.
 type ServerAdminHandler struct {
@@ -120,26 +123,41 @@ type ServerAdminHandler struct {
 	startTime    time.Time
 	backupsDir   string
 
-	mu            sync.RWMutex
-	tlsConfig     DomainTLSConfig
-	schedules     []ScheduledJob
-	auditLogs     []AuditEvent
-	notifications NotificationConfig
-	restartedAt   map[string]time.Time
+	mu                     sync.RWMutex
+	tlsConfig              DomainTLSConfig
+	schedules              []ScheduledJob
+	auditLogs              []AuditEvent
+	notifications          NotificationConfig
+	restartedAt            map[string]time.Time
+	currentVersion         string
+	latestVersion          string
+	updateAvailable        bool
+	lastVersionCheck       time.Time
+	releaseURL             string
+	releaseNotes           string
+	simulatedLatestVersion string
 }
 
 func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, controlStore *control.Store) *ServerAdminHandler {
 	backupsDir := "./data/backups"
 	_ = os.MkdirAll(backupsDir, 0o755)
 
+	curVer := strings.TrimPrefix(strings.TrimSpace(os.Getenv("FILE4BASE_VERSION")), "v")
+	if curVer == "" {
+		curVer = CurrentStackVersion
+	}
+
 	now := time.Now().UTC()
 	h := &ServerAdminHandler{
-		dbMgr:        dbMgr,
-		sessions:     sessions,
-		controlStore: controlStore,
-		startTime:    now,
-		backupsDir:   backupsDir,
-		restartedAt:  make(map[string]time.Time),
+		dbMgr:          dbMgr,
+		sessions:       sessions,
+		controlStore:   controlStore,
+		startTime:      now,
+		backupsDir:     backupsDir,
+		restartedAt:    make(map[string]time.Time),
+		currentVersion: curVer,
+		latestVersion:  curVer,
+		releaseURL:     "https://github.com/file4base/file4base-app/releases",
 		schedules: []ScheduledJob{
 			{
 				ID:          "sched-daily-backup",
@@ -165,6 +183,18 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 				LastStatus:  "success",
 				NextRunDesc: "Sundays at 03:00 UTC",
 			},
+			{
+				ID:          "sched-version-check",
+				Name:        "Container Image & Release Update Check",
+				Database:    "*",
+				JobType:     "maintenance",
+				Target:      "Check Docker Hub & GitHub Releases",
+				CronExpr:    "0 */6 * * *",
+				Enabled:     true,
+				LastRunAt:   now.Add(-15 * time.Minute).Format(time.RFC3339),
+				LastStatus:  "success",
+				NextRunDesc: "Every 6 hours",
+			},
 		},
 		notifications: NotificationConfig{
 			SMTPEnabled:    false,
@@ -174,7 +204,7 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 			SMTPUseTLS:     true,
 			WebhookEnabled: false,
 			WebhookURL:     "",
-			AlertEvents:    []string{"backup_failed", "high_error_rate", "mfa_changed", "tls_expiring"},
+			AlertEvents:    []string{"backup_failed", "high_error_rate", "mfa_changed", "tls_expiring", "update_available"},
 		},
 	}
 
@@ -302,6 +332,8 @@ func (h *ServerAdminHandler) RegisterRoutes(r chi.Router) {
 
 		r.Get("/telemetry", h.GetTelemetry)
 		r.Get("/containers", h.ListContainers)
+		r.Post("/containers/check-updates", h.CheckContainerUpdates)
+		r.Post("/containers/update", h.ApplyContainerUpdate)
 		r.Post("/containers/{name}/restart", h.RestartContainer)
 		r.Get("/containers/{name}/logs", h.GetContainerLogs)
 
@@ -370,8 +402,184 @@ func (h *ServerAdminHandler) GetTelemetry(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// ListContainers returns the status and resource metrics of the File4Base container stack.
+func parseSemVerParts(v string) (int, int, int, bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if idx := strings.IndexAny(v, "-+"); idx >= 0 {
+		v = v[:idx]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return 0, 0, 0, false
+	}
+	maj, err1 := strconv.Atoi(parts[0])
+	min, err2 := strconv.Atoi(parts[1])
+	pat, err3 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0, 0, 0, false
+	}
+	return maj, min, pat, true
+}
+
+func compareSemVer(a, b string) int {
+	majA, minA, patA, okA := parseSemVerParts(a)
+	majB, minB, patB, okB := parseSemVerParts(b)
+	if !okA || !okB {
+		return 0
+	}
+	if majA != majB {
+		if majA > majB {
+			return 1
+		}
+		return -1
+	}
+	if minA != minB {
+		if minA > minB {
+			return 1
+		}
+		return -1
+	}
+	if patA != patB {
+		if patA > patB {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+func (h *ServerAdminHandler) fetchUpstreamReleaseInfo(parentCtx context.Context) (string, string, string) {
+	h.mu.RLock()
+	bestVer := h.currentVersion
+	simVer := h.simulatedLatestVersion
+	h.mu.RUnlock()
+
+	relURL := "https://github.com/file4base/file4base-app/releases"
+	relNotes := ""
+
+	if simVer != "" {
+		return simVer, relURL, fmt.Sprintf("Simulated release v%s available on Docker Hub (cloudresources/file4base-api:%s, cloudresources/file4base-web:%s) and GitHub Releases.", simVer, simVer, simVer)
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 2500*time.Millisecond)
+	defer cancel()
+	client := &http.Client{Timeout: 2200 * time.Millisecond}
+
+	// 1. Check GitHub Releases API
+	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/repos/file4base/file4base-app/releases/latest", nil); err == nil {
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "file4base-server/"+bestVer)
+		if resp, err := client.Do(req); err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var gh struct {
+					TagName string `json:"tag_name"`
+					HTMLURL string `json:"html_url"`
+					Body    string `json:"body"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&gh) == nil {
+					cand := strings.TrimPrefix(strings.TrimSpace(gh.TagName), "v")
+					if compareSemVer(cand, bestVer) > 0 {
+						bestVer = cand
+					}
+					if gh.HTMLURL != "" {
+						relURL = gh.HTMLURL
+					}
+					if gh.Body != "" {
+						relNotes = gh.Body
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Check GitHub main VERSION file
+	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://raw.githubusercontent.com/file4base/file4base-app/main/VERSION", nil); err == nil {
+		req.Header.Set("User-Agent", "file4base-server/"+bestVer)
+		if resp, err := client.Do(req); err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				if rawBytes, err := io.ReadAll(io.LimitReader(resp.Body, 64)); err == nil {
+					cand := strings.TrimPrefix(strings.TrimSpace(string(rawBytes)), "v")
+					if compareSemVer(cand, bestVer) > 0 {
+						bestVer = cand
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Check Docker Hub tags for cloudresources/file4base-api
+	if req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://hub.docker.com/v2/repositories/cloudresources/file4base-api/tags?page_size=20", nil); err == nil {
+		req.Header.Set("User-Agent", "file4base-server/"+bestVer)
+		if resp, err := client.Do(req); err == nil {
+			defer resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				var dh struct {
+					Results []struct {
+						Name string `json:"name"`
+					} `json:"results"`
+				}
+				if json.NewDecoder(resp.Body).Decode(&dh) == nil {
+					for _, t := range dh.Results {
+						cand := strings.TrimPrefix(strings.TrimSpace(t.Name), "v")
+						if compareSemVer(cand, bestVer) > 0 {
+							bestVer = cand
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if relNotes == "" && compareSemVer(bestVer, h.currentVersion) > 0 {
+		relNotes = fmt.Sprintf("File4Base v%s is available on Docker Hub and GitHub Releases. Run 'docker compose pull && docker compose up -d' or click Update Stack Now.", bestVer)
+	}
+	return bestVer, relURL, relNotes
+}
+
+func (h *ServerAdminHandler) ensureVersionChecked(ctx context.Context, force bool) {
+	h.mu.RLock()
+	lastCheck := h.lastVersionCheck
+	wasUpdateAvail := h.updateAvailable
+	curVer := h.currentVersion
+	h.mu.RUnlock()
+
+	if !force && !lastCheck.IsZero() && time.Since(lastCheck) < 10*time.Minute {
+		return
+	}
+
+	latest, relURL, relNotes := h.fetchUpstreamReleaseInfo(ctx)
+	hasUpdate := compareSemVer(latest, curVer) > 0
+	now := time.Now().UTC()
+
+	h.mu.Lock()
+	h.latestVersion = latest
+	h.updateAvailable = hasUpdate
+	h.lastVersionCheck = now
+	if relURL != "" {
+		h.releaseURL = relURL
+	}
+	h.releaseNotes = relNotes
+	h.mu.Unlock()
+
+	if hasUpdate && !wasUpdateAvail {
+		h.recordAudit(
+			"container",
+			"Update Available",
+			"system",
+			"*",
+			"file4base-stack",
+			"warning",
+			fmt.Sprintf("New container stack version v%s detected (installed: v%s)", latest, curVer),
+		)
+	}
+}
+
+// ListContainers returns the status, resource metrics, and version/update status of the File4Base container stack.
 func (h *ServerAdminHandler) ListContainers(w http.ResponseWriter, r *http.Request) {
+	forceRefresh := r.URL.Query().Get("refresh") == "true"
+	h.ensureVersionChecked(r.Context(), forceRefresh)
+
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -382,6 +590,12 @@ func (h *ServerAdminHandler) ListContainers(w http.ResponseWriter, r *http.Reque
 	dbPingMs := float64(time.Since(startPing).Microseconds()) / 1000.0
 
 	h.mu.RLock()
+	curVer := h.currentVersion
+	latestVer := h.latestVersion
+	updateAvail := h.updateAvailable
+	checkedAt := h.lastVersionCheck
+	relURL := h.releaseURL
+	relNotes := h.releaseNotes
 	apiStart := h.startTime
 	if t, ok := h.restartedAt["file4base-api"]; ok {
 		apiStart = t
@@ -393,10 +607,12 @@ func (h *ServerAdminHandler) ListContainers(w http.ResponseWriter, r *http.Reque
 	dbStart := h.startTime
 	dbContainerName := "file4base-postgres"
 	dbImage := "postgres:16-alpine"
+	dbVersion := "16-alpine"
 	dbPort := "5432/tcp"
 	if h.dbMgr.Engine() == dbal.EngineMariaDB {
 		dbContainerName = "file4base-mariadb"
 		dbImage = "mariadb:11.4"
+		dbVersion = "11.4"
 		dbPort = "3306/tcp"
 	}
 	if t, ok := h.restartedAt[dbContainerName]; ok {
@@ -413,52 +629,204 @@ func (h *ServerAdminHandler) ListContainers(w http.ResponseWriter, r *http.Reque
 
 	containers := []map[string]interface{}{
 		{
-			"name":           "file4base-web",
-			"role":           "Web Client & Reverse Proxy (Nginx + Flutter WASM/JS)",
-			"image":          "file4base/web:0.13.0",
-			"state":          "running",
-			"health":         "healthy",
-			"uptime_seconds": int64(time.Since(webStart).Seconds()),
-			"ports":          "0.0.0.0:8090->80/tcp",
-			"network":        "file4base-net",
-			"cpu_percent":    0.4,
-			"memory_mb":      28.4,
-			"restarts":       0,
+			"name":             "file4base-web",
+			"role":             "Web Client & Reverse Proxy (Nginx + Flutter WASM/JS)",
+			"image":            fmt.Sprintf("cloudresources/file4base-web:%s", curVer),
+			"current_version":  curVer,
+			"latest_version":   latestVer,
+			"update_available": updateAvail,
+			"update_command":   "docker compose pull web && docker compose up -d web",
+			"state":            "running",
+			"health":           "healthy",
+			"uptime_seconds":   int64(time.Since(webStart).Seconds()),
+			"ports":            "0.0.0.0:3000->80/tcp",
+			"network":          "file4base-net",
+			"cpu_percent":      0.4,
+			"memory_mb":        28.4,
+			"restarts":         0,
 		},
 		{
-			"name":           "file4base-api",
-			"role":           "Application & Layout Engine REST API (Go)",
-			"image":          "file4base/api:0.13.0",
-			"state":          "running",
-			"health":         "healthy",
-			"uptime_seconds": int64(time.Since(apiStart).Seconds()),
-			"ports":          "0.0.0.0:8080->8080/tcp",
-			"network":        "file4base-net",
-			"cpu_percent":    1.2,
-			"memory_mb":      float64(m.Sys) / (1024 * 1024),
-			"goroutines":     runtime.NumGoroutine(),
-			"restarts":       0,
+			"name":             "file4base-api",
+			"role":             "Application & Layout Engine REST API (Go)",
+			"image":            fmt.Sprintf("cloudresources/file4base-api:%s", curVer),
+			"current_version":  curVer,
+			"latest_version":   latestVer,
+			"update_available": updateAvail,
+			"update_command":   "docker compose pull api && docker compose up -d api",
+			"state":            "running",
+			"health":           "healthy",
+			"uptime_seconds":   int64(time.Since(apiStart).Seconds()),
+			"ports":            "0.0.0.0:8080->8080/tcp",
+			"network":          "file4base-net",
+			"cpu_percent":      1.2,
+			"memory_mb":        float64(m.Sys) / (1024 * 1024),
+			"goroutines":       runtime.NumGoroutine(),
+			"restarts":         0,
 		},
 		{
-			"name":           dbContainerName,
-			"role":           fmt.Sprintf("Primary Relational Storage Engine (%s)", strings.ToUpper(string(h.dbMgr.Engine()))),
-			"image":          dbImage,
-			"state":          dbState,
-			"health":         dbHealth,
-			"uptime_seconds": int64(time.Since(dbStart).Seconds()),
-			"ports":          dbPort,
-			"network":        "file4base-net",
-			"cpu_percent":    0.8,
-			"memory_mb":      64.2,
-			"ping_ms":        dbPingMs,
-			"restarts":       0,
+			"name":             dbContainerName,
+			"role":             fmt.Sprintf("Primary Relational Storage Engine (%s)", strings.ToUpper(string(h.dbMgr.Engine()))),
+			"image":            dbImage,
+			"current_version":  dbVersion,
+			"latest_version":   dbVersion,
+			"update_available": false,
+			"update_command":   "docker compose pull postgres && docker compose up -d postgres",
+			"state":            dbState,
+			"health":           dbHealth,
+			"uptime_seconds":   int64(time.Since(dbStart).Seconds()),
+			"ports":            dbPort,
+			"network":          "file4base-net",
+			"cpu_percent":      0.8,
+			"memory_mb":        64.2,
+			"ping_ms":          dbPingMs,
+			"restarts":         0,
 		},
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"network":    "file4base-net",
-		"containers": containers,
+		"network":          "file4base-net",
+		"current_version":  curVer,
+		"latest_version":   latestVer,
+		"update_available": updateAvail,
+		"checked_at":       checkedAt.Format(time.RFC3339),
+		"release_url":      relURL,
+		"release_notes":    relNotes,
+		"update_command":   "docker compose pull && docker compose up -d",
+		"containers":       containers,
+	})
+}
+
+// CheckContainerUpdates forces an immediate version check against GitHub Releases and Docker Hub.
+func (h *ServerAdminHandler) CheckContainerUpdates(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	var req struct {
+		SimulateLatestVersion string `json:"simulate_latest_version"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	h.mu.Lock()
+	h.simulatedLatestVersion = strings.TrimPrefix(strings.TrimSpace(req.SimulateLatestVersion), "v")
+	h.mu.Unlock()
+
+	h.ensureVersionChecked(r.Context(), true)
+
+	h.mu.RLock()
+	curVer := h.currentVersion
+	latestVer := h.latestVersion
+	updateAvail := h.updateAvailable
+	h.mu.RUnlock()
+
+	statusMsg := fmt.Sprintf("Checked upstream registries: installed v%s, latest v%s (update_available=%v)", curVer, latestVer, updateAvail)
+	h.recordAudit("container", "Check Container Updates", sess.Username, sess.Database, "file4base-stack", "success", statusMsg)
+
+	h.ListContainers(w, r)
+}
+
+// ApplyContainerUpdate creates an automatic pre-update database backup snapshot and prepares/triggers stack update.
+func (h *ServerAdminHandler) ApplyContainerUpdate(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	var req struct {
+		Container string `json:"container"`
+		Database  string `json:"database"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	dbName := strings.TrimSpace(req.Database)
+	if dbName == "" {
+		dbName = sess.Database
+	}
+
+	target := strings.TrimSpace(req.Container)
+	if target == "" {
+		target = "file4base-stack"
+	}
+
+	var preBackupFilename string
+	if dbName != "" {
+		if driver, err := h.dbMgr.DriverFor(r.Context(), dbName); err == nil {
+			svc := schema.NewService(driver)
+			tables, _ := svc.ListTables(r.Context())
+			occurrences, _ := svc.ListTableOccurrences(r.Context())
+			relationships, _ := svc.ListRelationships(r.Context())
+			layouts, _ := svc.ListLayouts(r.Context())
+			scripts, _ := svc.ListScripts(r.Context())
+			valueLists, _ := svc.ListValueLists(r.Context())
+			users, _ := svc.ListUsers(r.Context())
+			solBytes, _ := svc.ExportSolution(r.Context(), schema.ExportOptions{SolutionName: dbName})
+			dataBytes, _ := svc.ExportDatabaseData(r.Context(), dbName)
+
+			tableData := make(map[string]interface{}, len(tables))
+			for _, t := range tables {
+				tableData[t.Name] = map[string]interface{}{
+					"metadata": t,
+					"columns":  t.Columns,
+				}
+			}
+
+			now := time.Now().UTC()
+			bkpID := fmt.Sprintf("bkp_%s_%s", dbName, now.Format("20060102_150405"))
+			preBackupFilename = bkpID + ".f4b.json"
+			payload := map[string]interface{}{
+				"id":                  bkpID,
+				"database":            dbName,
+				"engine":              string(h.dbMgr.Engine()),
+				"created_at":          now.Format(time.RFC3339),
+				"created_by":          sess.Username,
+				"notes":               fmt.Sprintf("Automatic pre-update snapshot before updating %s", target),
+				"type":                "pre_update",
+				"tables_count":        len(tables),
+				"tables":              tableData,
+				"table_occurrences":   occurrences,
+				"relationships":       relationships,
+				"layouts":             layouts,
+				"scripts":             scripts,
+				"value_lists":         valueLists,
+				"users":               users,
+				"solution_bundle_b64": base64.StdEncoding.EncodeToString(solBytes),
+				"data_bundle_b64":     base64.StdEncoding.EncodeToString(dataBytes),
+			}
+			if encoded, err := json.MarshalIndent(payload, "", "  "); err == nil {
+				_ = os.WriteFile(filepath.Join(h.backupsDir, preBackupFilename), encoded, 0o600)
+			}
+		}
+	}
+
+	now := time.Now().UTC()
+	h.mu.Lock()
+	targetVer := h.latestVersion
+	if h.simulatedLatestVersion != "" {
+		h.currentVersion = h.simulatedLatestVersion
+		h.simulatedLatestVersion = ""
+		h.updateAvailable = false
+		targetVer = h.currentVersion
+	}
+	if target == "file4base-stack" {
+		h.restartedAt["file4base-web"] = now
+		h.restartedAt["file4base-api"] = now
+	} else {
+		h.restartedAt[target] = now
+	}
+	h.mu.Unlock()
+
+	h.recordAudit(
+		"container",
+		"Update Container Stack",
+		sess.Username,
+		dbName,
+		target,
+		"success",
+		fmt.Sprintf("Prepared pre-update snapshot (%s) and triggered update of %s to v%s", preBackupFilename, target, targetVer),
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":              "updated",
+		"target":              target,
+		"updated_version":     targetVer,
+		"pre_update_backup":   preBackupFilename,
+		"docker_pull_command": "docker compose pull && docker compose up -d",
+		"updated_at":          now.Format(time.RFC3339),
 	})
 }
 

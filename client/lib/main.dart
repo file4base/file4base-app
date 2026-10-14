@@ -158,6 +158,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   bool _isPageMarginsVisible = false;
   bool _isFormattingBarVisible = false;
   bool _isTextRulerVisible = false;
+  bool _containerUpdateAvailable = false;
+  String? _containerLatestVersion;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
 
   /// The find requests that define the found set, remembered while the data
@@ -316,6 +318,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       });
       await _loadUserPermissions();
       await _loadTables();
+      unawaited(_checkContainerUpdatesInBackground());
       if (auth.fileName != null) {
         AutoSaveService.instance.configure(
           buildSolutionBytes: _exportCurrentSolutionBytes,
@@ -338,6 +341,22 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         });
       }
     }
+  }
+
+  Future<void> _checkContainerUpdatesInBackground() async {
+    if (_currentUser == null || !_currentUser!.isAdmin) return;
+    try {
+      final client = ref.read(apiClientProvider);
+      final data = await client.listServerContainers();
+      final updateAvail = data['update_available'] == true;
+      final latestVer = data['latest_version']?.toString();
+      if (mounted) {
+        setState(() {
+          _containerUpdateAvailable = updateAvail;
+          _containerLatestVersion = latestVer;
+        });
+      }
+    } catch (_) {}
   }
 
   /// Locks the workspace after the server rejected the session (expired,
@@ -2090,8 +2109,18 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       initialSection: section,
                       activeDatabase: _activeDatabaseName,
                       onDatabaseRestored: _loadTables,
+                      onVersionStatusChanged: ({required updateAvailable, required latestVersion}) {
+                        if (mounted) {
+                          setState(() {
+                            _containerUpdateAvailable = updateAvailable;
+                            _containerLatestVersion = latestVersion;
+                          });
+                        }
+                      },
                     );
                   },
+                  containerUpdateAvailable: _containerUpdateAvailable,
+                  containerLatestVersion: _containerLatestVersion,
                   menuSets: _menuSets,
                   activeMenuSet: _effectiveMenuSet,
                   onSelectMenuSet: (set) => setState(() {
@@ -2657,6 +2686,56 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           ),
 
           const Spacer(),
+
+          if (_containerUpdateAvailable && _currentUser != null) ...[
+            InkWell(
+              onTap: () {
+                ServerToolsDialog.show(
+                  context,
+                  ref.read(apiClientProvider),
+                  activeDatabase: _activeDatabaseName,
+                  onDatabaseRestored: _loadTables,
+                  onVersionStatusChanged: ({required updateAvailable, required latestVersion}) {
+                    if (mounted) {
+                      setState(() {
+                        _containerUpdateAvailable = updateAvailable;
+                        _containerLatestVersion = latestVersion;
+                      });
+                    }
+                  },
+                );
+              },
+              borderRadius: BorderRadius.circular(4),
+              child: Tooltip(
+                message: 'New container version v${_containerLatestVersion ?? ""} available! Click to open Server Tools > Containers & Services.',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade700,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.system_update_alt, size: 11, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Container Update Available (v${_containerLatestVersion ?? "NEW"})',
+                        style: const TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const VerticalDivider(width: 1, indent: 4, endIndent: 4),
+            const SizedBox(width: 8),
+          ],
 
           // Server Connection Status
           InkWell(

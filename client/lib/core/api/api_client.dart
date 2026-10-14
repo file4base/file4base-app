@@ -2281,10 +2281,43 @@ class ApiClient {
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
-  Future<Map<String, dynamic>> listServerContainers() async {
+  Future<Map<String, dynamic>> listServerContainers({bool refresh = false}) async {
+    final uri = refresh
+        ? Uri.parse('$baseUrl/api/v1/server/containers?refresh=true')
+        : Uri.parse('$baseUrl/api/v1/server/containers');
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/api/v1/server/containers'),
+      uri,
       headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> checkServerContainerUpdates({
+    String simulateLatestVersion = '',
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/containers/check-updates'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(<String, dynamic>{
+        'simulate_latest_version': simulateLatestVersion,
+      }),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> applyServerContainerUpdate({
+    String container = 'file4base-stack',
+    String? database,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/containers/update'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(<String, dynamic>{
+        'container': container,
+        if (database != null) 'database': database,
+      }),
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);

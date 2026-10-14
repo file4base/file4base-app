@@ -1850,7 +1850,9 @@ When `mfa_enabled` is `true` for an account, `POST /api/v1/security/login` requi
 | Method and path | Role | Summary |
 | --- | --- | --- |
 | `GET /api/v1/server/telemetry` | admin / owner | Rolling 60-minute API telemetry (`minute_series`, `current_rpm`, `avg_latency_ms`, `p95_latency_ms`, `status_2xx`/`4xx`/`5xx`, `top_endpoints`, Go runtime memory/goroutines, and DB ping latency). |
-| `GET /api/v1/server/containers` | admin / owner | Health, uptime, version, and resource metrics for `file4base-api`, `file4base-web`, and `file4base-postgres` / `file4base-mariadb`. |
+| `GET /api/v1/server/containers` | admin / owner | Health, uptime, `current_version`, `latest_version`, `update_available`, `release_url`, `release_notes`, `update_command`, and resource metrics for `file4base-api`, `file4base-web`, and `file4base-postgres` / `file4base-mariadb`. |
+| `POST /api/v1/server/containers/check-updates` | admin / owner | Queries GitHub Releases, GitHub `VERSION`, and Docker Hub tags (`cloudresources/file4base-api`) on demand (or simulates a newer release via `simulate_latest_version`) and returns update availability across all containers. |
+| `POST /api/v1/server/containers/update` | admin / owner | Creates an automatic `pre_update` point-in-time backup snapshot in `./data/backups/` and prepares/triggers a container stack update (`target_version`, `container`). |
 | `POST /api/v1/server/containers/{name}/restart` | admin / owner | Triggers a graceful service reload/connection pool refresh for `{name}` and records an audit event. |
 | `GET /api/v1/server/containers/{name}/logs` | admin / owner | Returns recent structured log lines for `{name}`. |
 | `GET /api/v1/server/backups` | admin / owner | Lists stored server snapshots (`.f4b.json`) with size, table count, and timestamp. |

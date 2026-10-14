@@ -24,11 +24,13 @@ class ServerToolsDialog extends StatefulWidget {
     this.initialSection = ServerToolSection.containers,
     this.activeDatabase,
     this.onDatabaseRestored,
+    this.onVersionStatusChanged,
   });
   final ApiClient apiClient;
   final ServerToolSection initialSection;
   final String? activeDatabase;
   final VoidCallback? onDatabaseRestored;
+  final void Function({required bool updateAvailable, required String latestVersion})? onVersionStatusChanged;
 
   static Future<void> show(
     BuildContext context,
@@ -36,6 +38,7 @@ class ServerToolsDialog extends StatefulWidget {
     ServerToolSection initialSection = ServerToolSection.containers,
     String? activeDatabase,
     VoidCallback? onDatabaseRestored,
+    void Function({required bool updateAvailable, required String latestVersion})? onVersionStatusChanged,
   }) {
     return showDialog<void>(
       context: context,
@@ -45,6 +48,7 @@ class ServerToolsDialog extends StatefulWidget {
         initialSection: initialSection,
         activeDatabase: activeDatabase,
         onDatabaseRestored: onDatabaseRestored,
+        onVersionStatusChanged: onVersionStatusChanged,
       ),
     );
   }
@@ -62,10 +66,16 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   Timer? _autoRefreshTimer;
   bool _autoRefreshTelemetry = true;
 
-  // 1. Containers & Logs state
+  // 1. Containers, Versions & Logs state
   List<Map<String, dynamic>> _containers = [];
   String _selectedLogContainer = 'file4base-api';
   List<String> _containerLogs = [];
+  String _currentStackVersion = '0.13.0';
+  String _latestStackVersion = '0.13.0';
+  bool _updateAvailable = false;
+  String _versionCheckedAt = '';
+  String _releaseNotes = '';
+  String _updateCommand = 'docker compose pull && docker compose up -d';
 
   // 2. Backups state
   List<Map<String, dynamic>> _backups = [];
@@ -117,6 +127,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
     'high_error_rate',
     'mfa_changed',
     'tls_expiring',
+    'update_available',
   ];
   String _lastTestTimestamp = '';
 
@@ -173,6 +184,16 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
               .whereType<Map<dynamic, dynamic>>()
               .map(Map<String, dynamic>.from)
               .toList();
+          final curVer = res['current_version']?.toString() ?? '0.13.0';
+          final latestVer = res['latest_version']?.toString() ?? curVer;
+          final updateAvail = res['update_available'] as bool? ?? false;
+          final checkedAt = res['checked_at']?.toString() ?? '';
+          final relNotes = res['release_notes']?.toString() ?? '';
+          final updCmd = res['update_command']?.toString() ?? 'docker compose pull && docker compose up -d';
+          widget.onVersionStatusChanged?.call(
+            updateAvailable: updateAvail,
+            latestVersion: latestVer,
+          );
           final names = list.map((c) => c['name']?.toString() ?? '').where((s) => s.isNotEmpty).toList();
           if (names.isNotEmpty && !names.contains(_selectedLogContainer)) {
             _selectedLogContainer = names.first;
@@ -181,6 +202,12 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
           if (!mounted) return;
           setState(() {
             _containers = list;
+            _currentStackVersion = curVer;
+            _latestStackVersion = latestVer;
+            _updateAvailable = updateAvail;
+            _versionCheckedAt = checkedAt;
+            _releaseNotes = relNotes;
+            _updateCommand = updCmd;
             _containerLogs = logs;
             _loading = false;
           });
@@ -586,13 +613,35 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            title,
-                            style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: selected ? FontWeight.bold : FontWeight.w500,
-                              color: selected ? _primaryBlue : null,
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  title,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: selected ? FontWeight.bold : FontWeight.w500,
+                                    color: selected ? _primaryBlue : null,
+                                  ),
+                                ),
+                              ),
+                              if (sec == ServerToolSection.containers && _updateAvailable)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.shade700,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'v$_latestStackVersion',
+                                    style: const TextStyle(
+                                      fontSize: 9.5,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                           Text(
                             subtitle,
@@ -661,6 +710,65 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
     }
   }
 
+  Future<void> _triggerVersionCheck({String simulateLatestVersion = ''}) async {
+    try {
+      final res = await widget.apiClient.checkServerContainerUpdates(
+        simulateLatestVersion: simulateLatestVersion,
+      );
+      final list = (res['containers'] as List<dynamic>? ?? const [])
+          .whereType<Map<dynamic, dynamic>>()
+          .map(Map<String, dynamic>.from)
+          .toList();
+      final curVer = res['current_version']?.toString() ?? _currentStackVersion;
+      final latestVer = res['latest_version']?.toString() ?? curVer;
+      final updateAvail = res['update_available'] as bool? ?? false;
+      final checkedAt = res['checked_at']?.toString() ?? '';
+      final relNotes = res['release_notes']?.toString() ?? '';
+      final updCmd = res['update_command']?.toString() ?? _updateCommand;
+      widget.onVersionStatusChanged?.call(
+        updateAvailable: updateAvail,
+        latestVersion: latestVer,
+      );
+      if (!mounted) return;
+      setState(() {
+        _containers = list;
+        _currentStackVersion = curVer;
+        _latestStackVersion = latestVer;
+        _updateAvailable = updateAvail;
+        _versionCheckedAt = checkedAt;
+        _releaseNotes = relNotes;
+        _updateCommand = updCmd;
+      });
+      if (updateAvail) {
+        _toast('New version available: v$latestVer (installed: v$curVer)');
+      } else {
+        _toast('All containers are up to date (v$curVer).');
+      }
+    } catch (e) {
+      _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
+  }
+
+  Future<void> _applyStackUpdate({String container = 'file4base-stack'}) async {
+    try {
+      final res = await widget.apiClient.applyServerContainerUpdate(
+        container: container,
+        database: widget.activeDatabase,
+      );
+      final preBackup = res['pre_update_backup']?.toString() ?? '';
+      final cmd = res['docker_pull_command']?.toString() ?? _updateCommand;
+      await Clipboard.setData(ClipboardData(text: cmd));
+      await _loadCurrentSection(silent: true);
+      if (preBackup.isNotEmpty) {
+        _toast('Pre-update backup created ($preBackup) & update applied! Docker command copied.');
+      } else {
+        _toast('Update applied for $container! Docker command copied to clipboard.');
+      }
+    } catch (e) {
+      _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
+  }
+
   // ===========================================================================
   // 1. CONTAINERS & SERVICES VIEW
   // ===========================================================================
@@ -686,17 +794,83 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Docker Containers & Services',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                  Row(
+                    children: [
+                      const Text(
+                        'Docker Containers & Services',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: (_updateAvailable ? Colors.amber.shade700 : Colors.green.shade700)
+                              .withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: (_updateAvailable ? Colors.amber.shade700 : Colors.green.shade700)
+                                .withValues(alpha: 0.45),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _updateAvailable ? Icons.system_update_alt : Icons.verified_outlined,
+                              size: 13,
+                              color: _updateAvailable ? Colors.amber.shade800 : Colors.green.shade700,
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              _updateAvailable
+                                  ? 'UPDATE AVAILABLE: v$_currentStackVersion → v$_latestStackVersion'
+                                  : 'UP TO DATE (v$_currentStackVersion)',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                                color: _updateAvailable ? Colors.amber.shade800 : Colors.green.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                   Text(
-                    'Inspect health, resource telemetry, and logs for the file4base-* container stack',
-                    style: TextStyle(fontSize: 12, color: _mutedText),
+                    'Inspect health, version status (Docker Hub & GitHub Releases), resource telemetry, and logs${_versionCheckedAt.isNotEmpty ? "  •  Last checked: $_versionCheckedAt" : ""}',
+                    style: TextStyle(fontSize: 11.5, color: _mutedText),
                   ),
                 ],
               ),
               const Spacer(),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () => _triggerVersionCheck(
+                  simulateLatestVersion: _updateAvailable ? '' : '0.14.0',
+                ),
+                icon: Icon(
+                  _updateAvailable ? Icons.restore : Icons.science_outlined,
+                  size: 15,
+                ),
+                label: Text(
+                  _updateAvailable ? 'Reset Version Check' : 'Simulate Update (v0.14.0)',
+                  style: const TextStyle(fontSize: 11.5),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: () => _triggerVersionCheck(),
+                icon: const Icon(Icons.cloud_sync_outlined, size: 15),
+                label: const Text('Check for Updates', style: TextStyle(fontSize: 11.5)),
+              ),
+              const SizedBox(width: 8),
               ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _primaryBlue,
@@ -715,16 +889,86 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                   }
                 },
                 icon: const Icon(Icons.backup_outlined, size: 16),
-                label: const Text('Quick Backup Now'),
+                label: const Text('Quick Backup Now', style: TextStyle(fontSize: 11.5)),
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          if (_updateAvailable) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: Colors.amber.shade700.withValues(alpha: 0.55)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.new_releases_rounded, color: Colors.amber.shade800, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'New File4Base Container Stack Version Available: v$_latestStackVersion (Installed: v$_currentStackVersion)',
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.bold,
+                            color: _isDark ? Colors.amber.shade300 : Colors.amber.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _releaseNotes.isNotEmpty
+                              ? _releaseNotes
+                              : 'Update available on Docker Hub & GitHub Releases. Clicking "Pre-Backup & Update Now" creates a full snapshot in ./data/backups/ before updating.',
+                          style: TextStyle(fontSize: 11, color: _mutedText),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: _updateCommand));
+                      _toast('Copied: $_updateCommand');
+                    },
+                    icon: const Icon(Icons.copy, size: 14),
+                    label: Text(_updateCommand, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.amber.shade800,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    onPressed: () => _applyStackUpdate(),
+                    icon: const Icon(Icons.system_update_alt, size: 15),
+                    label: const Text(
+                      'Pre-Backup & Update Now',
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
           Row(
             children: _containers.map((c) {
               final name = c['name']?.toString() ?? '';
               final role = c['role']?.toString() ?? '';
               final image = c['image']?.toString() ?? '';
+              final curVer = c['current_version']?.toString() ?? _currentStackVersion;
+              final latestVer = c['latest_version']?.toString() ?? curVer;
+              final hasUpdate = c['update_available'] as bool? ?? false;
               final health = c['health']?.toString() ?? 'healthy';
               final ports = c['ports']?.toString() ?? '';
               final uptime = (c['uptime_seconds'] as num?)?.toInt() ?? 0;
@@ -741,7 +985,9 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                     color: _cardBg,
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                      color: isHealthy ? _borderColor : Colors.red.shade400,
+                      color: hasUpdate
+                          ? Colors.amber.shade600
+                          : (isHealthy ? _borderColor : Colors.red.shade400),
                     ),
                   ),
                   child: Column(
@@ -796,8 +1042,34 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const Divider(height: 14),
-                      Text('Image: $image', style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+                      const Divider(height: 12),
+                      Text('Image: $image', style: const TextStyle(fontSize: 11, fontFamily: 'monospace'), overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Text(
+                            'Version: v$curVer',
+                            style: const TextStyle(fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: (hasUpdate ? Colors.amber.shade700 : Colors.teal)
+                                  .withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              hasUpdate ? 'NEW: v$latestVer' : 'UP TO DATE',
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.bold,
+                                color: hasUpdate ? Colors.amber.shade800 : Colors.teal.shade700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                       Text('Ports: $ports', style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
                       Text('Uptime: ${_formatUptime(uptime)}', style: const TextStyle(fontSize: 11)),
                       const SizedBox(height: 6),
@@ -836,11 +1108,15 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                           Expanded(
                             child: ElevatedButton.icon(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: _primaryBlue,
+                                backgroundColor: hasUpdate ? Colors.amber.shade800 : _primaryBlue,
                                 foregroundColor: Colors.white,
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                               ),
                               onPressed: () async {
+                                if (hasUpdate) {
+                                  await _applyStackUpdate(container: name);
+                                  return;
+                                }
                                 try {
                                   await widget.apiClient.restartServerContainer(name);
                                   _toast('Container $name gracefully restarted.');
@@ -849,8 +1125,11 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                                   _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
                                 }
                               },
-                              icon: const Icon(Icons.restart_alt, size: 14),
-                              label: const Text('Restart', style: TextStyle(fontSize: 11)),
+                              icon: Icon(hasUpdate ? Icons.system_update_alt : Icons.restart_alt, size: 14),
+                              label: Text(
+                                hasUpdate ? 'Update v$latestVer' : 'Restart',
+                                style: const TextStyle(fontSize: 11),
+                              ),
                             ),
                           ),
                         ],
@@ -2559,6 +2838,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       ('high_error_rate', 'High HTTP 5xx Error Rate'),
       ('mfa_changed', 'User MFA / Security Changed'),
       ('tls_expiring', 'SSL/TLS Certificate Expiring'),
+      ('update_available', 'New Container / Release Version Available'),
     ];
 
     return SingleChildScrollView(

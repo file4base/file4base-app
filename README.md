@@ -1,6 +1,29 @@
-# File4Base
+# <img src="docs/file4base-icon.png" alt="File4Base Icon" width="40" style="vertical-align: middle;"> File4Base (f4b)
 
-File4Base is an open-source, modern alternative to database and layout editors, built with a decoupled Go backend and Flutter desktop frontend.
+[![GitHub Release](https://img.shields.io/github/v/release/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/releases)
+[![Docker API Image](https://img.shields.io/docker/v/cloudresources/file4base-api?label=docker%20api&style=flat-square&color=blue&logo=docker)](https://hub.docker.com/r/cloudresources/file4base-api)
+[![Docker Web Image](https://img.shields.io/docker/v/cloudresources/file4base-web?label=docker%20web&style=flat-square&color=blue&logo=docker)](https://hub.docker.com/r/cloudresources/file4base-web)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/file4base/file4base-app?filename=server%2Fgo.mod&style=flat-square&logo=go)](https://github.com/file4base/file4base-app/blob/main/server/go.mod)
+[![Flutter](https://img.shields.io/badge/Flutter-Desktop%20%26%20Web-02569B?style=flat-square&logo=flutter)](https://github.com/file4base/file4base-app/tree/main/client)
+[![Go Report Card](https://goreportcard.com/badge/github.com/file4base/file4base-app?style=flat-square)](https://goreportcard.com/report/github.com/file4base/file4base-app)
+[![License](https://img.shields.io/github/license/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/blob/main/LICENSE)
+[![CI / Code Quality](https://img.shields.io/github/actions/workflow/status/file4base/file4base-app/code_quality.yml?branch=main&label=CI%20%26%20Analysis&style=flat-square)](https://github.com/file4base/file4base-app/actions/workflows/code_quality.yml)
+[![Desktop & Docker Release](https://img.shields.io/github/actions/workflow/status/file4base/file4base-app/desktop_release.yml?branch=main&label=Desktop%20%26%20Docker%20CI%2FCD&style=flat-square)](https://github.com/file4base/file4base-app/actions/workflows/desktop_release.yml)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue?style=flat-square)](https://file4base.github.io/file4base-app/)
+[![GitHub issues](https://img.shields.io/github/issues/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/issues)
+[![GitHub pull requests](https://img.shields.io/github/issues-pr/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/pulls)
+[![GitHub stars](https://img.shields.io/github/stars/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/network)
+[![Docker Pulls (API)](https://img.shields.io/docker/pulls/cloudresources/file4base-api?label=api%20pulls&style=flat-square&logo=docker)](https://hub.docker.com/r/cloudresources/file4base-api)
+[![Docker Pulls (Web)](https://img.shields.io/docker/pulls/cloudresources/file4base-web?label=web%20pulls&style=flat-square&logo=docker)](https://hub.docker.com/r/cloudresources/file4base-web)
+[![Docker Image Size](https://img.shields.io/docker/image-size/cloudresources/file4base-api/latest?style=flat-square&color=blue&logo=docker)](https://hub.docker.com/r/cloudresources/file4base-api)
+[![Go Reference](https://img.shields.io/badge/go-reference-blue?style=flat-square&logo=go)](https://pkg.go.dev/github.com/file4base/file4base-app)
+[![GitHub contributors](https://img.shields.io/github/contributors/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/graphs/contributors)
+[![GitHub repo size](https://img.shields.io/github/repo-size/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app)
+[![GitHub last commit](https://img.shields.io/github/last-commit/file4base/file4base-app?style=flat-square)](https://github.com/file4base/file4base-app/commits/main)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/file4base/file4base-app)
+
+**File4Base** is a powerful open-source low-code relational database and visual layout platform that combines the **rapid visual design of classic desktop database studios** (drag-and-drop layouts, portals, scripts, Kiosk mode, and instant form/list/report views) with the **reliability of a modern cloud-native stack** (decoupled Go REST API, PostgreSQL 16 / MariaDB 11 persistence, multi-user RBAC + TOTP MFA, and Dockerized Web & Native Desktop clients).
 
 File4Base is an independent project. References to Claris products do not imply
 affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker
@@ -10,7 +33,8 @@ WebDirect are trademarks of Claris International Inc. See the
 
 ## Architecture Highlights
 - **Backend (Go 1.26+)**: REST API with per-database sessions and role-based authorization, Clean Architecture, `pgx/v5`, PostgreSQL 16. Real-time WebSocket sync is planned (Roadmap Phase 6).
-- **Frontend (Flutter Desktop)**: Native desktop application targeting macOS (Apple Silicon M-series & Intel), Windows, and Linux.
+- **Frontend (Flutter Desktop & Web Client)**: Native desktop application targeting macOS (Apple Silicon M-series & Intel), Windows, and Linux, plus the containerized **File4Base Web Client** served via Nginx.
+- **Server Tools & Container Update Watcher**: Built-in administration console for container monitoring, version update detection & pre-backup stack upgrades, point-in-time snapshots, ACME SSL/TLS, live API telemetry, and cron schedules.
 - **Environment & Preflight Engine**: Automated startup check verifying Docker presence, daemon state, and host architecture, with direct download and auto-launch prompts.
 - **Data Persistence**: Relational storage in PostgreSQL/MariaDB running locally in Docker with dynamic schema metadata tables.
 
