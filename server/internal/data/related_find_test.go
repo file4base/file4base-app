@@ -62,7 +62,7 @@ func TestExecuteFind_RelatedField(t *testing.T) {
 
 	// The operators are the same ones a criterion on an own field takes.
 	assert.Equal(t, []string{"Tang"},
-		find(data.FindRequest{Criteria: []data.FindCriterion{related("company", "=", "DEF Ltd.")}}))
+		find(data.FindRequest{Criteria: []data.FindCriterion{related("company", "=", "Coastal Botanical")}}))
 	assert.Equal(t, []string{"Smith"},
 		find(data.FindRequest{Criteria: []data.FindCriterion{related("company_address", "LIKE", "%San Francisco%")}}))
 
@@ -109,7 +109,7 @@ func TestExecuteFind_RelatedField(t *testing.T) {
 	}}, data.QueryOptions{})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	assert.Equal(t, "DEF Ltd.", rows[0]["company"])
+	assert.Equal(t, "Coastal Botanical", rows[0]["company"])
 
 	// What cannot be searched is reported rather than silently ignored.
 	_, err = f.dataSvc.ExecuteFind(ctx, f.customers, []data.FindRequest{{

@@ -195,7 +195,7 @@ func TestRelatedRows(t *testing.T) {
 			f.relationship, f.companiesOccurrence, data.QueryOptions{})
 		require.NoError(t, err)
 		require.Len(t, rows, 1, "a customer has one company")
-		assert.Equal(t, "12 Mill Lane", rows[0]["company_address"],
+		assert.Equal(t, "12 Fjordveien", rows[0]["company_address"],
 			"this is the related field a layout shows")
 	})
 

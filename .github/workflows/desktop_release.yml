@@ -278,9 +278,9 @@ jobs:
           [Run]
           Filename: "{app}\file4base_client.exe"; Description: "Launch File4Base"; Flags: nowait postinstall skipifsilent
           "@
-          Set-Content -Path "dist/installer.iss" -Value $IssContent
-          iscc "dist/installer.iss"
-          Remove-Item "dist/installer.iss" -Force
+          Set-Content -Path "installer.iss" -Value $IssContent
+          iscc "installer.iss"
+          Remove-Item "installer.iss" -Force
 
       - name: Verify Windows Bundle Licenses and PDFium Notices
         shell: bash
