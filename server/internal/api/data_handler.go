@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -427,6 +428,10 @@ type ExternalSourceBody struct {
 	TimeoutSeconds int `json:"timeout_seconds"`
 }
 
+// errSourceQueryOwnerOnly refuses a statement of the caller's own against a
+// data source to anyone but an owner.
+var errSourceQueryOwnerOnly = errors.New("only an owner can read a data source with a statement of their own; import a whole table instead")
+
 // importSource reads what an import is to bring in: the file in the body, or
 // the registered data source it names (#47).
 func importSource(r *http.Request, body ImportBody) (*dataio.Table, error) {
@@ -441,6 +446,8 @@ func writeImportSourceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, schema.ErrDataSourceNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Data Source Not Found", err.Error())
+	case errors.Is(err, errSourceQueryOwnerOnly):
+		telemetry.WriteProblem(w, r, http.StatusForbidden, "Owner Only", err.Error())
 	case errors.Is(err, extsource.ErrUnsafeStatement):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsafe Statement", err.Error())
 	case errors.Is(err, extsource.ErrUnsupportedEngine):
@@ -459,6 +466,12 @@ func writeImportSourceError(w http.ResponseWriter, r *http.Request, err error) {
 // opened for this read and closed again.
 func readExternalSource(r *http.Request, body ImportBody) (*dataio.Table, error) {
 	ref := body.DataSource
+	// The source reads with the credentials its owner stored. Importing one
+	// of its tables is what the bulk import capability grants; running a
+	// statement of one's own with those credentials is the owner's call.
+	if strings.TrimSpace(ref.Query) != "" && currentSession(r).Role != auth.RoleOwner {
+		return nil, errSourceQueryOwnerOnly
+	}
 	source, err := schemaService(r).GetDataSource(r.Context(), strings.TrimSpace(ref.ID))
 	if err != nil {
 		return nil, err

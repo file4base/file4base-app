@@ -809,9 +809,22 @@ instead of `content`:
 }
 ```
 
-`table` reads a whole table; `query` reads a single `SELECT` instead. Anything
-that is not one SELECT answers `422 Unsafe Statement` before a connection is
-opened — File4Base never writes to a data source. A source that is not
+`table` reads a whole table; `query` reads a single `SELECT` instead.
+
+- `query` is for **owners** only (`403 Owner Only` otherwise): the source reads
+  with the credentials its owner stored, so anyone else with the
+  `bulk_import` capability imports one of its tables instead.
+- Anything that is not one SELECT answers `422 Unsafe Statement` before a
+  connection is opened: a statement must begin with `SELECT` or `WITH`, hold
+  no second statement, and contain no write or execution keyword (`INSERT`,
+  `UPDATE`, `DELETE`, `MERGE`, `INTO`, `EXEC`, `CREATE`, `DROP`, …) outside
+  quoted text, quoted names and comments. Quote a column whose name is one of
+  those words.
+- PostgreSQL and MySQL/MariaDB sources are read in a **read-only
+  transaction**, so the source refuses a write the statement check missed.
+  SQL Server's driver has none: give such a source a read-only login.
+
+File4Base never writes to a data source. A source that is not
 registered answers `404`, and one that cannot be reached `502`. Everything
 else — preview, mapping, coercion, validation, one transaction — is the file
 import's, unchanged.

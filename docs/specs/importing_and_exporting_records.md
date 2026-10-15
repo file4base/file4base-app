@@ -156,9 +156,15 @@ the same reason; an admin can read the list and test a connection.
 ### What is read, and what is refused
 
 - A **table** picked from the source's own catalog, or a **single SELECT**
-  typed by the caller. Nothing else: a statement that is not one `SELECT`
-  (or `WITH … SELECT`), or that holds a second statement, is refused before a
-  connection is opened. File4Base never writes to a data source.
+  typed by an **owner** (the source reads with the credentials the owner
+  stored; anyone else who may import picks a table). Nothing else: a
+  statement that is not one `SELECT` (or `WITH … SELECT`), that holds a
+  second statement, or that contains a write or execution keyword (`INSERT`,
+  `DELETE`, `INTO`, `EXEC`, `DROP`, … outside quoted text, quoted names and
+  comments) is refused before a connection is opened. PostgreSQL and
+  MySQL/MariaDB sources are read in a read-only transaction as well; a SQL
+  Server source should use a read-only login, since its driver has no
+  read-only transactions. File4Base never writes to a data source.
 - A table name from the picker is quoted in the engine's own spelling, and
   anything that is not a plain name is refused rather than concatenated.
 - The same guards a file gets: the row cap is applied by the source database

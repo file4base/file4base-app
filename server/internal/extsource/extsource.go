@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/file4base/file4base-app/server/internal/dataio"
 )
@@ -194,7 +195,23 @@ func Read(ctx context.Context, conn Connection, password string, opts ReadOption
 	ctx, cancel := context.WithTimeout(ctx, opts.timeout())
 	defer cancel()
 
-	rows, err := db.QueryContext(ctx, statement)
+	// The read runs in a read-only transaction where the engine has one, so
+	// the source itself refuses any write the statement check missed.
+	// SQL Server's driver has no read-only transactions: there the statement
+	// check is the guard, and the data source should use a read-only login.
+	var querier interface {
+		QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	} = db
+	if conn.Engine != EngineSQLServer {
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrConnection, err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		querier = tx
+	}
+
+	rows, err := querier.QueryContext(ctx, statement)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConnection, err)
 	}
@@ -258,6 +275,71 @@ func readStatement(conn Connection, opts ReadOptions, limits dataio.Limits) (str
 	return limitedSelect(conn.Engine, query, rowCap), nil
 }
 
+// writeKeywords are words a read never needs: they write, define, run code
+// or change the server. They are refused anywhere in a statement outside
+// quoted text, identifiers and comments, because some engines accept a write
+// after a SELECT or WITH (SQL Server runs `WITH x AS (...) DELETE ...` and
+// several statements without `;`; `SELECT ... INTO` creates a table).
+var writeKeywords = map[string]bool{
+	"insert": true, "update": true, "delete": true, "merge": true, "into": true,
+	"exec": true, "execute": true, "call": true,
+	"create": true, "alter": true, "drop": true, "truncate": true,
+	"grant": true, "revoke": true, "deny": true, "declare": true,
+	"backup": true, "restore": true, "shutdown": true, "kill": true, "dbcc": true,
+	"bulk": true, "openrowset": true, "opendatasource": true, "openquery": true, "waitfor": true,
+}
+
+// sqlWords returns the bare words of a statement, lower case, leaving out
+// string literals, quoted identifiers ("x", `x`, [x]) and comments.
+func sqlWords(query string) []string {
+	var words []string
+	var word strings.Builder
+	flush := func() {
+		if word.Len() > 0 {
+			words = append(words, strings.ToLower(word.String()))
+			word.Reset()
+		}
+	}
+	runes := []rune(query)
+	for i := 0; i < len(runes); i++ {
+		c := runes[i]
+		switch {
+		case c == '\'' || c == '"' || c == '`' || c == '[':
+			flush()
+			closing := c
+			if c == '[' {
+				closing = ']'
+			}
+			for i++; i < len(runes); i++ {
+				if runes[i] == closing {
+					// A doubled quote is an escaped quote, not the end.
+					if closing != ']' && i+1 < len(runes) && runes[i+1] == closing {
+						i++
+						continue
+					}
+					break
+				}
+			}
+		case c == '-' && i+1 < len(runes) && runes[i+1] == '-':
+			flush()
+			for i < len(runes) && runes[i] != '\n' {
+				i++
+			}
+		case c == '/' && i+1 < len(runes) && runes[i+1] == '*':
+			flush()
+			for i += 2; i+1 < len(runes) && !(runes[i] == '*' && runes[i+1] == '/'); i++ {
+			}
+			i++
+		case c == '_' || unicode.IsLetter(c) || unicode.IsDigit(c):
+			word.WriteRune(c)
+		default:
+			flush()
+		}
+	}
+	flush()
+	return words
+}
+
 // checkQuery accepts a single SELECT and nothing else. The connection is used
 // read-only by construction — File4Base never writes to a source — and this
 // keeps a typed statement from being the exception.
@@ -273,6 +355,12 @@ func checkQuery(query string) (string, error) {
 	lowered := strings.ToLower(trimmed)
 	if !strings.HasPrefix(lowered, "select ") && !strings.HasPrefix(lowered, "with ") {
 		return "", fmt.Errorf("%w: it begins with %q", ErrUnsafeStatement, firstWord(trimmed))
+	}
+	for _, word := range sqlWords(trimmed) {
+		if writeKeywords[word] {
+			return "", fmt.Errorf("%w: it contains %q (quote a column with that name)",
+				ErrUnsafeStatement, strings.ToUpper(word))
+		}
 	}
 	return trimmed, nil
 }

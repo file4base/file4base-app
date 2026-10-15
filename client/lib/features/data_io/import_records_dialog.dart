@@ -39,9 +39,15 @@ class ImportRecordsDialog extends StatefulWidget {
     this.fileName,
     this.bytes,
     this.initialSource = ImportSourceKind.file,
+    this.canReadWithStatement = true,
   });
   final TableModel table;
   final ApiClient apiClient;
+
+  /// Whether a data source may be read with a SELECT of the user's own. The
+  /// server only allows it to owners (the source reads with the credentials
+  /// its owner stored); everyone else imports one of its tables.
+  final bool canReadWithStatement;
 
   /// A file the caller already has. Null makes the dialog ask for one.
   final String? fileName;
@@ -57,6 +63,7 @@ class ImportRecordsDialog extends StatefulWidget {
     required TableModel table,
     required ApiClient apiClient,
     ImportSourceKind initialSource = ImportSourceKind.file,
+    bool canReadWithStatement = true,
   }) {
     return showDialog<ImportReportModel>(
       context: context,
@@ -65,6 +72,7 @@ class ImportRecordsDialog extends StatefulWidget {
         table: table,
         apiClient: apiClient,
         initialSource: initialSource,
+        canReadWithStatement: canReadWithStatement,
       ),
     );
   }
@@ -551,6 +559,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
           const SizedBox(height: 10),
           Row(
             children: [
+              if (widget.canReadWithStatement)
               SegmentedButton<bool>(
                 segments: const [
                   ButtonSegment(value: true, label: Text('A table')),

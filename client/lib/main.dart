@@ -1740,6 +1740,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       table: table,
       apiClient: client,
       initialSource: source,
+      canReadWithStatement: _currentUser?.isOwner ?? false,
     );
     if (report == null || !mounted) return;
 
