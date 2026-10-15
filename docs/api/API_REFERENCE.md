@@ -52,6 +52,7 @@ Sessions live in server memory, expire after `SESSION_TTL` of inactivity (defaul
 |---|---|
 | `401 Unauthorized` | Missing, invalid, expired or revoked token. Sign in again. |
 | `403 Forbidden` | The session's role or layout permissions do not allow the operation. |
+| `429 Too Many Requests` | Too many failed password checks in a row for this database + username + client; `Retry-After` gives the seconds to wait. Covers `POST /api/v1/auth/login` and credential-based database drops. |
 
 ### Roles
 
@@ -78,6 +79,9 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated list of browser origins allowed to call the API. |
 | `ALLOW_PUBLIC_DATABASE_CREATION` | `true` | When `false`, only a signed-in owner can create databases. |
 | `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools. |
+| `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
+| `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
+| `FILE4BASE_LOGIN_LOCKOUT_SECONDS` | `900` | How long a tripped lockout lasts. |
 
 ---
 

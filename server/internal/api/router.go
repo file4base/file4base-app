@@ -33,6 +33,9 @@ type Options struct {
 	// Version is the running server version (AppVersion), reported by
 	// Server Tools > Containers and compared with the latest release.
 	Version string
+	// LoginThrottle rate-limits password checks (sign-in and credential-based
+	// database drops). When nil, Mount installs a default one.
+	LoginThrottle *auth.LoginThrottle
 }
 
 // Mount registers every domain route of the API on r.
@@ -49,13 +52,20 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 
 	authMW := NewAuthMiddleware(sessions, dbMgr)
 
+	throttle := opts.LoginThrottle
+	if throttle == nil {
+		throttle = DefaultLoginThrottle()
+	}
+
 	schemaHandler := NewSchemaHandler()
 	dataHandler := NewDataHandler()
 	securityHandler := NewSecurityHandlerWithControl(dbMgr, sessions, controlStore)
+	securityHandler.throttle = throttle
 	solutionHandler := NewSolutionHandler(dbMgr, sessions, SolutionHandlerOptions{
 		AllowPublicDatabaseCreation: opts.AllowPublicDatabaseCreation,
 		ControlStore:                controlStore,
 	})
+	solutionHandler.throttle = throttle
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
 
