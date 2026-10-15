@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +25,47 @@ type SecurityHandler struct {
 	dbMgr        *dbal.MultiDatabaseManager
 	sessions     *auth.Store
 	controlStore *control.Store
+	throttle     *auth.LoginThrottle
+}
+
+// DefaultLoginThrottle locks a database+username+client out for 15 minutes
+// after 10 failed password checks in a row (a 15-minute window forgets
+// earlier failures). FILE4BASE_LOGIN_MAX_ATTEMPTS=0 disables it.
+func DefaultLoginThrottle() *auth.LoginThrottle {
+	max := envInt("FILE4BASE_LOGIN_MAX_ATTEMPTS", 10)
+	window := time.Duration(envInt("FILE4BASE_LOGIN_WINDOW_SECONDS", 900)) * time.Second
+	lockout := time.Duration(envInt("FILE4BASE_LOGIN_LOCKOUT_SECONDS", 900)) * time.Second
+	return auth.NewLoginThrottle(max, window, lockout)
+}
+
+func envInt(name string, def int) int {
+	if raw := strings.TrimSpace(os.Getenv(name)); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v >= 0 {
+			return v
+		}
+	}
+	return def
+}
+
+// loginThrottleKey identifies who is trying to authenticate: the account
+// (database + username) and where from (client address). Keying on both
+// means one attacker cannot lock a victim out of their own account from
+// elsewhere, while still capping guesses per account and per source.
+func loginThrottleKey(database, username string, r *http.Request) string {
+	ip, _, _ := extractClientSessionMeta(r)
+	return strings.ToLower(strings.TrimSpace(database)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(username)) + "\x00" + ip
+}
+
+// writeLockedOut refuses an attempt that is currently locked out.
+func writeLockedOut(w http.ResponseWriter, r *http.Request, retryAfter time.Duration) {
+	secs := int(retryAfter.Seconds())
+	if secs < 1 {
+		secs = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	telemetry.WriteProblem(w, r, http.StatusTooManyRequests, "Too Many Attempts",
+		fmt.Sprintf("too many failed attempts; try again in %d seconds", secs))
 }
 
 func NewSecurityHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store) *SecurityHandler {
@@ -176,8 +220,22 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	throttleKey := loginThrottleKey(dbName, req.Username, r)
+	if ok, retryAfter := h.throttle.Allow(throttleKey); !ok {
+		writeLockedOut(w, r, retryAfter)
+		return
+	}
+
 	user, err := svc.Authenticate(r.Context(), req.Username, req.Password, req.TOTPCode)
 	if err != nil {
+		// A missing second factor is not a wrong credential: the first factor
+		// was right, so it does not count against the limit.
+		if !errors.Is(err, schema.ErrMFARequired) {
+			if locked, retryAfter := h.throttle.Fail(throttleKey); locked {
+				writeLockedOut(w, r, retryAfter)
+				return
+			}
+		}
 		if errors.Is(err, schema.ErrMFARequired) {
 			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -194,6 +252,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.throttle.Succeed(throttleKey)
 	h.syncProjectSecurity(r.Context(), dbName, svc)
 
 	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName, user.Stamp)
@@ -664,4 +723,3 @@ func (h *SecurityHandler) DisableUserMFA(w http.ResponseWriter, r *http.Request)
 		"status":      "disabled",
 	})
 }
-

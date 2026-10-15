@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A statement of one's own (`query`) is for **owners** only (`403` otherwise); everyone else who may import picks one of the source's tables. The import window only offers "A SELECT" to owners.
   - Statements containing a write or execution keyword (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `INTO`, `EXEC`, `CREATE`, `DROP`, …) outside quoted text, quoted names and comments are refused (`422`).
   - PostgreSQL and MySQL/MariaDB sources are read in a **read-only transaction**. SQL Server's driver has none: give a SQL Server source a read-only login.
+- **No limit on password guessing.** Sign-in (`POST /api/v1/auth/login`) and credential-based database drops accepted unlimited password attempts. Now a database + username + client is locked out (`429 Too Many Requests`, with `Retry-After`) after `FILE4BASE_LOGIN_MAX_ATTEMPTS` failures in a row (default 10), for `FILE4BASE_LOGIN_LOCKOUT_SECONDS` (default 15 min). A missing second factor does not count; a success clears the counter. Keyed on the client address too, so one attacker cannot lock a victim out.
 
 ---
 

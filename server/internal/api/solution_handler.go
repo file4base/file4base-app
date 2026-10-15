@@ -42,6 +42,7 @@ type SolutionHandler struct {
 	dbMgr    *dbal.MultiDatabaseManager
 	sessions *auth.Store
 	opts     SolutionHandlerOptions
+	throttle *auth.LoginThrottle
 }
 
 func NewSolutionHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, opts SolutionHandlerOptions) *SolutionHandler {
@@ -390,12 +391,24 @@ func (h *SolutionHandler) DeleteDatabase(w http.ResponseWriter, r *http.Request)
 			_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&creds)
 		}
 		if creds.Username != "" && creds.Password != "" {
+			key := loginThrottleKey(name, creds.Username, r)
+			if ok, retryAfter := h.throttle.Allow(key); !ok {
+				writeLockedOut(w, r, retryAfter)
+				return
+			}
 			if driver, err := h.dbMgr.DriverFor(r.Context(), name); err == nil {
 				svc := schema.NewService(driver)
 				if svc.HasSystemCatalog(r.Context()) {
 					if user, err := svc.Authenticate(r.Context(), creds.Username, creds.Password); err == nil && user.Role == auth.RoleOwner {
 						authorized = true
+						h.throttle.Succeed(key)
 					}
+				}
+			}
+			if !authorized {
+				if locked, retryAfter := h.throttle.Fail(key); locked {
+					writeLockedOut(w, r, retryAfter)
+					return
 				}
 			}
 		}
@@ -1255,5 +1268,3 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		Report:          converted.Report,
 	})
 }
-
-
