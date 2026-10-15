@@ -13,6 +13,7 @@ ABOUT_DIALOG="${ROOT_DIR}/client/lib/features/about/about_dialog.dart"
 # the build, which Flutter derives from pubspec.yaml, so bumping pubspec.yaml
 # is what sets the Windows file and product version.
 OPENAPI_SPEC="${ROOT_DIR}/server/internal/api/swagger/ui/openapi.json"
+DOCS_INDEX="${ROOT_DIR}/docs/index.html"
 COMPOSE_FILES=("${ROOT_DIR}/docker-compose.yml" "${ROOT_DIR}/docker-compose.mariadb.yml")
 
 if [ ! -f "${VERSION_FILE}" ]; then
@@ -98,6 +99,19 @@ for COMPOSE_FILE in "${COMPOSE_FILES[@]}"; do
         echo "Updated ${COMPOSE_FILE}"
     fi
 done
+
+# 7. Update GitHub Pages static documentation (docs/index.html)
+if [ -f "${DOCS_INDEX}" ]; then
+    sed -i.bak -E \
+        -e "s/<span class=\"version-pill\">v[^<]+<\/span>/<span class=\"version-pill\">v${NEW_VERSION}<\/span>/g" \
+        -e "s/File4Base \(<strong>v[^<]+<\/strong>\)/File4Base (<strong>v${NEW_VERSION}<\/strong>)/g" \
+        -e "s/cloudresources\/file4base-api:[0-9]+\.[0-9]+\.[0-9]+/cloudresources\/file4base-api:${NEW_VERSION}/g" \
+        -e "s/cloudresources\/file4base-web:[0-9]+\.[0-9]+\.[0-9]+/cloudresources\/file4base-web:${NEW_VERSION}/g" \
+        -e "s/Version v[0-9]+\.[0-9]+\.[0-9]+/Version v${NEW_VERSION}/g" \
+        "${DOCS_INDEX}"
+    rm -f "${DOCS_INDEX}.bak"
+    echo "Updated ${DOCS_INDEX}"
+fi
 
 echo "=================================================="
 echo "Version successfully bumped to: ${NEW_VERSION}"

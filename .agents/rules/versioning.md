@@ -17,9 +17,10 @@ The root `VERSION` file is the primary single source of truth for the project ve
 5. `client/lib/features/about/about_dialog.dart`: Displayed version.
 6. `server/internal/api/swagger/ui/openapi.json`: `info.version`.
 7. `docker-compose.yml`: default image tag `${FILE4BASE_VERSION:-X.Y.Z}` of `file4base-api` and `file4base-web`.
-8. Git Tags: `vX.Y.Z`.
+8. `docs/index.html`: GitHub Pages documentation site version pill, hero version, Docker image tags, and footer version.
+9. Git Tags: `vX.Y.Z`.
 
-`scripts/bump_version.sh [major|minor|patch|X.Y.Z]` updates items 1-7 (`Runner.rc` reads the version from Flutter at build time).
+`scripts/bump_version.sh [major|minor|patch|X.Y.Z]` updates items 1-8 (`Runner.rc` reads the version from Flutter at build time).
 
 ---
 
@@ -41,6 +42,7 @@ The AI and developers must keep project documentation synchronized with code:
 2. **Schema & DBAL**: Any new dialect, data type, or catalog table MUST be documented in `docs/specs/DBAL_SPECIFICATION.md` or `docs/specs/layout_schema.json`.
 3. **Roadmap**: Ticked progress checkboxes in `docs/specs/ROADMAP.md` MUST match actual merged code.
 4. **Desktop & Platforms**: Changes in platform targets, ports, or preflight logic MUST be documented in `README.md` and `docs/specs/ARCHITECTURE.md`.
+5. **GitHub Pages (`docs/index.html`)**: New user-facing modules, tools, or architecture updates MUST be reflected in `docs/index.html` so `https://file4base.github.io/file4base-app/` stays up to date.
 
 ---
 

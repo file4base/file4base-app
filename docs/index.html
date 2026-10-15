@@ -441,7 +441,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
       </div>
       <span class="brand-title">File4Base</span>
-      <span class="version-pill">v0.4.18</span>
+      <span class="version-pill">v0.14.0</span>
     </a>
 
     <div class="nav-actions">
@@ -449,6 +449,9 @@
         <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
         <input type="text" id="docSearch" placeholder="Search documentation...">
       </div>
+      <a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener" class="nav-btn">
+        API Reference
+      </a>
       <a href="https://github.com/file4base/file4base-app" target="_blank" rel="noopener" class="nav-btn">
         <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
         GitHub
@@ -468,17 +471,19 @@
         <ul class="sidebar-links">
           <li><a href="#overview" class="active">Overview & Architecture</a></li>
           <li><a href="#quickstart">Quick Start & Docker</a></li>
-          <li><a href="#solutions">Solutions & Packages (.f4p)</a></li>
+          <li><a href="#solutions">Solutions (.f4p) & Data (.f4data)</a></li>
+          <li><a href="#migration">FileMaker DDR & .fmp12 Migration</a></li>
         </ul>
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-heading">Operational Modes</div>
+        <div class="sidebar-heading">Operational Modes & UI</div>
         <ul class="sidebar-links">
-          <li><a href="#browse-mode">Browse Mode</a></li>
-          <li><a href="#find-mode">Find Mode</a></li>
+          <li><a href="#browse-mode">Browse Mode (Form/List/Table)</a></li>
+          <li><a href="#find-mode">Find Mode & Saved Finds</a></li>
           <li><a href="#layout-studio">Layout Mode Studio</a></li>
           <li><a href="#preview-mode">Preview & Print Mode</a></li>
+          <li><a href="#view-format">Edit, View & Format Menus</a></li>
         </ul>
       </div>
 
@@ -486,18 +491,29 @@
         <div class="sidebar-heading">Data & Logic Engine</div>
         <ul class="sidebar-links">
           <li><a href="#manage-database">Manage Database & Schema</a></li>
-          <li><a href="#calc-engine">Calculations & Formulas</a></li>
-          <li><a href="#script-workspace">Script Workspace</a></li>
-          <li><a href="#security-users">Security & User Accounts</a></li>
+          <li><a href="#relationships-portals">Relationships & Portals</a></li>
+          <li><a href="#calc-engine">Calculations & Summaries</a></li>
+          <li><a href="#reports-charts">Reports, Labels & Charts</a></li>
+          <li><a href="#script-workspace">Script Workspace & Debugger</a></li>
+        </ul>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-heading">Administration & Security</div>
+        <ul class="sidebar-links">
+          <li><a href="#kiosk-mode">Kiosk Mode & Developer Utilities</a></li>
+          <li><a href="#server-tools">Server Tools Console (9 Modules)</a></li>
+          <li><a href="#security-users">Security, RBAC & MFA (2FA)</a></li>
         </ul>
       </div>
 
       <div class="sidebar-section">
         <div class="sidebar-heading">API & Deployment</div>
         <ul class="sidebar-links">
-          <li><a href="#rest-api">REST API Reference</a></li>
+          <li><a href="#rest-api">REST API v1 & OpenAPI/Swagger</a></li>
           <li><a href="#docker-standards">Docker Standards</a></li>
-          <li><a href="#multiplatform">macOS & Desktop Targets</a></li>
+          <li><a href="#multiplatform">macOS, Windows, Linux & Web</a></li>
+          <li><a href="#tutorials">Tutorials & Specs</a></li>
         </ul>
       </div>
 
@@ -516,29 +532,29 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base is a modern, open-source rapid application database platform for rapid development. Built with Go (Clean Architecture, DBAL) on the backend and Flutter (Desktop & Web Client) on the frontend.
+          File4Base (<strong>v0.14.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
           <div class="card">
             <div class="card-icon">⚡</div>
             <div class="card-title">Multi-Engine DBAL</div>
-            <p>PostgreSQL 16 default engine with optional MariaDB/MySQL support, dynamic DDL migrations, and live catalogs.</p>
+            <p>PostgreSQL 16 default engine with optional MariaDB/MySQL support, external SQL data sources, dynamic DDL migrations, and live system catalogs.</p>
           </div>
           <div class="card">
             <div class="card-icon">🎨</div>
             <div class="card-title">Visual Database Studio</div>
-            <p>Full-screen visual layout designer with 16 drawing tools, 8-handle resizing, inspector palette, and draggable parts.</p>
+            <p>Full-screen visual layout designer with 16 drawing tools, Formatting Bar, Text Ruler, Page Margins, Portals, Charts, Web Viewers, and Layout Themes.</p>
           </div>
           <div class="card">
             <div class="card-icon">🔒</div>
-            <div class="card-title">Database-Scoped Security</div>
-            <p>Strict catalog-level user isolation, bcrypt password hashing, granular layout permissions, and protected unauthenticated workspace.</p>
+            <div class="card-title">Security, MFA (2FA) &amp; Kiosk Mode</div>
+            <p>Database-scoped accounts, Google Authenticator TOTP 2FA, login rate limiting, AES-256-GCM transport encryption, and full Kiosk Mode runtime lockout.</p>
           </div>
           <div class="card">
-            <div class="card-icon">📦</div>
-            <div class="card-title">Self-Contained .f4p Bundles</div>
-            <p>MessagePack-packaged database solutions with tables, columns, layouts, scripts, and users with auto-save support.</p>
+            <div class="card-icon">🛠️</div>
+            <div class="card-title">Server Tools &amp; Packaging</div>
+            <p>9-module Server Administration Console (Backups <code>.tar.gz</code>, Container Update Watcher, ACME TLS, Live Telemetry, Cron) plus <code>.f4p</code> &amp; <code>.f4data</code> bundles.</p>
           </div>
         </div>
       </section>
@@ -555,86 +571,181 @@ cd file4base-app
 # 2. Launch database, backend API, and File4Base Web Client
 docker compose up -d
 
-# 3. Access web client
+# 3. Access File4Base Web Client
 open http://localhost:3000</code></pre>
 
         <p>The stack exposes:</p>
         <ul>
-          <li><strong>File4Base Web Client</strong>: <code>http://localhost:3000</code> (served via Nginx)</li>
-          <li><strong>Backend Core API</strong>: <code>http://localhost:8080</code> (REST & WebSockets)</li>
-          <li><strong>OpenAPI / Swagger UI</strong>: <code>http://localhost:8080/swagger</code></li>
-          <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code> (database: <code>file4base_dev</code>)</li>
+          <li><strong>File4Base Web Client</strong>: <code>http://localhost:3000</code> (served via Nginx with reverse proxy to API &amp; Swagger)</li>
+          <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (103 REST endpoints)</li>
+          <li><strong>OpenAPI 3.0.3 / Swagger UI</strong>: <code>http://localhost:3000/swagger/</code> and <code>http://localhost:8080/swagger/</code></li>
+          <li><strong>Health &amp; Readiness Probes</strong>: <code>/healthz</code>, <code>/livez</code>, <code>/readyz</code>, <code>/startupz</code></li>
+          <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code></li>
+        </ul>
+      </section>
+
+      <!-- Solutions & Packages -->
+      <section id="solutions">
+        <h2>📦 Solutions (<code>.f4p</code>) &amp; Data Bundles (<code>.f4data</code>)</h2>
+        <p>File4Base separates structural design from user records so you can version, clone, and transport solutions cleanly:</p>
+        <ul>
+          <li><strong>Export Solution (<code>.f4p</code>)</strong>: Packages tables, columns, calculations, summaries, table occurrences (with Relationship Graph coordinates), relationships, value lists, layouts, scripts, custom menu sets, file options, and accounts/permissions.</li>
+          <li><strong>Export Database Data (<code>.f4data</code>)</strong>: Packages all table rows across the database into a portable data archive.</li>
+          <li><strong>Roundtrip Import</strong>: From <strong>File &gt; Open Solution...</strong> (or <strong>File &gt; Import Data (.f4data)...</strong>), select a <code>.f4p</code> solution file and an optional companion <code>.f4data</code> file to provision a new database or restore onto an existing database with automatic layout/startup ID remapping.</li>
+          <li><strong>Save a Copy as XML &amp; DDR</strong>: Export human-readable XML representations (<code>Tools &gt; Save a Copy as XML...</code>) or generate a full HTML/JSON/Markdown <strong>Database Design Report</strong> (<code>Tools &gt; Database Design Report...</code>).</li>
+          <li><strong>Structure Clipboard</strong>: Copy and paste tables, fields, layouts, and scripts across solutions (<code>Tools &gt; Structure Clipboard...</code>) with dependency conflict preview.</li>
+        </ul>
+      </section>
+
+      <!-- Assisted Migration -->
+      <section id="migration">
+        <h2>🔄 FileMaker XML/HTML DDR &amp; <code>.fmp12</code> Migration</h2>
+        <p>Migrate existing FileMaker solutions via <strong>File &gt; Migrate from FileMaker...</strong> (<a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/filemaker_migration_guide.md" target="_blank" rel="noopener">Migration Guide</a>):</p>
+        <ul>
+          <li><strong>XML &amp; HTML DDR Parser</strong>: Extracts base tables, typed fields, calculation &amp; summary formulas, table occurrences, pair-keyed relationships, value lists, scripts, and multi-part layouts (including Portals, Group Buttons, Merge Fields, and Web Viewers).</li>
+          <li><strong>Binary <code>.fmp12</code> Record &amp; Container Extractor</strong>: Pair your DDR with the binary <code>.fmp12</code> file to extract table rows, relational keys, and embedded <code>JPEG</code>/<code>PNG</code> <code>CONTAINER</code> images directly into a new File4Base database.</li>
         </ul>
       </section>
 
       <!-- Operational Modes -->
       <section id="browse-mode">
         <h2>📋 The 4 Operational Modes</h2>
-        <p>File4Base mirrors the classic 4-mode operational state machine:</p>
+        <p>File4Base provides a 4-mode operational state machine accessible from the View menu and top mode switcher:</p>
 
-        <h3>1. Browse Mode (Cmd/Ctrl + B)</h3>
-        <p>Default interactive data view. Navigate records with standard slider controls, create, duplicate, and delete records, sort columns, and edit layout fields with live validation.</p>
-
-        <h3 id="find-mode">2. Find Mode (Cmd/Ctrl + F)</h3>
-        <p>Enter search criteria directly into form fields. Supports operators like <code>=</code>, <code>&gt;</code>, <code>&lt;</code>, <code>...</code> (range), and text searches to filter the active found set.</p>
-
-        <h3 id="layout-studio">3. Layout Mode Studio (Cmd/Ctrl + L)</h3>
-        <p>The File4Base studio workspace uses File4Base's Slate &amp; Sky-Cyan design tokens and includes:</p>
+        <h3>1. Browse Mode (<code>Cmd/Ctrl + B</code>)</h3>
+        <p>Interactive data entry and navigation across three synchronized views:</p>
         <ul>
-          <li><strong>Top Studio Palette</strong>: Selection pointer, Text tool, Line, Rectangle, Rounded Rectangle, Oval, Field tool, Button, Popover Button, Button Bar, Set Tab Order, Portal, Chart, Web Viewer, Part tool, and Format Painter.</li>
-          <li><strong>Left Fields &amp; Objects Dock</strong>: Drag &amp; drop database columns straight onto the canvas, filter fields, customize placement orientation and control types.</li>
-          <li><strong>Horizontal Part Rail &amp; Dividers</strong>: Horizontal left-rail part cards with live point-height readouts and draggable divider bars for <code>Header</code>, <code>Sub-summary</code>, <code>Body</code>, <code>Trailing Grand Summary</code>, and <code>Footer</code>.</li>
-          <li><strong>Right Inspector (4 Tabs)</strong>: Geometry coordinates, Fill/Border styles, Data bindings, and Typography.</li>
-          <li><strong>Exit Layout Action</strong>: Primary cyan-accented studio control to commit layout changes and return to Browse mode.</li>
+          <li><strong>Form View</strong>: Single-record canvas rendering custom layouts, interactive value list controls (drop-down lists, pop-up menus, radio button sets, checkbox sets), related fields, portals, tab controls, slide controls, charts, web viewers, and container media. Single-click any field (including currency/date formatted fields) to type and auto-save to PostgreSQL/MariaDB.</li>
+          <li><strong>List View</strong>: Vertically scrolling record bands with inline field editing on the active record, or grouped sub-summary &amp; grand-summary report views.</li>
+          <li><strong>Table View</strong>: Spreadsheet grid allowing direct inline cell editing, column sorting, and quick record creation.</li>
         </ul>
 
-        <h3 id="preview-mode">4. Preview & Print Mode (Cmd/Ctrl + U)</h3>
-        <p>WYSIWYG print preview simulating pagination, margins, page setup, and PDF export.</p>
+        <h3 id="find-mode">2. Find Mode (<code>Cmd/Ctrl + F</code>) &amp; Saved Finds</h3>
+        <p>Build multi-request queries directly on layout fields:</p>
+        <ul>
+          <li><strong>Operators</strong>: Exact match (<code>=</code>, <code>==</code>), range (<code>100...500</code>, <code>2026-01-01...2026-12-31</code>), inequalities (<code>&gt;</code>, <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>!=</code>), wildcards (<code>*</code>, <code>@</code>, <code>?</code>), and today's date token (<code>//</code>).</li>
+          <li><strong>Multi-Request OR &amp; Omit</strong>: Add multiple Find requests (<code>Requests &gt; Add New Request</code>) for <code>OR</code> logic, or mark a request as <strong>Omit</strong> to exclude matching records.</li>
+          <li><strong>Relational Finds &amp; Saved Finds</strong>: Enter criteria into related fields or portals, and save complex queries under <strong>Saved Finds</strong> for 1-click reuse.</li>
+        </ul>
+
+        <h3 id="layout-studio">3. Layout Mode Studio (<code>Cmd/Ctrl + L</code>)</h3>
+        <p>Full-featured WYSIWYG layout designer:</p>
+        <ul>
+          <li><strong>16 Studio Tools</strong>: Selection pointer, Text label, Line, Rectangle, Rounded Rectangle, Oval, Field tool, Button, Popover Button, Button Bar, Tab Control, Slide Control, Portal, Chart, Web Viewer, Part tool, Set Tab Order, and Format Painter.</li>
+          <li><strong>Left Fields &amp; Objects Dock</strong>: Drag &amp; drop database columns straight onto the canvas; newly created fields in <strong>Manage &gt; Database</strong> are also placed automatically onto the default Form layout.</li>
+          <li><strong>Layout Parts</strong>: <code>Header</code>, <code>Sub-summary (when sorted by...)</code>, <code>Body</code>, <code>Leading/Trailing Grand Summary</code>, and <code>Footer</code> with draggable height dividers.</li>
+          <li><strong>Right Inspector (4 Tabs)</strong>: Position/Autosizing anchors, Appearance/Styles &amp; Layout Themes, Data bindings/Value Lists/Display Formats, and Script Triggers.</li>
+        </ul>
+
+        <h3 id="preview-mode">4. Preview &amp; Print Mode (<code>Cmd/Ctrl + U</code>)</h3>
+        <p>Paginated WYSIWYG print preview supporting multi-column mailing labels (e.g., Avery L7160), form letters with <code>&lt;&lt;Merge Fields&gt;&gt;</code> and system tokens (<code>{{CurrentDate}}</code>, <code>{{PageNumber}}</code>, <code>{{RecordNumber}}</code>), sub-summary reports, and native PDF generation.</p>
+      </section>
+
+      <!-- Edit, View & Format Menus -->
+      <section id="view-format">
+        <h2>✨ Edit, View &amp; Format Menus</h2>
+        <ul>
+          <li><strong>Edit Menu</strong>: Full support for <code>Undo</code>, <code>Redo</code>, <code>Cut</code>, <code>Copy</code>, <code>Paste</code>, <code>Clear</code>, and <code>Select All</code> across both Browse/Find text fields (via <code>EditMenuFocusTracker</code>) and Layout Mode canvas objects.</li>
+          <li><strong>View &gt; Formatting Bar</strong>: Quick-access horizontal toolbar for font family, font size, bold/italic/underline/strikethrough, text/fill/border colors, alignment, line spacing, and number/date/conditional format dialogs.</li>
+          <li><strong>View &gt; Text Ruler &amp; Page Margins</strong>: Interactive graduated ruler (<code>pt</code> / <code>in</code>) with draggable left/right paragraph indents and clickable tab stops, plus printable page margin overlays.</li>
+          <li><strong>Format Menu</strong>: Non-destructive display formatting for <code>Number...</code> (Currency, Percent, Decimal, Thousands separator, Negative red/parentheses), <code>Date...</code>, <code>Time...</code>, <code>Timestamp...</code>, <code>Text...</code> case transforms, and <code>Conditional...</code> formatting rules.</li>
+        </ul>
       </section>
 
       <!-- Manage Database & Schema -->
       <section id="manage-database">
-        <h2>🗄️ Manage Database & Schema</h2>
+        <h2>🗄️ Manage Database, Relationships &amp; Portals</h2>
         <p>Accessed via <strong>File &gt; Manage &gt; Database...</strong>:</p>
         <ul>
-          <li><strong>Tables Tab</strong>: Create, rename, duplicate, empty, or delete tables. All mutations update physical database tables and sync to <code>sys_tables</code>.</li>
-          <li><strong>Fields Tab</strong>: Add typed columns (<code>Text</code>, <code>Number</code>, <code>Date</code>, <code>Time</code>, <code>Timestamp</code>, <code>Container</code>, <code>Calculation</code>, <code>Summary</code>).</li>
-          <li><strong>Relationships Graph</strong>: Visual node canvas with drag-and-drop relationship links, table occurrences, and cascade rules.</li>
+          <li><strong>Tables &amp; Fields Tabs</strong>: Create physical tables and typed columns (<code>Text</code>, <code>Number</code>, <code>Date</code>, <code>Time</code>, <code>Timestamp</code>, <code>Boolean</code>, <code>Container</code>, <code>Calculation</code>, <code>Summary</code>) with auto-enter serials, defaults, and field validation rules.</li>
+          <li id="relationships-portals"><strong>Relationships Graph &amp; Table Occurrences</strong>: Visual node canvas connecting table occurrences with <code>=</code>, <code>!=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, or Cartesian predicates, cascade delete, and <em>"Allow creation of records in this table via this relationship"</em>.</li>
+          <li><strong>Portals &amp; Related Fields</strong>: Place related fields (<code>Companies::company_address</code>) directly on a parent layout, or draw multi-row <strong>Portals</strong> with custom sort orders, vertical scrolling, related record deletion, and inline related record creation via the trailing blank portal row.</li>
         </ul>
       </section>
 
-      <!-- Calculations Engine -->
+      <!-- Calculations & Summaries -->
       <section id="calc-engine">
-        <h2>🧮 Calculations & Formulas</h2>
-        <p>Calculation fields evaluate dynamically on record insert or update using an embedded formula parser.</p>
-        <pre><code>// Example: Total with tax calculation
-Price * Quantity * 1.21
+        <h2>🧮 Calculations, Summary Fields &amp; Reports</h2>
+        <p>Calculation fields evaluate dynamically using the built-in formula engine, while Summary fields aggregate across the active found set and break groups:</p>
+        <pre><code>// Conditional Annual Fee calculation
+If ( customer_type = "New" ; 200 ; 100 )
 
-// Example: Full name concatenation
-FirstName & " " & LastName</code></pre>
+// String &amp; Math expressions
+Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
+        <p id="reports-charts"><strong>Summary Reports &amp; Charts</strong>: Combine <code>Summary</code> fields (<code>Total of</code>, <code>Average of</code>, <code>Count of</code>, <code>Minimum</code>, <code>Maximum</code>) with <code>Sub-summary</code> layout parts and <strong>Column, Bar, Line, Area, Pie, or Scatter Charts</strong> to build live executive dashboards and grouped financial reports.</p>
       </section>
 
-      <!-- Script Workspace -->
+      <!-- Script Workspace & Debugger -->
       <section id="script-workspace">
-        <h2>⚙️ Script Workspace</h2>
-        <p>Automate business workflows using visual block steps:</p>
+        <h2>⚙️ Script Workspace, Debugger &amp; Data Viewer</h2>
+        <p>Automate workflows using visual script steps and inspect execution in real time:</p>
         <ul>
-          <li><strong>Navigation</strong>: Go to Layout, Go to Record, Go to Field.</li>
-          <li><strong>Editing</strong>: Set Field, New Record, Delete Record.</li>
-          <li><strong>Logic</strong>: If, Else If, Else, End If, Loop, Exit Loop If.</li>
-          <li><strong>Execution</strong>: Run Script, Pause/Resume, Exit Script.</li>
+          <li><strong>Navigation &amp; Modes</strong>: <code>Go to Layout</code>, <code>Go to Record/Request/Page</code>, <code>Go to Field</code>, <code>Enter Browse Mode</code>, <code>Enter Find Mode</code>, <code>Enter Preview Mode</code>.</li>
+          <li><strong>Records &amp; Fields</strong>: <code>Set Field</code>, <code>Set Variable</code> (<code>$local</code> and <code>$$global</code>), <code>New Record/Request</code>, <code>Duplicate Record/Request</code>, <code>Delete Record/Request</code>, <code>Commit Records/Requests</code>, <code>Revert Record/Request</code>.</li>
+          <li><strong>Found Sets &amp; Windows</strong>: <code>Perform Find</code>, <code>Show All Records</code>, <code>Show Omitted Only</code>, <code>Omit Record</code>, <code>Sort Records</code>, <code>Adjust Window</code> (Restore, Maximize, Minimize, Resize to Fit), <code>Refresh Window</code>.</li>
+          <li><strong>Control Flow &amp; Session</strong>: <code>If</code> / <code>Else If</code> / <code>Else</code> / <code>End If</code>, <code>Loop</code> / <code>Exit Loop If</code> / <code>End Loop</code>, <code>Perform Script</code>, <code>Pause/Resume Script</code>, <code>Exit Script</code>, <code>Show Custom Dialog</code>, <code>Re-Login</code>, <code>Close File</code>, <code>Exit Application</code>.</li>
+          <li><strong>Script Debugger &amp; Data Viewer</strong>: Step through scripts line by line (<code>Tools &gt; Script Debugger</code>) and evaluate live fields, variables, and calculation expressions in the <strong>Data Viewer</strong> (<code>Tools &gt; Data Viewer</code>).</li>
         </ul>
+      </section>
+
+      <!-- Kiosk Mode & Developer Utilities -->
+      <section id="kiosk-mode">
+        <h2>🖥️ Kiosk Mode &amp; Developer Utilities</h2>
+        <p>Configure dedicated touchscreens and locked-down user deployments via <strong>Tools &gt; Developer Utilities...</strong> (<a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/developer_utilities.md" target="_blank" rel="noopener">Specification</a>):</p>
+        <ul>
+          <li><strong>Full Interface Lockout</strong>: Hides the top Menu Bar, Formatting Bar, Text Ruler, Left Status Sidebar, and Bottom Status Bar, and blocks developer keyboard shortcuts (<code>Cmd+L</code>, <code>Cmd+N</code>, <code>Cmd+O</code>, <code>Cmd+S</code>).</li>
+          <li><strong>Conditional Privilege</strong>: Accounts with <code>[Full Access]</code> (<code>owner</code> / <code>admin</code>) or layout/script modification privileges open the database normally for development; non-admin accounts automatically enter Kiosk lockout. Includes a 1-click <strong>"Test Kiosk Mode Now (Simulate Non-Admin)"</strong> preview.</li>
+          <li><strong>Primary Home Layout &amp; Readiness Auditor</strong>: Configure the Primary/Home Layout, force credential login on open, audit secondary layouts for dead-ends, and auto-inject <code>Home</code>, <code>Re-Login</code>, and <code>Exit Kiosk</code> script buttons.</li>
+          <li><strong>Preview Mode Auto-Return</strong>: Automatically pauses in Preview Mode for a configurable countdown (e.g., 10 seconds) and returns to Browse Mode so Kiosk users are never stranded on a print preview screen.</li>
+        </ul>
+      </section>
+
+      <!-- Server Tools Console -->
+      <section id="server-tools">
+        <h2>🖧 Server Tools &amp; Administration Console (9 Modules)</h2>
+        <p>Accessible from the top-level <strong>Server Tools</strong> menu for server administrators (<a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/server_tools_and_mfa.md" target="_blank" rel="noopener">Specification</a>):</p>
+        <ol>
+          <li><strong>Containers &amp; Services (with Automatic Update Watcher)</strong>: Inspect live health, version, uptime, CPU/RAM usage, and container logs for <code>file4base-api</code>, <code>file4base-web</code>, and <code>file4base-postgres</code>. Checks GitHub Releases &amp; Docker Hub for newer versions, displays an <strong>"Update Available"</strong> badge in the menu/status bars, and performs 1-click <strong>"Pre-Backup &amp; Update Now"</strong>.</li>
+          <li><strong>Backups &amp; Snapshots</strong>: Create on-demand snapshots in <code>./data/backups/</code>, download archives as <code>.tar.gz</code>, upload external backup archives (<code>.tar.gz</code> / <code>.f4b.json</code>), and execute full point-in-time DDL + DML + Layout restoration.</li>
+          <li><strong>Domain &amp; SSL/TLS Certificates</strong>: Configure public domain, automatic Let's Encrypt / ZeroSSL ACME certificate provisioning (<code>http-01</code> / <code>tls-alpn-01</code>), or upload custom PEM certificate chains.</li>
+          <li><strong>API Telemetry &amp; Live Metrics</strong>: Rolling 60-minute ring buffer with live Requests Per Minute (RPM) bar charts, Average vs P95 latency line charts, HTTP status breakdown, Go runtime heap/goroutines, and top endpoints.</li>
+          <li><strong>Connected Clients &amp; Sessions</strong>: View active user sessions across databases with 1-click session revocation (<code>Force Disconnect</code>).</li>
+          <li><strong>Scheduled Tasks &amp; Cron Scripts</strong>: Automate recurring database backups and server-side script runs using standard cron expressions.</li>
+          <li><strong>Audit &amp; Security Logs</strong>: Filterable immutable security event trail across authentication, MFA, backups, TLS, container actions, and maintenance.</li>
+          <li><strong>Database Maintenance &amp; Optimizer</strong>: Inspect per-table column/row counts and trigger <code>VACUUM ANALYZE</code>, <code>ANALYZE</code>, and <code>REINDEX DATABASE</code>.</li>
+          <li><strong>Server Notifications, SMTP &amp; Webhooks</strong>: Configure outbound SMTP email and Slack/Discord/Teams/Generic JSON webhooks with test dispatch.</li>
+        </ol>
       </section>
 
       <!-- Security & User Accounts -->
       <section id="security-users">
-        <h2>🛡️ Security & User Accounts (v0.4.18)</h2>
-        <p>Security is strictly catalog-isolated:</p>
+        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.14.0)</h2>
+        <p>Security is strictly catalog-isolated and hardened across transport and authentication layers:</p>
         <ul>
-          <li><strong>Per-Database Accounts</strong>: Accounts belong exclusively to their respective database and solution file.</li>
-          <li><strong>Roles</strong>: <code>owner</code> (full schema & security control), <code>admin</code> (table & layout editing), <code>user</code> (data browse/find only).</li>
-          <li><strong>Granular Layout Permissions</strong>: Assign <code>Read-Write</code>, <code>Read-Only</code>, or <code>No Access</code> per layout.</li>
-          <li><strong>Protected Workspace Lock</strong>: Cancelling authentication immediately locks the application and purges in-memory tables and records.</li>
+          <li><strong>Per-Database Accounts &amp; Roles</strong>: Accounts belong exclusively to their database (<code>owner</code>, <code>admin</code>, <code>user</code>) with bcrypt password hashing and brute-force rate limiting on sign-in and database drop operations.</li>
+          <li><strong>Google Authenticator MFA / 2FA (RFC 6238 TOTP)</strong>: Enable 2FA for any account in <strong>File &gt; Manage &gt; Security...</strong> by scanning the generated QR code with Google Authenticator, Authy, or 1Password and verifying a 6-digit TOTP code.</li>
+          <li><strong>Granular Table, Layout &amp; Extended Privileges</strong>: Assign <code>Read-Write</code>, <code>Read-Only</code>, or <code>No Access</code> per table and layout, and toggle role capabilities such as <code>bulk_export</code> and <code>bulk_import</code>.</li>
+          <li><strong>AES-256-GCM Encrypted Channel</strong>: Optional payload-level authenticated encryption between the Web/Desktop client and the Go API via <code>/api/v1/crypto/handshake</code>.</li>
+        </ul>
+      </section>
+
+      <!-- REST API Reference -->
+      <section id="rest-api">
+        <h2>🔌 REST API v1 &amp; OpenAPI 3.0.3 / Swagger UI</h2>
+        <p>Every capability in File4Base is exposed through a versioned REST API under <code>/api/v1/</code> following <a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/API_BEST_PRACTICES.md" target="_blank" rel="noopener">REST API Best Practices</a> and <a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener">API Reference (103 Endpoints)</a>:</p>
+        <ul>
+          <li><strong>Interactive Swagger UI</strong>: Available at <code>http://localhost:3000/swagger/</code> and <code>http://localhost:8080/swagger/</code> (spec at <code>/openapi.json</code>).</li>
+          <li><strong>Standardized Error Contract (RFC 9457)</strong>: All errors return structured Problem Details JSON (<code>type</code>, <code>title</code>, <code>status</code>, <code>detail</code>, <code>instance</code>, <code>trace_id</code>).</li>
+          <li><strong>Key Endpoint Domains</strong>:
+            <ul>
+              <li><span class="badge post">POST</span> <code>/api/v1/auth/login</code> · Session authentication &amp; TOTP MFA verification</li>
+              <li><span class="badge get">GET</span> <span class="badge post">POST</span> <code>/api/v1/databases</code> · Multi-database provisioning &amp; catalog listing</li>
+              <li><span class="badge get">GET</span> <span class="badge post">POST</span> <code>/api/v1/schemas/tables</code>, <code>/occurrences</code>, <code>/relationships</code>, <code>/layouts</code>, <code>/scripts</code>, <code>/value-lists</code></li>
+              <li><span class="badge get">GET</span> <span class="badge post">POST</span> <code>/api/v1/data/{table}</code>, <code>/find</code>, <code>/summary</code>, <code>/export</code>, <code>/import</code></li>
+              <li><span class="badge get">GET</span> <span class="badge post">POST</span> <code>/api/v1/solutions/export</code>, <code>/import</code>, <code>/export-data</code>, <code>/import-data</code>, <code>/migrate/apply</code></li>
+              <li><span class="badge get">GET</span> <span class="badge post">POST</span> <code>/api/v1/server/overview</code>, <code>/containers</code>, <code>/backups</code>, <code>/tls</code>, <code>/telemetry</code>, <code>/schedules</code>, <code>/audit-logs</code></li>
+            </ul>
+          </li>
         </ul>
       </section>
 
@@ -654,21 +765,21 @@ FirstName & " " & LastName</code></pre>
           <tbody>
             <tr>
               <td><code>file4base-api</code></td>
-              <td><code>file4base-api</code></td>
+              <td><code>cloudresources/file4base-api:0.14.0</code></td>
               <td><code>8080:8080</code></td>
-              <td>Go REST API & WebSocket Backend</td>
+              <td>Go REST API v1, DBAL &amp; Server Tools Backend</td>
             </tr>
             <tr>
               <td><code>file4base-web</code></td>
-              <td><code>file4base-web</code></td>
+              <td><code>cloudresources/file4base-web:0.14.0</code></td>
               <td><code>3000:80</code></td>
-              <td>Nginx Web Client Static Proxy</td>
+              <td>Nginx Web Client &amp; API/Swagger Reverse Proxy</td>
             </tr>
             <tr>
               <td><code>file4base-postgres</code></td>
               <td><code>postgres:16-alpine</code></td>
               <td><code>5432:5432</code></td>
-              <td>Primary Relational Database</td>
+              <td>Primary Relational Database Engine</td>
             </tr>
             <tr>
               <td><code>file4base-mariadb</code></td>
@@ -680,11 +791,27 @@ FirstName & " " & LastName</code></pre>
         </table>
       </section>
 
+      <!-- Multiplatform & Tutorials -->
+      <section id="multiplatform">
+        <h2>💻 macOS, Windows, Linux &amp; Web Targets</h2>
+        <p>File4Base compiles from a single Flutter codebase to native desktop binaries (macOS Universal <code>.dmg</code>, Windows <code>.exe</code> installer, Linux <code>x64</code> bundle) and the containerized <strong>File4Base Web Client</strong>.</p>
+
+        <h3 id="tutorials">📚 Tutorials &amp; Technical Specifications</h3>
+        <ul>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/seed_archive.md" target="_blank" rel="noopener"><strong>Complete 21-Lesson Tutorial — Boreal Seed &amp; Herbarium Archive</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/filemaker_migration_guide.md" target="_blank" rel="noopener"><strong>FileMaker-to-File4Base Assisted Migration Guide</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener"><strong>REST API v1 Reference (103 Endpoints)</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/server_tools_and_mfa.md" target="_blank" rel="noopener"><strong>Server Tools &amp; MFA (Google Authenticator) Specification</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/file4base_menu_reference_guide.md" target="_blank" rel="noopener"><strong>Complete Menu Bar &amp; Keyboard Shortcuts Reference Guide</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/ROADMAP.md" target="_blank" rel="noopener"><strong>Project Roadmap &amp; Implementation Status</strong></a></li>
+        </ul>
+      </section>
+
       <!-- Working with Issues -->
       <section id="issues-guide">
-        <h2>💡 Service & Support — Working with GitHub Issues</h2>
+        <h2>💡 Service &amp; Support — Working with GitHub Issues</h2>
         <div class="callout tip">
-          <div class="callout-title">Community & Support Guidelines</div>
+          <div class="callout-title">Community &amp; Support Guidelines</div>
           We welcome bug reports, feature suggestions, and pull requests! Please follow these best practices to ensure fast triage and resolution.
         </div>
 
@@ -705,20 +832,23 @@ FirstName & " " & LastName</code></pre>
             <strong>Include Environment Details</strong>:
             Always state:
             <ul>
-              <li><strong>File4Base Version</strong>: (e.g. <code>v0.4.18</code>)</li>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.14.0</code>)</li>
               <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
               <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
             </ul>
           </li>
           <li>
-            <strong>Attach Logs & Screenshots</strong>:
+            <strong>Attach Logs &amp; Screenshots</strong>:
             Attach server logs (<code>docker logs file4base-api</code>) and browser console or terminal stack traces.
           </li>
         </ol>
 
-        <p>
+        <p id="community">
           <a href="https://github.com/file4base/file4base-app/issues" target="_blank" rel="noopener" class="nav-btn primary">
             Open File4Base GitHub Issues
+          </a>
+          <a href="https://github.com/file4base/file4base-app/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener" class="nav-btn">
+            Contributing Guidelines
           </a>
         </p>
       </section>
@@ -728,7 +858,7 @@ FirstName & " " & LastName</code></pre>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p>© 2024-2026 File4Base Project · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go & Flutter</p>
+    <p>© 2024-2026 File4Base Project · Version v0.14.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
     <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
     <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>
@@ -741,6 +871,14 @@ FirstName & " " & LastName</code></pre>
       document.querySelectorAll('main.content-area section').forEach(sec => {
         const text = sec.innerText.toLowerCase();
         sec.style.display = (!q || text.includes(q)) ? 'block' : 'none';
+      });
+    });
+
+    // Active sidebar link highlighting
+    document.querySelectorAll('.sidebar-links a').forEach(link => {
+      link.addEventListener('click', () => {
+        document.querySelectorAll('.sidebar-links a').forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
       });
     });
   </script>
