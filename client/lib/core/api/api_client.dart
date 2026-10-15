@@ -2394,6 +2394,17 @@ class ApiClient {
     return response.body;
   }
 
+  /// Downloads a backup as a gzip-compressed tar (`tar xzf` → the snapshot
+  /// JSON), for saving to disk.
+  Future<Uint8List> downloadServerBackupArchive(String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/backups/${Uri.encodeComponent(id)}/download?format=targz'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return response.bodyBytes;
+  }
+
   Future<Map<String, dynamic>> restoreServerBackup(String id) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/server/backups/${Uri.encodeComponent(id)}/restore'),

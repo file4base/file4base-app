@@ -1,7 +1,12 @@
 package api_test
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -131,6 +136,29 @@ func TestServerTools_DatabaseToolsOnlyReachTheSessionsDatabase(t *testing.T) {
 	assert.Len(t, list.Backups, 2)
 	code, _ = s.backup(s.adminToken, map[string]string{"database": s.aliceDB})
 	assert.Equal(t, http.StatusCreated, code)
+}
+
+func TestServerTools_BackupDownloadsAsTarGz(t *testing.T) {
+	s := newServerToolsHarness(t, true)
+	code, id := s.backup(s.aliceToken, nil)
+	require.Equal(t, http.StatusCreated, code)
+
+	rec := s.do(http.MethodGet, "/api/v1/server/backups/"+id+"/download?format=targz", s.aliceToken, nil, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/gzip", rec.Header().Get("Content-Type"))
+	assert.Contains(t, rec.Header().Get("Content-Disposition"), ".tar.gz")
+
+	gz, err := gzip.NewReader(bytes.NewReader(rec.Body.Bytes()))
+	require.NoError(t, err)
+	tr := tar.NewReader(gz)
+	hdr, err := tr.Next()
+	require.NoError(t, err, "the archive holds one file")
+	assert.True(t, strings.HasSuffix(hdr.Name, ".f4b.json"))
+	content, err := io.ReadAll(tr)
+	require.NoError(t, err)
+	assert.Contains(t, string(content), s.aliceDB, "the snapshot JSON is inside the archive")
+	_, err = tr.Next()
+	assert.ErrorIs(t, err, io.EOF, "only one file in the archive")
 }
 
 func TestServerTools_AccessTellsTheClientWhatItMayUse(t *testing.T) {
