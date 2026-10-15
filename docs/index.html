@@ -582,7 +582,7 @@ open http://localhost:3000</code></pre>
         <p>The stack exposes:</p>
         <ul>
           <li><strong>File4Base Web Client</strong>: <code>http://localhost:3000</code> (served via Nginx with reverse proxy to API &amp; Swagger)</li>
-          <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (105 REST endpoints)</li>
+          <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (106 REST endpoints)</li>
           <li><strong>OpenAPI 3.0.3 / Swagger UI</strong>: <code>http://localhost:3000/swagger/</code> and <code>http://localhost:8080/swagger/</code></li>
           <li><strong>Health &amp; Readiness Probes</strong>: <code>/healthz</code>, <code>/livez</code>, <code>/readyz</code>, <code>/startupz</code></li>
           <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code></li>
@@ -740,8 +740,8 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <p>Every capability in File4Base is exposed through a versioned REST API under <code>/api/v1/</code> following <a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/API_BEST_PRACTICES.md" target="_blank" rel="noopener">REST API Best Practices</a> and <a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener">API Reference (103 Endpoints)</a>:</p>
         <!-- AUTO-OPENAPI:START -->
         <div class="callout">
-          <strong>Live OpenAPI 3.0.3 Metrics (Auto-Synced):</strong> <code>105</code> REST paths · <code>161</code> HTTP operations.<br>
-          <span style="font-size: 0.88rem;"><strong>Schemas &amp; DDL</strong>: 72 · <strong>Server Administration</strong>: 30 · <strong>Solutions &amp; Backup</strong>: 20 · <strong>Security &amp; Users</strong>: 18 · <strong>Data Operations</strong>: 14 · <strong>Health &amp; Probes</strong>: 4 · <strong>Databases &amp; Projects</strong>: 2 · <strong>Authentication &amp; Session</strong>: 1</span><br>
+          <strong>Live OpenAPI 3.0.3 Metrics (Auto-Synced):</strong> <code>106</code> REST paths · <code>162</code> HTTP operations.<br>
+          <span style="font-size: 0.88rem;"><strong>Schemas &amp; DDL</strong>: 72 · <strong>Server Administration</strong>: 30 · <strong>Solutions &amp; Backup</strong>: 20 · <strong>Security &amp; Users</strong>: 18 · <strong>Data Operations</strong>: 14 · <strong>Health &amp; Probes</strong>: 4 · <strong>Databases &amp; Projects</strong>: 2 · <strong>Authentication &amp; Session</strong>: 1 · <strong>Real-time</strong>: 1</span><br>
           👉 <a href="./swagger/" target="_blank" rel="noopener"><strong>Open Hosted Interactive Swagger UI</strong></a> · <a href="./openapi.json" target="_blank" rel="noopener">Download <code>openapi.json</code></a>
         </div>
         <!-- AUTO-OPENAPI:END -->
@@ -812,7 +812,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <ul>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/seed_archive.md" target="_blank" rel="noopener"><strong>Complete 21-Lesson Tutorial — Boreal Seed &amp; Herbarium Archive</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/filemaker_migration_guide.md" target="_blank" rel="noopener"><strong>FileMaker-to-File4Base Assisted Migration Guide</strong></a></li>
-          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener"><strong>REST API v1 Reference (105 Endpoints)</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener"><strong>REST API v1 Reference (106 Endpoints)</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/server_tools_and_mfa.md" target="_blank" rel="noopener"><strong>Server Tools &amp; MFA (Google Authenticator) Specification</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/file4base_menu_reference_guide.md" target="_blank" rel="noopener"><strong>Complete Menu Bar &amp; Keyboard Shortcuts Reference Guide</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/ROADMAP.md" target="_blank" rel="noopener"><strong>Project Roadmap &amp; Implementation Status</strong></a></li>
@@ -893,6 +893,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <h3 style="margin-top: 0;">Release <code>v0.14.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-15)</span></h3>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
           <ul>
+            <li><strong>Real-time sync (server)</strong>: a change-notification WebSocket at <code>GET /api/v1/realtime</code>. A client authenticates with its bearer token as the first message and then receives a small event (<code>{type, resource, database, origin}</code>) whenever the records or schema of its database change in another session — so every open window can reload instead of going stale. Events carry no record data (the client reloads what it shows) and are scoped to the client's database; the <code>origin</code> id lets a client ignore the changes it made itself. In-memory per process (a future multi-replica setup would use Postgres LISTEN/NOTIFY). The Flutter client that consumes it is a follow-up.</li>
             <li>Server Tools: a backup can be downloaded as a gzip-compressed tar (<code>.tar.gz</code>, <code>GET .../download?format=targz</code>) and saved to disk; the window's download button now saves the file (a separate button still copies the JSON to the clipboard).</li>
             <li>Server Tools: a backup file (<code>.tar.gz</code> or <code>.f4b.json</code>) can be uploaded (<code>POST .../backups/upload</code>, "Upload Backup..." button) and stored as a server-side backup, then restored — the counterpart of download. A non-administrator's upload can only ever target their own database.</li>
           </ul>
