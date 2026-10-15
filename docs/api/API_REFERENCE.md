@@ -54,6 +54,10 @@ Sessions live in server memory, expire after `SESSION_TTL` of inactivity (defaul
 | `403 Forbidden` | The session's role or layout permissions do not allow the operation. |
 | `429 Too Many Requests` | Too many failed password checks in a row for this database + username + client; `Retry-After` gives the seconds to wait. Covers `POST /api/v1/auth/login` and credential-based database drops. |
 
+### Real-time change notifications (`GET /api/v1/realtime`)
+
+A WebSocket that pushes a small event when the records or schema of a database change, so other clients reload. The client sends `{"token":"<bearer>"}` as its first message (a browser cannot set an `Authorization` header on a WebSocket); the server replies `{"type":"welcome","origin":"<id>","database":"<db>"}` and then streams events `{"type":"data"|"schema","resource":"<table or kind>","database":"<db>","origin":"<id>","at":<ms>}`. Events are scoped to the client's database; `origin` is the id of the session that caused the change, so a client ignores its own. The event names what changed, not the changed data — the client reloads what it is showing.
+
 ### Roles
 
 | Capability | `owner` | `admin` | `user` |

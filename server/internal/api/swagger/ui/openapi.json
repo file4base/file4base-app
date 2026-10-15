@@ -1539,6 +1539,19 @@
         }
       }
     },
+    "/api/v1/realtime": {
+      "get": {
+        "tags": [
+          "Real-time"
+        ],
+        "summary": "WebSocket: change notifications (auth via first message {token}); emits data/schema events per database",
+        "responses": {
+          "101": {
+            "description": "Switching Protocols (WebSocket)"
+          }
+        }
+      }
+    },
     "/api/v1/crypto/handshake": {
       "get": {
         "tags": [
