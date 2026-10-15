@@ -5,6 +5,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/crypto"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/realtime"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -36,6 +37,9 @@ type Options struct {
 	// LoginThrottle rate-limits password checks (sign-in and credential-based
 	// database drops). When nil, Mount installs a default one.
 	LoginThrottle *auth.LoginThrottle
+	// Hub pushes change notifications to connected clients. When nil, Mount
+	// creates one; the server keeps it for its lifetime.
+	Hub *realtime.Hub
 }
 
 // Mount registers every domain route of the API on r.
@@ -69,7 +73,16 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
 
+	hub := opts.Hub
+	if hub == nil {
+		hub = realtime.NewHub()
+	}
+	realtimeHandler := NewRealtimeHandler(hub, sessions)
+
 	r.Get("/api/v1/crypto/handshake", crypto.HandshakeHandler(opts.ChannelSecret))
+	// The change-notification WebSocket authenticates with its first message,
+	// so it sits outside the bearer-header auth middleware.
+	r.Get("/api/v1/realtime", realtimeHandler.ServeWS)
 
 	r.Group(func(r chi.Router) {
 		r.Use(crypto.Middleware(opts.ChannelSecret))
@@ -81,6 +94,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	r.Group(func(r chi.Router) {
 		r.Use(crypto.Middleware(opts.ChannelSecret))
 		r.Use(authMW.Authenticate)
+		r.Use(emitChangeEvents(hub))
 		schemaHandler.RegisterRoutes(r)
 		dataHandler.RegisterRoutes(r)
 		securityHandler.RegisterRoutes(r)
