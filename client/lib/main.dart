@@ -45,6 +45,7 @@ import 'package:file4base_client/features/tools/data_viewer_dialog.dart';
 import 'package:file4base_client/features/tools/design_report_dialog.dart';
 import 'package:file4base_client/features/tools/developer_utilities_dialog.dart';
 import 'package:file4base_client/features/tools/manage_custom_menus_dialog.dart';
+import 'package:file4base_client/core/realtime/realtime_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -161,6 +162,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   bool _containerUpdateAvailable = false;
   String? _containerLatestVersion;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
+  final RealtimeService _realtime = RealtimeService();
+  StreamSubscription<RealtimeEvent>? _realtimeSub;
+  Timer? _schemaReloadDebounce;
 
   /// The find requests that define the found set, remembered while the data
   /// browser is not on screen so Preview can print the same records (#32).
@@ -252,14 +256,57 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       directory: null, // will be set when user picks a directory
       baseName: 'Untitled',
     );
+    _realtimeSub = _realtime.events.listen(_onRealtimeEvent);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final serverUrl = ref.read(serverUrlProvider);
       PreflightDialog.showIfNeeded(context, serverUrl: serverUrl, onProceed: _startAuthSequence);
     });
   }
 
+  /// Runs _syncRealtime after the current frame, once the ApiClient holds the
+  /// new token.
+  void _syncRealtimeAfterFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncRealtime();
+    });
+  }
+
+  /// Opens or closes the realtime connection to match the sign-in state.
+  void _syncRealtime() {
+    final client = ref.read(apiClientProvider);
+    final token = client.authToken;
+    if (_currentUser != null && token != null && token.isNotEmpty) {
+      _realtime.connect(api: client, token: token);
+    } else {
+      _realtime.disconnect();
+    }
+  }
+
+  /// A change happened in another session: reload what is affected. The client
+  /// already skips the events it caused itself (same origin).
+  void _onRealtimeEvent(RealtimeEvent ev) {
+    if (!mounted) return;
+    if (ev.isData) {
+      final table = _selectedTable;
+      if (table != null && ev.resource.toLowerCase() == table.name.toLowerCase()) {
+        _dataBrowserKey.currentState?.reloadFromRemote();
+      }
+    } else if (ev.isSchema) {
+      // Coalesce a burst of schema changes into one reload.
+      _schemaReloadDebounce?.cancel();
+      _schemaReloadDebounce = Timer(const Duration(milliseconds: 500), () {
+        if (mounted && _currentUser != null) {
+          unawaited(_loadTables(targetLayoutId: _activeLayout?.id));
+        }
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _schemaReloadDebounce?.cancel();
+    _realtimeSub?.cancel();
+    _realtime.dispose();
     AutoSaveService.instance.dispose();
     super.dispose();
   }
@@ -304,6 +351,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       setState(() {
         _currentUser = auth.user;
         _activeDatabaseName = auth.database;
+        _syncRealtimeAfterFrame();
         if (auth.fileName != null) {
           _activeSolutionFileName = auth.fileName!;
         }
@@ -363,6 +411,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   /// revoked, or the server was restarted). Does nothing when already signed out.
   void _handleSessionExpired() {
     if (!mounted || _currentUser == null) return;
+    _realtime.disconnect();
     setState(() {
       _currentUser = null;
       _kioskSimulatedByAdmin = false;
@@ -380,7 +429,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     );
   }
 
+  void _handleSignOutRealtime() => _realtime.disconnect();
+
   void _handleSignOut() {
+    _handleSignOutRealtime();
     // Close the server session; the token is forgotten immediately
     ref.read(apiClientProvider).logout();
     setState(() {
@@ -1077,6 +1129,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           setState(() {
             _currentUser = auth.user;
             _activeDatabaseName = auth.database;
+            _syncRealtimeAfterFrame();
             _activeSolutionFileName = result.fileName;
             _activeSolutionName = result.package.solutionName;
             _activeSolutionDirectory = result.directoryRef;
@@ -1122,6 +1175,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     setState(() {
       _activeDatabaseName = result.databaseName;
       _currentUser = result.user;
+      _syncRealtimeAfterFrame();
       if (result.fileName != null) {
         _activeSolutionFileName = result.fileName!;
       }
