@@ -1880,6 +1880,7 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `GET /api/v1/server/backups` | admin / owner (own database) | Lists stored server snapshots (`.f4b.json`) with size, table count, and timestamp. |
 | `POST /api/v1/server/backups` | admin / owner (own database) | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, and accounts. |
 | `GET /api/v1/server/backups/{id}/download` | admin / owner (own database) | Downloads a stored backup snapshot archive. |
+| `GET /api/v1/server/backups/{id}/download?format=targz` | admin / owner (own database) | The same snapshot as a gzip-compressed tar (`tar xzf` → the `.f4b.json`). |
 | `POST /api/v1/server/backups/{id}/restore` | admin / owner (own database) | Verifies and restores a stored snapshot into the target database. |
 | `DELETE /api/v1/server/backups/{id}` | admin / owner (own database) | Deletes a stored backup snapshot. |
 | `GET /api/v1/server/tls` | server administrator | Returns the current Web/API domain, HTTPS/HSTS state, TLS mode (`acme`, `custom`, `self_signed`, `http_only`), ACME email/challenge type, and X.509 certificate metadata (`cert_issuer`, `cert_subject`, `cert_not_after`, `cert_days_left`, `cert_sha256`). |

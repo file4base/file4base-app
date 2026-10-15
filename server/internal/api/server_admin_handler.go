@@ -1,6 +1,9 @@
 package api
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -12,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -1201,10 +1205,54 @@ func (h *ServerAdminHandler) DownloadBackup(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+
+	// format=targz streams a real gzip-compressed tar holding the snapshot
+	// file, for saving to disk; the default serves the raw JSON.
+	if strings.EqualFold(r.URL.Query().Get("format"), "targz") {
+		archive, err := gzipTar(filename, raw)
+		if err != nil {
+			telemetry.WriteInternalError(w, r, errors.New("failed building the archive"))
+			return
+		}
+		base := strings.TrimSuffix(filename, ".f4b.json")
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tar.gz"`, base))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(archive)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(raw)
+}
+
+// gzipTar wraps one file in a gzip-compressed tar archive, so a downloaded
+// backup unpacks with `tar xzf` to the snapshot JSON.
+func gzipTar(name string, content []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	hdr := &tar.Header{
+		Name:    name,
+		Mode:    0o600,
+		Size:    int64(len(content)),
+		ModTime: time.Now(),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(content); err != nil {
+		return nil, err
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 type backupTableSnapshot struct {

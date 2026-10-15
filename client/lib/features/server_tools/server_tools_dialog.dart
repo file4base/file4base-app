@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1463,8 +1464,27 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                                           mainAxisAlignment: MainAxisAlignment.end,
                                           children: [
                                             IconButton(
-                                              tooltip: 'Copy Backup JSON to Clipboard',
+                                              tooltip: 'Download backup (.tar.gz)',
                                               icon: const Icon(Icons.download_outlined, size: 18, color: _primaryBlue),
+                                              onPressed: () async {
+                                                try {
+                                                  final bytes = await widget.apiClient.downloadServerBackupArchive(id);
+                                                  final base = id.endsWith('.f4b.json')
+                                                      ? id.substring(0, id.length - '.f4b.json'.length)
+                                                      : id;
+                                                  await SolutionStorageService.saveFile(
+                                                    filename: '$base.tar.gz',
+                                                    bytes: bytes,
+                                                  );
+                                                  _toast('Backup saved as $base.tar.gz');
+                                                } catch (e) {
+                                                  _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
+                                                }
+                                              },
+                                            ),
+                                            IconButton(
+                                              tooltip: 'Copy backup JSON to clipboard',
+                                              icon: const Icon(Icons.copy_all_outlined, size: 17, color: _primaryBlue),
                                               onPressed: () async {
                                                 try {
                                                   final raw = await widget.apiClient.downloadServerBackup(id);

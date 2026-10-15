@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-15
+
+### Added
+- Server Tools: a backup can be downloaded as a gzip-compressed tar (`.tar.gz`, `GET .../download?format=targz`) and saved to disk; the window's download button now saves the file (a separate button still copies the JSON to the clipboard).
+
 ### Security
 - **Server Tools could be used to read and change other databases and to control the whole server.** Every `/api/v1/server/*` route only required the `admin` role of *some* database, and by default anyone who can reach the server can create a database and become its owner. Such an account could back up, download and restore any other database, list and revoke every session, read and clear the audit log, change TLS and restart or update the containers. Now:
   - **Server-wide tools** (containers, TLS, sessions, audit log, schedules, notifications, telemetry) require a **server administrator**: an owner of the database named by the new `FILE4BASE_ADMIN_DATABASE` setting. Without it they are disabled.
