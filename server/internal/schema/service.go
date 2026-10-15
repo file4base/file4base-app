@@ -193,12 +193,14 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
 			mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
 			mfa_secret VARCHAR(128) NOT NULL DEFAULT '',
+			super_owner BOOLEAN NOT NULL DEFAULT FALSE,
 			created_at ` + ts + `,
 			updated_at ` + ts + `
 		);`,
 		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;`,
 		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN DEFAULT FALSE;`,
 		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(128) DEFAULT '';`,
+		`ALTER TABLE sys_users ADD COLUMN IF NOT EXISTS super_owner BOOLEAN DEFAULT FALSE;`,
 		`CREATE TABLE IF NOT EXISTS sys_user_permissions (
 			id VARCHAR(36) PRIMARY KEY,
 			user_id VARCHAR(36) NOT NULL REFERENCES sys_users(id) ON DELETE CASCADE,
