@@ -113,8 +113,6 @@ type NotificationConfig struct {
 	LastTestTimestamp string   `json:"last_test_timestamp"`
 }
 
-const CurrentStackVersion = "0.13.0"
-
 // ServerAdminHandler serves all endpoints backing the "Server Tools" top-level menu.
 type ServerAdminHandler struct {
 	dbMgr        *dbal.MultiDatabaseManager
@@ -138,13 +136,16 @@ type ServerAdminHandler struct {
 	simulatedLatestVersion string
 }
 
-func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, controlStore *control.Store) *ServerAdminHandler {
+// NewServerAdminHandler builds the Server Tools handler. version is the
+// running server version; FILE4BASE_VERSION overrides it (the stack version
+// set in docker-compose).
+func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, controlStore *control.Store, version string) *ServerAdminHandler {
 	backupsDir := "./data/backups"
 	_ = os.MkdirAll(backupsDir, 0o755)
 
 	curVer := strings.TrimPrefix(strings.TrimSpace(os.Getenv("FILE4BASE_VERSION")), "v")
 	if curVer == "" {
-		curVer = CurrentStackVersion
+		curVer = strings.TrimPrefix(strings.TrimSpace(version), "v")
 	}
 
 	now := time.Now().UTC()

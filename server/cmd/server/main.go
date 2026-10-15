@@ -24,7 +24,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-const AppVersion = "0.13.0"
+const AppVersion = "0.13.1"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
@@ -221,6 +221,7 @@ func main() {
 		AllowPublicDatabaseCreation: allowPublicCreate,
 		ControlStore:                controlStore,
 		ChannelSecret:               os.Getenv("FILE4BASE_CHANNEL_SECRET"),
+		Version:                     AppVersion,
 	})
 
 	srv := &http.Server{

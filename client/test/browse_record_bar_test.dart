@@ -57,9 +57,10 @@ void main() {
     await tester.tap(find.text('First name'));
     await tester.pumpAndSettle();
     expect(find.text('3 records · Sorted by First name ↑'), findsOneWidget);
+    // The current row is edited in place (text fields), the others are text.
     final names = tester
-        .widgetList<Text>(find.textContaining(RegExp(r'^(Ana|Bea|Carla)$')))
-        .map((t) => t.data)
+        .widgetList(find.textContaining(RegExp(r'^(Ana|Bea|Carla)$')))
+        .map((w) => w is EditableText ? w.controller.text : (w as Text).data)
         .toList();
     expect(names, ['Ana', 'Bea', 'Carla']);
     expect(key.currentState!.currentIndex, 0, reason: 'Ana (the current record) is now first');

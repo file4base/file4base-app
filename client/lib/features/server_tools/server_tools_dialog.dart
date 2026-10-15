@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -70,8 +71,8 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   List<Map<String, dynamic>> _containers = [];
   String _selectedLogContainer = 'file4base-api';
   List<String> _containerLogs = [];
-  String _currentStackVersion = '0.13.0';
-  String _latestStackVersion = '0.13.0';
+  String _currentStackVersion = AboutFile4BaseDialog.version;
+  String _latestStackVersion = AboutFile4BaseDialog.version;
   bool _updateAvailable = false;
   String _versionCheckedAt = '';
   String _releaseNotes = '';
@@ -184,7 +185,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
               .whereType<Map<dynamic, dynamic>>()
               .map(Map<String, dynamic>.from)
               .toList();
-          final curVer = res['current_version']?.toString() ?? '0.13.0';
+          final curVer = res['current_version']?.toString() ?? AboutFile4BaseDialog.version;
           final latestVer = res['latest_version']?.toString() ?? curVer;
           final updateAvail = res['update_available'] as bool? ?? false;
           final checkedAt = res['checked_at']?.toString() ?? '';

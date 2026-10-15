@@ -5,6 +5,9 @@ class AboutFile4BaseDialog extends StatefulWidget {
   const AboutFile4BaseDialog({required this.serverStatus, super.key});
   final String serverStatus;
 
+  /// Client version, kept in sync by scripts/bump_version.sh.
+  static const String version = _AboutFile4BaseDialogState._version;
+
   static void show(BuildContext context, {required String serverStatus}) {
     showDialog(
       context: context,
@@ -21,7 +24,7 @@ class _AboutFile4BaseDialogState extends State<AboutFile4BaseDialog>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  static const String _version = '0.13.0';
+  static const String _version = '0.13.1';
 
   @override
   void initState() {

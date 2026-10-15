@@ -243,10 +243,11 @@ void main() {
       expect(find.text('Step catalog'), findsOneWidget);
       expect(find.text('NAVIGATION'), findsNWidgets(2));
       expect(find.text('RECORDS'), findsOneWidget);
-      expect(find.text('CONTROL & LOGIC'), findsOneWidget);
 
-      // Scroll catalog to verify INTEGRATION & DATA
+      // The catalog builds its sections lazily: scroll to the later ones.
       final catalogScrollable = find.byType(Scrollable).last;
+      await tester.scrollUntilVisible(find.text('CONTROL & LOGIC'), 100, scrollable: catalogScrollable);
+      expect(find.text('CONTROL & LOGIC'), findsOneWidget);
       await tester.scrollUntilVisible(
         find.text('INTEGRATION & DATA'),
         100,

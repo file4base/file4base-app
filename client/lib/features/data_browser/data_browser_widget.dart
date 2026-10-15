@@ -280,15 +280,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
   }
 
-  void goToRecord(int index) {
-    if (_records.isNotEmpty && index >= 0 && index < _records.length) {
-      _saveCurrentRecord().then((saved) {
-        if (!saved || !mounted) return;
-        setState(() => _currentIndex = index);
-        _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
-      });
-    }
+  /// Saves the current record and moves to [index]. Completes with whether
+  /// the record changed (false when saving failed or [index] is invalid).
+  Future<bool> goToRecord(int index) async {
+    if (_records.isEmpty || index < 0 || index >= _records.length) return false;
+    final saved = await _saveCurrentRecord();
+    if (!saved || !mounted) return false;
+    setState(() => _currentIndex = index);
+    _rebuildFieldControllers();
+    widget.onRecordChanged?.call(_currentIndex, _records.length);
+    return true;
   }
 
   void toggleOmit(bool val) => setState(() => _currentFindRequest.omit = val);
@@ -1478,9 +1479,21 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     return '$n ${n == 1 ? 'record' : 'records'} · $sort';
   }
 
-  void _goToRecordIndex(int index) {
-    if (_records.isEmpty) return;
-    goToRecord(index.clamp(0, _records.length - 1));
+  Future<bool> _goToRecordIndex(int index) async {
+    if (_records.isEmpty) return false;
+    return goToRecord(index.clamp(0, _records.length - 1));
+  }
+
+  /// List / Table views: a click on a field of another record makes it the
+  /// current record and puts the cursor in that field, ready to type. The
+  /// field is focused once the record has changed and its editable field is
+  /// built, not before.
+  Future<void> _editFieldOfRecord(int recordIndex, String fieldName) async {
+    if (recordIndex != _currentIndex && !await _goToRecordIndex(recordIndex)) return;
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fieldFocusNodes[fieldName]?.requestFocus();
+    });
   }
 
   Widget _buildBrowseRecordBar() {
@@ -1522,7 +1535,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 enabled: hasRecords,
                 onSubmitted: (v) {
                   final n = int.tryParse(v.trim());
-                  if (n != null) _goToRecordIndex(n - 1);
+                  if (n != null) unawaited(_goToRecordIndex(n - 1));
                 },
               ),
               Text(' of ${_records.length}', style: const TextStyle(fontSize: 13)),
@@ -1541,7 +1554,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                     onChanged: (v) => setState(() => _sliderDragValue = v),
                     onChangeEnd: (v) {
                       setState(() => _sliderDragValue = null);
-                      _goToRecordIndex(v.round());
+                      unawaited(_goToRecordIndex(v.round()));
                     },
                   ),
                 ),
@@ -1809,7 +1822,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   List<ColumnModel> get _visibleColumns => widget.table.columns.where((c) => !c.isPrimaryKey).toList();
 
   void _openRecordInForm(int index) {
-    _goToRecordIndex(index);
+    unawaited(_goToRecordIndex(index));
     setState(() => _viewMode = 'form');
   }
 
@@ -1905,9 +1918,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                   ),
                 ),
               for (final (i, rec) in _records.indexed)
+                // No double tap on the whole row: it would delay every single
+                // click (and so the start of editing) by the double-click
+                // interval. The open button at the end shows it in Form view.
                 InkWell(
                   onTap: () => _goToRecordIndex(i),
-                  onDoubleTap: () => _openRecordInForm(i),
                   child: Container(
                     width: layout.width,
                     height: rowHeight,
@@ -1933,6 +1948,19 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             height: obj.height,
                             child: _buildListRowObject(obj, rec, i, isDark),
                           ),
+                        Positioned(
+                          right: 2,
+                          top: 0,
+                          bottom: 0,
+                          child: Center(
+                            child: IconButton(
+                              icon: const Icon(Icons.open_in_full, size: 16),
+                              tooltip: 'Open in Form view',
+                              visualDensity: VisualDensity.compact,
+                              onPressed: () => _openRecordInForm(i),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -1959,7 +1987,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         final bytes = _tryDecodeBase64Image(rec[col.name]?.toString());
         return InkWell(
           onTap: () async {
-            _goToRecordIndex(recordIndex);
+            unawaited(_goToRecordIndex(recordIndex));
             if (obj.action != null) {
               await _handleLayoutButtonClick(obj, col.displayName);
             } else {
@@ -2028,10 +2056,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         );
       }
       final rawText = col != null ? fieldText(col, rawVal) : (rawVal?.toString() ?? '');
-      final hasCustomFormat = effStyle.numberFormat != 'general' ||
-          effStyle.dateFormat != 'as_entered' ||
-          effStyle.timeFormat != 'as_entered' ||
-          effStyle.textCase != 'normal';
+      final hasCustomFormat = layoutStyleHasDisplayFormat(effStyle);
       final valText = hasCustomFormat
           ? formatLayoutDisplayValue(rawVal ?? rawText, effStyle)
           : rawText;
@@ -2041,12 +2066,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       return GestureDetector(
         onTap: col == null || _isComputed(col.name)
             ? null
-            : () {
-                _goToRecordIndex(recordIndex);
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _fieldFocusNodes[col.name]?.requestFocus();
-                });
-              },
+            : () => _editFieldOfRecord(recordIndex, col.name),
         child: Container(
           alignment: _parseAlignment(effStyle.textAlign),
           padding: EdgeInsets.only(
@@ -2081,7 +2101,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       final btnText = _resolveTextForRecord(obj.text.isEmpty ? 'Button' : obj.text, rec);
       return ElevatedButton(
         onPressed: () async {
-          _goToRecordIndex(recordIndex);
+          unawaited(_goToRecordIndex(recordIndex));
           await _handleLayoutButtonClick(obj, btnText);
         },
         child: Text(btnText, overflow: TextOverflow.ellipsis),
@@ -2184,14 +2204,27 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       color: selected
                           ? theme.colorScheme.primary.withValues(alpha: 0.10)
                           : (i.isOdd ? theme.colorScheme.surfaceContainerLowest : Colors.transparent),
+                      // No double tap on the whole row: it would delay every
+                      // single click by the double-click interval. Opening the
+                      // record in Form view is a double click on its number.
                       child: InkWell(
                         onTap: () => _goToRecordIndex(i),
-                        onDoubleTap: () => _openRecordInForm(i),
                         child: Row(children: [
-                          SizedBox(
-                            width: 56,
-                            child: Center(
-                              child: Text('${i + 1}', style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+                          Tooltip(
+                            message: 'Double click to open in Form view',
+                            waitDuration: const Duration(milliseconds: 600),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => _goToRecordIndex(i),
+                              onDoubleTap: () => _openRecordInForm(i),
+                              child: SizedBox(
+                                width: 56,
+                                height: double.infinity,
+                                child: Center(
+                                  child: Text('${i + 1}',
+                                      style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant)),
+                                ),
+                              ),
                             ),
                           ),
                           ...cols.map((c) {
@@ -2223,14 +2256,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             }
                             return GestureDetector(
                               behavior: HitTestBehavior.opaque,
-                              onTap: () {
-                                _goToRecordIndex(i);
-                                if (!computed) {
-                                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                                    _fieldFocusNodes[c.name]?.requestFocus();
-                                  });
-                                }
-                              },
+                              onTap: () => computed ? _goToRecordIndex(i) : _editFieldOfRecord(i, c.name),
                               child: Container(
                                 width: colWidth,
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -2797,10 +2823,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         final rawVal = record[col.name] ?? ctrl?.text;
         final effStyle = obj.style.effectiveForValue(rawVal);
         final isFocused = fn?.hasFocus ?? false;
-        final hasDisplayFormatting = effStyle.numberFormat != 'general' ||
-            effStyle.dateFormat != 'as_entered' ||
-            effStyle.timeFormat != 'as_entered' ||
-            effStyle.textCase != 'normal';
+        final hasDisplayFormatting = layoutStyleHasDisplayFormat(effStyle);
 
         final isMultilineField = obj.height > 44;
         final verticalPad = obj.height < 32
@@ -2868,15 +2891,26 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 },
         );
 
-        if (!isFocused && hasDisplayFormatting) {
-          final formatted = formatLayoutDisplayValue(
-            rawVal ?? (ctrl?.text ?? ''),
-            effStyle,
-          );
-          return Stack(
+        if (!hasDisplayFormatting) return textField;
+
+        // A formatted field shows its formatted value until it is edited. The
+        // text field stays at the same place in the tree in both states, so
+        // the click that focuses it also opens its text input: one click is
+        // enough to start typing. (Building a new text field on focus left it
+        // focused but without input, so a second click was needed.)
+        final showFormatted = !isFocused;
+        final formatted = formatLayoutDisplayValue(
+          rawVal ?? (ctrl?.text ?? ''),
+          effStyle,
+        );
+        return Stack(
             fit: StackFit.expand,
             children: [
-              Opacity(opacity: 0, child: IgnorePointer(child: textField)),
+              Opacity(
+                opacity: showFormatted ? 0 : 1,
+                child: IgnorePointer(ignoring: showFormatted, child: textField),
+              ),
+              if (showFormatted)
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {
@@ -2918,9 +2952,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               ),
             ],
           );
-        }
-
-        return textField;
 
       case 'button':
       case 'popover_button':
@@ -3366,7 +3397,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       'last' || 'último' || 'ultimo' => _records.length - 1,
       _ => (int.tryParse(t) ?? (_currentIndex + 2)) - 1,
     };
-    goToRecord(index.clamp(0, _records.length - 1));
+    unawaited(goToRecord(index.clamp(0, _records.length - 1)));
   }
 
   @override
@@ -3446,11 +3477,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         lower.contains('eliminar')) {
       deleteCurrentRecord();
     } else if (lower.contains('first') || lower.contains('primero')) {
-      goToRecord(0);
+      unawaited(goToRecord(0));
     } else if (lower.contains('last') ||
         lower.contains('ultimo') ||
         lower.contains('último')) {
-      goToRecord(_records.length - 1);
+      unawaited(goToRecord(_records.length - 1));
     } else if (lower.contains('next') || lower.contains('siguiente')) {
       nextRecord();
     } else if (lower.contains('prev') || lower.contains('anterior')) {
