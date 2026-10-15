@@ -57,7 +57,7 @@ WebDirect are trademarks of Claris International Inc. See the
 - **Per-session database**: the server keeps no global "active database". Two clients signed in to different databases never affect each other.
 - **Roles enforced by the server**: `owner`, `admin` and `user`, plus per-layout permissions (`read_write`, `read_only`, `none`) that also govern record access through the data API.
 - **No default accounts**: a database gets its first owner with the credentials chosen when it is created.
-- **Configuration** (environment variables of the API server): `DATABASE_URL`, `SESSION_TTL` (default `12h`), `CORS_ALLOWED_ORIGINS` (default `*`), `ALLOW_PUBLIC_DATABASE_CREATION` (default `true`; set to `false` on shared servers).
+- **Configuration** (environment variables of the API server): `DATABASE_URL`, `SESSION_TTL` (default `12h`), `CORS_ALLOWED_ORIGINS` (default `*`), `ALLOW_PUBLIC_DATABASE_CREATION` (default `true`; set to `false` on shared servers), `FILE4BASE_ADMIN_DATABASE` (the owners of that database administer the server through the server-wide Server Tools; empty disables them).
 
 Details: [REST API Reference - Authentication & Authorization](docs/api/API_REFERENCE.md#authentication--authorization).
 

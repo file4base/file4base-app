@@ -20,6 +20,16 @@ type Options struct {
 	// ChannelSecret is the shared secret used to derive the AES-256-GCM key for
 	// encrypted payload transfers between the Web Client and the API.
 	ChannelSecret string
+	// AdminDatabase names the database whose owners are the server
+	// administrators (FILE4BASE_ADMIN_DATABASE). Only they reach the
+	// server-wide Server Tools (containers, TLS, every session, audit log,
+	// schedules, notifications, telemetry). Empty disables those tools; the
+	// tools of one database (backups, maintenance) stay available to that
+	// database's owners and admins, for their own database only.
+	AdminDatabase string
+	// BackupsDir is where Server Tools keeps backup snapshots
+	// (default ./data/backups).
+	BackupsDir string
 	// Version is the running server version (AppVersion), reported by
 	// Server Tools > Containers and compared with the latest release.
 	Version string
@@ -47,6 +57,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		ControlStore:                controlStore,
 	})
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
+	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
 
 	r.Get("/api/v1/crypto/handshake", crypto.HandshakeHandler(opts.ChannelSecret))
 
@@ -67,4 +78,3 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		serverAdminHandler.RegisterRoutes(r)
 	})
 }
-

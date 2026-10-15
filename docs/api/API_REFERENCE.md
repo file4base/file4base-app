@@ -77,6 +77,7 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `SESSION_TTL` | `12h` | Idle lifetime of a session (Go duration). |
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated list of browser origins allowed to call the API. |
 | `ALLOW_PUBLIC_DATABASE_CREATION` | `true` | When `false`, only a signed-in owner can create databases. |
+| `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools. |
 
 ---
 
@@ -1845,36 +1846,40 @@ When `mfa_enabled` is `true` for an account, `POST /api/v1/auth/login` requires 
 
 ## 15. Server Tools & Operations (`/api/v1/server/*`)
 
-*Requires `admin` or `owner` role (destructive operations require `owner`).* Powers the top-level **Server Tools** administration console (`ServerToolsDialog`).
+Powers the top-level **Server Tools** administration console (`ServerToolsDialog`). Two access levels:
+
+- **Database tools** (backups and maintenance): `admin` / `owner` of a database, for **their own database only**. Naming another database returns `403`; another database's backup is reported as `404` (its existence is not disclosed). A server administrator may name any database.
+- **Server-wide tools** (containers, TLS, every session, audit log, schedules, notifications, telemetry): **server administrators** only, i.e. the owners of the database named by `FILE4BASE_ADMIN_DATABASE`. Without that variable these routes return `403` (*Server Tools Disabled*). A database role alone never grants them: by default anyone can create a database and become its owner.
 
 | Method and path | Role | Summary |
 | --- | --- | --- |
-| `GET /api/v1/server/telemetry` | admin / owner | Rolling 60-minute API telemetry (`minute_series`, `current_rpm`, `avg_latency_ms`, `p95_latency_ms`, `status_2xx`/`4xx`/`5xx`, `top_endpoints`, Go runtime memory/goroutines, and DB ping latency). |
-| `GET /api/v1/server/containers` | admin / owner | Health, uptime, `current_version`, `latest_version`, `update_available`, `release_url`, `release_notes`, `update_command`, and resource metrics for `file4base-api`, `file4base-web`, and `file4base-postgres` / `file4base-mariadb`. |
-| `POST /api/v1/server/containers/check-updates` | admin / owner | Queries GitHub Releases, GitHub `VERSION`, and Docker Hub tags (`cloudresources/file4base-api`) on demand (or simulates a newer release via `simulate_latest_version`) and returns update availability across all containers. |
-| `POST /api/v1/server/containers/update` | admin / owner | Creates an automatic `pre_update` point-in-time backup snapshot in `./data/backups/` and prepares/triggers a container stack update (`target_version`, `container`). |
-| `POST /api/v1/server/containers/{name}/restart` | admin / owner | Triggers a graceful service reload/connection pool refresh for `{name}` and records an audit event. |
-| `GET /api/v1/server/containers/{name}/logs` | admin / owner | Returns recent structured log lines for `{name}`. |
-| `GET /api/v1/server/backups` | admin / owner | Lists stored server snapshots (`.f4b.json`) with size, table count, and timestamp. |
-| `POST /api/v1/server/backups` | admin / owner | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, and accounts. |
-| `GET /api/v1/server/backups/{id}/download` | admin / owner | Downloads a stored backup snapshot archive. |
-| `POST /api/v1/server/backups/{id}/restore` | admin / owner | Verifies and restores a stored snapshot into the target database. |
-| `DELETE /api/v1/server/backups/{id}` | admin / owner | Deletes a stored backup snapshot. |
-| `GET /api/v1/server/tls` | admin / owner | Returns the current Web/API domain, HTTPS/HSTS state, TLS mode (`acme`, `custom`, `self_signed`, `http_only`), ACME email/challenge type, and X.509 certificate metadata (`cert_issuer`, `cert_subject`, `cert_not_after`, `cert_days_left`, `cert_sha256`). |
-| `PUT /api/v1/server/tls` | admin / owner | Updates the domain, HTTPS/HSTS flags, ACME settings, or custom PEM certificate configuration. |
-| `POST /api/v1/server/tls/renew` | admin / owner | Rotates or renews the server's active X.509 TLS certificate on demand. |
-| `GET /api/v1/server/sessions` | admin / owner | Lists active authenticated sessions across databases (`session_id`, `username`, `role`, `database`, `created_at`, `expires_at`, `is_current`). |
-| `DELETE /api/v1/server/sessions/{id}` | admin / owner | Revokes session `{id}` immediately. |
-| `GET /api/v1/server/schedules` | admin / owner | Lists scheduled cron jobs (`backup`, `script`, or `maintenance`). |
-| `POST /api/v1/server/schedules` | admin / owner | Creates a new scheduled cron job. |
-| `PUT /api/v1/server/schedules/{id}` | admin / owner | Updates or toggles `enabled` (`true`/`false`) on an existing scheduled cron job. |
-| `POST /api/v1/server/schedules/{id}/run` | admin / owner | Executes a scheduled job immediately and updates `last_run_at` / `last_status`. |
-| `DELETE /api/v1/server/schedules/{id}` | admin / owner | Deletes a scheduled cron job. |
-| `GET /api/v1/server/audit-logs` | admin / owner | Lists security and administrative audit events. |
-| `DELETE /api/v1/server/audit-logs` | admin / owner | Rotates/clears the audit log buffer and records a new audit entry. |
-| `GET /api/v1/server/maintenance` | admin / owner | Lists user tables, column counts, live row counts, and catalog health for the target database. |
-| `POST /api/v1/server/maintenance/optimize` | admin / owner | Runs `VACUUM ANALYZE` or `ANALYZE` and verifies `_f4b_*` system catalog tables, returning execution duration. |
-| `GET /api/v1/server/notifications` | admin / owner | Returns SMTP and Webhook alert settings and subscribed `alert_events`. |
-| `PUT /api/v1/server/notifications` | admin / owner | Saves SMTP and Webhook alert settings and subscribed `alert_events`. |
-| `POST /api/v1/server/notifications/test` | admin / owner | Dispatches a test alert notification and records an audit event. |
+| `GET /api/v1/server/access` | any session | Which tools the session may use: `server_admin`, `database_tools`, `admin_database_configured`, `database`. |
+| `GET /api/v1/server/telemetry` | server administrator | Rolling 60-minute API telemetry (`minute_series`, `current_rpm`, `avg_latency_ms`, `p95_latency_ms`, `status_2xx`/`4xx`/`5xx`, `top_endpoints`, Go runtime memory/goroutines, and DB ping latency). |
+| `GET /api/v1/server/containers` | server administrator | Health, uptime, `current_version`, `latest_version`, `update_available`, `release_url`, `release_notes`, `update_command`, and resource metrics for `file4base-api`, `file4base-web`, and `file4base-postgres` / `file4base-mariadb`. |
+| `POST /api/v1/server/containers/check-updates` | server administrator | Queries GitHub Releases, GitHub `VERSION`, and Docker Hub tags (`cloudresources/file4base-api`) on demand (or simulates a newer release via `simulate_latest_version`) and returns update availability across all containers. |
+| `POST /api/v1/server/containers/update` | server administrator | Creates an automatic `pre_update` point-in-time backup snapshot in `./data/backups/` and prepares/triggers a container stack update (`target_version`, `container`). |
+| `POST /api/v1/server/containers/{name}/restart` | server administrator | Triggers a graceful service reload/connection pool refresh for `{name}` and records an audit event. |
+| `GET /api/v1/server/containers/{name}/logs` | server administrator | Returns recent structured log lines for `{name}`. |
+| `GET /api/v1/server/backups` | admin / owner (own database) | Lists stored server snapshots (`.f4b.json`) with size, table count, and timestamp. |
+| `POST /api/v1/server/backups` | admin / owner (own database) | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, and accounts. |
+| `GET /api/v1/server/backups/{id}/download` | admin / owner (own database) | Downloads a stored backup snapshot archive. |
+| `POST /api/v1/server/backups/{id}/restore` | admin / owner (own database) | Verifies and restores a stored snapshot into the target database. |
+| `DELETE /api/v1/server/backups/{id}` | admin / owner (own database) | Deletes a stored backup snapshot. |
+| `GET /api/v1/server/tls` | server administrator | Returns the current Web/API domain, HTTPS/HSTS state, TLS mode (`acme`, `custom`, `self_signed`, `http_only`), ACME email/challenge type, and X.509 certificate metadata (`cert_issuer`, `cert_subject`, `cert_not_after`, `cert_days_left`, `cert_sha256`). |
+| `PUT /api/v1/server/tls` | server administrator | Updates the domain, HTTPS/HSTS flags, ACME settings, or custom PEM certificate configuration. |
+| `POST /api/v1/server/tls/renew` | server administrator | Rotates or renews the server's active X.509 TLS certificate on demand. |
+| `GET /api/v1/server/sessions` | server administrator | Lists active authenticated sessions across databases (`session_id`, `username`, `role`, `database`, `created_at`, `expires_at`, `is_current`). |
+| `DELETE /api/v1/server/sessions/{id}` | server administrator | Revokes session `{id}` immediately. |
+| `GET /api/v1/server/schedules` | server administrator | Lists scheduled cron jobs (`backup`, `script`, or `maintenance`). |
+| `POST /api/v1/server/schedules` | server administrator | Creates a new scheduled cron job. |
+| `PUT /api/v1/server/schedules/{id}` | server administrator | Updates or toggles `enabled` (`true`/`false`) on an existing scheduled cron job. |
+| `POST /api/v1/server/schedules/{id}/run` | server administrator | Executes a scheduled job immediately and updates `last_run_at` / `last_status`. |
+| `DELETE /api/v1/server/schedules/{id}` | server administrator | Deletes a scheduled cron job. |
+| `GET /api/v1/server/audit-logs` | server administrator | Lists security and administrative audit events. |
+| `DELETE /api/v1/server/audit-logs` | server administrator | Rotates/clears the audit log buffer and records a new audit entry. |
+| `GET /api/v1/server/maintenance` | admin / owner (own database) | Lists user tables, column counts, live row counts, and catalog health for the target database. |
+| `POST /api/v1/server/maintenance/optimize` | admin / owner (own database) | Runs `VACUUM ANALYZE` or `ANALYZE` and verifies `_f4b_*` system catalog tables, returning execution duration. |
+| `GET /api/v1/server/notifications` | server administrator | Returns SMTP and Webhook alert settings and subscribed `alert_events`. |
+| `PUT /api/v1/server/notifications` | server administrator | Saves SMTP and Webhook alert settings and subscribed `alert_events`. |
+| `POST /api/v1/server/notifications/test` | server administrator | Dispatches a test alert notification and records an audit event. |
 

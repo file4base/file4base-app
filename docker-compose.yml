@@ -60,6 +60,9 @@ services:
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-*}"
       # Set to "false" so that only a signed-in owner can create databases
       ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-true}"
+      # Owners of this database administer the whole server (Server Tools);
+      # empty disables the server-wide tools.
+      FILE4BASE_ADMIN_DATABASE: "${FILE4BASE_ADMIN_DATABASE:-}"
       # Embedded SQLite control store for project registry, options, and permissions
       CONTROL_DB_PATH: "/app/data/file4base_control.db"
       # Shared secret for AES-256-GCM encrypted payload channel between Web/Desktop and API

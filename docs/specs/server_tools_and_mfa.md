@@ -11,6 +11,8 @@ This specification documents three core platform capabilities introduced in **Fi
 
 ## 2. Top-Level `Server Tools` Menu & Console (`ServerToolsDialog`)
 
+**Access.** Backups & Snapshots and Database Maintenance are *database tools*: the `owner`s and `admin`s of a database use them on their own database only. Every other module acts on the whole server and is reserved to **server administrators**: the owners of the database named by `FILE4BASE_ADMIN_DATABASE` (no other account, whatever its database role). Without that variable the server-wide modules are disabled. `GET /api/v1/server/access` tells the client which modules to show; the server enforces the same rules on every route.
+
 The `Server Tools` menu is positioned immediately after `Tools` in `File4BaseMenuBar` (`File` · `Edit` · `View` · `Insert` · `Format` · `Records/Requests` · `Scripts` · `Tools` · **`Server Tools`** · `Window` · `Help`). Selecting any item opens `ServerToolsDialog` focused on the corresponding module:
 
 | # | Menu Item | Section Key | REST Endpoint(s) | Capabilities |

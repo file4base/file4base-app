@@ -2272,6 +2272,18 @@ class ApiClient {
 
   // ─── Server Tools & Administration (/api/v1/server) ────────────────────────
 
+  /// Which Server Tools this session may use: `server_admin` (owner of the
+  /// server administration database: every tool), `database_tools` (backups
+  /// and maintenance of its own database) and `admin_database_configured`.
+  Future<Map<String, dynamic>> getServerAccess() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/access'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
   Future<Map<String, dynamic>> getServerTelemetry({int minutes = 30}) async {
     final response = await _httpClient.get(
       Uri.parse('$baseUrl/api/v1/server/telemetry?minutes=$minutes'),
