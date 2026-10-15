@@ -175,6 +175,31 @@ func TestAPI_ImportFromAnExternalSource(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	admin := h.login(db, "bob", "bob-secret-pw")
 	assert.Equal(t, http.StatusOK, h.do(http.MethodGet, "/api/v1/data-sources", admin, nil, nil).Code)
+
+	// The source reads with the credentials its owner stored: anyone who may
+	// import can bring in one of its tables, but only an owner may run a
+	// statement of their own through it.
+	tableRead := map[string]interface{}{
+		"data_source": map[string]interface{}{"id": source.ID, "table": external, "password": password},
+	}
+	rec = h.do(http.MethodPost, "/api/v1/data/members/import/preview", admin, tableRead, nil)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	ownQuery := func(query string) map[string]interface{} {
+		return map[string]interface{}{
+			"data_source": map[string]interface{}{"id": source.ID, "query": query, "password": password},
+		}
+	}
+	rec = h.do(http.MethodPost, "/api/v1/data/members/import/preview", admin, ownQuery("SELECT full_name FROM "+external), nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodPost, "/api/v1/data/members/import/preview", owner, ownQuery("SELECT full_name FROM "+external), nil)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// Even an owner's statement may only read.
+	rec = h.do(http.MethodPost, "/api/v1/data/members/import/preview", owner,
+		ownQuery("WITH gone AS (SELECT 1 AS x) DELETE FROM "+external), nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	var remaining int
+	require.NoError(t, driver.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM "+external).Scan(&remaining))
+	assert.Equal(t, 2, remaining, "the refused statement did not run")
 	rec = h.do(http.MethodPost, "/api/v1/data-sources", admin, map[string]interface{}{
 		"name": "Mine", "engine": "postgres", "host": "evil.example", "database": "x", "username": "y",
 	}, nil)

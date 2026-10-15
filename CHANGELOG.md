@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Database tools** (backups, maintenance) stay available to a database's owners and admins, **for their own database only**; another database's backups are not listed and are reported as not found.
   - New `GET /api/v1/server/access`; the Server Tools window only shows the modules the session may use and explains how the server-wide ones are enabled.
   - **Upgrade note:** set `FILE4BASE_ADMIN_DATABASE` (in `.env`) to keep using the server-wide tools.
+- **External data sources could be made to write.** Reading a source with a statement only checked that it began with `SELECT` or `WITH` and held no `;`, and anyone with the `bulk_import` capability could send one, run with the credentials the owner stored. SQL Server accepts a write after `WITH`, several statements without `;`, and `SELECT … INTO` creates a table. Now:
+  - A statement of one's own (`query`) is for **owners** only (`403` otherwise); everyone else who may import picks one of the source's tables. The import window only offers "A SELECT" to owners.
+  - Statements containing a write or execution keyword (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `INTO`, `EXEC`, `CREATE`, `DROP`, …) outside quoted text, quoted names and comments are refused (`422`).
+  - PostgreSQL and MySQL/MariaDB sources are read in a **read-only transaction**. SQL Server's driver has none: give a SQL Server source a read-only login.
 
 ---
 

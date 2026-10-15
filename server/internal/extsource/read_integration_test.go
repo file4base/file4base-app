@@ -143,6 +143,24 @@ func TestReadFromAnotherDatabase(t *testing.T) {
 		fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&stillThere))
 	assert.Equal(t, 3, stillThere, "the refused statement did not run")
 
+	// What looks like a read but changes the source is stopped by the
+	// read-only transaction the read runs in: nextval() advances a sequence.
+	if testdb.Engine() == dbal.EnginePostgres {
+		seq := table + "_seq"
+		_, err = driver.DB().ExecContext(ctx, "CREATE SEQUENCE "+seq)
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = driver.DB().ExecContext(context.Background(), "DROP SEQUENCE IF EXISTS "+seq) })
+		_, err = extsource.Read(ctx, conn, password, extsource.ReadOptions{
+			Query: fmt.Sprintf("SELECT nextval('%s') AS n", seq),
+		})
+		assert.ErrorIs(t, err, extsource.ErrConnection, "a read-only transaction refuses nextval()")
+		var last int64
+		var called bool
+		require.NoError(t, driver.DB().QueryRowContext(ctx,
+			fmt.Sprintf("SELECT last_value, is_called FROM %s", seq)).Scan(&last, &called))
+		assert.False(t, called, "the sequence was not advanced")
+	}
+
 	// A wrong password is reported as what it is, not as a crash.
 	_, err = extsource.Read(ctx, conn, "not-the-password", extsource.ReadOptions{Table: table})
 	assert.ErrorIs(t, err, extsource.ErrConnection)

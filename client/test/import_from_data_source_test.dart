@@ -93,7 +93,7 @@ class _SourceApi extends ApiClient {
   }
 }
 
-Future<_SourceApi> pumpDialog(WidgetTester tester, {_SourceApi? api}) async {
+Future<_SourceApi> pumpDialog(WidgetTester tester, {_SourceApi? api, bool canReadWithStatement = true}) async {
   tester.view.physicalSize = const Size(1400, 1100);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
@@ -105,6 +105,7 @@ Future<_SourceApi> pumpDialog(WidgetTester tester, {_SourceApi? api}) async {
         table: _table,
         apiClient: client,
         initialSource: ImportSourceKind.external,
+        canReadWithStatement: canReadWithStatement,
       ),
     ),
   ));
@@ -176,6 +177,13 @@ void main() {
 
       expect(api.previewedWith?.query, 'SELECT * FROM people');
       expect(api.previewedWith?.table, isEmpty);
+    });
+
+    testWidgets('someone who is not an owner imports a table, not a SELECT of their own', (tester) async {
+      await pumpDialog(tester, canReadWithStatement: false);
+      expect(find.text('A SELECT'), findsNothing,
+          reason: 'the server only lets owners read a source with their own statement');
+      expect(find.text('List tables'), findsOneWidget);
     });
 
     testWidgets('with no source registered it says who can add one', (tester) async {

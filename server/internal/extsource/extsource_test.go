@@ -15,6 +15,14 @@ func TestCheckQuery(t *testing.T) {
 		"SELECT * FROM customers",
 		"  select id, name from customers where city = 'Paris' ;",
 		"WITH recent AS (SELECT * FROM orders) SELECT * FROM recent",
+		// Write words inside text, quoted names or comments are not writes.
+		"SELECT note FROM tickets WHERE note = 'please delete me' OR note = 'drop it'",
+		`SELECT "update", "into" FROM changes`,
+		"SELECT `delete` FROM mysql_style",
+		"SELECT [insert] FROM sqlserver_style",
+		"SELECT id /* drop table here? no */ FROM t -- exec nothing\n",
+		"SELECT name FROM t WHERE name = 'it''s an insert'",
+		"SELECT created_at, updated_at, deleted FROM audit",
 	} {
 		got, err := checkQuery(accepted)
 		require.NoError(t, err, accepted)
@@ -30,6 +38,15 @@ func TestCheckQuery(t *testing.T) {
 		"SELECT 1; DROP TABLE customers",
 		"INSERT INTO customers (id) VALUES ('x')",
 		"EXEC sp_who",
+		// SQL Server accepts a write after WITH, several statements without
+		// ';', and SELECT ... INTO creates a table.
+		"WITH x AS (SELECT 1 AS id) DELETE FROM customers",
+		"SELECT 1 DELETE FROM customers",
+		"SELECT * INTO customers_copy FROM customers",
+		"SELECT 1 EXEC xp_cmdshell 'dir'",
+		"SELECT * FROM OPENROWSET('SQLNCLI', 'x', 'SELECT 1')",
+		"select 1 waitfor delay '00:00:10'",
+		"SELECT name FROM t WHERE x = 'a' UPDATE t SET x = 1",
 	} {
 		_, err := checkQuery(refused)
 		assert.ErrorIs(t, err, ErrUnsafeStatement, refused)
