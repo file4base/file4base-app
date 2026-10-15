@@ -4205,6 +4205,22 @@
         ]
       }
     },
+    "/api/v1/server/backups/upload": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Upload a backup file (.tar.gz or .f4b.json) and store it as a server-side backup",
+        "responses": {
+          "201": {
+            "description": "Stored backup record"
+          },
+          "422": {
+            "description": "Not a valid backup file"
+          }
+        }
+      }
+    },
     "/api/v1/server/backups/{id}/download": {
       "get": {
         "tags": [

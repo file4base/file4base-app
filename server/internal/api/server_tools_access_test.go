@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -54,6 +56,17 @@ func (s *serverToolsHarness) backup(token string, body map[string]string) (int, 
 	}
 	rec := s.do(http.MethodPost, "/api/v1/server/backups", token, body, &res)
 	return rec.Code, res.ID
+}
+
+func (s *serverToolsHarness) doRaw(method, path, token, contentType string, body []byte) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	s.router.ServeHTTP(rec, req)
+	return rec
 }
 
 var serverWideRoutes = []struct{ method, path string }{
@@ -159,6 +172,51 @@ func TestServerTools_BackupDownloadsAsTarGz(t *testing.T) {
 	assert.Contains(t, string(content), s.aliceDB, "the snapshot JSON is inside the archive")
 	_, err = tr.Next()
 	assert.ErrorIs(t, err, io.EOF, "only one file in the archive")
+}
+
+func TestServerTools_BackupUploadRoundTrip(t *testing.T) {
+	s := newServerToolsHarness(t, true)
+	code, id := s.backup(s.aliceToken, nil)
+	require.Equal(t, http.StatusCreated, code)
+
+	// Download the tar.gz and upload it straight back.
+	dl := s.do(http.MethodGet, "/api/v1/server/backups/"+id+"/download?format=targz", s.aliceToken, nil, nil)
+	require.Equal(t, http.StatusOK, dl.Code)
+
+	up := s.doRaw(http.MethodPost, "/api/v1/server/backups/upload", s.aliceToken, "application/gzip", dl.Body.Bytes())
+	require.Equal(t, http.StatusCreated, up.Code, up.Body.String())
+	var rec struct {
+		ID, Database, Type string
+	}
+	require.NoError(t, json.Unmarshal(up.Body.Bytes(), &rec))
+	assert.Equal(t, s.aliceDB, rec.Database)
+	assert.Equal(t, "uploaded", rec.Type)
+
+	// It appears in Alice's list and restores.
+	var list backupList
+	s.do(http.MethodGet, "/api/v1/server/backups", s.aliceToken, nil, &list)
+	ids := make([]string, 0, len(list.Backups))
+	for _, b := range list.Backups {
+		ids = append(ids, b.ID)
+	}
+	assert.Contains(t, ids, rec.ID)
+	assert.Equal(t, http.StatusOK, s.do(http.MethodPost, "/api/v1/server/backups/"+rec.ID+"/restore", s.aliceToken, nil, nil).Code)
+
+	// A raw .f4b.json upload also works.
+	raw := s.do(http.MethodGet, "/api/v1/server/backups/"+id+"/download", s.aliceToken, nil, nil)
+	up = s.doRaw(http.MethodPost, "/api/v1/server/backups/upload", s.aliceToken, "application/json", raw.Body.Bytes())
+	assert.Equal(t, http.StatusCreated, up.Code, up.Body.String())
+
+	// A non-admin's upload is stamped with their own database, whatever the
+	// file claims: Bob uploads Alice's backup and it becomes Bob's.
+	up = s.doRaw(http.MethodPost, "/api/v1/server/backups/upload", s.bobToken, "application/json", raw.Body.Bytes())
+	require.Equal(t, http.StatusCreated, up.Code, up.Body.String())
+	require.NoError(t, json.Unmarshal(up.Body.Bytes(), &rec))
+	assert.Equal(t, s.bobDB, rec.Database, "an uploaded backup can only target the uploader's own database")
+
+	// Garbage is rejected.
+	assert.Equal(t, http.StatusUnprocessableEntity,
+		s.doRaw(http.MethodPost, "/api/v1/server/backups/upload", s.aliceToken, "application/json", []byte("not a backup")).Code)
 }
 
 func TestServerTools_AccessTellsTheClientWhatItMayUse(t *testing.T) {
