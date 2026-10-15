@@ -345,6 +345,23 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
     await _loadCurrentSection();
   }
 
+  /// Picks a backup file (.tar.gz from a download, or a raw .f4b.json),
+  /// uploads it as a server-side backup and refreshes the list.
+  Future<void> _uploadBackupFromFile() async {
+    try {
+      final picked = await SolutionStorageService.pickFile(
+        allowedExtensions: const ['gz', 'tgz', 'json', 'f4b'],
+      );
+      if (picked == null) return;
+      final isGzip = picked.bytes.length >= 2 && picked.bytes[0] == 0x1f && picked.bytes[1] == 0x8b;
+      final created = await widget.apiClient.uploadServerBackup(picked.bytes, gzip: isGzip);
+      _toast('Uploaded backup: ${created['filename'] ?? created['id']}');
+      await _loadCurrentSection();
+    } on Exception catch (e) {
+      _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
+  }
+
   void _selectSection(ServerToolSection section) {
     if (_section == section || !_maySee(section)) return;
     setState(() {
@@ -1364,6 +1381,16 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                   },
                   icon: const Icon(Icons.add_circle_outline, size: 18),
                   label: const Text('Create Snapshot Now'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: _uploadBackupFromFile,
+                  icon: const Icon(Icons.upload_file_outlined, size: 18),
+                  label: const Text('Upload Backup...'),
                 ),
               ],
             ),

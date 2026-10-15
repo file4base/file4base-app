@@ -438,6 +438,7 @@ func (h *ServerAdminHandler) RegisterRoutes(r chi.Router) {
 			r.Use(RequireAdmin)
 			r.Get("/backups", h.ListBackups)
 			r.Post("/backups", h.CreateBackup)
+			r.Post("/backups/upload", h.UploadBackup)
 			r.Get("/backups/{id}/download", h.DownloadBackup)
 			r.Post("/backups/{id}/restore", h.RestoreBackup)
 			r.Delete("/backups/{id}", h.DeleteBackup)
@@ -1191,6 +1192,121 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 		TablesCount: len(tables),
 		Notes:       req.Notes,
 		Type:        bkpType,
+	})
+}
+
+// maxBackupUploadBytes caps an uploaded backup, decompressed.
+const maxBackupUploadBytes = 512 << 20 // 512 MiB
+
+// ungzipTar returns the first file of a gzip-compressed tar (what the download
+// produces). Used to accept an uploaded `.tar.gz` backup.
+func ungzipTar(data []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	hdr, err := tr.Next()
+	if err != nil {
+		return nil, err
+	}
+	if hdr.Size > maxBackupUploadBytes {
+		return nil, errors.New("the archive is too large")
+	}
+	return io.ReadAll(io.LimitReader(tr, maxBackupUploadBytes))
+}
+
+// UploadBackup stores a snapshot uploaded from a file (the `.tar.gz` the
+// download produces, or a raw `.f4b.json`) as a server-side backup, so it can
+// then be restored. The snapshot's database is forced to one the session may
+// use, so an uploaded file cannot target another database.
+func (h *ServerAdminHandler) UploadBackup(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBackupUploadBytes))
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Read Error", "failed reading the uploaded file")
+		return
+	}
+	// A gzip file (the downloaded archive) starts with 0x1f 0x8b; otherwise
+	// the body is the raw JSON snapshot.
+	if len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
+		raw, err = ungzipTar(raw)
+		if err != nil {
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Archive",
+				"the file is not a File4Base backup archive (.tar.gz)")
+			return
+		}
+	}
+
+	var snap map[string]interface{}
+	if err := json.Unmarshal(raw, &snap); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Backup",
+			"the file is not a File4Base backup (.f4b.json or .tar.gz)")
+		return
+	}
+	if _, hasTables := snap["tables"]; !hasTables {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Backup",
+			"the file does not look like a backup snapshot")
+		return
+	}
+
+	// Where the upload lands. A non-administrator's upload is always stamped
+	// with their own database, whatever the file claims, so it can only ever
+	// restore into it. A server administrator keeps the file's database (or
+	// the one named on the request) so a backup can be moved between
+	// databases on purpose.
+	target := sess.Database
+	if h.isServerAdmin(sess) {
+		fileDB, _ := snap["database"].(string)
+		if requested := strings.TrimSpace(r.URL.Query().Get("database")); requested != "" {
+			target = requested
+		} else if db := strings.TrimSpace(fileDB); db != "" {
+			target = db
+		}
+	}
+
+	now := time.Now().UTC()
+	backupID := fmt.Sprintf("bkp_%s_%s_uploaded", target, now.Format("20060102_150405"))
+	filename := backupID + ".f4b.json"
+	snap["id"] = backupID
+	snap["database"] = target
+	snap["type"] = "uploaded"
+	snap["created_at"] = now.Format(time.RFC3339)
+	snap["created_by"] = sess.Username
+	if _, ok := snap["notes"].(string); !ok {
+		snap["notes"] = "Uploaded from a file"
+	}
+
+	encoded, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(h.backupsDir, filename), encoded, 0o600); err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	h.recordAudit("backup", "Upload Backup", sess.Username, target, filename, "success",
+		fmt.Sprintf("Stored uploaded snapshot %s (%d bytes)", filename, len(encoded)))
+
+	tablesCount := 0
+	if m, ok := snap["tables"].(map[string]interface{}); ok {
+		tablesCount = len(m)
+	}
+	notes, _ := snap["notes"].(string)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(BackupRecord{
+		ID:          backupID,
+		Filename:    filename,
+		Database:    target,
+		CreatedAt:   now.Format(time.RFC3339),
+		CreatedBy:   sess.Username,
+		SizeBytes:   int64(len(encoded)),
+		TablesCount: tablesCount,
+		Notes:       notes,
+		Type:        "uploaded",
 	})
 }
 

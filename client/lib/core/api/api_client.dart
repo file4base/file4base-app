@@ -2405,6 +2405,18 @@ class ApiClient {
     return response.bodyBytes;
   }
 
+  /// Uploads a backup file (a `.tar.gz` from download, or a raw `.f4b.json`)
+  /// and stores it as a server-side backup that can then be restored.
+  Future<Map<String, dynamic>> uploadServerBackup(Uint8List bytes, {bool gzip = true}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/backups/upload'),
+      headers: _headers(contentType: gzip ? 'application/gzip' : 'application/json'),
+      body: bytes,
+    );
+    _checkResponse(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> restoreServerBackup(String id) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/server/backups/${Uri.encodeComponent(id)}/restore'),
