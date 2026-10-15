@@ -204,6 +204,18 @@ String applyLayoutTextCase(String text, String textCase) {
 
 /// Formats a raw field value according to [style]'s Number, Date, Time, or
 /// Timestamp display format without altering the stored value.
+/// Whether [style] changes how a value is displayed (number, date or time
+/// format, or text case), i.e. whether [formatLayoutDisplayValue] can return
+/// something other than the value as entered. Unset formats (null) and the
+/// defaults ('general', 'as_entered', 'none' / 'normal') do not.
+bool layoutStyleHasDisplayFormat(LayoutObjectStyle style) {
+  bool set(String? v, String plain) => v != null && v.isNotEmpty && v != plain;
+  return set(style.numberFormat, 'general') ||
+      set(style.dateFormat, 'as_entered') ||
+      set(style.timeFormat, 'as_entered') ||
+      (style.textCase != 'none' && style.textCase != 'normal' && style.textCase.isNotEmpty);
+}
+
 String formatLayoutDisplayValue(Object? rawValue, LayoutObjectStyle style) {
   final raw = (rawValue?.toString() ?? '').trim();
   if (raw.isEmpty) return '';

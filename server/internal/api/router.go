@@ -20,6 +20,9 @@ type Options struct {
 	// ChannelSecret is the shared secret used to derive the AES-256-GCM key for
 	// encrypted payload transfers between the Web Client and the API.
 	ChannelSecret string
+	// Version is the running server version (AppVersion), reported by
+	// Server Tools > Containers and compared with the latest release.
+	Version string
 }
 
 // Mount registers every domain route of the API on r.
@@ -43,7 +46,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		AllowPublicDatabaseCreation: opts.AllowPublicDatabaseCreation,
 		ControlStore:                controlStore,
 	})
-	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore)
+	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 
 	r.Get("/api/v1/crypto/handshake", crypto.HandshakeHandler(opts.ChannelSecret))
 

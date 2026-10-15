@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.13.1] - 2026-10-15
+
+### Fixed
+- Browse mode: one click on a field now puts the cursor in it, ready to type. It took two: every field was treated as formatted (unset number/date/time formats and the default text case `none` counted as formatting), and a formatted field was rebuilt as a new text field when focused, so it got the focus but no text input until a second click.
+- Browse mode, List and Table views: one click on a field of another record makes it the current record and starts editing that field. The field was focused before the record changed, and the double click on the whole row (open in Form view) delayed every single click; it moved to the record number (Table) and an open button at the end of each row (List).
+- Server Tools reported a hard-coded stack version (0.13.0) that `scripts/bump_version.sh` does not update, so after an upgrade it showed the old version and a stale "update available". The server now reports its own version (`AppVersion`, passed as `api.Options.Version`; `FILE4BASE_VERSION` still overrides it) and the client uses its single version constant.
+- Client tests: refreshed the shared new-database fixture (it lacked the File Options `kiosk_mode` key added in 0.13.0; the server stores File Options as given, so nothing was lost), and updated the Script Workspace and Browse record bar tests to the current catalog and inline-editing table.
+
 ## [0.13.0] - 2026-10-14
 
 ### Added
