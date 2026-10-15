@@ -5,11 +5,17 @@ on:
     branches: [ main ]
     paths:
       - 'docs/**'
+      - 'VERSION'
+      - 'CHANGELOG.md'
+      - 'README.md'
+      - 'server/internal/api/swagger/ui/openapi.json'
+      - 'scripts/sync_docs_site.sh'
+      - 'scripts/sync_docs_site.py'
       - '.github/workflows/deploy_docs.yml'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -25,7 +31,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Auto-sync GitHub Pages site from VERSION, CHANGELOG, OpenAPI & ROADMAP
+        run: |
+          chmod +x ./scripts/sync_docs_site.sh ./scripts/sync_docs_site.py
+          ./scripts/sync_docs_site.sh
+
+      - name: Commit synchronized docs if updated
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet docs/ || [ -n "$(git ls-files --others --exclude-standard docs/)" ]; then
+            git add docs/index.html docs/openapi.json docs/swagger/
+            git commit -m "docs(pages): auto-sync GitHub Pages documentation [skip ci]"
+            git push origin HEAD:main || true
+          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

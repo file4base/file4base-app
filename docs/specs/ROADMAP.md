@@ -83,7 +83,7 @@
 - [x] No default accounts; database creation provisions the first owner explicitly.
 - [x] Multi-Factor Authentication (MFA / 2FA) with Google Authenticator (RFC 6238 TOTP QR code setup, Base32 secret, and 6-digit verification at sign-in; [server_tools_and_mfa.md](server_tools_and_mfa.md)).
 - [x] Go test suite and `go vet` in CI.
-- [ ] Sign-in rate limiting and account lockout.
+- [x] Sign-in rate limiting and account lockout ([#59](https://github.com/file4base/file4base-app/pull/59)).
 - [ ] Sessions shared across server replicas (required for horizontal scaling).
 
 ## Tools & Interoperability

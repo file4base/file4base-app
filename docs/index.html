@@ -452,6 +452,9 @@
       <a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener" class="nav-btn">
         API Reference
       </a>
+      <a href="./swagger/" target="_blank" rel="noopener" class="nav-btn">
+        Swagger UI
+      </a>
       <a href="https://github.com/file4base/file4base-app" target="_blank" rel="noopener" class="nav-btn">
         <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
         GitHub
@@ -514,6 +517,8 @@
           <li><a href="#docker-standards">Docker Standards</a></li>
           <li><a href="#multiplatform">macOS, Windows, Linux & Web</a></li>
           <li><a href="#tutorials">Tutorials & Specs</a></li>
+          <li><a href="#roadmap-status">Roadmap Status</a></li>
+          <li><a href="#changelog">Latest Releases & Changelog</a></li>
         </ul>
       </div>
 
@@ -577,7 +582,7 @@ open http://localhost:3000</code></pre>
         <p>The stack exposes:</p>
         <ul>
           <li><strong>File4Base Web Client</strong>: <code>http://localhost:3000</code> (served via Nginx with reverse proxy to API &amp; Swagger)</li>
-          <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (103 REST endpoints)</li>
+          <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (105 REST endpoints)</li>
           <li><strong>OpenAPI 3.0.3 / Swagger UI</strong>: <code>http://localhost:3000/swagger/</code> and <code>http://localhost:8080/swagger/</code></li>
           <li><strong>Health &amp; Readiness Probes</strong>: <code>/healthz</code>, <code>/livez</code>, <code>/readyz</code>, <code>/startupz</code></li>
           <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code></li>
@@ -733,8 +738,15 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
       <section id="rest-api">
         <h2>🔌 REST API v1 &amp; OpenAPI 3.0.3 / Swagger UI</h2>
         <p>Every capability in File4Base is exposed through a versioned REST API under <code>/api/v1/</code> following <a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/API_BEST_PRACTICES.md" target="_blank" rel="noopener">REST API Best Practices</a> and <a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener">API Reference (103 Endpoints)</a>:</p>
+        <!-- AUTO-OPENAPI:START -->
+        <div class="callout">
+          <strong>Live OpenAPI 3.0.3 Metrics (Auto-Synced):</strong> <code>105</code> REST paths · <code>161</code> HTTP operations.<br>
+          <span style="font-size: 0.88rem;"><strong>Schemas &amp; DDL</strong>: 72 · <strong>Server Administration</strong>: 30 · <strong>Solutions &amp; Backup</strong>: 20 · <strong>Security &amp; Users</strong>: 18 · <strong>Data Operations</strong>: 14 · <strong>Health &amp; Probes</strong>: 4 · <strong>Databases &amp; Projects</strong>: 2 · <strong>Authentication &amp; Session</strong>: 1</span><br>
+          👉 <a href="./swagger/" target="_blank" rel="noopener"><strong>Open Hosted Interactive Swagger UI</strong></a> · <a href="./openapi.json" target="_blank" rel="noopener">Download <code>openapi.json</code></a>
+        </div>
+        <!-- AUTO-OPENAPI:END -->
         <ul>
-          <li><strong>Interactive Swagger UI</strong>: Available at <code>http://localhost:3000/swagger/</code> and <code>http://localhost:8080/swagger/</code> (spec at <code>/openapi.json</code>).</li>
+          <li><strong>Interactive Swagger UI</strong>: Available on GitHub Pages (<a href="./swagger/" target="_blank" rel="noopener"><code>/swagger/</code></a>), <code>http://localhost:3000/swagger/</code>, and <code>http://localhost:8080/swagger/</code> (spec at <a href="./openapi.json" target="_blank" rel="noopener"><code>/openapi.json</code></a>).</li>
           <li><strong>Standardized Error Contract (RFC 9457)</strong>: All errors return structured Problem Details JSON (<code>type</code>, <code>title</code>, <code>status</code>, <code>detail</code>, <code>instance</code>, <code>trace_id</code>).</li>
           <li><strong>Key Endpoint Domains</strong>:
             <ul>
@@ -800,11 +812,157 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <ul>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/seed_archive.md" target="_blank" rel="noopener"><strong>Complete 21-Lesson Tutorial — Boreal Seed &amp; Herbarium Archive</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/filemaker_migration_guide.md" target="_blank" rel="noopener"><strong>FileMaker-to-File4Base Assisted Migration Guide</strong></a></li>
-          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener"><strong>REST API v1 Reference (103 Endpoints)</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener"><strong>REST API v1 Reference (105 Endpoints)</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/server_tools_and_mfa.md" target="_blank" rel="noopener"><strong>Server Tools &amp; MFA (Google Authenticator) Specification</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/file4base_menu_reference_guide.md" target="_blank" rel="noopener"><strong>Complete Menu Bar &amp; Keyboard Shortcuts Reference Guide</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/ROADMAP.md" target="_blank" rel="noopener"><strong>Project Roadmap &amp; Implementation Status</strong></a></li>
         </ul>
+      </section>
+
+      <!-- Auto-Synced Roadmap Progress -->
+      <section id="roadmap-status">
+        <h2>🗺️ Roadmap &amp; Implementation Status</h2>
+        <!-- AUTO-ROADMAP:START -->
+        <p>Overall specification &amp; milestone progress synced from <a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/ROADMAP.md" target="_blank" rel="noopener"><code>docs/specs/ROADMAP.md</code></a>: <strong>89 / 94 milestones completed (95%)</strong>.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Roadmap Phase / Domain</th>
+                <th>Milestones</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+            <tr>
+              <td><strong>Phase 1: Environment, DBAL Scaffolding &amp; Foundation</strong></td>
+              <td><code>9 / 9</code></td>
+              <td>✅ Complete</td>
+            </tr>
+            <tr>
+              <td><strong>Phase 2: Schema Engine &amp; DDL (Backend Go)</strong></td>
+              <td><code>10 / 10</code></td>
+              <td>✅ Complete</td>
+            </tr>
+            <tr>
+              <td><strong>Phase 3: Visual Schema Designer (Flutter Client)</strong></td>
+              <td><code>5 / 5</code></td>
+              <td>✅ Complete</td>
+            </tr>
+            <tr>
+              <td><strong>Phase 4: Dynamic CRUD &amp; Query Builder (Find Mode)</strong></td>
+              <td><code>12 / 12</code></td>
+              <td>✅ Complete</td>
+            </tr>
+            <tr>
+              <td><strong>Phase 5: Dynamic Layout Engine &amp; 4 Execution Modes</strong></td>
+              <td><code>22 / 22</code></td>
+              <td>✅ Complete</td>
+            </tr>
+            <tr>
+              <td><strong>Security &amp; Multi-User Foundations (prerequisite for Phase 6)</strong></td>
+              <td><code>11 / 12</code></td>
+              <td>🔄 In Progress (92%)</td>
+            </tr>
+            <tr>
+              <td><strong>Tools &amp; Interoperability</strong></td>
+              <td><code>8 / 8</code></td>
+              <td>✅ Complete</td>
+            </tr>
+            <tr>
+              <td><strong>Phase 6: Real-Time Sync &amp; Multi-User Collaboration</strong></td>
+              <td><code>0 / 3</code></td>
+              <td>🔄 In Progress (0%)</td>
+            </tr>
+            <tr>
+              <td><strong>Phase 7: Calculation Engine &amp; Script Workspace</strong></td>
+              <td><code>12 / 13</code></td>
+              <td>🔄 In Progress (92%)</td>
+            </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- AUTO-ROADMAP:END -->
+      </section>
+
+      <!-- Auto-Synced Latest Releases & Changelog -->
+      <section id="changelog">
+        <h2>📋 Latest Releases &amp; Changelog</h2>
+        <!-- AUTO-CHANGELOG:START -->
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.14.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-15)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li>Server Tools: a backup can be downloaded as a gzip-compressed tar (<code>.tar.gz</code>, <code>GET .../download?format=targz</code>) and saved to disk; the window's download button now saves the file (a separate button still copies the JSON to the clipboard).</li>
+            <li>Server Tools: a backup file (<code>.tar.gz</code> or <code>.f4b.json</code>) can be uploaded (<code>POST .../backups/upload</code>, "Upload Backup..." button) and stored as a server-side backup, then restored — the counterpart of download. A non-administrator's upload can only ever target their own database.</li>
+          </ul>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Security</p>
+          <ul>
+            <li><strong>Server Tools could be used to read and change other databases and to control the whole server.</strong> Every <code>/api/v1/server/*</code> route only required the <code>admin</code> role of <em>some</em> database, and by default anyone who can reach the server can create a database and become its owner. Such an account could back up, download and restore any other database, list and revoke every session, read and clear the audit log, change TLS and restart or update the containers. Now</li>
+            <li><strong>External data sources could be made to write.</strong> Reading a source with a statement only checked that it began with <code>SELECT</code> or <code>WITH</code> and held no <code>;</code>, and anyone with the <code>bulk_import</code> capability could send one, run with the credentials the owner stored. SQL Server accepts a write after <code>WITH</code>, several statements without <code>;</code>, and <code>SELECT … INTO</code> creates a table. Now</li>
+            <li><strong>No limit on password guessing.</strong> Sign-in (<code>POST /api/v1/auth/login</code>) and credential-based database drops accepted unlimited password attempts. Now a database + username + client is locked out (<code>429 Too Many Requests</code>, with <code>Retry-After</code>) after <code>FILE4BASE_LOGIN_MAX_ATTEMPTS</code> failures in a row (default 10), for <code>FILE4BASE_LOGIN_LOCKOUT_SECONDS</code> (default 15 min). A missing second factor does not count; a success clears the counter. Keyed on the client address too, so one attacker cannot lock a victim out.</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.13.1</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-15)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
+          <ul>
+            <li>Browse mode: one click on a field now puts the cursor in it, ready to type. It took two: every field was treated as formatted (unset number/date/time formats and the default text case <code>none</code> counted as formatting), and a formatted field was rebuilt as a new text field when focused, so it got the focus but no text input until a second click.</li>
+            <li>Browse mode, List and Table views: one click on a field of another record makes it the current record and starts editing that field. The field was focused before the record changed, and the double click on the whole row (open in Form view) delayed every single click; it moved to the record number (Table) and an open button at the end of each row (List).</li>
+            <li>Server Tools reported a hard-coded stack version (0.13.0) that <code>scripts/bump_version.sh</code> does not update, so after an upgrade it showed the old version and a stale "update available". The server now reports its own version (<code>AppVersion</code>, passed as <code>api.Options.Version</code>; <code>FILE4BASE_VERSION</code> still overrides it) and the client uses its single version constant.</li>
+            <li>Client tests: refreshed the shared new-database fixture (it lacked the File Options <code>kiosk_mode</code> key added in 0.13.0; the server stores File Options as given, so nothing was lost), and updated the Script Workspace and Browse record bar tests to the current catalog and inline-editing table.</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.13.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-14)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>Server Tools Menu &amp; Administration Console</strong> (<code>client/lib/features/server_tools/server_tools_dialog.dart</code>, <code>client/lib/core/widgets/file4base_menu_bar.dart</code>, <code>server/internal/api/server_admin_handler.go</code>, <code>server/internal/telemetry/collector.go</code>, <a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/server_tools_and_mfa.md" target="_blank" rel="noopener"><code>docs/specs/server_tools_and_mfa.md</code></a>)</li>
+            <li><strong>Multi-Factor Authentication (MFA / 2FA) with Google Authenticator (RFC 6238 TOTP)</strong> (<code>server/internal/schema/mfa.go</code>, <code>server/internal/api/security_handler.go</code>, <code>client/lib/features/security/manage_security_dialog.dart</code>, <code>client/lib/features/auth/database_login_dialog.dart</code>)</li>
+            <li><strong>Functional <code>Edit</code> Menu (<code>Undo</code>, <code>Redo</code>, <code>Cut</code>, <code>Copy</code>, <code>Paste</code>, <code>Clear</code>, <code>Select All</code>)</strong> (<code>client/lib/core/widgets/file4base_menu_bar.dart</code>, <code>client/lib/features/layout_engine/layout_designer_widget.dart</code>, <code>client/lib/main.dart</code>)</li>
+            <li><strong>View Menu Design Tools (<code>Page Margins</code>, <code>Formatting Bar</code>, <code>Text Ruler</code>) &amp; Full <code>Format</code> Menu</strong> (<code>client/lib/features/layout_engine/view_format_tools.dart</code>, <code>client/lib/features/layout_engine/models/layout_definition.dart</code>, <code>client/lib/features/layout_engine/layout_object_visuals.dart</code>, <code>client/lib/core/widgets/file4base_menu_bar.dart</code>, <code>client/lib/features/layout_engine/layout_designer_widget.dart</code>, <code>client/lib/features/data_browser/data_browser_widget.dart</code>, <code>client/lib/main.dart</code>)</li>
+            <li><strong>Complete Kiosk Mode (<code>Tools &gt; Developer Utilities...</code>) &amp; Runtime UI Lockout</strong> (<code>client/lib/features/tools/developer_utilities_dialog.dart</code>, <code>client/lib/core/models/file_options_model.dart</code>, <code>client/lib/core/models/script_models.dart</code>, <code>client/lib/features/layout_engine/layout_action_runner.dart</code>, <code>client/lib/features/data_browser/data_browser_widget.dart</code>, <code>client/lib/features/layout_engine/layout_preview_widget.dart</code>, <code>client/lib/main.dart</code>)</li>
+            <li><strong>Full Solution (<code>.f4p</code>) &amp; Database Data (<code>.f4data</code>) Roundtrip Import</strong> (<code>server/internal/schema/solution_service.go</code>, <code>client/lib/features/solution_manager/open_solution_dialog.dart</code>, <code>client/lib/core/widgets/file4base_menu_bar.dart</code>, <code>client/lib/main.dart</code>)</li>
+            <li><strong>Complete OpenAPI 3.0.3 / Swagger UI &amp; Web-to-API Nginx Reverse Proxy Synchronization</strong> (<code>client/nginx.conf</code>, <code>server/internal/api/swagger/ui/openapi.json</code>, <code>docs/api/API_REFERENCE.md</code>)</li>
+          </ul>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
+          <ul>
+            <li><strong>Browse Mode Field Entry, Formatted Field Focus, Inline List/Table Editing &amp; Default Form Sync</strong> (<code>client/lib/features/data_browser/data_browser_widget.dart</code>, <code>client/lib/features/schema_manager/manage_database_dialog.dart</code>, <code>client/lib/main.dart</code>)</li>
+            <li><strong>Wildcard (<code>*</code>, <code>@</code>, <code>?</code>) and Date (<code>//</code>) Find Expression Routing (<code>server/internal/data/service.go</code>)</strong>: Fixed <code>buildFindClauses</code> so find requests containing FileMaker wildcard tokens (<code>Sm*</code>, <code>*Rue de la Paix*</code>, <code>@</code>, <code>?</code>, <code>//</code>) without pre-converted SQL <code>%</code> wildcards are routed through <code>parseFindValueExpr</code> instead of matching literal asterisks.</li>
+            <li><strong>Script Step Primary Key Collision Across Scripts (<code>server/internal/schema/script_service.go</code>)</strong>: Fixed <code>CreateScript</code> and <code>UpdateScript</code> to detect when a caller-supplied step ID (such as <code>"step_1"</code>) already exists in <code>sys_script_steps</code> across another script, automatically generating a fresh UUID and remapping <code>parent_step_id</code> references.</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.12.1</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-13)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>FileMaker HTML DDR &amp; Binary <code>.fmp12</code> Record/Container Migration</strong></li>
+            <li><strong>FileMaker-to-File4Base Migration Guide &amp; Case Study</strong> (<a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/filemaker_migration_guide.md" target="_blank" rel="noopener"><code>docs/tutorials/filemaker_migration_guide.md</code></a>, <a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/filemaker_migration.md" target="_blank" rel="noopener"><code>docs/specs/filemaker_migration.md</code></a>, <code>assets/mockups/filemaker_migration_pipeline.svg</code>, <code>assets/mockups/filemaker_migration_layouts.svg</code>, <code>assets/mockups/file4base_edit_recipe_portal_error.png</code>, <code>assets/mockups/file4base_edit_recipe_resolved.png</code>): Step-by-step migration documentation, architecture diagrams, Before/After portal resolution screenshots, and engineering case study based on <code>recipes.fmp12</code> + <code>recipes.html</code>.</li>
+            <li><strong>Flutter Static Analysis with <code>very_good_analysis</code></strong> (<code>client/analysis_options.yaml</code>, <code>client/pubspec.yaml</code>, <code>.github/workflows/code_quality.yml</code>, <code>scripts/flutter_analyze_fix.sh</code>): Configured <code>very_good_analysis: ^10.2.0</code> for automated lint checking and <code>dart fix --apply</code> remediation locally and in GitHub Actions CI.</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.12.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-13)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>Tools Menu Advanced Capabilities (<code>Custom Menus</code>, <code>Developer Utilities</code>, <code>Database Design Report</code>, <code>Save a Copy as XML</code>, <code>Layout Themes</code>)</strong></li>
+            <li><strong>Assisted FileMaker Migration Path &amp; Capability Parity Matrix</strong></li>
+            <li><strong>Independent Tutorial Scenario, Provenance Ledger &amp; Studio UI Redesign</strong></li>
+            <li><strong>API SQLite Control Store, Granular Table Permissions, Encrypted Channel &amp; Configurable API Server</strong></li>
+            <li><strong>Copy and paste structure between solutions</strong></li>
+            <li><strong>Developer Utilities: clone without records, rename, and permanently lock design</strong></li>
+            <li><strong>Custom Menus defined by the solution</strong></li>
+          </ul>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
+          <ul>
+            <li><strong>Persistent destination folder for solution saves and record exports</strong> (<code>SolutionStorageService.defaultDirectory</code>, <code>ExportRecordsDialog</code>, <code>SaveCopyDialog</code>, <code>NewDatabaseDialog</code>): once a destination folder is chosen on disk (or via the File System Access API on Web), subsequent solution saves (<code>.f4p</code>), database data exports (<code>.f4data</code>), and record exports (<code>.csv</code>, <code>.tab</code>, <code>.xlsx</code>) write directly into that folder instead of re-prompting or falling back to the browser's <code>Downloads</code> directory.</li>
+            <li><strong>Release workflow publishes multi-architecture Docker Hub images</strong></li>
+            <li><strong>PDFium redistribution notices in desktop release archives</strong></li>
+            <li><strong>Consistent <code>File4Base Web Client</code> naming across UI, OpenAPI, and Docker</strong></li>
+          </ul>
+        </div>
+        <p>View the full history in <a href="https://github.com/file4base/file4base-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><code>CHANGELOG.md</code></a>.</p>
+        <!-- AUTO-CHANGELOG:END -->
       </section>
 
       <!-- Working with Issues -->

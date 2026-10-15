@@ -100,17 +100,11 @@ for COMPOSE_FILE in "${COMPOSE_FILES[@]}"; do
     fi
 done
 
-# 7. Update GitHub Pages static documentation (docs/index.html)
-if [ -f "${DOCS_INDEX}" ]; then
-    sed -i.bak -E \
-        -e "s/<span class=\"version-pill\">v[^<]+<\/span>/<span class=\"version-pill\">v${NEW_VERSION}<\/span>/g" \
-        -e "s/File4Base \(<strong>v[^<]+<\/strong>\)/File4Base (<strong>v${NEW_VERSION}<\/strong>)/g" \
-        -e "s/cloudresources\/file4base-api:[0-9]+\.[0-9]+\.[0-9]+/cloudresources\/file4base-api:${NEW_VERSION}/g" \
-        -e "s/cloudresources\/file4base-web:[0-9]+\.[0-9]+\.[0-9]+/cloudresources\/file4base-web:${NEW_VERSION}/g" \
-        -e "s/Version v[0-9]+\.[0-9]+\.[0-9]+/Version v${NEW_VERSION}/g" \
-        "${DOCS_INDEX}"
-    rm -f "${DOCS_INDEX}.bak"
-    echo "Updated ${DOCS_INDEX}"
+# 7. Synchronize GitHub Pages documentation site (docs/index.html, docs/openapi.json, docs/swagger/)
+if [ -x "${SCRIPT_DIR}/sync_docs_site.sh" ]; then
+    "${SCRIPT_DIR}/sync_docs_site.sh"
+elif [ -f "${SCRIPT_DIR}/sync_docs_site.py" ]; then
+    python3 "${SCRIPT_DIR}/sync_docs_site.py"
 fi
 
 echo "=================================================="
