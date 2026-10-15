@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Server Tools could be used to read and change other databases and to control the whole server.** Every `/api/v1/server/*` route only required the `admin` role of *some* database, and by default anyone who can reach the server can create a database and become its owner. Such an account could back up, download and restore any other database, list and revoke every session, read and clear the audit log, change TLS and restart or update the containers. Now:
+  - **Server-wide tools** (containers, TLS, sessions, audit log, schedules, notifications, telemetry) require a **server administrator**: an owner of the database named by the new `FILE4BASE_ADMIN_DATABASE` setting. Without it they are disabled.
+  - **Database tools** (backups, maintenance) stay available to a database's owners and admins, **for their own database only**; another database's backups are not listed and are reported as not found.
+  - New `GET /api/v1/server/access`; the Server Tools window only shows the modules the session may use and explains how the server-wide ones are enabled.
+  - **Upgrade note:** set `FILE4BASE_ADMIN_DATABASE` (in `.env`) to keep using the server-wide tools.
+
 ---
 
 ## [0.13.1] - 2026-10-15

@@ -134,6 +134,102 @@ type ServerAdminHandler struct {
 	releaseURL             string
 	releaseNotes           string
 	simulatedLatestVersion string
+
+	// adminDatabase: owners of this database are server administrators.
+	adminDatabase string
+}
+
+// ConfigureAccess sets who administers the server (the owners of
+// adminDatabase; empty: nobody, the server-wide tools are disabled) and,
+// when not empty, where backups are kept.
+func (h *ServerAdminHandler) ConfigureAccess(adminDatabase, backupsDir string) {
+	h.adminDatabase = strings.ToLower(strings.TrimSpace(adminDatabase))
+	if dir := strings.TrimSpace(backupsDir); dir != "" {
+		h.backupsDir = dir
+		_ = os.MkdirAll(dir, 0o755)
+	}
+}
+
+// isServerAdmin reports whether the session belongs to an owner of the
+// server administration database.
+func (h *ServerAdminHandler) isServerAdmin(sess auth.Session) bool {
+	return h.adminDatabase != "" && sess.Role == auth.RoleOwner && strings.EqualFold(sess.Database, h.adminDatabase)
+}
+
+// RequireServerAdmin lets only server administrators through. Every
+// database has owners, and by default anyone can create a database, so a
+// database role alone must never grant control of the whole server.
+func (h *ServerAdminHandler) RequireServerAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.isServerAdmin(currentSession(r)) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if h.adminDatabase == "" {
+			telemetry.WriteProblem(w, r, http.StatusForbidden, "Server Tools Disabled",
+				"server-wide tools are disabled; set FILE4BASE_ADMIN_DATABASE to the database whose owners administer the server")
+			return
+		}
+		telemetry.WriteProblem(w, r, http.StatusForbidden, "Server Administrator Required",
+			"only owners of the server administration database can use the server-wide tools")
+	})
+}
+
+// databaseFor resolves the database a database-scoped tool (backup,
+// maintenance) works on: the session's own database, or any database for a
+// server administrator. It writes 403 and returns false otherwise.
+func (h *ServerAdminHandler) databaseFor(w http.ResponseWriter, r *http.Request, requested string) (string, bool) {
+	sess := currentSession(r)
+	requested = strings.TrimSpace(requested)
+	if requested == "" || strings.EqualFold(requested, sess.Database) {
+		return sess.Database, true
+	}
+	if h.isServerAdmin(sess) {
+		return requested, true
+	}
+	telemetry.WriteProblem(w, r, http.StatusForbidden, "Another Database",
+		"this session can only use the tools of its own database")
+	return "", false
+}
+
+// mayUseBackup reports whether the session may see or act on a backup of
+// database: its own database's backups, or any for a server administrator.
+func (h *ServerAdminHandler) mayUseBackup(sess auth.Session, database string) bool {
+	return h.isServerAdmin(sess) || (database != "" && strings.EqualFold(database, sess.Database))
+}
+
+// backupDatabase returns the database a snapshot file was taken from.
+func backupDatabase(raw []byte) string {
+	var meta struct {
+		Database string `json:"database"`
+	}
+	if json.Unmarshal(raw, &meta) != nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.Database)
+}
+
+// readOwnBackup reads a backup the session may use. A backup of another
+// database is reported as not found, so its existence is not disclosed.
+func (h *ServerAdminHandler) readOwnBackup(w http.ResponseWriter, r *http.Request, filename string) ([]byte, bool) {
+	raw, err := os.ReadFile(filepath.Join(h.backupsDir, filename))
+	if err != nil || !h.mayUseBackup(currentSession(r), backupDatabase(raw)) {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
+		return nil, false
+	}
+	return raw, true
+}
+
+// GetAccess tells the client which Server Tools the session may use.
+func (h *ServerAdminHandler) GetAccess(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"server_admin":              h.isServerAdmin(sess),
+		"admin_database_configured": h.adminDatabase != "",
+		"database_tools":            sess.Role == auth.RoleOwner || sess.Role == auth.RoleAdmin,
+		"database":                  sess.Database,
+	})
 }
 
 // NewServerAdminHandler builds the Server Tools handler. version is the
@@ -329,20 +425,39 @@ func (h *ServerAdminHandler) recordAudit(category, action, actor, database, targ
 func (h *ServerAdminHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/api/v1/server", func(r chi.Router) {
 		r.Use(RequireSession)
-		r.Use(RequireAdmin)
 
+		r.Get("/access", h.GetAccess)
+
+		// Tools of one database: its owners and admins, for their own
+		// database only (a server administrator may name any database).
+		r.Group(func(r chi.Router) {
+			r.Use(RequireAdmin)
+			r.Get("/backups", h.ListBackups)
+			r.Post("/backups", h.CreateBackup)
+			r.Get("/backups/{id}/download", h.DownloadBackup)
+			r.Post("/backups/{id}/restore", h.RestoreBackup)
+			r.Delete("/backups/{id}", h.DeleteBackup)
+
+			r.Get("/maintenance", h.GetDatabaseMaintenance)
+			r.Post("/maintenance/optimize", h.RunDatabaseOptimize)
+		})
+
+		// Tools of the whole server: server administrators only.
+		r.Group(func(r chi.Router) {
+			r.Use(h.RequireServerAdmin)
+			h.registerServerWideRoutes(r)
+		})
+	})
+}
+
+func (h *ServerAdminHandler) registerServerWideRoutes(r chi.Router) {
+	{
 		r.Get("/telemetry", h.GetTelemetry)
 		r.Get("/containers", h.ListContainers)
 		r.Post("/containers/check-updates", h.CheckContainerUpdates)
 		r.Post("/containers/update", h.ApplyContainerUpdate)
 		r.Post("/containers/{name}/restart", h.RestartContainer)
 		r.Get("/containers/{name}/logs", h.GetContainerLogs)
-
-		r.Get("/backups", h.ListBackups)
-		r.Post("/backups", h.CreateBackup)
-		r.Get("/backups/{id}/download", h.DownloadBackup)
-		r.Post("/backups/{id}/restore", h.RestoreBackup)
-		r.Delete("/backups/{id}", h.DeleteBackup)
 
 		r.Get("/tls", h.GetTLSConfig)
 		r.Put("/tls", h.UpdateTLSConfig)
@@ -360,13 +475,10 @@ func (h *ServerAdminHandler) RegisterRoutes(r chi.Router) {
 		r.Get("/audit-logs", h.ListAuditLogs)
 		r.Delete("/audit-logs", h.ClearAuditLogs)
 
-		r.Get("/maintenance", h.GetDatabaseMaintenance)
-		r.Post("/maintenance/optimize", h.RunDatabaseOptimize)
-
 		r.Get("/notifications", h.GetNotifications)
 		r.Put("/notifications", h.UpdateNotifications)
 		r.Post("/notifications/test", h.TestNotification)
-	})
+	}
 }
 
 // GetTelemetry returns the rolling API telemetry snapshot + live database pool metrics.
@@ -908,6 +1020,7 @@ func (h *ServerAdminHandler) ListBackups(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	sess := currentSession(r)
 	records := make([]BackupRecord, 0, len(entries))
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".f4b.json") {
@@ -955,6 +1068,11 @@ func (h *ServerAdminHandler) ListBackups(w http.ResponseWriter, r *http.Request)
 				rec.TablesCount = meta.TablesCount
 			}
 		}
+		// Only the backups of the session's own database (all of them for a
+		// server administrator).
+		if !h.isServerAdmin(sess) && !h.mayUseBackup(sess, rec.Database) {
+			continue
+		}
 		records = append(records, rec)
 	}
 
@@ -962,11 +1080,12 @@ func (h *ServerAdminHandler) ListBackups(w http.ResponseWriter, r *http.Request)
 		return records[i].CreatedAt > records[j].CreatedAt
 	})
 
+	resp := map[string]interface{}{"backups": records}
+	if h.isServerAdmin(sess) {
+		resp["backups_dir"] = h.backupsDir
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"backups_dir": h.backupsDir,
-		"backups":     records,
-	})
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 type createBackupRequest struct {
@@ -981,9 +1100,9 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 	var req createBackupRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	dbName := strings.TrimSpace(req.Database)
-	if dbName == "" {
-		dbName = sess.Database
+	dbName, ok := h.databaseFor(w, r, req.Database)
+	if !ok {
+		return
 	}
 
 	driver, err := h.dbMgr.DriverFor(r.Context(), dbName)
@@ -1078,10 +1197,8 @@ func (h *ServerAdminHandler) DownloadBackup(w http.ResponseWriter, r *http.Reque
 	if !strings.HasSuffix(filename, ".f4b.json") {
 		filename += ".f4b.json"
 	}
-	fullPath := filepath.Join(h.backupsDir, filename)
-	raw, err := os.ReadFile(fullPath)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
+	raw, ok := h.readOwnBackup(w, r, filename)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -1103,10 +1220,8 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 	if !strings.HasSuffix(filename, ".f4b.json") {
 		filename += ".f4b.json"
 	}
-	fullPath := filepath.Join(h.backupsDir, filename)
-	raw, err := os.ReadFile(fullPath)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
+	raw, ok := h.readOwnBackup(w, r, filename)
+	if !ok {
 		return
 	}
 
@@ -1125,6 +1240,7 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// readOwnBackup already checked the snapshot's database against the session.
 	targetDB := strings.TrimSpace(snap.Database)
 	if targetDB == "" {
 		targetDB = sess.Database
@@ -1454,9 +1570,11 @@ func (h *ServerAdminHandler) DeleteBackup(w http.ResponseWriter, r *http.Request
 	if !strings.HasSuffix(filename, ".f4b.json") {
 		filename += ".f4b.json"
 	}
-	fullPath := filepath.Join(h.backupsDir, filename)
-	if err := os.Remove(fullPath); err != nil {
-		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", err.Error())
+	if _, ok := h.readOwnBackup(w, r, filename); !ok {
+		return
+	}
+	if err := os.Remove(filepath.Join(h.backupsDir, filename)); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Backup Not Found", "snapshot file does not exist")
 		return
 	}
 	h.recordAudit("backup", "Delete Backup", sess.Username, sess.Database, id, "warning", "Deleted backup snapshot "+id)
@@ -1793,10 +1911,9 @@ func (h *ServerAdminHandler) ClearAuditLogs(w http.ResponseWriter, r *http.Reque
 
 // GetDatabaseMaintenance inspects table statistics and catalog health for the active database.
 func (h *ServerAdminHandler) GetDatabaseMaintenance(w http.ResponseWriter, r *http.Request) {
-	sess := currentSession(r)
-	dbName := strings.TrimSpace(r.URL.Query().Get("database"))
-	if dbName == "" {
-		dbName = sess.Database
+	dbName, ok := h.databaseFor(w, r, r.URL.Query().Get("database"))
+	if !ok {
+		return
 	}
 
 	driver, err := h.dbMgr.DriverFor(r.Context(), dbName)
@@ -1857,9 +1974,9 @@ func (h *ServerAdminHandler) RunDatabaseOptimize(w http.ResponseWriter, r *http.
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	dbName := strings.TrimSpace(req.Database)
-	if dbName == "" {
-		dbName = sess.Database
+	dbName, ok := h.databaseFor(w, r, req.Database)
+	if !ok {
+		return
 	}
 	op := strings.TrimSpace(req.Operation)
 	if op == "" {

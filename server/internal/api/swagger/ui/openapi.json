@@ -1450,6 +1450,19 @@
         }
       }
     },
+    "/api/v1/server/access": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Which Server Tools the session may use (server administrator, database tools)",
+        "responses": {
+          "200": {
+            "description": "server_admin, database_tools, admin_database_configured, database"
+          }
+        }
+      }
+    },
     "/api/v1/server/telemetry": {
       "get": {
         "tags": [

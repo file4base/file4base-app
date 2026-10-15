@@ -63,6 +63,18 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
 
   late ServerToolSection _section;
   bool _loading = false;
+
+  // What the session may use (GET /api/v1/server/access). Until it is known
+  // only the tools of the session's own database are offered.
+  bool _serverAdmin = false;
+  bool _adminDatabaseConfigured = true;
+
+  /// Backups and maintenance work on one database (the session's own); the
+  /// other sections act on the whole server.
+  static bool _isDatabaseSection(ServerToolSection s) =>
+      s == ServerToolSection.backups || s == ServerToolSection.maintenance;
+
+  bool _maySee(ServerToolSection s) => _serverAdmin || _isDatabaseSection(s);
   String? _error;
   Timer? _autoRefreshTimer;
   bool _autoRefreshTelemetry = true;
@@ -143,7 +155,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   void initState() {
     super.initState();
     _section = widget.initialSection;
-    _loadCurrentSection();
+    unawaited(_loadAccessThenSection());
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 6), (_) {
       if (!mounted) return;
       if (_section == ServerToolSection.telemetry && _autoRefreshTelemetry) {
@@ -314,8 +326,26 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
     }
   }
 
+  /// Reads what the session may use, then opens the requested section, or
+  /// the backups of its own database when that section is server-wide.
+  Future<void> _loadAccessThenSection() async {
+    try {
+      final access = await widget.apiClient.getServerAccess();
+      _serverAdmin = access['server_admin'] == true;
+      _adminDatabaseConfigured = access['admin_database_configured'] != false;
+    } on Exception {
+      // Unknown access: offer only the tools of the session's own database.
+      _serverAdmin = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      if (!_maySee(_section)) _section = ServerToolSection.backups;
+    });
+    await _loadCurrentSection();
+  }
+
   void _selectSection(ServerToolSection section) {
-    if (_section == section) return;
+    if (_section == section || !_maySee(section)) return;
     setState(() {
       _section = section;
       _error = null;
@@ -576,10 +606,40 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       (ServerToolSection.auditLogs, Icons.policy_outlined, 'Audit & Security Logs', 'Auth, MFA & admin trail'),
       (ServerToolSection.maintenance, Icons.build_circle_outlined, 'Database Maintenance', 'VACUUM ANALYZE & catalog'),
       (ServerToolSection.notifications, Icons.notifications_active_outlined, 'Alerts, SMTP & Webhooks', 'Server alert channels'),
-    ];
+    ].where((item) => _maySee(item.$1)).toList();
 
+    final serverWideNote = _serverAdmin
+        ? null
+        : _adminDatabaseConfigured
+            ? 'The server-wide tools (containers, TLS, sessions, audit, schedules, notifications, telemetry) '
+                'are for the owners of the server administration database.'
+            : 'The server-wide tools are disabled on this server. To enable them, set '
+                'FILE4BASE_ADMIN_DATABASE to the database whose owners administer the server.';
     return Container(
       width: 248,
+      color: _subtleBg,
+      child: Column(
+        children: [
+          Expanded(child: _buildNavigationList(items)),
+          if (serverWideNote != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.lock_outline, size: 14, color: _mutedText),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(serverWideNote, style: TextStyle(fontSize: 10.5, color: _mutedText))),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavigationList(List<(ServerToolSection, IconData, String, String)> items) {
+    return Container(
       color: _subtleBg,
       child: ListView.separated(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),

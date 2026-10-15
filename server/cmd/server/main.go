@@ -222,6 +222,7 @@ func main() {
 		ControlStore:                controlStore,
 		ChannelSecret:               os.Getenv("FILE4BASE_CHANNEL_SECRET"),
 		Version:                     AppVersion,
+		AdminDatabase:               os.Getenv("FILE4BASE_ADMIN_DATABASE"),
 	})
 
 	srv := &http.Server{
