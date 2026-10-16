@@ -26,6 +26,36 @@ type SecurityHandler struct {
 	sessions     *auth.Store
 	controlStore *control.Store
 	throttle     *auth.LoginThrottle
+	// superOwnerSeed bootstraps super-ownership for accounts named by
+	// FILE4BASE_SUPER_OWNER. Keys are "database\x00username", both folded to
+	// lower case. A seeded account signs in as a super-owner even before its
+	// stored super_owner flag is set, so the first super-owner can exist
+	// without another one to grant it.
+	superOwnerSeed map[string]bool
+}
+
+// ConfigureSuperOwner records the FILE4BASE_SUPER_OWNER bootstrap seeds. Each
+// entry is "database:username"; blank or malformed entries are ignored.
+func (h *SecurityHandler) ConfigureSuperOwner(entries []string) {
+	seed := make(map[string]bool, len(entries))
+	for _, raw := range entries {
+		db, user, ok := strings.Cut(raw, ":")
+		db, user = strings.TrimSpace(db), strings.TrimSpace(user)
+		if !ok || db == "" || user == "" {
+			continue
+		}
+		seed[superOwnerSeedKey(db, user)] = true
+	}
+	h.superOwnerSeed = seed
+}
+
+func superOwnerSeedKey(database, username string) string {
+	return strings.ToLower(strings.TrimSpace(database)) + "\x00" + strings.ToLower(strings.TrimSpace(username))
+}
+
+// isSeededSuperOwner reports whether an account is a bootstrap super-owner.
+func (h *SecurityHandler) isSeededSuperOwner(database, username string) bool {
+	return h.superOwnerSeed[superOwnerSeedKey(database, username)]
 }
 
 // DefaultLoginThrottle locks a database+username+client out for 15 minutes
@@ -153,6 +183,9 @@ func (h *SecurityHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin).Get("/users", h.ListUsers)
 		r.With(RequireAdmin).Post("/users", h.CreateUser)
 		r.Put("/users/{id}", h.UpdateUser) // admins, or a user changing their own password
+		// Super-ownership is a server-wide privilege, so only a super-owner may
+		// grant or revoke it (never a mere database owner or admin).
+		r.With(RequireSuperOwner).Put("/users/{id}/super-owner", h.SetSuperOwner)
 		r.With(RequireAdmin).Delete("/users/{id}", h.DeleteUser)
 		r.Get("/users/{id}/permissions", h.GetUserPermissions) // admins, or the user themselves
 		r.With(RequireAdmin).Put("/users/{id}/permissions", h.SetUserPermissions)
@@ -255,7 +288,12 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.throttle.Succeed(throttleKey)
 	h.syncProjectSecurity(r.Context(), dbName, svc)
 
-	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName, user.Stamp)
+	// Effective super-ownership combines the account's stored flag with the
+	// bootstrap seed, so the response and the session agree on what the caller
+	// may do before any grant has been persisted.
+	user.SuperOwner = user.SuperOwner || h.isSeededSuperOwner(dbName, user.Username)
+
+	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName, user.Stamp, user.SuperOwner)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, errors.New("failed creating session"))
 		return
@@ -335,6 +373,7 @@ func (h *SecurityHandler) CurrentSession(w http.ResponseWriter, r *http.Request)
 			Username:         sess.Username,
 			Role:             sess.Role,
 			IsActive:         true,
+			SuperOwner:       sess.SuperOwner,
 			Permissions:      perms,
 			TablePermissions: tablePerms,
 		},
@@ -469,6 +508,59 @@ func (h *SecurityHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"id":     id,
 		"status": "updated",
+	})
+}
+
+type SetSuperOwnerRequest struct {
+	SuperOwner bool `json:"super_owner"`
+}
+
+// SetSuperOwner grants or revokes the super-owner privilege of an account in
+// the caller's database. Only a super-owner may call it (RequireSuperOwner),
+// the privilege can only sit on an owner account, and a super-owner may not
+// strip their own privilege (so the population cannot lock itself out by
+// accident). The target's other sessions are revoked so the change takes hold
+// at once.
+func (h *SecurityHandler) SetSuperOwner(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req SetSuperOwnerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+
+	sess := currentSession(r)
+	svc := schemaService(r)
+
+	target, err := svc.GetUser(r.Context(), id)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "User Not Found", err.Error())
+		return
+	}
+	if req.SuperOwner && target.Role != auth.RoleOwner {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Owner Required",
+			"super-owner can only be granted to an owner account")
+		return
+	}
+	if sess.UserID == target.ID && !req.SuperOwner {
+		writeForbidden(w, r, "you cannot remove your own super-owner privilege; ask another super-owner")
+		return
+	}
+
+	if err := svc.SetSuperOwner(r.Context(), id, req.SuperOwner); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Super-Owner Update Error", err.Error())
+		return
+	}
+	h.syncProjectSecurity(r.Context(), sess.Database, svc)
+	// The target's privilege changed; drop their existing sessions so it is
+	// re-evaluated on the next sign-in.
+	h.sessions.RevokeUser(sess.Database, id, "")
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":          id,
+		"super_owner": req.SuperOwner,
+		"status":      "updated",
 	})
 }
 

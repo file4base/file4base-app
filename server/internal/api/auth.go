@@ -196,6 +196,21 @@ func RequireOwner(next http.Handler) http.Handler {
 	return RequireRole(auth.RoleOwner)(next)
 }
 
+// RequireSuperOwner lets only super-owners through. Super-ownership is a
+// per-account privilege that grants full, server-wide control, independent of
+// the database the session signed in to. It is how the super-owner population
+// manages itself once bootstrapped; it is not implied by the legacy
+// FILE4BASE_ADMIN_DATABASE compatibility path.
+func RequireSuperOwner(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !currentSession(r).SuperOwner {
+			writeForbidden(w, r, "only a super-owner can perform this operation")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // RequireCapability only lets sessions through whose role holds the given
 // capability (see schema.Capabilities). Capabilities are actions the server
 // performs, so this is the one place that can refuse them: a restriction

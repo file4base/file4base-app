@@ -12,7 +12,7 @@ import (
 func TestStore_CreateGetRevoke(t *testing.T) {
 	store := NewStore(time.Hour)
 
-	token, sess, err := store.Create("u1", "alice", RoleAdmin, "sales", "stamp")
+	token, sess, err := store.Create("u1", "alice", RoleAdmin, "sales", "stamp", false)
 	require.NoError(t, err)
 	assert.Len(t, token, 64)
 	assert.Equal(t, "sales", sess.Database)
@@ -35,9 +35,9 @@ func TestStore_CreateGetRevoke(t *testing.T) {
 
 func TestStore_TokensAreUniqueAndNotStoredInClear(t *testing.T) {
 	store := NewStore(time.Hour)
-	t1, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp")
+	t1, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp", false)
 	require.NoError(t, err)
-	t2, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp")
+	t2, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp", false)
 	require.NoError(t, err)
 	assert.NotEqual(t, t1, t2)
 
@@ -52,7 +52,7 @@ func TestStore_ExpiryIsSliding(t *testing.T) {
 	current := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	store.now = func() time.Time { return current }
 
-	token, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp")
+	token, _, err := store.Create("u1", "alice", RoleUser, "db", "stamp", false)
 	require.NoError(t, err)
 
 	current = current.Add(9 * time.Minute)
@@ -71,10 +71,10 @@ func TestStore_ExpiryIsSliding(t *testing.T) {
 
 func TestStore_RevokeUserAndDatabase(t *testing.T) {
 	store := NewStore(time.Hour)
-	a1, _, _ := store.Create("u1", "alice", RoleUser, "db1", "stamp")
-	a2, _, _ := store.Create("u1", "alice", RoleUser, "db1", "stamp")
-	b1, _, _ := store.Create("u2", "bob", RoleUser, "db1", "stamp")
-	c1, _, _ := store.Create("u1", "alice", RoleUser, "db2", "stamp")
+	a1, _, _ := store.Create("u1", "alice", RoleUser, "db1", "stamp", false)
+	a2, _, _ := store.Create("u1", "alice", RoleUser, "db1", "stamp", false)
+	b1, _, _ := store.Create("u2", "bob", RoleUser, "db1", "stamp", false)
+	c1, _, _ := store.Create("u1", "alice", RoleUser, "db2", "stamp", false)
 
 	store.RevokeUser("db1", "u1", a2)
 	_, ok := store.Get(a1)
@@ -110,7 +110,7 @@ func TestContextHelpers(t *testing.T) {
 
 func TestStore_KeepsAndRestampsTheAccountStamp(t *testing.T) {
 	store := NewStore(time.Hour)
-	token, sess, err := store.Create("u1", "alice", RoleUser, "db", "stamp-1")
+	token, sess, err := store.Create("u1", "alice", RoleUser, "db", "stamp-1", false)
 	if err != nil {
 		t.Fatal(err)
 	}

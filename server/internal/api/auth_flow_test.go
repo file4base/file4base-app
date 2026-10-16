@@ -1015,7 +1015,7 @@ func TestAPI_SessionsFromBeforeAnAccountChangeAreRejected(t *testing.T) {
 		before, err := svc.CurrentAccountStamp(ctx, userID)
 		require.NoError(t, err)
 		change()
-		token, _, err := h.sessions.Create(userID, name, role, db, before)
+		token, _, err := h.sessions.Create(userID, name, role, db, before, false)
 		require.NoError(t, err)
 		return token
 	}

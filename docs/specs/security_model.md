@@ -10,6 +10,12 @@ the server:
 | **Table and layout access** | `sys_user_permissions`: `read_write`, `read_only`, `none` per layout, from which the access level on a base table is derived | `schema.Service.TableAccess` / `LayoutAccess`, through `DataHandler.authorize` |
 | **Extended privileges** | `sys_privileges`: one capability switch per account role | `RequireCapability` |
 
+On top of these four, a **super-owner** (`sys_users.super_owner`) is a
+per-account, server-wide privilege: it grants full control of every Server Tool
+of every database, regardless of the database the session signed in to. It is
+distinct from the four boundaries above — which all scope to the session's own
+database — and is covered in [Super-owners](#super-owners) below.
+
 It does **not** restrict access by the client used. That is a deliberate
 decision, explained below.
 
@@ -83,11 +89,12 @@ what building it would need.
 
 ## Account state and sessions
 
-A session carries an *account stamp* — a hash of the password hash, role and
-active flag (`schema.AccountStamp`). Every authenticated request checks the
-stamp against the account as stored now, so changing a password, changing a
-role or deactivating an account rejects and revokes the sessions opened before
-the change, including one created by a sign-in that raced the revocation.
+A session carries an *account stamp* — a hash of the password hash, role,
+active flag and super-owner flag (`schema.AccountStamp`). Every authenticated
+request checks the stamp against the account as stored now, so changing a
+password, changing a role, deactivating an account or changing its super-owner
+privilege rejects and revokes the sessions opened before the change, including
+one created by a sign-in that raced the revocation.
 
 Other properties the server keeps:
 
@@ -97,3 +104,28 @@ Other properties the server keeps:
   unreachable, and a name with a reserved prefix cannot be created either.
 - A database always keeps one active owner: the last one cannot be demoted,
   deactivated or deleted.
+
+## Super-owners
+
+Server-wide administration is an *account* privilege, not a database role. An
+account with `sys_users.super_owner` set reaches every Server Tool of every
+database (see [server_tools_and_mfa.md](server_tools_and_mfa.md)); a database
+role alone never does, since by default anyone may create a database and become
+its owner.
+
+- **Bootstrap.** `FILE4BASE_SUPER_OWNER=database:username` (comma-separated for
+  several) marks accounts as super-owners at sign-in even before any flag is
+  stored, so the first one can exist without another to grant it. The effective
+  value at sign-in is `super_owner (stored) OR seeded`, and it is carried in the
+  session (`auth.Session.SuperOwner`).
+- **Delegation.** A super-owner grants or revokes the privilege on other
+  **owner** accounts with `PUT /api/v1/security/users/{id}/super-owner`
+  (`RequireSuperOwner`). The target must be an owner, and a super-owner cannot
+  strip their own privilege (so the population cannot lock itself out by
+  accident).
+- **Compatibility.** An owner of `FILE4BASE_ADMIN_DATABASE` remains a server
+  administrator even without the flag, so existing admin-database setups keep
+  working. That legacy path grants the server-wide *tools* but not the right to
+  manage the super-owner flag.
+- The super-owner flag is part of the account stamp, so granting or revoking it
+  ends the target's existing sessions at once (see above).

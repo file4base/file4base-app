@@ -3,7 +3,7 @@
   "info": {
     "title": "File4Base API Engine",
     "description": "Enterprise-grade REST and Dynamic Relational DDL Database Engine for File4Base. Supports runtime schema migrations, table occurrences, relationships graph, dynamic Find Mode formula parsing, security ACL, and solution archiving. Every endpoint except the health probes, sign-in and the database selector requires a session token: sign in with POST /api/v1/auth/login and send the returned token as 'Authorization: Bearer <token>'. A session is bound to the database it signed in to.",
-    "version": "0.14.0",
+    "version": "0.15.0",
     "contact": {
       "name": "File4Base Core Team",
       "url": "https://github.com/file4base/file4base-app"
@@ -3664,6 +3664,57 @@
             }
           }
         ]
+      }
+    },
+    "/api/v1/security/users/{id}/super-owner": {
+      "put": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Grant or Revoke Super-Owner",
+        "description": "Grants or revokes the server-wide super-owner privilege of an owner account in the caller's database. Super-owners only; the target must be an owner; a super-owner cannot remove their own privilege. The target's sessions are revoked.",
+        "responses": {
+          "200": {
+            "description": "Super-owner flag updated"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "The target is not an owner account"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "super_owner": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "super_owner"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/security/users/{id}/permissions": {

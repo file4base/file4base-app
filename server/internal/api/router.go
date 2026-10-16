@@ -28,6 +28,12 @@ type Options struct {
 	// tools of one database (backups, maintenance) stay available to that
 	// database's owners and admins, for their own database only.
 	AdminDatabase string
+	// SuperOwnerSeed bootstraps super-ownership (FILE4BASE_SUPER_OWNER). Each
+	// entry is "database:username"; those accounts sign in as super-owners even
+	// before a super_owner flag has been persisted for them, so the first
+	// super-owner can exist without another one to grant it. A super-owner has
+	// full, server-wide control regardless of AdminDatabase.
+	SuperOwnerSeed []string
 	// BackupsDir is where Server Tools keeps backup snapshots
 	// (default ./data/backups).
 	BackupsDir string
@@ -65,6 +71,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	dataHandler := NewDataHandler()
 	securityHandler := NewSecurityHandlerWithControl(dbMgr, sessions, controlStore)
 	securityHandler.throttle = throttle
+	securityHandler.ConfigureSuperOwner(opts.SuperOwnerSeed)
 	solutionHandler := NewSolutionHandler(dbMgr, sessions, SolutionHandlerOptions{
 		AllowPublicDatabaseCreation: opts.AllowPublicDatabaseCreation,
 		ControlStore:                controlStore,

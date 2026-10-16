@@ -27,10 +27,16 @@ const DefaultSessionTTL = 12 * time.Hour
 
 // Session describes an authenticated caller.
 type Session struct {
-	UserID        string
-	Username      string
-	Role          string
-	Database      string
+	UserID   string
+	Username string
+	Role     string
+	Database string
+	// SuperOwner marks an account with full, server-wide control. It is a
+	// privilege on top of an owner role and is independent of the database the
+	// session signed in to: a super-owner reaches every Server Tool of every
+	// database. The effective value is computed at sign-in from the account's
+	// stored super_owner flag and the FILE4BASE_SUPER_OWNER bootstrap seed.
+	SuperOwner    bool
 	CreatedAt     time.Time
 	LastSeenAt    time.Time
 	ExpiresAt     time.Time
@@ -47,6 +53,10 @@ type Session struct {
 
 // IsOwner reports whether the session belongs to a database owner.
 func (s Session) IsOwner() bool { return s.Role == RoleOwner }
+
+// IsSuperOwner reports whether the session holds the server-wide super-owner
+// privilege.
+func (s Session) IsSuperOwner() bool { return s.SuperOwner }
 
 // IsAdmin reports whether the session has administrative rights (owner or admin).
 func (s Session) IsAdmin() bool { return s.Role == RoleOwner || s.Role == RoleAdmin }
@@ -81,7 +91,7 @@ func digest(token string) string {
 }
 
 // Create registers a new session and returns its bearer token.
-func (s *Store) Create(userID, username, role, database, stamp string) (string, Session, error) {
+func (s *Store) Create(userID, username, role, database, stamp string, superOwner bool) (string, Session, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", Session{}, err
@@ -99,6 +109,7 @@ func (s *Store) Create(userID, username, role, database, stamp string) (string, 
 		Username:      username,
 		Role:          role,
 		Database:      database,
+		SuperOwner:    superOwner,
 		Stamp:         stamp,
 		CreatedAt:     now,
 		LastSeenAt:    now,
@@ -216,6 +227,7 @@ type SessionInfo struct {
 	Username      string `json:"username"`
 	Role          string `json:"role"`
 	Database      string `json:"database"`
+	SuperOwner    bool   `json:"super_owner"`
 	ClientIP      string `json:"client_ip"`
 	WebContainer  string `json:"web_container"`
 	UserAgent     string `json:"user_agent"`
@@ -248,6 +260,7 @@ func (s *Store) ListSessions(currentToken string) []SessionInfo {
 			Username:      sess.Username,
 			Role:          sess.Role,
 			Database:      sess.Database,
+			SuperOwner:    sess.SuperOwner,
 			ClientIP:      sess.ClientIP,
 			WebContainer:  sess.WebContainer,
 			UserAgent:     sess.UserAgent,

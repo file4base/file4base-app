@@ -22,6 +22,7 @@ type UserMetadata struct {
 	Role       string    `json:"role"` // "owner", "admin", "user"
 	IsActive   bool      `json:"is_active"`
 	MFAEnabled bool      `json:"mfa_enabled"`
+	SuperOwner bool      `json:"super_owner"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -51,6 +52,7 @@ type AuthUser struct {
 	Role             string                 `json:"role"`
 	IsActive         bool                   `json:"is_active"`
 	MFAEnabled       bool                   `json:"mfa_enabled"`
+	SuperOwner       bool                   `json:"super_owner"`
 	Permissions      []UserLayoutPermission `json:"permissions"`
 	TablePermissions []UserTablePermission  `json:"table_permissions,omitempty"`
 	// Stamp identifies the account state the user signed in with (see
@@ -65,27 +67,27 @@ var ErrAccountNotFound = errors.New("account not found")
 // hash, role and active flag. Any change to them (password rotation, role
 // change, deactivation) changes the stamp, which invalidates the sessions
 // opened before the change.
-func AccountStamp(passwordHash, role string, isActive bool) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%t", passwordHash, role, isActive)))
+func AccountStamp(passwordHash, role string, isActive, superOwner bool) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%t\x00%t", passwordHash, role, isActive, superOwner)))
 	return hex.EncodeToString(sum[:])
 }
 
 // CurrentAccountStamp returns the AccountStamp of an account as stored now,
 // or ErrAccountNotFound when it was deleted.
 func (s *Service) CurrentAccountStamp(ctx context.Context, userID string) (string, error) {
-	q := `SELECT password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE id = $1`
+	q := `SELECT password_hash, role, COALESCE(is_active, TRUE), COALESCE(super_owner, FALSE) FROM sys_users WHERE id = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE id = ?`
+		q = `SELECT password_hash, role, COALESCE(is_active, TRUE), COALESCE(super_owner, FALSE) FROM sys_users WHERE id = ?`
 	}
 	var hash, role string
-	var active bool
-	if err := s.driver.DB().QueryRowContext(ctx, q, userID).Scan(&hash, &role, &active); err != nil {
+	var active, superOwner bool
+	if err := s.driver.DB().QueryRowContext(ctx, q, userID).Scan(&hash, &role, &active, &superOwner); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrAccountNotFound
 		}
 		return "", err
 	}
-	return AccountStamp(hash, role, active), nil
+	return AccountStamp(hash, role, active, superOwner), nil
 }
 
 // Access levels a user can hold on a layout.
@@ -138,13 +140,13 @@ func (s *Service) Authenticate(ctx context.Context, username, password string, t
 	dialect := s.driver.Dialect()
 
 	var id, uName, hash, role, mfaSecret string
-	var isActive, mfaEnabled bool
+	var isActive, mfaEnabled, superOwner bool
 
-	q := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(mfa_secret, '') FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
+	q := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(mfa_secret, ''), COALESCE(super_owner, FALSE) FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
 	if dialect.Engine() != dbal.EnginePostgres {
-		q = `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(mfa_secret, '') FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
+		q = `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(mfa_secret, ''), COALESCE(super_owner, FALSE) FROM sys_users WHERE LOWER(username) = LOWER(?) LIMIT 1`
 	}
-	if err := db.QueryRowContext(ctx, q, cleanUser).Scan(&id, &uName, &hash, &role, &isActive, &mfaEnabled, &mfaSecret); err != nil {
+	if err := db.QueryRowContext(ctx, q, cleanUser).Scan(&id, &uName, &hash, &role, &isActive, &mfaEnabled, &mfaSecret, &superOwner); err != nil {
 		// Fallback for older unmigrated catalog tables in tests
 		qLegacy := `SELECT id, username, password_hash, role, COALESCE(is_active, TRUE) FROM sys_users WHERE LOWER(username) = LOWER($1) LIMIT 1`
 		if dialect.Engine() != dbal.EnginePostgres {
@@ -193,9 +195,10 @@ func (s *Service) Authenticate(ctx context.Context, username, password string, t
 		Role:             role,
 		IsActive:         isActive,
 		MFAEnabled:       mfaEnabled,
+		SuperOwner:       superOwner,
 		Permissions:      perms,
 		TablePermissions: tablePerms,
-		Stamp:            AccountStamp(hash, role, isActive),
+		Stamp:            AccountStamp(hash, role, isActive, superOwner),
 	}, nil
 }
 
@@ -216,12 +219,12 @@ func (s *Service) HasSystemCatalog(ctx context.Context) bool {
 
 // GetUser returns a single user account by id.
 func (s *Service) GetUser(ctx context.Context, id string) (*UserMetadata, error) {
-	q := `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), created_at, updated_at FROM sys_users WHERE id = $1`
+	q := `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(super_owner, FALSE), created_at, updated_at FROM sys_users WHERE id = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), created_at, updated_at FROM sys_users WHERE id = ?`
+		q = `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(super_owner, FALSE), created_at, updated_at FROM sys_users WHERE id = ?`
 	}
 	var u UserMetadata
-	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.MFAEnabled, &u.CreatedAt, &u.UpdatedAt); err != nil {
+	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.MFAEnabled, &u.SuperOwner, &u.CreatedAt, &u.UpdatedAt); err != nil {
 		qLegacy := `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = $1`
 		if s.driver.Dialect().Engine() != dbal.EnginePostgres {
 			qLegacy = `SELECT id, username, role, COALESCE(is_active, TRUE), created_at, updated_at FROM sys_users WHERE id = ?`
@@ -353,7 +356,7 @@ func (s *Service) TableAccess(ctx context.Context, userID, tableName string) (st
 // ListUsers returns all registered users
 func (s *Service) ListUsers(ctx context.Context) ([]UserMetadata, error) {
 	db := s.driver.DB()
-	rows, err := db.QueryContext(ctx, `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), created_at, updated_at FROM sys_users ORDER BY username ASC`)
+	rows, err := db.QueryContext(ctx, `SELECT id, username, role, COALESCE(is_active, TRUE), COALESCE(mfa_enabled, FALSE), COALESCE(super_owner, FALSE), created_at, updated_at FROM sys_users ORDER BY username ASC`)
 	hasMFA := true
 	if err != nil {
 		hasMFA = false
@@ -368,7 +371,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]UserMetadata, error) {
 	for rows.Next() {
 		var u UserMetadata
 		if hasMFA {
-			if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.MFAEnabled, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			if err := rows.Scan(&u.ID, &u.Username, &u.Role, &u.IsActive, &u.MFAEnabled, &u.SuperOwner, &u.CreatedAt, &u.UpdatedAt); err != nil {
 				continue
 			}
 		} else {
@@ -490,6 +493,30 @@ func (s *Service) UpdateUser(ctx context.Context, id, password, role string, isA
 		q = `UPDATE sys_users SET role = ?, updated_at = ? WHERE id = ?`
 	}
 	_, err = db.ExecContext(ctx, q, role, now, id)
+	return err
+}
+
+// SetSuperOwner grants or revokes the server-wide super-owner privilege of an
+// account. The caller is responsible for the policy around it (only an owner
+// may hold it; who may change it). The account's security stamp changes as a
+// result, so any session opened before the change is rejected on its next
+// request.
+func (s *Service) SetSuperOwner(ctx context.Context, id string, superOwner bool) error {
+	current, err := s.GetUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if superOwner && current.Role != "owner" {
+		return errors.New("super-owner can only be granted to an owner account")
+	}
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+	now := time.Now().UTC()
+	q := `UPDATE sys_users SET super_owner = $1, updated_at = $2 WHERE id = $3`
+	if dialect.Engine() != dbal.EnginePostgres {
+		q = `UPDATE sys_users SET super_owner = ?, updated_at = ? WHERE id = ?`
+	}
+	_, err = db.ExecContext(ctx, q, superOwner, now, id)
 	return err
 }
 
@@ -703,4 +730,3 @@ func (s *Service) SetUserTablePermissions(ctx context.Context, userID string, pe
 
 	return tx.Commit()
 }
-
