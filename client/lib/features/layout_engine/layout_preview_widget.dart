@@ -71,7 +71,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
   void initState() {
     super.initState();
     widget.onAttach?.call(this);
-    _fetchRecords();
+    unawaited(_fetchRecords());
     _initKioskCountdown();
   }
 
@@ -105,7 +105,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
   void didUpdateWidget(covariant LayoutPreviewWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.table.id != widget.table.id) {
-      _fetchRecords();
+      unawaited(_fetchRecords());
     }
     if (oldWidget.isKioskMode != widget.isKioskMode ||
         oldWidget.kioskAutoReturnSeconds != widget.kioskAutoReturnSeconds) {

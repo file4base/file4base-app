@@ -363,8 +363,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _activeTool = widget.activeTool;
     _currentTable = widget.table;
     _isPersisted = !_layout.id.startsWith('layout_');
-    _loadValueLists();
-    _loadRelationshipGraph();
+    unawaited(_loadValueLists());
+    unawaited(_loadRelationshipGraph());
   }
 
   /// The database's value lists, so a field object can be bound to one (#31).
@@ -459,7 +459,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     if (_autoSaveStatus == _LayoutSaveStatus.dirty) {
       widget.onLayoutChanged?.call(_layout);
       if (_isPersisted) {
-        widget.apiClient.updateLayout(_layout.id, _layout.name, _layout.toJson()).then((_) {}, onError: (_) {});
+        unawaited(widget.apiClient.updateLayout(_layout.id, _layout.name, _layout.toJson()).then((_) {}, onError: (_) {}));
       }
     }
     super.dispose();
@@ -1540,7 +1540,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     setState(() => _selectedObjectId = obj.id);
     if (isDoubleClick) {
       if (_isButton(obj)) {
-        _openButtonSetup(obj);
+        unawaited(_openButtonSetup(obj));
       } else if (obj.type == 'chart') {
         unawaited(_showChartSetup(obj));
       } else if (obj.type == 'portal') {
@@ -2037,7 +2037,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               setState(() => _selectedObjectId = null);
             }
           } else if (event.logicalKey == LogicalKeyboardKey.enter && _selectedObject != null && _isButton(_selectedObject!)) {
-            _openButtonSetup(_selectedObject!);
+            unawaited(_openButtonSetup(_selectedObject!));
           } else if (event.logicalKey == LogicalKeyboardKey.enter && _selectedObject?.hasEditableText == true) {
             _startInlineEdit(_selectedObject!);
           } else if (event.logicalKey == LogicalKeyboardKey.keyD &&
@@ -2194,7 +2194,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 case 'security':
                   widget.onManageSecurity?.call();
                 case 'scripts':
-                  _openScriptWorkspace();
+                  unawaited(_openScriptWorkspace());
                 case 'themes':
                   widget.onManageThemes?.call();
               }

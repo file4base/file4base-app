@@ -259,7 +259,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     _realtimeSub = _realtime.events.listen(_onRealtimeEvent);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final serverUrl = ref.read(serverUrlProvider);
-      PreflightDialog.showIfNeeded(context, serverUrl: serverUrl, onProceed: _startAuthSequence);
+      unawaited(PreflightDialog.showIfNeeded(context, serverUrl: serverUrl, onProceed: _startAuthSequence));
     });
   }
 
@@ -305,7 +305,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   @override
   void dispose() {
     _schemaReloadDebounce?.cancel();
-    _realtimeSub?.cancel();
+    unawaited(_realtimeSub?.cancel());
     _realtime.dispose();
     AutoSaveService.instance.dispose();
     super.dispose();
@@ -434,7 +434,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   void _handleSignOut() {
     _handleSignOutRealtime();
     // Close the server session; the token is forgotten immediately
-    ref.read(apiClientProvider).logout();
+    unawaited(ref.read(apiClientProvider).logout());
     setState(() {
       _currentUser = null;
       _kioskSimulatedByAdmin = false;
@@ -466,7 +466,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           }
         });
         if (_currentUser != null) {
-          _loadTables();
+          unawaited(_loadTables());
         }
       }
     } catch (_) {
@@ -860,7 +860,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   Future<void> _handleDeveloperUtilities() async {
     if (_currentUser == null) {
-      _startAuthSequence();
+      unawaited(_startAuthSequence());
       return;
     }
     if (_currentUser!.role != 'owner') {
@@ -905,7 +905,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             ref.read(operationalModeProvider) == OperationalMode.layout) {
           ref.read(operationalModeProvider.notifier).setMode(OperationalMode.browse);
         }
-        _loadTables(targetLayoutId: _activeLayout?.id);
+        unawaited(_loadTables(targetLayoutId: _activeLayout?.id));
       },
       onKioskModeChanged: (kioskEnabled) {
         if (!mounted) return;
@@ -977,7 +977,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         definition: def.toJson(),
       );
       await _loadTables(targetLayoutId: created.id);
-      _changeMode(OperationalMode.layout);
+      unawaited(_changeMode(OperationalMode.layout));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1059,7 +1059,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   Future<void> _changeMode(OperationalMode newMode) async {
     if (_currentUser == null) {
-      _startAuthSequence();
+      unawaited(_startAuthSequence());
       return;
     }
 
@@ -1338,7 +1338,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           ElevatedButton.icon(
             onPressed: () {
               Navigator.of(ctx).pop();
-              _handleExportData();
+              unawaited(_handleExportData());
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF1E88E5),
@@ -1464,13 +1464,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   void _handleSaveCopyAs() {
     final client = ref.read(apiClientProvider);
-    SaveCopyDialog.show(
+    unawaited(SaveCopyDialog.show(
       context,
       apiClient: client,
       activeSolutionName: _activeSolutionName,
       activeDatabaseName: _activeDatabaseName,
       onExportSolution: _exportCurrentSolutionBytes,
-    );
+    ));
   }
 
   /// Export database row data (.f4data) explicitly — never auto-saved.
@@ -1619,7 +1619,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   Future<void> _handleChangePassword() async {
     if (_currentUser == null) {
-      _startAuthSequence();
+      unawaited(_startAuthSequence());
       return;
     }
     final client = ref.read(apiClientProvider);
@@ -1641,7 +1641,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   Future<void> _handleExportRecords() async {
     if (_currentUser == null) {
-      _startAuthSequence();
+      unawaited(_startAuthSequence());
       return;
     }
     if (!_capabilities.contains(Capability.bulkExport)) {
@@ -1770,7 +1770,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   /// file, an Excel workbook or XML (#38).
   Future<void> _handleImportRecords({ImportSourceKind source = ImportSourceKind.file}) async {
     if (_currentUser == null) {
-      _startAuthSequence();
+      unawaited(_startAuthSequence());
       return;
     }
     if (!_capabilities.contains(Capability.bulkImport)) {
@@ -1813,7 +1813,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   /// first), as a PDF of the Page Setup paper size.
   Future<void> _handlePrint() async {
     if (ref.read(operationalModeProvider) != OperationalMode.preview) {
-      _changeMode(OperationalMode.preview);
+      unawaited(_changeMode(OperationalMode.preview));
     }
     // Wait for the preview to load its records and lay out the sheet.
     for (var i = 0; i < 50 && (_previewState == null || !_previewState!.isReady); i++) {
@@ -2041,22 +2041,22 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     onModeChanged: _changeMode,
                   onManageDatabase: () async {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
                     await ManageDatabaseDialog.show(context);
-                    _loadTables();
+                    unawaited(_loadTables());
                   },
                   onManageLayouts: () {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
-                    _handleManageLayouts();
+                    unawaited(_handleManageLayouts());
                   },
                   onManageSecurity: () async {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
                     if (_currentUser!.role == 'user') {
@@ -2083,7 +2083,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   },
                   onManageScripts: () async {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
                     final client = ref.read(apiClientProvider);
@@ -2095,7 +2095,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   },
                   onScriptWorkspace: () async {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
                     final client = ref.read(apiClientProvider);
@@ -2108,14 +2108,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onManageThemes: () => ManageThemesDialog.show(context),
                   onOpenRemote: () {
                     final currentUrl = ref.read(serverUrlProvider);
-                    ServerConnectionDialog.show(
+                    unawaited(ServerConnectionDialog.show(
                       context,
                       currentUrl: currentUrl,
                       onConnect: (newUrl) {
                         ref.read(serverUrlProvider.notifier).setUrl(newUrl);
-                        _checkServer();
+                        unawaited(_checkServer());
                       },
-                    );
+                    ));
                   },
                   onAbout: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
                   onNewDatabase: _handleNewDatabase,
@@ -2144,7 +2144,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       : null,
                   onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
                   onShowAllRecords: () {
-                    _changeMode(OperationalMode.browse);
+                    unawaited(_changeMode(OperationalMode.browse));
                     _dataBrowserKey.currentState?.fetchRecords();
                   },
                   onManageValueLists: _currentUser == null
@@ -2178,21 +2178,21 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onImportFromDataSource: _handleImportFromDataSource,
                   onScriptDebugger: () {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
-                    ScriptDebuggerDialog.show(
+                    unawaited(ScriptDebuggerDialog.show(
                       context,
                       apiClient: ref.read(apiClientProvider),
                       host: _dataBrowserKey.currentState,
-                    );
+                    ));
                   },
                   onDataViewer: () {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
-                    DataViewerDialog.show(
+                    unawaited(DataViewerDialog.show(
                       context,
                       apiClient: ref.read(apiClientProvider),
                       table: _selectedTable,
@@ -2200,52 +2200,52 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       recordId: _dataBrowserKey.currentState?.currentRecordId,
                       initialWatches: _watchedExpressions,
                       onWatchesChanged: (watches) => _watchedExpressions = watches,
-                    );
+                    ));
                   },
                   onDesignReport: () {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
-                    DesignReportDialog.show(
+                    unawaited(DesignReportDialog.show(
                       context,
                       apiClient: ref.read(apiClientProvider),
                       solutionName: _reportedSolutionName,
-                    );
+                    ));
                   },
                   onSaveDesignAsText: () {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
-                    DesignReportDialog.show(
+                    unawaited(DesignReportDialog.show(
                       context,
                       apiClient: ref.read(apiClientProvider),
                       solutionName: _reportedSolutionName,
                       initialFormat: DesignReportFormat.xml,
-                    );
+                    ));
                   },
                   onManageCustomMenus: _designLocked
                       ? null
                       : () {
                           if (_currentUser == null) {
-                            _startAuthSequence();
+                            unawaited(_startAuthSequence());
                             return;
                           }
-                          ManageCustomMenusDialog.show(
+                          unawaited(ManageCustomMenusDialog.show(
                             context,
                             apiClient: ref.read(apiClientProvider),
                             layouts: _serverLayouts,
                             onChanged: () {
-                              _loadMenuSets();
-                              _loadTables(targetLayoutId: _activeLayout?.id);
+                              unawaited(_loadMenuSets());
+                              unawaited(_loadTables(targetLayoutId: _activeLayout?.id));
                             },
-                          );
+                          ));
                         },
                   onDeveloperUtilities: _handleDeveloperUtilities,
                   onServerToolSelected: (toolKey) {
                     if (_currentUser == null) {
-                      _startAuthSequence();
+                      unawaited(_startAuthSequence());
                       return;
                     }
                     final section = switch (toolKey) {
@@ -2260,7 +2260,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       'notifications' => ServerToolSection.notifications,
                       _ => ServerToolSection.containers,
                     };
-                    ServerToolsDialog.show(
+                    unawaited(ServerToolsDialog.show(
                       context,
                       ref.read(apiClientProvider),
                       initialSection: section,
@@ -2274,7 +2274,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                           });
                         }
                       },
-                    );
+                    ));
                   },
                   containerUpdateAvailable: _containerUpdateAvailable,
                   containerLatestVersion: _containerLatestVersion,
@@ -2347,7 +2347,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     }
                     if (!EditMenuFocusTracker.instance.undoActiveText(context) &&
                         mode == OperationalMode.browse) {
-                      _dataBrowserKey.currentState?.revertRecord();
+                      unawaited(_dataBrowserKey.currentState?.revertRecord());
                     }
                   },
                   onRedo: () {
@@ -2392,7 +2392,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       designer.pasteObjects();
                       return;
                     }
-                    EditMenuFocusTracker.instance.pasteActiveText(context);
+                    unawaited(EditMenuFocusTracker.instance.pasteActiveText(context));
                   },
                   onClear: () {
                     final designer = _layoutDesignerKey.currentState;
@@ -2476,7 +2476,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                               onGoToRecord: (index) => _dataBrowserKey.currentState?.goToRecord(index),
                               onManageDatabase: () async {
                                 await ManageDatabaseDialog.show(context);
-                                _loadTables();
+                                unawaited(_loadTables());
                               },
                               isFindOmit: _isFindOmit,
                               onToggleOmit: (val) {
@@ -2485,7 +2485,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                               },
                               onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
                               onShowAllRecords: () {
-                                _changeMode(OperationalMode.browse);
+                                unawaited(_changeMode(OperationalMode.browse));
                                 _dataBrowserKey.currentState?.fetchRecords();
                               },
                               onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
@@ -2847,7 +2847,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           if (_containerUpdateAvailable && _currentUser != null) ...[
             InkWell(
               onTap: () {
-                ServerToolsDialog.show(
+                unawaited(ServerToolsDialog.show(
                   context,
                   ref.read(apiClientProvider),
                   activeDatabase: _activeDatabaseName,
@@ -2860,7 +2860,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       });
                     }
                   },
-                );
+                ));
               },
               borderRadius: BorderRadius.circular(4),
               child: Tooltip(
@@ -2898,14 +2898,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           InkWell(
             onTap: () {
               final currentUrl = ref.read(serverUrlProvider);
-              ServerConnectionDialog.show(
+              unawaited(ServerConnectionDialog.show(
                 context,
                 currentUrl: currentUrl,
                 onConnect: (newUrl) {
                   ref.read(serverUrlProvider.notifier).setUrl(newUrl);
-                  _checkServer();
+                  unawaited(_checkServer());
                 },
-              );
+              ));
             },
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -3052,11 +3052,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           onExitLayout: () => _changeMode(OperationalMode.browse),
           onManageDatabase: () async {
             await ManageDatabaseDialog.show(context);
-            _loadTables();
+            unawaited(_loadTables());
           },
           onManageSecurity: () async {
             if (_currentUser == null) {
-              _startAuthSequence();
+              unawaited(_startAuthSequence());
               return;
             }
             if (_currentUser!.role == 'user') {
@@ -3176,7 +3176,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   ),
                   onPressed: () async {
                     await ManageDatabaseDialog.show(context);
-                    _loadTables();
+                    unawaited(_loadTables());
                   },
                 ),
                 const SizedBox(height: 24),
@@ -3341,14 +3341,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     label: const Text('Connect to Remote Server...'),
                     onPressed: () {
                       final currentUrl = ref.read(serverUrlProvider);
-                      ServerConnectionDialog.show(
+                      unawaited(ServerConnectionDialog.show(
                         context,
                         currentUrl: currentUrl,
                         onConnect: (newUrl) {
                           ref.read(serverUrlProvider.notifier).setUrl(newUrl);
-                          _checkServer();
+                          unawaited(_checkServer());
                         },
-                      );
+                      ));
                     },
                   ),
                 ],

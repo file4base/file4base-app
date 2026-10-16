@@ -2,6 +2,7 @@
 // the records on screen, marks the step about to run, and says where it
 // stopped.
 
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger.dart';
@@ -41,7 +42,7 @@ class _ScriptDebuggerDialogState extends State<ScriptDebuggerDialog> {
   @override
   void initState() {
     super.initState();
-    _loadScripts();
+    unawaited(_loadScripts());
   }
 
   Future<void> _loadScripts() async {

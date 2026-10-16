@@ -2,6 +2,7 @@
 // brings records in from a CSV, a tab-separated file, an Excel workbook or
 // XML, matching the file's columns to the table's fields.
 
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file4base_client/core/api/api_client.dart';
@@ -121,8 +122,8 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
     super.initState();
     _fileName = widget.fileName;
     _bytes = widget.bytes;
-    if (_bytes != null) _loadPreview();
-    if (_sourceKind == ImportSourceKind.external) _loadSources();
+    if (_bytes != null) unawaited(_loadPreview());
+    if (_sourceKind == ImportSourceKind.external) unawaited(_loadSources());
   }
 
   @override
@@ -473,7 +474,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
                 _mapping.clear();
                 _matchFields.clear();
               });
-              if (_sourceKind == ImportSourceKind.external && _sources.isEmpty) _loadSources();
+              if (_sourceKind == ImportSourceKind.external && _sources.isEmpty) unawaited(_loadSources());
             },
     );
   }
@@ -610,7 +611,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
                               _sourceTable = value;
                               _preview = null;
                             });
-                            _loadPreview();
+                            unawaited(_loadPreview());
                           },
                   ),
                 ),
@@ -692,7 +693,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
                   ? null
                   : (v) {
                       setState(() => _hasHeader = v ?? true);
-                      _loadPreview();
+                      unawaited(_loadPreview());
                     },
             ),
           ),
@@ -714,7 +715,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
                   ? null
                   : (v) {
                       setState(() => _sheet = v);
-                      _loadPreview();
+                      unawaited(_loadPreview());
                     },
             ),
           ),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/solution_models.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
@@ -83,7 +84,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this, initialIndex: widget.initialTab);
-    _loadDatabases();
+    unawaited(_loadDatabases());
   }
 
   @override
@@ -748,7 +749,7 @@ class _OpenSolutionDialogState extends State<OpenSolutionDialog> with SingleTick
             child: OutlinedButton.icon(
               key: const Key('open_filemaker_migration_btn'),
               onPressed: () {
-                FileMakerMigrationDialog.show(context, widget.apiClient);
+                unawaited(FileMakerMigrationDialog.show(context, widget.apiClient));
               },
               icon: const Icon(Icons.transform_rounded, size: 16),
               label: const Text('Assisted FileMaker Migration (DDR XML / FMPXMLRESULT)...'),

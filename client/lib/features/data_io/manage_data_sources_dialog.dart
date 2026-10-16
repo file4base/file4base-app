@@ -2,6 +2,7 @@
 // database records can be imported from. It holds no password: one is typed
 // when the import runs, or taken from an environment variable of the server.
 
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 
@@ -35,7 +36,7 @@ class _ManageDataSourcesDialogState extends State<ManageDataSourcesDialog> {
   @override
   void initState() {
     super.initState();
-    _load();
+    unawaited(_load());
   }
 
   Future<void> _load() async {

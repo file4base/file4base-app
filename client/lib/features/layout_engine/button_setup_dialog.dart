@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
@@ -73,7 +74,7 @@ class _ButtonSetupDialogState extends State<ButtonSetupDialog> {
   @override
   void initState() {
     super.initState();
-    _loadScripts();
+    unawaited(_loadScripts());
   }
 
   @override

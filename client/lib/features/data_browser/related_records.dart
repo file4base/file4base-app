@@ -205,7 +205,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   @override
   void initState() {
     super.initState();
-    _load();
+    unawaited(_load());
   }
 
   @override
@@ -213,7 +213,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     super.didUpdateWidget(old);
     if (old.related.recordId != widget.related.recordId ||
         old.object.fieldBinding?.relationshipId != widget.object.fieldBinding?.relationshipId) {
-      _load();
+      unawaited(_load());
     }
   }
 
@@ -378,7 +378,7 @@ class _PortalViewState extends State<PortalView> {
   @override
   void initState() {
     super.initState();
-    _load();
+    unawaited(_load());
   }
 
   @override
@@ -386,7 +386,7 @@ class _PortalViewState extends State<PortalView> {
     super.didUpdateWidget(old);
     if (old.related.recordId != widget.related.recordId ||
         old.object.portalConfig.toString() != widget.object.portalConfig.toString()) {
-      _load();
+      unawaited(_load());
     }
   }
 
@@ -488,7 +488,7 @@ class _PortalViewState extends State<PortalView> {
     _debounce[key]?.cancel();
     _debounce[key] = Timer(const Duration(milliseconds: 600), () {
       _debounce[key] = null;
-      _saveCell(rowId, field, value);
+      unawaited(_saveCell(rowId, field, value));
     });
   }
 
@@ -753,7 +753,7 @@ class _PortalViewState extends State<PortalView> {
       onEditingComplete: () {
         _debounce[key]?.cancel();
         _debounce[key] = null;
-        _saveCell(rowId, field, controller.text);
+        unawaited(_saveCell(rowId, field, controller.text));
       },
     );
   }
@@ -814,7 +814,7 @@ class _PortalViewState extends State<PortalView> {
               enabled: field != null,
               onSubmitted: (v) {
                 if (v.trim().isEmpty) return;
-                _createRow(field!.fieldBinding!.fieldName, v);
+                unawaited(_createRow(field!.fieldBinding!.fieldName, v));
               },
             ),
     );

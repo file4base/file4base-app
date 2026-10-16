@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file4base_client/core/api/api_client.dart';
@@ -59,7 +60,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
   @override
   void initState() {
     super.initState();
-    _loadInitialData();
+    unawaited(_loadInitialData());
   }
 
   Future<void> _loadInitialData() async {
@@ -463,7 +464,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
     var debugStep = 0;
     final activeSteps = script.steps.where((s) => s.isEnabled).toList();
 
-    showDialog(
+    unawaited(showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDbgState) {
@@ -583,7 +584,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
           );
         },
       ),
-    );
+    ));
   }
 
   // Calculate indentation depth based on if/loop nesting
@@ -942,14 +943,14 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                                         onSelected: (val) {
                                           if (val == 'toggle') _toggleScriptActive(s.id);
                                           if (val == 'copy_structure') {
-                                            StructureClipboardService.copyStructure(
+                                            unawaited(StructureClipboardService.copyStructure(
                                               context,
                                               apiClient: widget.apiClient,
                                               kind: 'script',
                                               scriptId: s.id,
                                               database: widget.databaseName,
                                               label: 'Script "${s.name}"',
-                                            );
+                                            ));
                                           }
                                           if (val == 'duplicate') _duplicateActiveScript();
                                           if (val == 'delete') _deleteScript(s.id);

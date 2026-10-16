@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart'
     show CustomMenuItemModel, MenuSetModel, SavedFindModel;
 import 'package:file4base_client/core/services/solution_storage.dart';
@@ -302,7 +303,7 @@ class File4BaseMenuBar extends StatelessWidget {
   }
 
   void _showRoadmapDialog(BuildContext context, String featureName, String phase, String details) {
-    showDialog(
+    unawaited(showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Row(
@@ -342,7 +343,7 @@ class File4BaseMenuBar extends StatelessWidget {
           ),
         ],
       ),
-    );
+    ));
   }
 
   @override
@@ -807,7 +808,7 @@ class File4BaseMenuBar extends StatelessWidget {
             if (onPaste != null) {
               onPaste!();
             } else {
-              EditMenuFocusTracker.instance.pasteActiveText(context);
+              unawaited(EditMenuFocusTracker.instance.pasteActiveText(context));
             }
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyV, meta: true),
@@ -2175,7 +2176,7 @@ class EditMenuFocusTracker {
     final textToCopy = hasSelection ? val.selection.textInside(val.text) : val.text;
     if (textToCopy.isNotEmpty) {
       _lastClipboardText = textToCopy;
-      Clipboard.setData(ClipboardData(text: textToCopy));
+      unawaited(Clipboard.setData(ClipboardData(text: textToCopy)));
     }
     if (!editable.widget.readOnly) {
       final newValue = hasSelection
@@ -2198,7 +2199,7 @@ class EditMenuFocusTracker {
     final textToCopy = hasSelection ? val.selection.textInside(val.text) : val.text;
     if (textToCopy.isNotEmpty) {
       _lastClipboardText = textToCopy;
-      Clipboard.setData(ClipboardData(text: textToCopy));
+      unawaited(Clipboard.setData(ClipboardData(text: textToCopy)));
     }
     editable.widget.focusNode.requestFocus();
     return true;

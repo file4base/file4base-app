@@ -160,7 +160,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
     _autoRefreshTimer = Timer.periodic(const Duration(seconds: 6), (_) {
       if (!mounted) return;
       if (_section == ServerToolSection.telemetry && _autoRefreshTelemetry) {
-        _loadCurrentSection(silent: true);
+        unawaited(_loadCurrentSection(silent: true));
       }
     });
   }
@@ -368,7 +368,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       _section = section;
       _error = null;
     });
-    _loadCurrentSection();
+    unawaited(_loadCurrentSection());
   }
 
   void _toast(String msg, {bool isError = false}) {
@@ -1723,7 +1723,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                         value: _forceHttps,
                         onChanged: (v) {
                           setState(() => _forceHttps = v);
-                          _saveTlsSettings(toastMsg: 'Force HTTPS redirect ${v ? "enabled" : "disabled"}.');
+                          unawaited(_saveTlsSettings(toastMsg: 'Force HTTPS redirect ${v ? "enabled" : "disabled"}.'));
                         },
                       ),
                       SwitchListTile(
@@ -1734,7 +1734,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                         value: _hstsEnabled,
                         onChanged: (v) {
                           setState(() => _hstsEnabled = v);
-                          _saveTlsSettings(toastMsg: 'HSTS policy ${v ? "enabled" : "disabled"}.');
+                          unawaited(_saveTlsSettings(toastMsg: 'HSTS policy ${v ? "enabled" : "disabled"}.'));
                         },
                       ),
                     ],
@@ -1772,7 +1772,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                           if (v == null) return;
                           setState(() => _tlsMode = v);
                           if (v != 'custom') {
-                            _saveTlsSettings(toastMsg: 'TLS mode switched to $v.');
+                            unawaited(_saveTlsSettings(toastMsg: 'TLS mode switched to $v.'));
                           }
                         },
                       ),
@@ -1807,7 +1807,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                                 onChanged: (v) {
                                   if (v == null) return;
                                   setState(() => _acmeProvider = v);
-                                  _saveTlsSettings(toastMsg: 'ACME provider updated.');
+                                  unawaited(_saveTlsSettings(toastMsg: 'ACME provider updated.'));
                                 },
                               ),
                             ),
@@ -1827,7 +1827,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                                 onChanged: (v) {
                                   if (v == null) return;
                                   setState(() => _acmeChallenge = v);
-                                  _saveTlsSettings(toastMsg: 'ACME challenge updated.');
+                                  unawaited(_saveTlsSettings(toastMsg: 'ACME challenge updated.'));
                                 },
                               ),
                             ),
@@ -1841,7 +1841,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                           value: _autoRenew,
                           onChanged: (v) {
                             setState(() => _autoRenew = v);
-                            _saveTlsSettings(toastMsg: 'ACME Auto-Renew ${v ? "enabled" : "disabled"}.');
+                            unawaited(_saveTlsSettings(toastMsg: 'ACME Auto-Renew ${v ? "enabled" : "disabled"}.'));
                           },
                         ),
                       ] else if (_tlsMode == 'custom') ...[
@@ -1958,7 +1958,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                           activeThumbColor: Colors.green,
                           onChanged: (v) {
                             setState(() => _autoRefreshTelemetry = v);
-                            if (v) _loadCurrentSection(silent: true);
+                            if (v) unawaited(_loadCurrentSection(silent: true));
                           },
                         ),
                       ),
@@ -1977,7 +1977,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                 selected: {_telemetryMinutes},
                 onSelectionChanged: (sel) {
                   setState(() => _telemetryMinutes = sel.first);
-                  _loadCurrentSection();
+                  unawaited(_loadCurrentSection());
                 },
               ),
             ],
@@ -3034,7 +3034,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                         value: _smtpEnabled,
                         onChanged: (v) {
                           setState(() => _smtpEnabled = v);
-                          _saveNotifications(toastMsg: 'SMTP server ${v ? "enabled" : "disabled"}.');
+                          unawaited(_saveNotifications(toastMsg: 'SMTP server ${v ? "enabled" : "disabled"}.'));
                         },
                       ),
                       const SizedBox(height: 10),
@@ -3074,7 +3074,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                         value: _smtpUseTls,
                         onChanged: (v) {
                           setState(() => _smtpUseTls = v);
-                          _saveNotifications(toastMsg: 'SMTP TLS ${v ? "enabled" : "disabled"}.');
+                          unawaited(_saveNotifications(toastMsg: 'SMTP TLS ${v ? "enabled" : "disabled"}.'));
                         },
                       ),
                     ],
@@ -3102,7 +3102,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                         value: _webhookEnabled,
                         onChanged: (v) {
                           setState(() => _webhookEnabled = v);
-                          _saveNotifications(toastMsg: 'Webhook alerts ${v ? "enabled" : "disabled"}.');
+                          unawaited(_saveNotifications(toastMsg: 'Webhook alerts ${v ? "enabled" : "disabled"}.'));
                         },
                       ),
                       const SizedBox(height: 10),
@@ -3147,7 +3147,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                                   _alertEvents.remove(key);
                                 }
                               });
-                              _saveNotifications(toastMsg: 'Alert event triggers updated.');
+                              unawaited(_saveNotifications(toastMsg: 'Alert event triggers updated.'));
                             },
                           );
                         }).toList(),

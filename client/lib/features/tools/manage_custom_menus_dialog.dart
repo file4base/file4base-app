@@ -2,6 +2,7 @@
 // Allows a solution's owner or administrator to define custom menu sets,
 // choose the solution's default menu set, and assign a menu set per layout.
 
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 
@@ -71,7 +72,7 @@ class _ManageCustomMenusDialogState extends State<ManageCustomMenusDialog> {
     super.initState();
     _scripts = List<ScriptModel>.from(widget.scripts);
     _layouts = List<LayoutModel>.from(widget.layouts);
-    _load();
+    unawaited(_load());
   }
 
   @override

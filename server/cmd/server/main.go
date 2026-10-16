@@ -14,6 +14,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/api"
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/crypto"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -190,6 +191,19 @@ func main() {
 		log.Println("Notice: anyone who can reach this server may create new databases (ALLOW_PUBLIC_DATABASE_CREATION=true). Set it to false on shared or internet-facing servers.")
 	}
 
+	// Reverse proxies whose X-Forwarded-For / X-Real-IP may be trusted when
+	// recording a caller's address (audit log, session metadata, login
+	// throttle). Empty means no proxy is trusted and the direct TCP peer is
+	// used, so a client cannot forge the address attributed to it.
+	trustedProxies, tpErr := clientip.ParseTrustedProxies(os.Getenv("FILE4BASE_TRUSTED_PROXIES"))
+	if tpErr != nil {
+		log.Printf("Warning: FILE4BASE_TRUSTED_PROXIES: %v", tpErr)
+	}
+	ipResolver := clientip.NewResolver(trustedProxies)
+	if len(trustedProxies) > 0 {
+		log.Printf("Trusting X-Forwarded-For / X-Real-IP from %d configured proxy network(s)", len(trustedProxies))
+	}
+
 	// Cloud-Native Lifecycle State Flags
 	var isReady atomic.Bool
 	var isStarted atomic.Bool
@@ -215,8 +229,11 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Use(corsMiddleware(corsOrigins))
-	r.Use(telemetry.Middleware("file4base-api", AppVersion))
-	r.Use(middleware.RealIP)
+	r.Use(telemetry.Middleware("file4base-api", AppVersion, ipResolver.ClientIP))
+	// Note: chi's middleware.RealIP is deliberately not used. It overwrites
+	// RemoteAddr from client-supplied X-Forwarded-For / X-Real-IP headers
+	// unconditionally; the client address is instead resolved per request
+	// through the trusted-proxy aware resolver (ipResolver / FILE4BASE_TRUSTED_PROXIES).
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 
@@ -232,15 +249,25 @@ func main() {
 		log.Printf("Warning: failed to initialize SwaggerHandler: %v", err)
 	}
 
+	// The payload-encryption channel falls back to a built-in default key when
+	// no secret is configured. That default is public (it is in the source), so
+	// it offers no confidentiality on its own — transport security then rests on
+	// TLS. Warn so the fallback is never silent on a real deployment.
+	channelSecret := strings.TrimSpace(os.Getenv("FILE4BASE_CHANNEL_SECRET"))
+	if channelSecret == "" {
+		log.Println("Warning: FILE4BASE_CHANNEL_SECRET is not set; the payload-encryption channel uses a built-in default key that provides no confidentiality on its own. Set FILE4BASE_CHANNEL_SECRET and serve over TLS on any non-local deployment.")
+	}
+
 	// API domain routes: public sign-in/database selector, and the protected
 	// routes that run against the database of the caller's session.
 	api.Mount(r, dbMgr, sessions, api.Options{
 		AllowPublicDatabaseCreation: allowPublicCreate,
 		ControlStore:                controlStore,
-		ChannelSecret:               os.Getenv("FILE4BASE_CHANNEL_SECRET"),
+		ChannelSecret:               channelSecret,
 		Version:                     AppVersion,
 		AdminDatabase:               os.Getenv("FILE4BASE_ADMIN_DATABASE"),
 		SuperOwnerSeed:              splitList(os.Getenv("FILE4BASE_SUPER_OWNER")),
+		TrustedProxies:              trustedProxies,
 	})
 
 	srv := &http.Server{
