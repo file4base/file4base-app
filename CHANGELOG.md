@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Dependency and Go toolchain updates to clear all known vulnerabilities** (`server/go.mod`, `server/go.sum`). `govulncheck ./...` reported **23 called vulnerabilities** (Go standard library plus `github.com/go-chi/chi/v5`); it now reports **0**. Changes: the build toolchain is pinned to **go1.26.9** (new `toolchain` directive, keeping the `go 1.26.0` minimum), `github.com/go-chi/chi/v5` is updated `5.2.1 → 5.5.0` (fixes the host-header/open-redirect in `RedirectSlashes` and the request-parsing advisories `GO-2026-5774/5775/5777`), and `golang.org/x/net` is updated `0.58.0 → 0.61.0` (fixes `GO-2026-6603/6610/6611/6612/6617`). One advisory remains and is accepted: `GO-2026-5932` (the unmaintained `golang.org/x/crypto/openpgp` package) has no fixed version, and File4Base neither imports nor calls it.
+
 ## [0.15.0] - 2026-10-16
 
 ### Added
