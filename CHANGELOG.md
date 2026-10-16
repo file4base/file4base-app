@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Hardening from the 0.15.1 security review** of the file importers, the encrypted channel and the control store (documented in `docs/specs/security_model.md`). The encrypted payload channel (`server/internal/crypto`) now (a) logs a startup warning when `FILE4BASE_CHANNEL_SECRET` is unset — the fallback key is a public built-in default that provides no confidentiality on its own — and (b) caps the in-memory read of an encrypted request body at 512 MiB so a hostile oversized payload cannot exhaust server memory. The review confirmed the `.fmp12` / HTML-DDR importers whitelist (`[a-z0-9_]`) and quote every imported identifier and bound every binary read against the input length (no SQL injection, no out-of-bounds), and that the SQLite control store is fully parameterised with transactional writes; those needed no code change.
+
 ## [0.15.0] - 2026-10-16
 
 ### Added
