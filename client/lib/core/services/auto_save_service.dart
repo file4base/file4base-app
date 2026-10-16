@@ -146,6 +146,6 @@ class AutoSaveService {
   /// Dispose resources. Call when the app is closing.
   void dispose() {
     _debounceTimer?.cancel();
-    _statusController.close();
+    unawaited(_statusController.close());
   }
 }

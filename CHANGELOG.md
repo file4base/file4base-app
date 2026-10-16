@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Audited and annotated the client's unhandled async futures** (`client/lib`, 135 `discarded_futures` / `unawaited_futures` from `flutter analyze`, now 0). The audit found that the flagged fire-and-forget calls target methods that already surface their own failures to the user (an error `SnackBar`, an in-dialog error state, or a `_report(...)`) or are benign lifecycle cleanup (`cancel()` / `close()`); none was silently swallowing an error in a user-facing flow. Each is now wrapped in `unawaited(...)` (the idiom already used in the codebase) so the intentional discard is explicit — behaviour is unchanged, errors still reach the zone handler, and the lint is cleared. All 427 Flutter tests pass. (The only remaining findings are in test files and are benign.)
+
 ## [0.15.0] - 2026-10-16
 
 ### Added

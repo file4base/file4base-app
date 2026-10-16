@@ -2,6 +2,7 @@
 // the fields of the record in hand, and expressions you watch, evaluated by
 // the same engine that fills the calculation fields.
 
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:flutter/material.dart';
 
@@ -80,7 +81,7 @@ class _DataViewerDialogState extends State<DataViewerDialog> with SingleTickerPr
   @override
   void initState() {
     super.initState();
-    if (_watches.isNotEmpty) _evaluateAll();
+    if (_watches.isNotEmpty) unawaited(_evaluateAll());
   }
 
   @override
@@ -128,7 +129,7 @@ class _DataViewerDialogState extends State<DataViewerDialog> with SingleTickerPr
       _newWatch.clear();
     });
     widget.onWatchesChanged?.call([for (final watch in _watches) watch.expression]);
-    _evaluateAll();
+    unawaited(_evaluateAll());
   }
 
   void _removeWatch(int index) {
@@ -290,7 +291,7 @@ class _DataViewerDialogState extends State<DataViewerDialog> with SingleTickerPr
                 ],
                 onChanged: (value) {
                   setState(() => _resultType = value ?? _resultType);
-                  _evaluateAll();
+                  unawaited(_evaluateAll());
                 },
               ),
             ),

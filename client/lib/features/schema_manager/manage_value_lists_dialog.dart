@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/main.dart' show apiClientProvider;
 import 'package:flutter/material.dart';
@@ -32,7 +33,7 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
   @override
   void initState() {
     super.initState();
-    _load();
+    unawaited(_load());
   }
 
   Future<void> _load() async {

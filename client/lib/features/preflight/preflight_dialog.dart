@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/system/environment_checker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -45,7 +46,7 @@ class _PreflightDialogState extends State<PreflightDialog> {
   @override
   void initState() {
     super.initState();
-    _checkRequirements();
+    unawaited(_checkRequirements());
   }
 
   Future<void> _checkRequirements() async {

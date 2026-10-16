@@ -279,23 +279,23 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void previousRecord() {
     if (_records.isNotEmpty && _currentIndex > 0) {
-      _saveCurrentRecord().then((saved) {
+      unawaited(_saveCurrentRecord().then((saved) {
         if (!saved || !mounted) return;
         setState(() => _currentIndex--);
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
-      });
+      }));
     }
   }
 
   void nextRecord() {
     if (_records.isNotEmpty && _currentIndex < _records.length - 1) {
-      _saveCurrentRecord().then((saved) {
+      unawaited(_saveCurrentRecord().then((saved) {
         if (!saved || !mounted) return;
         setState(() => _currentIndex++);
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
-      });
+      }));
     }
   }
 
@@ -823,7 +823,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           widget.onFocusedFieldChanged?.call();
         } else {
           _fieldDebounceTimers[col.name]?.cancel();
-          _saveField(col.name, ctrl.text);
+          unawaited(_saveField(col.name, ctrl.text));
           if (mounted) setState(() {});
           // A remote change arrived while this field was being edited: now
           // that it is saved and focus has left, reload.
@@ -943,9 +943,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     _initFindControllers();
     unawaited(_loadValueLists());
     if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
-    _fetchRecords().then((_) {
-      if (mounted && widget.mode == OperationalMode.browse) _runLayoutTrigger(widget.layout?.onLayoutEnter);
-    });
+    unawaited(_fetchRecords().then((_) {
+      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.onLayoutEnter));
+    }));
     HardwareKeyboard.instance.addHandler(_handleRecordShortcut);
   }
 
@@ -1010,7 +1010,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       _initFindControllers();
       _rebuildFieldControllers();
       if (oldWidget.table.id != widget.table.id) {
-        _fetchRecords();
+        unawaited(_fetchRecords());
       }
     }
     // Switching to a layout that shows the other side of a relationship for
@@ -1265,7 +1265,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               OutlinedButton(
                 onPressed: () {
                   Navigator.of(ctx).pop();
-                  _fetchRecords();
+                  unawaited(_fetchRecords());
                   widget.onModeChanged?.call(OperationalMode.browse);
                 },
                 child: const Text('Show All Records (Cancel)'),
@@ -1466,7 +1466,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 onPressed: () {
                   deleteAllFindRequests();
                   widget.onModeChanged?.call(OperationalMode.browse);
-                  _fetchRecords();
+                  unawaited(_fetchRecords());
                 },
               ),
             ],
@@ -2078,7 +2078,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           onChanged: (v) => _onFieldChanged(col.name, v),
           onEditingComplete: () {
             _fieldDebounceTimers[col.name]?.cancel();
-            _saveField(col.name, ctrl?.text ?? '');
+            unawaited(_saveField(col.name, ctrl?.text ?? ''));
             fn?.nextFocus();
           },
         );
@@ -2276,7 +2276,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                                   onChanged: (v) => _onFieldChanged(c.name, v),
                                   onEditingComplete: () {
                                     _fieldDebounceTimers[c.name]?.cancel();
-                                    _saveField(c.name, ctrl?.text ?? '');
+                                    unawaited(_saveField(c.name, ctrl?.text ?? ''));
                                     fn?.nextFocus();
                                   },
                                 ),
@@ -2914,7 +2914,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               ? null
               : () {
                   _fieldDebounceTimers[col.name]?.cancel();
-                  _saveField(col.name, ctrl?.text ?? '');
+                  unawaited(_saveField(col.name, ctrl?.text ?? ''));
                   fn?.nextFocus();
                 },
         );
@@ -3521,7 +3521,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         lower.contains('preview')) {
       widget.onModeChanged?.call(OperationalMode.preview);
     } else if (lower.contains('save') || lower.contains('guardar')) {
-      _saveCurrentRecord();
+      unawaited(_saveCurrentRecord());
     } else if (lower.contains('home') ||
         lower.contains('inicio') ||
         lower.contains('volver') ||
@@ -3730,7 +3730,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                               onChanged: (v) => _onFieldChanged(col.name, v),
                               onEditingComplete: () {
                                 _fieldDebounceTimers[col.name]?.cancel();
-                                _saveField(col.name, ctrl?.text ?? '');
+                                unawaited(_saveField(col.name, ctrl?.text ?? ''));
                                 fn?.nextFocus();
                               },
                             ),
@@ -3957,7 +3957,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         onPressed: () {
                           deleteAllFindRequests();
                           widget.onModeChanged?.call(OperationalMode.browse);
-                          _fetchRecords();
+                          unawaited(_fetchRecords());
                         },
                       ),
                       const SizedBox(width: 10),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -202,7 +203,7 @@ class IssuesGuideDialog extends StatelessWidget {
                   children: [
                     OutlinedButton.icon(
                       onPressed: () {
-                        _openUrl('https://github.com/file4base/file4base-app/issues');
+                        unawaited(_openUrl('https://github.com/file4base/file4base-app/issues'));
                       },
                       icon: const Icon(Icons.search, size: 15),
                       label: const Text('View Existing Issues', style: TextStyle(fontSize: 12)),
@@ -222,7 +223,7 @@ class IssuesGuideDialog extends StatelessWidget {
                         FilledButton.icon(
                           onPressed: () {
                             Navigator.of(context).pop();
-                            _openUrl('https://github.com/file4base/file4base-app/issues/new/choose');
+                            unawaited(_openUrl('https://github.com/file4base/file4base-app/issues/new/choose'));
                           },
                           icon: const Icon(Icons.open_in_new_rounded, size: 15),
                           label: const Text('Open GitHub Issues', style: TextStyle(fontSize: 12)),
