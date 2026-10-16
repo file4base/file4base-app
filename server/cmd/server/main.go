@@ -249,12 +249,21 @@ func main() {
 		log.Printf("Warning: failed to initialize SwaggerHandler: %v", err)
 	}
 
+	// The payload-encryption channel falls back to a built-in default key when
+	// no secret is configured. That default is public (it is in the source), so
+	// it offers no confidentiality on its own — transport security then rests on
+	// TLS. Warn so the fallback is never silent on a real deployment.
+	channelSecret := strings.TrimSpace(os.Getenv("FILE4BASE_CHANNEL_SECRET"))
+	if channelSecret == "" {
+		log.Println("Warning: FILE4BASE_CHANNEL_SECRET is not set; the payload-encryption channel uses a built-in default key that provides no confidentiality on its own. Set FILE4BASE_CHANNEL_SECRET and serve over TLS on any non-local deployment.")
+	}
+
 	// API domain routes: public sign-in/database selector, and the protected
 	// routes that run against the database of the caller's session.
 	api.Mount(r, dbMgr, sessions, api.Options{
 		AllowPublicDatabaseCreation: allowPublicCreate,
 		ControlStore:                controlStore,
-		ChannelSecret:               os.Getenv("FILE4BASE_CHANNEL_SECRET"),
+		ChannelSecret:               channelSecret,
 		Version:                     AppVersion,
 		AdminDatabase:               os.Getenv("FILE4BASE_ADMIN_DATABASE"),
 		SuperOwnerSeed:              splitList(os.Getenv("FILE4BASE_SUPER_OWNER")),
