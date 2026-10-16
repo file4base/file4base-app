@@ -38,7 +38,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.14.0}
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.15.0}
     container_name: file4base-api
     restart: unless-stopped
     ports:
@@ -55,6 +55,7 @@ services:
       # Owners of this database administer the whole server (Server Tools);
       # empty disables the server-wide tools.
       FILE4BASE_ADMIN_DATABASE: "${FILE4BASE_ADMIN_DATABASE:-}"
+      FILE4BASE_SUPER_OWNER: "${FILE4BASE_SUPER_OWNER:-}"
       CONTROL_DB_PATH: "/app/data/file4base_control.db"
       FILE4BASE_CHANNEL_SECRET: "${FILE4BASE_CHANNEL_SECRET:-}"
     volumes:
@@ -79,7 +80,7 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.14.0}
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.15.0}
     container_name: file4base-web
     restart: unless-stopped
     ports:

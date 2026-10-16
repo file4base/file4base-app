@@ -158,6 +158,48 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
   bool _isCurrentUser(UserModel user) => user.id == widget.currentUser.id || user.username == widget.currentUser.username;
 
+  /// Whether the signed-in account may manage super-ownership.
+  bool get _viewerIsSuperOwner => widget.currentUser.superOwner;
+
+  /// Width of the account-row action column. A super-owner gets one extra
+  /// control (the super-owner toggle), so the column widens to fit it.
+  double get _optionsColumnWidth => _viewerIsSuperOwner ? 260 : 225;
+
+  Future<void> _toggleSuperOwner(UserModel user) async {
+    final grant = !user.superOwner;
+    try {
+      await widget.apiClient.setUserSuperOwner(user.id, grant, database: widget.databaseName);
+      widget.onModified?.call();
+      AutoSaveService.instance.markDirty();
+      setState(() {
+        final index = _users.indexWhere((u) => u.id == user.id);
+        if (index != -1) {
+          _users[index] = _users[index].copyWith(superOwner: grant);
+        }
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(grant
+                ? 'Account "${user.username}" is now a super-owner (full server-wide control). Their sessions were signed out.'
+                : 'Super-owner revoked from "${user.username}". Their sessions were signed out.'),
+            backgroundColor: grant ? Colors.amber.shade800 : Colors.blueGrey,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error changing super-owner status: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   bool _isLastActiveOwner(UserModel user) {
     if (user.role != 'owner' || !user.isActive) return false;
     final activeOwners = _users.where((u) => u.role == 'owner' && u.isActive).length;
@@ -1465,14 +1507,14 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     Container(
                       color: Colors.black26,
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      child: const Row(
+                      child: Row(
                         children: [
-                          SizedBox(width: 40, child: Text('#', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          const SizedBox(width: 40, child: Text('#', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           SizedBox(width: 140, child: Text('STATUS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           Expanded(flex: 3, child: Text('ACCOUNT NAME', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           Expanded(flex: 3, child: Text('PRIVILEGE SET', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                           Expanded(flex: 2, child: Text('LAYOUTS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
-                          SizedBox(width: 225, child: Text('OPTIONS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
+                          SizedBox(width: _optionsColumnWidth, child: const Text('OPTIONS', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey))),
                         ],
                       ),
                     ),
@@ -1659,10 +1701,33 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
                                       // 6. Action Icons
                                       SizedBox(
-                                        width: 225,
+                                        width: _optionsColumnWidth,
                                         child: Row(
                                           mainAxisAlignment: MainAxisAlignment.end,
                                           children: [
+                                            // Super-owner (server-wide control).
+                                            // Only a super-owner may grant or
+                                            // revoke it, and only on an owner.
+                                            if (_viewerIsSuperOwner && user.isOwner) ...[
+                                              IconButton(
+                                                visualDensity: VisualDensity.compact,
+                                                padding: const EdgeInsets.all(4),
+                                                constraints: const BoxConstraints(),
+                                                icon: Icon(
+                                                  user.superOwner ? Icons.shield : Icons.shield_outlined,
+                                                  size: 18,
+                                                  color: user.superOwner ? Colors.amberAccent : null,
+                                                ),
+                                                tooltip: isCurrent
+                                                    ? 'You are a super-owner (another super-owner must revoke it)'
+                                                    : user.superOwner
+                                                        ? 'Super-owner — click to revoke server-wide control'
+                                                        : 'Grant super-owner (full server-wide control)',
+                                                onPressed: isCurrent ? null : () => _toggleSuperOwner(user),
+                                              ),
+                                              const SizedBox(width: 2),
+                                            ],
+
                                             // Google Authenticator MFA
                                             IconButton(
                                               visualDensity: VisualDensity.compact,

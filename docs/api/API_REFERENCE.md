@@ -82,7 +82,8 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `SESSION_TTL` | `12h` | Idle lifetime of a session (Go duration). |
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated list of browser origins allowed to call the API. |
 | `ALLOW_PUBLIC_DATABASE_CREATION` | `true` | When `false`, only a signed-in owner can create databases. |
-| `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools. |
+| `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools unless a super-owner exists (see `FILE4BASE_SUPER_OWNER`). |
+| `FILE4BASE_SUPER_OWNER` | *(empty)* | Bootstrap super-owners as `database:username` (comma-separated for several). These owner accounts sign in with full, server-wide control even before a `super_owner` flag is stored; they can then grant the privilege to other owners via `PUT /api/v1/security/users/{id}/super-owner`. |
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
 | `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
 | `FILE4BASE_LOGIN_LOCKOUT_SECONDS` | `900` | How long a tripped lockout lasts. |
@@ -1357,6 +1358,27 @@ Deletes a user account and revokes its sessions. Requires the `owner` or `admin`
 
 ---
 
+### `PUT /api/v1/security/users/{id}/super-owner`
+Grants or revokes the server-wide **super-owner** privilege of an account in the caller's database. A super-owner has full control of every Server Tool of every database, independent of the database they signed in to.
+
+- Only a **super-owner** may call this (`403` otherwise) — never a mere database owner or admin.
+- The target must be an **owner** account (`422` otherwise).
+- A super-owner **cannot** remove their own privilege (`403`); another super-owner must do it.
+
+The target's existing sessions are revoked so the change takes effect immediately. Bootstrap the first super-owner with the `FILE4BASE_SUPER_OWNER` setting (see the configuration table).
+
+#### Request Body
+```json
+{ "super_owner": true }
+```
+
+#### Response `200 OK`
+```json
+{ "id": "…", "super_owner": true, "status": "updated" }
+```
+
+---
+
 ### `GET /api/v1/security/users/{id}/permissions`
 Retrieves granular per-layout permissions for a user. Admins can read anyone's; a `user` can only read their own.
 
@@ -1870,11 +1892,11 @@ When `mfa_enabled` is `true` for an account, `POST /api/v1/auth/login` requires 
 Powers the top-level **Server Tools** administration console (`ServerToolsDialog`). Two access levels:
 
 - **Database tools** (backups and maintenance): `admin` / `owner` of a database, for **their own database only**. Naming another database returns `403`; another database's backup is reported as `404` (its existence is not disclosed). A server administrator may name any database.
-- **Server-wide tools** (containers, TLS, every session, audit log, schedules, notifications, telemetry): **server administrators** only, i.e. the owners of the database named by `FILE4BASE_ADMIN_DATABASE`. Without that variable these routes return `403` (*Server Tools Disabled*). A database role alone never grants them: by default anyone can create a database and become its owner.
+- **Server-wide tools** (containers, TLS, every session, audit log, schedules, notifications, telemetry): **server administrators** only — a **super-owner** (any database; see `FILE4BASE_SUPER_OWNER` and `PUT /api/v1/security/users/{id}/super-owner`), or, for backward compatibility, an owner of the database named by `FILE4BASE_ADMIN_DATABASE`. Without a super-owner and without that variable these routes return `403` (*Server Tools Disabled*). A database role alone never grants them: by default anyone can create a database and become its owner.
 
 | Method and path | Role | Summary |
 | --- | --- | --- |
-| `GET /api/v1/server/access` | any session | Which tools the session may use: `server_admin`, `database_tools`, `admin_database_configured`, `database`. |
+| `GET /api/v1/server/access` | any session | Which tools the session may use: `server_admin`, `super_owner`, `database_tools`, `admin_database_configured`, `database`. |
 | `GET /api/v1/server/telemetry` | server administrator | Rolling 60-minute API telemetry (`minute_series`, `current_rpm`, `avg_latency_ms`, `p95_latency_ms`, `status_2xx`/`4xx`/`5xx`, `top_endpoints`, Go runtime memory/goroutines, and DB ping latency). |
 | `GET /api/v1/server/containers` | server administrator | Health, uptime, `current_version`, `latest_version`, `update_available`, `release_url`, `release_notes`, `update_command`, and resource metrics for `file4base-api`, `file4base-web`, and `file4base-postgres` / `file4base-mariadb`. |
 | `POST /api/v1/server/containers/check-updates` | server administrator | Queries GitHub Releases, GitHub `VERSION`, and Docker Hub tags (`cloudresources/file4base-api`) on demand (or simulates a newer release via `simulate_latest_version`) and returns update availability across all containers. |

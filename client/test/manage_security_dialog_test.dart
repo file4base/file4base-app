@@ -44,6 +44,23 @@ void main() {
       expect(updated.isActive, false);
       expect(updated.username, 'test');
     });
+
+    test('round-trips and defaults the super_owner flag', () {
+      final granted = UserModel.fromJson({
+        'id': 'owner-1',
+        'username': 'root',
+        'role': 'owner',
+        'super_owner': true,
+      });
+      expect(granted.superOwner, true);
+      expect(granted.toJson()['super_owner'], true);
+
+      // Absent in older payloads: defaults to false.
+      final legacy = UserModel.fromJson({'id': 'u', 'username': 'u', 'role': 'owner'});
+      expect(legacy.superOwner, false);
+
+      expect(legacy.copyWith(superOwner: true).superOwner, true);
+    });
   });
 
   group('ManageSecurityDialog Widget Tests', () {
@@ -141,6 +158,70 @@ void main() {
 
       // Check New Account button
       expect(find.text('New account...'), findsOneWidget);
+    });
+
+    // A super-owner sees a shield control to manage server-wide control on
+    // owner rows; an ordinary owner never sees it.
+    MockClient twoOwnersClient() => MockClient((request) async {
+          if (request.url.path == '/api/v1/security/users') {
+            return http.Response(
+              jsonEncode([
+                {'id': 'owner-1', 'username': 'admin_root', 'role': 'owner', 'is_active': true, 'super_owner': true},
+                {'id': 'owner-2', 'username': 'deputy', 'role': 'owner', 'is_active': true, 'super_owner': false},
+                {'id': 'user-3', 'username': 'operator_bob', 'role': 'user', 'is_active': true},
+              ]),
+              200,
+              headers: {'content-type': 'application/json'},
+            );
+          }
+          if (request.url.path == '/api/v1/schemas/layouts') {
+            return http.Response('[]', 200, headers: {'content-type': 'application/json'});
+          }
+          if (request.url.path.contains('/permissions')) {
+            return http.Response('[]', 200, headers: {'content-type': 'application/json'});
+          }
+          return http.Response('Not found', 404);
+        });
+
+    Future<void> pumpDialog(WidgetTester tester, MockClient client, UserModel viewer) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(() => tester.view.resetPhysicalSize());
+      final apiClient = ApiClient(baseUrl: 'http://test-server:8080', httpClient: client);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ManageSecurityDialog(
+              apiClient: apiClient,
+              currentUser: viewer,
+              databaseName: 'ops',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    // The toggle is identified by its tooltip (the shield glyph is also used
+    // in the dialog header, so it is not a unique marker).
+    final grantTip = find.byTooltip('Grant super-owner (full server-wide control)');
+    final selfTip = find.byTooltip('You are a super-owner (another super-owner must revoke it)');
+
+    testWidgets('super-owner sees the shield control on owner rows', (tester) async {
+      await pumpDialog(tester, twoOwnersClient(),
+          const UserModel(id: 'owner-1', username: 'admin_root', role: 'owner', superOwner: true));
+      // The ungranted owner row offers a grant; the viewer's own row shows the
+      // (disabled) self control. The plain user row has neither.
+      expect(grantTip, findsOneWidget);
+      expect(selfTip, findsOneWidget);
+    });
+
+    testWidgets('an ordinary owner never sees the shield control', (tester) async {
+      await pumpDialog(tester, twoOwnersClient(),
+          const UserModel(id: 'owner-2', username: 'deputy', role: 'owner'));
+      expect(grantTip, findsNothing);
+      expect(selfTip, findsNothing);
+      expect(find.byTooltip('Super-owner — click to revoke server-wide control'), findsNothing);
     });
 
     testWidgets('scopes API requests to databaseName and calls onModified on changes', (tester) async {

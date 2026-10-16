@@ -496,6 +496,30 @@ func (s *Service) UpdateUser(ctx context.Context, id, password, role string, isA
 	return err
 }
 
+// SetSuperOwner grants or revokes the server-wide super-owner privilege of an
+// account. The caller is responsible for the policy around it (only an owner
+// may hold it; who may change it). The account's security stamp changes as a
+// result, so any session opened before the change is rejected on its next
+// request.
+func (s *Service) SetSuperOwner(ctx context.Context, id string, superOwner bool) error {
+	current, err := s.GetUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if superOwner && current.Role != "owner" {
+		return errors.New("super-owner can only be granted to an owner account")
+	}
+	db := s.driver.DB()
+	dialect := s.driver.Dialect()
+	now := time.Now().UTC()
+	q := `UPDATE sys_users SET super_owner = $1, updated_at = $2 WHERE id = $3`
+	if dialect.Engine() != dbal.EnginePostgres {
+		q = `UPDATE sys_users SET super_owner = ?, updated_at = ? WHERE id = ?`
+	}
+	_, err = db.ExecContext(ctx, q, superOwner, now, id)
+	return err
+}
+
 // DeleteUser deletes a user account (prevents deleting the last owner)
 func (s *Service) DeleteUser(ctx context.Context, id string) error {
 	db := s.driver.DB()
@@ -706,4 +730,3 @@ func (s *Service) SetUserTablePermissions(ctx context.Context, userID string, pe
 
 	return tx.Commit()
 }
-

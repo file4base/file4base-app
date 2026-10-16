@@ -24,7 +24,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-const AppVersion = "0.14.0"
+const AppVersion = "0.15.0"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
@@ -91,6 +91,23 @@ func envBool(name string, def bool) bool {
 		return def
 	}
 	return val
+}
+
+// splitList splits a comma-separated environment value into trimmed,
+// non-empty entries. An empty or blank value yields a nil slice.
+func splitList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // envDuration reads a duration environment variable (e.g. "12h", "30m").
@@ -223,6 +240,7 @@ func main() {
 		ChannelSecret:               os.Getenv("FILE4BASE_CHANNEL_SECRET"),
 		Version:                     AppVersion,
 		AdminDatabase:               os.Getenv("FILE4BASE_ADMIN_DATABASE"),
+		SuperOwnerSeed:              splitList(os.Getenv("FILE4BASE_SUPER_OWNER")),
 	})
 
 	srv := &http.Server{

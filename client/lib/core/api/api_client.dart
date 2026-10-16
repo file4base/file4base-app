@@ -575,6 +575,7 @@ class UserModel {
     required this.role,
     this.isActive = true,
     this.mfaEnabled = false,
+    this.superOwner = false,
     this.createdAt,
     this.updatedAt,
     this.permissions = const [],
@@ -605,6 +606,7 @@ class UserModel {
       role: json['role'] as String? ?? 'user',
       isActive: json['is_active'] as bool? ?? true,
       mfaEnabled: json['mfa_enabled'] as bool? ?? false,
+      superOwner: json['super_owner'] as bool? ?? false,
       createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
       updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
       permissions: perms,
@@ -616,6 +618,7 @@ class UserModel {
   final String role; // 'owner', 'admin', 'user'
   final bool isActive;
   final bool mfaEnabled;
+  final bool superOwner;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final List<UserLayoutPermissionModel> permissions;
@@ -630,6 +633,7 @@ class UserModel {
     String? role,
     bool? isActive,
     bool? mfaEnabled,
+    bool? superOwner,
     DateTime? createdAt,
     DateTime? updatedAt,
     List<UserLayoutPermissionModel>? permissions,
@@ -641,6 +645,7 @@ class UserModel {
       role: role ?? this.role,
       isActive: isActive ?? this.isActive,
       mfaEnabled: mfaEnabled ?? this.mfaEnabled,
+      superOwner: superOwner ?? this.superOwner,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       permissions: permissions ?? this.permissions,
@@ -654,6 +659,7 @@ class UserModel {
     'role': role,
     'is_active': isActive,
     'mfa_enabled': mfaEnabled,
+    'super_owner': superOwner,
     if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
     if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
     'permissions': permissions.map((p) => p.toJson()).toList(),
@@ -2704,6 +2710,18 @@ class ApiClient {
     final response = await _httpClient.delete(
       Uri.parse('$baseUrl/api/v1/security/users/$id$query'),
       headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+  }
+
+  /// Grants or revokes the server-wide super-owner privilege of an account.
+  /// Only a super-owner may call this; the target must be an owner.
+  Future<void> setUserSuperOwner(String id, bool superOwner, {String? database}) async {
+    final query = (database != null && database.isNotEmpty) ? '?database=${Uri.encodeComponent(database)}' : '';
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/security/users/$id/super-owner$query'),
+      headers: _headers(contentType: 'application/json', extra: database != null ? {'X-Database-Name': database} : null),
+      body: jsonEncode({'super_owner': superOwner}),
     );
     _checkResponse(response);
   }

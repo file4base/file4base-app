@@ -441,7 +441,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
       </div>
       <span class="brand-title">File4Base</span>
-      <span class="version-pill">v0.14.0</span>
+      <span class="version-pill">v0.15.0</span>
     </a>
 
     <div class="nav-actions">
@@ -537,7 +537,7 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base (<strong>v0.14.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
+          File4Base (<strong>v0.15.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
@@ -582,7 +582,7 @@ open http://localhost:3000</code></pre>
         <p>The stack exposes:</p>
         <ul>
           <li><strong>File4Base Web Client</strong>: <code>http://localhost:3000</code> (served via Nginx with reverse proxy to API &amp; Swagger)</li>
-          <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (106 REST endpoints)</li>
+          <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (107 REST endpoints)</li>
           <li><strong>OpenAPI 3.0.3 / Swagger UI</strong>: <code>http://localhost:3000/swagger/</code> and <code>http://localhost:8080/swagger/</code></li>
           <li><strong>Health &amp; Readiness Probes</strong>: <code>/healthz</code>, <code>/livez</code>, <code>/readyz</code>, <code>/startupz</code></li>
           <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code></li>
@@ -724,7 +724,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
       <!-- Security & User Accounts -->
       <section id="security-users">
-        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.14.0)</h2>
+        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.15.0)</h2>
         <p>Security is strictly catalog-isolated and hardened across transport and authentication layers:</p>
         <ul>
           <li><strong>Per-Database Accounts &amp; Roles</strong>: Accounts belong exclusively to their database (<code>owner</code>, <code>admin</code>, <code>user</code>) with bcrypt password hashing and brute-force rate limiting on sign-in and database drop operations.</li>
@@ -740,8 +740,8 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <p>Every capability in File4Base is exposed through a versioned REST API under <code>/api/v1/</code> following <a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/API_BEST_PRACTICES.md" target="_blank" rel="noopener">REST API Best Practices</a> and <a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener">API Reference (103 Endpoints)</a>:</p>
         <!-- AUTO-OPENAPI:START -->
         <div class="callout">
-          <strong>Live OpenAPI 3.0.3 Metrics (Auto-Synced):</strong> <code>106</code> REST paths · <code>162</code> HTTP operations.<br>
-          <span style="font-size: 0.88rem;"><strong>Schemas &amp; DDL</strong>: 72 · <strong>Server Administration</strong>: 30 · <strong>Solutions &amp; Backup</strong>: 20 · <strong>Security &amp; Users</strong>: 18 · <strong>Data Operations</strong>: 14 · <strong>Health &amp; Probes</strong>: 4 · <strong>Databases &amp; Projects</strong>: 2 · <strong>Authentication &amp; Session</strong>: 1 · <strong>Real-time</strong>: 1</span><br>
+          <strong>Live OpenAPI 3.0.3 Metrics (Auto-Synced):</strong> <code>107</code> REST paths · <code>163</code> HTTP operations.<br>
+          <span style="font-size: 0.88rem;"><strong>Schemas &amp; DDL</strong>: 72 · <strong>Server Administration</strong>: 30 · <strong>Solutions &amp; Backup</strong>: 20 · <strong>Security &amp; Users</strong>: 19 · <strong>Data Operations</strong>: 14 · <strong>Health &amp; Probes</strong>: 4 · <strong>Databases &amp; Projects</strong>: 2 · <strong>Authentication &amp; Session</strong>: 1 · <strong>Real-time</strong>: 1</span><br>
           👉 <a href="./swagger/" target="_blank" rel="noopener"><strong>Open Hosted Interactive Swagger UI</strong></a> · <a href="./openapi.json" target="_blank" rel="noopener">Download <code>openapi.json</code></a>
         </div>
         <!-- AUTO-OPENAPI:END -->
@@ -777,13 +777,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <tbody>
             <tr>
               <td><code>file4base-api</code></td>
-              <td><code>cloudresources/file4base-api:0.14.0</code></td>
+              <td><code>cloudresources/file4base-api:0.15.0</code></td>
               <td><code>8080:8080</code></td>
               <td>Go REST API v1, DBAL &amp; Server Tools Backend</td>
             </tr>
             <tr>
               <td><code>file4base-web</code></td>
-              <td><code>cloudresources/file4base-web:0.14.0</code></td>
+              <td><code>cloudresources/file4base-web:0.15.0</code></td>
               <td><code>3000:80</code></td>
               <td>Nginx Web Client &amp; API/Swagger Reverse Proxy</td>
             </tr>
@@ -812,7 +812,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <ul>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/seed_archive.md" target="_blank" rel="noopener"><strong>Complete 21-Lesson Tutorial — Boreal Seed &amp; Herbarium Archive</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/tutorials/filemaker_migration_guide.md" target="_blank" rel="noopener"><strong>FileMaker-to-File4Base Assisted Migration Guide</strong></a></li>
-          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener"><strong>REST API v1 Reference (106 Endpoints)</strong></a></li>
+          <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/api/API_REFERENCE.md" target="_blank" rel="noopener"><strong>REST API v1 Reference (107 Endpoints)</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/server_tools_and_mfa.md" target="_blank" rel="noopener"><strong>Server Tools &amp; MFA (Google Authenticator) Specification</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/file4base_menu_reference_guide.md" target="_blank" rel="noopener"><strong>Complete Menu Bar &amp; Keyboard Shortcuts Reference Guide</strong></a></li>
           <li><a href="https://github.com/file4base/file4base-app/blob/main/docs/specs/ROADMAP.md" target="_blank" rel="noopener"><strong>Project Roadmap &amp; Implementation Status</strong></a></li>
@@ -890,13 +890,20 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <h2>📋 Latest Releases &amp; Changelog</h2>
         <!-- AUTO-CHANGELOG:START -->
         <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.15.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-16)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>Super-owner accounts</strong>: a per-account <code>super_owner</code> flag that grants full, server-wide control independent of the database a session signed in to — the account-based way to administer the whole server, alongside the <code>FILE4BASE_ADMIN_DATABASE</code> setting (an owner of that database is still a server administrator, for backward compatibility). A super-owner reaches every Server Tool of every database. The first super-owner is bootstrapped with <code>FILE4BASE_SUPER_OWNER=database:username</code> (comma-separated for several); a seeded account signs in as a super-owner even before any flag is stored, so it can then grant the privilege to other owners. Grant/revoke with <code>PUT /api/v1/security/users/{id}/super-owner</code> (super-owners only; the target must be an owner; a super-owner cannot strip their own privilege). Manage Security shows a shield control on owner rows for super-owners. Changing the flag re-stamps the account, so the target's existing sessions end at once.</li>
+            <li><strong>Real-time sync (server)</strong>: a change-notification WebSocket at <code>GET /api/v1/realtime</code>. A client authenticates with its bearer token as the first message and then receives a small event (<code>{type, resource, database, origin}</code>) whenever the records or schema of its database change in another session — so every open window can reload instead of going stale. Events carry no record data (the client reloads what it shows) and are scoped to the client's database; the <code>origin</code> id lets a client ignore the changes it made itself. In-memory per process (a future multi-replica setup would use Postgres LISTEN/NOTIFY). The Flutter client subscribes to it (below).</li>
+            <li><strong>Real-time sync (client)</strong>: while signed in, the app keeps a WebSocket to <code>/api/v1/realtime</code> (auto-reconnecting). When another session changes the table you are viewing, Browse reloads and keeps you on the same record — and it waits until you leave a field so it never interrupts your typing; schema/layout changes reload the tables and layouts. The app ignores the changes it made itself.</li>
+            <li>Server Tools: a backup file (<code>.tar.gz</code> or <code>.f4b.json</code>) can be uploaded (<code>POST .../backups/upload</code>, "Upload Backup..." button) and stored as a server-side backup, then restored — the counterpart of download. A non-administrator's upload can only ever target their own database.</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
           <h3 style="margin-top: 0;">Release <code>v0.14.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-15)</span></h3>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
           <ul>
-            <li><strong>Real-time sync (server)</strong>: a change-notification WebSocket at <code>GET /api/v1/realtime</code>. A client authenticates with its bearer token as the first message and then receives a small event (<code>{type, resource, database, origin}</code>) whenever the records or schema of its database change in another session — so every open window can reload instead of going stale. Events carry no record data (the client reloads what it shows) and are scoped to the client's database; the <code>origin</code> id lets a client ignore the changes it made itself. In-memory per process (a future multi-replica setup would use Postgres LISTEN/NOTIFY). The Flutter client subscribes to it (below).</li>
-            <li><strong>Real-time sync (client)</strong>: while signed in, the app keeps a WebSocket to <code>/api/v1/realtime</code> (auto-reconnecting). When another session changes the table you are viewing, Browse reloads and keeps you on the same record — and it waits until you leave a field so it never interrupts your typing; schema/layout changes reload the tables and layouts. The app ignores the changes it made itself.</li>
             <li>Server Tools: a backup can be downloaded as a gzip-compressed tar (<code>.tar.gz</code>, <code>GET .../download?format=targz</code>) and saved to disk; the window's download button now saves the file (a separate button still copies the JSON to the clipboard).</li>
-            <li>Server Tools: a backup file (<code>.tar.gz</code> or <code>.f4b.json</code>) can be uploaded (<code>POST .../backups/upload</code>, "Upload Backup..." button) and stored as a server-side backup, then restored — the counterpart of download. A non-administrator's upload can only ever target their own database.</li>
           </ul>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Security</p>
           <ul>
@@ -943,26 +950,6 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <li><strong>Flutter Static Analysis with <code>very_good_analysis</code></strong> (<code>client/analysis_options.yaml</code>, <code>client/pubspec.yaml</code>, <code>.github/workflows/code_quality.yml</code>, <code>scripts/flutter_analyze_fix.sh</code>): Configured <code>very_good_analysis: ^10.2.0</code> for automated lint checking and <code>dart fix --apply</code> remediation locally and in GitHub Actions CI.</li>
           </ul>
         </div>
-        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
-          <h3 style="margin-top: 0;">Release <code>v0.12.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-13)</span></h3>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
-          <ul>
-            <li><strong>Tools Menu Advanced Capabilities (<code>Custom Menus</code>, <code>Developer Utilities</code>, <code>Database Design Report</code>, <code>Save a Copy as XML</code>, <code>Layout Themes</code>)</strong></li>
-            <li><strong>Assisted FileMaker Migration Path &amp; Capability Parity Matrix</strong></li>
-            <li><strong>Independent Tutorial Scenario, Provenance Ledger &amp; Studio UI Redesign</strong></li>
-            <li><strong>API SQLite Control Store, Granular Table Permissions, Encrypted Channel &amp; Configurable API Server</strong></li>
-            <li><strong>Copy and paste structure between solutions</strong></li>
-            <li><strong>Developer Utilities: clone without records, rename, and permanently lock design</strong></li>
-            <li><strong>Custom Menus defined by the solution</strong></li>
-          </ul>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
-          <ul>
-            <li><strong>Persistent destination folder for solution saves and record exports</strong> (<code>SolutionStorageService.defaultDirectory</code>, <code>ExportRecordsDialog</code>, <code>SaveCopyDialog</code>, <code>NewDatabaseDialog</code>): once a destination folder is chosen on disk (or via the File System Access API on Web), subsequent solution saves (<code>.f4p</code>), database data exports (<code>.f4data</code>), and record exports (<code>.csv</code>, <code>.tab</code>, <code>.xlsx</code>) write directly into that folder instead of re-prompting or falling back to the browser's <code>Downloads</code> directory.</li>
-            <li><strong>Release workflow publishes multi-architecture Docker Hub images</strong></li>
-            <li><strong>PDFium redistribution notices in desktop release archives</strong></li>
-            <li><strong>Consistent <code>File4Base Web Client</code> naming across UI, OpenAPI, and Docker</strong></li>
-          </ul>
-        </div>
         <p>View the full history in <a href="https://github.com/file4base/file4base-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><code>CHANGELOG.md</code></a>.</p>
         <!-- AUTO-CHANGELOG:END -->
       </section>
@@ -992,7 +979,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <strong>Include Environment Details</strong>:
             Always state:
             <ul>
-              <li><strong>File4Base Version</strong>: (e.g. <code>v0.14.0</code>)</li>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.15.0</code>)</li>
               <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
               <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
             </ul>
@@ -1018,7 +1005,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p>© 2024-2026 File4Base Project · Version v0.14.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
+    <p>© 2024-2026 File4Base Project · Version v0.15.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
     <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
     <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>

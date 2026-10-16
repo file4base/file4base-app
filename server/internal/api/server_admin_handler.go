@@ -154,9 +154,13 @@ func (h *ServerAdminHandler) ConfigureAccess(adminDatabase, backupsDir string) {
 	}
 }
 
-// isServerAdmin reports whether the session belongs to an owner of the
-// server administration database.
+// isServerAdmin reports whether the session may use the server-wide tools: a
+// super-owner (per-account, any database), or — for backward compatibility —
+// an owner of the server administration database.
 func (h *ServerAdminHandler) isServerAdmin(sess auth.Session) bool {
+	if sess.SuperOwner {
+		return true
+	}
 	return h.adminDatabase != "" && sess.Role == auth.RoleOwner && strings.EqualFold(sess.Database, h.adminDatabase)
 }
 
@@ -171,11 +175,11 @@ func (h *ServerAdminHandler) RequireServerAdmin(next http.Handler) http.Handler 
 		}
 		if h.adminDatabase == "" {
 			telemetry.WriteProblem(w, r, http.StatusForbidden, "Server Tools Disabled",
-				"server-wide tools are disabled; set FILE4BASE_ADMIN_DATABASE to the database whose owners administer the server")
+				"server-wide tools require a super-owner; grant super-owner to an account (seed one with FILE4BASE_SUPER_OWNER) or set FILE4BASE_ADMIN_DATABASE")
 			return
 		}
 		telemetry.WriteProblem(w, r, http.StatusForbidden, "Server Administrator Required",
-			"only owners of the server administration database can use the server-wide tools")
+			"only a super-owner or an owner of the server administration database can use the server-wide tools")
 	})
 }
 
@@ -230,6 +234,7 @@ func (h *ServerAdminHandler) GetAccess(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"server_admin":              h.isServerAdmin(sess),
+		"super_owner":               sess.SuperOwner,
 		"admin_database_configured": h.adminDatabase != "",
 		"database_tools":            sess.Role == auth.RoleOwner || sess.Role == auth.RoleAdmin,
 		"database":                  sess.Database,
