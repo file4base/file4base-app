@@ -126,7 +126,7 @@ class RealtimeService {
   }
 
   void _scheduleReconnect() {
-    _sub?.cancel();
+    unawaited(_sub?.cancel());
     _sub = null;
     _channel = null;
     if (!_active) return;
@@ -141,11 +141,11 @@ class RealtimeService {
     _active = false;
     _reconnect?.cancel();
     _reconnect = null;
-    _sub?.cancel();
+    unawaited(_sub?.cancel());
     _sub = null;
     _ownOrigin = null;
     try {
-      _channel?.sink.close();
+      unawaited(_channel?.sink.close());
     } on Object {
       // ignore close errors
     }
@@ -154,6 +154,6 @@ class RealtimeService {
 
   void dispose() {
     disconnect();
-    _controller.close();
+    unawaited(_controller.close());
   }
 }

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Saving a script now runs inside a database transaction, so a failing step can no longer corrupt it** (`server/internal/schema/script_service.go`). `CreateScript` and `UpdateScript` wrote the script row and each of its steps as separate statements; `UpdateScript` first deleted all existing steps and then re-inserted the new ones one at a time. A failure partway through (for example a step violating a column constraint) left the script with its steps wiped out and only a prefix of the new sequence written — and `CreateScript` could leave a half-created script. Both now wrap the whole operation in a single transaction that rolls back on any failure, leaving the previously stored script untouched. Added `internal/schema` tests that a failing step rolls back both the create and the update.
 
+### Changed
+- **Audited and annotated the client's unhandled async futures** (`client/lib`, 135 `discarded_futures` / `unawaited_futures` from `flutter analyze`, now 0). The audit found that the flagged fire-and-forget calls target methods that already surface their own failures to the user (an error `SnackBar`, an in-dialog error state, or a `_report(...)`) or are benign lifecycle cleanup (`cancel()` / `close()`); none was silently swallowing an error in a user-facing flow. Each is now wrapped in `unawaited(...)` (the idiom already used in the codebase) so the intentional discard is explicit — behaviour is unchanged, errors still reach the zone handler, and the lint is cleared. All 427 Flutter tests pass. (The only remaining findings are in test files and are benign.)
+
 ## [0.15.0] - 2026-10-16
 
 ### Added

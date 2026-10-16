@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/schema_manager/field_options_dialog.dart';
 import 'package:file4base_client/features/schema_manager/widgets/relationship_graph_widget.dart';
@@ -45,7 +46,7 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
   void initState() {
     super.initState();
     _tabController = TabController(length: _tabCount, vsync: this);
-    _loadAll();
+    unawaited(_loadAll());
   }
 
   @override
@@ -1204,13 +1205,13 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
     if (selected == 'fields') {
       _tabController.animateTo(_fieldsTabIndex);
     } else if (selected == 'rename') {
-      _showRenameTableDialog(tbl);
+      unawaited(_showRenameTableDialog(tbl));
     } else if (selected == 'duplicate') {
-      _showDuplicateTableDialog(tbl);
+      unawaited(_showDuplicateTableDialog(tbl));
     } else if (selected == 'truncate') {
-      _showTruncateTableDialog(tbl);
+      unawaited(_showTruncateTableDialog(tbl));
     } else if (selected == 'delete') {
-      _showDeleteTableDialog(tbl);
+      unawaited(_showDeleteTableDialog(tbl));
     }
   }
 
@@ -1510,13 +1511,13 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                                 visualDensity: VisualDensity.compact,
                                 onPressed: () {
                                   final client = ref.read(apiClientProvider);
-                                  StructureClipboardService.copyStructure(
+                                  unawaited(StructureClipboardService.copyStructure(
                                     context,
                                     apiClient: client,
                                     kind: 'table',
                                     tableId: tbl.id,
                                     label: 'Table "${tbl.displayName}"',
-                                  );
+                                  ));
                                 },
                               ),
                               // Rename
@@ -1773,14 +1774,14 @@ class _ManageDatabaseDialogState extends ConsumerState<ManageDatabaseDialog>
                         tooltip: 'Copy Field Structure to Clipboard',
                         onPressed: () {
                           final client = ref.read(apiClientProvider);
-                          StructureClipboardService.copyStructure(
+                          unawaited(StructureClipboardService.copyStructure(
                             context,
                             apiClient: client,
                             kind: 'columns',
                             tableId: _selectedTable!.id,
                             columnIds: [col.id],
                             label: 'Field "${col.displayName}"',
-                          );
+                          ));
                         },
                       ),
                       IconButton(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 class AboutFile4BaseDialog extends StatefulWidget {
@@ -9,11 +10,11 @@ class AboutFile4BaseDialog extends StatefulWidget {
   static const String version = _AboutFile4BaseDialogState._version;
 
   static void show(BuildContext context, {required String serverStatus}) {
-    showDialog(
+    unawaited(showDialog(
       context: context,
       barrierColor: Colors.black54,
       builder: (context) => AboutFile4BaseDialog(serverStatus: serverStatus),
-    );
+    ));
   }
 
   @override

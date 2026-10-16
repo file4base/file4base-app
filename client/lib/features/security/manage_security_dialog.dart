@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/services/auto_save_service.dart';
 import 'package:flutter/material.dart';
@@ -65,7 +66,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _loadData();
+    unawaited(_loadData());
   }
 
   @override
@@ -2282,7 +2283,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               tooltip: 'Copy secret key',
                               visualDensity: VisualDensity.compact,
                               onPressed: () {
-                                Clipboard.setData(ClipboardData(text: secret));
+                                unawaited(Clipboard.setData(ClipboardData(text: secret)));
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('MFA Base32 secret copied to clipboard')),
                                 );

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/solution_models.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
@@ -53,7 +54,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
         ? widget.apiClient.baseUrl.trim()
         : 'http://127.0.0.1:8080';
     _apiUrlController = TextEditingController(text: initialUrl);
-    _loadDatabases();
+    unawaited(_loadDatabases());
   }
 
   @override
