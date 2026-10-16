@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-16
+
+### Added
+- **In-app "update available" notice with one-click guided deploy** (web client). While a server administrator is signed in, the app checks the running version against the latest File4Base release every 30 minutes (and at sign-in), and when a newer version is published it shows a notice with the current→latest versions and the release notes. Confirming takes an automatic pre-update backup (server side) and shows the exact command to run on the Docker host (`docker compose pull && docker compose up -d`) with a copy button — because the API container has no access to the host's Docker, it cannot pull and recreate the stack itself, so the operator runs that one command to finish. The amber toolbar badge now opens this notice instead of pointing to Server Tools, and the check stops polling for accounts that are not server administrators. Reuses the existing `GET /api/v1/server/containers` version check and `POST /api/v1/server/containers/update` (no server changes).
+
 ## [0.15.2] - 2026-10-16
 
 ### Fixed

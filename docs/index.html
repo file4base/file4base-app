@@ -441,7 +441,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
       </div>
       <span class="brand-title">File4Base</span>
-      <span class="version-pill">v0.15.2</span>
+      <span class="version-pill">v0.16.0</span>
     </a>
 
     <div class="nav-actions">
@@ -537,7 +537,7 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base (<strong>v0.15.2</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
+          File4Base (<strong>v0.16.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
@@ -724,7 +724,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
       <!-- Security & User Accounts -->
       <section id="security-users">
-        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.15.2)</h2>
+        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.16.0)</h2>
         <p>Security is strictly catalog-isolated and hardened across transport and authentication layers:</p>
         <ul>
           <li><strong>Per-Database Accounts &amp; Roles</strong>: Accounts belong exclusively to their database (<code>owner</code>, <code>admin</code>, <code>user</code>) with bcrypt password hashing and brute-force rate limiting on sign-in and database drop operations.</li>
@@ -777,13 +777,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <tbody>
             <tr>
               <td><code>file4base-api</code></td>
-              <td><code>cloudresources/file4base-api:0.15.2</code></td>
+              <td><code>cloudresources/file4base-api:0.16.0</code></td>
               <td><code>8080:8080</code></td>
               <td>Go REST API v1, DBAL &amp; Server Tools Backend</td>
             </tr>
             <tr>
               <td><code>file4base-web</code></td>
-              <td><code>cloudresources/file4base-web:0.15.2</code></td>
+              <td><code>cloudresources/file4base-web:0.16.0</code></td>
               <td><code>3000:80</code></td>
               <td>Nginx Web Client &amp; API/Swagger Reverse Proxy</td>
             </tr>
@@ -890,6 +890,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <h2>📋 Latest Releases &amp; Changelog</h2>
         <!-- AUTO-CHANGELOG:START -->
         <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.16.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-16)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>In-app "update available" notice with one-click guided deploy</strong> (web client). While a server administrator is signed in, the app checks the running version against the latest File4Base release every 30 minutes (and at sign-in), and when a newer version is published it shows a notice with the current→latest versions and the release notes. Confirming takes an automatic pre-update backup (server side) and shows the exact command to run on the Docker host (<code>docker compose pull &amp;&amp; docker compose up -d</code>) with a copy button — because the API container has no access to the host's Docker, it cannot pull and recreate the stack itself, so the operator runs that one command to finish. The amber toolbar badge now opens this notice instead of pointing to Server Tools, and the check stops polling for accounts that are not server administrators. Reuses the existing <code>GET /api/v1/server/containers</code> version check and <code>POST /api/v1/server/containers/update</code> (no server changes).</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
           <h3 style="margin-top: 0;">Release <code>v0.15.2</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-16)</span></h3>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
           <ul>
@@ -936,16 +943,6 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <li><strong>No limit on password guessing.</strong> Sign-in (<code>POST /api/v1/auth/login</code>) and credential-based database drops accepted unlimited password attempts. Now a database + username + client is locked out (<code>429 Too Many Requests</code>, with <code>Retry-After</code>) after <code>FILE4BASE_LOGIN_MAX_ATTEMPTS</code> failures in a row (default 10), for <code>FILE4BASE_LOGIN_LOCKOUT_SECONDS</code> (default 15 min). A missing second factor does not count; a success clears the counter. Keyed on the client address too, so one attacker cannot lock a victim out.</li>
           </ul>
         </div>
-        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
-          <h3 style="margin-top: 0;">Release <code>v0.13.1</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-15)</span></h3>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
-          <ul>
-            <li>Browse mode: one click on a field now puts the cursor in it, ready to type. It took two: every field was treated as formatted (unset number/date/time formats and the default text case <code>none</code> counted as formatting), and a formatted field was rebuilt as a new text field when focused, so it got the focus but no text input until a second click.</li>
-            <li>Browse mode, List and Table views: one click on a field of another record makes it the current record and starts editing that field. The field was focused before the record changed, and the double click on the whole row (open in Form view) delayed every single click; it moved to the record number (Table) and an open button at the end of each row (List).</li>
-            <li>Server Tools reported a hard-coded stack version (0.13.0) that <code>scripts/bump_version.sh</code> does not update, so after an upgrade it showed the old version and a stale "update available". The server now reports its own version (<code>AppVersion</code>, passed as <code>api.Options.Version</code>; <code>FILE4BASE_VERSION</code> still overrides it) and the client uses its single version constant.</li>
-            <li>Client tests: refreshed the shared new-database fixture (it lacked the File Options <code>kiosk_mode</code> key added in 0.13.0; the server stores File Options as given, so nothing was lost), and updated the Script Workspace and Browse record bar tests to the current catalog and inline-editing table.</li>
-          </ul>
-        </div>
         <p>View the full history in <a href="https://github.com/file4base/file4base-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><code>CHANGELOG.md</code></a>.</p>
         <!-- AUTO-CHANGELOG:END -->
       </section>
@@ -975,7 +972,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <strong>Include Environment Details</strong>:
             Always state:
             <ul>
-              <li><strong>File4Base Version</strong>: (e.g. <code>v0.15.2</code>)</li>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.16.0</code>)</li>
               <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
               <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
             </ul>
@@ -1001,7 +998,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p>© 2024-2026 File4Base Project · Version v0.15.2 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
+    <p>© 2024-2026 File4Base Project · Version v0.16.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
     <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
     <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>

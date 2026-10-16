@@ -35,6 +35,7 @@ import 'package:file4base_client/features/script_workspace/script_workspace_dial
 import 'package:file4base_client/features/security/change_password_dialog.dart';
 import 'package:file4base_client/features/security/manage_security_dialog.dart';
 import 'package:file4base_client/features/server_tools/server_tools_dialog.dart';
+import 'package:file4base_client/features/server_tools/update_available_dialog.dart';
 import 'package:file4base_client/features/solution_manager/file_options_dialog.dart';
 import 'package:file4base_client/features/solution_manager/new_database_dialog.dart';
 import 'package:file4base_client/features/solution_manager/open_solution_dialog.dart';
@@ -161,6 +162,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   bool _isTextRulerVisible = false;
   bool _containerUpdateAvailable = false;
   String? _containerLatestVersion;
+  String? _containerCurrentVersion;
+  String? _containerReleaseNotes;
+  String? _containerReleaseUrl;
+  // Periodic check so a version published while the app is open is noticed.
+  Timer? _updateCheckTimer;
+  // The version we have already prompted about, so the notice pops once per
+  // new version per session rather than on every poll.
+  String? _updatePromptedVersion;
+  // Set once the version-check endpoint returns 403 (the account is not a
+  // server administrator), so we stop polling it.
+  bool _updateCheckForbidden = false;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
   final RealtimeService _realtime = RealtimeService();
   StreamSubscription<RealtimeEvent>? _realtimeSub;
@@ -305,6 +317,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   @override
   void dispose() {
     _schemaReloadDebounce?.cancel();
+    _updateCheckTimer?.cancel();
     unawaited(_realtimeSub?.cancel());
     _realtime.dispose();
     AutoSaveService.instance.dispose();
@@ -366,7 +379,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       });
       await _loadUserPermissions();
       await _loadTables();
+      _updatePromptedVersion = null;
+      _updateCheckForbidden = false;
       unawaited(_checkContainerUpdatesInBackground());
+      _startUpdateCheckTimer();
       if (auth.fileName != null) {
         AutoSaveService.instance.configure(
           buildSolutionBytes: _exportCurrentSolutionBytes,
@@ -392,19 +408,63 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   }
 
   Future<void> _checkContainerUpdatesInBackground() async {
-    if (_currentUser == null || !_currentUser!.isAdmin) return;
+    if (_currentUser == null || !_currentUser!.isAdmin || _updateCheckForbidden) {
+      return;
+    }
     try {
       final client = ref.read(apiClientProvider);
       final data = await client.listServerContainers();
       final updateAvail = data['update_available'] == true;
       final latestVer = data['latest_version']?.toString();
-      if (mounted) {
-        setState(() {
-          _containerUpdateAvailable = updateAvail;
-          _containerLatestVersion = latestVer;
-        });
+      if (!mounted) return;
+      setState(() {
+        _containerUpdateAvailable = updateAvail;
+        _containerLatestVersion = latestVer;
+        _containerCurrentVersion = data['current_version']?.toString();
+        _containerReleaseNotes = data['release_notes']?.toString();
+        _containerReleaseUrl = data['release_url']?.toString();
+      });
+      // Proactively notify once per newly-seen version, so the operator does
+      // not have to spot the badge.
+      if (updateAvail && latestVer != null && latestVer != _updatePromptedVersion) {
+        _updatePromptedVersion = latestVer;
+        _showUpdateAvailableDialog();
+      }
+    } on ApiException catch (e) {
+      // 403: not a server administrator — stop polling the server-wide tool.
+      if (e.statusCode == 403) {
+        _updateCheckForbidden = true;
+        _updateCheckTimer?.cancel();
+        _updateCheckTimer = null;
       }
     } catch (_) {}
+  }
+
+  void _startUpdateCheckTimer() {
+    _updateCheckTimer?.cancel();
+    if (_updateCheckForbidden) return;
+    _updateCheckTimer = Timer.periodic(
+      const Duration(minutes: 30),
+      (_) => unawaited(_checkContainerUpdatesInBackground()),
+    );
+  }
+
+  void _stopUpdateCheckTimer() {
+    _updateCheckTimer?.cancel();
+    _updateCheckTimer = null;
+  }
+
+  void _showUpdateAvailableDialog() {
+    if (!mounted || _currentUser == null || !_containerUpdateAvailable) return;
+    unawaited(UpdateAvailableDialog.show(
+      context,
+      ref.read(apiClientProvider),
+      currentVersion: _containerCurrentVersion ?? '',
+      latestVersion: _containerLatestVersion ?? '',
+      releaseNotes: _containerReleaseNotes,
+      releaseUrl: _containerReleaseUrl,
+      activeDatabase: _activeDatabaseName,
+    ));
   }
 
   /// Locks the workspace after the server rejected the session (expired,
@@ -412,6 +472,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   void _handleSessionExpired() {
     if (!mounted || _currentUser == null) return;
     _realtime.disconnect();
+    _stopUpdateCheckTimer();
     setState(() {
       _currentUser = null;
       _kioskSimulatedByAdmin = false;
@@ -433,6 +494,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   void _handleSignOut() {
     _handleSignOutRealtime();
+    _stopUpdateCheckTimer();
     // Close the server session; the token is forgotten immediately
     unawaited(ref.read(apiClientProvider).logout());
     setState(() {
@@ -2846,25 +2908,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
           if (_containerUpdateAvailable && _currentUser != null) ...[
             InkWell(
-              onTap: () {
-                unawaited(ServerToolsDialog.show(
-                  context,
-                  ref.read(apiClientProvider),
-                  activeDatabase: _activeDatabaseName,
-                  onDatabaseRestored: _loadTables,
-                  onVersionStatusChanged: ({required updateAvailable, required latestVersion}) {
-                    if (mounted) {
-                      setState(() {
-                        _containerUpdateAvailable = updateAvailable;
-                        _containerLatestVersion = latestVersion;
-                      });
-                    }
-                  },
-                ));
-              },
+              onTap: _showUpdateAvailableDialog,
               borderRadius: BorderRadius.circular(4),
               child: Tooltip(
-                message: 'New container version v${_containerLatestVersion ?? ""} available! Click to open Server Tools > Containers & Services.',
+                message: 'File4Base v${_containerLatestVersion ?? ""} is available. Click to review and deploy.',
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
