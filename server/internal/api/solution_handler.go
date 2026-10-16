@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/designreport"
@@ -43,6 +44,10 @@ type SolutionHandler struct {
 	sessions *auth.Store
 	opts     SolutionHandlerOptions
 	throttle *auth.LoginThrottle
+	// clientIP resolves the caller's address for the login-throttle key,
+	// honouring forwarding headers only from trusted proxies. A nil resolver
+	// falls back to the direct peer.
+	clientIP *clientip.Resolver
 }
 
 func NewSolutionHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store, opts SolutionHandlerOptions) *SolutionHandler {
@@ -391,7 +396,7 @@ func (h *SolutionHandler) DeleteDatabase(w http.ResponseWriter, r *http.Request)
 			_ = json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&creds)
 		}
 		if creds.Username != "" && creds.Password != "" {
-			key := loginThrottleKey(name, creds.Username, r)
+			key := loginThrottleKey(name, creds.Username, r, h.clientIP)
 			if ok, retryAfter := h.throttle.Allow(key); !ok {
 				writeLockedOut(w, r, retryAfter)
 				return

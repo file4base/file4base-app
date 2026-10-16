@@ -1,7 +1,10 @@
 package api
 
 import (
+	"net"
+
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/crypto"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -46,6 +49,12 @@ type Options struct {
 	// Hub pushes change notifications to connected clients. When nil, Mount
 	// creates one; the server keeps it for its lifetime.
 	Hub *realtime.Hub
+	// TrustedProxies lists the reverse-proxy networks whose X-Forwarded-For /
+	// X-Real-IP headers may be trusted when resolving a caller's address for
+	// the audit log, session metadata and the login-throttle key
+	// (FILE4BASE_TRUSTED_PROXIES). Empty means no proxy is trusted, so those
+	// headers are ignored and the direct TCP peer address is used.
+	TrustedProxies []*net.IPNet
 }
 
 // Mount registers every domain route of the API on r.
@@ -60,7 +69,10 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		controlStore, _ = control.NewStore(":memory:")
 	}
 
+	ipResolver := clientip.NewResolver(opts.TrustedProxies)
+
 	authMW := NewAuthMiddleware(sessions, dbMgr)
+	authMW.clientIP = ipResolver
 
 	throttle := opts.LoginThrottle
 	if throttle == nil {
@@ -71,12 +83,14 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	dataHandler := NewDataHandler()
 	securityHandler := NewSecurityHandlerWithControl(dbMgr, sessions, controlStore)
 	securityHandler.throttle = throttle
+	securityHandler.clientIP = ipResolver
 	securityHandler.ConfigureSuperOwner(opts.SuperOwnerSeed)
 	solutionHandler := NewSolutionHandler(dbMgr, sessions, SolutionHandlerOptions{
 		AllowPublicDatabaseCreation: opts.AllowPublicDatabaseCreation,
 		ControlStore:                controlStore,
 	})
 	solutionHandler.throttle = throttle
+	solutionHandler.clientIP = ipResolver
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
 
