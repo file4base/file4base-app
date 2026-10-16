@@ -1,8 +1,10 @@
 package telemetry
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -26,6 +28,25 @@ func (w *statusCapturingResponseWriter) Write(b []byte) (int, error) {
 	n, err := w.ResponseWriter.Write(b)
 	w.bytesWritten += int64(n)
 	return n, err
+}
+
+// Hijack lets a caller take over the connection (needed by the WebSocket
+// upgrade at /api/v1/realtime). Embedding http.ResponseWriter does not promote
+// Hijack — the static type is the bare interface — so the wrapper must forward
+// it explicitly, or the upgrade fails with 501 Not Implemented.
+func (w *statusCapturingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := w.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
+}
+
+// Flush forwards streaming flushes (e.g. Server-Sent Events) to the underlying
+// writer when it supports them.
+func (w *statusCapturingResponseWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // LogEntry defines the standard structured JSON log record.

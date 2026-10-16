@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-16
+
+### Fixed
+- **Real-time sync never connected in the deployed server (WebSocket upgrade failed with `501 Not Implemented`).** The global telemetry/logging middleware wraps every response in a status-recording writer, but that wrapper embedded `http.ResponseWriter` without forwarding `Hijack`, so it did not satisfy `http.Hijacker`. The WebSocket upgrade at `GET /api/v1/realtime` needs to hijack the connection, so it was refused for every client — each browser only ever saw its own edits and picked up others' changes solely on a manual reload or when navigating between records (the database was always shared; only the live push was broken). The wrapper now forwards `Hijack` (and `Flush`). This passed the unit tests before because they mount the API router without the production middleware stack; added a telemetry test that the wrapped writer supports hijacking.
+
 ## [0.15.1] - 2026-10-16
 
 Security-review follow-ups deferred during 0.15.0. Each item was developed and reviewed as its own pull request.
