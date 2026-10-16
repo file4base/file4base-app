@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
@@ -26,6 +27,10 @@ type SecurityHandler struct {
 	sessions     *auth.Store
 	controlStore *control.Store
 	throttle     *auth.LoginThrottle
+	// clientIP resolves the caller's address for the audit log, session
+	// metadata and the login-throttle key, honouring forwarding headers only
+	// from trusted proxies. A nil resolver falls back to the direct peer.
+	clientIP *clientip.Resolver
 	// superOwnerSeed bootstraps super-ownership for accounts named by
 	// FILE4BASE_SUPER_OWNER. Keys are "database\x00username", both folded to
 	// lower case. A seeded account signs in as a super-owner even before its
@@ -81,8 +86,8 @@ func envInt(name string, def int) int {
 // (database + username) and where from (client address). Keying on both
 // means one attacker cannot lock a victim out of their own account from
 // elsewhere, while still capping guesses per account and per source.
-func loginThrottleKey(database, username string, r *http.Request) string {
-	ip, _, _ := extractClientSessionMeta(r)
+func loginThrottleKey(database, username string, r *http.Request, resolver *clientip.Resolver) string {
+	ip, _, _ := extractClientSessionMeta(r, resolver)
 	return strings.ToLower(strings.TrimSpace(database)) + "\x00" +
 		strings.ToLower(strings.TrimSpace(username)) + "\x00" + ip
 }
@@ -253,7 +258,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	throttleKey := loginThrottleKey(dbName, req.Username, r)
+	throttleKey := loginThrottleKey(dbName, req.Username, r, h.clientIP)
 	if ok, retryAfter := h.throttle.Allow(throttleKey); !ok {
 		writeLockedOut(w, r, retryAfter)
 		return
@@ -298,7 +303,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		telemetry.WriteInternalError(w, r, errors.New("failed creating session"))
 		return
 	}
-	clientIP, webContainer, userAgent := extractClientSessionMeta(r)
+	clientIP, webContainer, userAgent := extractClientSessionMeta(r, h.clientIP)
 	h.sessions.TouchMeta(token, clientIP, webContainer, userAgent)
 
 	// The capabilities of the account's role travel with the sign-in so a
