@@ -129,3 +129,53 @@ its owner.
   manage the super-owner flag.
 - The super-owner flag is part of the account stamp, so granting or revoking it
   ends the target's existing sessions at once (see above).
+
+## Transport and payload protection
+
+Two layers protect traffic between a client and `file4base-api`:
+
+- **TLS.** Enable it with `TLS_ENABLED=true` (plus `TLS_CERT_FILE`/`TLS_KEY_FILE`,
+  or an ephemeral self-signed ECDSA P-256 certificate). TLS is what actually
+  keeps traffic confidential on a network.
+- **AES-256-GCM payload envelope** (`internal/crypto`). The Web Client and the
+  API can wrap request/response bodies in an authenticated `F4BE\x01` envelope
+  (12-byte random nonce, GCM tag over the magic header as additional data),
+  keyed from `FILE4BASE_CHANNEL_SECRET`. This is defence-in-depth, not a
+  substitute for TLS: **when `FILE4BASE_CHANNEL_SECRET` is unset the key is
+  derived from a built-in default that is public (it is in the source), so the
+  envelope then offers no confidentiality on its own.** The server logs a
+  warning at startup in that case. Set `FILE4BASE_CHANNEL_SECRET` and serve over
+  TLS on any non-local deployment. The middleware caps the amount of an
+  encrypted request body it reads into memory (512 MiB, well above the 256 MiB
+  import ceiling) so a hostile oversized payload cannot exhaust memory.
+
+A client's address, as recorded in the audit log, the session list and the
+login-throttle key, is taken from the direct TCP peer and never from a
+client-supplied `X-Forwarded-For` / `X-Real-IP` header, unless the request
+arrived through a reverse proxy listed in `FILE4BASE_TRUSTED_PROXIES`. A direct
+client therefore cannot forge the address attributed to it.
+
+## Hardening review (0.15.1)
+
+A focused review of the file importers, the encrypted channel and the control
+store was carried out for 0.15.1. Summary of findings and their disposition:
+
+- **File importers** (`internal/migration`: binary `.fmp12` records and HTML DDR
+  parsing). Imported table and column names are reduced to a strict
+  `[a-z0-9_]` whitelist (`sanitizeIdentifier`) and every DDL/DML statement that
+  uses them also goes through `dialect.QuoteIdentifier`, so a crafted DDR cannot
+  inject SQL. The binary `.fmp12` page-tree and record decoders bound every read
+  against the input length, and uploads are capped at 256 MiB. Regular
+  expressions are Go's RE2 (linear time, no catastrophic backtracking) and the
+  one pattern built from parsed field names escapes them with
+  `regexp.QuoteMeta`. No code change was required; the only note is cosmetic
+  (some regexps are compiled per call rather than once).
+- **Encrypted channel** (`internal/crypto`). The AEAD construction is sound
+  (AES-256-GCM, random nonce, authenticated header). Two hardening changes were
+  made: a startup warning when `FILE4BASE_CHANNEL_SECRET` is unset (the default
+  key provides no confidentiality), and a 512 MiB cap on the in-memory read of
+  an encrypted request body (see above).
+- **Control store** (`internal/control`). All SQL is parameterised (`?`
+  placeholders) and multi-statement writes run in transactions; no identifier or
+  value is interpolated into a statement. No injection surface was found; no
+  change required.

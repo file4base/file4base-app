@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
@@ -16,6 +17,10 @@ import (
 type AuthMiddleware struct {
 	sessions *auth.Store
 	dbMgr    *dbal.MultiDatabaseManager
+	// clientIP resolves the caller's address for session metadata, honouring
+	// forwarding headers only from trusted proxies. A nil resolver falls back
+	// to the direct peer address.
+	clientIP *clientip.Resolver
 }
 
 // NewAuthMiddleware creates the session-resolving middleware.
@@ -46,17 +51,11 @@ func writeUnauthorized(w http.ResponseWriter, r *http.Request, detail string) {
 	telemetry.WriteProblem(w, r, http.StatusUnauthorized, "Authentication Required", detail)
 }
 
-func extractClientSessionMeta(r *http.Request) (clientIP, webContainer, userAgent string) {
-	clientIP = strings.TrimSpace(r.Header.Get("X-Forwarded-For"))
-	if idx := strings.Index(clientIP, ","); idx != -1 {
-		clientIP = strings.TrimSpace(clientIP[:idx])
-	}
-	if clientIP == "" {
-		clientIP = strings.TrimSpace(r.Header.Get("X-Real-IP"))
-	}
-	if clientIP == "" {
-		clientIP = r.RemoteAddr
-	}
+func extractClientSessionMeta(r *http.Request, resolver *clientip.Resolver) (clientIP, webContainer, userAgent string) {
+	// The client address is only derived from X-Forwarded-For / X-Real-IP when
+	// the request arrived through a configured trusted proxy; otherwise those
+	// headers are attacker-controlled and the direct peer address is used.
+	clientIP = resolver.ClientIP(r)
 	webContainer = strings.TrimSpace(r.Header.Get("X-Web-Container"))
 	if webContainer == "" {
 		if strings.Contains(strings.ToLower(r.UserAgent()), "dart") {
@@ -102,7 +101,7 @@ func (m *AuthMiddleware) attach(w http.ResponseWriter, r *http.Request) (*http.R
 		return r, false, false
 	}
 
-	clientIP, webContainer, userAgent := extractClientSessionMeta(r)
+	clientIP, webContainer, userAgent := extractClientSessionMeta(r, m.clientIP)
 	m.sessions.TouchMeta(token, clientIP, webContainer, userAgent)
 
 	ctx := auth.WithSession(r.Context(), sess)

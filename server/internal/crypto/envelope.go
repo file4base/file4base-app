@@ -48,6 +48,13 @@ var (
 	ErrInvalidEnvelope = errors.New("invalid or unauthenticated encrypted payload")
 )
 
+// maxEncryptedRequestBytes bounds how much of an encrypted request body the
+// middleware reads into memory, so a hostile oversized payload cannot exhaust
+// server memory. It is well above the 256 MiB solution/data import ceiling, so
+// it never rejects a legitimate encrypted import. It is a var only so tests can
+// lower it.
+var maxEncryptedRequestBytes int64 = 512 << 20 // 512 MiB
+
 // DeriveKey derives a 256-bit AES key from a channel secret string.
 func DeriveKey(secret string) [32]byte {
 	s := strings.TrimSpace(secret)
@@ -151,9 +158,19 @@ func Middleware(secret string) func(http.Handler) http.Handler {
 			acceptCipher := strings.ToLower(strings.TrimSpace(r.Header.Get(HeaderAcceptEncryption)))
 
 			if reqCipher == CipherAES256GCM && r.Body != nil {
+				// Bound the in-memory read so a hostile oversized encrypted body
+				// cannot exhaust server memory.
+				r.Body = http.MaxBytesReader(w, r.Body, maxEncryptedRequestBytes)
 				encryptedBody, err := io.ReadAll(r.Body)
 				_ = r.Body.Close()
 				if err != nil {
+					var tooLarge *http.MaxBytesError
+					if errors.As(err, &tooLarge) {
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.WriteHeader(http.StatusRequestEntityTooLarge)
+						_, _ = w.Write([]byte(`{"title":"Payload Too Large","detail":"encrypted request body exceeds the maximum allowed size"}`))
+						return
+					}
 					http.Error(w, `{"title":"Bad Request","detail":"failed reading encrypted request body"}`, http.StatusBadRequest)
 					return
 				}

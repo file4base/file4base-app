@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,103 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// newScriptTestService connects to the scratch database and returns a ready
+// Service, skipping the test when the engine is not reachable.
+func newScriptTestService(t *testing.T) (*schema.Service, func()) {
+	t.Helper()
+	driver, err := dbal.Connect(dbal.DriverConfig{
+		EngineType: testdb.Engine(),
+		DSN:        testdb.DevDSN(),
+	})
+	if err != nil {
+		t.Skip("PostgreSQL not available:", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		_ = driver.Close()
+		t.Skip("PostgreSQL ping failed:", err)
+	}
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+	return svc, func() { _ = driver.Close() }
+}
+
+// TestScriptService_UpdateRollsBackOnFailingStep verifies that a step which
+// fails to persist rolls back the whole UpdateScript, leaving the previously
+// stored script (name, active flag and steps) untouched rather than wiped out
+// and half-rewritten. It relies on PostgreSQL rejecting an over-length
+// step_type (VARCHAR(64)), so it is skipped on other engines.
+func TestScriptService_UpdateRollsBackOnFailingStep(t *testing.T) {
+	if testdb.Engine() != dbal.EnginePostgres {
+		t.Skip("rollback test relies on PostgreSQL VARCHAR length enforcement")
+	}
+	svc, closeFn := newScriptTestService(t)
+	defer closeFn()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	name := fmt.Sprintf("rollback_script_%d", time.Now().UnixNano()%1000000)
+	original := []schema.ScriptStepMetadata{
+		{SequenceIdx: 1, StepType: "go_to_layout", Params: json.RawMessage(`{"layout_name":"A"}`), IsEnabled: true},
+		{SequenceIdx: 2, StepType: "set_variable", Params: json.RawMessage(`{"variable":"$x"}`), IsEnabled: true},
+	}
+	created, err := svc.CreateScript(ctx, name, "invoices", nil, true, original)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.DeleteScript(context.Background(), created.ID) })
+	require.Len(t, created.Steps, 2)
+
+	// An over-length step_type (> VARCHAR(64)) makes the second step's INSERT
+	// fail after the UPDATE, the DELETE and the first new step have been staged.
+	badUpdate := []schema.ScriptStepMetadata{
+		{SequenceIdx: 1, StepType: "valid_step", Params: json.RawMessage(`{}`), IsEnabled: true},
+		{SequenceIdx: 2, StepType: strings.Repeat("x", 100), Params: json.RawMessage(`{}`), IsEnabled: true},
+	}
+	_, err = svc.UpdateScript(ctx, created.ID, name+"_broken", "contacts", nil, false, badUpdate)
+	require.Error(t, err, "UpdateScript should fail on the over-length step")
+
+	// Nothing of the failed update may have landed: the script keeps its
+	// original name, active flag and both original steps.
+	after, err := svc.GetScript(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, name, after.Name, "name must be unchanged after rollback")
+	assert.Equal(t, "invoices", after.ContextTable, "context_table must be unchanged after rollback")
+	assert.True(t, after.IsActive, "is_active must be unchanged after rollback")
+	require.Len(t, after.Steps, 2, "original steps must survive the rolled-back update")
+	assert.Equal(t, "go_to_layout", after.Steps[0].StepType)
+	assert.Equal(t, "set_variable", after.Steps[1].StepType)
+}
+
+// TestScriptService_CreateRollsBackOnFailingStep verifies that a failing step
+// during CreateScript rolls back the script row too, so no half-created script
+// is left behind.
+func TestScriptService_CreateRollsBackOnFailingStep(t *testing.T) {
+	if testdb.Engine() != dbal.EnginePostgres {
+		t.Skip("rollback test relies on PostgreSQL VARCHAR length enforcement")
+	}
+	svc, closeFn := newScriptTestService(t)
+	defer closeFn()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	name := fmt.Sprintf("create_rollback_%d", time.Now().UnixNano()%1000000)
+	steps := []schema.ScriptStepMetadata{
+		{SequenceIdx: 1, StepType: "valid_step", Params: json.RawMessage(`{}`), IsEnabled: true},
+		{SequenceIdx: 2, StepType: strings.Repeat("y", 100), Params: json.RawMessage(`{}`), IsEnabled: true},
+	}
+	_, err := svc.CreateScript(ctx, name, "invoices", nil, true, steps)
+	require.Error(t, err, "CreateScript should fail on the over-length step")
+
+	// The script row must not survive the rolled-back create.
+	list, err := svc.ListScripts(ctx)
+	require.NoError(t, err)
+	for _, s := range list {
+		assert.NotEqual(t, name, s.Name, "a rolled-back create must leave no script row")
+	}
+}
 
 func TestScriptService_CRUD(t *testing.T) {
 	dsn := testdb.DevDSN()

@@ -60,6 +60,30 @@ func TestMiddleware_EncryptsAndDecryptsRequestAndResponse(t *testing.T) {
 	assert.JSONEq(t, `{"echo":"secret-solution-bundle"}`, string(respPlain))
 }
 
+func TestMiddleware_RejectsOversizedEncryptedBody(t *testing.T) {
+	orig := maxEncryptedRequestBytes
+	maxEncryptedRequestBytes = 64 // tiny cap for the test
+	defer func() { maxEncryptedRequestBytes = orig }()
+
+	handlerRan := false
+	handler := Middleware("unit-test-channel-key")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerRan = true
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// A body far larger than the cap, flagged as encrypted, must be rejected
+	// before it is read into memory and before the handler runs.
+	oversized := bytes.Repeat([]byte("A"), 4096)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/solutions/import", bytes.NewReader(oversized))
+	req.Header.Set(HeaderEncrypted, CipherAES256GCM)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+	assert.False(t, handlerRan, "handler must not run when the encrypted body exceeds the limit")
+}
+
 func TestHandshakeAndSelfSignedTLS(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/crypto/handshake", nil)
 	rec := httptest.NewRecorder()

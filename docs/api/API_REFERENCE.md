@@ -81,6 +81,7 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `DATABASE_URL` | local development DSN | Connection to the engine's administrative database. Always set it outside development. |
 | `SESSION_TTL` | `12h` | Idle lifetime of a session (Go duration). |
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated list of browser origins allowed to call the API. |
+| `FILE4BASE_TRUSTED_PROXIES` | *(empty)* | Comma-separated IPs and CIDR ranges of reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be trusted when resolving the client address (audit log, session list, login throttle). Empty trusts no proxy, so those headers are ignored and the direct TCP peer is recorded — a client cannot forge the address attributed to it. Set it to your reverse proxy's address only (for the bundled Nginx web client, the Docker Compose network, e.g. `172.16.0.0/12,127.0.0.1,::1`). |
 | `ALLOW_PUBLIC_DATABASE_CREATION` | `true` | When `false`, only a signed-in owner can create databases. |
 | `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools unless a super-owner exists (see `FILE4BASE_SUPER_OWNER`). |
 | `FILE4BASE_SUPER_OWNER` | *(empty)* | Bootstrap super-owners as `database:username` (comma-separated for several). These owner accounts sign in with full, server-wide control even before a `super_owner` flag is stored; they can then grant the privilege to other owners via `PUT /api/v1/security/users/{id}/super-owner`. |
