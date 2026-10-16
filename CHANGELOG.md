@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-10-17
+
+### Fixed
+- **The super-owner switch could not be used in the default setup (`FILE4BASE_ADMIN_DATABASE` set, no `FILE4BASE_SUPER_OWNER`).** Granting super-owner required already being a super-owner, but the only bootstrap was the env seed — so with an admin database and no seed there was no way to grant server-wide (Server Tools) access from the UI: a dead-end. An owner of the admin database is already a server administrator, so it now signs in as an **effective super-owner** and therefore sees and can use the super-owner switch (the shield on owner rows in Manage Security) to delegate server-wide access to other owners — no `FILE4BASE_SUPER_OWNER` seed needed. No endpoint guard was loosened: the effective super-owner is computed at sign-in (like the seed), alongside the existing `FILE4BASE_ADMIN_DATABASE` compatibility. Sign in again after updating for it to take effect.
+
 ## [0.16.0] - 2026-10-16
 
 ### Added

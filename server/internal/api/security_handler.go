@@ -37,6 +37,25 @@ type SecurityHandler struct {
 	// stored super_owner flag is set, so the first super-owner can exist
 	// without another one to grant it.
 	superOwnerSeed map[string]bool
+	// adminDatabase mirrors FILE4BASE_ADMIN_DATABASE: owners of this database
+	// are server administrators, so they may manage the super-owner switch even
+	// before any super-owner exists (the bootstrap path from the UI, without the
+	// FILE4BASE_SUPER_OWNER seed).
+	adminDatabase string
+}
+
+// ConfigureServerAdmin records which database's owners are server
+// administrators (FILE4BASE_ADMIN_DATABASE). Empty means none.
+func (h *SecurityHandler) ConfigureServerAdmin(adminDatabase string) {
+	h.adminDatabase = strings.ToLower(strings.TrimSpace(adminDatabase))
+}
+
+// isAdminDatabaseOwner reports whether an owner of the given database is a
+// server administrator by virtue of FILE4BASE_ADMIN_DATABASE. Such an account
+// signs in as an effective super-owner, so it can reach the server-wide tools
+// and delegate super-owner from the UI without the FILE4BASE_SUPER_OWNER seed.
+func (h *SecurityHandler) isAdminDatabaseOwner(database, role string) bool {
+	return h.adminDatabase != "" && role == auth.RoleOwner && strings.EqualFold(database, h.adminDatabase)
 }
 
 // ConfigureSuperOwner records the FILE4BASE_SUPER_OWNER bootstrap seeds. Each
@@ -293,10 +312,15 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 	h.throttle.Succeed(throttleKey)
 	h.syncProjectSecurity(r.Context(), dbName, svc)
 
-	// Effective super-ownership combines the account's stored flag with the
-	// bootstrap seed, so the response and the session agree on what the caller
-	// may do before any grant has been persisted.
-	user.SuperOwner = user.SuperOwner || h.isSeededSuperOwner(dbName, user.Username)
+	// Effective super-ownership combines the account's stored flag, the
+	// bootstrap seed, and ownership of the server administration database (which
+	// already confers server-wide administration). Computing it here means a
+	// server administrator can manage the super-owner switch from the UI without
+	// the FILE4BASE_SUPER_OWNER seed, and the response and session agree on what
+	// the caller may do before any grant has been persisted.
+	user.SuperOwner = user.SuperOwner ||
+		h.isSeededSuperOwner(dbName, user.Username) ||
+		h.isAdminDatabaseOwner(dbName, user.Role)
 
 	token, sess, err := h.sessions.Create(user.ID, user.Username, user.Role, dbName, user.Stamp, user.SuperOwner)
 	if err != nil {
