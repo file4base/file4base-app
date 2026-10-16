@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **The audit log, session list and login throttle no longer trust a client-supplied IP by default.** `X-Forwarded-For` / `X-Real-IP` were honored from any caller (and chi's `middleware.RealIP` rewrote `RemoteAddr` from them unconditionally), so a direct client could forge the address recorded against it — or, since the login throttle keys on that address, interfere with another account's lockout state. Those forwarding headers are now trusted only when the request's direct TCP peer is a configured reverse proxy, set via the new **`FILE4BASE_TRUSTED_PROXIES`** setting (comma-separated IPs and CIDR ranges); the real client is then recovered by walking `X-Forwarded-For` right-to-left past trusted hops. With no trusted proxies configured (the default) the direct peer address is always used. The resolution is shared by the audit/session metadata, the request telemetry log and the login-throttle key (new `internal/clientip` package). Documented in `.env.example` and `docs/api/API_REFERENCE.md`.
+
 ## [0.15.0] - 2026-10-16
 
 ### Added
