@@ -155,13 +155,21 @@ func (s *Service) CreateScript(ctx context.Context, name, contextTable string, f
 		fID = sql.NullString{String: *folderID, Valid: true}
 	}
 
+	// The script row and all of its steps are written in a single transaction:
+	// if any step fails, the whole script is rolled back instead of leaving a
+	// half-created script behind.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed starting script transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	q := `INSERT INTO sys_scripts (id, name, context_table, folder_id, is_active, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	if dialect.Engine() != dbal.EnginePostgres {
 		q = `INSERT INTO sys_scripts (id, name, context_table, folder_id, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
 	}
 
-	_, err := db.ExecContext(ctx, q, id, name, contextTable, fID, isActive, now, now)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, q, id, name, contextTable, fID, isActive, now, now); err != nil {
 		return nil, fmt.Errorf("failed inserting script: %w", err)
 	}
 
@@ -179,7 +187,7 @@ func (s *Service) CreateScript(ctx context.Context, name, contextTable string, f
 				checkQ = `SELECT COUNT(1) FROM sys_script_steps WHERE id = ?`
 			}
 			var existing int
-			if err := db.QueryRowContext(ctx, checkQ, stepID).Scan(&existing); err == nil && existing > 0 {
+			if err := tx.QueryRowContext(ctx, checkQ, stepID).Scan(&existing); err == nil && existing > 0 {
 				stepID = uuid.NewString()
 			}
 		}
@@ -210,8 +218,7 @@ func (s *Service) CreateScript(ctx context.Context, name, contextTable string, f
 			seq = st.SequenceIdx
 		}
 
-		_, err := db.ExecContext(ctx, iq, stepID, id, seq, st.StepType, paramsStr, st.IsEnabled, pID, now)
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, iq, stepID, id, seq, st.StepType, paramsStr, st.IsEnabled, pID, now); err != nil {
 			return nil, fmt.Errorf("failed inserting script step: %w", err)
 		}
 
@@ -220,6 +227,10 @@ func (s *Service) CreateScript(ctx context.Context, name, contextTable string, f
 		st.SequenceIdx = seq
 		st.Params = json.RawMessage(paramsStr)
 		insertedSteps = append(insertedSteps, st)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed committing new script: %w", err)
 	}
 
 	return &ScriptMetadata{
@@ -249,12 +260,22 @@ func (s *Service) UpdateScript(ctx context.Context, id, name, contextTable strin
 		fID = sql.NullString{String: *folderID, Valid: true}
 	}
 
+	// The script update, the clearing of its old steps and the insertion of the
+	// new ones all run in one transaction. Without it, a step that failed after
+	// the DELETE would leave the script with its steps wiped out and only a
+	// prefix of the new sequence written.
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed starting script transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	uq := `UPDATE sys_scripts SET name = $1, context_table = $2, folder_id = $3, is_active = $4, updated_at = $5 WHERE id = $6`
 	if dialect.Engine() != dbal.EnginePostgres {
 		uq = `UPDATE sys_scripts SET name = ?, context_table = ?, folder_id = ?, is_active = ?, updated_at = ? WHERE id = ?`
 	}
 
-	res, err := db.ExecContext(ctx, uq, name, contextTable, fID, isActive, now, id)
+	res, err := tx.ExecContext(ctx, uq, name, contextTable, fID, isActive, now, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed updating script: %w", err)
 	}
@@ -268,7 +289,7 @@ func (s *Service) UpdateScript(ctx context.Context, id, name, contextTable strin
 	if dialect.Engine() != dbal.EnginePostgres {
 		dq = `DELETE FROM sys_script_steps WHERE script_id = ?`
 	}
-	if _, err := db.ExecContext(ctx, dq, id); err != nil {
+	if _, err := tx.ExecContext(ctx, dq, id); err != nil {
 		return nil, fmt.Errorf("failed clearing script steps: %w", err)
 	}
 
@@ -285,7 +306,7 @@ func (s *Service) UpdateScript(ctx context.Context, id, name, contextTable strin
 				checkQ = `SELECT COUNT(1) FROM sys_script_steps WHERE id = ?`
 			}
 			var existing int
-			if err := db.QueryRowContext(ctx, checkQ, stepID).Scan(&existing); err == nil && existing > 0 {
+			if err := tx.QueryRowContext(ctx, checkQ, stepID).Scan(&existing); err == nil && existing > 0 {
 				stepID = uuid.NewString()
 			}
 		}
@@ -316,7 +337,7 @@ func (s *Service) UpdateScript(ctx context.Context, id, name, contextTable strin
 			seq = st.SequenceIdx
 		}
 
-		if _, err := db.ExecContext(ctx, iq, stepID, id, seq, st.StepType, paramsStr, st.IsEnabled, pID, now); err != nil {
+		if _, err := tx.ExecContext(ctx, iq, stepID, id, seq, st.StepType, paramsStr, st.IsEnabled, pID, now); err != nil {
 			return nil, fmt.Errorf("failed inserting updated step: %w", err)
 		}
 
@@ -325,6 +346,10 @@ func (s *Service) UpdateScript(ctx context.Context, id, name, contextTable strin
 		st.SequenceIdx = seq
 		st.Params = json.RawMessage(paramsStr)
 		updatedSteps = append(updatedSteps, st)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed committing script update: %w", err)
 	}
 
 	return s.GetScript(ctx, id)
