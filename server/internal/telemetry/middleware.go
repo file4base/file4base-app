@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -47,8 +46,11 @@ type LogEntry struct {
 	UserAgent      string  `json:"user_agent,omitempty"`
 }
 
-// Middleware creates a high-performance OpenTelemetry and structured logging HTTP middleware.
-func Middleware(serviceName, version string) func(next http.Handler) http.Handler {
+// Middleware creates a high-performance OpenTelemetry and structured logging
+// HTTP middleware. clientIP resolves the caller's address for the request log,
+// honouring forwarding headers only from trusted proxies; when nil, the direct
+// peer address (RemoteAddr) is logged.
+func Middleware(serviceName, version string, clientIP func(*http.Request) string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			startTime := time.Now()
@@ -99,11 +101,9 @@ func Middleware(serviceName, version string) func(next http.Handler) http.Handle
 				level = "WARN"
 			}
 
-			clientIP := r.RemoteAddr
-			if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-				clientIP = strings.Split(forwarded, ",")[0]
-			} else if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-				clientIP = realIP
+			clientAddr := r.RemoteAddr
+			if clientIP != nil {
+				clientAddr = clientIP(r)
 			}
 
 			entry := LogEntry{
@@ -119,7 +119,7 @@ func Middleware(serviceName, version string) func(next http.Handler) http.Handle
 				HTTPStatusCode: wrapped.statusCode,
 				BytesWritten:   wrapped.bytesWritten,
 				DurationMs:     durationMs,
-				ClientIP:       clientIP,
+				ClientIP:       clientAddr,
 				UserAgent:      r.UserAgent(),
 			}
 

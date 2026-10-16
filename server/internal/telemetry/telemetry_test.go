@@ -48,7 +48,7 @@ func TestProblemDetails(t *testing.T) {
 }
 
 func TestMiddleware(t *testing.T) {
-	handler := Middleware("test-service", "1.0.0")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := Middleware("test-service", "1.0.0", nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tID := TraceIDFromContext(r.Context())
 		assert.NotEmpty(t, tID)
 		w.WriteHeader(http.StatusOK)
