@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.14.0] - 2026-10-15
 
 ### Added
+- **Real-time sync (server)**: a change-notification WebSocket at `GET /api/v1/realtime`. A client authenticates with its bearer token as the first message and then receives a small event (`{type, resource, database, origin}`) whenever the records or schema of its database change in another session — so every open window can reload instead of going stale. Events carry no record data (the client reloads what it shows) and are scoped to the client's database; the `origin` id lets a client ignore the changes it made itself. In-memory per process (a future multi-replica setup would use Postgres LISTEN/NOTIFY). The Flutter client subscribes to it (below).
+- **Real-time sync (client)**: while signed in, the app keeps a WebSocket to `/api/v1/realtime` (auto-reconnecting). When another session changes the table you are viewing, Browse reloads and keeps you on the same record — and it waits until you leave a field so it never interrupts your typing; schema/layout changes reload the tables and layouts. The app ignores the changes it made itself.
 - Server Tools: a backup can be downloaded as a gzip-compressed tar (`.tar.gz`, `GET .../download?format=targz`) and saved to disk; the window's download button now saves the file (a separate button still copies the JSON to the clipboard).
 - Server Tools: a backup file (`.tar.gz` or `.f4b.json`) can be uploaded (`POST .../backups/upload`, "Upload Backup..." button) and stored as a server-side backup, then restored — the counterpart of download. A non-administrator's upload can only ever target their own database.
 

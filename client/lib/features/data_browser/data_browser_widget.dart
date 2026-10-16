@@ -258,6 +258,25 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void fetchRecords() => _fetchRecords();
 
+  /// Reloads after a change made in another session (realtime sync). It keeps
+  /// the record you are on, and never interrupts editing or a find: while a
+  /// field has focus the reload waits until you leave it.
+  void reloadFromRemote() {
+    if (widget.mode != OperationalMode.browse) {
+      _pendingRemoteReload = false;
+      return;
+    }
+    if (_aFieldIsFocused) {
+      _pendingRemoteReload = true;
+      return;
+    }
+    _pendingRemoteReload = false;
+    unawaited(_fetchRecords(preserveCurrent: true));
+  }
+
+  bool _pendingRemoteReload = false;
+  bool get _aFieldIsFocused => _fieldFocusNodes.values.any((f) => f.hasFocus);
+
   void previousRecord() {
     if (_records.isNotEmpty && _currentIndex > 0) {
       _saveCurrentRecord().then((saved) {
@@ -806,6 +825,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           _fieldDebounceTimers[col.name]?.cancel();
           _saveField(col.name, ctrl.text);
           if (mounted) setState(() {});
+          // A remote change arrived while this field was being edited: now
+          // that it is saved and focus has left, reload.
+          if (_pendingRemoteReload && !_aFieldIsFocused) {
+            WidgetsBinding.instance.addPostFrameCallback((_) => reloadFromRemote());
+          }
         }
       });
     }
@@ -1049,8 +1073,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     super.dispose();
   }
 
-  Future<void> _fetchRecords() async {
-    setState(() { _isLoading = true; _error = null; _isFoundSet = false; });
+  Future<void> _fetchRecords({bool preserveCurrent = false}) async {
+    final keepId = preserveCurrent && _records.isNotEmpty
+        ? _records[_currentIndex]['id']?.toString()
+        : null;
+    setState(() { _isLoading = true; _error = null; if (!preserveCurrent) _isFoundSet = false; });
     try {
       // A report covers the whole found set: its totals would not match the
       // rows under them if it only read the first page (#32).
@@ -1063,7 +1090,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           _unsortedRecords = List.of(rows);
           _totalInTable = rows.length;
           _sortOrder = const [];
-          _currentIndex = 0;
+          final keptIdx = keepId == null ? -1 : rows.indexWhere((r) => r['id']?.toString() == keepId);
+          _currentIndex = keptIdx >= 0 ? keptIdx : 0;
           _isLoading = false;
         });
         _rebuildFieldControllers();
