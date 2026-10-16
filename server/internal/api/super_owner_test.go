@@ -56,6 +56,45 @@ func TestSuperOwner_SeedGrantsServerWideAccessWithoutAdminDatabase(t *testing.T)
 		h.do(http.MethodGet, "/api/v1/server/sessions", bossToken, nil, nil).Code)
 }
 
+func TestSuperOwner_AdminDatabaseOwnerManagesWithoutSeed(t *testing.T) {
+	// FILE4BASE_ADMIN_DATABASE is set, FILE4BASE_SUPER_OWNER is not: the owner
+	// of the admin database must still be able to grant super-owner from the UI
+	// (the bootstrap gap this fixes).
+	s := newServerToolsHarness(t, true)
+
+	var access accessView
+	s.do(http.MethodGet, "/api/v1/server/access", s.adminToken, nil, &access)
+	assert.True(t, access.SuperOwner, "an owner of the admin database is an effective super-owner")
+	assert.True(t, access.ServerAdmin)
+
+	// An owner of an ordinary database is neither.
+	s.do(http.MethodGet, "/api/v1/server/access", s.aliceToken, nil, &access)
+	assert.False(t, access.SuperOwner)
+	assert.False(t, access.ServerAdmin)
+
+	// The admin-database owner creates another owner there and grants it
+	// super-owner — no FILE4BASE_SUPER_OWNER seed was needed.
+	var created struct {
+		ID string `json:"id"`
+	}
+	rec := s.do(http.MethodPost, "/api/v1/security/users", s.adminToken,
+		map[string]interface{}{"username": "deputy", "password": "deputy-pass-1", "role": "owner"}, &created)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	rec = s.do(http.MethodPut, "/api/v1/security/users/"+created.ID+"/super-owner", s.adminToken,
+		map[string]bool{"super_owner": true}, nil)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// An ordinary owner of another database still cannot grant it.
+	var aliceOwner struct {
+		ID string `json:"id"`
+	}
+	s.do(http.MethodPost, "/api/v1/security/users", s.aliceToken,
+		map[string]interface{}{"username": "alice2", "password": "alice2-pass-1", "role": "owner"}, &aliceOwner)
+	rec = s.do(http.MethodPut, "/api/v1/security/users/"+aliceOwner.ID+"/super-owner", s.aliceToken,
+		map[string]bool{"super_owner": true}, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, "a non-server-admin owner cannot grant super-owner")
+}
+
 func TestSuperOwner_GrantIsPersistedAndRestrictedToSuperOwners(t *testing.T) {
 	h, opsDB, otherDB, rootToken, bossToken := newSuperOwnerHarness(t)
 

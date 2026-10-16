@@ -85,6 +85,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	securityHandler.throttle = throttle
 	securityHandler.clientIP = ipResolver
 	securityHandler.ConfigureSuperOwner(opts.SuperOwnerSeed)
+	securityHandler.ConfigureServerAdmin(opts.AdminDatabase)
 	solutionHandler := NewSolutionHandler(dbMgr, sessions, SolutionHandlerOptions{
 		AllowPublicDatabaseCreation: opts.AllowPublicDatabaseCreation,
 		ControlStore:                controlStore,
