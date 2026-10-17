@@ -1810,6 +1810,45 @@ class File4BaseMenuBar extends StatelessWidget {
           leadingIcon: const Icon(Icons.notifications_active_outlined, size: 18),
           child: const Text('Server Notifications, SMTP & Webhooks...'),
         ),
+        const Divider(height: 1),
+        // The same "Manage" menu as File > Manage, at the end of Server Tools
+        // (Containers excluded — it is a Server Tools section above).
+        SubmenuButton(
+          leadingIcon: const Icon(Icons.tune_outlined, size: 18),
+          menuChildren: [
+            MenuItemButton(
+              onPressed: onManageDatabase,
+              leadingIcon: const Icon(Icons.storage_outlined, size: 18),
+              child: const Text('Database...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageSecurity,
+              leadingIcon: const Icon(Icons.security_outlined, size: 18),
+              child: const Text('Security...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageValueLists,
+              leadingIcon: const Icon(Icons.list_alt_outlined, size: 18),
+              child: const Text('Value Lists...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageDataSources,
+              leadingIcon: const Icon(Icons.cable_outlined, size: 18),
+              child: const Text('External Data Sources...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageLayouts ?? () => onModeChanged(OperationalMode.layout),
+              leadingIcon: const Icon(Icons.dashboard_customize_outlined, size: 18),
+              child: const Text('Layouts...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageScripts ?? onScriptWorkspace,
+              leadingIcon: const Icon(Icons.code, size: 18),
+              child: const Text('Scripts...'),
+            ),
+          ],
+          child: const Text('Manage'),
+        ),
       ],
       child: Row(
         mainAxisSize: MainAxisSize.min,

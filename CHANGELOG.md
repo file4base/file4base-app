@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-17
+
+### Added
+- **The "Manage" menu is now also in the Server Tools top menu**, at the end (Database, Security, Value Lists, External Data Sources, Layouts, Scripts) — the same menu as File ▸ Manage, with "Containers" excluded (it is a Server Tools section). It is in both the Server Tools menu-bar dropdown and the console dialog.
+- **New-version banner (web PWA).** The web client caches itself via a service worker, so after a deploy the browser kept serving the old build until fully closed. It now checks for a newer version while open and, when one is ready, shows a bar offering **Actualizar** (unregisters the worker, clears caches and reloads for a guaranteed-fresh version) or **Cancelar**.
+
+### Changed
+- **The Super-owner switch now works on any account, not only existing owners.** Super-owner is a privilege on top of Owner, so turning it on for a non-owner account promotes it to Owner first and then grants super-owner (a single toggle). It still never appears on your own account.
+
 ## [0.17.0] - 2026-10-17
 
 ### Added

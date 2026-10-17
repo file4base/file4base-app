@@ -590,9 +590,11 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                           ),
 
                           // Super-owner on/off switch — grants full, server-wide
-                          // access to all Server Tools. Only a super-owner sees
-                          // it, only on owner accounts, and never on themselves.
-                          if (_viewerIsSuperOwner && !isNew && selectedRole == 'owner') ...[
+                          // access to all Server Tools. A super-owner sees it on
+                          // any account (never their own). Super-owner is a
+                          // privilege on top of Owner, so turning it on for a
+                          // non-owner promotes the account to Owner first.
+                          if (_viewerIsSuperOwner && !isNew) ...[
                             const SizedBox(height: 12),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -614,7 +616,9 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                         Text(
                                           _isCurrentUser(userToEdit)
                                               ? 'You cannot change your own super-owner status'
-                                              : 'ON = full access to all Server Tools (every database); OFF = normal owner',
+                                              : selectedRole == 'owner'
+                                                  ? 'ON = full access to all Server Tools (every database); OFF = normal owner'
+                                                  : 'ON promotes this account to Owner and grants full Server Tools access',
                                           style: const TextStyle(fontSize: 10.5, color: Colors.grey),
                                         ),
                                       ],
@@ -627,19 +631,32 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                         ? null
                                         : (v) async {
                                             try {
+                                              // Super-owner implies Owner: promote first when granting.
+                                              final promoted = v && selectedRole != 'owner';
+                                              if (promoted) {
+                                                await widget.apiClient.updateUser(userToEdit.id, role: 'owner', database: widget.databaseName);
+                                              }
                                               await widget.apiClient.setUserSuperOwner(userToEdit.id, v, database: widget.databaseName);
                                               widget.onModified?.call();
                                               AutoSaveService.instance.markDirty();
-                                              setDlgState(() => isSuperOwner = v);
+                                              setDlgState(() {
+                                                isSuperOwner = v;
+                                                if (v) selectedRole = 'owner';
+                                              });
                                               final idx = _users.indexWhere((u) => u.id == userToEdit.id);
                                               if (idx != -1) {
-                                                setState(() => _users[idx] = _users[idx].copyWith(superOwner: v));
+                                                setState(() => _users[idx] = _users[idx].copyWith(
+                                                      superOwner: v,
+                                                      role: v ? 'owner' : _users[idx].role,
+                                                    ));
                                               }
                                               if (mounted) {
                                                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                                                   content: Text(v
-                                                      ? 'Super-owner granted — full Server Tools access. Their sessions were signed out.'
-                                                      : 'Super-owner revoked. Their sessions were signed out.'),
+                                                      ? (promoted
+                                                          ? 'Promoted to Owner and granted super-owner — full Server Tools access. Sessions signed out.'
+                                                          : 'Super-owner granted — full Server Tools access. Sessions signed out.')
+                                                      : 'Super-owner revoked. Sessions signed out.'),
                                                   backgroundColor: v ? Colors.amber.shade800 : Colors.blueGrey,
                                                   duration: const Duration(seconds: 3),
                                                 ));
