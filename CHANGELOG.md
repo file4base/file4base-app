@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-17
+
+### Changed
+- Version bump to validate the in-app new-version detection added in 0.18.0 (no functional changes).
+
 ## [0.18.0] - 2026-10-17
 
 ### Added
