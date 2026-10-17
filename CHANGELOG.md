@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-10-17
+
+### Fixed
+- **The in-app new-version banner (0.18.0) never appeared.** It watched the service-worker update lifecycle, but modern Flutter ships a self-unregistering service worker (no caching worker), so those events never fired. The detector now records the version the page loaded with and polls the deployed `version.json`; when the deployed version differs, it shows the Actualizar/Cancelar bar (verified end-to-end).
+
 ## [0.19.0] - 2026-10-17
 
 ### Changed

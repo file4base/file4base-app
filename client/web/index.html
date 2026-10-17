@@ -46,40 +46,51 @@
   <script src="flutter_bootstrap.js" async></script>
 
   <!--
-    New-version detector. The app is a PWA whose service worker caches the
-    build, so after a deploy the browser keeps serving the old version until it
-    is replaced. This watches for a newer service worker and, when one is ready,
-    shows a bar offering to update (which unregisters the worker, clears the
-    caches and reloads for a guaranteed-fresh version) or to cancel.
+    New-version detector. Modern Flutter ships a self-unregistering service
+    worker (no caching worker), so version changes cannot be observed through
+    the service-worker update lifecycle. Instead this records the version this
+    page was loaded with and then polls the deployed version.json; when the
+    deployed version differs, a newer build is live and it offers to update
+    (clear caches, unregister any worker and hard-reload) or to cancel.
   -->
   <script>
     (function () {
-      if (!('serviceWorker' in navigator)) return;
+      var baseline = null;
       var shown = false;
+
+      function fetchVersion() {
+        return fetch('version.json?t=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (j) { return (j && j.version) ? String(j.version) : null; })
+          .catch(function () { return null; });
+      }
 
       function forceUpdate() {
         var step = Promise.resolve();
         try {
-          step = navigator.serviceWorker.getRegistrations().then(function (regs) {
-            return Promise.all(regs.map(function (r) { return r.unregister(); }));
-          });
+          if ('serviceWorker' in navigator) {
+            step = navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(regs.map(function (r) { return r.unregister(); }));
+            });
+          }
         } catch (e) {}
         step.then(function () {
           return window.caches ? caches.keys().then(function (keys) {
             return Promise.all(keys.map(function (k) { return caches.delete(k); }));
           }) : null;
         }).catch(function () {}).then(function () {
-          window.location.reload();
+          // Cache-busting navigation so the fresh index.html/main.dart.js load.
+          window.location.replace(window.location.pathname + '?v=' + Date.now());
         });
       }
 
-      function showBar() {
+      function showBar(version) {
         if (shown) return;
         shown = true;
         var bar = document.createElement('div');
         bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#1E88E5;color:#fff;font:14px -apple-system,Segoe UI,Roboto,sans-serif;padding:12px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 -2px 10px rgba(0,0,0,.25)';
         var msg = document.createElement('span');
-        msg.textContent = 'Hay una nueva versión de File4Base disponible.';
+        msg.textContent = 'Hay una nueva versión de File4Base disponible (v' + version + ').';
         msg.style.flex = '1';
         var reload = document.createElement('button');
         reload.textContent = 'Actualizar';
@@ -93,20 +104,16 @@
         document.body.appendChild(bar);
       }
 
-      function watch(reg) {
-        if (!reg) return;
-        if (reg.waiting && navigator.serviceWorker.controller) showBar();
-        reg.addEventListener('updatefound', function () {
-          var nw = reg.installing;
-          if (!nw) return;
-          nw.addEventListener('statechange', function () {
-            if (nw.state === 'installed' && navigator.serviceWorker.controller) showBar();
-          });
+      function check() {
+        fetchVersion().then(function (v) {
+          if (!v) return;
+          if (baseline === null) { baseline = v; return; } // this build's version
+          if (v !== baseline) showBar(v);
         });
-        setInterval(function () { reg.update().catch(function () {}); }, 60000);
       }
 
-      navigator.serviceWorker.ready.then(watch).catch(function () {});
+      check();                     // establish the baseline
+      setInterval(check, 30000);   // then watch for a newer deployed version
     })();
   </script>
 </body>
