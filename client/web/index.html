@@ -44,5 +44,70 @@
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
   <script src="flutter_bootstrap.js" async></script>
+
+  <!--
+    New-version detector. The app is a PWA whose service worker caches the
+    build, so after a deploy the browser keeps serving the old version until it
+    is replaced. This watches for a newer service worker and, when one is ready,
+    shows a bar offering to update (which unregisters the worker, clears the
+    caches and reloads for a guaranteed-fresh version) or to cancel.
+  -->
+  <script>
+    (function () {
+      if (!('serviceWorker' in navigator)) return;
+      var shown = false;
+
+      function forceUpdate() {
+        var step = Promise.resolve();
+        try {
+          step = navigator.serviceWorker.getRegistrations().then(function (regs) {
+            return Promise.all(regs.map(function (r) { return r.unregister(); }));
+          });
+        } catch (e) {}
+        step.then(function () {
+          return window.caches ? caches.keys().then(function (keys) {
+            return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+          }) : null;
+        }).catch(function () {}).then(function () {
+          window.location.reload();
+        });
+      }
+
+      function showBar() {
+        if (shown) return;
+        shown = true;
+        var bar = document.createElement('div');
+        bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:#1E88E5;color:#fff;font:14px -apple-system,Segoe UI,Roboto,sans-serif;padding:12px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 -2px 10px rgba(0,0,0,.25)';
+        var msg = document.createElement('span');
+        msg.textContent = 'Hay una nueva versión de File4Base disponible.';
+        msg.style.flex = '1';
+        var reload = document.createElement('button');
+        reload.textContent = 'Actualizar';
+        reload.style.cssText = 'background:#fff;color:#1565C0;border:0;border-radius:6px;padding:8px 14px;font-weight:700;cursor:pointer';
+        reload.onclick = forceUpdate;
+        var cancel = document.createElement('button');
+        cancel.textContent = 'Cancelar';
+        cancel.style.cssText = 'background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);border-radius:6px;padding:8px 14px;cursor:pointer';
+        cancel.onclick = function () { bar.remove(); shown = false; };
+        bar.appendChild(msg); bar.appendChild(reload); bar.appendChild(cancel);
+        document.body.appendChild(bar);
+      }
+
+      function watch(reg) {
+        if (!reg) return;
+        if (reg.waiting && navigator.serviceWorker.controller) showBar();
+        reg.addEventListener('updatefound', function () {
+          var nw = reg.installing;
+          if (!nw) return;
+          nw.addEventListener('statechange', function () {
+            if (nw.state === 'installed' && navigator.serviceWorker.controller) showBar();
+          });
+        });
+        setInterval(function () { reg.update().catch(function () {}); }, 60000);
+      }
+
+      navigator.serviceWorker.ready.then(watch).catch(function () {});
+    })();
+  </script>
 </body>
 </html>

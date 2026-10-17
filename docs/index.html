@@ -441,7 +441,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
       </div>
       <span class="brand-title">File4Base</span>
-      <span class="version-pill">v0.17.0</span>
+      <span class="version-pill">v0.18.0</span>
     </a>
 
     <div class="nav-actions">
@@ -537,7 +537,7 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base (<strong>v0.17.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
+          File4Base (<strong>v0.18.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
@@ -724,7 +724,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
       <!-- Security & User Accounts -->
       <section id="security-users">
-        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.17.0)</h2>
+        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.18.0)</h2>
         <p>Security is strictly catalog-isolated and hardened across transport and authentication layers:</p>
         <ul>
           <li><strong>Per-Database Accounts &amp; Roles</strong>: Accounts belong exclusively to their database (<code>owner</code>, <code>admin</code>, <code>user</code>) with bcrypt password hashing and brute-force rate limiting on sign-in and database drop operations.</li>
@@ -777,13 +777,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <tbody>
             <tr>
               <td><code>file4base-api</code></td>
-              <td><code>cloudresources/file4base-api:0.17.0</code></td>
+              <td><code>cloudresources/file4base-api:0.18.0</code></td>
               <td><code>8080:8080</code></td>
               <td>Go REST API v1, DBAL &amp; Server Tools Backend</td>
             </tr>
             <tr>
               <td><code>file4base-web</code></td>
-              <td><code>cloudresources/file4base-web:0.17.0</code></td>
+              <td><code>cloudresources/file4base-web:0.18.0</code></td>
               <td><code>3000:80</code></td>
               <td>Nginx Web Client &amp; API/Swagger Reverse Proxy</td>
             </tr>
@@ -890,6 +890,18 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <h2>📋 Latest Releases &amp; Changelog</h2>
         <!-- AUTO-CHANGELOG:START -->
         <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.18.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-17)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>The "Manage" menu is now also in the Server Tools top menu</strong>, at the end (Database, Security, Value Lists, External Data Sources, Layouts, Scripts) — the same menu as File ▸ Manage, with "Containers" excluded (it is a Server Tools section). It is in both the Server Tools menu-bar dropdown and the console dialog.</li>
+            <li><strong>New-version banner (web PWA).</strong> The web client caches itself via a service worker, so after a deploy the browser kept serving the old build until fully closed. It now checks for a newer version while open and, when one is ready, shows a bar offering <strong>Actualizar</strong> (unregisters the worker, clears caches and reloads for a guaranteed-fresh version) or <strong>Cancelar</strong>.</li>
+          </ul>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Changed</p>
+          <ul>
+            <li><strong>The Super-owner switch now works on any account, not only existing owners.</strong> Super-owner is a privilege on top of Owner, so turning it on for a non-owner account promotes it to Owner first and then grants super-owner (a single toggle). It still never appears on your own account.</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
           <h3 style="margin-top: 0;">Release <code>v0.17.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-17)</span></h3>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
           <ul>
@@ -916,13 +928,6 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
           <ul>
             <li><strong>In-app "update available" notice with one-click guided deploy</strong> (web client). While a server administrator is signed in, the app checks the running version against the latest File4Base release every 30 minutes (and at sign-in), and when a newer version is published it shows a notice with the current→latest versions and the release notes. Confirming takes an automatic pre-update backup (server side) and shows the exact command to run on the Docker host (<code>docker compose pull &amp;&amp; docker compose up -d</code>) with a copy button — because the API container has no access to the host's Docker, it cannot pull and recreate the stack itself, so the operator runs that one command to finish. The amber toolbar badge now opens this notice instead of pointing to Server Tools, and the check stops polling for accounts that are not server administrators. Reuses the existing <code>GET /api/v1/server/containers</code> version check and <code>POST /api/v1/server/containers/update</code> (no server changes).</li>
-          </ul>
-        </div>
-        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
-          <h3 style="margin-top: 0;">Release <code>v0.15.2</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-16)</span></h3>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
-          <ul>
-            <li><strong>Real-time sync never connected in the deployed server (WebSocket upgrade failed with <code>501 Not Implemented</code>).</strong> The global telemetry/logging middleware wraps every response in a status-recording writer, but that wrapper embedded <code>http.ResponseWriter</code> without forwarding <code>Hijack</code>, so it did not satisfy <code>http.Hijacker</code>. The WebSocket upgrade at <code>GET /api/v1/realtime</code> needs to hijack the connection, so it was refused for every client — each browser only ever saw its own edits and picked up others' changes solely on a manual reload or when navigating between records (the database was always shared; only the live push was broken). The wrapper now forwards <code>Hijack</code> (and <code>Flush</code>). This passed the unit tests before because they mount the API router without the production middleware stack; added a telemetry test that the wrapped writer supports hijacking.</li>
           </ul>
         </div>
         <p>View the full history in <a href="https://github.com/file4base/file4base-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><code>CHANGELOG.md</code></a>.</p>
@@ -954,7 +959,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <strong>Include Environment Details</strong>:
             Always state:
             <ul>
-              <li><strong>File4Base Version</strong>: (e.g. <code>v0.17.0</code>)</li>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.18.0</code>)</li>
               <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
               <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
             </ul>
@@ -980,7 +985,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p>© 2024-2026 File4Base Project · Version v0.17.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
+    <p>© 2024-2026 File4Base Project · Version v0.18.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
     <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
     <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>
