@@ -1696,22 +1696,21 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               child: Column(
                                                 crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
-                                                  Row(
-                                                    mainAxisSize: MainAxisSize.min,
+                                                  Wrap(
+                                                    spacing: 6,
+                                                    runSpacing: 4,
+                                                    crossAxisAlignment: WrapCrossAlignment.center,
                                                     children: [
-                                                      Flexible(
-                                                        child: Text(
-                                                          user.username,
-                                                          overflow: TextOverflow.ellipsis,
-                                                          style: TextStyle(
-                                                            fontSize: 13,
-                                                            fontWeight: FontWeight.bold,
-                                                            color: user.isActive ? null : Colors.grey,
-                                                          ),
+                                                      Text(
+                                                        user.username,
+                                                        overflow: TextOverflow.ellipsis,
+                                                        style: TextStyle(
+                                                          fontSize: 13,
+                                                          fontWeight: FontWeight.bold,
+                                                          color: user.isActive ? null : Colors.grey,
                                                         ),
                                                       ),
-                                                      if (isCurrent) ...[
-                                                        const SizedBox(width: 6),
+                                                      if (isCurrent)
                                                         Container(
                                                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                                                           decoration: BoxDecoration(
@@ -1724,9 +1723,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                             style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.greenAccent),
                                                           ),
                                                         ),
-                                                      ],
-                                                      if (user.mfaEnabled) ...[
-                                                        const SizedBox(width: 6),
+                                                      if (user.mfaEnabled)
                                                         Container(
                                                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                                                           decoration: BoxDecoration(
@@ -1746,7 +1743,6 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                             ],
                                                           ),
                                                         ),
-                                                      ],
                                                     ],
                                                   ),
                                                   if (user.createdAt != null)

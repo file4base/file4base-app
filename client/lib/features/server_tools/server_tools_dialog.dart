@@ -961,58 +961,65 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
         children: [
           Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Text(
-                        'Docker Containers & Services',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: (_updateAvailable ? Colors.amber.shade700 : Colors.green.shade700)
-                              .withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: (_updateAvailable ? Colors.amber.shade700 : Colors.green.shade700)
-                                .withValues(alpha: 0.45),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Flexible(
+                          child: Text(
+                            'Docker Containers & Services',
+                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _updateAvailable ? Icons.system_update_alt : Icons.verified_outlined,
-                              size: 13,
-                              color: _updateAvailable ? Colors.amber.shade800 : Colors.green.shade700,
+                        const SizedBox(width: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: (_updateAvailable ? Colors.amber.shade700 : Colors.green.shade700)
+                                .withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: (_updateAvailable ? Colors.amber.shade700 : Colors.green.shade700)
+                                  .withValues(alpha: 0.45),
                             ),
-                            const SizedBox(width: 5),
-                            Text(
-                              _updateAvailable
-                                  ? 'UPDATE AVAILABLE: v$_currentStackVersion → v$_latestStackVersion'
-                                  : 'UP TO DATE (v$_currentStackVersion)',
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.bold,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _updateAvailable ? Icons.system_update_alt : Icons.verified_outlined,
+                                size: 13,
                                 color: _updateAvailable ? Colors.amber.shade800 : Colors.green.shade700,
                               ),
-                            ),
-                          ],
+                              const SizedBox(width: 5),
+                              Text(
+                                _updateAvailable
+                                    ? 'UPDATE AVAILABLE: v$_currentStackVersion → v$_latestStackVersion'
+                                    : 'UP TO DATE (v$_currentStackVersion)',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: _updateAvailable ? Colors.amber.shade800 : Colors.green.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    'Inspect health, version status (Docker Hub & GitHub Releases), resource telemetry, and logs${_versionCheckedAt.isNotEmpty ? "  •  Last checked: $_versionCheckedAt" : ""}',
-                    style: TextStyle(fontSize: 11.5, color: _mutedText),
-                  ),
-                ],
+                      ],
+                    ),
+                    Text(
+                      'Inspect health, version status (Docker Hub & GitHub Releases), resource telemetry, and logs${_versionCheckedAt.isNotEmpty ? "  •  Last checked: $_versionCheckedAt" : ""}',
+                      style: TextStyle(fontSize: 11.5, color: _mutedText),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 12),
               OutlinedButton.icon(
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),

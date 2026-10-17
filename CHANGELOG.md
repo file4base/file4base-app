@@ -11,8 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.19.2] - 2026-10-17
 
+### Added
+- **Comprehensive File4Base v0.19.2 Manual (`docs/manual-file4base-0.19.2.md`):** Complete end-user, visual layout designer, schema/script engineer, and server administrator manual in English illustrated with 20 high-resolution UI screenshots (`docs/images/manual-0.19.2/01_login_dialog.png` – `20_about_file4base.png`) and architectural diagrams.
+
 ### Changed
 - Version bump to demonstrate the in-app new-version banner live (no functional changes).
+- Wrapped account badges in `ManageSecurityDialog` and header text in `ServerToolsDialog` (`Containers & Services`) to prevent horizontal row overflow on narrow viewports.
 
 ## [0.19.1] - 2026-10-17
 

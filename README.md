@@ -165,3 +165,10 @@ flutter run -d macos    # or windows, linux
 
 ### 3. Automated CI/CD Workflows
 A GitHub Actions workflow (`.github/workflows/desktop_release.yml`) runs the Go server checks (`go vet` and the test suite against a PostgreSQL service) and the Flutter tests, and automatically compiles and packages native release builds for macOS, Windows, and Linux on every release tag or workflow dispatch.
+
+## Documentation
+
+- **[Complete File4Base v0.19.2 Manual (`docs/manual-file4base-0.19.2.md`)](docs/manual-file4base-0.19.2.md)** — Full User, Visual Designer, Schema & Scripting Engineer, and Server Administrator manual with 20 UI screenshots (`docs/images/manual-0.19.2/`).
+- **[REST API & Realtime Reference (`docs/api/API_REFERENCE.md`)](docs/api/API_REFERENCE.md)** — Complete `/api/v1/*` and WebSocket protocol documentation.
+- **[Menu Reference Guide (`docs/specs/file4base_menu_reference_guide.md`)](docs/specs/file4base_menu_reference_guide.md)** — Detailed menu bar and shortcut reference.
+- **[Server Tools & MFA Specification (`docs/specs/server_tools_and_mfa.md`)](docs/specs/server_tools_and_mfa.md)** — Architecture and operational guide for the 9 Server Tools modules and TOTP 2FA.
