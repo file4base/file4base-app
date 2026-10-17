@@ -441,7 +441,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
       </div>
       <span class="brand-title">File4Base</span>
-      <span class="version-pill">v0.16.1</span>
+      <span class="version-pill">v0.16.2</span>
     </a>
 
     <div class="nav-actions">
@@ -537,7 +537,7 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base (<strong>v0.16.1</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
+          File4Base (<strong>v0.16.2</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
@@ -724,7 +724,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
       <!-- Security & User Accounts -->
       <section id="security-users">
-        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.16.1)</h2>
+        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.16.2)</h2>
         <p>Security is strictly catalog-isolated and hardened across transport and authentication layers:</p>
         <ul>
           <li><strong>Per-Database Accounts &amp; Roles</strong>: Accounts belong exclusively to their database (<code>owner</code>, <code>admin</code>, <code>user</code>) with bcrypt password hashing and brute-force rate limiting on sign-in and database drop operations.</li>
@@ -777,13 +777,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <tbody>
             <tr>
               <td><code>file4base-api</code></td>
-              <td><code>cloudresources/file4base-api:0.16.1</code></td>
+              <td><code>cloudresources/file4base-api:0.16.2</code></td>
               <td><code>8080:8080</code></td>
               <td>Go REST API v1, DBAL &amp; Server Tools Backend</td>
             </tr>
             <tr>
               <td><code>file4base-web</code></td>
-              <td><code>cloudresources/file4base-web:0.16.1</code></td>
+              <td><code>cloudresources/file4base-web:0.16.2</code></td>
               <td><code>3000:80</code></td>
               <td>Nginx Web Client &amp; API/Swagger Reverse Proxy</td>
             </tr>
@@ -890,6 +890,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <h2>📋 Latest Releases &amp; Changelog</h2>
         <!-- AUTO-CHANGELOG:START -->
         <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.16.2</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-17)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>The login screens now show the loaded client version</strong> (a <code>v0.16.2</code> badge on the "Connect &amp; Login" dialog and a line on the "Protected Solution / Sign In" screen). Because the web client is a PWA cached by a service worker, after an update the browser can keep serving an older build; showing the version makes a stale cache obvious at a glance (do a hard reload, or unregister the service worker, if it does not match the published version).</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
           <h3 style="margin-top: 0;">Release <code>v0.16.1</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-17)</span></h3>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
           <ul>
@@ -927,16 +934,6 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <li><strong>Audited and annotated the client's unhandled async futures</strong> (<code>client/lib</code>, 135 <code>discarded_futures</code> / <code>unawaited_futures</code> from <code>flutter analyze</code>, now 0). The audit found that the flagged fire-and-forget calls target methods that already surface their own failures to the user (an error <code>SnackBar</code>, an in-dialog error state, or a <code>_report(...)</code>) or are benign lifecycle cleanup (<code>cancel()</code> / <code>close()</code>); none was silently swallowing an error in a user-facing flow. Each is now wrapped in <code>unawaited(...)</code> (the idiom already used in the codebase) so the intentional discard is explicit — behaviour is unchanged, errors still reach the zone handler, and the lint is cleared. All 427 Flutter tests pass. (The only remaining findings are in test files and are benign.)</li>
           </ul>
         </div>
-        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
-          <h3 style="margin-top: 0;">Release <code>v0.15.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-16)</span></h3>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
-          <ul>
-            <li><strong>Super-owner accounts</strong>: a per-account <code>super_owner</code> flag that grants full, server-wide control independent of the database a session signed in to — the account-based way to administer the whole server, alongside the <code>FILE4BASE_ADMIN_DATABASE</code> setting (an owner of that database is still a server administrator, for backward compatibility). A super-owner reaches every Server Tool of every database. The first super-owner is bootstrapped with <code>FILE4BASE_SUPER_OWNER=database:username</code> (comma-separated for several); a seeded account signs in as a super-owner even before any flag is stored, so it can then grant the privilege to other owners. Grant/revoke with <code>PUT /api/v1/security/users/{id}/super-owner</code> (super-owners only; the target must be an owner; a super-owner cannot strip their own privilege). Manage Security shows a shield control on owner rows for super-owners. Changing the flag re-stamps the account, so the target's existing sessions end at once.</li>
-            <li><strong>Real-time sync (server)</strong>: a change-notification WebSocket at <code>GET /api/v1/realtime</code>. A client authenticates with its bearer token as the first message and then receives a small event (<code>{type, resource, database, origin}</code>) whenever the records or schema of its database change in another session — so every open window can reload instead of going stale. Events carry no record data (the client reloads what it shows) and are scoped to the client's database; the <code>origin</code> id lets a client ignore the changes it made itself. In-memory per process (a future multi-replica setup would use Postgres LISTEN/NOTIFY). The Flutter client subscribes to it (below).</li>
-            <li><strong>Real-time sync (client)</strong>: while signed in, the app keeps a WebSocket to <code>/api/v1/realtime</code> (auto-reconnecting). When another session changes the table you are viewing, Browse reloads and keeps you on the same record — and it waits until you leave a field so it never interrupts your typing; schema/layout changes reload the tables and layouts. The app ignores the changes it made itself.</li>
-            <li>Server Tools: a backup file (<code>.tar.gz</code> or <code>.f4b.json</code>) can be uploaded (<code>POST .../backups/upload</code>, "Upload Backup..." button) and stored as a server-side backup, then restored — the counterpart of download. A non-administrator's upload can only ever target their own database.</li>
-          </ul>
-        </div>
         <p>View the full history in <a href="https://github.com/file4base/file4base-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><code>CHANGELOG.md</code></a>.</p>
         <!-- AUTO-CHANGELOG:END -->
       </section>
@@ -966,7 +963,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <strong>Include Environment Details</strong>:
             Always state:
             <ul>
-              <li><strong>File4Base Version</strong>: (e.g. <code>v0.16.1</code>)</li>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.16.2</code>)</li>
               <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
               <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
             </ul>
@@ -992,7 +989,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p>© 2024-2026 File4Base Project · Version v0.16.1 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
+    <p>© 2024-2026 File4Base Project · Version v0.16.2 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
     <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
     <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>

@@ -3341,6 +3341,13 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  // The client version loaded in this browser, so a stale
+                  // cached build is easy to spot.
+                  Text(
+                    'File4Base client v${AboutFile4BaseDialog.version}',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurfaceVariant),
+                  ),
                   const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,

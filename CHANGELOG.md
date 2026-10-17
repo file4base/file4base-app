@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-10-17
+
+### Added
+- **The login screens now show the loaded client version** (a `v0.16.2` badge on the "Connect & Login" dialog and a line on the "Protected Solution / Sign In" screen). Because the web client is a PWA cached by a service worker, after an update the browser can keep serving an older build; showing the version makes a stale cache obvious at a glance (do a hard reload, or unregister the service worker, if it does not match the published version).
+
 ## [0.16.1] - 2026-10-17
 
 ### Fixed
