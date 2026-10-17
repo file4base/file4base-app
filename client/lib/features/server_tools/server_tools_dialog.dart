@@ -19,6 +19,21 @@ enum ServerToolSection {
   notifications,
 }
 
+/// A solution-management action (an item of the "Manage" menu) made available
+/// at the end of the Server Tools console. [onSelected] opens the manager.
+class ServerToolsManagementAction {
+  const ServerToolsManagementAction({
+    required this.label,
+    required this.subtitle,
+    required this.icon,
+    required this.onSelected,
+  });
+  final String label;
+  final String subtitle;
+  final IconData icon;
+  final VoidCallback onSelected;
+}
+
 class ServerToolsDialog extends StatefulWidget {
 
   const ServerToolsDialog({
@@ -27,12 +42,18 @@ class ServerToolsDialog extends StatefulWidget {
     this.activeDatabase,
     this.onDatabaseRestored,
     this.onVersionStatusChanged,
+    this.management = const <ServerToolsManagementAction>[],
   });
   final ApiClient apiClient;
   final ServerToolSection initialSection;
   final String? activeDatabase;
   final VoidCallback? onDatabaseRestored;
   final void Function({required bool updateAvailable, required String latestVersion})? onVersionStatusChanged;
+
+  /// Solution-management actions (the "Manage" menu) surfaced at the end of the
+  /// console so an administrator can reach them from one place. Each opens its
+  /// own dialog on top of this one.
+  final List<ServerToolsManagementAction> management;
 
   static Future<void> show(
     BuildContext context,
@@ -41,6 +62,7 @@ class ServerToolsDialog extends StatefulWidget {
     String? activeDatabase,
     VoidCallback? onDatabaseRestored,
     void Function({required bool updateAvailable, required String latestVersion})? onVersionStatusChanged,
+    List<ServerToolsManagementAction> management = const <ServerToolsManagementAction>[],
   }) {
     return showDialog<void>(
       context: context,
@@ -51,6 +73,7 @@ class ServerToolsDialog extends StatefulWidget {
         activeDatabase: activeDatabase,
         onDatabaseRestored: onDatabaseRestored,
         onVersionStatusChanged: onVersionStatusChanged,
+        management: management,
       ),
     );
   }
@@ -69,6 +92,9 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   // only the tools of the session's own database are offered.
   bool _serverAdmin = false;
   bool _adminDatabaseConfigured = true;
+  // Whether the session may use the single-database tools (owner or admin).
+  // Gates the solution-management group.
+  bool _databaseTools = false;
 
   /// Backups and maintenance work on one database (the session's own); the
   /// other sections act on the whole server.
@@ -334,9 +360,11 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       final access = await widget.apiClient.getServerAccess();
       _serverAdmin = access['server_admin'] == true;
       _adminDatabaseConfigured = access['admin_database_configured'] != false;
+      _databaseTools = access['database_tools'] == true;
     } on Exception {
       // Unknown access: offer only the tools of the session's own database.
       _serverAdmin = false;
+      _databaseTools = false;
     }
     if (!mounted) return;
     setState(() {
@@ -639,6 +667,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       child: Column(
         children: [
           Expanded(child: _buildNavigationList(items)),
+          _buildManagementGroup(),
           if (serverWideNote != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
@@ -651,6 +680,68 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
                 ],
               ),
             ),
+        ],
+      ),
+    );
+  }
+
+  // The "Manage" menu, surfaced at the end of the console for administrators.
+  // Each item opens its own dialog on top of Server Tools.
+  Widget _buildManagementGroup() {
+    if (!_databaseTools || widget.management.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: _mutedText.withValues(alpha: 0.2))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
+            child: Text(
+              'MANAGE',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.6, color: _mutedText),
+            ),
+          ),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  for (final action in widget.management)
+                    Material(
+                      color: Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(8),
+                        onTap: action.onSelected,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                          child: Row(
+                            children: [
+                              Icon(action.icon, size: 18, color: _mutedText),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(action.label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                                    Text(action.subtitle, style: TextStyle(fontSize: 10, color: _mutedText)),
+                                  ],
+                                ),
+                              ),
+                              Icon(Icons.open_in_new, size: 13, color: _mutedText),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );

@@ -662,10 +662,6 @@ class File4BaseMenuBar extends StatelessWidget {
               child: const Text('Scripts...'),
             ),
             MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Containers', 'Roadmap Phase 8', 'Blob storage, S3 integration, and secure container files.'),
-              child: const Text('Containers...'),
-            ),
-            MenuItemButton(
               onPressed: onManageThemes ?? () => _showRoadmapDialog(context, 'Themes', 'Roadmap Phase 5', 'Visual styling themes, typography rules, and CSS presets.'),
               child: const Text('Themes...'),
             ),

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-17
+
+### Added
+- **The "Manage" menu is now also at the end of the Server Tools console.** A super-owner/administrator can reach solution management (Database, Security, Value Lists, External Data Sources, Layouts, Scripts) from one place; each opens its own dialog. "Containers" was removed from the Manage menu (in both File ▸ Manage and here) — it belongs to Server Tools proper, not to solution management.
+- **A clear Super-owner on/off switch in the account editor** (Manage Security ▸ edit an owner account). A super-owner now has an explicit, labelled toggle — ON = full, server-wide access to every Server Tool; OFF = normal owner — instead of only the small shield icon on the row. It appears only to a super-owner, only on owner accounts, and never on your own account; toggling takes effect immediately and signs the target out.
+
 ## [0.16.2] - 2026-10-17
 
 ### Added

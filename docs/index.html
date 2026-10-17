@@ -441,7 +441,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
       </div>
       <span class="brand-title">File4Base</span>
-      <span class="version-pill">v0.16.2</span>
+      <span class="version-pill">v0.17.0</span>
     </a>
 
     <div class="nav-actions">
@@ -537,7 +537,7 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base (<strong>v0.16.2</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
+          File4Base (<strong>v0.17.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
@@ -724,7 +724,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
       <!-- Security & User Accounts -->
       <section id="security-users">
-        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.16.2)</h2>
+        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.17.0)</h2>
         <p>Security is strictly catalog-isolated and hardened across transport and authentication layers:</p>
         <ul>
           <li><strong>Per-Database Accounts &amp; Roles</strong>: Accounts belong exclusively to their database (<code>owner</code>, <code>admin</code>, <code>user</code>) with bcrypt password hashing and brute-force rate limiting on sign-in and database drop operations.</li>
@@ -777,13 +777,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <tbody>
             <tr>
               <td><code>file4base-api</code></td>
-              <td><code>cloudresources/file4base-api:0.16.2</code></td>
+              <td><code>cloudresources/file4base-api:0.17.0</code></td>
               <td><code>8080:8080</code></td>
               <td>Go REST API v1, DBAL &amp; Server Tools Backend</td>
             </tr>
             <tr>
               <td><code>file4base-web</code></td>
-              <td><code>cloudresources/file4base-web:0.16.2</code></td>
+              <td><code>cloudresources/file4base-web:0.17.0</code></td>
               <td><code>3000:80</code></td>
               <td>Nginx Web Client &amp; API/Swagger Reverse Proxy</td>
             </tr>
@@ -890,6 +890,14 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <h2>📋 Latest Releases &amp; Changelog</h2>
         <!-- AUTO-CHANGELOG:START -->
         <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.17.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-17)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>The "Manage" menu is now also at the end of the Server Tools console.</strong> A super-owner/administrator can reach solution management (Database, Security, Value Lists, External Data Sources, Layouts, Scripts) from one place; each opens its own dialog. "Containers" was removed from the Manage menu (in both File ▸ Manage and here) — it belongs to Server Tools proper, not to solution management.</li>
+            <li><strong>A clear Super-owner on/off switch in the account editor</strong> (Manage Security ▸ edit an owner account). A super-owner now has an explicit, labelled toggle — ON = full, server-wide access to every Server Tool; OFF = normal owner — instead of only the small shield icon on the row. It appears only to a super-owner, only on owner accounts, and never on your own account; toggling takes effect immediately and signs the target out.</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
           <h3 style="margin-top: 0;">Release <code>v0.16.2</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-17)</span></h3>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
           <ul>
@@ -915,23 +923,6 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
           <ul>
             <li><strong>Real-time sync never connected in the deployed server (WebSocket upgrade failed with <code>501 Not Implemented</code>).</strong> The global telemetry/logging middleware wraps every response in a status-recording writer, but that wrapper embedded <code>http.ResponseWriter</code> without forwarding <code>Hijack</code>, so it did not satisfy <code>http.Hijacker</code>. The WebSocket upgrade at <code>GET /api/v1/realtime</code> needs to hijack the connection, so it was refused for every client — each browser only ever saw its own edits and picked up others' changes solely on a manual reload or when navigating between records (the database was always shared; only the live push was broken). The wrapper now forwards <code>Hijack</code> (and <code>Flush</code>). This passed the unit tests before because they mount the API router without the production middleware stack; added a telemetry test that the wrapped writer supports hijacking.</li>
-          </ul>
-        </div>
-        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
-          <h3 style="margin-top: 0;">Release <code>v0.15.1</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-16)</span></h3>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Security</p>
-          <ul>
-            <li><strong>Dependency and Go toolchain updates to clear all known vulnerabilities</strong> (<code>server/go.mod</code>, <code>server/go.sum</code>). <code>govulncheck ./...</code> reported <strong>23 called vulnerabilities</strong> (Go standard library plus <code>github.com/go-chi/chi/v5</code>); it now reports <strong>0</strong>. The build toolchain is pinned to <strong>go1.26.9</strong> (new <code>toolchain</code> directive, keeping the <code>go 1.26.0</code> minimum), <code>github.com/go-chi/chi/v5</code> is updated <code>5.2.1 → 5.5.0</code> (fixes the host-header/open-redirect in <code>RedirectSlashes</code> and the request-parsing advisories <code>GO-2026-5774/5775/5777</code>), and <code>golang.org/x/net</code> is updated <code>0.58.0 → 0.61.0</code> (fixes <code>GO-2026-6603/6610/6611/6612/6617</code>). One advisory remains and is accepted: <code>GO-2026-5932</code> (the unmaintained <code>golang.org/x/crypto/openpgp</code> package) has no fixed version, and File4Base neither imports nor calls it.</li>
-            <li><strong>The audit log, session list and login throttle no longer trust a client-supplied IP by default.</strong> <code>X-Forwarded-For</code> / <code>X-Real-IP</code> were honored from any caller (and chi's <code>middleware.RealIP</code> rewrote <code>RemoteAddr</code> from them unconditionally), so a direct client could forge the address recorded against it — or, since the login throttle keys on that address, interfere with another account's lockout state. Those forwarding headers are now trusted only when the request's direct TCP peer is a configured reverse proxy, set via the new <strong><code>FILE4BASE_TRUSTED_PROXIES</code></strong> setting (comma-separated IPs and CIDR ranges); the real client is then recovered by walking <code>X-Forwarded-For</code> right-to-left past trusted hops. With no trusted proxies configured (the default) the direct peer address is always used. The resolution is shared by the audit/session metadata, the request telemetry log and the login-throttle key (new <code>internal/clientip</code> package). Documented in <code>.env.example</code> and <code>docs/api/API_REFERENCE.md</code>.</li>
-            <li><strong>Hardening from a review of the file importers, the encrypted channel and the control store</strong> (documented in <code>docs/specs/security_model.md</code>). The encrypted payload channel (<code>server/internal/crypto</code>) now (a) logs a startup warning when <code>FILE4BASE_CHANNEL_SECRET</code> is unset — the fallback key is a public built-in default that provides no confidentiality on its own — and (b) caps the in-memory read of an encrypted request body at 512 MiB so a hostile oversized payload cannot exhaust server memory. The review confirmed the <code>.fmp12</code> / HTML-DDR importers whitelist (<code>[a-z0-9_]</code>) and quote every imported identifier and bound every binary read against the input length (no SQL injection, no out-of-bounds), and that the SQLite control store is fully parameterised with transactional writes; those needed no code change.</li>
-          </ul>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
-          <ul>
-            <li><strong>Saving a script now runs inside a database transaction, so a failing step can no longer corrupt it</strong> (<code>server/internal/schema/script_service.go</code>). <code>CreateScript</code> and <code>UpdateScript</code> wrote the script row and each of its steps as separate statements; <code>UpdateScript</code> first deleted all existing steps and then re-inserted the new ones one at a time. A failure partway through (for example a step violating a column constraint) left the script with its steps wiped out and only a prefix of the new sequence written — and <code>CreateScript</code> could leave a half-created script. Both now wrap the whole operation in a single transaction that rolls back on any failure, leaving the previously stored script untouched. Added <code>internal/schema</code> tests that a failing step rolls back both the create and the update.</li>
-          </ul>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Changed</p>
-          <ul>
-            <li><strong>Audited and annotated the client's unhandled async futures</strong> (<code>client/lib</code>, 135 <code>discarded_futures</code> / <code>unawaited_futures</code> from <code>flutter analyze</code>, now 0). The audit found that the flagged fire-and-forget calls target methods that already surface their own failures to the user (an error <code>SnackBar</code>, an in-dialog error state, or a <code>_report(...)</code>) or are benign lifecycle cleanup (<code>cancel()</code> / <code>close()</code>); none was silently swallowing an error in a user-facing flow. Each is now wrapped in <code>unawaited(...)</code> (the idiom already used in the codebase) so the intentional discard is explicit — behaviour is unchanged, errors still reach the zone handler, and the lint is cleared. All 427 Flutter tests pass. (The only remaining findings are in test files and are benign.)</li>
           </ul>
         </div>
         <p>View the full history in <a href="https://github.com/file4base/file4base-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><code>CHANGELOG.md</code></a>.</p>
@@ -963,7 +954,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <strong>Include Environment Details</strong>:
             Always state:
             <ul>
-              <li><strong>File4Base Version</strong>: (e.g. <code>v0.16.2</code>)</li>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.17.0</code>)</li>
               <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
               <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
             </ul>
@@ -989,7 +980,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p>© 2024-2026 File4Base Project · Version v0.16.2 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
+    <p>© 2024-2026 File4Base Project · Version v0.17.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
     <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
     <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>
