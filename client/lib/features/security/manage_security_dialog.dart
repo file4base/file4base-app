@@ -393,6 +393,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     final passwordController = TextEditingController();
     var selectedRole = userToEdit?.role ?? 'user';
     var isActive = userToEdit?.isActive ?? true;
+    var isSuperOwner = userToEdit?.superOwner ?? false;
     final layoutPerms = <String, String>{};
     final tablePerms = <String, UserTablePermissionModel>{};
 
@@ -587,6 +588,71 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                               ),
                             ],
                           ),
+
+                          // Super-owner on/off switch — grants full, server-wide
+                          // access to all Server Tools. Only a super-owner sees
+                          // it, only on owner accounts, and never on themselves.
+                          if (_viewerIsSuperOwner && !isNew && selectedRole == 'owner') ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                border: Border.all(color: isSuperOwner ? Colors.amber.shade700 : Colors.grey.shade700),
+                                borderRadius: BorderRadius.circular(6),
+                                color: isSuperOwner ? Colors.amber.withValues(alpha: 0.08) : null,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(isSuperOwner ? Icons.shield : Icons.shield_outlined,
+                                      size: 20, color: isSuperOwner ? Colors.amber.shade700 : Colors.grey),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        const Text('Super-owner', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                                        Text(
+                                          _isCurrentUser(userToEdit)
+                                              ? 'You cannot change your own super-owner status'
+                                              : 'ON = full access to all Server Tools (every database); OFF = normal owner',
+                                          style: const TextStyle(fontSize: 10.5, color: Colors.grey),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Switch(
+                                    value: isSuperOwner,
+                                    activeThumbColor: Colors.amber.shade700,
+                                    onChanged: _isCurrentUser(userToEdit)
+                                        ? null
+                                        : (v) async {
+                                            try {
+                                              await widget.apiClient.setUserSuperOwner(userToEdit.id, v, database: widget.databaseName);
+                                              widget.onModified?.call();
+                                              AutoSaveService.instance.markDirty();
+                                              setDlgState(() => isSuperOwner = v);
+                                              final idx = _users.indexWhere((u) => u.id == userToEdit.id);
+                                              if (idx != -1) {
+                                                setState(() => _users[idx] = _users[idx].copyWith(superOwner: v));
+                                              }
+                                              if (mounted) {
+                                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                                                  content: Text(v
+                                                      ? 'Super-owner granted — full Server Tools access. Their sessions were signed out.'
+                                                      : 'Super-owner revoked. Their sessions were signed out.'),
+                                                  backgroundColor: v ? Colors.amber.shade800 : Colors.blueGrey,
+                                                  duration: const Duration(seconds: 3),
+                                                ));
+                                              }
+                                            } catch (e) {
+                                              setDlgState(() => dialogError = e is ApiException ? e.detail : 'Error: $e');
+                                            }
+                                          },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
 
                           const SizedBox(height: 20),
                           const Divider(),

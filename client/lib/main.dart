@@ -407,6 +407,83 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  // The "Manage" menu, surfaced at the end of the Server Tools console.
+  // Containers is intentionally omitted (it belongs to Server Tools proper).
+  List<ServerToolsManagementAction> _serverToolsManagementActions() {
+    if (_currentUser == null) return const <ServerToolsManagementAction>[];
+    final client = ref.read(apiClientProvider);
+    return [
+      ServerToolsManagementAction(
+        label: 'Database',
+        subtitle: 'Tables, fields & relationships',
+        icon: Icons.storage_outlined,
+        onSelected: () async {
+          await ManageDatabaseDialog.show(context);
+          unawaited(_loadTables());
+        },
+      ),
+      ServerToolsManagementAction(
+        label: 'Security',
+        subtitle: 'Accounts & privileges',
+        icon: Icons.security_outlined,
+        onSelected: () async {
+          if (_currentUser!.role == 'user') {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Access Denied: Only Owner or Admin accounts can manage security and user accounts.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+          await ManageSecurityDialog.show(
+            context,
+            client,
+            _currentUser!,
+            databaseName: _activeDatabaseName,
+            onModified: () async {
+              AutoSaveService.instance.markDirty();
+            },
+          );
+          await _loadUserPermissions();
+          await _loadTables();
+        },
+      ),
+      ServerToolsManagementAction(
+        label: 'Value Lists',
+        subtitle: 'Reusable value lists',
+        icon: Icons.list_alt_outlined,
+        onSelected: () => unawaited(ManageValueListsDialog.show(context)),
+      ),
+      ServerToolsManagementAction(
+        label: 'External Data Sources',
+        subtitle: 'Registered connections',
+        icon: Icons.cable_outlined,
+        onSelected: () => unawaited(ManageDataSourcesDialog.show(
+          context,
+          apiClient: client,
+          canEdit: _currentUser!.role == 'owner',
+        )),
+      ),
+      ServerToolsManagementAction(
+        label: 'Layouts',
+        subtitle: 'Layout designer',
+        icon: Icons.dashboard_customize_outlined,
+        onSelected: () => unawaited(_handleManageLayouts()),
+      ),
+      ServerToolsManagementAction(
+        label: 'Scripts',
+        subtitle: 'Script workspace',
+        icon: Icons.code,
+        onSelected: () => unawaited(ScriptWorkspaceDialog.show(
+          context,
+          client,
+          databaseName: _activeDatabaseName,
+        )),
+      ),
+    ];
+  }
+
   Future<void> _checkContainerUpdatesInBackground() async {
     if (_currentUser == null || !_currentUser!.isAdmin || _updateCheckForbidden) {
       return;
@@ -2327,6 +2404,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ref.read(apiClientProvider),
                       initialSection: section,
                       activeDatabase: _activeDatabaseName,
+                      management: _serverToolsManagementActions(),
                       onDatabaseRestored: _loadTables,
                       onVersionStatusChanged: ({required updateAvailable, required latestVersion}) {
                         if (mounted) {
