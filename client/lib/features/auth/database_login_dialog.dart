@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/solution_models.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:file4base_client/features/solution_manager/new_database_dialog.dart';
 import 'package:flutter/material.dart';
 
@@ -312,6 +313,20 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                       ],
                     ),
                   ),
+                  // The client version loaded in this browser, so a stale
+                  // cached build is easy to spot.
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E88E5).withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      'v${AboutFile4BaseDialog.version}',
+                      style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF1565C0)),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   IconButton(
                     tooltip: 'Cancel',
                     icon: const Icon(Icons.close, size: 20),
