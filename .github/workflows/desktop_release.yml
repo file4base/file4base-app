@@ -373,6 +373,17 @@ jobs:
           skip-decompress: true
           merge-multiple: true
 
+      - name: Generate SHA256SUMS.txt for the desktop assets
+        # The in-app desktop updater verifies a download against this manifest
+        # before handing it to the installer (GET /api/v1/updates/desktop).
+        working-directory: release-assets
+        run: |
+          rm -f SHA256SUMS.txt
+          find . -maxdepth 1 -type f -printf '%P\0' \
+            | sort -z \
+            | xargs -0 --no-run-if-empty sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Ensure Git Tag and Publish/Update GitHub Release for VERSION
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

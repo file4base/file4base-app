@@ -139,6 +139,12 @@ type ServerAdminHandler struct {
 	releaseNotes           string
 	simulatedLatestVersion string
 
+	// Desktop installer assets of the latest release, cached per version
+	// (see desktop_update_handler.go).
+	desktopAssets          map[string]desktopAsset
+	desktopAssetsVersion   string
+	desktopAssetsCheckedAt time.Time
+
 	// adminDatabase: owners of this database are server administrators.
 	adminDatabase string
 }
@@ -428,6 +434,15 @@ func (h *ServerAdminHandler) recordAudit(category, action, actor, database, targ
 	if len(h.auditLogs) > 200 {
 		h.auditLogs = h.auditLogs[:200]
 	}
+}
+
+// RegisterPublicRoutes mounts the endpoints that need no session.
+//
+// The desktop update channel only mirrors a public GitHub release, and a client
+// too old to sign in must still be able to find its own update, so it sits
+// outside RequireSession (see desktop_update_handler.go).
+func (h *ServerAdminHandler) RegisterPublicRoutes(r chi.Router) {
+	r.Get("/api/v1/updates/desktop", h.GetDesktopUpdate)
 }
 
 // RegisterRoutes mounts the /api/v1/server endpoints (admin/owner only).

@@ -4794,6 +4794,49 @@
           }
         }
       }
+    },
+    "/api/v1/updates/desktop": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Latest Published Desktop Client for a Platform (no session required)",
+        "description": "Reports whether a newer installed desktop client is published and where to get it, with the SHA-256 the download is verified against. This is the client axis of updating, not the container stack one: see /api/v1/server/containers for the stack.",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "query",
+            "required": true,
+            "description": "macos, windows or linux",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "macos",
+                "windows",
+                "linux"
+              ]
+            }
+          },
+          {
+            "name": "client_version",
+            "in": "query",
+            "required": false,
+            "description": "The caller's installed version; update_available is answered against it.",
+            "schema": {
+              "type": "string",
+              "example": "0.19.2"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Latest published desktop client, with a download URL and digest when one exists for the platform"
+          },
+          "400": {
+            "description": "Unknown platform"
+          }
+        }
+      }
     }
   },
   "components": {

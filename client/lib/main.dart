@@ -34,6 +34,8 @@ import 'package:file4base_client/features/script_workspace/script_debugger_dialo
 import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
 import 'package:file4base_client/features/security/change_password_dialog.dart';
 import 'package:file4base_client/features/security/manage_security_dialog.dart';
+import 'package:file4base_client/core/services/desktop_update_service.dart';
+import 'package:file4base_client/features/server_tools/client_update_dialog.dart';
 import 'package:file4base_client/features/server_tools/server_tools_dialog.dart';
 import 'package:file4base_client/features/server_tools/update_available_dialog.dart';
 import 'package:file4base_client/features/solution_manager/file_options_dialog.dart';
@@ -173,6 +175,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   // Set once the version-check endpoint returns 403 (the account is not a
   // server administrator), so we stop polling it.
   bool _updateCheckForbidden = false;
+  // The other update axis: the installed desktop client itself, which no
+  // container pull ever replaces. Open to every account, unlike the stack
+  // check above, and never shown to a Kiosk end user.
+  final DesktopUpdateService _desktopUpdates = DesktopUpdateService();
+  DesktopUpdateInfo? _clientUpdate;
+  String? _clientUpdatePromptedVersion;
   final GlobalKey<DataBrowserWidgetState> _dataBrowserKey = GlobalKey<DataBrowserWidgetState>();
   final RealtimeService _realtime = RealtimeService();
   StreamSubscription<RealtimeEvent>? _realtimeSub;
@@ -318,6 +326,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   void dispose() {
     _schemaReloadDebounce?.cancel();
     _updateCheckTimer?.cancel();
+    _desktopUpdates.close();
     unawaited(_realtimeSub?.cancel());
     _realtime.dispose();
     AutoSaveService.instance.dispose();
@@ -382,6 +391,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       _updatePromptedVersion = null;
       _updateCheckForbidden = false;
       unawaited(_checkContainerUpdatesInBackground());
+      // The client-update check runs from _loadSolutionMeta instead, once
+      // File Options (the Kiosk and policy keys it obeys) are known.
       _startUpdateCheckTimer();
       if (auth.fileName != null) {
         AutoSaveService.instance.configure(
@@ -517,12 +528,56 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     } catch (_) {}
   }
 
+  /// Whether this session may be offered an update of the installed client.
+  ///
+  /// Kiosk Mode wins over any policy: a locked-down session shows no menu bar,
+  /// no status badges and no developer shortcuts, so it must not be handed a
+  /// download it cannot authorize either. Those deployments update through an
+  /// administrator signing in, or through device management.
+  bool get _canOfferClientUpdate {
+    if (!DesktopUpdateService.isSupported) return false;
+    if (_currentUser == null) return false;
+    if (_isKioskRuntimeActive) return false;
+    switch (_fileOptions.clientUpdatePolicy) {
+      case ClientUpdatePolicy.off:
+        return false;
+      case ClientUpdatePolicy.adminOnly:
+        return _currentUser!.isAdmin;
+      case ClientUpdatePolicy.prompt:
+        return true;
+    }
+  }
+
+  Future<void> _checkClientUpdateInBackground() async {
+    if (!_canOfferClientUpdate) return;
+    final info = await _desktopUpdates.check(
+      ref.read(apiClientProvider),
+      currentVersion: AboutFile4BaseDialog.version,
+    );
+    if (!mounted || info == null || !info.updateAvailable) return;
+    setState(() => _clientUpdate = info);
+    // Once per newly-seen version per session, like the stack notice.
+    if (info.latestVersion != _clientUpdatePromptedVersion) {
+      _clientUpdatePromptedVersion = info.latestVersion;
+      _showClientUpdateDialog();
+    }
+  }
+
+  void _showClientUpdateDialog() {
+    final info = _clientUpdate;
+    if (!mounted || info == null || !_canOfferClientUpdate) return;
+    unawaited(ClientUpdateDialog.show(context, info));
+  }
+
   void _startUpdateCheckTimer() {
     _updateCheckTimer?.cancel();
     if (_updateCheckForbidden) return;
     _updateCheckTimer = Timer.periodic(
       const Duration(minutes: 30),
-      (_) => unawaited(_checkContainerUpdatesInBackground()),
+      (_) {
+        unawaited(_checkContainerUpdatesInBackground());
+        unawaited(_checkClientUpdateInBackground());
+      },
     );
   }
 
@@ -553,6 +608,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     setState(() {
       _currentUser = null;
       _kioskSimulatedByAdmin = false;
+      _clientUpdate = null;
       _tables = [];
       _selectedTable = null;
       _activeLayout = null;
@@ -577,6 +633,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     setState(() {
       _currentUser = null;
       _kioskSimulatedByAdmin = false;
+      _clientUpdate = null;
       _tables = [];
       _selectedTable = null;
       _activeLayout = null;
@@ -902,6 +959,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     } catch (_) {
       if (mounted) setState(() => _designLocked = false);
     }
+    // Only now is it known whether this session is a Kiosk one and what the
+    // solution's update policy is, so this is the earliest point at which an
+    // update may be offered.
+    unawaited(_checkClientUpdateInBackground());
   }
 
   /// Navigates to the Primary / Home layout configured for Kiosk Mode (or the
@@ -3003,6 +3064,46 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       const SizedBox(width: 4),
                       Text(
                         'Container Update Available (v${_containerLatestVersion ?? "NEW"})',
+                        style: const TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const VerticalDivider(width: 1, indent: 4, endIndent: 4),
+            const SizedBox(width: 8),
+          ],
+
+          // The other axis: this installed build is out of date. Shown to
+          // whoever the solution's policy allows, Kiosk sessions excluded
+          // (they have no menu bar at all).
+          if (_clientUpdate != null && _canOfferClientUpdate) ...[
+            InkWell(
+              key: const Key('client_update_pill'),
+              onTap: _showClientUpdateDialog,
+              borderRadius: BorderRadius.circular(4),
+              child: Tooltip(
+                message:
+                    'File4Base v${_clientUpdate!.latestVersion} is available for this computer. Click to download and install.',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade600,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.download_for_offline, size: 11, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(
+                        'App Update Available (v${_clientUpdate!.latestVersion})',
                         style: const TextStyle(
                           fontSize: 9.5,
                           fontWeight: FontWeight.bold,

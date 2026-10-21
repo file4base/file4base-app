@@ -1,4 +1,5 @@
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/models/client_update_policy.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
 
@@ -79,6 +80,7 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
   bool _confirmLockCurrent = false;
   bool _kioskMode = false;
   bool _kioskRequireLogin = true;
+  ClientUpdatePolicy _clientUpdatePolicy = ClientUpdatePolicy.prompt;
   String _kioskPrimaryLayoutId = '';
   int _kioskPreviewTimeoutSeconds = 10;
   bool _encryptionEnabled = true;
@@ -97,6 +99,8 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
     final opts = _meta.fileOptions ?? const <String, dynamic>{};
     _kioskMode = opts['kiosk_mode'] == true;
     _kioskRequireLogin = opts['kiosk_require_login'] as bool? ?? true;
+    _clientUpdatePolicy =
+        ClientUpdatePolicy.fromJson(opts['client_update_policy']?.toString());
     _kioskPrimaryLayoutId =
         opts['kiosk_primary_layout_id']?.toString() ??
         opts['startup_layout_id']?.toString() ??
@@ -382,6 +386,7 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
     final nextOpts = Map<String, dynamic>.from(_meta.fileOptions ?? const {});
     nextOpts['kiosk_mode'] = _kioskMode;
     nextOpts['kiosk_require_login'] = _kioskRequireLogin;
+    nextOpts['client_update_policy'] = _clientUpdatePolicy.jsonValue;
     nextOpts['kiosk_preview_timeout_seconds'] = _kioskPreviewTimeoutSeconds;
     final primary = _selectedPrimaryLayout;
     if (primary != null) {
@@ -636,6 +641,38 @@ class _DeveloperUtilitiesDialogState extends State<DeveloperUtilitiesDialog> {
                         'Hides Menu Bar, Status Toolbar, and Mode Bar for limited privilege accounts. Admin accounts open normally.',
                         style: TextStyle(fontSize: 11),
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<ClientUpdatePolicy>(
+                      key: const Key('dev_util_client_update_policy_dropdown'),
+                      isExpanded: true,
+                      initialValue: _clientUpdatePolicy,
+                      decoration: const InputDecoration(
+                        labelText: 'Desktop client updates',
+                        helperText:
+                            'Who is offered a new version of the installed File4Base application. Kiosk sessions are never offered one.',
+                        helperMaxLines: 3,
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        for (final policy in ClientUpdatePolicy.values)
+                          DropdownMenuItem(
+                            value: policy,
+                            child: Text(
+                              policy.label,
+                              style: const TextStyle(fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                      ],
+                      onChanged: _busy
+                          ? null
+                          : (p) {
+                              if (p != null) {
+                                setState(() => _clientUpdatePolicy = p);
+                              }
+                            },
                     ),
                     if (_kioskMode) ...[
                       const SizedBox(height: 8),
