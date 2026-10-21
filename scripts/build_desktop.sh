@@ -50,7 +50,14 @@ build_macos() {
         ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${DIST_DIR}/File4Base-macOS-universal.zip"
         "${SCRIPT_DIR}/verify_desktop_archive.sh" "${DIST_DIR}/File4Base-macOS-universal.zip"
         if command -v hdiutil >/dev/null 2>&1; then
-            hdiutil create -volname "File4Base" -srcfolder "${APP_PATH}" -ov -format UDZO "${DIST_DIR}/File4Base-macOS.dmg"
+            # Stage the .app next to a symlink to /Applications, so the mounted
+            # volume shows both icons and the user installs by dragging one onto
+            # the other, the way macOS users expect a .dmg to behave.
+            DMG_STAGE="$(mktemp -d)"
+            cp -R "${APP_PATH}" "${DMG_STAGE}/"
+            ln -s /Applications "${DMG_STAGE}/Applications"
+            hdiutil create -volname "File4Base" -srcfolder "${DMG_STAGE}" -ov -format UDZO "${DIST_DIR}/File4Base-macOS.dmg"
+            rm -rf "${DMG_STAGE}"
             echo "macOS DMG installer created: ${DIST_DIR}/File4Base-macOS.dmg"
         fi
         echo "Packaging complete: ${DIST_DIR}/File4Base-macOS-universal.zip"

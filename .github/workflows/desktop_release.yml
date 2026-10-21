@@ -125,7 +125,15 @@ jobs:
           cp LICENSE client/build/macos/Build/Products/Release/File4Base.app/Contents/Resources/LICENSE
           ditto -c -k --sequesterRsrc --keepParent client/build/macos/Build/Products/Release/File4Base.app dist/File4Base-macOS.zip
           ./scripts/verify_desktop_archive.sh dist/File4Base-macOS.zip
-          hdiutil create -volname "File4Base" -srcfolder client/build/macos/Build/Products/Release/File4Base.app -ov -format UDZO dist/File4Base-macOS.dmg
+          # Stage the .app next to a symlink to /Applications, so the mounted
+          # volume shows both icons and the user installs by dragging one onto
+          # the other, the way macOS users expect a .dmg to behave.
+          rm -rf dmg-stage
+          mkdir -p dmg-stage
+          cp -R client/build/macos/Build/Products/Release/File4Base.app dmg-stage/
+          ln -s /Applications dmg-stage/Applications
+          hdiutil create -volname "File4Base" -srcfolder dmg-stage -ov -format UDZO dist/File4Base-macOS.dmg
+          rm -rf dmg-stage
 
       - name: Upload macOS Zip Artifact
         uses: actions/upload-artifact@v7

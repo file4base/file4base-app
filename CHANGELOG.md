@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **`SHA256SUMS.txt` is now published with every release** (`.github/workflows/desktop_release.yml`), which is what the in-app verification checks against.
 
 ### Changed
+- **The macOS `.dmg` now installs by dragging** (`.github/workflows/desktop_release.yml`, `scripts/build_desktop.sh`): the disk image is built from a staging folder holding `File4Base.app` beside a symlink to `/Applications`, so the mounted volume shows both icons and the user drags one onto the other. Previously the image carried the bare `.app`, leaving a single icon and no indication of what to do with it.
 - The shared solution-bundle fixtures (`server/internal/schema/testdata/client_new_database_v2.f4p`, `server_solution_v2.f4p`) were regenerated for the new `client_update_policy` File Options key; the server stores File Options as given, so nothing was lost.
 
 ## [0.19.2] - 2026-10-17
