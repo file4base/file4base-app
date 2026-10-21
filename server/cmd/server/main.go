@@ -16,10 +16,10 @@ import (
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/control"
-	"github.com/file4base/file4base-app/server/internal/crypto"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
+	"github.com/file4base/file4base-app/server/internal/localca"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -260,6 +260,11 @@ func main() {
 
 	// API domain routes: public sign-in/database selector, and the protected
 	// routes that run against the database of the caller's session.
+	// The local certificate authority and the leaf it signs are persisted
+	// here, shared by the HTTPS listener below, by Server Tools > TLS and by
+	// the Web Client's Nginx (which mounts the same volume read-only).
+	tlsStore := localca.New(localca.DefaultDir())
+
 	api.Mount(r, dbMgr, sessions, api.Options{
 		AllowPublicDatabaseCreation: allowPublicCreate,
 		ControlStore:                controlStore,
@@ -268,6 +273,7 @@ func main() {
 		AdminDatabase:               os.Getenv("FILE4BASE_ADMIN_DATABASE"),
 		SuperOwnerSeed:              splitList(os.Getenv("FILE4BASE_SUPER_OWNER")),
 		TrustedProxies:              trustedProxies,
+		TLSDir:                      tlsStore.Dir(),
 	})
 
 	srv := &http.Server{
@@ -289,13 +295,15 @@ func main() {
 				}
 				return
 			}
-			tlsCfg, err := crypto.SelfSignedTLSConfig()
+			// No explicit files: serve the persisted certificate the local
+			// authority signed, the same one Server Tools reports and
+			// exports. Only a first start on an empty volume creates it.
+			mat, err := tlsStore.Ensure(localca.SubjectFromEnv())
 			if err != nil {
-				log.Fatalf("Failed generating self-signed TLS certificate: %v", err)
+				log.Fatalf("Failed preparing the File4Base Local CA in %s: %v", tlsStore.Dir(), err)
 			}
-			srv.TLSConfig = tlsCfg
-			log.Println("Starting HTTPS listener with ephemeral self-signed ECDSA P-256 certificate")
-			if err := srv.ListenAndServeTLS("", ""); err != nil && err != http.ErrServerClosed {
+			log.Printf("Starting HTTPS listener with the certificate issued by the File4Base Local CA (%s)", mat.CertPath)
+			if err := srv.ListenAndServeTLS(mat.CertPath, mat.KeyPath); err != nil && err != http.ErrServerClosed {
 				log.Fatalf("Server ListenAndServeTLS error: %v", err)
 			}
 			return

@@ -5,12 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -18,8 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
-	"net"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -33,6 +28,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/localca"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
@@ -73,6 +69,21 @@ type DomainTLSConfig struct {
 	CustomCertPEM string   `json:"custom_cert_pem,omitempty"`
 	CustomKeyPEM  string   `json:"custom_key_pem,omitempty"`
 	LastUpdatedAt string   `json:"last_updated_at"`
+
+	// ExtraSANs are the additional host names and IP addresses an
+	// administrator wants the served certificate to cover, on top of the
+	// domain, loopback and the stack's container names.
+	ExtraSANs []string `json:"extra_sans,omitempty"`
+	// CertSource tells where the served certificate comes from:
+	// "local_ca" (issued by the persisted File4Base Local CA), "custom"
+	// (uploaded PEM) or "ephemeral" (generated in memory, not persisted).
+	CertSource string `json:"cert_source"`
+	// CAAvailable reports whether the local authority is on disk, so its
+	// public certificate can be downloaded and installed.
+	CAAvailable bool   `json:"ca_available"`
+	CASubject   string `json:"ca_subject,omitempty"`
+	CANotAfter  string `json:"ca_not_after,omitempty"`
+	CASHA256    string `json:"ca_sha256,omitempty"`
 }
 
 // BackupRecord describes a stored database snapshot in ./data/backups.
@@ -124,6 +135,10 @@ type ServerAdminHandler struct {
 	controlStore *control.Store
 	startTime    time.Time
 	backupsDir   string
+	// tlsStore holds the persisted local CA and the leaf it signed: the very
+	// certificate the HTTPS listener serves, this panel reports, and the
+	// export endpoint hands out.
+	tlsStore *localca.Store
 
 	mu                     sync.RWMutex
 	tlsConfig              DomainTLSConfig
@@ -266,6 +281,7 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 		controlStore:   controlStore,
 		startTime:      now,
 		backupsDir:     backupsDir,
+		tlsStore:       localca.New(localca.DefaultDir()),
 		restartedAt:    make(map[string]time.Time),
 		currentVersion: curVer,
 		latestVersion:  curVer,
@@ -325,11 +341,28 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 	return h
 }
 
+// ConfigureTLS points Server Tools at the directory that persists the local
+// certificate authority (empty keeps the default, FILE4BASE_TLS_DIR or
+// ./data/tls) and refreshes the panel from what is on disk.
+func (h *ServerAdminHandler) ConfigureTLS(dir string) {
+	if dir = strings.TrimSpace(dir); dir == "" {
+		return
+	}
+	h.mu.Lock()
+	h.tlsStore = localca.New(dir)
+	h.mu.Unlock()
+	h.initDefaultTLS()
+}
+
+// initDefaultTLS makes the served TLS material exist and describes it. The
+// authority and the leaf it signed are created only once, on the first start
+// with an empty volume; every later start reuses them, so a certificate an
+// administrator installed in a trust store keeps being honoured.
 func (h *ServerAdminHandler) initDefaultTLS() {
-	certPEM, keyPEM := generateSelfSignedCertPEM("localhost", []string{"localhost", "127.0.0.1", "file4base-web", "file4base-api"})
 	cfg := DomainTLSConfig{
-		Domain:        "localhost",
-		PublicURL:     "http://localhost:8090",
+		Domain:        localca.EnvDomain(),
+		ExtraSANs:     localca.EnvSANs(),
+		PublicURL:     "https://" + localca.EnvDomain() + ":3443",
 		Mode:          "self_signed",
 		ACMEEmail:     "admin@example.com",
 		ACMEProvider:  "letsencrypt_prod",
@@ -339,58 +372,75 @@ func (h *ServerAdminHandler) initDefaultTLS() {
 		HSTSEnabled:   true,
 		LastUpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
-	populateCertMetadata(&cfg, certPEM)
-	cfg.CustomCertPEM = certPEM
-	cfg.CustomKeyPEM = keyPEM
+
+	h.mu.Lock()
+	store := h.tlsStore
+	h.mu.Unlock()
+
+	if mat, err := store.Ensure(tlsSubject(cfg)); err == nil {
+		applyMaterial(&cfg, mat)
+	} else {
+		// A read-only or missing volume must not stop the API from serving:
+		// report an in-memory certificate rather than pretending to persist.
+		log.Printf("Warning: could not persist the File4Base Local CA in %s: %v; Server Tools reports an in-memory certificate and the Web Client stays on HTTP", store.Dir(), err)
+		certPEM, keyPEM, genErr := localca.SelfSignedPair(cfg.Domain, []string{"localhost", "127.0.0.1"})
+		if genErr == nil {
+			populateCertMetadata(&cfg, certPEM)
+			cfg.CustomCertPEM = certPEM
+			cfg.CustomKeyPEM = keyPEM
+		}
+		cfg.CertSource = "ephemeral"
+	}
+
+	h.mu.Lock()
 	h.tlsConfig = cfg
+	h.mu.Unlock()
 }
 
+// applyMaterial describes on-disk material in the panel's configuration. Only
+// public certificates are copied into the configuration; the leaf private key
+// stays on disk, and the authority's key is never read.
+func applyMaterial(cfg *DomainTLSConfig, mat localca.Material) {
+	populateCertMetadata(cfg, mat.CertPEM)
+	cfg.CustomCertPEM = mat.CertPEM
+	cfg.CustomKeyPEM = ""
+	cfg.CertSource = "local_ca"
+	cfg.CAAvailable = strings.TrimSpace(mat.CACertPEM) != ""
+	if ca, err := parseCertificatePEM(mat.CACertPEM); err == nil {
+		cfg.CASubject = ca.Subject.String()
+		cfg.CANotAfter = ca.NotAfter.UTC().Format(time.RFC3339)
+		cfg.CASHA256 = fingerprint(ca.Raw)
+	}
+}
+
+// tlsSubject is the set of names the served certificate must cover for the
+// configured domain.
+func tlsSubject(cfg DomainTLSConfig) localca.Subject {
+	return localca.DefaultSubject(cfg.Domain, cfg.ExtraSANs, nil)
+}
+
+// generateSelfSignedCertPEM builds a standalone self-signed pair, with no
+// authority behind it. The certificates the stack serves come from the
+// persisted local CA instead (see localca).
 func generateSelfSignedCertPEM(domain string, sans []string) (string, string) {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certPEM, keyPEM, err := localca.SelfSignedPair(domain, sans)
 	if err != nil {
 		return "", ""
 	}
-	notBefore := time.Now().UTC().Add(-5 * time.Minute)
-	notAfter := notBefore.Add(365 * 24 * time.Hour)
-	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if domain == "" {
-		domain = "localhost"
+	return certPEM, keyPEM
+}
+
+func parseCertificatePEM(certPEM string) (*x509.Certificate, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil, errors.New("no PEM block in certificate")
 	}
-	dnsNames := []string{domain}
-	for _, s := range sans {
-		if s != "" && s != domain {
-			dnsNames = append(dnsNames, s)
-		}
-	}
-	tmpl := x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{
-			CommonName:   domain,
-			Organization: []string{"File4Base Server"},
-		},
-		Issuer: pkix.Name{
-			CommonName:   "File4Base Root CA",
-			Organization: []string{"File4Base Security"},
-		},
-		NotBefore:             notBefore,
-		NotAfter:              notAfter,
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		DNSNames:              dnsNames,
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
-	}
-	derBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &priv.PublicKey, priv)
-	if err != nil {
-		return "", ""
-	}
-	certOut := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
-	privBytes, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		return string(certOut), ""
-	}
-	keyOut := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privBytes})
-	return string(certOut), string(keyOut)
+	return x509.ParseCertificate(block.Bytes)
+}
+
+func fingerprint(der []byte) string {
+	sum := sha256.Sum256(der)
+	return strings.ToUpper(hex.EncodeToString(sum[:16]))
 }
 
 func populateCertMetadata(cfg *DomainTLSConfig, certPEM string) {
@@ -412,8 +462,7 @@ func populateCertMetadata(cfg *DomainTLSConfig, certPEM string) {
 		days = 0
 	}
 	cfg.CertDaysLeft = days
-	sum := sha256.Sum256(cert.Raw)
-	cfg.CertSHA256 = strings.ToUpper(hex.EncodeToString(sum[:16]))
+	cfg.CertSHA256 = fingerprint(cert.Raw)
 }
 
 func (h *ServerAdminHandler) recordAudit(category, action, actor, database, target, status, details string) {
@@ -487,6 +536,8 @@ func (h *ServerAdminHandler) registerServerWideRoutes(r chi.Router) {
 		r.Get("/tls", h.GetTLSConfig)
 		r.Put("/tls", h.UpdateTLSConfig)
 		r.Post("/tls/renew", h.RenewTLSCertificate)
+		r.Get("/tls/ca.crt", h.DownloadCACertificate)
+		r.Get("/tls/bundle.pem", h.DownloadCertificateBundle)
 
 		r.Get("/sessions", h.ListActiveSessions)
 		r.Delete("/sessions/{id}", h.RevokeActiveSession)
@@ -1765,15 +1816,74 @@ func (h *ServerAdminHandler) DeleteBackup(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// GetTLSConfig returns the current domain and SSL/TLS configuration.
+// GetTLSConfig returns the current domain and SSL/TLS configuration. In
+// local-CA mode the certificate metadata is re-read from disk, so the panel
+// describes the certificate the stack really serves.
 func (h *ServerAdminHandler) GetTLSConfig(w http.ResponseWriter, r *http.Request) {
-	h.mu.RLock()
+	h.mu.Lock()
 	cfg := h.tlsConfig
+	if cfg.Mode != "custom" && cfg.Mode != "acme" {
+		if mat, err := h.tlsStore.Load(); err == nil {
+			applyMaterial(&cfg, mat)
+			h.tlsConfig = cfg
+		}
+	}
 	cfg.CustomKeyPEM = "" // Never expose private key in GET response
-	h.mu.RUnlock()
+	h.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+// DownloadCACertificate exports the public certificate of the local
+// authority, for an administrator to install once in the trust store of each
+// machine that reaches this server. The authority's private key stays on the
+// server and is never part of a response.
+func (h *ServerAdminHandler) DownloadCACertificate(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	h.mu.RLock()
+	store := h.tlsStore
+	h.mu.RUnlock()
+
+	caPEM, err := store.CACertPEM()
+	if err != nil || strings.TrimSpace(caPEM) == "" {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "No Local Certificate Authority",
+			"this server has no persisted File4Base Local CA; check that the API container can write its data volume")
+		return
+	}
+
+	h.recordAudit("tls", "Download Local CA Certificate", sess.Username, sess.Database, "file4base-local-ca.crt", "success",
+		"Exported the public certificate of the File4Base Local CA")
+
+	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
+	w.Header().Set("Content-Disposition", `attachment; filename="file4base-local-ca.crt"`)
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, caPEM)
+}
+
+// DownloadCertificateBundle exports the served leaf certificate followed by
+// the local authority, for an administrator who terminates TLS on another
+// reverse proxy. Private keys are never part of a response.
+func (h *ServerAdminHandler) DownloadCertificateBundle(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	h.mu.RLock()
+	store := h.tlsStore
+	h.mu.RUnlock()
+
+	mat, err := store.Load()
+	if err != nil || strings.TrimSpace(mat.BundlePEM) == "" {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "No Certificate Chain",
+			"this server has no persisted certificate chain; check that the API container can write its data volume")
+		return
+	}
+
+	h.recordAudit("tls", "Download Certificate Chain", sess.Username, sess.Database, "file4base-chain.pem", "success",
+		"Exported the served leaf certificate and the File4Base Local CA")
+
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", `attachment; filename="file4base-chain.pem"`)
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, mat.BundlePEM)
 }
 
 // UpdateTLSConfig updates the server's domain, ACME settings, or custom PEM certificate.
@@ -1817,6 +1927,7 @@ func (h *ServerAdminHandler) UpdateTLSConfig(w http.ResponseWriter, r *http.Requ
 	cfg.AutoRenew = req.AutoRenew
 	cfg.ForceHTTPS = req.ForceHTTPS
 	cfg.HSTSEnabled = req.HSTSEnabled
+	cfg.ExtraSANs = normalizeSANs(req.ExtraSANs)
 	cfg.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	switch cfg.Mode {
@@ -1842,10 +1953,16 @@ func (h *ServerAdminHandler) UpdateTLSConfig(w http.ResponseWriter, r *http.Requ
 		cfg.CustomCertPEM = certPEM
 		cfg.CustomKeyPEM = keyPEM
 	default:
-		certPEM, keyPEM := generateSelfSignedCertPEM(domain, []string{domain, "localhost", "127.0.0.1"})
-		populateCertMetadata(&cfg, certPEM)
-		cfg.CustomCertPEM = certPEM
-		cfg.CustomKeyPEM = keyPEM
+		// Reissue the leaf for the configured names, signed by the authority
+		// already on disk: trust an administrator installed keeps working.
+		cfg.CertSource = "local_ca"
+		mat, err := h.tlsStore.Ensure(tlsSubject(cfg))
+		if err != nil {
+			h.mu.Unlock()
+			telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Certificate Issue Failed", err.Error())
+			return
+		}
+		applyMaterial(&cfg, mat)
 	}
 
 	h.tlsConfig = cfg
@@ -1859,29 +1976,67 @@ func (h *ServerAdminHandler) UpdateTLSConfig(w http.ResponseWriter, r *http.Requ
 	_ = json.NewEncoder(w).Encode(respCfg)
 }
 
-// RenewTLSCertificate rotates or renews the server's active TLS certificate on demand.
+// RenewTLSCertificate rotates the served certificate on demand. In local-CA
+// mode only the leaf is reissued: the authority, and therefore the trust an
+// administrator installed on every machine, is left untouched.
 func (h *ServerAdminHandler) RenewTLSCertificate(w http.ResponseWriter, r *http.Request) {
 	sess := currentSession(r)
 	h.mu.Lock()
 	cfg := h.tlsConfig
-	certPEM, keyPEM := generateSelfSignedCertPEM(cfg.Domain, []string{cfg.Domain, "localhost"})
-	populateCertMetadata(&cfg, certPEM)
-	if cfg.Mode == "acme" {
+	switch cfg.Mode {
+	case "acme":
+		certPEM, keyPEM := generateSelfSignedCertPEM(cfg.Domain, []string{cfg.Domain, "localhost"})
+		populateCertMetadata(&cfg, certPEM)
 		cfg.CertIssuer = "CN=R11,O=Let's Encrypt,C=US (ACME Managed)"
 		cfg.CertDaysLeft = 90
+		cfg.CertSource = "ephemeral"
+		cfg.CustomCertPEM = certPEM
+		cfg.CustomKeyPEM = keyPEM
+	case "custom":
+		h.mu.Unlock()
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Custom Certificate In Use",
+			"an uploaded certificate cannot be renewed by this server; upload a new PEM instead")
+		return
+	default:
+		mat, err := h.tlsStore.IssueLeaf(tlsSubject(cfg))
+		if err != nil {
+			h.mu.Unlock()
+			telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Certificate Renewal Failed", err.Error())
+			return
+		}
+		applyMaterial(&cfg, mat)
 	}
-	cfg.CustomCertPEM = certPEM
-	cfg.CustomKeyPEM = keyPEM
 	cfg.LastUpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	h.tlsConfig = cfg
 	respCfg := cfg
 	respCfg.CustomKeyPEM = ""
 	h.mu.Unlock()
 
-	h.recordAudit("tls", "Renew TLS Certificate", sess.Username, sess.Database, cfg.Domain, "success", "Renewed X.509 certificate for "+cfg.Domain)
+	h.recordAudit("tls", "Renew TLS Certificate", sess.Username, sess.Database, cfg.Domain, "success",
+		"Renewed the X.509 leaf certificate for "+cfg.Domain+" (the local authority was left unchanged)")
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(respCfg)
+}
+
+// normalizeSANs trims and deduplicates administrator-supplied host names and
+// IP addresses.
+func normalizeSANs(raw []string) []string {
+	out := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, item := range raw {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		key := strings.ToLower(item)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, item)
+	}
+	return out
 }
 
 // ListActiveSessions returns all currently connected client sessions.

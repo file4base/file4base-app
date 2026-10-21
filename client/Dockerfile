@@ -23,13 +23,20 @@ FROM nginx:alpine
 # Remove default nginx html
 RUN rm -rf /usr/share/nginx/html/*
 
-# Copy custom nginx configuration with reverse proxy to server:8080
+# Copy custom nginx configuration with reverse proxy to server:8080.
+# nginx/app.conf holds the location blocks shared by the HTTP and HTTPS server
+# blocks; nginx/tls.conf.template becomes the HTTPS listener at container start
+# (see docker-entrypoint.d/25-file4base-tls.sh), only when the certificate the
+# API persists is readable, so a missing certificate never stops Nginx.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx/ /etc/nginx/file4base/
+COPY docker-entrypoint.d/25-file4base-tls.sh /docker-entrypoint.d/25-file4base-tls.sh
+RUN chmod +x /docker-entrypoint.d/25-file4base-tls.sh && : > /etc/nginx/file4base/force-https.conf
 
 # Copy compiled flutter web bundle
 COPY --from=builder /app/build/web /usr/share/nginx/html
 
-# Expose port
-EXPOSE 80
+# Expose ports: HTTP, and HTTPS when a certificate is available
+EXPOSE 80 443
 
 CMD ["nginx", "-g", "daemon off;"]

@@ -410,6 +410,39 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
     );
   }
 
+  /// Saves the public certificate of the File4Base Local CA to disk and tells
+  /// the administrator how to install it. Installing this one file, once per
+  /// machine, is what stops the browser warning: every certificate the server
+  /// reissues afterwards is signed by the same authority.
+  Future<void> _downloadCaCertificate() async {
+    try {
+      final bytes = await widget.apiClient.downloadServerCaCertificate();
+      await SolutionStorageService.saveFile(
+        filename: 'file4base-local-ca.crt',
+        bytes: bytes,
+      );
+      _toast('Local CA certificate saved as file4base-local-ca.crt');
+    } catch (e) {
+      _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
+  }
+
+  /// Saves the served certificate followed by the local authority, for an
+  /// administrator who terminates TLS on another reverse proxy. The file holds
+  /// no private key.
+  Future<void> _downloadCertificateBundle() async {
+    try {
+      final bytes = await widget.apiClient.downloadServerCertificateBundle();
+      await SolutionStorageService.saveFile(
+        filename: 'file4base-chain.pem',
+        bytes: bytes,
+      );
+      _toast('Certificate chain saved as file4base-chain.pem');
+    } catch (e) {
+      _toast(e.toString().replaceFirst('Exception: ', ''), isError: true);
+    }
+  }
+
   Future<void> _saveTlsSettings({String? toastMsg}) async {
     try {
       final updated = await widget.apiClient.updateServerTlsConfig({
@@ -1675,6 +1708,151 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
   }
 
   // ===========================================================================
+  /// The install-once card of the local authority: the download buttons plus
+  /// what to do with the file on each operating system.
+  Widget _buildLocalCaCard() {
+    final caSubject = _tlsConfig['ca_subject']?.toString() ?? '';
+    final caNotAfter = _tlsConfig['ca_not_after']?.toString() ?? '';
+    final caSha256 = _tlsConfig['ca_sha256']?.toString() ?? '';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.shield_outlined, color: _primaryBlue, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'File4Base Local CA — install once per machine',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'This server signs its own certificate with a local authority that is kept on disk and survives '
+                      'restarts. Trust the authority once on each machine and every certificate the server reissues '
+                      'later — on renewal, or when the domain changes — is trusted too, with nothing to reinstall.',
+                      style: TextStyle(fontSize: 12, color: _mutedText),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _primaryBlue,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed: _downloadCaCertificate,
+                icon: const Icon(Icons.download_outlined, size: 16),
+                label: const Text('Download CA Certificate'),
+              ),
+              OutlinedButton.icon(
+                onPressed: _downloadCertificateBundle,
+                icon: const Icon(Icons.link_outlined, size: 16),
+                label: const Text('Download Certificate Chain (PEM)'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'The downloaded files contain public certificates only; no private key ever leaves the server.',
+            style: TextStyle(fontSize: 11, color: _mutedText),
+          ),
+          if (caSubject.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Authority: $caSubject  •  valid until $caNotAfter  •  SHA-256: $caSha256',
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace', fontWeight: FontWeight.w600),
+            ),
+          ],
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 10),
+          const Text('How to install file4base-local-ca.crt', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 8),
+          _buildCaInstallStep(
+            Icons.laptop_mac,
+            'macOS',
+            'Double-click the file to open Keychain Access and add it to the System keychain. Then find '
+            '"File4Base Local CA" in that keychain, open it, expand Trust and set "When using this certificate" '
+            'to "Always Trust".',
+          ),
+          _buildCaInstallStep(
+            Icons.desktop_windows_outlined,
+            'Windows',
+            'Run certlm.msc (Local Machine certificates), then Trusted Root Certification Authorities → '
+            'Certificates → All Tasks → Import, and import the file. Importing per user through certmgr.msc '
+            'works the same way for a single account.',
+          ),
+          _buildCaInstallStep(
+            Icons.terminal_outlined,
+            'Linux',
+            'sudo cp file4base-local-ca.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates '
+            '(Debian/Ubuntu). On Fedora/RHEL copy it to /etc/pki/ca-trust/source/anchors/ and run '
+            'sudo update-ca-trust.',
+          ),
+          _buildCaInstallStep(
+            Icons.warning_amber_outlined,
+            'Firefox',
+            'Firefox keeps its own trust store and ignores the system one: import the file under Settings → '
+            'Privacy & Security → Certificates → View Certificates → Authorities → Import, and tick '
+            '"Trust this CA to identify websites".',
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Restart the browser after installing. The File4Base desktop client uses the operating system trust '
+            'store as well, so the same installation lets it reach this server over HTTPS.',
+            style: TextStyle(fontSize: 11, color: _mutedText),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCaInstallStep(IconData icon, String platform, String body) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: _mutedText),
+          const SizedBox(width: 8),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: TextStyle(fontSize: 11.5, color: _mutedText, height: 1.35),
+                children: [
+                  TextSpan(text: '$platform: ', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  TextSpan(text: body),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // 3. DOMAIN & SSL/TLS CERTIFICATES (ACME) VIEW
   // ===========================================================================
   Widget _buildDomainTlsView() {
@@ -1683,6 +1861,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
     final certNotAfter = _tlsConfig['cert_not_after']?.toString() ?? '';
     final certDaysLeft = (_tlsConfig['cert_days_left'] as num?)?.toInt() ?? 0;
     final certSha256 = _tlsConfig['cert_sha256']?.toString() ?? '';
+    final caAvailable = _tlsConfig['ca_available'] as bool? ?? false;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(18),
@@ -1773,6 +1952,9 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
             ),
           ),
           const SizedBox(height: 16),
+
+          if (caAvailable) _buildLocalCaCard(),
+          if (caAvailable) const SizedBox(height: 16),
 
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,

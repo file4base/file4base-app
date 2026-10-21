@@ -58,8 +58,14 @@ services:
       FILE4BASE_SUPER_OWNER: "${FILE4BASE_SUPER_OWNER:-}"
       CONTROL_DB_PATH: "/app/data/file4base_control.db"
       FILE4BASE_CHANNEL_SECRET: "${FILE4BASE_CHANNEL_SECRET:-}"
+      # The File4Base Local CA and the certificate it signs (shared read-only
+      # with the Web Client's Nginx). See docker-compose.yml for the details.
+      FILE4BASE_TLS_DIR: "/app/data/tls"
+      FILE4BASE_TLS_DOMAIN: "${FILE4BASE_TLS_DOMAIN:-localhost}"
+      FILE4BASE_TLS_SANS: "${FILE4BASE_TLS_SANS:-}"
     volumes:
       - api_data:/app/data
+      - tls_data:/app/data/tls
     depends_on:
       mariadb:
         condition: service_healthy
@@ -85,6 +91,11 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+      - "3443:443"
+    environment:
+      FILE4BASE_FORCE_HTTPS: "${FILE4BASE_FORCE_HTTPS:-false}"
+    volumes:
+      - tls_data:/etc/file4base/tls:ro
     depends_on:
       api:
         condition: service_healthy
@@ -96,6 +107,8 @@ volumes:
     name: file4base-mariadb-data
   api_data:
     name: file4base-api-data
+  tls_data:
+    name: file4base-tls
 
 networks:
   file4base-net:

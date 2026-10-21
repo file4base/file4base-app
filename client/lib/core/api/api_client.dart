@@ -2481,6 +2481,31 @@ class ApiClient {
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
+  /// Downloads the public certificate of the File4Base Local CA, the
+  /// authority that signed the certificate this server serves. Installing it
+  /// once in a machine's trust store makes every certificate the server
+  /// reissues later trusted too. The authority's private key stays on the
+  /// server and is never part of the response.
+  Future<Uint8List> downloadServerCaCertificate() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/tls/ca.crt'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return response.bodyBytes;
+  }
+
+  /// Downloads the served certificate followed by the local authority, for a
+  /// reverse proxy that terminates TLS itself. Contains no private key.
+  Future<Uint8List> downloadServerCertificateBundle() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/server/tls/bundle.pem'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return response.bodyBytes;
+  }
+
   Future<Map<String, dynamic>> renewServerTlsCertificate() async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/server/tls/renew'),
