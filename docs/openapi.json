@@ -4388,6 +4388,7 @@
           "Server Administration"
         ],
         "summary": "Get Domain, HTTPS/HSTS, ACME, and X.509 Certificate Status",
+        "description": "Describes the certificate the server actually serves. In local-CA mode the metadata is re-read from disk: cert_source is \"local_ca\", ca_available says whether the authority can be downloaded, and ca_subject / ca_not_after / ca_sha256 identify it. No private key is ever part of the response.",
         "responses": {
           "200": {
             "description": "Get Domain, HTTPS/HSTS, ACME, and X.509 Certificate Status"
@@ -4434,6 +4435,7 @@
           "Server Administration"
         ],
         "summary": "Renew or Rotate Active X.509 TLS Certificate",
+        "description": "Reissues the served leaf certificate. In local-CA mode the File4Base Local CA is left untouched, so trust installed from its exported certificate keeps working. An uploaded (custom) certificate cannot be renewed and returns 409.",
         "responses": {
           "200": {
             "description": "Renew or Rotate Active X.509 TLS Certificate"
@@ -4443,6 +4445,69 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A custom certificate is in use; upload a new PEM instead"
+          }
+        }
+      }
+    },
+    "/api/v1/server/tls/ca.crt": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Download the File4Base Local CA Certificate",
+        "description": "Returns the PEM-encoded public certificate of the local authority that signed the served certificate, for an administrator to install once in each machine's trust store. The authority's private key is never returned.",
+        "responses": {
+          "200": {
+            "description": "PEM-encoded CA certificate (attachment: file4base-local-ca.crt)",
+            "content": {
+              "application/x-x509-ca-cert": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "This server has no persisted local authority"
+          }
+        }
+      }
+    },
+    "/api/v1/server/tls/bundle.pem": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Download the Served Certificate Chain",
+        "description": "Returns the served leaf certificate followed by the File4Base Local CA, for a reverse proxy that terminates TLS itself. Contains no private key.",
+        "responses": {
+          "200": {
+            "description": "PEM-encoded certificate chain (attachment: file4base-chain.pem)",
+            "content": {
+              "application/x-pem-file": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "This server has no persisted certificate chain"
           }
         }
       }

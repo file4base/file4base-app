@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ type serverToolsHarness struct {
 func newServerToolsHarness(t *testing.T, adminDatabase bool) *serverToolsHarness {
 	t.Helper()
 	s := &serverToolsHarness{adminDB: uniqueDB("srvadmin"), aliceDB: uniqueDB("alice"), bobDB: uniqueDB("bob")}
-	opts := api.Options{AllowPublicDatabaseCreation: true, BackupsDir: t.TempDir()}
+	opts := api.Options{AllowPublicDatabaseCreation: true, BackupsDir: t.TempDir(), TLSDir: filepath.Join(t.TempDir(), "tls")}
 	if adminDatabase {
 		opts.AdminDatabase = s.adminDB
 	}

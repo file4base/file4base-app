@@ -40,6 +40,11 @@ type Options struct {
 	// BackupsDir is where Server Tools keeps backup snapshots
 	// (default ./data/backups).
 	BackupsDir string
+	// TLSDir persists the File4Base Local CA and the leaf certificate it
+	// signs (default FILE4BASE_TLS_DIR, or ./data/tls). The HTTPS listener
+	// serves that leaf, Server Tools reports it, and the authority's public
+	// certificate is exported from there.
+	TLSDir string
 	// Version is the running server version (AppVersion), reported by
 	// Server Tools > Containers and compared with the latest release.
 	Version string
@@ -94,6 +99,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	solutionHandler.clientIP = ipResolver
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
+	serverAdminHandler.ConfigureTLS(opts.TLSDir)
 
 	hub := opts.Hub
 	if hub == nil {

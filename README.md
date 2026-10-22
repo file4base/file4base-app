@@ -67,7 +67,7 @@ Details: [REST API Reference - Authentication & Authorization](docs/api/API_REFE
 When launched via Docker Compose, File4Base acts as a full multi-user application server:
 - **PostgreSQL 16**: Port `5432`, published on `127.0.0.1` only by default (MariaDB: see below)
 - **Backend Core API (Go)**: Port `8080` (`/healthz`, `/api/v1/schemas`, `/api/v1/data`)
-- **File4Base Web Client (Nginx)**: Port `3000` (browser-accessible client)
+- **File4Base Web Client (Nginx)**: Port `3000` (browser-accessible client), and `3443` for HTTPS once the certificate exists. The API creates a local certificate authority on its first start and keeps it in the `file4base-tls` volume: download it from **Server Tools > Domain & SSL/TLS**, install it once per machine, and `https://localhost:3443` is trusted — restarts and renewals do not invalidate it.
 
 ```bash
 # Optional: set your own database password and server options

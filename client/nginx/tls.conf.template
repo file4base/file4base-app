@@ -1,0 +1,23 @@
+# File4Base Web Client: HTTPS listener.
+#
+# Installed into /etc/nginx/conf.d by docker-entrypoint.d/25-file4base-tls.sh
+# when the certificate below exists. The certificate is the leaf the
+# File4Base Local CA signed; the API container creates and renews it inside the
+# shared `file4base-tls` volume, which this container mounts read-only.
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name localhost;
+    client_max_body_size 64m;
+
+    ssl_certificate     __FILE4BASE_TLS_CERT__;
+    ssl_certificate_key __FILE4BASE_TLS_KEY__;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:file4base_ssl:10m;
+    ssl_session_timeout 1h;
+
+    include /etc/nginx/file4base/security-headers.conf;
+
+    include /etc/nginx/file4base/app.conf;
+}
