@@ -2325,6 +2325,27 @@ class ApiClient {
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
+  /// Asks the server whether a newer **desktop client** is published for
+  /// [platform], and where to download it.
+  ///
+  /// This is the client axis of updating, not the container stack one: it needs
+  /// no session and no administrator role, because an installed build too old
+  /// to sign in must still be able to find its own update.
+  Future<Map<String, dynamic>> fetchDesktopUpdate({
+    required String platform,
+    required String clientVersion,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/v1/updates/desktop').replace(
+      queryParameters: <String, String>{
+        'platform': platform,
+        'client_version': clientVersion,
+      },
+    );
+    final response = await _httpClient.get(uri, headers: _headers());
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
   Future<Map<String, dynamic>> applyServerContainerUpdate({
     String container = 'file4base-stack',
     String? database,

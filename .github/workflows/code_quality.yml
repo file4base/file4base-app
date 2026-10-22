@@ -7,6 +7,11 @@ on:
         required: false
         default: false
         type: boolean
+      run_qodana:
+        description: 'Run the Qodana Cloud scan (needs a valid QODANA_TOKEN license)'
+        required: false
+        default: false
+        type: boolean
   pull_request:
   push:
     branches:
@@ -15,6 +20,7 @@ on:
 
 jobs:
   qodana-go:
+    name: Go Vet Static Analysis (Qodana scan disabled)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -37,7 +43,12 @@ jobs:
         working-directory: server
         run: go vet ./...
 
+      # Disabled by default: the Qodana Cloud license token is rejected
+      # ("token was declined by Qodana Cloud server"), which failed every pull
+      # request. Re-enable by running this workflow manually with run_qodana
+      # once a valid QODANA_TOKEN is configured.
       - name: Qodana Go Scan
+        if: ${{ inputs.run_qodana }}
         uses: JetBrains/qodana-action@v2024.3
         with:
           args: --project-dir=server

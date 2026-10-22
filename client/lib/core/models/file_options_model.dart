@@ -1,3 +1,5 @@
+import 'package:file4base_client/core/models/client_update_policy.dart';
+
 /// FileOptionsModel defines startup credentials, initial layout, toolbar visibility,
 /// Kiosk Mode settings, and script triggers (OnFirstWindowOpen, OnLastWindowClose, etc.)
 /// for File4Base File Options and Developer Utilities.
@@ -17,6 +19,7 @@ class FileOptionsModel {
     this.kioskPrimaryLayoutName = '',
     this.kioskRequireLogin = true,
     this.kioskPreviewTimeoutSeconds = 10,
+    this.clientUpdatePolicy = ClientUpdatePolicy.prompt,
     this.encryptionEnabled = true,
     this.encryptionCipher = 'AES-256-GCM',
     this.encryptionHint = '',
@@ -53,6 +56,8 @@ class FileOptionsModel {
       kioskRequireLogin: json['kiosk_require_login'] as bool? ?? true,
       kioskPreviewTimeoutSeconds:
           (json['kiosk_preview_timeout_seconds'] as num?)?.toInt() ?? 10,
+      clientUpdatePolicy:
+          ClientUpdatePolicy.fromJson(json['client_update_policy']?.toString()),
       encryptionEnabled: json['encryption_enabled'] as bool? ?? true,
       encryptionCipher: json['encryption_cipher']?.toString() ?? 'AES-256-GCM',
       encryptionHint: json['encryption_hint']?.toString() ?? '',
@@ -90,6 +95,11 @@ class FileOptionsModel {
   final String kioskPrimaryLayoutName;
   final bool kioskRequireLogin;
   final int kioskPreviewTimeoutSeconds;
+
+  /// Who is offered an update of the installed desktop client. Lives here, with
+  /// the Kiosk Mode keys, because both decide how much of the platform an end
+  /// user sees.
+  final ClientUpdatePolicy clientUpdatePolicy;
   final bool encryptionEnabled;
   final String encryptionCipher;
   final String encryptionHint;
@@ -129,6 +139,7 @@ class FileOptionsModel {
     String? kioskPrimaryLayoutName,
     bool? kioskRequireLogin,
     int? kioskPreviewTimeoutSeconds,
+    ClientUpdatePolicy? clientUpdatePolicy,
     bool? encryptionEnabled,
     String? encryptionCipher,
     String? encryptionHint,
@@ -163,6 +174,7 @@ class FileOptionsModel {
       kioskRequireLogin: kioskRequireLogin ?? this.kioskRequireLogin,
       kioskPreviewTimeoutSeconds:
           kioskPreviewTimeoutSeconds ?? this.kioskPreviewTimeoutSeconds,
+      clientUpdatePolicy: clientUpdatePolicy ?? this.clientUpdatePolicy,
       encryptionEnabled: encryptionEnabled ?? this.encryptionEnabled,
       encryptionCipher: encryptionCipher ?? this.encryptionCipher,
       encryptionHint: encryptionHint ?? this.encryptionHint,
@@ -197,6 +209,7 @@ class FileOptionsModel {
     'kiosk_primary_layout_name': kioskPrimaryLayoutName,
     'kiosk_require_login': kioskRequireLogin,
     'kiosk_preview_timeout_seconds': kioskPreviewTimeoutSeconds,
+    'client_update_policy': clientUpdatePolicy.jsonValue,
     'encryption_enabled': encryptionEnabled,
     'encryption_cipher': encryptionCipher,
     if (encryptionHint.isNotEmpty) 'encryption_hint': encryptionHint,

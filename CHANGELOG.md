@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **In-app updater for the installed desktop client** (`server/internal/api/desktop_update_handler.go`, `client/lib/core/services/desktop_update_service.dart`, `client/lib/features/server_tools/client_update_dialog.dart`, `client/lib/main.dart`):
+  - **`GET /api/v1/updates/desktop?platform=macos|windows|linux&client_version=…`** reports the newest published desktop client, its release notes, and the asset to download with the `sha256` to verify it against. It needs **no session** (a build too old to sign in must still find its own update) and mirrors only the public GitHub release; release metadata and the asset list are each cached for ten minutes, so a fleet of polling clients costs one upstream request. Per platform the native installer is preferred and the plain bundle is the fallback (`.dmg` → `.zip`, `Setup.exe` → `.zip`, `.deb` → `.tar.gz`).
+  - **Download, verification and installer handoff inside the app**: the client streams the asset to a private temporary directory, hashes it as it arrives, and only then opens it with the platform's own installer (`open` for the `.dmg`, the Setup wizard, `xdg-open` for the `.deb`). A checksum mismatch, an interrupted download or a release-server error deletes the partial file, so nothing unverified is ever left for someone to run. An update with no published digest is **not** offered as an in-app download at all: the user is sent to the release page instead.
+  - **This is a second, independent update axis.** `docker compose pull` replaces `file4base-api` and `file4base-web` but never the natively compiled binary a user installed, and the existing `Server Tools` container flow is administrator-only and ends in a shell command. The new `App Update Available` pill and `ClientUpdateDialog` never mention a terminal, so a user who only ever sees a program can stay current.
+  - **`client_update_policy` in File Options** (`Tools > Developer Utilities...`): `prompt` (default, any signed-in account), `admin-only`, or `off` for fleets rolled out by device management. **Kiosk Mode overrides all three** — a session in Kiosk lockout is never offered an update, since it has no menu bar, status badges or developer shortcuts with which to authorize one.
+  - **`SHA256SUMS.txt` is now published with every release** (`.github/workflows/desktop_release.yml`), which is what the in-app verification checks against.
+
+### Changed
+- **The macOS `.dmg` now installs by dragging** (`.github/workflows/desktop_release.yml`, `scripts/build_desktop.sh`): the disk image is built from a staging folder holding `File4Base.app` beside a symlink to `/Applications`, so the mounted volume shows both icons and the user drags one onto the other. Previously the image carried the bare `.app`, leaving a single icon and no indication of what to do with it.
+- The shared solution-bundle fixtures (`server/internal/schema/testdata/client_new_database_v2.f4p`, `server_solution_v2.f4p`) were regenerated for the new `client_update_policy` File Options key; the server stores File Options as given, so nothing was lost.
+
 ## [0.19.2] - 2026-10-17
 
 ### Added

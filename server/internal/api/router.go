@@ -111,6 +111,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		r.Use(authMW.Optional)
 		securityHandler.RegisterPublicRoutes(r)
 		solutionHandler.RegisterPublicRoutes(r)
+		serverAdminHandler.RegisterPublicRoutes(r)
 	})
 
 	r.Group(func(r chi.Router) {
