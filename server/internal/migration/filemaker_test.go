@@ -255,3 +255,136 @@ func TestAnalyzeAndConvert_HTMLDDRAndFractions(t *testing.T) {
 	}
 }
 
+// fmpXMLResultProductName is one record export per FileMaker generation, each
+// spelling its <PRODUCT> element the way that version writes it. Up to version
+// 12 the name is "FileMaker Pro", which the binary signature scan used to match
+// (see IsFMP12Binary), rejecting a valid export as a binary database.
+var fmpXMLResultProductName = map[string]string{
+	"FileMaker 7 (NAME carries the whole product name)":  `NAME="FileMaker Pro" VERSION="7.0"`,
+	"FileMaker 12 (NAME carries the whole product name)": `NAME="FileMaker Pro" VERSION="12.0v1"`,
+	"FileMaker 13 (VERSION carries the Pro designation)": `NAME="FileMaker" VERSION="Pro 13.0v1"`,
+}
+
+func fmpXMLResult(productAttrs string) string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<FMPXMLRESULT xmlns="http://www.filemaker.com/fmpxmlresult">
+  <ERRORCODE>0</ERRORCODE>
+  <PRODUCT BUILD="01/01/2024" ` + productAttrs + `/>
+  <DATABASE DATEFORMAT="MM/dd/yyyy" LAYOUT="Contact List" NAME="TestDB.fmp12" RECORDS="1" TIMEFORMAT="hh:mm:ss"/>
+  <METADATA><FIELD EMPTYOK="YES" MAXREPEAT="1" NAME="FirstName" TYPE="TEXT"/></METADATA>
+  <RESULTSET FOUND="1">
+    <ROW MODID="1" RECORDID="1"><COL><DATA>Ada</DATA></COL></ROW>
+  </RESULTSET>
+</FMPXMLRESULT>`
+}
+
+func TestIsFMP12Binary_AcceptsRecordExportNamingFileMakerPro(t *testing.T) {
+	for label, attrs := range fmpXMLResultProductName {
+		if IsFMP12Binary("Contact", []byte(fmpXMLResult(attrs))) {
+			t.Errorf("%s: FMPXMLRESULT export was detected as a .fmp12 binary", label)
+		}
+	}
+	// A byte order mark and leading blank lines still open an XML document.
+	withBOM := append([]byte{0xEF, 0xBB, 0xBF, '\n', ' '}, []byte(fmpXMLResult(`NAME="FileMaker Pro" VERSION="7.0"`))...)
+	if IsFMP12Binary("Contact", withBOM) {
+		t.Error("FMPXMLRESULT export behind a byte order mark was detected as a .fmp12 binary")
+	}
+	// The filename still decides when it names a database file outright.
+	if !IsFMP12Binary("Contacts.fp7", []byte(fmpXMLResult(`NAME="FileMaker" VERSION="Pro 13.0v1"`))) {
+		t.Error("expected a .fp7 filename to be detected whatever the payload looks like")
+	}
+}
+
+func TestAnalyzeAndConvert_ParsesRecordExportNamingFileMakerPro(t *testing.T) {
+	for label, attrs := range fmpXMLResultProductName {
+		converted, err := AnalyzeAndConvert(MigrationRequest{
+			DesignXML: ddrWithCustomValueList,
+			DataFiles: map[string]string{"Contact": fmpXMLResult(attrs)},
+		})
+		if err != nil {
+			t.Fatalf("%s: AnalyzeAndConvert: %v", label, err)
+		}
+		if got := converted.Report.Counts.RecordsReady; got != 1 {
+			t.Errorf("%s: records_ready = %d, want 1", label, got)
+		}
+	}
+}
+
+// ddrWithCustomValueList is the shape a FileMaker DDR gives a custom value
+// list: one <Text> child per entry inside <CustomValues>, with the element's
+// own character data holding nothing but layout whitespace.
+const ddrWithCustomValueList = `<?xml version="1.0" encoding="UTF-8"?>
+<FMPReport type="Report" version="21.0v1">
+  <File name="TestDB">
+    <BaseTableCatalog>
+      <BaseTable id="1" name="Contact" records="0">
+        <FieldCatalog>
+          <Field id="1" dataType="Text" fieldType="Normal" name="FirstName"/>
+        </FieldCatalog>
+      </BaseTable>
+    </BaseTableCatalog>
+    <ValueListCatalog>
+      <ValueList id="1" name="Status Values">
+        <Source value="Custom"/>
+        <CustomValues>
+          <Text>Active</Text>
+          <Text>Inactive</Text>
+        </CustomValues>
+      </ValueList>
+    </ValueListCatalog>
+  </File>
+</FMPReport>`
+
+func TestAnalyzeAndConvert_ReadsDDRCustomValueListEntries(t *testing.T) {
+	converted, err := AnalyzeAndConvert(MigrationRequest{DesignXML: ddrWithCustomValueList})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert: %v", err)
+	}
+	if got := len(converted.Bundle.ValueLists); got != 1 {
+		t.Fatalf("converted %d value lists, want 1", got)
+	}
+	// Empty entries are what made the import fail validation and roll the
+	// whole solution back.
+	if got, want := converted.Bundle.ValueLists[0].CustomValues, "Active\nInactive"; got != want {
+		t.Errorf("custom values = %q, want %q", got, want)
+	}
+	if got := converted.Report.Counts.ValueLists; got != 1 {
+		t.Errorf("report counted %d value lists, want 1", got)
+	}
+}
+
+func TestAnalyzeAndConvert_ReadsCustomValueListFromCharacterData(t *testing.T) {
+	design := `<design format="file4base_design"><ValueListCatalog>` +
+		"<ValueList name=\"Status Values\"><CustomValues>Active\nInactive\n</CustomValues></ValueList>" +
+		`</ValueListCatalog></design>`
+	converted, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert: %v", err)
+	}
+	if got := len(converted.Bundle.ValueLists); got != 1 {
+		t.Fatalf("converted %d value lists, want 1", got)
+	}
+	if got, want := converted.Bundle.ValueLists[0].CustomValues, "Active\nInactive"; got != want {
+		t.Errorf("custom values = %q, want %q", got, want)
+	}
+}
+
+func TestAnalyzeAndConvert_SkipsValueListWithNoEntries(t *testing.T) {
+	design := `<FMPReport type="Report" version="21.0v1"><File name="TestDB"><ValueListCatalog>` +
+		`<ValueList id="1" name="Empty List"><Source value="Custom"/><CustomValues/></ValueList>` +
+		`</ValueListCatalog></File></FMPReport>`
+	converted, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert: %v", err)
+	}
+	// Skipped rather than carried into the import as an invalid value list.
+	if got := len(converted.Bundle.ValueLists); got != 0 {
+		t.Errorf("converted %d value lists, want 0", got)
+	}
+	if got := converted.Report.Counts.ManualActionCount; got != 1 {
+		t.Fatalf("manual_action_count = %d, want 1", got)
+	}
+	if got := converted.Report.ManualActionRequired[0].SourceName; got != "Empty List" {
+		t.Errorf("manual action names %q, want %q", got, "Empty List")
+	}
+}
