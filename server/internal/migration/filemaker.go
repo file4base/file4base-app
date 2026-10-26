@@ -108,10 +108,20 @@ type ConvertedSolution struct {
 
 // IsFMP12Binary returns true when filename has a .fmp12/.fp7 extension or data
 // starts with the FileMaker Pro binary header signature (HBAM2 / \x00\x01\x00\x00).
+//
+// An XML payload is never a binary database, and the check below says so before
+// looking at the content: every FMPXMLRESULT export carries a <PRODUCT> element
+// naming the product it came from, and FileMaker versions up to 12 spell that
+// name "FileMaker Pro" (13 and later split it as NAME="FileMaker"
+// VERSION="Pro 13.0v1"). Without the guard, the signature scan matched that
+// element and a valid record export was rejected as a binary file.
 func IsFMP12Binary(filename string, data []byte) bool {
 	lower := strings.ToLower(strings.TrimSpace(filename))
 	if strings.HasSuffix(lower, ".fmp12") || strings.HasSuffix(lower, ".fp7") || strings.HasSuffix(lower, ".fp5") {
 		return true
+	}
+	if looksLikeXML(data) {
+		return false
 	}
 	if len(data) >= 20 {
 		if bytes.Contains(data[:minInt(len(data), 4096)], []byte("HBAM2")) ||
@@ -124,6 +134,13 @@ func IsFMP12Binary(filename string, data []byte) bool {
 		}
 	}
 	return false
+}
+
+// looksLikeXML reports whether data opens an XML document: an element or a
+// declaration, after any byte order mark and leading whitespace.
+func looksLikeXML(data []byte) bool {
+	trimmed := bytes.TrimLeft(bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}), " \t\r\n")
+	return bytes.HasPrefix(trimmed, []byte("<"))
 }
 
 func minInt(a, b int) int {
@@ -951,12 +968,34 @@ func convertValueListNode(
 		}
 	}
 	if len(vals) == 0 {
-		if cv := findFirstChild(vn, "CustomValues"); cv != nil && strings.TrimSpace(cv.Text) != "" {
-			for _, line := range strings.Split(cv.Text, "\n") {
-				if trimmed := strings.TrimSpace(line); trimmed != "" {
+		if cv := findFirstChild(vn, "CustomValues"); cv != nil {
+			// A FileMaker DDR carries one <Text> child per entry; a design
+			// document written by hand may instead put the whole list in the
+			// element's own character data, one value per line.
+			for _, tNode := range findNodes(cv, "Text", "text") {
+				if trimmed := strings.TrimSpace(tNode.Text); trimmed != "" {
 					vals = append(vals, trimmed)
 				}
 			}
+			if len(vals) == 0 {
+				for _, line := range strings.Split(cv.Text, "\n") {
+					if trimmed := strings.TrimSpace(line); trimmed != "" {
+						vals = append(vals, trimmed)
+					}
+				}
+			}
+		}
+	}
+
+	// File4Base rejects a custom value list with no entries, so an empty one is
+	// reported here instead of reaching the import and rolling the whole
+	// solution back.
+	if len(vals) == 0 {
+		return nil, ReportItem{
+			Category:   CategoryManualActionRequired,
+			Domain:     "value_list",
+			SourceName: name,
+			Detail:     fmt.Sprintf("Custom value list %q carried no values and was skipped; recreate it in Manage Database > Value Lists", name),
 		}
 	}
 
