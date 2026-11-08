@@ -1954,7 +1954,7 @@ class File4BaseMenuBar extends StatelessWidget {
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: () => CheckUpdatesDialog.show(context, currentVersion: '0.4.23'),
+          onPressed: () => CheckUpdatesDialog.show(context),
           leadingIcon: const Icon(Icons.system_update_outlined, size: 18),
           child: const Text('Check for Updates...'),
         ),

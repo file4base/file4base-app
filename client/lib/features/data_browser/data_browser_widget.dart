@@ -823,6 +823,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           widget.onFocusedFieldChanged?.call();
         } else {
           _fieldDebounceTimers[col.name]?.cancel();
+          if (col.fieldType == 'DATE' &&
+              ctrl.text.trim().isNotEmpty &&
+              _normalizeDateInput(ctrl.text) == null) {
+            if (mounted) {
+              setState(() => _fieldSaving[col.name] = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
+              );
+            }
+            return;
+          }
           unawaited(_saveField(col.name, ctrl.text));
           if (mounted) setState(() {});
           // A remote change arrived while this field was being edited: now
@@ -845,19 +856,31 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   Future<void> _saveField(String colName, String newVal) async {
     if (_records.isEmpty) return;
+    final column = widget.table.columns.where((c) => c.name == colName).firstOrNull;
+    Object? valueToSave = newVal;
+    if (column?.fieldType == 'DATE') {
+      if (newVal.trim().isEmpty) {
+        valueToSave = null;
+      } else {
+        valueToSave = _normalizeDateInput(newVal);
+        // Do not submit partial input such as "23/06/" while the user is
+        // typing. A complete valid value is sent as canonical ISO date.
+        if (valueToSave == null) return;
+      }
+    }
     final record = _records[_currentIndex];
     if (record[_draftKey] == true) {
       // A new record is sent as a whole when it is committed
-      record[colName] = newVal;
+      record[colName] = valueToSave;
       return;
     }
     final id = record['id']?.toString();
     if (id == null) return;
 
-    _records[_currentIndex][colName] = newVal;
+    _records[_currentIndex][colName] = valueToSave;
     if (mounted) setState(() => _fieldSaving[colName] = true);
     try {
-      await widget.apiClient.updateRow(widget.table.name, id, {colName: newVal});
+      await widget.apiClient.updateRow(widget.table.name, id, {colName: valueToSave});
       if (mounted) setState(() => _fieldSaving[colName] = null);
     } catch (e) {
       if (mounted) {
@@ -871,6 +894,36 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         );
       }
     }
+  }
+
+  /// Converts a complete ISO or day/month/year date into the ISO representation
+  /// expected by the database. Invalid and partial dates return null.
+  String? _normalizeDateInput(String input) {
+    final value = input.trim();
+    final iso = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$').firstMatch(value);
+    final local = RegExp(r'^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$').firstMatch(value);
+
+    int year;
+    int month;
+    int day;
+    if (iso != null) {
+      year = int.parse(iso.group(1)!);
+      month = int.parse(iso.group(2)!);
+      day = int.parse(iso.group(3)!);
+    } else if (local != null) {
+      day = int.parse(local.group(1)!);
+      month = int.parse(local.group(2)!);
+      year = int.parse(local.group(3)!);
+    } else {
+      return null;
+    }
+
+    if (year < 1) return null;
+    final date = DateTime(year, month, day);
+    if (date.year != year || date.month != month || date.day != day) return null;
+    return '${year.toString().padLeft(4, '0')}-'
+        '${month.toString().padLeft(2, '0')}-'
+        '${day.toString().padLeft(2, '0')}';
   }
 
   String _displayName(String colName) {
@@ -899,6 +952,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           ? fieldText(col, _records[_currentIndex][col.name])
           : '';
       if (ctrl.text != cached) {
+        if (col.fieldType == 'DATE' &&
+            ctrl.text.trim().isNotEmpty &&
+            _normalizeDateInput(ctrl.text) == null) {
+          if (mounted) {
+            setState(() => _fieldSaving[col.name] = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
+            );
+          }
+          return false;
+        }
         await _saveField(col.name, ctrl.text);
       }
     }
@@ -1073,22 +1137,35 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     super.dispose();
   }
 
-  Future<void> _fetchRecords({bool preserveCurrent = false}) async {
+  Future<void> _fetchRecords({bool preserveCurrent = false, bool loadAll = false}) async {
     final keepId = preserveCurrent && _records.isNotEmpty
         ? _records[_currentIndex]['id']?.toString()
         : null;
-    setState(() { _isLoading = true; _error = null; if (!preserveCurrent) _isFoundSet = false; });
+    final keepFoundSet = loadAll && _isFoundSet;
+    final findRequests = keepFoundSet ? _findRequestPayload() : const <Map<String, dynamic>>[];
+    setState(() {
+      _isLoading = true;
+      _error = null;
+      if (!preserveCurrent && !keepFoundSet) _isFoundSet = false;
+    });
     try {
       // A report covers the whole found set: its totals would not match the
       // rows under them if it only read the first page (#32).
-      final rows = _layoutIsReport
-          ? await widget.apiClient.listAllRows(widget.table.name)
-          : await widget.apiClient.listRows(widget.table.name);
+      // The record list must also be able to browse beyond the first page
+      // (#85). If a find is active, load every row in that found set.
+      late final List<Map<String, dynamic>> rows;
+      if (_layoutIsReport || loadAll) {
+        rows = keepFoundSet
+            ? await widget.apiClient.executeFindAll(widget.table.name, findRequests)
+            : await widget.apiClient.listAllRows(widget.table.name);
+      } else {
+        rows = await widget.apiClient.listRows(widget.table.name);
+      }
       if (mounted) {
         setState(() {
           _records = rows;
           _unsortedRecords = List.of(rows);
-          _totalInTable = rows.length;
+          if (!keepFoundSet) _totalInTable = rows.length;
           _sortOrder = const [];
           final keptIdx = keepId == null ? -1 : rows.indexWhere((r) => r['id']?.toString() == keepId);
           _currentIndex = keptIdx >= 0 ? keptIdx : 0;
@@ -1098,7 +1175,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         widget.onRecordChanged?.call(_currentIndex, _records.length);
         if (_layoutIsReport) unawaited(_loadReportFigures());
         unawaited(_loadChartFigures());
-        widget.onFoundSetChanged?.call(const []);
+        if (!keepFoundSet) widget.onFoundSetChanged?.call(const []);
       }
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
@@ -1653,6 +1730,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 selected: {_viewMode},
                 onSelectionChanged: (val) {
                   setState(() => _viewMode = val.first);
+                  if (val.first == 'list') {
+                    unawaited(() async {
+                      if (await _saveCurrentRecord() && mounted) {
+                        await _fetchRecords(preserveCurrent: true, loadAll: true);
+                      }
+                    }());
+                  }
                   if (val.first == 'list' && _layoutIsReport && _reportFigures.isEmpty) {
                     unawaited(_loadReportFigures());
                   }

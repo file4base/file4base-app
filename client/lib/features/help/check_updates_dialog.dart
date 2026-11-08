@@ -1,4 +1,6 @@
+import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class CheckUpdatesDialog extends StatelessWidget {
@@ -6,11 +8,23 @@ class CheckUpdatesDialog extends StatelessWidget {
   const CheckUpdatesDialog({required this.currentVersion, super.key});
   final String currentVersion;
 
-  static Future<void> show(BuildContext context, {String currentVersion = '0.4.25'}) {
-    return showDialog(
+  static Future<void> show(BuildContext context, {String? currentVersion}) async {
+    var version = currentVersion;
+    if (version == null) {
+      try {
+        final info = await PackageInfo.fromPlatform();
+        version = info.buildNumber.isEmpty
+            ? info.version
+            : '${info.version}+${info.buildNumber}';
+      } catch (_) {
+        version = AboutFile4BaseDialog.version;
+      }
+    }
+    if (!context.mounted) return;
+    await showDialog(
       context: context,
       barrierColor: Colors.black54,
-      builder: (ctx) => CheckUpdatesDialog(currentVersion: currentVersion),
+      builder: (ctx) => CheckUpdatesDialog(currentVersion: version!),
     );
   }
 
@@ -105,8 +119,8 @@ class CheckUpdatesDialog extends StatelessWidget {
                 child: Column(
                   children: [
                     const Icon(
-                      Icons.check_circle_outline_rounded,
-                      color: Colors.green,
+                      Icons.info_outline_rounded,
+                      color: Color(0xFF1E88E5),
                       size: 44,
                     ),
                     const SizedBox(height: 10),
@@ -116,7 +130,7 @@ class CheckUpdatesDialog extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Your installation is up to date with the main branch.',
+                      'Compare this installed build with the latest GitHub release.',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurfaceVariant),
                     ),

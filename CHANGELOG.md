@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.3] - 2026-11-08
+
+### Fixed
+- Normalize complete day/month/year and ISO date input before saving, avoiding failed requests for incomplete date typing.
+- Load every row when opening the record list, including all rows in an active found set.
+- Read the installed version and build number in the Check for Updates dialog instead of using stale hardcoded text.
+
 ### Added
 - **In-app updater for the installed desktop client** (`server/internal/api/desktop_update_handler.go`, `client/lib/core/services/desktop_update_service.dart`, `client/lib/features/server_tools/client_update_dialog.dart`, `client/lib/main.dart`):
   - **`GET /api/v1/updates/desktop?platform=macos|windows|linux&client_version=…`** reports the newest published desktop client, its release notes, and the asset to download with the `sha256` to verify it against. It needs **no session** (a build too old to sign in must still find its own update) and mirrors only the public GitHub release; release metadata and the asset list are each cached for ten minutes, so a fleet of polling clients costs one upstream request. Per platform the native installer is preferred and the plain bundle is the fallback (`.dmg` → `.zip`, `Setup.exe` → `.zip`, `.deb` → `.tar.gz`).
