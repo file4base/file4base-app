@@ -224,7 +224,13 @@ func TestUpdateTransfer_ReplacesTheDefinitionAndKeepsItsOwner(t *testing.T) {
 	assert.Equal(t, schema.TransferModeAdd, updated.Mode)
 	assert.Empty(t, updated.MatchFields)
 	assert.Equal(t, "account-1", updated.CreatedBy)
-	assert.Equal(t, created.CreatedAt.UTC(), updated.CreatedAt.UTC())
+	// The creation time is the one it was created with. It is compared with a
+	// tolerance because the value an update reads back came from the database,
+	// which keeps a timestamp to the microsecond, while the one Create
+	// returned is the time.Now() it was built from, to the nanosecond.
+	assert.WithinDuration(t, created.CreatedAt.UTC(), updated.CreatedAt.UTC(), time.Millisecond)
+	assert.True(t, updated.UpdatedAt.After(created.CreatedAt.Add(-time.Millisecond)),
+		"the update time moved forward")
 }
 
 func TestTransfers_NotFoundAndDelete(t *testing.T) {
