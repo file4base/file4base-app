@@ -14,7 +14,10 @@ import (
 
 var (
 	reHTMLSolutionName  = regexp.MustCompile(`(?is)<a\s+name="valFileOptionOverviewSectionAnchor_"\s*(?:/>|>\s*</a>)\s*([^<]+)`)
-	reHTMLBaseTable1    = regexp.MustCompile(`(?is)<table[^>]*>\s*(?:<tbody[^>]*>\s*)?<tr[^>]*>\s*<td[^>]*>\s*Table Name:\s*<a\s+name="(\d+)BaseTableAnchor_"\s*(?:/>|>\s*</a>)\s*([^<]+)</td>\s*</tr>(.*?)</table>`)
+	// The label before the anchor is the report's own wording ("Table Name:",
+	// "Nom de la table :"), so it is skipped rather than matched: the anchor
+	// is the same in every language (#100).
+	reHTMLBaseTable1    = regexp.MustCompile(`(?is)<table[^>]*>\s*(?:<tbody[^>]*>\s*)?<tr[^>]*>\s*<td[^>]*>\s*(?:[^<]*?)<a\s+name="(\d+)BaseTableAnchor_"\s*(?:/>|>\s*</a>)\s*([^<]+)</td>\s*</tr>(.*?)</table>`)
 	reHTMLBaseTable2    = regexp.MustCompile(`(?is)<a\s+name="(\d+)BaseTableAnchor_"\s*(?:/>|>\s*</a>)\s*([^<]+)</span>\s*<table[^>]*>(.*?)</table>`)
 	reHTMLTableCountSuf = regexp.MustCompile(`\s*-\s*\d+\s*Fields?\s*$`)
 	reHTMLTableRow      = regexp.MustCompile(`(?is)<tr[^>]*>(.*?)</tr>`)
@@ -235,7 +238,20 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				fID, _ = strconv.Atoi(strings.TrimPrefix(fullAnchorID, tblPrefix))
 			}
 			fRawName := cleanHTMLText(cells[0][1])
-			fRawType := cleanHTMLText(cells[1][1])
+			fRawType, unknownTypeWords := englishFieldTypeWords(cleanHTMLText(cells[1][1]))
+			if len(unknownTypeWords) > 0 {
+				// The type decides the column, so a word no supported locale
+				// uses is said out loud instead of quietly becoming TEXT
+				// (#100).
+				addReportItem(report, ReportItem{
+					Category:   CategoryManualActionRequired,
+					Domain:     "field",
+					SourceName: sqlName + "." + fRawName,
+					TargetName: sqlName + "." + sanitizeIdentifier(fRawName),
+					Detail: fmt.Sprintf("Field type %q was not recognized (unknown: %s); check the migrated field type in Manage Database. Supported report languages: %s",
+						cleanHTMLText(cells[1][1]), strings.Join(unknownTypeWords, ", "), strings.Join(SupportedDDRLocales, ", ")),
+				})
+			}
 			fRawOpts := extractRawFieldOptions(cells[2][1])
 			if fRawName == "" {
 				continue
@@ -306,6 +322,16 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		})
 	}
 	report.Counts.Tables = len(bundle.Tables)
+	if report.Counts.Tables == 0 || report.Counts.Fields == 0 {
+		// A design report that names a Tables section but yields no table, or
+		// tables with no field, was not understood — a localized report whose
+		// labels this reader does not know, for one. Reporting that as a
+		// successful preflight left the user with layouts bound to table
+		// occurrences that were never imported (#100).
+		return nil, fmt.Errorf("%w: this HTML Database Design Report converted to %d table(s) and %d field(s), so its table catalog was not understood. Supported report languages: %s. Export the report in one of those languages, or use the XML DDR",
+			ErrInvalidMigrationXML, report.Counts.Tables, report.Counts.Fields,
+			strings.Join(SupportedDDRLocales, ", "))
+	}
 
 	// 2. Parse Table Occurrences from Relationships section
 	occIDByName := make(map[string]string)
@@ -503,22 +529,32 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			if stepName == "" {
 				continue
 			}
-			lowerStep := strings.ToLower(stepName)
 			stepIdx++
+			canonical, isSupported, isLocalized := canonicalScriptStepName(stepName)
+			if isLocalized && canonical != "" {
+				stepParams["filemaker_step_name"] = stepName
+				addReportItem(report, ReportItem{
+					Category:   CategoryTranslated,
+					Domain:     "script",
+					SourceName: fmt.Sprintf("%s > %s (step %d)", ps.Name, stepName, stepIdx),
+					TargetName: ps.Name,
+					Detail:     fmt.Sprintf("Localized step name read as %q", canonical),
+				})
+			}
 			switch {
-			case supportedScriptSteps[lowerStep] != "":
+			case isSupported:
 				steps = append(steps, schema.BundleStep{
 					ID:          uuid.NewString(),
 					SequenceIdx: stepIdx,
-					StepType:    supportedScriptSteps[lowerStep],
+					StepType:    canonical,
 					Params:      stepParams,
 					IsEnabled:   true,
 				})
-			case catalogOnlyScriptSteps[lowerStep] != "":
+			case canonical != "":
 				steps = append(steps, schema.BundleStep{
 					ID:          uuid.NewString(),
 					SequenceIdx: stepIdx,
-					StepType:    catalogOnlyScriptSteps[lowerStep],
+					StepType:    canonical,
 					Params:      stepParams,
 					IsEnabled:   true,
 				})
@@ -527,7 +563,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 					Domain:     "script",
 					SourceName: fmt.Sprintf("%s > %s (step %d)", ps.Name, stepName, stepIdx),
 					TargetName: ps.Name,
-					Detail:     fmt.Sprintf("Step %q imported into Script Workspace catalog", catalogOnlyScriptSteps[lowerStep]),
+					Detail:     fmt.Sprintf("Step %q imported into Script Workspace catalog", canonical),
 				})
 			default:
 				// An unsupported step is kept as a disabled comment carrying
@@ -677,21 +713,37 @@ func parseHTMLScriptsSection(scriptsSection string) []htmlParsedScript {
 	for _, tm := range tableRe.FindAllStringSubmatch(scriptsSection, -1) {
 		tblHTML := tm[1]
 		var scName string
+		var firstLabelledValue string
 		var steps []string
 		for _, tr := range reHTMLTableRow.FindAllStringSubmatch(tblHTML, -1) {
 			cells := reHTMLTableCell.FindAllStringSubmatch(tr[1], -1)
-			if len(cells) >= 2 {
-				k := cleanHTMLText(cells[0][1])
-				if strings.EqualFold(k, "Script Name") {
-					scName = cleanHTMLText(cells[1][1])
-				} else if strings.EqualFold(k, "Script Steps") {
-					for _, lm := range reListItem.FindAllStringSubmatch(cells[1][1], -1) {
-						if line := cleanHTMLText(lm[1]); line != "" {
-							steps = append(steps, line)
-						}
+			if len(cells) < 2 {
+				continue
+			}
+			k := cleanHTMLText(cells[0][1])
+			// A row whose value is a list of items is the script's steps,
+			// whatever the report calls that row: the structure is the same in
+			// every language (#100).
+			if reListItem.MatchString(cells[1][1]) {
+				for _, lm := range reListItem.FindAllStringSubmatch(cells[1][1], -1) {
+					if line := cleanHTMLText(lm[1]); line != "" {
+						steps = append(steps, line)
 					}
 				}
+				continue
 			}
+			if strings.EqualFold(k, "Script Name") {
+				scName = cleanHTMLText(cells[1][1])
+				continue
+			}
+			if firstLabelledValue == "" && k != "" {
+				firstLabelledValue = cleanHTMLText(cells[1][1])
+			}
+		}
+		if scName == "" {
+			// A localized report labels the row in its own words; the first
+			// labelled value of the script's table is its name.
+			scName = firstLabelledValue
 		}
 		if scName != "" {
 			out = append(out, htmlParsedScript{Name: scName, StepLines: steps})

@@ -776,3 +776,140 @@ func TestAnalyzeAndConvert_HTMLDDRKeepsUnsupportedScriptSteps(t *testing.T) {
 		t.Fatal("an unsupported step needs a manual action entry saying what to do about it")
 	}
 }
+
+// A French HTML Database Design Report of the same solution converts to the
+// same tables, fields and scripts as the English one: the anchors and the
+// shape of the report are the same in every language, and the words that are
+// not are translated (#100).
+func TestConvertHTMLDDR_FrenchReportMatchesEnglish(t *testing.T) {
+	report := func(language string) string {
+		tableLabel, nameLabel, stepsLabel := "Table Name:", "Script Name", "Script Steps"
+		fieldType, firstStep, lastStep := "Normal, Text", "New Record/Request", "Commit Records/Requests"
+		if language == "French" {
+			tableLabel, nameLabel, stepsLabel = "Nom de la table :", "Nom du script", "Instructions de script"
+			fieldType, firstStep, lastStep = "Normale, Texte", "Nouvel enreg./requête", "Valider les enregistrements/requêtes"
+		}
+		return `<!DOCTYPE html><html><body>` +
+			`<span class="partheading"><a name="valFileOptionOverviewSectionAnchor_"/>Synthetic.fmp12</span>` +
+			`<span class="section"><a name="valTablesSectionAnchor_"/>Tables</span>` +
+			`<table><tr><td>` + tableLabel + `<a name="129BaseTableAnchor_"/>Visits</td></tr>` +
+			`<tr><td><a name="1291FieldAnchor_"/>Code</td><td>` + fieldType + `</td><td></td></tr></table>` +
+			`<span class="section"><a name="valScriptsSectionAnchor_"/>Scripts</span>` +
+			`<table><tr><td>` + nameLabel + `</td><td>Guard</td></tr>` +
+			`<tr><td>` + stepsLabel + `</td><td><ul><li>` + firstStep + `</li><li>` + lastStep + `</li></ul></td></tr></table>` +
+			`<span class="section"><a name="valAccountsSectionAnchor_"/>Accounts</span>` +
+			`</body></html>`
+	}
+
+	english, err := AnalyzeAndConvert(MigrationRequest{DesignXML: report("English")})
+	if err != nil {
+		t.Fatalf("the English report failed: %v", err)
+	}
+	french, err := AnalyzeAndConvert(MigrationRequest{DesignXML: report("French")})
+	if err != nil {
+		t.Fatalf("the French report failed: %v", err)
+	}
+
+	if french.Report.Counts.Tables != english.Report.Counts.Tables ||
+		french.Report.Counts.Fields != english.Report.Counts.Fields ||
+		french.Report.Counts.Scripts != english.Report.Counts.Scripts {
+		t.Fatalf("the French report converted to %d tables / %d fields / %d scripts, the English one to %d / %d / %d",
+			french.Report.Counts.Tables, french.Report.Counts.Fields, french.Report.Counts.Scripts,
+			english.Report.Counts.Tables, english.Report.Counts.Fields, english.Report.Counts.Scripts)
+	}
+	if french.Report.Counts.Tables != 1 || french.Report.Counts.Fields != 1 {
+		t.Fatalf("expected the one table and its field, got %+v", french.Report.Counts)
+	}
+	if french.Bundle.Tables[0].Columns[1].FieldType != "TEXT" {
+		t.Fatalf("Texte is a text field: got %q", french.Bundle.Tables[0].Columns[1].FieldType)
+	}
+
+	frenchSteps := french.Bundle.Scripts[0].Steps
+	englishSteps := english.Bundle.Scripts[0].Steps
+	if len(frenchSteps) != len(englishSteps) {
+		t.Fatalf("expected the same steps, got %d against %d", len(frenchSteps), len(englishSteps))
+	}
+	for i := range frenchSteps {
+		if frenchSteps[i].StepType != englishSteps[i].StepType {
+			t.Fatalf("step %d converted to %q from French and %q from English",
+				i+1, frenchSteps[i].StepType, englishSteps[i].StepType)
+		}
+		if !frenchSteps[i].IsEnabled {
+			t.Fatalf("step %d of the French script arrived disabled", i+1)
+		}
+		if frenchSteps[i].Params["filemaker_step_name"] == nil {
+			t.Fatalf("step %d must keep the name the report wrote for it", i+1)
+		}
+	}
+}
+
+// A report in a language the reader does not know is refused, rather than
+// reported as a successful preflight with no tables at all (#100).
+func TestConvertHTMLDDR_RefusesAnUnreadableReport(t *testing.T) {
+	doc := `<!DOCTYPE html><html><body>` +
+		`<span class="partheading"><a name="valFileOptionOverviewSectionAnchor_"/>Synthetic.fmp12</span>` +
+		`<span class="section"><a name="valTablesSectionAnchor_"/>Tables</span>` +
+		`<table><tr><td>テーブル名：Visits</td></tr></table>` +
+		`<span class="section"><a name="valLayoutsSectionAnchor_"/>Layouts</span>` +
+		`</body></html>`
+
+	_, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if !errors.Is(err, ErrInvalidMigrationXML) {
+		t.Fatalf("expected the report to be refused, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Supported report languages") {
+		t.Fatalf("the refusal must say which languages are read: %v", err)
+	}
+}
+
+// An XML DDR exported in French names its steps in French; the instruction id
+// and the original name are kept as diagnostic metadata (#103).
+func TestAnalyzeAndConvert_ReadsLocalizedXMLScriptSteps(t *testing.T) {
+	design := func(stepName string) string {
+		return `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+			`<BaseTable name="Visits"><FieldCatalog><Field name="Code" dataType="Text"/></FieldCatalog></BaseTable>` +
+			`</BaseTableCatalog><ScriptCatalog><Script name="Guard"><StepList>` +
+			`<Step id="9" name="` + stepName + `" enable="True"/>` +
+			`</StepList></Script></ScriptCatalog></File></FMPReport>`
+	}
+
+	english, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design("New Record/Request")})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	french, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design("Nouvel enreg./requête")})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	if len(french.Bundle.Scripts[0].Steps) != 1 {
+		t.Fatalf("expected one step, got %+v", french.Bundle.Scripts[0].Steps)
+	}
+	step := french.Bundle.Scripts[0].Steps[0]
+	if step.StepType != english.Bundle.Scripts[0].Steps[0].StepType {
+		t.Fatalf("the French step converted to %q, the English one to %q",
+			step.StepType, english.Bundle.Scripts[0].Steps[0].StepType)
+	}
+	if !step.IsEnabled {
+		t.Fatal("a recognized step is imported enabled, whatever language named it")
+	}
+	if got := fmt.Sprint(step.Params["filemaker_step_id"]); got != "9" {
+		t.Fatalf("the instruction id is kept as metadata: got %q", got)
+	}
+	if got := fmt.Sprint(step.Params["filemaker_step_name"]); got != "Nouvel enreg./requête" {
+		t.Fatalf("the name the report wrote is kept as metadata: got %q", got)
+	}
+
+	// A step no supported locale names stays quarantined, and says so.
+	unknown, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design("Envoyer un signal propriétaire")})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	quarantined := unknown.Bundle.Scripts[0].Steps[0]
+	if quarantined.StepType != "Comment" || quarantined.IsEnabled {
+		t.Fatalf("an unknown step is a disabled comment, got %+v", quarantined)
+	}
+	if unknown.Report.Counts.UnsupportedCount == 0 {
+		t.Fatal("an unknown step must be reported as unsupported")
+	}
+}

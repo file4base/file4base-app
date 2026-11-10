@@ -1534,13 +1534,26 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 			enabled = false
 		}
 
-		lowerStep := strings.ToLower(rawStepName)
-		canonical, isSupported := supportedScriptSteps[lowerStep]
-		if !isSupported {
-			canonical = catalogOnlyScriptSteps[lowerStep]
-		}
+		canonical, isSupported, isLocalized := canonicalScriptStepName(rawStepName)
 
 		params, structured, unmapped := decodeStepParams(stNode, canonical)
+		// The instruction id and the name as the report wrote it are kept as
+		// diagnostic metadata: a localized report names its steps in its own
+		// language, and the id is the only language-free key the document
+		// carries (#103).
+		if stepID := firstAttr(stNode, "id", "ID"); stepID != "" {
+			params["filemaker_step_id"] = stepID
+		}
+		if isLocalized {
+			params["filemaker_step_name"] = rawStepName
+			items = append(items, ReportItem{
+				Category:   CategoryTranslated,
+				Domain:     "script",
+				SourceName: fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1),
+				TargetName: name,
+				Detail:     fmt.Sprintf("Localized step name read as %q", canonical),
+			})
+		}
 		if len(unmapped) > 0 {
 			items = append(items, ReportItem{
 				Category:   CategoryManualActionRequired,
@@ -1604,7 +1617,8 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 				Domain:     "script",
 				SourceName: fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1),
 				TargetName: name,
-				Detail:     fmt.Sprintf("Unsupported FileMaker script step %q converted to disabled comment step", rawStepName),
+				Detail: fmt.Sprintf("Unsupported FileMaker script step %q (instruction id %q) converted to disabled comment step; supported report languages: %s",
+					rawStepName, firstAttr(stNode, "id", "ID"), strings.Join(SupportedDDRLocales, ", ")),
 			},
 			ReportItem{
 				Category:   CategoryManualActionRequired,
