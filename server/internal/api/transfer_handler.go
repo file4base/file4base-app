@@ -42,6 +42,7 @@ func (h *TransferHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireAdmin, RequireDesignUnlocked).Delete("/{id}", h.DeleteTransfer)
 		r.Post("/{id}/run", h.RunTransfer)
 	})
+	h.registerScheduleRoutes(r)
 }
 
 // ListTransfers answers the solution's transfer definitions, by name.
@@ -311,48 +312,26 @@ func (h *TransferHandler) resolvePeer(
 }
 
 // endAllows checks that one end's account may do the work the transfer asks
-// of it: the capability its role holds, and its access to the table.
+// of it: the capability its role holds, and its access to the table. It is
+// the same rule a scheduled run applies to the accounts it runs as
+// (transfer.CheckEnd), so a request and a schedule can never disagree about
+// who may move what.
 func (h *TransferHandler) endAllows(
 	w http.ResponseWriter, r *http.Request, end transferEnd,
 	capability, tableName string, writing bool,
 ) bool {
-	svc := schema.NewService(end.driver)
-	ctx := r.Context()
-
-	allowed, err := svc.RoleAllows(ctx, end.session.Role, capability)
-	if err != nil {
-		telemetry.WriteInternalError(w, r, err)
-		return false
-	}
-	if !allowed {
-		writeForbidden(w, r, "the account on "+describeEnd(end.database)+
-			" does not hold the "+capability+" privilege")
-		return false
-	}
-
-	access, err := svc.TableAccess(ctx, end.session.UserID, tableName)
-	if err != nil {
-		telemetry.WriteInternalError(w, r, err)
-		return false
-	}
+	err := transfer.CheckEnd(r.Context(), end.driver,
+		transfer.Account{ID: end.session.UserID, Role: end.session.Role},
+		end.database, capability, tableName, writing)
 	switch {
-	case access == schema.AccessNone:
-		writeForbidden(w, r, "the account on "+describeEnd(end.database)+
-			" cannot reach the table "+tableName)
-		return false
-	case writing && access != schema.AccessReadWrite:
-		writeForbidden(w, r, "the account on "+describeEnd(end.database)+
-			" has read-only access to the table "+tableName+", which a transfer writes to")
-		return false
+	case err == nil:
+		return true
+	case errors.Is(err, transfer.ErrNotAuthorized):
+		writeForbidden(w, r, strings.TrimPrefix(err.Error(), transfer.ErrNotAuthorized.Error()+": "))
+	default:
+		telemetry.WriteInternalError(w, r, err)
 	}
-	return true
-}
-
-func describeEnd(database string) string {
-	if strings.TrimSpace(database) == "" {
-		return "this solution"
-	}
-	return "the solution " + database
+	return false
 }
 
 // resolveTransfer reads a definition by id, or by name when the path is a

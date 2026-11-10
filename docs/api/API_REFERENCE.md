@@ -88,6 +88,7 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
 | `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
 | `FILE4BASE_LOGIN_LOCKOUT_SECONDS` | `900` | How long a tripped lockout lasts. |
+| `FILE4BASE_TRANSFER_SCHEDULER` | `true` | Whether this server process runs due transfer schedules (§ 19). Several processes over the same databases may all leave it on: each occurrence is claimed once. Set it to `false` on a process that should only serve requests. |
 
 ---
 
@@ -1920,11 +1921,11 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `GET /api/v1/server/tls/bundle.pem` | server administrator | Downloads the served leaf certificate followed by the local authority (`application/x-pem-file`, `file4base-chain.pem`), for a reverse proxy that terminates TLS itself. Contains no private key. |
 | `GET /api/v1/server/sessions` | server administrator | Lists active authenticated sessions across databases (`session_id`, `username`, `role`, `database`, `created_at`, `expires_at`, `is_current`). |
 | `DELETE /api/v1/server/sessions/{id}` | server administrator | Revokes session `{id}` immediately. |
-| `GET /api/v1/server/schedules` | server administrator | Lists scheduled cron jobs (`backup`, `script`, or `maintenance`). |
-| `POST /api/v1/server/schedules` | server administrator | Creates a new scheduled cron job. |
-| `PUT /api/v1/server/schedules/{id}` | server administrator | Updates or toggles `enabled` (`true`/`false`) on an existing scheduled cron job. |
-| `POST /api/v1/server/schedules/{id}/run` | server administrator | Executes a scheduled job immediately and updates `last_run_at` / `last_status`. |
-| `DELETE /api/v1/server/schedules/{id}` | server administrator | Deletes a scheduled cron job. |
+| `GET /api/v1/server/schedules` | server administrator | Lists the planned server jobs (`backup`, `script`, or `maintenance`). **None of them is executed by this server**: each reports `executed: false` and `last_status: "not executed"`, and carries no `last_run_at` (`#108`). |
+| `POST /api/v1/server/schedules` | server administrator | Records a planned job. It is kept in memory and not executed. |
+| `PUT /api/v1/server/schedules/{id}` | server administrator | Renames a planned job, changes its cron text, or toggles `enabled`. |
+| `POST /api/v1/server/schedules/{id}/run` | server administrator | **`409 Conflict` (*Job Not Executed*)**: nothing is run, and the audit log records the request as a warning. Until `#108` this answered `200` and marked the job `success` without running anything. Scheduled record transfers, which do run, are at `/api/v1/transfer-schedules` (§ 19). |
+| `DELETE /api/v1/server/schedules/{id}` | server administrator | Deletes a planned job. |
 | `GET /api/v1/server/audit-logs` | server administrator | Lists security and administrative audit events. |
 | `DELETE /api/v1/server/audit-logs` | server administrator | Rotates/clears the audit log buffer and records a new audit entry. |
 | `GET /api/v1/server/maintenance` | admin / owner (own database) | Lists user tables, column counts, live row counts, and catalog health for the target database. |
@@ -2008,7 +2009,7 @@ Both ends being the same solution needs no `peer_token`, and offering one is ref
 
 ### Where a transfer runs
 
-Execution is **server-side**, through the endpoint below, and it is available to **any API caller holding a session for each end**. The desktop and Web Client reach it from the `Import Records` / `Export Records` script steps (see `docs/specs/script_workspace_spec.md`). There is no scheduled or server-side script runner in this release: a transfer runs when a client — or any other authenticated caller, such as a scheduler of your own calling this endpoint with two tokens — asks for it. It is not yet triggered by a File4Base-side schedule.
+Execution is **server-side**, through the endpoint below, and it is available to **any API caller holding a session for each end**. The desktop and Web Client reach it from the `Import Records` / `Export Records` script steps (see `docs/specs/script_workspace_spec.md`). A transfer can also run **unattended on a schedule**, run by the server itself as accounts an administrator of each solution designated — see § 19 (`#108`). Scripts are not run on the server: a schedule runs a transfer definition, never a script.
 
 ### `GET /api/v1/transfers`
 Lists the solution's transfer definitions, by name.
@@ -2197,3 +2198,110 @@ Removes a reference. `204 No Content`.
 ### Restoring a solution bundle
 
 References are matched by name. A reference the destination already has **keeps the solution it is mapped to**: restoring a bundle never repoints a script at a different solution.
+
+---
+
+## 19. Transfer Schedules (`#108`)
+
+A **transfer schedule** runs a transfer definition (§ 17) on a cron schedule, with nobody signed in. Schedules are stored in `sys_transfer_schedules` of the solution that holds the transfer, with the history of their runs in `sys_transfer_schedule_runs` (the 50 most recent per schedule). They are run by the File4Base server process itself.
+
+Everything about a schedule is an administrator's: every route below requires the `owner` or `admin` role, and creating, changing or deleting one also requires an unlocked design.
+
+### Whose authority an unattended run uses
+
+There is no session to vouch for a scheduled run, and a transfer definition holds no credentials. So a schedule **names an account in each solution to run as** — `source_account` in the source solution, `destination_account` in the destination — and **stores no password and no token**.
+
+- **When it is created**, everything is proven: the creator is an administrator of the solution holding the schedule; for a far end in another solution, a `peer_token` from an **owner or administrator of that solution** vouches for the account named there (a plain user of it cannot); and both accounts are checked at once — they exist, are active, hold `bulk_export` (source) or `bulk_import` (destination), and reach their table (read access for the source, read-write for the destination). A schedule that could never run is refused, not stored.
+- **On every run**, the same checks are made again. An account that has been disabled, deleted, demoted, lost the privilege or the table access refuses the run, which is recorded as `refused` with nothing read or written.
+- **The two solutions are pinned.** The schedule keeps the solutions both ends resolved to when it was authorized. If the transfer definition is later changed to read from or write to another solution, the schedule refuses to run rather than carry its authorization over to a solution nobody authorized it for; create it again to authorize the new one.
+- A schedule lives in **one of its transfer's own solutions**. A transfer between two other solutions cannot be scheduled here.
+
+Multi-factor authentication does not apply to a scheduled run: the run signs in to nothing. Its authority is the administrators' who designated the accounts, re-checked on every run.
+
+### When it runs
+
+`cron` is a five-field expression in **UTC** — minute, hour, day of month, month, day of week — with `*`, lists (`1,15`), ranges (`1-5`) and steps (`*/15`). Names, a seconds field, `L`, `W` and `#` are not read and are refused when the schedule is saved. When both day fields are restricted, a day matches if either does.
+
+The server looks for due schedules about every 20 seconds. Each due occurrence is **claimed** in the catalog before it runs, so several server processes over the same databases never run the same occurrence twice, and a schedule whose previous run is still going is not started again. A process can be told not to run schedules at all with `FILE4BASE_TRANSFER_SCHEDULER=false`. On shutdown the server stops starting runs and lets the running ones finish within the shutdown deadline.
+
+A run is recorded with one of three statuses:
+
+| Status | Meaning |
+|---|---|
+| `committed` | The destination transaction was committed. The run carries the transfer's report. |
+| `refused` | An account no longer held the authority its end needs, or the transfer now points at a solution the schedule was not authorized for. Nothing was read or written. |
+| `failed` | The transfer ran and was refused by its own rules — a rejected row under `on_rejected: "abort"`, an unresolved field, a row the destination would not store. The destination is as it was. The run carries the report, with the rejected rows. |
+
+### `GET /api/v1/transfer-schedules`
+Lists the solution's schedules, by name.
+
+```json
+[
+  {
+    "id": "5d2b…",
+    "name": "Nightly surveys",
+    "transfer_id": "0f1c…",
+    "transfer_name": "Send surveys",
+    "cron": "0 2 * * *",
+    "enabled": true,
+    "source_account": "sender",
+    "destination_account": "receiver",
+    "source_database": "dispatch_db",
+    "destination_database": "results_db",
+    "created_by": "a1b2…",
+    "created_at": "2026-11-10T21:30:00Z",
+    "updated_at": "2026-11-10T21:30:00Z",
+    "next_run_at": "2026-11-11T02:00:00Z",
+    "last_run_at": "2026-11-10T21:31:04Z",
+    "last_status": "committed"
+  }
+]
+```
+
+`next_run_at` is absent while the schedule is disabled. `last_error` is present when the last run was `refused` or `failed`.
+
+### `POST /api/v1/transfer-schedules`
+Creates a schedule.
+
+```json
+{
+  "name": "Nightly surveys",
+  "transfer": "Send surveys",
+  "cron": "0 2 * * *",
+  "enabled": true,
+  "source_account": "sender",
+  "destination_account": "receiver",
+  "peer_token": "eyJ…"
+}
+```
+
+`transfer` is the definition's id or name. `peer_token` is required when the transfer's other end is another solution, and must be a session of an owner or administrator of it; it is used to authorize the schedule and is **never stored**. Responses: `201 Created`; `400 Bad Request` (no `peer_token` when one is needed, or one when it is not); `403 Forbidden` (the peer session is not an administrator of that solution, an account does not exist or cannot do its end's work, or the transfer does not involve this solution); `404 Not Found` (no such transfer); `409 Conflict` (the name is taken); `422 Unprocessable Content` (no name, no accounts, a cron expression that is not read).
+
+### `GET /api/v1/transfer-schedules/{id}`
+Reads one schedule.
+
+### `PUT /api/v1/transfer-schedules/{id}`
+Changes `name`, `cron` or `enabled` — all optional. The next run is worked out again from now. The transfer and the run-as accounts **cannot** be changed: they are what was authorized, so changing them is creating a different schedule.
+
+### `DELETE /api/v1/transfer-schedules/{id}`
+Deletes a schedule and its history. `204 No Content`. Deleting the transfer definition deletes its schedules too.
+
+### `POST /api/v1/transfer-schedules/{id}/run`
+Runs a schedule now, exactly as the scheduler would: as its accounts, re-checked, and recorded in its history with `"trigger": "manual"`. It needs no `peer_token` — the schedule's authorization is what runs it.
+
+`200 OK` when the destination was written, `422 Unprocessable Content` when it was not; the body is the recorded run either way. `409 Conflict` when the schedule is already running.
+
+```json
+{
+  "id": "e81a…",
+  "schedule_id": "5d2b…",
+  "trigger": "manual",
+  "started_at": "2026-11-10T21:31:04.118000Z",
+  "finished_at": "2026-11-10T21:31:04.402000Z",
+  "status": "committed",
+  "report": { "transfer": "Send surveys", "rows": 2, "added": 2, "updated": 0, "skipped": 0, "rejected": [], "committed": true }
+}
+```
+
+### `GET /api/v1/transfer-schedules/{id}/runs`
+The schedule's recorded runs, newest first, in the shape above.

@@ -79,7 +79,7 @@ A converted step whose transfer reaches another solution also stops the script w
 
 ### What is still not migrated
 
-- **Scheduled and server-side execution.** A transfer runs when a client, or another authenticated caller, asks the endpoint for it. There is no File4Base-side schedule in this release, so a FileMaker Server schedule that ran an import has no automatic counterpart; the endpoint is what a scheduler of your own would call, with a session token for each end (`#108`).
+- **FileMaker Server schedules.** A FileMaker Server schedule that ran a script is not converted: it lives on the server, not in the design document. Its File4Base counterpart for moving records is a **transfer schedule** (`#108`, [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 19), created by an administrator of each solution and run by the File4Base server. A schedule runs one transfer definition; it does not run a script.
 
 ---
 
