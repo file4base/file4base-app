@@ -192,7 +192,8 @@ void main() {
     await session.continueRun();
     expect(host.did, ['new_record']);
     expect(session.finished, isTrue);
-    expect(session.message, contains('ended at step 2'));
+    expect(session.message, contains('step 2'));
+    expect(session.message, contains('Halt Script'));
   });
 
   test('stopping ends the session, and starting over keeps the breakpoints', () async {
