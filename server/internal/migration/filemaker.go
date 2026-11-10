@@ -22,6 +22,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 )
 
@@ -407,7 +408,23 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 2. Extract Table Occurrences
 	occIDByName := make(map[string]string) // lower(occName) -> occID
 	occTableByName := make(map[string]string)
+	tablesWithOccurrence := make(map[string]bool) // sqlTableName -> the graph names an occurrence of it
 	occNodes := findNodes(root, "TableOccurrence", "occurrence")
+	// A native DDR writes the relationships graph as
+	// RelationshipGraph/TableList/Table: those <Table> elements are the
+	// solution's table occurrences, aliases and all (#101).
+	for _, graph := range findNodes(root, "RelationshipGraph", "relationshipGraph") {
+		for _, list := range graph.Children {
+			if list.Name != "TableList" && list.Name != "tableList" {
+				continue
+			}
+			for _, tableNode := range list.Children {
+				if tableNode.Name == "Table" || tableNode.Name == "table" {
+					occNodes = append(occNodes, tableNode)
+				}
+			}
+		}
+	}
 	for idx, on := range occNodes {
 		occName := firstAttr(on, "name", "Name")
 		if occName == "" {
@@ -438,6 +455,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		occID := uuid.NewString()
 		occIDByName[strings.ToLower(occName)] = occID
 		occTableByName[strings.ToLower(occName)] = tSQL
+		tablesWithOccurrence[tSQL] = true
 		bundle.TableOccurrences = append(bundle.TableOccurrences, schema.BundleOccurrence{
 			ID:          occID,
 			BaseTableID: tID,
@@ -455,6 +473,12 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	// Ensure every base table has at least one default Table Occurrence
 	for idx, tbl := range bundle.Tables {
+		if tablesWithOccurrence[tbl.Name] {
+			// The source graph already names an occurrence of this table,
+			// under its own alias; a second, invented one would not be in the
+			// solution being migrated (#101).
+			continue
+		}
 		if _, ok := occIDByName[strings.ToLower(tbl.Name)]; !ok && occIDByName[strings.ToLower(tbl.DisplayName)] == "" {
 			occID := uuid.NewString()
 			occIDByName[strings.ToLower(tbl.Name)] = occID
@@ -475,8 +499,10 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 3. Extract Relationships
 	relNodes := findNodes(root, "Relationship", "relationship")
 	for _, rn := range relNodes {
-		rel, item := convertRelationshipNode(rn, occIDByName, occTableByName, colIDByTableCol)
-		addReportItem(report, item)
+		rel, items := convertRelationshipNode(rn, occIDByName, occTableByName, colIDByTableCol)
+		for _, item := range items {
+			addReportItem(report, item)
+		}
 		if rel != nil {
 			bundle.Relationships = append(bundle.Relationships, *rel)
 		}
@@ -590,8 +616,19 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 		IsNullable:  true,
 	}
 
+	// A native DDR keeps a field's options in nested <Storage>, <Validation>
+	// and <AutoEnter> elements rather than on the <Field> itself, so none of
+	// them were read while the field was reported as preserved (#102).
+	storageNode := findFirstChild(fn, "Storage", "storage")
+	validationNode := findFirstChild(fn, "Validation", "validation")
+	autoEnterNode := findFirstChild(fn, "AutoEnter", "autoEnter")
+
 	// Check repetitions & global storage
-	if reps := firstAttr(fn, "maxRepetition", "repetitions"); reps != "" && reps != "1" {
+	reps := firstAttr(fn, "maxRepetition", "repetitions")
+	if reps == "" && storageNode != nil {
+		reps = firstAttr(storageNode, "maxRepetition", "repetitions", "maximumRepetitions")
+	}
+	if reps != "" && reps != "1" {
 		items = append(items,
 			ReportItem{
 				Category:   CategoryUnsupported,
@@ -609,7 +646,11 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 			},
 		)
 	}
-	if globalAttr := strings.ToLower(firstAttr(fn, "global", "globalStorage")); globalAttr == "true" || globalAttr == "yes" || globalAttr == "1" {
+	isGlobal := parseBoolAttr(fn, "global", "globalStorage")
+	if !isGlobal && storageNode != nil {
+		isGlobal = parseBoolAttr(storageNode, "global", "globalStorage")
+	}
+	if isGlobal {
 		items = append(items, ReportItem{
 			Category:   CategoryTranslated,
 			Domain:     "field",
@@ -618,6 +659,21 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 			Detail:     "FileMaker global field converted to standard table column",
 		})
 	}
+
+	if rules, ruleItems := convertFieldValidation(tableSQL, rawFieldName, colName, validationNode); rules != nil || len(ruleItems) > 0 {
+		items = append(items, ruleItems...)
+		if rules != nil {
+			encoded, err := json.Marshal(rules)
+			if err == nil {
+				stored := string(encoded)
+				col.ValidationRules = &stored
+				if rules.NotEmpty {
+					col.IsNullable = false
+				}
+			}
+		}
+	}
+	items = append(items, convertFieldAutoEnter(tableSQL, rawFieldName, colName, autoEnterNode, &col)...)
 
 	// Determine calculation or summary formula if present
 	calcText := ""
@@ -727,6 +783,228 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 	return col, items
 }
 
+// nestedOption reads a DDR field option, which FileMaker writes either as an
+// attribute of the options element (notEmpty="True") or as a child element
+// carrying a value (<NotEmpty value="True"/>). It returns the value and
+// whether the option was present at all.
+func nestedOption(parent *xmlNode, element string, attrs ...string) (string, bool) {
+	if parent == nil {
+		return "", false
+	}
+	if value := firstAttr(parent, attrs...); value != "" {
+		return value, true
+	}
+	child := findFirstChild(parent, element, strings.ToLower(element[:1])+element[1:])
+	if child == nil {
+		return "", false
+	}
+	if value := firstAttr(child, "value", "Value"); value != "" {
+		return value, true
+	}
+	if text := strings.TrimSpace(child.Text); text != "" {
+		return text, true
+	}
+	return "True", true // a bare <NotEmpty/> is the option being set
+}
+
+func nestedFlag(parent *xmlNode, element string, attrs ...string) bool {
+	value, ok := nestedOption(parent, element, attrs...)
+	if !ok {
+		return false
+	}
+	switch strings.ToLower(value) {
+	case "true", "yes", "1":
+		return true
+	}
+	return false
+}
+
+// convertFieldValidation turns a field's nested <Validation> element into
+// File4Base validation rules, so a not-empty or unique field is still
+// not-empty or unique after the migration, and reports every validation
+// semantic File4Base cannot enforce (#102).
+func convertFieldValidation(tableSQL, rawFieldName, colName string, vn *xmlNode) (*validation.Rules, []ReportItem) {
+	if vn == nil {
+		return nil, nil
+	}
+	source := tableSQL + "." + rawFieldName
+	target := tableSQL + "." + colName
+	var items []ReportItem
+	rules := &validation.Rules{}
+	kept := []string{}
+
+	if nestedFlag(vn, "NotEmpty", "notEmpty", "not_empty") {
+		rules.NotEmpty = true
+		kept = append(kept, "not empty")
+	}
+	if nestedFlag(vn, "Unique", "unique") {
+		rules.Unique = true
+		kept = append(kept, "unique")
+	}
+	if nestedFlag(vn, "Existing", "existing", "existingValue") {
+		rules.ExistingValue = true
+		kept = append(kept, "member of existing values")
+	}
+	if value, ok := nestedOption(vn, "MaxLength", "maxLength", "max_length"); ok {
+		if length, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && length > 0 {
+			rules.MaxLengthEnabled = true
+			rules.MaxLength = &length
+			kept = append(kept, fmt.Sprintf("at most %d characters", length))
+		}
+	}
+	if rangeNode := findFirstChild(vn, "Range", "range"); rangeNode != nil {
+		from := firstAttr(rangeNode, "from", "From", "min", "start")
+		to := firstAttr(rangeNode, "to", "To", "max", "end")
+		if from != "" || to != "" {
+			rules.RangeEnabled = true
+			rules.RangeMin = from
+			rules.RangeMax = to
+			kept = append(kept, fmt.Sprintf("between %q and %q", from, to))
+		}
+	}
+	if value, ok := nestedOption(vn, "StrictDataType", "strictDataType", "strictType"); ok {
+		if strict := strictTypeFromDDR(value); strict != "" {
+			rules.StrictTypeEnabled = true
+			rules.StrictType = strict
+			kept = append(kept, "strictly "+strict)
+		} else {
+			items = append(items, ReportItem{
+				Category:   CategoryUnsupported,
+				Domain:     "field",
+				SourceName: source,
+				TargetName: target,
+				Detail:     fmt.Sprintf("Validation data type %q has no File4Base equivalent and was not migrated", value),
+			})
+		}
+	}
+	if message, ok := nestedOption(vn, "Message", "message"); ok && message != "True" && message != "False" {
+		rules.CustomMessageEnabled = true
+		rules.CustomMessage = message
+	}
+	// FileMaker validates during data entry unless the field is set to
+	// validate always, which is the same distinction File4Base draws.
+	if nestedFlag(vn, "AlwaysValidate", "alwaysValidate", "alwaysValidateCalculation") {
+		rules.Timing = "always"
+	} else {
+		rules.Timing = "entry"
+	}
+
+	for _, unsupported := range []struct {
+		element string
+		attr    string
+		what    string
+	}{
+		{"ValidateCalculation", "validateCalculation", "a validation formula"},
+		{"ValueList", "valuelist", "membership of a value list"},
+	} {
+		if nestedFlag(vn, unsupported.element, unsupported.attr) {
+			items = append(items,
+				ReportItem{
+					Category:   CategoryUnsupported,
+					Domain:     "field",
+					SourceName: source,
+					TargetName: target,
+					Detail:     fmt.Sprintf("Validation by %s is not enforced by File4Base and was not migrated", unsupported.what),
+				},
+				ReportItem{
+					Category:   CategoryManualActionRequired,
+					Domain:     "field",
+					SourceName: source,
+					TargetName: target,
+					Detail:     fmt.Sprintf("Re-create the validation by %s on %s, or enforce it in a script", unsupported.what, target),
+				})
+		}
+	}
+
+	if len(kept) == 0 {
+		// A custom message with nothing to enforce is no rule at all.
+		return nil, items
+	}
+	items = append(items, ReportItem{
+		Category:   CategoryPreserved,
+		Domain:     "field",
+		SourceName: source,
+		TargetName: target,
+		Detail:     fmt.Sprintf("Validation migrated (%s)", strings.Join(kept, ", ")),
+	})
+	return rules, items
+}
+
+func strictTypeFromDDR(raw string) string {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(raw), " ", "")) {
+	case "numeric", "numericonly", "number":
+		return "Numeric Only"
+	case "date":
+		return "Date"
+	case "4digityear", "fourdigityear", "year":
+		return "4-Digit Year"
+	case "time", "timeofday":
+		return "Time of Day"
+	case "text", "textonly":
+		return "Text Only"
+	}
+	return ""
+}
+
+// convertFieldAutoEnter turns a field's nested <AutoEnter> element into a
+// File4Base default value where it is one, and reports the auto-entry options
+// that need a formula or a script instead (#102).
+func convertFieldAutoEnter(tableSQL, rawFieldName, colName string, an *xmlNode, col *schema.BundleColumn) []ReportItem {
+	if an == nil {
+		return nil
+	}
+	source := tableSQL + "." + rawFieldName
+	target := tableSQL + "." + colName
+	var items []ReportItem
+
+	if value, ok := nestedOption(an, "ConstantData", "constantData", "constant"); ok &&
+		value != "True" && value != "False" {
+		stored := value
+		col.DefaultValue = &stored
+		items = append(items, ReportItem{
+			Category:   CategoryPreserved,
+			Domain:     "field",
+			SourceName: source,
+			TargetName: target,
+			Detail:     fmt.Sprintf("Auto-enter constant %q migrated as the field's default value", value),
+		})
+	}
+
+	for _, unsupported := range []struct {
+		element string
+		attr    string
+		what    string
+	}{
+		{"Serial", "serial", "an auto-entered serial number"},
+		{"Calculation", "calculation", "an auto-entered calculation"},
+		{"Lookup", "lookup", "a looked-up value"},
+		{"CreationTimestamp", "creationTimestamp", "the creation date, time or account"},
+		{"ModificationTimestamp", "modificationTimestamp", "the modification date, time or account"},
+	} {
+		present := nestedFlag(an, unsupported.element, unsupported.attr) ||
+			findFirstChild(an, unsupported.element) != nil
+		if !present {
+			continue
+		}
+		items = append(items,
+			ReportItem{
+				Category:   CategoryUnsupported,
+				Domain:     "field",
+				SourceName: source,
+				TargetName: target,
+				Detail:     fmt.Sprintf("Auto-entering %s was not migrated", unsupported.what),
+			},
+			ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "field",
+				SourceName: source,
+				TargetName: target,
+				Detail:     fmt.Sprintf("Set up %s for %s with a calculation field, a default value or a script", unsupported.what, target),
+			})
+	}
+	return items
+}
+
 var (
 	reGetCurrentDate      = regexp.MustCompile(`(?i)Get\s*\(\s*CurrentDate\s*\)`)
 	reGetCurrentTimestamp = regexp.MustCompile(`(?i)Get\s*\(\s*(CurrentTimestamp|CurrentHostTimestamp)\s*\)`)
@@ -816,7 +1094,7 @@ func convertRelationshipNode(
 	occIDByName map[string]string,
 	occTableByName map[string]string,
 	colIDByTableCol map[string]string,
-) (*schema.BundleRelationship, ReportItem) {
+) (*schema.BundleRelationship, []ReportItem) {
 	relName := firstAttr(rn, "name", "Name", "id")
 	leftOcc := firstAttr(rn, "left", "leftTable", "LeftTable")
 	leftField := firstAttr(rn, "left_field", "leftField", "LeftField")
@@ -824,23 +1102,45 @@ func convertRelationshipNode(
 	rightField := firstAttr(rn, "right_field", "rightField", "RightField")
 	op := firstAttr(rn, "operator", "Operator")
 
-	// Support FileMaker DDR JoinPredicateList structure
-	if leftOcc == "" || rightOcc == "" {
-		if jp := findFirstChild(rn, "JoinPredicate", "Predicate"); jp != nil {
-			op = firstAttr(jp, "type", "operator")
-			if lNode := findFirstChild(jp, "LeftField"); lNode != nil {
-				if fNode := findFirstChild(lNode, "Field"); fNode != nil {
-					leftOcc = firstAttr(fNode, "table", "occurrence")
-					leftField = firstAttr(fNode, "name")
-				}
+	// A native DDR names the two sides in <LeftTable> / <RightTable> child
+	// elements, and carries its join in a <JoinPredicateList> whose
+	// <JoinPredicate> elements are not direct children of the relationship
+	// (#101).
+	leftTableNode := findFirstChild(rn, "LeftTable", "leftTable")
+	rightTableNode := findFirstChild(rn, "RightTable", "rightTable")
+	if leftOcc == "" && leftTableNode != nil {
+		leftOcc = firstAttr(leftTableNode, "name", "Name")
+	}
+	if rightOcc == "" && rightTableNode != nil {
+		rightOcc = firstAttr(rightTableNode, "name", "Name")
+	}
+
+	predicates := findNodes(rn, "JoinPredicate", "Predicate")
+	var extraPredicates []string
+	for i, jp := range predicates {
+		predOp := firstAttr(jp, "type", "operator")
+		lOcc, lField := joinPredicateEndpoint(jp, "LeftField", "leftField")
+		rOcc, rField := joinPredicateEndpoint(jp, "RightField", "rightField")
+		if i == 0 {
+			if op == "" {
+				op = predOp
 			}
-			if rNode := findFirstChild(jp, "RightField"); rNode != nil {
-				if fNode := findFirstChild(rNode, "Field"); fNode != nil {
-					rightOcc = firstAttr(fNode, "table", "occurrence")
-					rightField = firstAttr(fNode, "name")
-				}
+			if leftField == "" {
+				leftField = lField
 			}
+			if rightField == "" {
+				rightField = rField
+			}
+			if leftOcc == "" {
+				leftOcc = lOcc
+			}
+			if rightOcc == "" {
+				rightOcc = rOcc
+			}
+			continue
 		}
+		extraPredicates = append(extraPredicates,
+			fmt.Sprintf("%s.%s %s %s.%s", lOcc, lField, normalizeRelOperator(predOp), rOcc, rField))
 	}
 
 	if relName == "" {
@@ -862,26 +1162,66 @@ func convertRelationshipNode(
 	}
 
 	if leftOccID == "" || rightOccID == "" || leftColID == "" || rightColID == "" {
-		return nil, ReportItem{
+		return nil, []ReportItem{{
 			Category:   CategoryRejected,
 			Domain:     "relationship",
 			SourceName: relName,
 			Detail:     fmt.Sprintf("Unresolvable join endpoints (%s.%s -> %s.%s)", leftOcc, leftField, rightOcc, rightField),
-		}
+		}}
 	}
 
 	normOp := normalizeRelOperator(op)
+	detail := fmt.Sprintf("%s.%s %s %s.%s", leftOcc, leftField, normOp, rightOcc, rightField)
 	if normOp == "x" {
-		return nil, ReportItem{
+		return nil, []ReportItem{{
 			Category:   CategoryUnsupported,
 			Domain:     "relationship",
 			SourceName: relName,
 			Detail:     "Cartesian product (x) relationship is not supported in File4Base",
-		}
+		}}
 	}
 
 	allowCreate := parseBoolAttr(rn, "allow_creation", "allowCreate", "rightAllowCreate")
 	cascadeDelete := parseBoolAttr(rn, "cascade_delete", "cascadeDelete", "rightCascadeDelete")
+	sortRelated := firstAttr(rn, "sort_related", "sortRelated")
+	if rightTableNode != nil {
+		// A native DDR records allow-creation and cascade-delete per side, on
+		// the side they act on, which is the right-hand table (#101).
+		allowCreate = allowCreate || parseBoolAttr(rightTableNode, "cascadeCreate", "allowCreate", "allow_creation")
+		cascadeDelete = cascadeDelete || parseBoolAttr(rightTableNode, "cascadeDelete", "cascade_delete")
+		if sortRelated == "" {
+			sortRelated = firstAttr(rightTableNode, "sortList", "sort_related", "sortRelated")
+		}
+	}
+
+	items := []ReportItem{{
+		Category:   CategoryPreserved,
+		Domain:     "relationship",
+		SourceName: relName,
+		TargetName: relName,
+		Detail:     detail,
+	}}
+	if len(extraPredicates) > 0 {
+		// A File4Base relationship joins one pair of fields, so the further
+		// predicates of a multi-predicate join are named rather than dropped
+		// in silence (#101).
+		items = append(items,
+			ReportItem{
+				Category:   CategoryUnsupported,
+				Domain:     "relationship",
+				SourceName: relName,
+				TargetName: relName,
+				Detail: fmt.Sprintf("Only the first join predicate was migrated; %d further predicate(s) were not: %s",
+					len(extraPredicates), strings.Join(extraPredicates, ", ")),
+			},
+			ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "relationship",
+				SourceName: relName,
+				TargetName: relName,
+				Detail:     "Rebuild the remaining join predicates of this relationship in Manage Database > Relationships, or narrow the join with a calculated key field",
+			})
+	}
 
 	return &schema.BundleRelationship{
 			ID:                uuid.NewString(),
@@ -893,14 +1233,23 @@ func convertRelationshipNode(
 			Operator:          normOp,
 			AllowCreation:     allowCreate,
 			CascadeDelete:     cascadeDelete,
-			SortRelated:       firstAttr(rn, "sort_related", "sortRelated"),
-		}, ReportItem{
-			Category:   CategoryPreserved,
-			Domain:     "relationship",
-			SourceName: relName,
-			TargetName: relName,
-			Detail:     fmt.Sprintf("%s.%s %s %s.%s", leftOcc, leftField, normOp, rightOcc, rightField),
-		}
+			SortRelated:       sortRelated,
+		}, items
+}
+
+// joinPredicateEndpoint reads one side of a native DDR join predicate, whose
+// field is a <Field> element inside <LeftField> / <RightField> naming both the
+// occurrence and the field (#101).
+func joinPredicateEndpoint(jp *xmlNode, names ...string) (string, string) {
+	side := findFirstChild(jp, names...)
+	if side == nil {
+		return "", ""
+	}
+	if fieldNode := findFirstChild(side, "Field", "field"); fieldNode != nil {
+		return firstAttr(fieldNode, "table", "occurrence", "Table"),
+			firstAttr(fieldNode, "name", "Name")
+	}
+	return firstAttr(side, "table", "occurrence"), firstAttr(side, "name", "Name")
 }
 
 func normalizeRelOperator(op string) string {

@@ -504,31 +504,64 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				continue
 			}
 			lowerStep := strings.ToLower(stepName)
-			if canonical, ok := supportedScriptSteps[lowerStep]; ok {
+			stepIdx++
+			switch {
+			case supportedScriptSteps[lowerStep] != "":
 				steps = append(steps, schema.BundleStep{
 					ID:          uuid.NewString(),
 					SequenceIdx: stepIdx,
-					StepType:    canonical,
+					StepType:    supportedScriptSteps[lowerStep],
 					Params:      stepParams,
 					IsEnabled:   true,
 				})
-				stepIdx++
-			} else if canonical, ok := catalogOnlyScriptSteps[lowerStep]; ok {
+			case catalogOnlyScriptSteps[lowerStep] != "":
 				steps = append(steps, schema.BundleStep{
 					ID:          uuid.NewString(),
 					SequenceIdx: stepIdx,
-					StepType:    canonical,
+					StepType:    catalogOnlyScriptSteps[lowerStep],
 					Params:      stepParams,
 					IsEnabled:   true,
 				})
 				addReportItem(report, ReportItem{
 					Category:   CategoryTranslated,
 					Domain:     "script",
-					SourceName: fmt.Sprintf("%s > %s (step %d)", ps.Name, stepName, stepIdx+1),
+					SourceName: fmt.Sprintf("%s > %s (step %d)", ps.Name, stepName, stepIdx),
 					TargetName: ps.Name,
-					Detail:     fmt.Sprintf("Step %q imported into Script Workspace catalog", canonical),
+					Detail:     fmt.Sprintf("Step %q imported into Script Workspace catalog", catalogOnlyScriptSteps[lowerStep]),
 				})
-				stepIdx++
+			default:
+				// An unsupported step is kept as a disabled comment carrying
+				// its original line, so a script is never left looking
+				// complete after an operation was dropped out of its middle
+				// (#104). This is what the XML route has always done.
+				commentParams := map[string]interface{}{
+					"text":                    fmt.Sprintf("[UNSUPPORTED FM STEP: %s]", strings.TrimSpace(lineText)),
+					"original_filemaker_step": stepName,
+				}
+				if len(stepParams) > 0 {
+					commentParams["filemaker_parameters"] = stepParams
+				}
+				steps = append(steps, schema.BundleStep{
+					ID:          uuid.NewString(),
+					SequenceIdx: stepIdx,
+					StepType:    "Comment",
+					Params:      commentParams,
+					IsEnabled:   false,
+				})
+				addReportItem(report, ReportItem{
+					Category:   CategoryUnsupported,
+					Domain:     "script",
+					SourceName: fmt.Sprintf("%s > %s (step %d)", ps.Name, stepName, stepIdx),
+					TargetName: ps.Name,
+					Detail:     fmt.Sprintf("Unsupported FileMaker script step %q converted to a disabled comment step keeping its original line", stepName),
+				})
+				addReportItem(report, ReportItem{
+					Category:   CategoryManualActionRequired,
+					Domain:     "script",
+					SourceName: fmt.Sprintf("%s > %s (step %d)", ps.Name, stepName, stepIdx),
+					TargetName: ps.Name,
+					Detail:     fmt.Sprintf("Replace unsupported script step %q in script %q, then enable the step", stepName, ps.Name),
+				})
 			}
 		}
 		scID := uuid.NewString()
@@ -545,7 +578,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			Domain:     "script",
 			SourceName: ps.Name,
 			TargetName: ps.Name,
-			Detail:     fmt.Sprintf("Script migrated with %d steps", len(steps)),
+			Detail:     fmt.Sprintf("Script migrated with %d of %d source steps converted", len(steps), stepIdx),
 		})
 	}
 	report.Counts.Scripts = len(bundle.Scripts)

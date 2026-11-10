@@ -4,8 +4,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/validation"
 )
 
 func TestIsFMP12Binary(t *testing.T) {
@@ -587,5 +591,188 @@ func TestAnalyzeAndConvert_RefusesTablesWithNoFields(t *testing.T) {
 
 	if _, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc}); !errors.Is(err, ErrInvalidMigrationXML) {
 		t.Fatalf("expected an invalid-XML error, got %v", err)
+	}
+}
+
+// A native DDR writes its occurrences and relationships in the
+// RelationshipGraph, with the two sides as child elements and the join in a
+// JoinPredicateList (#101).
+func TestAnalyzeAndConvert_ReadsNativeRelationshipGraph(t *testing.T) {
+	doc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable id="1" name="Parents"><FieldCatalog><Field id="1" name="Key" dataType="Text" fieldType="Normal"/></FieldCatalog></BaseTable>` +
+		`<BaseTable id="2" name="Children"><FieldCatalog><Field id="1" name="ParentKey" dataType="Text" fieldType="Normal"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog><RelationshipGraph>` +
+		`<TableList><Table id="1" name="ParentAlias" baseTable="Parents" baseTableId="1"/>` +
+		`<Table id="2" name="ChildAlias" baseTable="Children" baseTableId="2"/></TableList>` +
+		`<RelationshipList><Relationship id="1">` +
+		`<LeftTable name="ParentAlias" cascadeCreate="False" cascadeDelete="False"/>` +
+		`<RightTable name="ChildAlias" cascadeCreate="True" cascadeDelete="False"/>` +
+		`<JoinPredicateList><JoinPredicate type="Equal">` +
+		`<LeftField><Field name="Key" table="ParentAlias"/></LeftField>` +
+		`<RightField><Field name="ParentKey" table="ChildAlias"/></RightField>` +
+		`</JoinPredicate></JoinPredicateList>` +
+		`</Relationship></RelationshipList></RelationshipGraph></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	names := make([]string, 0, len(res.Bundle.TableOccurrences))
+	for _, occ := range res.Bundle.TableOccurrences {
+		names = append(names, occ.Name)
+	}
+	sort.Strings(names)
+	if len(names) != 2 || names[0] != "ChildAlias" || names[1] != "ParentAlias" {
+		t.Fatalf("expected the source aliases and no invented occurrences, got %v", names)
+	}
+
+	if len(res.Bundle.Relationships) != 1 {
+		t.Fatalf("expected the one relationship the graph declares, got %d (rejected: %+v)",
+			len(res.Bundle.Relationships), res.Report.Rejected)
+	}
+	rel := res.Bundle.Relationships[0]
+	if rel.Operator != "=" {
+		t.Fatalf("expected an equality join, got %q", rel.Operator)
+	}
+	if !rel.AllowCreation {
+		t.Fatal("cascadeCreate on the right-hand table means records may be created through the relationship")
+	}
+	occByID := map[string]string{}
+	for _, occ := range res.Bundle.TableOccurrences {
+		occByID[occ.ID] = occ.Name
+	}
+	if occByID[rel.LeftOccurrenceID] != "ParentAlias" || occByID[rel.RightOccurrenceID] != "ChildAlias" {
+		t.Fatalf("the join is between the source aliases: got %q -> %q",
+			occByID[rel.LeftOccurrenceID], occByID[rel.RightOccurrenceID])
+	}
+}
+
+// A field's nested Storage, Validation and AutoEnter options are read, kept
+// where File4Base can enforce them, and reported where it cannot (#102).
+func TestAnalyzeAndConvert_ReadsNestedFieldOptions(t *testing.T) {
+	doc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog><BaseTable name="Visits"><FieldCatalog>` +
+		`<Field name="Code" dataType="Text" fieldType="Normal">` +
+		`<AutoEnter><ConstantData>SV-000</ConstantData></AutoEnter>` +
+		`<Validation message="False" valuelist="False" validateCalculation="False">` +
+		`<NotEmpty value="True"/><Unique value="True"/><MaxLength value="12"/>` +
+		`</Validation>` +
+		`<Storage global="False" maxRepetition="1"/>` +
+		`</Field>` +
+		`<Field name="SessionFilter" dataType="Text" fieldType="Normal"><Storage global="True" maxRepetition="1"/></Field>` +
+		`<Field name="Answers" dataType="Text" fieldType="Normal"><Storage global="False" maxRepetition="5"/></Field>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	var code schema.BundleColumn
+	for _, col := range res.Bundle.Tables[0].Columns {
+		if col.Name == "code" {
+			code = col
+		}
+	}
+	if code.ValidationRules == nil {
+		t.Fatal("the validation rules of the source field were not migrated")
+	}
+	rules, err := validation.Parse(code.ValidationRules)
+	if err != nil {
+		t.Fatalf("the migrated rules are not valid validation rules: %v", err)
+	}
+	if !rules.NotEmpty || !rules.Unique {
+		t.Fatalf("expected not-empty and unique to hold after migration, got %+v", rules)
+	}
+	if !rules.MaxLengthEnabled || rules.MaxLength == nil || *rules.MaxLength != 12 {
+		t.Fatalf("expected the 12-character limit, got %+v", rules)
+	}
+	if code.IsNullable {
+		t.Fatal("a not-empty field is not nullable")
+	}
+	if code.DefaultValue == nil || *code.DefaultValue != "SV-000" {
+		t.Fatalf("expected the auto-enter constant as the default value, got %v", code.DefaultValue)
+	}
+
+	// Storage-level global and repeating fields are reported, as the
+	// attribute-level ones always were.
+	var globalReported, repeatingReported bool
+	for _, item := range res.Report.Translated {
+		if item.SourceName == "visits.SessionFilter" && strings.Contains(item.Detail, "global") {
+			globalReported = true
+		}
+	}
+	for _, item := range res.Report.Unsupported {
+		if item.SourceName == "visits.Answers" && strings.Contains(item.Detail, "Repeating") {
+			repeatingReported = true
+		}
+	}
+	if !globalReported {
+		t.Fatalf("a Storage global=True field must be reported as translated: %+v", res.Report.Translated)
+	}
+	if !repeatingReported {
+		t.Fatalf("a Storage maxRepetition=5 field must be reported as unsupported: %+v", res.Report.Unsupported)
+	}
+}
+
+// Every step of an HTML DDR script is accounted for: an unsupported
+// operation in the middle of a script is kept as a disabled comment with its
+// original line and reported, rather than deleted while the script is called
+// preserved (#104).
+func TestAnalyzeAndConvert_HTMLDDRKeepsUnsupportedScriptSteps(t *testing.T) {
+	htmlDDR := `<!DOCTYPE html><html><body>` +
+		`<span class="partheading"><a name="valFileOptionOverviewSectionAnchor_"/>Synthetic.fmp12</span>` +
+		`<span class="section"><a name="valTablesSectionAnchor_"/>Tables</span>` +
+		`<span class="subheader"><a name="129BaseTableAnchor_"/>Visits</span>` +
+		`<table><tr><th>Field Name</th><th>Field Type</th><th>Options | Comments</th></tr>` +
+		`<tr><td><a name="1291FieldAnchor_"/>Code</td><td>Normal, Text</td><td></td></tr></table>` +
+		`<span class="section"><a name="valScriptsSectionAnchor_"/>Scripts</span>` +
+		`<table><tr><td>Script Name</td><td>Guard</td></tr>` +
+		`<tr><td>Script Steps</td><td><ul>` +
+		`<li>New Record/Request</li>` +
+		`<li>Send Mail [ With dialog: Off ]</li>` +
+		`<li>Commit Records/Requests</li>` +
+		`</ul></td></tr></table>` +
+		`<span class="section"><a name="valAccountsSectionAnchor_"/>Accounts</span>` +
+		`</body></html>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: htmlDDR})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if len(res.Bundle.Scripts) != 1 {
+		t.Fatalf("expected 1 script, got %d", len(res.Bundle.Scripts))
+	}
+
+	steps := res.Bundle.Scripts[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("expected all 3 source steps to be accounted for, got %d: %+v", len(steps), steps)
+	}
+	for i, step := range steps {
+		if step.SequenceIdx != i+1 {
+			t.Fatalf("step %d has sequence_idx %d; indices must be 1-based and unique", i, step.SequenceIdx)
+		}
+	}
+	if steps[1].StepType != "Comment" || steps[1].IsEnabled {
+		t.Fatalf("the unsupported step is kept as a disabled comment, got %+v", steps[1])
+	}
+	if got := fmt.Sprint(steps[1].Params["original_filemaker_step"]); got != "Send Mail" {
+		t.Fatalf("the original step name is kept: got %q", got)
+	}
+	if got := fmt.Sprint(steps[1].Params["text"]); !strings.Contains(got, "Send Mail [ With dialog: Off ]") {
+		t.Fatalf("the original line is kept for review: got %q", got)
+	}
+
+	reported := false
+	for _, item := range res.Report.Unsupported {
+		if item.Domain == "script" && strings.Contains(item.Detail, "Send Mail") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("the dropped operation must be reported: %+v", res.Report.Unsupported)
+	}
+	if res.Report.Counts.ManualActionCount == 0 {
+		t.Fatal("an unsupported step needs a manual action entry saying what to do about it")
 	}
 }
