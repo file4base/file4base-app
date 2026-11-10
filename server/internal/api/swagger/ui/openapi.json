@@ -2324,6 +2324,221 @@
         ]
       }
     },
+    "/api/v1/transfers": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Transfer Definitions",
+        "description": "Named record transfers between two solutions (#96). A definition holds no credentials: a run is authorized by a session for each end.",
+        "responses": {
+          "200": {
+            "description": "List Transfer Definitions"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create Transfer Definition",
+        "description": "Requires the owner or admin role and an unlocked design.",
+        "responses": {
+          "201": {
+            "description": "Create Transfer Definition"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A transfer with that name already exists"
+          },
+          "422": {
+            "description": "Invalid transfer definition"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/transfers/{idOrName}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get Transfer Definition",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The transfer definition's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Get Transfer Definition"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such transfer"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update Transfer Definition",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The transfer definition's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Update Transfer Definition"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such transfer"
+          },
+          "422": {
+            "description": "Invalid transfer definition"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete Transfer Definition",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The transfer definition's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete Transfer Definition"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such transfer"
+          }
+        }
+      }
+    },
+    "/api/v1/transfers/{idOrName}/run": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Run Transfer Definition",
+        "description": "Runs one transfer. `peer_token` is a session token for the end that is not this session's solution; it is required when the two ends are different solutions and refused when they are the same one. The run report is the response body for both outcomes: 200 when the destination was written, 422 with `committed: false` and the rejected rows when nothing was.",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The transfer definition's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The transfer committed; the body is the run report"
+          },
+          "400": {
+            "description": "A peer_token is needed and absent, or offered when it is not needed"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such transfer"
+          },
+          "422": {
+            "description": "The transfer was refused; the body is the run report with committed=false"
+          },
+          "503": {
+            "description": "A solution is not reachable"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/saved-finds": {
       "get": {
         "tags": [

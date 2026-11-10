@@ -111,6 +111,7 @@ type Report struct {
 	SavedFinds    []SavedFind     `json:"saved_finds" xml:"saved_finds>saved_find"`
 	DataSources   []DataSource    `json:"data_sources" xml:"data_sources>data_source"`
 	MenuSets      []MenuSet       `json:"menu_sets,omitempty" xml:"menu_sets>menu_set,omitempty"`
+	Transfers     []Transfer      `json:"transfers,omitempty" xml:"transfers>transfer,omitempty"`
 
 	// Notes say what this report does not describe, so a reader is not left
 	// to assume that what is absent does not exist.
@@ -131,6 +132,7 @@ type Counts struct {
 	SavedFinds    int `json:"saved_finds" xml:"saved_finds,attr"`
 	DataSources   int `json:"data_sources" xml:"data_sources,attr"`
 	MenuSets      int `json:"menu_sets,omitempty" xml:"menu_sets,attr,omitempty"`
+	Transfers     int `json:"transfers,omitempty" xml:"transfers,attr,omitempty"`
 }
 
 // Table is a base table and its fields.
@@ -284,6 +286,40 @@ type RolePrivilege struct {
 	Role       string `json:"role" xml:"role,attr"`
 	BulkExport bool   `json:"bulk_export" xml:"bulk_export,attr"`
 	BulkImport bool   `json:"bulk_import" xml:"bulk_import,attr"`
+}
+
+// Transfer is a named record transfer between two solutions (#96): what it
+// moves, where, by which keys, and what it does with a record that matches
+// nothing or a value the destination cannot hold.
+//
+// It carries no credentials, because the definition holds none: a transfer is
+// authorized when it runs, by a session of each end.
+type Transfer struct {
+	Name string `json:"name" xml:"name,attr"`
+
+	// Source and Destination read "solution.table", or just "table" for the
+	// solution this report describes.
+	Source      string `json:"source" xml:"source,attr"`
+	Destination string `json:"destination" xml:"destination,attr"`
+
+	Mode        string `json:"mode" xml:"mode,attr"`
+	MatchFields string `json:"match_fields,omitempty" xml:"match_fields,attr,omitempty"`
+	OnUnmatched string `json:"on_unmatched,omitempty" xml:"on_unmatched,attr,omitempty"`
+	OnRejected  string `json:"on_rejected" xml:"on_rejected,attr"`
+	DateOrder   string `json:"date_order" xml:"date_order,attr"`
+
+	// FoundSet says whether the transfer sends a found set rather than the
+	// whole table.
+	FoundSet bool `json:"found_set" xml:"found_set,attr"`
+
+	Mappings []TransferMapping `json:"mappings" xml:"mappings>mapping"`
+}
+
+// TransferMapping is one field of the source sent to one field of the
+// destination.
+type TransferMapping struct {
+	Source      string `json:"source" xml:"source,attr"`
+	Destination string `json:"destination" xml:"destination,attr"`
 }
 
 // SavedFind is a named find and what it searches.

@@ -543,6 +543,18 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			}
 			switch {
 			case isSupported:
+				if needsTransferDefinition(canonical) {
+					addReportItem(report, ReportItem{
+						Category:   CategoryManualActionRequired,
+						Domain:     "script",
+						SourceName: fmt.Sprintf("%s > %s (step %d)", ps.Name, stepName, stepIdx),
+						TargetName: ps.Name,
+						Detail: fmt.Sprintf("Step %q runs a File4Base transfer definition, which names the "+
+							"two solutions, the field mappings and the match keys. The FileMaker file and "+
+							"mapping this step referred to were not converted into one, so the step stops "+
+							"the script until a transfer is created and named in it", canonical),
+					})
+				}
 				steps = append(steps, schema.BundleStep{
 					ID:          uuid.NewString(),
 					SequenceIdx: stepIdx,

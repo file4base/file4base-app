@@ -72,6 +72,7 @@ The following features from proprietary desktop/server ecosystems are **explicit
 |---|---|---|---|---|
 | Solution Bundle Export/Import (`.f4p` / `.f4b`) & Data Snapshot (`.f4data`) with Persistent Export Directory | `File > Save a Copy As...`, `Export Solution`, `Open Solution` | `SolutionStorageService` (persists chosen directory), `internal/schema/solution_service.go` | **Verified** | [`solution_bundle_format.md`](solution_bundle_format.md), `bundle_golden_test.go` (`#12`, `#14`) |
 | Tabular Record Import/Export (CSV, TSV, XLSX, `FMPXMLRESULT` / repeating XML) | `File > Import Records`, `File > Export Records...` | `internal/dataio` with dry-run preview & single-transaction atomic import | **Verified** | [`importing_and_exporting_records.md`](importing_and_exporting_records.md), `dataio_test.go` (`#38`) |
+| Scripted Record Transfers Between Solutions (persisted mappings, stable match keys, add/update mode, unmatched & rejected-row policies, idempotent replay) | `Import Records` / `Export Records` script steps naming a transfer definition | `sys_transfers`, `internal/schema/transfer_service.go`, `internal/transfer` over `data.ImportRecords`; `/api/v1/transfers` with a session for **each** end (`peer_token`), zero stored credentials | **Verified** | [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 17, `internal/transfer/transfer_integration_test.go`, `internal/api/transfers_test.go`, `client/test/script_execution_test.dart` (`#96`) |
 | External SQL Data Sources (PostgreSQL, MySQL/MariaDB, SQL Server) | `File > Manage > External Data Sources...` | `internal/extsource` read-only bounded query importer (zero stored passwords) | **Verified** | [`external_sql_sources.md`](external_sql_sources.md) (`#47`) |
 | Database Design Report (DDR) & Save a Copy as XML | `Tools > Database Design Report...`, `Tools > Save a Copy as XML...` | `internal/designreport` (`GET /api/v1/solutions/design-report?format=html\|xml\|json`) | **Verified** | [`design_report.md`](design_report.md) (`#49`) |
 | Data Viewer (`Current` record fields & live `Watch` expression evaluator) | `Tools > Data Viewer` | `POST /api/v1/data/{table}/evaluate` using `internal/calc` | **Verified** | [`data_viewer.md`](data_viewer.md) (`#50`) |
@@ -123,13 +124,21 @@ Scripts are persisted in `sys_scripts` and `sys_script_steps` and executed by `L
 | **Records** | `Set Field` | Updates a target field on the current record. |
 | **Found Sets** | `Perform Find`, `Show All Records`, `Show Omitted Only`, `Omit Record`, `Sort Records` | Executes find queries, restores all records, or sorts the found set. |
 | **Control & Dialogs** | `Perform Script` | Executes a named sub-script from the catalog. |
-| **Control & Dialogs** | `Exit Script`, `Halt Script` | Cleanly terminates the current script or halts the entire execution session. |
+| **Control & Dialogs** | `Exit Script`, `Halt Script` | Cleanly terminates the current script or halts the entire execution session. A halt reaches every caller (`#95`). |
+| **Control & Dialogs** | `If`, `Else If`, `Else`, `End If` | Evaluates the condition and takes the branch it picks; a condition File4Base cannot evaluate stops the script rather than guessing (`#93`). |
+| **Control & Dialogs** | `Loop`, `Exit Loop If`, `End Loop` | Repeats the steps between them until an `Exit Loop If` holds. Nested loops leave only the loop they are in, branches opened inside a turn are closed on the next, and a loop with no way out is stopped and says so rather than hanging (`#96`). |
+| **Control & Dialogs** | `Set Variable` | Assigns to a local `$` or global `$$` variable; a value it cannot evaluate stops the script (`#93`). |
 | **Control & Dialogs** | `Show Custom Dialog` | Displays a modal message dialog with configurable title and body. |
 | **Integration** | `Open URL` | Validates and opens an `http`/`https`/`mailto` URL. |
+| **Integration** | `Import Records`, `Export Records` | Runs the **transfer definition** named in the step: records cross between two solutions by explicit mappings and stable match keys, in one transaction per destination table (`#96`). The counts land in `$$transferAdded`, `$$transferUpdated`, `$$transferSkipped`, `$$transferRejected` and `$$transferCommitted`, so the steps after it can test what happened with an ordinary `If`. See [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 17. |
 | **Documentation** | `Comment` (`#`) | No-op annotation step recorded in the execution trace. |
 
 ### 4.2 Catalog-Only / Halting Script Steps
-Steps that can be stored in the catalog or imported for inspection (`If`, `Else If`, `Else`, `End If`, `Loop`, `Exit Loop If`, `End Loop`, `Set Variable`, `Insert from URL`, `Import Records`, `Export Records`, `Print`) are **never silently ignored**: when encountered during execution or debugging, `LayoutActionRunner` halts the script and reports the exact step name that requires server-side/expression runner support (`#20`, `#51`).
+Steps that are stored in the catalog or imported for inspection but **not executed** — `Insert from URL` and `Print` — are **never silently ignored**: when one is reached during execution or debugging, `LayoutActionRunner` stops the script and reports the exact step name that needs support it does not yet have (`#20`, `#51`).
+
+An `Import Records` or `Export Records` step that names **no transfer**, or one that names a transfer this solution does not have, stops the script the same way. In particular it is never answered with a *script* of the same name: a transfer and a script are different objects, and falling back from one to the other would run something nobody asked for (`#96`).
+
+A transfer whose far end is another solution also stops the script when this session is not signed in to that solution. The step reports which solution it needs, because File4Base moves records only on authority it has been given — the definition carries no credential of its own.
 
 ### 4.3 Script Triggers
 | Trigger Scope | Supported Triggers | Migration Quarantine Policy (`#26`) |

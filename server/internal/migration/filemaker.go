@@ -178,6 +178,31 @@ var supportedScriptSteps = map[string]string{
 	"open url":                  "Open URL",
 	"comment":                   "Comment",
 	"#":                         "Comment",
+	// Loops and the two record-transfer steps execute in the client runner
+	// (#96). An Import Records or Export Records step runs a named transfer
+	// definition; until one is named it stops the script, which is what the
+	// issue asks of an unresolved target.
+	"loop":            "Loop",
+	"exit loop if":    "Exit Loop If",
+	"end loop":        "End Loop",
+	"import records":  "Import Records",
+	"export records":  "Export Records",
+}
+
+// transferScriptSteps are the steps that run a transfer definition (#96).
+// A FileMaker report names a file and a mapping of its own, which File4Base
+// cannot turn into a transfer definition on its own, so a converted step
+// carries no target and the conversion report says one has to be named.
+var transferScriptSteps = map[string]struct{}{
+	"Import Records": {},
+	"Export Records": {},
+}
+
+// needsTransferDefinition reports whether a converted step cannot run until a
+// transfer definition is named in it.
+func needsTransferDefinition(canonical string) bool {
+	_, ok := transferScriptSteps[canonical]
+	return ok
 }
 
 // catalogOnlyScriptSteps are control-flow or variable steps that File4Base
@@ -187,12 +212,7 @@ var catalogOnlyScriptSteps = map[string]string{
 	"else if":         "Else If",
 	"else":            "Else",
 	"end if":          "End If",
-	"loop":            "Loop",
-	"exit loop if":    "Exit Loop If",
-	"end loop":        "End Loop",
 	"set variable":    "Set Variable",
-	"import records":  "Import Records",
-	"export records":  "Export Records",
 	"print":           "Print",
 	"insert from url": "Insert from URL",
 }
@@ -1566,6 +1586,18 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 		}
 
 		if isSupported {
+			if needsTransferDefinition(canonical) {
+				items = append(items, ReportItem{
+					Category:   CategoryManualActionRequired,
+					Domain:     "script",
+					SourceName: fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1),
+					TargetName: name,
+					Detail: fmt.Sprintf("Step %q runs a File4Base transfer definition, which names the "+
+						"two solutions, the field mappings and the match keys. The FileMaker file and "+
+						"mapping this step referred to were not converted into one, so the step stops "+
+						"the script until a transfer is created and named in it", canonical),
+				})
+			}
 			steps = append(steps, schema.BundleStep{
 				ID:          uuid.NewString(),
 				SequenceIdx: idx + 1,

@@ -5,10 +5,12 @@ import 'dart:typed_data';
 
 import 'package:file4base_client/core/crypto/payload_cipher.dart';
 import 'package:file4base_client/core/models/script_models.dart';
+import 'package:file4base_client/core/models/transfer_models.dart';
 import 'package:http/http.dart' as http;
 
 export '../crypto/payload_cipher.dart';
 export '../models/script_models.dart';
+export '../models/transfer_models.dart';
 
 /// RFC 9457 Problem Details Exception
 class ApiException implements Exception {
@@ -3106,6 +3108,69 @@ class ApiClient {
     );
     _checkResponse(response);
     return ScriptModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  // ==========================================
+  // Transfers between solutions API (#96)
+  // ==========================================
+
+  /// The solution's transfer definitions, by name.
+  Future<List<TransferDefinitionModel>> listTransfers({String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/transfers'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>;
+    return list
+        .map((item) => TransferDefinitionModel.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// One transfer definition, by id or by name. A script step names the
+  /// transfer it runs, so the name is the usual way in.
+  Future<TransferDefinitionModel> getTransfer(String idOrName, {String? database}) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/transfers/${Uri.encodeComponent(idOrName)}'),
+      headers: _headers(extra: database != null ? {'X-Database-Name': database} : null),
+    );
+    _checkResponse(response);
+    return TransferDefinitionModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Runs one transfer definition and answers its report.
+  ///
+  /// [peerToken] is a session token for the end of the transfer that is not
+  /// this session's solution; the server refuses the run without one rather
+  /// than reaching into a solution nobody signed in to.
+  ///
+  /// A refused transfer is not an exception: the server answers 422 with the
+  /// same report, carrying `committed: false` and the rejected rows, because
+  /// that report is exactly what the caller needs in order to act. Only a
+  /// request that never reached a verdict — no such transfer, no
+  /// authorization — throws.
+  Future<TransferRunReport> runTransfer(
+    String idOrName, {
+    String? peerToken,
+    String? database,
+  }) async {
+    final body = <String, dynamic>{};
+    if (peerToken != null && peerToken.isNotEmpty) {
+      body['peer_token'] = peerToken;
+    }
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/transfers/${Uri.encodeComponent(idOrName)}/run'),
+      headers: _headers(
+        contentType: 'application/json',
+        extra: database != null ? {'X-Database-Name': database} : null,
+      ),
+      body: jsonEncode(body),
+    );
+    if (response.statusCode == 200 || response.statusCode == 422) {
+      return TransferRunReport.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    }
+    _checkResponse(response);
+    throw ApiException.fromResponse(response);
   }
 
   // ==========================================
