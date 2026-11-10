@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"net/http"
+	"sort"
 	"net/http/httptest"
 	"testing"
 
@@ -125,4 +126,68 @@ func TestAPI_FileMakerMigration(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	assert.Equal(t, "migrated", applyRes.Status)
 	assert.Equal(t, 2, applyRes.RecordsInserted)
+}
+
+// #97 — a migration into a database that already holds a solution is all or
+// nothing: when the records cannot be imported, the design it merged goes
+// back to what it was, so a retry does not build on a half-migrated schema.
+func TestAPI_FileMakerMigrationRollsBackIntoAnExistingDatabase(t *testing.T) {
+	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+
+	dbName := uniqueDB("f4b_mig_rb")
+	h.createDatabase(dbName, "alice", "alice-secret")
+	ownerTok := h.login(dbName, "alice", "alice-secret")
+
+	tableNames := func() []string {
+		var tables []struct {
+			Name string `json:"name"`
+		}
+		rec := h.do(http.MethodGet, "/api/v1/schemas/tables", ownerTok, nil, &tables)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		names := make([]string, 0, len(tables))
+		for _, t := range tables {
+			names = append(names, t.Name)
+		}
+		sort.Strings(names)
+		return names
+	}
+
+	// A solution the database already holds, migrated in successfully.
+	firstDDR := `<FMPReport><File name="Visits.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog><Field name="Code" dataType="Text" fieldType="Normal"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog></File></FMPReport>`
+	rec := h.do(http.MethodPost, "/api/v1/solutions/migrate/apply", ownerTok, map[string]interface{}{
+		"design_xml": firstDDR,
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	before := tableNames()
+	require.Contains(t, before, "visits")
+	require.NotContains(t, before, "importedevents")
+
+	// A second migration whose records cannot be imported: the field is
+	// unique and validated on every write, and both exported records carry
+	// the same value.
+	failingDDR := `<FMPReport><File name="Events.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="ImportedEvents"><FieldCatalog>` +
+		`<Field name="Code" dataType="Text" fieldType="Normal">` +
+		`<Validation alwaysValidate="True"><Unique value="True"/></Validation>` +
+		`</Field></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog></File></FMPReport>`
+	duplicateRecords := `<FMPXMLRESULT xmlns="http://www.filemaker.com/fmpxmlresult"><METADATA>` +
+		`<FIELD NAME="Code" TYPE="TEXT"/></METADATA><RESULTSET FOUND="2">` +
+		`<ROW RECORDID="1"><COL><DATA>EV-1</DATA></COL></ROW>` +
+		`<ROW RECORDID="2"><COL><DATA>EV-1</DATA></COL></ROW>` +
+		`</RESULTSET></FMPXMLRESULT>`
+
+	rec = h.do(http.MethodPost, "/api/v1/solutions/migrate/apply", ownerTok, map[string]interface{}{
+		"design_xml": failingDDR,
+		"data_files": map[string]string{"ImportedEvents": duplicateRecords},
+	}, nil)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "Migration Data Import Error")
+	assert.NotContains(t, rec.Body.String(), "could not be fully restored")
+
+	assert.Equal(t, before, tableNames(),
+		"a failed migration leaves the design exactly as it was")
 }

@@ -1206,21 +1206,51 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	bundleBytes, err := msgpack.Marshal(converted.Bundle)
-	if err != nil {
+	// Merging into a database that already holds a solution is undone from a
+	// snapshot taken before the first write, so a failure anywhere after it
+	// leaves no half-migrated design for a retry to build on (#97). A newly
+	// created target is simply dropped, as it always was.
+	var preMergeDesign *schema.DesignSnapshot
+	if !createdNewDB {
+		snapshot, err := targetSvc.SnapshotDesign(r.Context(), targetDB)
+		if err != nil {
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Rollback Unavailable",
+				"the current design could not be recorded, so this migration was not started: "+err.Error())
+			return
+		}
+		preMergeDesign = snapshot
+	}
+
+	// discardPartialMigration undoes everything this request wrote. It
+	// returns the message to add to the problem report when the rollback was
+	// itself incomplete, so the caller is never told a failed migration left
+	// nothing behind when it did.
+	discardPartialMigration := func() string {
 		if createdNewDB {
 			_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
+			return ""
 		}
+		if preMergeDesign == nil {
+			return ""
+		}
+		if err := targetSvc.RestoreDesign(r.Context(), preMergeDesign); err != nil {
+			return " The design could not be fully restored: " + err.Error() +
+				" Review the solution before retrying."
+		}
+		return ""
+	}
+
+	bundleBytes, err := msgpack.Marshal(converted.Bundle)
+	if err != nil {
+		discardPartialMigration()
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
 
 	importReport, err := targetSvc.ImportSolution(r.Context(), bundleBytes)
 	if err != nil {
-		if createdNewDB {
-			_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
-		}
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error())
+		rollbackNote := discardPartialMigration()
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Schema Import Error", err.Error()+rollbackNote)
 		return
 	}
 
@@ -1235,18 +1265,16 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		}
 		dataBytes, err := msgpack.Marshal(dataBundle)
 		if err != nil {
-			if createdNewDB {
-				_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
-			}
+			discardPartialMigration()
 			telemetry.WriteInternalError(w, r, err)
 			return
 		}
 		dataReport, err := targetSvc.ImportDatabaseData(r.Context(), dataBytes)
 		if err != nil {
-			if createdNewDB {
-				_ = h.dbMgr.DropDatabase(r.Context(), targetDB)
-			}
-			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Data Import Error", err.Error())
+			// The imported schema goes with the records: a migration is all
+			// or nothing, whichever database it targeted (#97).
+			rollbackNote := discardPartialMigration()
+			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Data Import Error", err.Error()+rollbackNote)
 			return
 		}
 		recordsInserted = dataReport.RecordsInserted
