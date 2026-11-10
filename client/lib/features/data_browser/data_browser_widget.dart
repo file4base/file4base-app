@@ -428,6 +428,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   bool _loadingReport = false;
   String? _reportError;
 
+  /// What the figures now held were asked for: the table, the summary fields,
+  /// the break levels and the found set. Null while there are none.
+  ///
+  /// Switching to the Report view re-reads the records (the first read may
+  /// have been one page, and a report totals the whole found set) and reading
+  /// records asks for the figures again — so the same question went to the
+  /// server twice for one report, once per break level each time. The figures
+  /// do not depend on the rows, only on this signature, so a load that would
+  /// ask the same question is left alone.
+  String? _reportFiguresKey;
+
   /// Reads the figures of the report from the server, which works them out
   /// over the same found set the find returned.
   ///
@@ -440,6 +451,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final fields = _summarySpecs.keys.toList();
     final breaks = layout.breakFields;
     final requests = _isFoundSet ? _findRequestPayload() : const <Map<String, dynamic>>[];
+
+    final key = jsonEncode([widget.table.name, fields, breaks, requests]);
+    if (key == _reportFiguresKey && (_loadingReport || _reportFigures.isNotEmpty)) {
+      return;
+    }
+    _reportFiguresKey = key;
 
     setState(() {
       _loadingReport = true;
@@ -461,6 +478,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         _loadingReport = false;
       });
     } catch (e) {
+      // The question was not answered, so it is not remembered as asked: a
+      // retry must reach the server.
+      _reportFiguresKey = null;
       if (!mounted) return;
       setState(() {
         _reportFigures = const {};

@@ -10,10 +10,26 @@ import (
 // node is an XML element read whole: its name, its attributes and its
 // children, in the order they appeared.
 type node struct {
-	Name     string
-	Attrs    map[string]string
-	Text     string
+	Name  string
+	Attrs map[string]string
+	// Text is the element's character data with the whitespace a pretty
+	// printer added around it removed, which is what a record element read as
+	// a field needs.
+	Text string
+	// RawText is that same character data exactly as the file wrote it. A
+	// FileMaker <DATA> element holds one field's value, so trimming it changes
+	// the data: a text field whose value is " 12 " is not "12" (#90).
+	RawText  string
 	Children []*node
+}
+
+// value is the element's text as data: exactly what the file holds, unless all
+// it holds is the whitespace of a pretty printer, which is a blank value.
+func (n *node) value() string {
+	if strings.TrimSpace(n.RawText) == "" {
+		return ""
+	}
+	return n.RawText
 }
 
 // parseXML reads records out of an XML file.
@@ -158,6 +174,7 @@ func decodeXML(data []byte) (*node, error) {
 		case xml.CharData:
 			current := stack[len(stack)-1]
 			current.Text += string(t)
+			current.RawText += string(t)
 		}
 	}
 
@@ -274,7 +291,7 @@ func parseFMPXMLResult(root *node, opts Options) (*Table, bool) {
 				parts := make([]string, 0, 1)
 				for _, dataNode := range col.Children {
 					if dataNode.Name == "DATA" {
-						parts = append(parts, dataNode.Text)
+						parts = append(parts, dataNode.value())
 					}
 				}
 				values = append(values, strings.Join(parts, "\n"))

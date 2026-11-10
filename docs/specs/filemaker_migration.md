@@ -18,13 +18,19 @@ Instead:
 
 The Assisted Migration converter accepts:
 1. **Design Structure (`design_xml`):**
-   - FileMaker **Database Design Report (DDR) XML** (`<FMPReport>`).
-   - FileMaker **Save a Copy as XML** (`<FMPSaveAsXML>`).
-   - FileMaker **HTML Database Design Report (DDR)** (`recipes.html` / `Summary.html`).
+   - FileMaker **Database Design Report (DDR) XML** (`<FMPReport>`), as exported by **FileMaker Pro 12 through 19** (`Tools > Database Design Report...`, XML output).
+   - FileMaker **HTML Database Design Report (DDR)** (`recipes.html` / `Summary.html`) from the same versions.
+   - A **`<FMPSaveAsXML>`** design document.
    - File4Base **Design Report XML** (`<design format="file4base_design">`).
+
+   **Supported report languages: English and French** (`server/internal/migration/locales.go`, `migration.SupportedDDRLocales`). A DDR is localized, and the readers key off what is the same in every language — the HTML report's anchors (`BaseTableAnchor_`, `valScriptsSectionAnchor_`), the shape of its tables, and the element names of the XML DDR — treating the visible label as decoration. The words that do decide something (a field's type, a script step's name) are translated from a table that only holds names with one possible meaning; a step whose localized name is not in it stays quarantined as a disabled comment with its own name, its instruction id (`filemaker_step_id`) and a report entry, rather than being guessed onto another operation. An HTML report that converts to no table, or to tables with no field, is **refused** naming the supported languages, instead of returning a successful preflight that imports nothing (#100, #103).
+
+   > FileMaker writes a numeric instruction id beside each step name (`<Step id="9" name="…">`), which would be a language-free key. Claris publishes no id table, so File4Base records the id for diagnosis and does not decide an operation from a number it cannot verify.
+
+   **Not supported:** the `<FMSaveAsXML>` document that **FileMaker Pro 20 / Claris 26** (`FMDeveloperTool --saveAsXML`) writes. Its grammar is a different one — fields live in `FieldsForTables/FieldCatalog` with lower-case `datatype`/`fieldtype`, occurrences carry a nested `BaseTableSourceReference`, and script steps live under `StepsForScripts` — so renaming its root element to `<FMPSaveAsXML>` produces tables with no fields and no relationships. The converter refuses that root element by name and points at the formats above. A design whose base tables arrive without a single field is refused for the same reason, rather than reported as a successful conversion (#87).
 2. **Record & Container Datasets (`data_files` / `fmp12_base64`, optional):**
-   - One or more **`FMPXMLRESULT`** (or repeating-element XML) files mapped by base table name.
-   - A binary **`.fmp12`** container (`fmp12_base64`) paired with an XML/HTML DDR (`design_xml`) to extract table records, relational UUID keys, calculated/summary fields, and embedded `JPEG`/`PNG` `CONTAINER` images (`server/internal/migration/fmp12_records.go`).
+   - One or more **`FMPXMLRESULT`** (or repeating-element XML) files mapped by base table name. Values are converted through the same conversion an ordinary import runs: a number keeps every digit it was exported with, text keeps its spaces, and a record whose every exported value is blank is still imported as a record. A value that cannot be converted is listed under `rejected` with its row and column, instead of failing the whole apply (#90).
+   - A binary **`.fmp12`** container (`fmp12_base64`) paired with an XML/HTML DDR (`design_xml`) to extract table records, relational UUID keys, calculated/summary fields, and embedded `JPEG`/`PNG` `CONTAINER` images (`server/internal/migration/fmp12_records.go`). Records in a `.fmp12` are addressed by the numeric table and field ids of the design, so the design document must carry them: the HTML report always does, and an `<FMPReport>` XML DDR does when its `<BaseTable>` and `<Field>` elements have `id` attributes. An attachment that cannot be addressed, or that yields no records, is reported under `rejected` and `manual_action_required`; invalid base64 fails the request before any destination database is created (#91).
 
 > **Step-by-Step Case Study:** For a complete real-world walkthrough (migrating `recipes.fmp12` + `recipes.html` with portals, self-join disambiguation, `CONTAINER` photographs, `Group Buttons`, and scripts), see the [**FileMaker to File4Base Migration Guide (`docs/tutorials/filemaker_migration_guide.md`)**](../tutorials/filemaker_migration_guide.md).
 
@@ -52,4 +58,4 @@ Before any database table, column, layout, script, account, or row is written, `
    - The `[Guest]` account is always rejected.
    - All migrated accounts are created with `is_active: false` and an unguessable random secret, recorded in `accounts_pending_password` and `manual_action_required`. An owner must explicitly assign a password and enable the account in `File > Manage > Security...` before anyone can sign in with it.
 3. **Atomic Target Isolation:**
-   - `POST /api/v1/solutions/migrate/apply` can either target a newly created `target_database` (rolling back and dropping the database on any schema or data error) or merge into the active session database with full rollback on failure.
+   - `POST /api/v1/solutions/migrate/apply` can either target a newly created `target_database` (rolling back and dropping the database on any schema or data error) or merge into the active session database with full rollback on failure. A merge into an existing database records its design before the first write (`schema.Service.SnapshotDesign`) and, on any later failure, deletes every design object the migration added and re-imports the recorded design, so a definition the merge changed is the one it was (`RestoreDesign`). Records are not part of the rollback because none are written: the records are imported after the schema, in one transaction of their own. If the restore is itself incomplete, the problem report says so rather than implying nothing was left behind (#97).

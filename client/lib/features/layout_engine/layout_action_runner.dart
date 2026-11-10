@@ -96,10 +96,54 @@ class LayoutActionResult {
 
   const LayoutActionResult.ok()
       : completed = true,
+        halted = false,
         message = null;
 
-  const LayoutActionResult.stopped(this.message) : completed = false;
+  /// Halt Script: this script and every script that called it stop, which is
+  /// what Claris defines the step as doing. It is not a failure, so
+  /// [completed] stays true, but no later step of any caller may run (#95).
+  const LayoutActionResult.haltedAll()
+      : completed = true,
+        halted = true,
+        message = null;
+
+  const LayoutActionResult.stopped(this.message)
+      : completed = false,
+        halted = false;
   final bool completed;
+
+  /// True when a Halt Script step ended the whole execution session.
+  final bool halted;
+  final String? message;
+}
+
+/// What happened to one step of a script.
+enum StepOutcomeKind {
+  /// Ran, and the host was happy.
+  ran,
+
+  /// Not run: the step is disabled, or it sits in a branch that was not
+  /// taken.
+  skipped,
+
+  /// A branch or loop step: it moved the execution state rather than doing
+  /// anything to the records.
+  controlFlow,
+
+  /// Exit Script: this script returns to its caller, which carries on.
+  exited,
+
+  /// Halt Script: this script and every caller stop.
+  halted,
+
+  /// The step could not run; [StepOutcome.message] says why.
+  stopped,
+}
+
+/// The result of advancing one step of a [ScriptExecution].
+class StepOutcome {
+  const StepOutcome(this.kind, [this.message]);
+  final StepOutcomeKind kind;
   final String? message;
 }
 
@@ -173,61 +217,24 @@ class LayoutActionRunner {
     }
     if (script == null) return LayoutActionResult.stopped('Script "${name ?? id}" not found.');
 
-    final localVars = <String, String>{};
-    final ifStack = <_IfFrame>[];
-
-    bool isExecuting() => ifStack.every((f) => f.active);
-
-    final steps = List<ScriptStepModel>.from(script.steps)..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx));
-    final hasEndIf = steps.any((s) => s.isEnabled && normalizeStepType(s.stepType) == 'end_if');
-    for (final step in steps) {
-      if (!step.isEnabled) continue;
-      final norm = normalizeStepType(step.stepType);
-
-      if (norm == 'if' && hasEndIf) {
-        final parentActive = isExecuting();
-        final cond = parentActive && _evaluateCondition(_extractCondition(step.params), localVars);
-        ifStack.add(_IfFrame(parentActive: parentActive, branchTaken: cond, active: cond));
-        continue;
-      }
-      if (norm == 'else_if' && hasEndIf) {
-        if (ifStack.isNotEmpty) {
-          final top = ifStack.last;
-          if (!top.parentActive || top.branchTaken) {
-            top.active = false;
-          } else {
-            final cond = _evaluateCondition(_extractCondition(step.params), localVars);
-            top.branchTaken = cond;
-            top.active = cond;
-          }
-        }
-        continue;
-      }
-      if (norm == 'else' && hasEndIf) {
-        if (ifStack.isNotEmpty) {
-          final top = ifStack.last;
-          if (!top.parentActive || top.branchTaken) {
-            top.active = false;
-          } else {
-            top.branchTaken = true;
-            top.active = true;
-          }
-        }
-        continue;
-      }
-      if (norm == 'end_if' && hasEndIf) {
-        if (ifStack.isNotEmpty) {
-          ifStack.removeLast();
-        }
-        continue;
-      }
-
-      if (!isExecuting()) continue;
-
-      if (norm == 'halt_script' || norm == 'exit_script') break;
-      final result = await runStep(step.stepType, step.params, depth: depth, localVars: localVars);
-      if (!result.completed) {
-        return LayoutActionResult.stopped('Script "${script.name}" stopped at step ${step.sequenceIdx}: ${result.message}');
+    final execution = ScriptExecution(script: script, runner: this, depth: depth);
+    while (!execution.atEnd) {
+      final sequence = execution.currentSequence;
+      final outcome = await execution.advance();
+      switch (outcome.kind) {
+        case StepOutcomeKind.stopped:
+          return LayoutActionResult.stopped(
+              'Script "${script.name}" stopped at step $sequence: ${outcome.message}');
+        case StepOutcomeKind.halted:
+          // Every caller stops too, so the halt travels up instead of
+          // looking like an ordinary return (#95).
+          return const LayoutActionResult.haltedAll();
+        case StepOutcomeKind.exited:
+          return const LayoutActionResult.ok();
+        case StepOutcomeKind.ran:
+        case StepOutcomeKind.skipped:
+        case StepOutcomeKind.controlFlow:
+          break;
       }
     }
     return const LayoutActionResult.ok();
@@ -256,8 +263,7 @@ class LayoutActionRunner {
         if (!params.containsKey('value') && !params.containsKey('formula') && !params.containsKey('text') && !params.containsKey('calc')) {
           return LayoutActionResult.stopped('Step "$stepType" is not supported without a value.');
         }
-        _execSetVariable(params, vars);
-        return const LayoutActionResult.ok();
+        return _execSetVariable(params, vars);
       case 'new_record':
         await host.actionNewRecord();
       case 'duplicate_record':
@@ -340,13 +346,14 @@ class LayoutActionRunner {
     return const LayoutActionResult.ok();
   }
 
-  String _extractCondition(Map<String, dynamic> params) {
+  /// The condition of an `If` / `Else If` / `Exit Loop If` step.
+  String extractCondition(Map<String, dynamic> params) {
     final c = params['condition']?.toString().trim() ?? '';
     if (c.isNotEmpty) return c;
     return params['expression']?.toString().trim() ?? '';
   }
 
-  void _execSetVariable(Map<String, dynamic> params, Map<String, String> localVars) {
+  LayoutActionResult _execSetVariable(Map<String, dynamic> params, Map<String, String> localVars) {
     var name = params['name']?.toString().trim() ?? '';
     var valExpr = params['value']?.toString().trim() ?? '';
     if (name.isEmpty) {
@@ -363,9 +370,19 @@ class LayoutActionRunner {
         valExpr = rest;
       }
     }
-    if (name.isEmpty) return;
-    final resolved = _resolveExpressionValue(valExpr, localVars);
+    if (name.isEmpty) {
+      return const LayoutActionResult.stopped('Set Variable has no variable name.');
+    }
+    final resolved = resolveValue(valExpr, localVars);
+    if (resolved == null) {
+      // Guessing an unreadable value as empty wrote an empty variable and let
+      // the script carry on as though it had a value (#93).
+      return LayoutActionResult.stopped(
+          'Set Variable cannot evaluate "$valExpr": File4Base reads a number, '
+          r'a quoted string, a $variable, a merge token or a field name.');
+    }
     _setVariable(name, resolved, localVars);
+    return const LayoutActionResult.ok();
   }
 
   void _setVariable(String name, String value, Map<String, String> localVars) {
@@ -393,13 +410,27 @@ class LayoutActionRunner {
     return host.actionResolveText(raw);
   }
 
-  String _resolveExpressionValue(String raw, Map<String, String> localVars) {
+  String _resolveExpressionValue(String raw, Map<String, String> localVars) =>
+      resolveValue(raw, localVars) ?? '';
+
+  /// The value of one expression, or null when it is not an expression this
+  /// runner can evaluate.
+  ///
+  /// It reads a number as the number it is, a quoted string, a `$variable`, a
+  /// `{{merge}}` token, `Get(LayoutName)`, and a qualified or unqualified
+  /// field reference. Anything else — arithmetic, a function call, a field
+  /// this layout does not have — is null, so the caller stops the script
+  /// rather than treating it as an empty field: an empty string made
+  /// `1 = 0` true and wrote empty variables (#93).
+  String? resolveValue(String raw, Map<String, String> localVars) {
     final expr = raw.trim();
     if (expr.isEmpty) return '';
-    if ((expr.startsWith('"') && expr.endsWith('"')) ||
-        (expr.startsWith("'") && expr.endsWith("'"))) {
+    if ((expr.startsWith('"') && expr.endsWith('"') && expr.length >= 2) ||
+        (expr.startsWith("'") && expr.endsWith("'") && expr.length >= 2)) {
       return host.actionResolveText(expr.substring(1, expr.length - 1));
     }
+    // A numeric literal is its own value, not the name of a field.
+    if (num.tryParse(expr) != null) return expr;
     if (RegExp(r'^get\s*\(\s*layoutname\s*\)$', caseSensitive: false).hasMatch(expr)) {
       final ln = host.actionResolveText('{{LayoutName}}');
       return ln == '{{LayoutName}}' ? '' : ln;
@@ -412,16 +443,28 @@ class LayoutActionRunner {
     }
     // Qualified or unqualified field reference (e.g. `recipes::URL` or `URL`)
     final fieldPart = expr.contains('::') ? expr.split('::').last.trim() : expr;
+    if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_ ]*$').hasMatch(fieldPart)) {
+      return null; // not a field name: an expression File4Base does not evaluate
+    }
     final snakeField = fieldPart.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_');
     final mergeToken = '{{$snakeField}}';
     final resolved = host.actionResolveText(mergeToken);
     if (resolved == mergeToken) {
-      return '';
+      return null; // no such field in this context
     }
     return resolved;
   }
 
-  bool _evaluateCondition(String rawExpr, Map<String, String> localVars) {
+  /// Whether a condition holds, or null when the condition is not one this
+  /// runner can evaluate.
+  ///
+  /// It reads `and` / `or` / `not`, `IsEmpty(...)`, the comparisons `=`, `<>`
+  /// (`≠`, `!=`), `<`, `<=` (`≤`), `>`, `>=` (`≥`) — numerically when both
+  /// sides are numbers and as text otherwise — and a bare value, which holds
+  /// when it is a non-zero number or a non-empty text. Null is the answer for
+  /// anything else, and a script stops on it rather than taking a branch
+  /// chosen by guesswork (#93).
+  bool? evaluateCondition(String rawExpr, Map<String, String> localVars) {
     var expr = rawExpr.trim();
     if (expr.isEmpty) return true;
     while (expr.startsWith('(') && expr.endsWith(')')) {
@@ -429,46 +472,83 @@ class LayoutActionRunner {
     }
     final orParts = expr.split(RegExp(r'\s+or\s+', caseSensitive: false));
     if (orParts.length > 1) {
-      return orParts.any((p) => _evaluateCondition(p, localVars));
+      var answer = false;
+      for (final part in orParts) {
+        final one = evaluateCondition(part, localVars);
+        if (one == null) return null;
+        answer = answer || one;
+      }
+      return answer;
     }
     final andParts = expr.split(RegExp(r'\s+and\s+', caseSensitive: false));
     if (andParts.length > 1) {
-      return andParts.every((p) => _evaluateCondition(p, localVars));
+      var answer = true;
+      for (final part in andParts) {
+        final one = evaluateCondition(part, localVars);
+        if (one == null) return null;
+        answer = answer && one;
+      }
+      return answer;
     }
     if (expr.toLowerCase().startsWith('not ')) {
-      return !_evaluateCondition(expr.substring(4), localVars);
+      final inner = evaluateCondition(expr.substring(4), localVars);
+      return inner == null ? null : !inner;
     }
-    if (expr.startsWith('!')) {
-      return !_evaluateCondition(expr.substring(1), localVars);
+    if (expr.startsWith('!') && !expr.startsWith('!=')) {
+      final inner = evaluateCondition(expr.substring(1), localVars);
+      return inner == null ? null : !inner;
     }
     final isEmptyMatch = RegExp(r'^isempty\s*\(\s*(.+)\s*\)$', caseSensitive: false).firstMatch(expr);
     if (isEmptyMatch != null) {
       final inner = isEmptyMatch.group(1)!;
-      final val = _resolveExpressionValue(inner, localVars);
-      return val.trim().isEmpty;
+      // A field this context does not have is not an empty field, so the
+      // question cannot be answered.
+      final value = resolveValue(inner, localVars);
+      return value?.trim().isEmpty;
     }
-    if (expr.contains('!=')) {
-      final parts = expr.split('!=');
-      return _resolveExpressionValue(parts[0], localVars) !=
-          _resolveExpressionValue(parts.sublist(1).join('!='), localVars);
+
+    // Two-character operators are looked for first, so `<=` is never read as
+    // `<` or as `=`, which is how ordering comparisons went unevaluated.
+    for (final op in <String>['<=', '>=', '!=', '<>', '≠', '≤', '≥', '=', '<', '>']) {
+      final idx = expr.indexOf(op);
+      if (idx <= 0) continue;
+      final left = resolveValue(expr.substring(0, idx), localVars);
+      final right = resolveValue(expr.substring(idx + op.length), localVars);
+      if (left == null || right == null) return null;
+      return _compareValues(op, left, right);
     }
-    if (expr.contains('≠')) {
-      final parts = expr.split('≠');
-      return _resolveExpressionValue(parts[0], localVars) !=
-          _resolveExpressionValue(parts.sublist(1).join('≠'), localVars);
+
+    final value = resolveValue(expr, localVars);
+    if (value == null) return null;
+    final number = num.tryParse(value.trim());
+    if (number != null) return number != 0;
+    final text = value.trim();
+    return text.isNotEmpty && text.toLowerCase() != 'false';
+  }
+
+  bool? _compareValues(String op, String left, String right) {
+    final l = num.tryParse(left.trim());
+    final r = num.tryParse(right.trim());
+    final numeric = l != null && r != null;
+    switch (op) {
+      case '=':
+        return numeric ? l == r : left == right;
+      case '!=':
+      case '<>':
+      case '≠':
+        return numeric ? l != r : left != right;
+      case '<':
+        return numeric ? l < r : left.compareTo(right) < 0;
+      case '>':
+        return numeric ? l > r : left.compareTo(right) > 0;
+      case '<=':
+      case '≤':
+        return numeric ? l <= r : left.compareTo(right) <= 0;
+      case '>=':
+      case '≥':
+        return numeric ? l >= r : left.compareTo(right) >= 0;
     }
-    if (expr.contains('<>')) {
-      final parts = expr.split('<>');
-      return _resolveExpressionValue(parts[0], localVars) !=
-          _resolveExpressionValue(parts.sublist(1).join('<>'), localVars);
-    }
-    if (expr.contains('=')) {
-      final parts = expr.split('=');
-      return _resolveExpressionValue(parts[0], localVars) ==
-          _resolveExpressionValue(parts.sublist(1).join('='), localVars);
-    }
-    final val = _resolveExpressionValue(expr, localVars).trim();
-    return val.isNotEmpty && val != '0' && val.toLowerCase() != 'false';
+    return null;
   }
 
   String _extractLayoutFromExpression(String expr) {
@@ -486,6 +566,125 @@ class LayoutActionRunner {
       }
     }
     return '';
+  }
+}
+
+/// One script being executed: the program counter, the If frames, the local
+/// variables and the halt state.
+///
+/// Normal execution and the debugger both advance this one state machine, so
+/// stepping through a script has the same effects, in the same order, as
+/// running it — and a construct the debugger shows is a construct the runner
+/// really interprets (#94).
+class ScriptExecution {
+
+  ScriptExecution({required this.script, required this.runner, this.depth = 0, Map<String, String>? localVars})
+      : steps = List<ScriptStepModel>.from(script.steps)
+          ..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx)),
+        localVars = localVars ?? <String, String>{} {
+    _hasEndIf = steps.any((s) => s.isEnabled && LayoutActionRunner.normalizeStepType(s.stepType) == 'end_if');
+  }
+  final ScriptModel script;
+  final LayoutActionRunner runner;
+  final int depth;
+
+  /// The script's steps in the order they run.
+  final List<ScriptStepModel> steps;
+
+  /// The script's `$local` variables, shared by every step of this run.
+  final Map<String, String> localVars;
+
+  final List<_IfFrame> _ifStack = <_IfFrame>[];
+  late final bool _hasEndIf;
+  int _pc = 0;
+
+  /// The index of the step about to run.
+  int get pc => _pc;
+  bool get atEnd => _pc >= steps.length;
+
+  /// The `sequence_idx` of the step about to run, for a message about it.
+  int get currentSequence => atEnd ? steps.length : steps[_pc].sequenceIdx;
+
+  /// False while execution is inside a branch that was not taken.
+  bool get isExecuting => _ifStack.every((f) => f.active);
+
+  /// Runs the step the execution is on and moves to the next one.
+  Future<StepOutcome> advance() async {
+    if (atEnd) return const StepOutcome(StepOutcomeKind.exited);
+    final step = steps[_pc];
+    _pc++;
+
+    if (!step.isEnabled) return const StepOutcome(StepOutcomeKind.skipped);
+    final norm = LayoutActionRunner.normalizeStepType(step.stepType);
+
+    // Branch bookkeeping happens whether or not the branch is being taken: an
+    // End If has to close the frame its If opened. A script with no End If at
+    // all is not a conditional script, and its If falls through to the step
+    // runner, which says so.
+    if (_hasEndIf) {
+      switch (norm) {
+        case 'if':
+          final parentActive = isExecuting;
+          var taken = false;
+          if (parentActive) {
+            final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars);
+            if (condition == null) {
+              return StepOutcome(StepOutcomeKind.stopped,
+                  'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
+            }
+            taken = condition;
+          }
+          _ifStack.add(_IfFrame(parentActive: parentActive, branchTaken: taken, active: taken));
+          return const StepOutcome(StepOutcomeKind.controlFlow);
+        case 'else_if':
+          if (_ifStack.isNotEmpty) {
+            final top = _ifStack.last;
+            if (!top.parentActive || top.branchTaken) {
+              top.active = false;
+            } else {
+              final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars);
+              if (condition == null) {
+                return StepOutcome(StepOutcomeKind.stopped,
+                    'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
+              }
+              top
+                ..branchTaken = condition
+                ..active = condition;
+            }
+          }
+          return const StepOutcome(StepOutcomeKind.controlFlow);
+        case 'else':
+          if (_ifStack.isNotEmpty) {
+            final top = _ifStack.last;
+            if (!top.parentActive || top.branchTaken) {
+              top.active = false;
+            } else {
+              top
+                ..branchTaken = true
+                ..active = true;
+            }
+          }
+          return const StepOutcome(StepOutcomeKind.controlFlow);
+        case 'end_if':
+          if (_ifStack.isNotEmpty) _ifStack.removeLast();
+          return const StepOutcome(StepOutcomeKind.controlFlow);
+      }
+    }
+
+    if (!isExecuting) return const StepOutcome(StepOutcomeKind.skipped);
+
+    if (norm == 'halt_script') return const StepOutcome(StepOutcomeKind.halted);
+    if (norm == 'exit_script') return const StepOutcome(StepOutcomeKind.exited);
+
+    final result = await runner.runStep(step.stepType, step.params, depth: depth, localVars: localVars);
+    if (result.halted) return const StepOutcome(StepOutcomeKind.halted);
+    if (!result.completed) return StepOutcome(StepOutcomeKind.stopped, result.message);
+    return const StepOutcome(StepOutcomeKind.ran);
+  }
+
+  String _describeCondition(Map<String, dynamic> params) {
+    final condition = runner.extractCondition(params).trim();
+    return condition.isEmpty ? '(empty)' : '"$condition"';
   }
 }
 

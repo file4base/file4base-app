@@ -1,11 +1,16 @@
 // #51 — stepping through a script: what is about to run, what each step did,
 // and where it stopped.
 //
-// The debugger drives the same runner the layout buttons use
-// (LayoutActionRunner), one step at a time, so what it shows is what running
-// the script does. A step the runner refuses stops the session with the
-// runner's own message: a debugger that pretended to run what the runner
-// will not would be worse than none.
+// The debugger drives the very execution state machine a normal run drives
+// (ScriptExecution): the same program counter, the same If frames, the same
+// local variables and the same halt semantics, one step at a time. Stepping
+// therefore has the same effects, in the same order, as running the script,
+// and a conditional script the runner interprets is a conditional script the
+// debugger steps through rather than refusing at its first If (#94).
+//
+// A step the runner refuses stops the session with the runner's own message:
+// a debugger that pretended to run what the runner will not would be worse
+// than none.
 
 import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
@@ -54,10 +59,19 @@ class ScriptDebugSession {
       : steps = (List<ScriptStepModel>.from(script.steps)
               ..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx)))
             .map(DebugStep.new)
-            .toList();
+            .toList(),
+        _execution = ScriptExecution(script: script, runner: runner);
   final ScriptModel script;
   final LayoutActionRunner runner;
   final List<DebugStep> steps;
+
+  /// The execution a normal run would drive. The debugger holds the only
+  /// reference to it, and advances it one step at a time.
+  ScriptExecution _execution;
+
+  /// The script's local variables as they stand, so the interface can show
+  /// what a Set Variable step put there.
+  Map<String, String> get localVariables => Map.unmodifiable(_execution.localVars);
 
   /// Where the session is: the index into [steps] of the step about to run.
   int _index = 0;
@@ -89,6 +103,7 @@ class ScriptDebugSession {
     _index = 0;
     _finished = false;
     _message = null;
+    _execution = ScriptExecution(script: script, runner: runner);
     for (final step in steps) {
       step.state = DebugStepState.pending;
     }
@@ -147,26 +162,29 @@ class ScriptDebugSession {
       return;
     }
 
-    // A disabled step is left out, exactly as running the script does.
-    if (!step.enabled) {
-      step.state = DebugStepState.skipped;
-      _advance();
-      return;
+    final outcome = await _execution.advance();
+    switch (outcome.kind) {
+      case StepOutcomeKind.stopped:
+        step.state = DebugStepState.failed;
+        _finished = true;
+        _message = 'Step ${step.sequence} stopped the script: ${outcome.message}';
+        return;
+      case StepOutcomeKind.halted:
+        step.state = DebugStepState.done;
+        _finish('Halt Script at step ${step.sequence} ended every running script.');
+        return;
+      case StepOutcomeKind.exited:
+        step.state = DebugStepState.done;
+        _finish('Exit Script at step ${step.sequence} ended this script.');
+        return;
+      case StepOutcomeKind.skipped:
+        // A disabled step, or one in a branch that was not taken: left out,
+        // exactly as running the script leaves it out.
+        step.state = DebugStepState.skipped;
+      case StepOutcomeKind.ran:
+      case StepOutcomeKind.controlFlow:
+        step.state = DebugStepState.done;
     }
-    if (step.type == 'halt_script' || step.type == 'exit_script') {
-      step.state = DebugStepState.done;
-      _finish('The script ended at step ${step.sequence} (${step.type}).');
-      return;
-    }
-
-    final result = await runner.runStep(step.type, step.step.params, depth: 0);
-    if (!result.completed) {
-      step.state = DebugStepState.failed;
-      _finished = true;
-      _message = 'Step ${step.sequence} stopped the script: ${result.message}';
-      return;
-    }
-    step.state = DebugStepState.done;
     _advance();
   }
 

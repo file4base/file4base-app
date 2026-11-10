@@ -1,8 +1,15 @@
 package migration
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"sort"
+	"strings"
 	"testing"
+
+	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/validation"
 )
 
 func TestIsFMP12Binary(t *testing.T) {
@@ -386,5 +393,523 @@ func TestAnalyzeAndConvert_SkipsValueListWithNoEntries(t *testing.T) {
 	}
 	if got := converted.Report.ManualActionRequired[0].SourceName; got != "Empty List" {
 		t.Errorf("manual action names %q, want %q", got, "Empty List")
+	}
+}
+
+// A step's operands live in child elements, not attributes, and a <Script> or
+// <Layout> nested in a step is a reference rather than a definition (#88). The
+// step order is also pinned here: sequence indices are 1-based and unique
+// (#98).
+func TestAnalyzeAndConvert_DecodesNestedScriptStepParameters(t *testing.T) {
+	xmlDoc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog><Field name="Notes" dataType="Text"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog><ScriptCatalog>` +
+		`<Script name="Dispatch"><StepList>` +
+		`<Step name="Set Field" enable="True"><Field table="Visits" name="Notes"/><Calculation><Text>"Completed"</Text></Calculation></Step>` +
+		`<Step name="Go to Layout" enable="True"><Layout name="Visit Detail" id="1"/></Step>` +
+		`<Step name="Perform Script" enable="True"><Script name="Receive" id="2"/><FileReference name="RemoteArchive" id="1"/><Calculation><Text>"SV-001"</Text></Calculation></Step>` +
+		`</StepList></Script></ScriptCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: xmlDoc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	if res.Report.Counts.Scripts != 1 {
+		t.Fatalf("expected the one script the document defines, got %d", res.Report.Counts.Scripts)
+	}
+	if res.Report.Counts.Layouts != 0 {
+		t.Fatalf("a layout a step points at is not a layout definition, got %d layouts", res.Report.Counts.Layouts)
+	}
+
+	steps := res.Bundle.Scripts[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(steps))
+	}
+	for i, step := range steps {
+		if step.SequenceIdx != i+1 {
+			t.Fatalf("step %d has sequence_idx %d; indices must be 1-based and unique", i, step.SequenceIdx)
+		}
+	}
+
+	if got := steps[0].Params["field"]; got != "notes" {
+		t.Fatalf("Set Field target: expected %q, got %v", "notes", got)
+	}
+	if got := steps[0].Params["value"]; got != `"Completed"` {
+		t.Fatalf("Set Field value: expected the nested calculation, got %v", got)
+	}
+	if got := steps[1].Params["layout_name"]; got != "Visit Detail" {
+		t.Fatalf("Go to Layout destination: expected %q, got %v", "Visit Detail", got)
+	}
+	if got := steps[2].Params["script_name"]; got != "Receive" {
+		t.Fatalf("Perform Script target: expected %q, got %v", "Receive", got)
+	}
+	if got := steps[2].Params["script_parameter"]; got != `"SV-001"` {
+		t.Fatalf("Perform Script parameter: expected the nested calculation, got %v", got)
+	}
+	if got := steps[2].Params["file_reference"]; got != "RemoteArchive" {
+		t.Fatalf("Perform Script external file: expected %q, got %v", "RemoteArchive", got)
+	}
+
+	// The external file target is a semantic File4Base does not run, so it is
+	// flagged rather than dropped in silence.
+	flagged := false
+	for _, item := range res.Report.ManualActionRequired {
+		if item.Domain == "script" && strings.Contains(item.Detail, "FileReference") {
+			flagged = true
+		}
+	}
+	if !flagged {
+		t.Fatal("expected the unread FileReference operand to be flagged for manual action")
+	}
+}
+
+// Two source names that normalize alike both survive, under reported names,
+// and a source field called id does not disappear behind the generated primary
+// key (#89).
+func TestAnalyzeAndConvert_ReportsNormalizedNameCollisions(t *testing.T) {
+	xmlDoc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog>` +
+		`<Field name="Visit Code" dataType="Text"/>` +
+		`<Field name="Visit-Code" dataType="Text"/>` +
+		`<Field name="id" dataType="Number"/>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: xmlDoc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if res.Report.Counts.Fields != 3 {
+		t.Fatalf("expected all 3 source fields to be migrated, got %d", res.Report.Counts.Fields)
+	}
+
+	byName := map[string]string{}
+	for _, col := range res.Bundle.Tables[0].Columns {
+		byName[col.Name] = col.FieldType
+	}
+	for _, want := range []string{"id", "visit_code", "visit_code_2", "id_2"} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("expected column %q, got %v", want, byName)
+		}
+	}
+	if byName["id_2"] != "NUMBER" {
+		t.Fatalf("the renamed source id field keeps its type: got %q", byName["id_2"])
+	}
+	if res.Report.Counts.TranslatedCount == 0 {
+		t.Fatal("every collision must be reported")
+	}
+}
+
+// A record export is converted exactly: a number keeps its digits, text keeps
+// its spaces, and a record whose every exported value is blank is still a
+// record (#90).
+func TestAnalyzeAndConvert_ConvertsRecordExportExactly(t *testing.T) {
+	design := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog>` +
+		`<Field name="Code" dataType="Text"/><Field name="Notes" dataType="Text"/><Field name="Amount" dataType="Number"/>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
+	records := `<FMPXMLRESULT xmlns="http://www.filemaker.com/fmpxmlresult"><METADATA>` +
+		`<FIELD NAME="Code" TYPE="TEXT"/><FIELD NAME="Notes" TYPE="TEXT"/><FIELD NAME="Amount" TYPE="NUMBER"/>` +
+		`</METADATA><RESULTSET FOUND="2">` +
+		`<ROW RECORDID="1"><COL><DATA>SV-001</DATA></COL><COL><DATA>  Preserve these spaces  </DATA></COL><COL><DATA>9007199254740993</DATA></COL></ROW>` +
+		`<ROW RECORDID="2"><COL><DATA/></COL><COL><DATA/></COL><COL><DATA/></COL></ROW>` +
+		`</RESULTSET></FMPXMLRESULT>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{
+		DesignXML: design,
+		DataFiles: map[string]string{"Visits": records},
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	rows := res.TableRows["visits"]
+	if len(rows) != 2 {
+		t.Fatalf("expected both exported records, got %d", len(rows))
+	}
+	if res.Report.Counts.RecordsReady != 2 {
+		t.Fatalf("records_ready must reconcile with the source rows: got %d", res.Report.Counts.RecordsReady)
+	}
+	if got := rows[0]["notes"]; got != "  Preserve these spaces  " {
+		t.Fatalf("text whitespace was not preserved: %q", got)
+	}
+	if got := fmt.Sprint(rows[0]["amount"]); got != "9007199254740993" {
+		t.Fatalf("the number lost precision: %q", got)
+	}
+	if len(rows[1]) != 0 {
+		t.Fatalf("the blank record carries no values of its own: %v", rows[1])
+	}
+}
+
+// An attachment is never ignored: invalid base64 fails the conversion, and one
+// that cannot be addressed is reported rather than passed over (#91).
+func TestAnalyzeAndConvert_ValidatesFMP12Attachment(t *testing.T) {
+	design := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog><Field name="Code" dataType="Text"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog></File></FMPReport>`
+
+	if _, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design, FMP12Base64: "%%%"}); err == nil {
+		t.Fatal("invalid base64 in fmp12_base64 must fail the conversion")
+	}
+
+	res, err := AnalyzeAndConvert(MigrationRequest{
+		DesignXML:   design,
+		FMP12Base64: base64.StdEncoding.EncodeToString([]byte("HBAM2 but not addressable")),
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if res.Report.Counts.RejectedCount == 0 {
+		t.Fatal("an attachment no record could be read from must be reported, not ignored")
+	}
+}
+
+// The authentic Save-a-Copy-as-XML document of FileMaker Pro 20 / Claris 26 is
+// refused with the formats that do work, rather than accepted into tables with
+// no fields (#87).
+func TestAnalyzeAndConvert_RejectsNativeSaveAsXML(t *testing.T) {
+	doc := `<?xml version="1.0" encoding="UTF-8"?><FMSaveAsXML><FMSaveAsXMLFile name="Recipes.fmp12">` +
+		`<BaseTableCatalog><BaseTable name="Recipes" id="129"/></BaseTableCatalog>` +
+		`<FieldsForTables><FieldCatalog><Field name="Title" datatype="text" fieldtype="normal"/></FieldCatalog></FieldsForTables>` +
+		`</FMSaveAsXMLFile></FMSaveAsXML>`
+
+	_, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if !errors.Is(err, ErrInvalidMigrationXML) {
+		t.Fatalf("expected an invalid-XML error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "FMSaveAsXML") || !strings.Contains(err.Error(), "Design Report") {
+		t.Fatalf("the refusal must name the format and the supported ones: %v", err)
+	}
+}
+
+// A design whose tables arrive without a single field was not understood, and
+// is refused rather than reported as a successful conversion (#87).
+func TestAnalyzeAndConvert_RefusesTablesWithNoFields(t *testing.T) {
+	doc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog></File></FMPReport>`
+
+	if _, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc}); !errors.Is(err, ErrInvalidMigrationXML) {
+		t.Fatalf("expected an invalid-XML error, got %v", err)
+	}
+}
+
+// A native DDR writes its occurrences and relationships in the
+// RelationshipGraph, with the two sides as child elements and the join in a
+// JoinPredicateList (#101).
+func TestAnalyzeAndConvert_ReadsNativeRelationshipGraph(t *testing.T) {
+	doc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable id="1" name="Parents"><FieldCatalog><Field id="1" name="Key" dataType="Text" fieldType="Normal"/></FieldCatalog></BaseTable>` +
+		`<BaseTable id="2" name="Children"><FieldCatalog><Field id="1" name="ParentKey" dataType="Text" fieldType="Normal"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog><RelationshipGraph>` +
+		`<TableList><Table id="1" name="ParentAlias" baseTable="Parents" baseTableId="1"/>` +
+		`<Table id="2" name="ChildAlias" baseTable="Children" baseTableId="2"/></TableList>` +
+		`<RelationshipList><Relationship id="1">` +
+		`<LeftTable name="ParentAlias" cascadeCreate="False" cascadeDelete="False"/>` +
+		`<RightTable name="ChildAlias" cascadeCreate="True" cascadeDelete="False"/>` +
+		`<JoinPredicateList><JoinPredicate type="Equal">` +
+		`<LeftField><Field name="Key" table="ParentAlias"/></LeftField>` +
+		`<RightField><Field name="ParentKey" table="ChildAlias"/></RightField>` +
+		`</JoinPredicate></JoinPredicateList>` +
+		`</Relationship></RelationshipList></RelationshipGraph></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	names := make([]string, 0, len(res.Bundle.TableOccurrences))
+	for _, occ := range res.Bundle.TableOccurrences {
+		names = append(names, occ.Name)
+	}
+	sort.Strings(names)
+	if len(names) != 2 || names[0] != "ChildAlias" || names[1] != "ParentAlias" {
+		t.Fatalf("expected the source aliases and no invented occurrences, got %v", names)
+	}
+
+	if len(res.Bundle.Relationships) != 1 {
+		t.Fatalf("expected the one relationship the graph declares, got %d (rejected: %+v)",
+			len(res.Bundle.Relationships), res.Report.Rejected)
+	}
+	rel := res.Bundle.Relationships[0]
+	if rel.Operator != "=" {
+		t.Fatalf("expected an equality join, got %q", rel.Operator)
+	}
+	if !rel.AllowCreation {
+		t.Fatal("cascadeCreate on the right-hand table means records may be created through the relationship")
+	}
+	occByID := map[string]string{}
+	for _, occ := range res.Bundle.TableOccurrences {
+		occByID[occ.ID] = occ.Name
+	}
+	if occByID[rel.LeftOccurrenceID] != "ParentAlias" || occByID[rel.RightOccurrenceID] != "ChildAlias" {
+		t.Fatalf("the join is between the source aliases: got %q -> %q",
+			occByID[rel.LeftOccurrenceID], occByID[rel.RightOccurrenceID])
+	}
+}
+
+// A field's nested Storage, Validation and AutoEnter options are read, kept
+// where File4Base can enforce them, and reported where it cannot (#102).
+func TestAnalyzeAndConvert_ReadsNestedFieldOptions(t *testing.T) {
+	doc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog><BaseTable name="Visits"><FieldCatalog>` +
+		`<Field name="Code" dataType="Text" fieldType="Normal">` +
+		`<AutoEnter><ConstantData>SV-000</ConstantData></AutoEnter>` +
+		`<Validation message="False" valuelist="False" validateCalculation="False">` +
+		`<NotEmpty value="True"/><Unique value="True"/><MaxLength value="12"/>` +
+		`</Validation>` +
+		`<Storage global="False" maxRepetition="1"/>` +
+		`</Field>` +
+		`<Field name="SessionFilter" dataType="Text" fieldType="Normal"><Storage global="True" maxRepetition="1"/></Field>` +
+		`<Field name="Answers" dataType="Text" fieldType="Normal"><Storage global="False" maxRepetition="5"/></Field>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	var code schema.BundleColumn
+	for _, col := range res.Bundle.Tables[0].Columns {
+		if col.Name == "code" {
+			code = col
+		}
+	}
+	if code.ValidationRules == nil {
+		t.Fatal("the validation rules of the source field were not migrated")
+	}
+	rules, err := validation.Parse(code.ValidationRules)
+	if err != nil {
+		t.Fatalf("the migrated rules are not valid validation rules: %v", err)
+	}
+	if !rules.NotEmpty || !rules.Unique {
+		t.Fatalf("expected not-empty and unique to hold after migration, got %+v", rules)
+	}
+	if !rules.MaxLengthEnabled || rules.MaxLength == nil || *rules.MaxLength != 12 {
+		t.Fatalf("expected the 12-character limit, got %+v", rules)
+	}
+	if code.IsNullable {
+		t.Fatal("a not-empty field is not nullable")
+	}
+	if code.DefaultValue == nil || *code.DefaultValue != "SV-000" {
+		t.Fatalf("expected the auto-enter constant as the default value, got %v", code.DefaultValue)
+	}
+
+	// Storage-level global and repeating fields are reported, as the
+	// attribute-level ones always were.
+	var globalReported, repeatingReported bool
+	for _, item := range res.Report.Translated {
+		if item.SourceName == "visits.SessionFilter" && strings.Contains(item.Detail, "global") {
+			globalReported = true
+		}
+	}
+	for _, item := range res.Report.Unsupported {
+		if item.SourceName == "visits.Answers" && strings.Contains(item.Detail, "Repeating") {
+			repeatingReported = true
+		}
+	}
+	if !globalReported {
+		t.Fatalf("a Storage global=True field must be reported as translated: %+v", res.Report.Translated)
+	}
+	if !repeatingReported {
+		t.Fatalf("a Storage maxRepetition=5 field must be reported as unsupported: %+v", res.Report.Unsupported)
+	}
+}
+
+// Every step of an HTML DDR script is accounted for: an unsupported
+// operation in the middle of a script is kept as a disabled comment with its
+// original line and reported, rather than deleted while the script is called
+// preserved (#104).
+func TestAnalyzeAndConvert_HTMLDDRKeepsUnsupportedScriptSteps(t *testing.T) {
+	htmlDDR := `<!DOCTYPE html><html><body>` +
+		`<span class="partheading"><a name="valFileOptionOverviewSectionAnchor_"/>Synthetic.fmp12</span>` +
+		`<span class="section"><a name="valTablesSectionAnchor_"/>Tables</span>` +
+		`<span class="subheader"><a name="129BaseTableAnchor_"/>Visits</span>` +
+		`<table><tr><th>Field Name</th><th>Field Type</th><th>Options | Comments</th></tr>` +
+		`<tr><td><a name="1291FieldAnchor_"/>Code</td><td>Normal, Text</td><td></td></tr></table>` +
+		`<span class="section"><a name="valScriptsSectionAnchor_"/>Scripts</span>` +
+		`<table><tr><td>Script Name</td><td>Guard</td></tr>` +
+		`<tr><td>Script Steps</td><td><ul>` +
+		`<li>New Record/Request</li>` +
+		`<li>Send Mail [ With dialog: Off ]</li>` +
+		`<li>Commit Records/Requests</li>` +
+		`</ul></td></tr></table>` +
+		`<span class="section"><a name="valAccountsSectionAnchor_"/>Accounts</span>` +
+		`</body></html>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: htmlDDR})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if len(res.Bundle.Scripts) != 1 {
+		t.Fatalf("expected 1 script, got %d", len(res.Bundle.Scripts))
+	}
+
+	steps := res.Bundle.Scripts[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("expected all 3 source steps to be accounted for, got %d: %+v", len(steps), steps)
+	}
+	for i, step := range steps {
+		if step.SequenceIdx != i+1 {
+			t.Fatalf("step %d has sequence_idx %d; indices must be 1-based and unique", i, step.SequenceIdx)
+		}
+	}
+	if steps[1].StepType != "Comment" || steps[1].IsEnabled {
+		t.Fatalf("the unsupported step is kept as a disabled comment, got %+v", steps[1])
+	}
+	if got := fmt.Sprint(steps[1].Params["original_filemaker_step"]); got != "Send Mail" {
+		t.Fatalf("the original step name is kept: got %q", got)
+	}
+	if got := fmt.Sprint(steps[1].Params["text"]); !strings.Contains(got, "Send Mail [ With dialog: Off ]") {
+		t.Fatalf("the original line is kept for review: got %q", got)
+	}
+
+	reported := false
+	for _, item := range res.Report.Unsupported {
+		if item.Domain == "script" && strings.Contains(item.Detail, "Send Mail") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("the dropped operation must be reported: %+v", res.Report.Unsupported)
+	}
+	if res.Report.Counts.ManualActionCount == 0 {
+		t.Fatal("an unsupported step needs a manual action entry saying what to do about it")
+	}
+}
+
+// A French HTML Database Design Report of the same solution converts to the
+// same tables, fields and scripts as the English one: the anchors and the
+// shape of the report are the same in every language, and the words that are
+// not are translated (#100).
+func TestConvertHTMLDDR_FrenchReportMatchesEnglish(t *testing.T) {
+	report := func(language string) string {
+		tableLabel, nameLabel, stepsLabel := "Table Name:", "Script Name", "Script Steps"
+		fieldType, firstStep, lastStep := "Normal, Text", "New Record/Request", "Commit Records/Requests"
+		if language == "French" {
+			tableLabel, nameLabel, stepsLabel = "Nom de la table :", "Nom du script", "Instructions de script"
+			fieldType, firstStep, lastStep = "Normale, Texte", "Nouvel enreg./requête", "Valider les enregistrements/requêtes"
+		}
+		return `<!DOCTYPE html><html><body>` +
+			`<span class="partheading"><a name="valFileOptionOverviewSectionAnchor_"/>Synthetic.fmp12</span>` +
+			`<span class="section"><a name="valTablesSectionAnchor_"/>Tables</span>` +
+			`<table><tr><td>` + tableLabel + `<a name="129BaseTableAnchor_"/>Visits</td></tr>` +
+			`<tr><td><a name="1291FieldAnchor_"/>Code</td><td>` + fieldType + `</td><td></td></tr></table>` +
+			`<span class="section"><a name="valScriptsSectionAnchor_"/>Scripts</span>` +
+			`<table><tr><td>` + nameLabel + `</td><td>Guard</td></tr>` +
+			`<tr><td>` + stepsLabel + `</td><td><ul><li>` + firstStep + `</li><li>` + lastStep + `</li></ul></td></tr></table>` +
+			`<span class="section"><a name="valAccountsSectionAnchor_"/>Accounts</span>` +
+			`</body></html>`
+	}
+
+	english, err := AnalyzeAndConvert(MigrationRequest{DesignXML: report("English")})
+	if err != nil {
+		t.Fatalf("the English report failed: %v", err)
+	}
+	french, err := AnalyzeAndConvert(MigrationRequest{DesignXML: report("French")})
+	if err != nil {
+		t.Fatalf("the French report failed: %v", err)
+	}
+
+	if french.Report.Counts.Tables != english.Report.Counts.Tables ||
+		french.Report.Counts.Fields != english.Report.Counts.Fields ||
+		french.Report.Counts.Scripts != english.Report.Counts.Scripts {
+		t.Fatalf("the French report converted to %d tables / %d fields / %d scripts, the English one to %d / %d / %d",
+			french.Report.Counts.Tables, french.Report.Counts.Fields, french.Report.Counts.Scripts,
+			english.Report.Counts.Tables, english.Report.Counts.Fields, english.Report.Counts.Scripts)
+	}
+	if french.Report.Counts.Tables != 1 || french.Report.Counts.Fields != 1 {
+		t.Fatalf("expected the one table and its field, got %+v", french.Report.Counts)
+	}
+	if french.Bundle.Tables[0].Columns[1].FieldType != "TEXT" {
+		t.Fatalf("Texte is a text field: got %q", french.Bundle.Tables[0].Columns[1].FieldType)
+	}
+
+	frenchSteps := french.Bundle.Scripts[0].Steps
+	englishSteps := english.Bundle.Scripts[0].Steps
+	if len(frenchSteps) != len(englishSteps) {
+		t.Fatalf("expected the same steps, got %d against %d", len(frenchSteps), len(englishSteps))
+	}
+	for i := range frenchSteps {
+		if frenchSteps[i].StepType != englishSteps[i].StepType {
+			t.Fatalf("step %d converted to %q from French and %q from English",
+				i+1, frenchSteps[i].StepType, englishSteps[i].StepType)
+		}
+		if !frenchSteps[i].IsEnabled {
+			t.Fatalf("step %d of the French script arrived disabled", i+1)
+		}
+		if frenchSteps[i].Params["filemaker_step_name"] == nil {
+			t.Fatalf("step %d must keep the name the report wrote for it", i+1)
+		}
+	}
+}
+
+// A report in a language the reader does not know is refused, rather than
+// reported as a successful preflight with no tables at all (#100).
+func TestConvertHTMLDDR_RefusesAnUnreadableReport(t *testing.T) {
+	doc := `<!DOCTYPE html><html><body>` +
+		`<span class="partheading"><a name="valFileOptionOverviewSectionAnchor_"/>Synthetic.fmp12</span>` +
+		`<span class="section"><a name="valTablesSectionAnchor_"/>Tables</span>` +
+		`<table><tr><td>テーブル名：Visits</td></tr></table>` +
+		`<span class="section"><a name="valLayoutsSectionAnchor_"/>Layouts</span>` +
+		`</body></html>`
+
+	_, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if !errors.Is(err, ErrInvalidMigrationXML) {
+		t.Fatalf("expected the report to be refused, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Supported report languages") {
+		t.Fatalf("the refusal must say which languages are read: %v", err)
+	}
+}
+
+// An XML DDR exported in French names its steps in French; the instruction id
+// and the original name are kept as diagnostic metadata (#103).
+func TestAnalyzeAndConvert_ReadsLocalizedXMLScriptSteps(t *testing.T) {
+	design := func(stepName string) string {
+		return `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+			`<BaseTable name="Visits"><FieldCatalog><Field name="Code" dataType="Text"/></FieldCatalog></BaseTable>` +
+			`</BaseTableCatalog><ScriptCatalog><Script name="Guard"><StepList>` +
+			`<Step id="9" name="` + stepName + `" enable="True"/>` +
+			`</StepList></Script></ScriptCatalog></File></FMPReport>`
+	}
+
+	english, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design("New Record/Request")})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	french, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design("Nouvel enreg./requête")})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	if len(french.Bundle.Scripts[0].Steps) != 1 {
+		t.Fatalf("expected one step, got %+v", french.Bundle.Scripts[0].Steps)
+	}
+	step := french.Bundle.Scripts[0].Steps[0]
+	if step.StepType != english.Bundle.Scripts[0].Steps[0].StepType {
+		t.Fatalf("the French step converted to %q, the English one to %q",
+			step.StepType, english.Bundle.Scripts[0].Steps[0].StepType)
+	}
+	if !step.IsEnabled {
+		t.Fatal("a recognized step is imported enabled, whatever language named it")
+	}
+	if got := fmt.Sprint(step.Params["filemaker_step_id"]); got != "9" {
+		t.Fatalf("the instruction id is kept as metadata: got %q", got)
+	}
+	if got := fmt.Sprint(step.Params["filemaker_step_name"]); got != "Nouvel enreg./requête" {
+		t.Fatalf("the name the report wrote is kept as metadata: got %q", got)
+	}
+
+	// A step no supported locale names stays quarantined, and says so.
+	unknown, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design("Envoyer un signal propriétaire")})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	quarantined := unknown.Bundle.Scripts[0].Steps[0]
+	if quarantined.StepType != "Comment" || quarantined.IsEnabled {
+		t.Fatalf("an unknown step is a disabled comment, got %+v", quarantined)
+	}
+	if unknown.Report.Counts.UnsupportedCount == 0 {
+		t.Fatal("an unknown step must be reported as unsupported")
 	}
 }

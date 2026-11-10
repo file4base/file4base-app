@@ -1287,6 +1287,7 @@ func remapSteps(steps []BundleStep) []ScriptStepMetadata {
 		}
 	}
 	out := make([]ScriptStepMetadata, 0, len(steps))
+	seenSequence := make(map[int]bool, len(steps))
 	for i, st := range steps {
 		params, _ := json.Marshal(st.Params)
 		if st.Params == nil {
@@ -1297,9 +1298,13 @@ func remapSteps(steps []BundleStep) []ScriptStepMetadata {
 			id = uuid.NewString()
 		}
 		m := ScriptStepMetadata{ID: id, SequenceIdx: st.SequenceIdx, StepType: st.StepType, Params: params, IsEnabled: st.IsEnabled}
-		if m.SequenceIdx <= 0 {
+		if m.SequenceIdx <= 0 || seenSequence[m.SequenceIdx] {
+			// Sequence indices are 1-based, unique and in the order the steps
+			// arrived: a repeated position leaves no total order for the
+			// workspace to sort by or an export to round-trip (#98).
 			m.SequenceIdx = i + 1
 		}
+		seenSequence[m.SequenceIdx] = true
 		if st.ParentStepID != nil && *st.ParentStepID != "" {
 			p := ids[*st.ParentStepID]
 			m.ParentStepID = &p
