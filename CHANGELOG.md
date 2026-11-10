@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.4] - 2026-11-10
+
 ### Fixed
 - **"Check for Updates..." opens its dialog.** The Help menu item read the installed version from the platform package plugin and opened the dialog afterwards, which left it opening nothing on two counts: the item that asked for it is a menu entry, so the tap closes the menu and unmounts the context the dialog was asked of, and a platform that answers the package query slowly — or never — held the dialog back indefinitely. The dialog now opens immediately with the version the app was built with, which the release script keeps in step with the root `VERSION` file and the About dialog already shows.
 - **A report asks the server for its figures once.** Switching to the Report view re-reads the records, because the first read may have been a single page while a report totals the whole found set, and reading records asks for the report figures — so every report issued its one-request-per-break-level summary twice. The figures depend on the table, the summary fields, the break levels and the found set rather than on the rows, so a load that would ask the identical question is now skipped; a failed load is not remembered as asked, so Retry still reaches the server.
