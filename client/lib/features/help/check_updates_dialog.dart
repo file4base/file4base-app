@@ -1,6 +1,5 @@
 import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class CheckUpdatesDialog extends StatelessWidget {
@@ -8,23 +7,25 @@ class CheckUpdatesDialog extends StatelessWidget {
   const CheckUpdatesDialog({required this.currentVersion, super.key});
   final String currentVersion;
 
+  /// Opens the dialog at once.
+  ///
+  /// It used to read the installed version from the platform first and open
+  /// the dialog afterwards, which made "Check for Updates..." do nothing at
+  /// all on two counts: the caller is a menu item, so tapping it closes the
+  /// menu and unmounts the context the dialog was asked of, and a platform
+  /// that answers the package query slowly — or not at all — held the dialog
+  /// back indefinitely. The version the app was built with is compiled in —
+  /// the release script keeps it in step with the root VERSION file, and the
+  /// About dialog shows the same one — so the dialog is opened with it and
+  /// waits for nothing.
   static Future<void> show(BuildContext context, {String? currentVersion}) async {
-    var version = currentVersion;
-    if (version == null) {
-      try {
-        final info = await PackageInfo.fromPlatform();
-        version = info.buildNumber.isEmpty
-            ? info.version
-            : '${info.version}+${info.buildNumber}';
-      } catch (_) {
-        version = AboutFile4BaseDialog.version;
-      }
-    }
-    if (!context.mounted) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
     await showDialog(
-      context: context,
+      context: navigator.context,
       barrierColor: Colors.black54,
-      builder: (ctx) => CheckUpdatesDialog(currentVersion: version!),
+      builder: (ctx) => CheckUpdatesDialog(
+        currentVersion: currentVersion ?? AboutFile4BaseDialog.version,
+      ),
     );
   }
 

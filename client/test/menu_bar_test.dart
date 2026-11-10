@@ -231,7 +231,10 @@ void main() {
 
     // Verify CheckUpdatesDialog opens
     expect(find.text('Check for Updates'), findsOneWidget);
-    expect(find.text('File4Base v0.4.23'), findsOneWidget);
+    // The version the app was built with, never a literal: a release bumps it
+    // and a test that hardcoded one would fail on the next bump instead of on
+    // a real defect.
+    expect(find.text('File4Base v${AboutFile4BaseDialog.version}'), findsOneWidget);
     expect(find.text('View Releases on GitHub'), findsOneWidget);
 
     // Close Updates dialog
