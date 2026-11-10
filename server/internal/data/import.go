@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/validation"
@@ -344,16 +345,21 @@ func (s *Service) ImportRecords(
 			record[field] = value
 		}
 
-		if err := applyCalculationsTo(calculations, record); err != nil {
-			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
-		}
-
 		if opts.Action == ImportUpdateMatching {
+			// The match is looked up before the calculations are computed: an
+			// update evaluates its formulas over the stored row merged with the
+			// mapped values, so a formula reading a field this row does not
+			// carry sees what the record holds rather than nothing (#92).
 			id, err := findMatchingRecord(ctx, tx, dialect, tableName, opts.MatchFields, record)
 			if err != nil {
 				return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 			}
 			if id != "" {
+				if err := applyCalculationsForUpdate(
+					ctx, tx, dialect, tableName, id, fields, calculations, record,
+				); err != nil {
+					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+				}
 				if err := checker.Check(ctx, id, record, nil, false); err != nil {
 					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 				}
@@ -367,6 +373,12 @@ func (s *Service) ImportRecords(
 				report.Skipped++
 				continue
 			}
+		}
+
+		// A row that is added carries only its own mapped values, so its
+		// formulas are computed over the new record alone.
+		if err := applyCalculationsTo(calculations, record); err != nil {
+			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
 
 		id := uuid.NewString()
@@ -390,7 +402,60 @@ func (s *Service) ImportRecords(
 // import needs.
 type execer interface {
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+
+// applyCalculationsForUpdate computes the calculation fields of the record a
+// keyed import is about to update. The formulas read the stored row overlaid
+// with the mapped values, which is what the row holds once the update lands, so
+// an import that touches one field of a formula's inputs keeps the others
+// (#92). The answers are written into record, so the update writes them too.
+//
+// The row is read inside the import transaction, so a row an earlier line of
+// the same file wrote is seen as it now stands.
+func applyCalculationsForUpdate(
+	ctx context.Context, tx execer, dialect dbal.Dialect,
+	tableName, id string, fields fieldSet, calculations []calculation,
+	record map[string]interface{},
+) error {
+	if len(calculations) == 0 {
+		return nil
+	}
+
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s LIMIT 1",
+		selectList(dialect, fields), dialect.QuoteIdentifier(tableName),
+		dialect.QuoteIdentifier("id"), dialect.Placeholder(1))
+	rows, err := tx.QueryContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	stored, err := rowsToMaps(rows, fields)
+	if err != nil {
+		return err
+	}
+
+	merged := make(map[string]interface{}, len(fields)+len(record))
+	if len(stored) > 0 {
+		for field, value := range stored[0] {
+			merged[field] = value
+		}
+	}
+	for field, value := range record {
+		merged[field] = value
+	}
+
+	for _, c := range calculations {
+		answer, err := calc.Evaluate(c.expr, calc.Record(merged), c.result)
+		if err != nil {
+			return fmt.Errorf("%w: the formula of %q could not be computed: %s",
+				ErrInvalidValue, c.field, err.Error())
+		}
+		merged[c.field] = answer
+		record[c.field] = answer
+	}
+	return nil
 }
 
 // findMatchingRecord returns the id of the record whose match fields hold the

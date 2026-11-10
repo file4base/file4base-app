@@ -208,6 +208,47 @@ func TestImportUpdateMatching(t *testing.T) {
 	})
 }
 
+// A keyed update recomputes its formulas over the stored record merged with
+// the mapped values, so a calculation reading a field the file does not carry
+// keeps its answer rather than being computed from nothing (#92).
+func TestImportUpdateMatchingKeepsCalculationsOfUntouchedFields(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	f := newImportFixture(t, ctx, driver)
+
+	_, err := f.dataSvc.InsertRow(ctx, f.table, map[string]interface{}{
+		"last_name": "Durand", "city": "Paris", "customer_type": "Continuing",
+	})
+	require.NoError(t, err)
+
+	rows, err := f.dataSvc.ListRows(ctx, f.table, data.QueryOptions{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "100", fmt.Sprint(rows[0]["annual_fee"]), "a Continuing customer pays 100")
+
+	report, err := f.dataSvc.ImportRecords(ctx, f.table,
+		parseCSV(t, "Surname,Town\nDurand,Lyon\n"), data.ImportOptions{
+			Action:      data.ImportUpdateMatching,
+			MatchFields: []string{"last_name"},
+			Mappings: []data.ImportMapping{
+				{Column: 0, Field: "last_name"},
+				{Column: 1, Field: "city"},
+			},
+		})
+	require.NoError(t, err)
+	assert.Equal(t, 1, report.Updated)
+
+	rows, err = f.dataSvc.ListRows(ctx, f.table, data.QueryOptions{})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Lyon", rows[0]["city"], "the mapped column was written")
+	assert.Equal(t, "Continuing", rows[0]["customer_type"], "the field no column was sent to is left alone")
+	assert.Equal(t, "100", fmt.Sprint(rows[0]["annual_fee"]),
+		"the formula read the stored customer type, not an empty one")
+}
+
 func TestImportRefusesABadSetup(t *testing.T) {
 	driver, ctx := relatedTestDriver(t)
 	if driver == nil {

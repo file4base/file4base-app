@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A keyed import no longer recomputes a calculation field from the file alone (#92).** `update_matching` looked up the matching record *after* evaluating the formulas, so a row carrying only its match key and one column computed every calculation over that partial map: `total = quantity * rate` became `0` when the file sent `quantity` and the stored `rate` was never read. The match is now found first, the stored row is read inside the import transaction, and the formulas are evaluated over that row merged with the mapped values — the same rule a partial `PUT` follows. Adding a row is unchanged: its formulas are computed over the new record alone.
+
 ## [0.19.3] - 2026-11-08
 
 ### Fixed
