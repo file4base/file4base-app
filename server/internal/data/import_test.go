@@ -110,9 +110,11 @@ func TestCoerce(t *testing.T) {
 	})
 
 	t.Run("a container value is base64 or nothing", func(t *testing.T) {
+		// The column holds the bytes, not the base64 they were written in:
+		// keeping the text doubled the encoding on the way back out (#96).
 		value, err := coerce(dbal.FieldTypeContainer, "aGVsbG8=", data.DateISO)
 		require.NoError(t, err)
-		assert.Equal(t, "aGVsbG8=", value)
+		assert.Equal(t, []byte("hello"), value)
 
 		_, err = coerce(dbal.FieldTypeContainer, "not base64!", data.DateISO)
 		assert.Error(t, err)

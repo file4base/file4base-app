@@ -217,6 +217,27 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 	}
 	report.Counts.SavedFinds = len(report.SavedFinds)
 
+	for _, t := range bundle.Transfers {
+		reported := designreport.Transfer{
+			Name:        t.Name,
+			Source:      describeTransferEnd(t.Source),
+			Destination: describeTransferEnd(t.Destination),
+			Mode:        t.Mode,
+			MatchFields: strings.Join(t.MatchFields, ", "),
+			OnUnmatched: t.OnUnmatched,
+			OnRejected:  t.OnRejected,
+			DateOrder:   t.DateOrder,
+			FoundSet:    len(t.FoundSet) > 0,
+		}
+		for _, m := range t.Mappings {
+			reported.Mappings = append(reported.Mappings, designreport.TransferMapping{
+				Source: m.SourceField, Destination: m.DestinationField,
+			})
+		}
+		report.Transfers = append(report.Transfers, reported)
+	}
+	report.Counts.Transfers = len(report.Transfers)
+
 	for _, source := range bundle.DataSources {
 		report.DataSources = append(report.DataSources, designreport.DataSource{
 			Name: source.Name, Engine: source.Engine, Host: source.Host, Port: source.Port,
@@ -446,4 +467,13 @@ func asFloat(value interface{}) float64 {
 func asBool(value interface{}) bool {
 	b, _ := value.(bool)
 	return b
+}
+
+// describeTransferEnd reads one end of a transfer as "solution.table", or as
+// just the table for the solution the report describes.
+func describeTransferEnd(end TransferEnd) string {
+	if end.IsLocal() {
+		return end.Table
+	}
+	return end.Database + "." + end.Table
 }

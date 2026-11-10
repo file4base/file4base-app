@@ -906,3 +906,18 @@ func rowsToMaps(rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, erro
 	}
 	return results, nil
 }
+
+// FieldTypes returns the registered fields of a user table and the type each
+// one actually stores, which for a calculation is the type its formula's
+// result needs rather than the declared CALCULATION.
+//
+// It is exported so that a cross-solution transfer can check a mapping and
+// convert a value against the destination's own field types before it writes
+// anything (#96), without a second copy of the catalog query.
+func (s *Service) FieldTypes(ctx context.Context, tableName string) (map[string]dbal.AgnosticFieldType, error) {
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]dbal.AgnosticFieldType(fields), nil
+}

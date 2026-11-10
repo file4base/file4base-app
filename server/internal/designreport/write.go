@@ -120,6 +120,7 @@ func WriteHTML(report *Report) ([]byte, error) {
 		{"Saved finds", strconv.Itoa(counts.SavedFinds)},
 		{"Data sources", strconv.Itoa(counts.DataSources)},
 		{"Menu sets", strconv.Itoa(counts.MenuSets)},
+		{"Transfers", strconv.Itoa(counts.Transfers)},
 	} {
 		b.WriteString(`<li><b>` + pair[1] + `</b> ` + pair[0] + `</li>` + "\n")
 	}
@@ -356,6 +357,30 @@ func WriteHTML(report *Report) ([]byte, error) {
 			}
 			b.WriteString(`<tr><td>` + esc(find.Name) + `</td><td><code>` + esc(find.Table) + `</code></td><td>` +
 				strings.Join(lines, "<br>") + `</td></tr>` + "\n")
+		}
+		b.WriteString(`</tbody></table>` + "\n")
+	}
+
+	if len(report.Transfers) > 0 {
+		b.WriteString(`<h2>Transfers between solutions</h2>` + "\n")
+		b.WriteString(`<p>A transfer holds no credentials: it is authorized when it runs, ` +
+			`by a session of each end.</p>` + "\n")
+		b.WriteString(`<table><thead><tr><th>Name</th><th>From</th><th>To</th><th>Mode</th>` +
+			`<th>Match keys</th><th>Unmatched</th><th>Rejected</th><th>Fields</th></tr></thead><tbody>` + "\n")
+		for _, t := range report.Transfers {
+			from := `<code>` + esc(t.Source) + `</code>`
+			if t.FoundSet {
+				from += ` (found set)`
+			}
+			mappings := []string{}
+			for _, m := range t.Mappings {
+				mappings = append(mappings, esc(m.Source)+" → "+esc(m.Destination))
+			}
+			b.WriteString(`<tr><td>` + esc(t.Name) + `</td><td>` + from +
+				`</td><td><code>` + esc(t.Destination) + `</code></td><td>` + esc(t.Mode) +
+				`</td><td>` + esc(t.MatchFields) + `</td><td>` + esc(t.OnUnmatched) +
+				`</td><td>` + esc(t.OnRejected) + `</td><td>` +
+				strings.Join(mappings, "<br>") + `</td></tr>` + "\n")
 		}
 		b.WriteString(`</tbody></table>` + "\n")
 	}

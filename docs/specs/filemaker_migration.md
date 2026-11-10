@@ -43,7 +43,7 @@ Before any database table, column, layout, script, account, or row is written, `
 | Category | Meaning | Examples |
 |---|---|---|
 | `preserved` | Imported 1:1 with identical semantics. | Base tables, `Text`/`Number`/`Date`/`Timestamp`/`Container` fields, Table Occurrences, `=`, `≠`, `<`, `≤`, `>`, `≥` relationships, custom & field-backed value lists, layouts & parts, compatible calculations, compatible script steps, and `FMPXMLRESULT` rows. |
-| `translated` | Mapped to the closest safe File4Base construct and documented in the report. | `Time` fields → `TIMESTAMP`; `Get(CurrentDate)` → `TODAY()`; `Get(CurrentTimestamp)` → `NOW()`; global fields → standard columns; catalog-only control-flow script steps (`If`, `Loop`, `Set Variable`); FileMaker privilege sets → `owner`/`admin`/`user` roles. |
+| `translated` | Mapped to the closest safe File4Base construct and documented in the report. | `Time` fields → `TIMESTAMP`; `Get(CurrentDate)` → `TODAY()`; `Get(CurrentTimestamp)` → `NOW()`; global fields → standard columns; catalog-only script steps (`Set Variable`, `Print`, `Insert from URL`); FileMaker privilege sets → `owner`/`admin`/`user` roles. |
 | `unsupported` | Cannot be executed by File4Base's runtime; preserved safely as inert data/comments so the solution imports cleanly. | Unsupported calculation functions (`ExecuteSQL`, `Let`, `While`) downgraded to stored columns; unsupported script steps (`Perform AppleScript`, plug-in steps) converted to disabled `Comment` steps (`[UNSUPPORTED FM STEP: ...]`); repeating fields (`maxRepetition > 1`) collapsed to single column; Cartesian (`x`) relationships skipped. |
 | `rejected` | Invalid or unsafe items excluded from import. | `[Guest]` anonymous accounts; relationships referencing non-existent tables or columns; malformed XML datasets. |
 | `manual_action_required` | Explicit post-migration checklist for the solution owner. | Reviewing quarantined script triggers; setting passwords for migrated accounts; rewriting unsupported calculation formulas or script steps; normalizing repeating fields. |
@@ -59,3 +59,25 @@ Before any database table, column, layout, script, account, or row is written, `
    - All migrated accounts are created with `is_active: false` and an unguessable random secret, recorded in `accounts_pending_password` and `manual_action_required`. An owner must explicitly assign a password and enable the account in `File > Manage > Security...` before anyone can sign in with it.
 3. **Atomic Target Isolation:**
    - `POST /api/v1/solutions/migrate/apply` can either target a newly created `target_database` (rolling back and dropping the database on any schema or data error) or merge into the active session database with full rollback on failure. A merge into an existing database records its design before the first write (`schema.Service.SnapshotDesign`) and, on any later failure, deletes every design object the migration added and re-imports the recorded design, so a definition the merge changed is the one it was (`RestoreDesign`). Records are not part of the rollback because none are written: the records are imported after the schema, in one transaction of their own. If the restore is itself incomplete, the problem report says so rather than implying nothing was left behind (#97).
+
+---
+
+## 5. `Import Records` / `Export Records` and Transfer Definitions (`#96`)
+
+FileMaker's `Import Records` and `Export Records` steps name a **file** and a mapping of their own. File4Base's equivalent is a **transfer definition**: a named, persisted object that records the source and destination solutions and tables, explicit field mappings, stable match keys, the add/update mode, the unmatched-record policy, the rejected-row policy and the date interpretation. The script step names the definition; the definition holds everything else. See [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 17 for the stored shape and the endpoint.
+
+The two steps are therefore **converted but not configured**:
+
+- the step is imported as an enabled `Import Records` / `Export Records` step, so the script reads as it did and nothing disappears out of its middle;
+- it carries **no target**, because the FileMaker file reference and its mapping are not a File4Base transfer definition and cannot be turned into one automatically: the field names, the match keys and the policies are decisions about two solutions that the source document does not state;
+- each one is reported under **`manual_action_required`**, naming the script, the step and its position, and saying that a transfer has to be created and named in it;
+- until one is, the step **stops the script** when it runs, reporting that it names no transfer. It is never answered with a *script* of the same name — a transfer and a script are different objects, and falling back from one to the other would run something nobody asked for.
+
+A converted step whose transfer reaches another solution also stops the script when the session is not signed in to that solution, naming the solution it needs. A transfer definition carries no credential, so authority comes from a session of each end and from nothing else.
+
+`Loop`, `Exit Loop If` and `End Loop` convert to steps the client runner really executes (`#96`), so a migrated loop runs rather than halting the script.
+
+### What is still not migrated
+
+- **External file references on `Perform Script`.** A called script in another FileMaker file still resolves only within the converted solution; an unresolved one is reported rather than matched to a same-named local script.
+- **Scheduled and server-side execution.** A transfer runs when a client, or another authenticated caller, asks the endpoint for it. There is no File4Base-side schedule in this release, so a FileMaker Server schedule that ran an import has no automatic counterpart; the endpoint is what a scheduler of your own would call, with a session token for each end.

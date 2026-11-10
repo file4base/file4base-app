@@ -58,7 +58,7 @@ Visual reference mockup: [script_workspace_mockup.png](../../assets/mockups/scri
   - **Navigation**: Go to Layout (`Ir a Presentación`), Go to Record/Request (`Ir a Registro`), Enter Find Mode (`Entrar en Modo Buscar`).
   - **Records**: New Record (`Nuevo Registro`), Commit Records (`Guardar Registros`), Delete Record (`Eliminar Registro`), Revert Record (`Revertir Registro`).
   - **Control & Logic**: If / Else / End If (`Si / Sino / Fin Si`), Loop / Exit Loop If / End Loop (`Bucle`), Set Variable (`Establecer Variable`), Perform Script (`Ejecutar Script`), Pause/Continue Script (`Pausar / Continuar Script`).
-  - **Integration & Data**: Perform REST API cURL (`Ejecutar API REST cURL`), Insert from URL (`Insertar desde URL`), Send Webhook (`Enviar Notificación Webhook`).
+  - **Integration & Data**: Perform REST API cURL (`Ejecutar API REST cURL`), Insert from URL (`Insertar desde URL`), Send Webhook (`Enviar Notificación Webhook`), Import Records (`Importar Registros`), Export Records (`Exportar Registros`).
 - Action invocation: Double-click to insert at cursor or drag-and-drop into the central step list.
 
 ---
@@ -159,3 +159,44 @@ Visual reference mockup: [script_workspace_mockup.png](../../assets/mockups/scri
 ## 4. Execution Engine Architecture
 - **Server-Side Execution**: Go engine with Google CEL (Common Expression Language) for deterministic formula evaluation.
 - **Client-Side Visual Runner**: Step-by-step debugger with breakpoint support, variable inspection stack (`$local`, `$$global`), and error handling (`Set Error Capture`).
+
+Normal execution and the debugger advance **one** state machine, `ScriptExecution` (program counter, `If` frames, `Loop` frames, local variables, halt state), so stepping through a script has the same effects, in the same order, as running it (`#94`).
+
+---
+
+## 5. `Import Records` / `Export Records` (`#96`)
+
+Both steps run a **transfer definition**: a named, persisted object recording the two solutions and tables, the explicit field mappings, the stable match keys, the add/update mode and the unmatched- and rejected-row policies. The step names the definition and nothing else; the definition is managed over `/api/v1/transfers` (see [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 17).
+
+| Step parameter | Meaning |
+|---|---|
+| `transfer` (also read as `transfer_name` or `name`) | The definition's name, or a `$variable` / `{{merge}}` token holding it. |
+
+`Import Records` requires a definition whose **destination** is this solution, `Export Records` one whose **source** is. A step pointed the other way is refused by name rather than run backwards.
+
+### Where execution happens
+
+The step calls the server, which runs the transfer. Execution is therefore **client-triggered and server-performed**, and it is available wherever a script runs today: the desktop client, the Web Client and the Script Debugger. **There is no scheduled or server-side script runner in this release**, so a transfer never runs unattended on File4Base's own initiative; any scheduler must call the endpoint itself with a session token for each end.
+
+### What stops the script
+
+A transfer moves records between two solutions, so the step is deliberately unforgiving. Each of these stops the script and says which it was:
+
+- the step names **no transfer** — a step converted from FileMaker carries no target, by design;
+- **no transfer of that name** exists in this solution. It is never answered with a *script* of the same name;
+- the variable naming the transfer **holds nothing**;
+- the step is pointed the **wrong way** for the definition it names;
+- the transfer reaches **another solution** and this session is not signed in to it. The message names the solution. A definition carries no credential, so authority comes from a session of each end;
+- the transfer ran and was **refused**: nothing was written, and the message carries the counts and the first rejected rows, each with its row number, the two fields and the value.
+
+### What a script can read afterwards
+
+A committed run leaves its counts in global variables, so the steps after it can test what happened with an ordinary `If`:
+
+| Variable | Holds |
+|---|---|
+| `$$transferAdded` | Records created in the destination. |
+| `$$transferUpdated` | Destination records a match key found and updated. |
+| `$$transferSkipped` | Records passed over for want of a match. |
+| `$$transferRejected` | Rows the destination could not hold. Non-zero only under `on_rejected: "skip"`, since `abort` stops the script. |
+| `$$transferCommitted` | `1` when the destination transaction was committed. |

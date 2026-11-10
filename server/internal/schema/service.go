@@ -270,6 +270,23 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			updated_at ` + ts + `,
 			CONSTRAINT uq_saved_find_name UNIQUE (table_name, name)
 		);`,
+		// A named record transfer between two solutions (#96). It holds the
+		// mappings, the match keys and the policies, and no credentials
+		// whatever: which accounts may run it is decided when it runs, by
+		// the session tokens presented for each end.
+		`CREATE TABLE IF NOT EXISTS sys_transfers (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			source_database VARCHAR(128),
+			source_table VARCHAR(64) NOT NULL,
+			destination_database VARCHAR(128),
+			destination_table VARCHAR(64) NOT NULL,
+			definition TEXT NOT NULL,
+			created_by VARCHAR(36),
+			created_at ` + ts + `,
+			updated_at ` + ts + `,
+			CONSTRAINT uq_transfer_name UNIQUE (name)
+		);`,
 		// Capabilities granted per account role (#39). A role without a
 		// row holds every capability, so a database created before this
 		// table existed keeps working unrestricted.

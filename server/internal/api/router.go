@@ -106,6 +106,10 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		hub = realtime.NewHub()
 	}
 	realtimeHandler := NewRealtimeHandler(hub, sessions)
+	// Transfers need the session store and the connection manager: the far
+	// end of a cross-solution transfer is authorized by its own session
+	// token, never by the session this request was made with (#96).
+	transferHandler := NewTransferHandler(dbMgr, sessions)
 
 	r.Get("/api/v1/crypto/handshake", crypto.HandshakeHandler(opts.ChannelSecret))
 	// The change-notification WebSocket authenticates with its first message,
@@ -126,6 +130,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		r.Use(emitChangeEvents(hub))
 		schemaHandler.RegisterRoutes(r)
 		dataHandler.RegisterRoutes(r)
+		transferHandler.RegisterRoutes(r)
 		securityHandler.RegisterRoutes(r)
 		solutionHandler.RegisterRoutes(r)
 		serverAdminHandler.RegisterRoutes(r)

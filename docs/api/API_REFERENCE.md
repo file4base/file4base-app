@@ -1986,3 +1986,165 @@ The client decides with `client_update_policy` in File Options (`GET`/`PUT /api/
 | `off` | Never check. For fleets rolled out by device management. |
 
 **Kiosk Mode overrides all three.** A session in Kiosk lockout is never offered an update: it has no menu bar, no status badges and no developer shortcuts, so it must not be handed a download it cannot authorize either. Those deployments update when an administrator signs in, or through device management.
+
+---
+
+## 17. Transfers Between Solutions (`#96`)
+
+A **transfer definition** is a named, persisted record transfer between two solutions: a source table (optionally narrowed to a found set), a destination table, explicit field mappings, stable match keys, an add/update mode, an unmatched-record policy, a rejected-row policy and a date interpretation.
+
+Definitions are stored in `sys_transfers`, exported in the solution bundle (`transfers`) and listed in the Database Design Report, like any other design object. They are served at `/api/v1/transfers`. Reading one is allowed for any authenticated session, because running a transfer is an operation on records; creating, updating and deleting one requires the `owner` or `admin` role and an unlocked design.
+
+### A transfer never holds a credential
+
+A definition records *what moves where*. It holds no connection string, no account and no password. Who may run it is decided at run time, and a transfer is only ever carried out on authority the caller has actually been given:
+
+- the session the request is made with authorizes **its own** solution — the invariant that a session reaches exactly the database it signed in to is unchanged;
+- the other end, when it is another solution, is authorized by **`peer_token`**: a session token obtained by signing in to that solution. A token for any third solution is refused, whatever role it holds there;
+- the source account must hold the `bulk_export` privilege and be able to read the source table; the destination account must hold `bulk_import` and have read-write access to the destination table;
+- the peer account must still be in the state its session was opened with, the same check every authenticated request makes, so a revoked or demoted account cannot write through a transfer.
+
+Both ends being the same solution needs no `peer_token`, and offering one is refused as a mistake.
+
+### Where a transfer runs
+
+Execution is **server-side**, through the endpoint below, and it is available to **any API caller holding a session for each end**. The desktop and Web Client reach it from the `Import Records` / `Export Records` script steps (see `docs/specs/script_workspace_spec.md`). There is no scheduled or server-side script runner in this release: a transfer runs when a client — or any other authenticated caller, such as a scheduler of your own calling this endpoint with two tokens — asks for it. It is not yet triggered by a File4Base-side schedule.
+
+### `GET /api/v1/transfers`
+Lists the solution's transfer definitions, by name.
+
+#### Response `200 OK`
+```json
+[
+  {
+    "id": "0f1c…",
+    "name": "Send answers",
+    "source": { "table": "answers" },
+    "destination": { "database": "results_db", "table": "project_answers" },
+    "found_set": [
+      { "criteria": [ { "field_name": "status", "operator": "=", "value": "ready" } ] }
+    ],
+    "sort": [ { "field": "answer_code" } ],
+    "mappings": [
+      { "source_field": "answer_code", "destination_field": "code" },
+      { "source_field": "respondent",  "destination_field": "respondent" },
+      { "source_field": "score_text",  "destination_field": "score" }
+    ],
+    "match_fields": ["code"],
+    "mode": "update_matching",
+    "on_unmatched": "add",
+    "on_rejected": "abort",
+    "date_order": "iso",
+    "created_by": "a1b2…",
+    "created_at": "2026-11-10T08:00:00Z",
+    "updated_at": "2026-11-10T08:00:00Z"
+  }
+]
+```
+
+An **empty `database`** on either end means *the solution holding the definition*, so a definition carried in a solution bundle keeps working in the copy it is restored into.
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `mode` | `update_matching` (default), `add` | `update_matching` finds the destination record whose match fields hold the same values and updates it; this is the mode that makes a transfer replayable. `add` makes every source record a new record, every run. |
+| `match_fields` | destination field names | The stable business keys. Required by `update_matching`, refused by `add`. Every one of them must be mapped, so the source always supplies the key it is matched on. |
+| `on_unmatched` | `add` (default), `skip` | What happens to a source record that matches no destination record. Consulted by `update_matching` only. |
+| `on_rejected` | `abort` (default), `skip` | What happens to a source value the destination field cannot hold. See the transaction contract below. |
+| `date_order` | `iso` (default), `dmy`, `mdy` | How a date written `03/04/2011` is to be read. There is no way to tell from the value, so the definition says. |
+
+### `POST /api/v1/transfers`
+Creates a definition. Requires `owner`/`admin` and an unlocked design. The body is the object above without `id`, `created_by`, `created_at` and `updated_at`.
+
+A definition is checked for **structure** when it is saved: a name, both tables, at least one mapping, no two source fields sent to one destination field, every match field mapped, and known values for the four policy fields. Responses: `201 Created`; `409 Conflict` when the name is taken (names are unique per solution, because a script step resolves a transfer by name); `422 Unprocessable Content` (`Invalid Transfer`).
+
+The **mapped fields are not** checked when the definition is saved: one end is usually another solution's database, which this server may not be able to reach at that moment, and a definition that could only be saved while the far solution was online would be useless. They are resolved when the transfer runs, against both databases — see below.
+
+### `GET /api/v1/transfers/{idOrName}`
+Reads one definition. The path segment is the definition's `id` **or** its `name` (percent-encoded), because a script step names the transfer it runs and a name survives a bundle being restored with fresh ids. `404 Not Found` when neither matches.
+
+### `PUT /api/v1/transfers/{idOrName}`
+Replaces a definition. The owner account and the creation time are kept. Requires `owner`/`admin` and an unlocked design.
+
+### `DELETE /api/v1/transfers/{idOrName}`
+Removes a definition. `204 No Content`. Requires `owner`/`admin` and an unlocked design.
+
+### `POST /api/v1/transfers/{idOrName}/run`
+Runs one definition.
+
+#### Request Body
+```json
+{ "peer_token": "eyJ…" }
+```
+
+`peer_token` is required when the two ends are different solutions and refused when they are the same one. The body may be omitted entirely for a transfer inside one solution.
+
+#### Response `200 OK` — the destination was written
+```json
+{
+  "transfer": "Send answers",
+  "source_database": "dispatch_db",
+  "source_table": "answers",
+  "destination_database": "results_db",
+  "destination_table": "project_answers",
+  "mode": "update_matching",
+  "on_unmatched": "add",
+  "on_rejected": "skip",
+  "rows": 3,
+  "added": 2,
+  "updated": 0,
+  "skipped": 0,
+  "rejected": [
+    {
+      "row": 3,
+      "source_field": "score_text",
+      "destination_field": "score",
+      "value": "non renseigné",
+      "reason": "is not a number"
+    }
+  ],
+  "committed": true,
+  "fields": ["code", "respondent", "score"]
+}
+```
+
+| Count | Meaning |
+| --- | --- |
+| `rows` | How many records the source found set held. |
+| `added` | Records created in the destination. |
+| `updated` | Destination records a match key found and updated. |
+| `skipped` | Records passed over for want of a match, under `on_unmatched: "skip"`. |
+| `rejected` | Rows the destination could not hold, each with its 1-based position in the source found set, the two fields, the value and the reason. |
+| `committed` | Whether the destination transaction was committed. |
+
+#### Response `422 Unprocessable Content` — nothing was written
+
+The body is **the same report object**, with `committed: false` and an added `error` string, because that report is exactly what the caller needs in order to act. A caller parses one shape for both outcomes and reads `committed`; the status says the same thing more briefly.
+
+```json
+{
+  "transfer": "Send answers",
+  "rows": 3,
+  "added": 0,
+  "updated": 0,
+  "skipped": 0,
+  "rejected": [
+    { "row": 3, "source_field": "score_text", "destination_field": "score", "value": "non renseigné", "reason": "is not a number" }
+  ],
+  "committed": false,
+  "error": "transfer refused: rows the destination cannot hold: 1 of 3 rows were rejected and this transfer aborts on a rejected row, so the destination was left unchanged"
+}
+```
+
+Other responses are RFC 9457 problem documents, not reports: `400 Bad Request` (no `peer_token` when one is needed, or one offered when it is not), `403 Forbidden` (the peer token is not a session of that solution, the peer account no longer holds the state it signed in with, a missing privilege or table access, or this session is signed in to neither end), `404 Not Found` (no such definition), `503 Service Unavailable` (a solution is not reachable).
+
+### The transaction and retry contract
+
+One transfer writes **one destination table, inside one transaction**. A transfer of parents and children is two definitions run in order, and each commits on its own.
+
+- **A mapping or table that cannot be resolved blocks the run** before a single record moves: a field neither table has, or a destination table that is not in the far solution's catalog, answers `422` with `committed: false` and nothing written. An unresolved target is never guessed at and never partially applied.
+- **`on_rejected: "abort"` (the default) refuses the whole transfer.** Every rejected row is reported, the destination is left exactly as it was, and the run can be replayed once the source is corrected. This is the all-or-nothing contract a manual import already follows (`#38`).
+- **`on_rejected: "skip"` quarantines the rejected rows** and commits the rest in that one transaction. The rejected rows are still reported in full.
+- **A row the destination refuses for another reason** — a validation rule, a constraint — rolls the transaction back as it does for a manual import, and the run answers `422` with `committed: false`.
+- **Retrying is replaying.** A refused run wrote nothing, so the same request can simply be sent again. A *committed* run can be sent again too: with `mode: "update_matching"` and stable match keys, a replay updates the same records instead of duplicating them, so a transfer of parents and then children neither duplicates a parent nor orphans a child. `mode: "add"` is deliberately not replayable — it is for an append-only destination — and the capability parity matrix says so.
+
+Values cross through the same conversion a manual import runs (`data.CoerceImportValue`), so a number keeps its exact decimal, text keeps its spaces and its accents, a date is read in the definition's `date_order`, and a container crosses as the same bytes.

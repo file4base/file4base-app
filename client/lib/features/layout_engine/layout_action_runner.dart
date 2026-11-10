@@ -154,9 +154,23 @@ class StepOutcome {
 /// `Else` / `End If`) steps.
 class LayoutActionRunner {
 
-  LayoutActionRunner({required this.apiClient, required this.host});
+  LayoutActionRunner({
+    required this.apiClient,
+    required this.host,
+    this.peerTokenProvider,
+  });
   final ApiClient apiClient;
   final LayoutActionHost host;
+
+  /// Supplies a session token for another solution, so an `Import Records` or
+  /// `Export Records` step whose transfer reaches a second solution can be
+  /// authorized (#96).
+  ///
+  /// It is asked for the solution's database name and answers a token, or
+  /// null when the user has not signed in to that solution. A null provider,
+  /// or a null answer, stops the script: a transfer is never run on
+  /// authority this session does not have, and never quietly skipped.
+  final Future<String?> Function(String solution)? peerTokenProvider;
 
   static const maxScriptDepth = 8;
 
@@ -258,7 +272,15 @@ class LayoutActionRunner {
       case 'else_if':
       case 'else':
       case 'end_if':
+      case 'loop':
+      case 'exit_loop_if':
+      case 'end_loop':
+        // Control flow belongs to a script, which has the steps around it to
+        // branch over or repeat. On its own, on a button, it means nothing.
         return LayoutActionResult.stopped('Step "$stepType" is not supported on a button.');
+      case 'import_records':
+      case 'export_records':
+        return _execTransfer(norm, params, vars);
       case 'set_variable':
         if (!params.containsKey('value') && !params.containsKey('formula') && !params.containsKey('text') && !params.containsKey('calc')) {
           return LayoutActionResult.stopped('Step "$stepType" is not supported without a value.');
@@ -342,6 +364,118 @@ class LayoutActionRunner {
         return LayoutActionResult.stopped(
             'step "$stepType" is not supported by the client script runner yet '
             '(it needs the calculation engine / server script runner).');
+    }
+    return const LayoutActionResult.ok();
+  }
+
+  /// Names of the step parameters that can hold the transfer an
+  /// `Import Records` / `Export Records` step runs.
+  static const _transferNameKeys = <String>['transfer', 'transfer_name', 'name'];
+
+  /// Runs the transfer definition an `Import Records` or `Export Records`
+  /// step names (#96).
+  ///
+  /// The transfer is resolved by name against this solution, and an
+  /// unresolved one stops the script. It is never answered with something
+  /// else that happens to share the name — in particular never with a local
+  /// script, which is the fallback the issue asks us not to have.
+  ///
+  /// The counts of the run are left in `$$transferAdded`,
+  /// `$$transferUpdated`, `$$transferSkipped`, `$$transferRejected` and
+  /// `$$transferCommitted`, so the steps after it can test what happened with
+  /// an ordinary `If`.
+  Future<LayoutActionResult> _execTransfer(
+    String norm,
+    Map<String, dynamic> params,
+    Map<String, String> localVars,
+  ) async {
+    final label = norm == 'export_records' ? 'Export Records' : 'Import Records';
+
+    var name = '';
+    for (final key in _transferNameKeys) {
+      final raw = params[key]?.toString().trim() ?? '';
+      if (raw.isNotEmpty) {
+        name = _resolveParamsText(raw, localVars).trim();
+        if (name.isEmpty && raw.startsWith(r'$')) {
+          return LayoutActionResult.stopped(
+              '$label names the transfer in $raw, which holds nothing here.');
+        }
+        break;
+      }
+    }
+    if (name.isEmpty) {
+      name = _extractQuoted(params['expression']?.toString() ?? '').trim();
+    }
+    if (name.isEmpty) {
+      return LayoutActionResult.stopped(
+          '$label has no transfer named in it. A transfer definition says which two '
+          'solutions the records move between, which fields map to which, and which '
+          'keys records are matched on; a step converted from FileMaker carries none '
+          'of that, so one has to be created and named here.');
+    }
+
+    TransferDefinitionModel definition;
+    try {
+      definition = await apiClient.getTransfer(name);
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) {
+        return LayoutActionResult.stopped(
+            '$label: there is no transfer named "$name" in this solution.');
+      }
+      return LayoutActionResult.stopped(
+          '$label: the transfer "$name" could not be read: ${e.detail}');
+    } catch (e) {
+      return LayoutActionResult.stopped(
+          '$label: the transfer "$name" could not be read: $e');
+    }
+
+    // The two steps are the two directions of the same thing, and a step
+    // pointed the wrong way is a mistake worth naming rather than running
+    // backwards.
+    if (norm == 'import_records' && !definition.destination.isLocal) {
+      return LayoutActionResult.stopped(
+          'Import Records brings records into this solution, but the transfer "$name" '
+          'sends them to ${definition.destination.label}. Use Export Records, or a '
+          'transfer whose destination is this solution.');
+    }
+    if (norm == 'export_records' && !definition.source.isLocal) {
+      return LayoutActionResult.stopped(
+          'Export Records sends records out of this solution, but the transfer "$name" '
+          'reads them from ${definition.source.label}. Use Import Records, or a '
+          'transfer whose source is this solution.');
+    }
+
+    String? peerToken;
+    final peer = definition.peerDatabase;
+    if (peer.isNotEmpty) {
+      peerToken = await peerTokenProvider?.call(peer);
+      if (peerToken == null || peerToken.isEmpty) {
+        return LayoutActionResult.stopped(
+            '$label: the transfer "$name" reaches the solution $peer, and this session '
+            'is not signed in to it. Sign in to $peer and run the script again; '
+            'File4Base never moves records on authority it has not been given.');
+      }
+    }
+
+    TransferRunReport report;
+    try {
+      report = await apiClient.runTransfer(definition.id, peerToken: peerToken);
+    } on ApiException catch (e) {
+      return LayoutActionResult.stopped('$label "$name" could not run: ${e.detail}');
+    } catch (e) {
+      return LayoutActionResult.stopped('$label "$name" could not run: $e');
+    }
+
+    _setVariable(r'$$transferAdded', report.added.toString(), localVars);
+    _setVariable(r'$$transferUpdated', report.updated.toString(), localVars);
+    _setVariable(r'$$transferSkipped', report.skipped.toString(), localVars);
+    _setVariable(r'$$transferRejected', report.rejectedCount.toString(), localVars);
+    _setVariable(r'$$transferCommitted', report.committed ? '1' : '0', localVars);
+
+    if (!report.committed) {
+      // Nothing was written, so the script stops here rather than carrying on
+      // as though the records had moved.
+      return LayoutActionResult.stopped('$label "$name" was refused: ${report.describeRefusal()}');
     }
     return const LayoutActionResult.ok();
   }
@@ -583,6 +717,7 @@ class ScriptExecution {
           ..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx)),
         localVars = localVars ?? <String, String>{} {
     _hasEndIf = steps.any((s) => s.isEnabled && LayoutActionRunner.normalizeStepType(s.stepType) == 'end_if');
+    _hasEndLoop = steps.any((s) => s.isEnabled && LayoutActionRunner.normalizeStepType(s.stepType) == 'end_loop');
   }
   final ScriptModel script;
   final LayoutActionRunner runner;
@@ -595,8 +730,15 @@ class ScriptExecution {
   final Map<String, String> localVars;
 
   final List<_IfFrame> _ifStack = <_IfFrame>[];
+  final List<_LoopFrame> _loopStack = <_LoopFrame>[];
   late final bool _hasEndIf;
+  late final bool _hasEndLoop;
   int _pc = 0;
+
+  /// A loop with no way out would hang the application rather than report
+  /// anything, so one is stopped after this many turns and says so. It is far
+  /// above any found set a person loops over by hand.
+  static const maxLoopIterations = 100000;
 
   /// The index of the step about to run.
   int get pc => _pc;
@@ -673,6 +815,56 @@ class ScriptExecution {
 
     if (!isExecuting) return const StepOutcome(StepOutcomeKind.skipped);
 
+    // Loop bookkeeping sits after the branch check, so a loop inside a branch
+    // that was not taken is passed over whole — its End Loop with it — rather
+    // than repeating a branch nobody entered. A script with no End Loop at
+    // all is not a loop script, and its Loop falls through to the step
+    // runner, which says so.
+    if (_hasEndLoop) {
+      switch (norm) {
+        case 'loop':
+          // The step after Loop is where each turn begins. The If depth is
+          // remembered with it, so leaving the loop early also leaves the
+          // branches that were opened inside it.
+          _loopStack.add(_LoopFrame(firstStep: _pc, ifDepth: _ifStack.length));
+          return const StepOutcome(StepOutcomeKind.controlFlow);
+
+        case 'exit_loop_if':
+          if (_loopStack.isEmpty) {
+            return const StepOutcome(StepOutcomeKind.stopped,
+                'Exit Loop If is not inside a Loop');
+          }
+          final condition = runner.evaluateCondition(
+              runner.extractCondition(step.params), localVars);
+          if (condition == null) {
+            return StepOutcome(StepOutcomeKind.stopped,
+                'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
+          }
+          if (condition) {
+            return _leaveLoop();
+          }
+          return const StepOutcome(StepOutcomeKind.controlFlow);
+
+        case 'end_loop':
+          if (_loopStack.isEmpty) {
+            return const StepOutcome(StepOutcomeKind.stopped, 'End Loop has no Loop to close');
+          }
+          final frame = _loopStack.last;
+          frame.turns++;
+          if (frame.turns > maxLoopIterations) {
+            return const StepOutcome(StepOutcomeKind.stopped,
+                'this Loop has run $maxLoopIterations times without reaching an Exit Loop If, '
+                'so it was stopped rather than left running');
+          }
+          // Back to the top. Any branch opened inside this turn of the loop
+          // is closed, so the next turn starts with the same branch state as
+          // the first one.
+          _truncateIfStack(frame.ifDepth);
+          _pc = frame.firstStep;
+          return const StepOutcome(StepOutcomeKind.controlFlow);
+      }
+    }
+
     if (norm == 'halt_script') return const StepOutcome(StepOutcomeKind.halted);
     if (norm == 'exit_script') return const StepOutcome(StepOutcomeKind.exited);
 
@@ -680,6 +872,42 @@ class ScriptExecution {
     if (result.halted) return const StepOutcome(StepOutcomeKind.halted);
     if (!result.completed) return StepOutcome(StepOutcomeKind.stopped, result.message);
     return const StepOutcome(StepOutcomeKind.ran);
+  }
+
+  /// Leaves the innermost loop: execution carries on after its End Loop.
+  ///
+  /// The End Loop is found by counting the loops that open and close in
+  /// between, so a nested loop's End Loop is never mistaken for this one.
+  StepOutcome _leaveLoop() {
+    final frame = _loopStack.removeLast();
+    _truncateIfStack(frame.ifDepth);
+
+    var depth = 0;
+    for (var i = _pc; i < steps.length; i++) {
+      if (!steps[i].isEnabled) continue;
+      switch (LayoutActionRunner.normalizeStepType(steps[i].stepType)) {
+        case 'loop':
+          depth++;
+        case 'end_loop':
+          if (depth == 0) {
+            _pc = i + 1;
+            return const StepOutcome(StepOutcomeKind.controlFlow);
+          }
+          depth--;
+      }
+    }
+    // A Loop whose End Loop is missing: the script ends here rather than
+    // running the rest of it outside a loop it never left.
+    _pc = steps.length;
+    return const StepOutcome(StepOutcomeKind.controlFlow);
+  }
+
+  /// Drops the If frames opened above [depth], which is what leaving or
+  /// restarting a loop does to the branches opened inside it.
+  void _truncateIfStack(int depth) {
+    while (_ifStack.length > depth) {
+      _ifStack.removeLast();
+    }
   }
 
   String _describeCondition(Map<String, dynamic> params) {
@@ -698,4 +926,20 @@ class _IfFrame {
   final bool parentActive;
   bool branchTaken;
   bool active;
+}
+
+/// One `Loop` being executed: where its turns begin, how many have run, and
+/// how deep the If frames were when it was entered.
+class _LoopFrame {
+
+  _LoopFrame({required this.firstStep, required this.ifDepth});
+
+  /// The index of the step just after the `Loop`, where each turn starts.
+  final int firstStep;
+
+  /// The If-frame depth outside the loop, restored on every turn and on the
+  /// way out.
+  final int ifDepth;
+
+  int turns = 0;
 }

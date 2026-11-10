@@ -202,10 +202,17 @@ func coerce(fieldType dbal.AgnosticFieldType, text string, order DateOrder) (int
 		if trimmed == "" {
 			return nil, nil
 		}
-		if _, err := base64.StdEncoding.DecodeString(trimmed); err != nil {
+		// A container column holds the bytes themselves, so the base64 the
+		// cell is written in is decoded here. Storing the base64 text
+		// instead wrote the characters "aGVsbG8=" into the column, and
+		// reading the record back encoded those again, so an imported
+		// container came out doubly encoded and no longer the file that went
+		// in (#96).
+		decoded, err := base64.StdEncoding.DecodeString(trimmed)
+		if err != nil {
 			return nil, errors.New("is not base64, which is how a container value is written")
 		}
-		return trimmed, nil
+		return decoded, nil
 
 	default:
 		// Text keeps whatever it was given, spaces and all: trimming someone's

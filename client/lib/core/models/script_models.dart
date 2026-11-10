@@ -219,6 +219,10 @@ class ScriptStepModel {
         return 'Perform REST API (cURL)';
       case 'insert_from_url':
         return 'Insert from URL';
+      case 'import_records':
+        return 'Import Records';
+      case 'export_records':
+        return 'Export Records';
       case 'send_webhook':
         return 'Send Webhook Notification';
       case 'show_dialog':
@@ -536,6 +540,23 @@ class ScriptCatalogItem {
       category: 'INTEGRATION & DATA',
       description: 'Downloads content from a URL and stores it in a field or variable.',
       defaultParams: {'url': 'https://', 'target': r'$response'},
+    ),
+    // The two directions of a transfer definition (#96). The definition names
+    // the solutions, the field mappings and the match keys; the step names
+    // the definition, and stops the script when it names none.
+    ScriptCatalogItem(
+      stepType: 'import_records',
+      label: '+ Import Records',
+      category: 'INTEGRATION & DATA',
+      description: 'Brings records into this solution by running a named transfer definition.',
+      defaultParams: {'transfer': ''},
+    ),
+    ScriptCatalogItem(
+      stepType: 'export_records',
+      label: '+ Export Records',
+      category: 'INTEGRATION & DATA',
+      description: 'Sends records out of this solution by running a named transfer definition.',
+      defaultParams: {'transfer': ''},
     ),
     ScriptCatalogItem(
       stepType: 'send_webhook',

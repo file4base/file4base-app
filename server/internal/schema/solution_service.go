@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/msgpackguard"
 	"github.com/file4base/file4base-app/server/internal/validation"
@@ -168,6 +169,29 @@ type BundleDataSource struct {
 	PasswordEnv string `msgpack:"password_env,omitempty"`
 }
 
+// BundleTransfer carries a transfer definition (#96). It names its tables
+// and its solutions by name, as a transfer always has, and it holds no
+// credentials, because the catalog holds none either: which accounts may run
+// a transfer is decided when it runs, from the session tokens presented for
+// each end.
+//
+// A definition whose far end is empty means "the solution holding this
+// definition", so a bundle restored into another database keeps working
+// without being edited.
+type BundleTransfer struct {
+	Name        string             `msgpack:"name"`
+	Source      TransferEnd        `msgpack:"source"`
+	Destination TransferEnd        `msgpack:"destination"`
+	FoundSet    []data.FindRequest `msgpack:"found_set,omitempty"`
+	Sort        []data.SortField   `msgpack:"sort,omitempty"`
+	Mappings    []TransferMapping  `msgpack:"mappings"`
+	MatchFields []string           `msgpack:"match_fields,omitempty"`
+	Mode        string             `msgpack:"mode"`
+	OnUnmatched string             `msgpack:"on_unmatched,omitempty"`
+	OnRejected  string             `msgpack:"on_rejected"`
+	DateOrder   string             `msgpack:"date_order"`
+}
+
 // BundleMenuSet carries a menu set (#52). Its items name scripts and layouts
 // by id, and layouts may name a menu set by id, so those ids are remapped on
 // import like every other reference.
@@ -195,6 +219,7 @@ type SolutionBundle struct {
 	SavedFinds         []BundleSavedFind      `msgpack:"saved_finds,omitempty"`
 	DataSources        []BundleDataSource     `msgpack:"data_sources,omitempty"`
 	MenuSets           []BundleMenuSet        `msgpack:"menu_sets,omitempty"`
+	Transfers          []BundleTransfer       `msgpack:"transfers,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
 }
@@ -275,6 +300,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("failed listing menu sets: %w", err)
 	}
+	transfers, err := s.ListTransfers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing transfer definitions: %w", err)
+	}
 
 	conn := opts.Connection
 	if conn.Engine == "" {
@@ -297,6 +326,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		SavedFinds:         make([]BundleSavedFind, 0, len(savedFinds)),
 		DataSources:        make([]BundleDataSource, 0, len(dataSources)),
 		MenuSets:           make([]BundleMenuSet, 0, len(menuSets)),
+		Transfers:          make([]BundleTransfer, 0, len(transfers)),
 		FileOptions:        withoutSecrets(opts.FileOptions),
 		PageSetup:          opts.PageSetup,
 	}
@@ -354,6 +384,14 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	for _, m := range menuSets {
 		b.MenuSets = append(b.MenuSets, BundleMenuSet{
 			ID: m.ID, Name: m.Name, IsDefault: m.IsDefault, Menus: m.Menus,
+		})
+	}
+	for _, t := range transfers {
+		b.Transfers = append(b.Transfers, BundleTransfer{
+			Name: t.Name, Source: t.Source, Destination: t.Destination,
+			FoundSet: t.FoundSet, Sort: t.Sort, Mappings: t.Mappings,
+			MatchFields: t.MatchFields, Mode: t.Mode, OnUnmatched: t.OnUnmatched,
+			OnRejected: t.OnRejected, DateOrder: t.DateOrder,
 		})
 	}
 	for _, d := range dataSources {
@@ -472,6 +510,7 @@ type ImportReport struct {
 	SavedFindsCreated       int                    `json:"saved_finds_created"`
 	DataSourcesCreated      int                    `json:"data_sources_created"`
 	MenuSetsCreated         int                    `json:"menu_sets_created"`
+	TransfersCreated        int                    `json:"transfers_created"`
 	AccountsPendingPassword []string               `json:"accounts_pending_password"`
 	FileOptions             map[string]interface{} `json:"file_options,omitempty"`
 	PageSetup               map[string]interface{} `json:"page_setup,omitempty"`
@@ -935,6 +974,40 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		}
 		undo = append(undo, func() { _ = s.DeleteDataSource(bg, created.ID) })
 		report.DataSourcesCreated++
+	}
+
+	// 8b. Transfer definitions (#96), matched by name. A transfer carries no
+	// credentials, so a restored transfer cannot move anything until an
+	// account signs in to each of its ends; and its mapped fields are
+	// resolved when it runs, against both databases, so a definition whose
+	// far solution is not reachable yet restores cleanly and refuses at run
+	// time rather than at restore time.
+	for _, t := range b.Transfers {
+		existing, err := s.ListTransfers(ctx)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("reading the transfer definitions: %w", err))
+		}
+		known := false
+		for _, e := range existing {
+			if strings.EqualFold(strings.TrimSpace(e.Name), strings.TrimSpace(t.Name)) {
+				known = true
+				break
+			}
+		}
+		if known {
+			continue
+		}
+		created, err := s.CreateTransfer(ctx, TransferInput{
+			Name: t.Name, Source: t.Source, Destination: t.Destination,
+			FoundSet: t.FoundSet, Sort: t.Sort, Mappings: t.Mappings,
+			MatchFields: t.MatchFields, Mode: t.Mode, OnUnmatched: t.OnUnmatched,
+			OnRejected: t.OnRejected, DateOrder: t.DateOrder,
+		}, "")
+		if err != nil {
+			return nil, rollback(fmt.Errorf("restoring the transfer %q: %w", t.Name, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteTransfer(bg, created.ID) })
+		report.TransfersCreated++
 	}
 
 	// 9. Menu sets (#52), matched by name. The script or layout a menu item
