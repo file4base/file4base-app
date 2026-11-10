@@ -675,9 +675,23 @@ func exportText(fieldType dbal.AgnosticFieldType, value interface{}) string {
 	}
 }
 
-// CoerceForTest exposes the value conversion so it can be tested on its own.
-// It is the one piece of an import with no database in it, and the one most
-// worth pinning down.
+// CoerceImportValue turns one cell of exported text into the value its field
+// holds: a number as the exact decimal it was written as, a date and a
+// timestamp in File4Base's own notation, text with its spaces intact, and an
+// empty cell as nothing at all. Anything that will not convert is an error
+// naming why.
+//
+// It is the conversion every import runs, exported so that the assisted
+// FileMaker migration converts a record export the same exact way rather than
+// through a float of its own (#90), and so the one piece of an import with no
+// database in it can be tested on its own.
+func CoerceImportValue(fieldType dbal.AgnosticFieldType, text string, order DateOrder) (interface{}, error) {
+	return coerce(fieldType, text, order)
+}
+
+// CoerceForTest is the previous name of CoerceImportValue.
+//
+// Deprecated: call CoerceImportValue.
 func CoerceForTest(fieldType dbal.AgnosticFieldType, text string, order DateOrder) (interface{}, error) {
 	return coerce(fieldType, text, order)
 }

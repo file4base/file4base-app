@@ -13,7 +13,7 @@ import (
 // nothing, and anything that will not convert is an error rather than a
 // silently wrong number (#38).
 func TestCoerce(t *testing.T) {
-	coerce := data.CoerceForTest
+	coerce := data.CoerceImportValue
 
 	t.Run("an empty cell is nothing, never a zero", func(t *testing.T) {
 		for _, fieldType := range []dbal.AgnosticFieldType{

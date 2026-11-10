@@ -69,35 +69,54 @@ func populateDataRows(
 				continue
 			}
 			rows := make([]map[string]interface{}, 0, len(parsed.Rows))
-			for _, rawRow := range parsed.Rows {
+			rejectedCells := 0
+			for rowIdx, rawRow := range parsed.Rows {
 				rec := make(map[string]interface{})
 				for colIdx, colHeader := range parsed.Columns {
 					if colIdx >= len(rawRow) {
 						continue
 					}
-					valStr := strings.TrimSpace(rawRow[colIdx])
-					if valStr == "" {
-						continue
+					// The cell keeps the spaces the export wrote: trimming
+					// someone's data is not the migration's business (#90).
+					valStr := rawRow[colIdx]
+					if strings.TrimSpace(valStr) == "" {
+						continue // nothing to write; the record is kept all the same
 					}
 					colName := sanitizeIdentifier(colHeader)
 					fType := colTypeByTableCol[sqlTable+"."+colName]
 					if fType == "CALCULATION" || fType == "SUMMARY" {
+						continue // Server calculation engine computes these
+					}
+					value, err := coerceSourceValue(valStr, fType)
+					if err != nil {
+						rejectedCells++
+						addReportItem(report, ReportItem{
+							Category:   CategoryRejected,
+							Domain:     "data",
+							SourceName: fmt.Sprintf("%s row %d, %s", rawTableKey, rowIdx+1, colHeader),
+							TargetName: sqlTable + "." + colName,
+							Detail:     fmt.Sprintf("Value %q was not imported: %v", valStr, err),
+						})
 						continue
 					}
-					rec[colName] = coerceDataValue(valStr, fType)
+					rec[colName] = value
 				}
-				if len(rec) > 0 {
-					rows = append(rows, rec)
-				}
+				// A record every exported field of which is blank is still a
+				// record, and it is counted as one (#90).
+				rows = append(rows, rec)
 			}
 			tableRows[sqlTable] = rows
 			report.Counts.RecordsReady += len(rows)
+			detail := fmt.Sprintf("Parsed %d records from FMPXMLRESULT dataset", len(rows))
+			if rejectedCells > 0 {
+				detail = fmt.Sprintf("%s; %d value(s) could not be converted and were left empty", detail, rejectedCells)
+			}
 			addReportItem(report, ReportItem{
 				Category:   CategoryPreserved,
 				Domain:     "data",
 				SourceName: rawTableKey,
 				TargetName: sqlTable,
-				Detail:     fmt.Sprintf("Parsed %d records from FMPXMLRESULT dataset", len(rows)),
+				Detail:     detail,
 			})
 		}
 	}
@@ -107,6 +126,25 @@ func populateDataRows(
 		rawBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.FMP12Base64))
 		if err != nil {
 			return fmt.Errorf("invalid base64 in fmp12_base64: %w", err)
+		}
+		if len(fmpTableMeta) == 0 {
+			// Records in a .fmp12 are addressed by the numeric table and field
+			// ids of the design it belongs to; without them the attachment
+			// cannot be read, and saying so beats reporting a data-bearing
+			// migration as complete with no records (#91).
+			addReportItem(report, ReportItem{
+				Category:   CategoryRejected,
+				Domain:     "data",
+				SourceName: "fmp12_binary",
+				Detail:     "The attached .fmp12 could not be read: this design document carries no table and field ids to address its records by. Export the records as FMPXMLRESULT, or supply the HTML Database Design Report of the same solution.",
+			})
+			addReportItem(report, ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "data",
+				SourceName: "fmp12_binary",
+				Detail:     "Import the records separately (FMPXMLRESULT per table), or rerun the migration with the HTML design report that carries the ids the binary is keyed by",
+			})
+			return nil
 		}
 		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol)
 		if err != nil {
@@ -122,6 +160,18 @@ func populateDataRows(
 				tableNames = append(tableNames, k)
 			}
 			sort.Strings(tableNames)
+			extractedTotal := 0
+			for _, tbl := range tableNames {
+				extractedTotal += len(extracted[tbl])
+			}
+			if extractedTotal == 0 {
+				addReportItem(report, ReportItem{
+					Category:   CategoryRejected,
+					Domain:     "data",
+					SourceName: "fmp12_binary",
+					Detail:     "The attached .fmp12 was read but held no records this design's tables could be matched to; no record was migrated from it",
+				})
+			}
 			for _, tbl := range tableNames {
 				rows := extracted[tbl]
 				if len(rows) == 0 {

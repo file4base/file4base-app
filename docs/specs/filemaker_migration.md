@@ -18,13 +18,15 @@ Instead:
 
 The Assisted Migration converter accepts:
 1. **Design Structure (`design_xml`):**
-   - FileMaker **Database Design Report (DDR) XML** (`<FMPReport>`).
-   - FileMaker **Save a Copy as XML** (`<FMPSaveAsXML>`).
-   - FileMaker **HTML Database Design Report (DDR)** (`recipes.html` / `Summary.html`).
+   - FileMaker **Database Design Report (DDR) XML** (`<FMPReport>`), as exported by **FileMaker Pro 12 through 19** (`Tools > Database Design Report...`, XML output).
+   - FileMaker **HTML Database Design Report (DDR)** (`recipes.html` / `Summary.html`) from the same versions.
+   - A **`<FMPSaveAsXML>`** design document.
    - File4Base **Design Report XML** (`<design format="file4base_design">`).
+
+   **Not supported:** the `<FMSaveAsXML>` document that **FileMaker Pro 20 / Claris 26** (`FMDeveloperTool --saveAsXML`) writes. Its grammar is a different one — fields live in `FieldsForTables/FieldCatalog` with lower-case `datatype`/`fieldtype`, occurrences carry a nested `BaseTableSourceReference`, and script steps live under `StepsForScripts` — so renaming its root element to `<FMPSaveAsXML>` produces tables with no fields and no relationships. The converter refuses that root element by name and points at the formats above. A design whose base tables arrive without a single field is refused for the same reason, rather than reported as a successful conversion (#87).
 2. **Record & Container Datasets (`data_files` / `fmp12_base64`, optional):**
-   - One or more **`FMPXMLRESULT`** (or repeating-element XML) files mapped by base table name.
-   - A binary **`.fmp12`** container (`fmp12_base64`) paired with an XML/HTML DDR (`design_xml`) to extract table records, relational UUID keys, calculated/summary fields, and embedded `JPEG`/`PNG` `CONTAINER` images (`server/internal/migration/fmp12_records.go`).
+   - One or more **`FMPXMLRESULT`** (or repeating-element XML) files mapped by base table name. Values are converted through the same conversion an ordinary import runs: a number keeps every digit it was exported with, text keeps its spaces, and a record whose every exported value is blank is still imported as a record. A value that cannot be converted is listed under `rejected` with its row and column, instead of failing the whole apply (#90).
+   - A binary **`.fmp12`** container (`fmp12_base64`) paired with an XML/HTML DDR (`design_xml`) to extract table records, relational UUID keys, calculated/summary fields, and embedded `JPEG`/`PNG` `CONTAINER` images (`server/internal/migration/fmp12_records.go`). Records in a `.fmp12` are addressed by the numeric table and field ids of the design, so the design document must carry them: the HTML report always does, and an `<FMPReport>` XML DDR does when its `<BaseTable>` and `<Field>` elements have `id` attributes. An attachment that cannot be addressed, or that yields no records, is reported under `rejected` and `manual_action_required`; invalid base64 fails the request before any destination database is created (#91).
 
 > **Step-by-Step Case Study:** For a complete real-world walkthrough (migrating `recipes.fmp12` + `recipes.html` with portals, self-join disambiguation, `CONTAINER` photographs, `Group Buttons`, and scripts), see the [**FileMaker to File4Base Migration Guide (`docs/tutorials/filemaker_migration_guide.md`)**](../tutorials/filemaker_migration_guide.md).
 

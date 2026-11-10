@@ -1,7 +1,10 @@
 package migration
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -386,5 +389,203 @@ func TestAnalyzeAndConvert_SkipsValueListWithNoEntries(t *testing.T) {
 	}
 	if got := converted.Report.ManualActionRequired[0].SourceName; got != "Empty List" {
 		t.Errorf("manual action names %q, want %q", got, "Empty List")
+	}
+}
+
+// A step's operands live in child elements, not attributes, and a <Script> or
+// <Layout> nested in a step is a reference rather than a definition (#88). The
+// step order is also pinned here: sequence indices are 1-based and unique
+// (#98).
+func TestAnalyzeAndConvert_DecodesNestedScriptStepParameters(t *testing.T) {
+	xmlDoc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog><Field name="Notes" dataType="Text"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog><ScriptCatalog>` +
+		`<Script name="Dispatch"><StepList>` +
+		`<Step name="Set Field" enable="True"><Field table="Visits" name="Notes"/><Calculation><Text>"Completed"</Text></Calculation></Step>` +
+		`<Step name="Go to Layout" enable="True"><Layout name="Visit Detail" id="1"/></Step>` +
+		`<Step name="Perform Script" enable="True"><Script name="Receive" id="2"/><FileReference name="RemoteArchive" id="1"/><Calculation><Text>"SV-001"</Text></Calculation></Step>` +
+		`</StepList></Script></ScriptCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: xmlDoc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	if res.Report.Counts.Scripts != 1 {
+		t.Fatalf("expected the one script the document defines, got %d", res.Report.Counts.Scripts)
+	}
+	if res.Report.Counts.Layouts != 0 {
+		t.Fatalf("a layout a step points at is not a layout definition, got %d layouts", res.Report.Counts.Layouts)
+	}
+
+	steps := res.Bundle.Scripts[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(steps))
+	}
+	for i, step := range steps {
+		if step.SequenceIdx != i+1 {
+			t.Fatalf("step %d has sequence_idx %d; indices must be 1-based and unique", i, step.SequenceIdx)
+		}
+	}
+
+	if got := steps[0].Params["field"]; got != "notes" {
+		t.Fatalf("Set Field target: expected %q, got %v", "notes", got)
+	}
+	if got := steps[0].Params["value"]; got != `"Completed"` {
+		t.Fatalf("Set Field value: expected the nested calculation, got %v", got)
+	}
+	if got := steps[1].Params["layout_name"]; got != "Visit Detail" {
+		t.Fatalf("Go to Layout destination: expected %q, got %v", "Visit Detail", got)
+	}
+	if got := steps[2].Params["script_name"]; got != "Receive" {
+		t.Fatalf("Perform Script target: expected %q, got %v", "Receive", got)
+	}
+	if got := steps[2].Params["script_parameter"]; got != `"SV-001"` {
+		t.Fatalf("Perform Script parameter: expected the nested calculation, got %v", got)
+	}
+	if got := steps[2].Params["file_reference"]; got != "RemoteArchive" {
+		t.Fatalf("Perform Script external file: expected %q, got %v", "RemoteArchive", got)
+	}
+
+	// The external file target is a semantic File4Base does not run, so it is
+	// flagged rather than dropped in silence.
+	flagged := false
+	for _, item := range res.Report.ManualActionRequired {
+		if item.Domain == "script" && strings.Contains(item.Detail, "FileReference") {
+			flagged = true
+		}
+	}
+	if !flagged {
+		t.Fatal("expected the unread FileReference operand to be flagged for manual action")
+	}
+}
+
+// Two source names that normalize alike both survive, under reported names,
+// and a source field called id does not disappear behind the generated primary
+// key (#89).
+func TestAnalyzeAndConvert_ReportsNormalizedNameCollisions(t *testing.T) {
+	xmlDoc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog>` +
+		`<Field name="Visit Code" dataType="Text"/>` +
+		`<Field name="Visit-Code" dataType="Text"/>` +
+		`<Field name="id" dataType="Number"/>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: xmlDoc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if res.Report.Counts.Fields != 3 {
+		t.Fatalf("expected all 3 source fields to be migrated, got %d", res.Report.Counts.Fields)
+	}
+
+	byName := map[string]string{}
+	for _, col := range res.Bundle.Tables[0].Columns {
+		byName[col.Name] = col.FieldType
+	}
+	for _, want := range []string{"id", "visit_code", "visit_code_2", "id_2"} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("expected column %q, got %v", want, byName)
+		}
+	}
+	if byName["id_2"] != "NUMBER" {
+		t.Fatalf("the renamed source id field keeps its type: got %q", byName["id_2"])
+	}
+	if res.Report.Counts.TranslatedCount == 0 {
+		t.Fatal("every collision must be reported")
+	}
+}
+
+// A record export is converted exactly: a number keeps its digits, text keeps
+// its spaces, and a record whose every exported value is blank is still a
+// record (#90).
+func TestAnalyzeAndConvert_ConvertsRecordExportExactly(t *testing.T) {
+	design := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog>` +
+		`<Field name="Code" dataType="Text"/><Field name="Notes" dataType="Text"/><Field name="Amount" dataType="Number"/>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
+	records := `<FMPXMLRESULT xmlns="http://www.filemaker.com/fmpxmlresult"><METADATA>` +
+		`<FIELD NAME="Code" TYPE="TEXT"/><FIELD NAME="Notes" TYPE="TEXT"/><FIELD NAME="Amount" TYPE="NUMBER"/>` +
+		`</METADATA><RESULTSET FOUND="2">` +
+		`<ROW RECORDID="1"><COL><DATA>SV-001</DATA></COL><COL><DATA>  Preserve these spaces  </DATA></COL><COL><DATA>9007199254740993</DATA></COL></ROW>` +
+		`<ROW RECORDID="2"><COL><DATA/></COL><COL><DATA/></COL><COL><DATA/></COL></ROW>` +
+		`</RESULTSET></FMPXMLRESULT>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{
+		DesignXML: design,
+		DataFiles: map[string]string{"Visits": records},
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	rows := res.TableRows["visits"]
+	if len(rows) != 2 {
+		t.Fatalf("expected both exported records, got %d", len(rows))
+	}
+	if res.Report.Counts.RecordsReady != 2 {
+		t.Fatalf("records_ready must reconcile with the source rows: got %d", res.Report.Counts.RecordsReady)
+	}
+	if got := rows[0]["notes"]; got != "  Preserve these spaces  " {
+		t.Fatalf("text whitespace was not preserved: %q", got)
+	}
+	if got := fmt.Sprint(rows[0]["amount"]); got != "9007199254740993" {
+		t.Fatalf("the number lost precision: %q", got)
+	}
+	if len(rows[1]) != 0 {
+		t.Fatalf("the blank record carries no values of its own: %v", rows[1])
+	}
+}
+
+// An attachment is never ignored: invalid base64 fails the conversion, and one
+// that cannot be addressed is reported rather than passed over (#91).
+func TestAnalyzeAndConvert_ValidatesFMP12Attachment(t *testing.T) {
+	design := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog><Field name="Code" dataType="Text"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog></File></FMPReport>`
+
+	if _, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design, FMP12Base64: "%%%"}); err == nil {
+		t.Fatal("invalid base64 in fmp12_base64 must fail the conversion")
+	}
+
+	res, err := AnalyzeAndConvert(MigrationRequest{
+		DesignXML:   design,
+		FMP12Base64: base64.StdEncoding.EncodeToString([]byte("HBAM2 but not addressable")),
+	})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if res.Report.Counts.RejectedCount == 0 {
+		t.Fatal("an attachment no record could be read from must be reported, not ignored")
+	}
+}
+
+// The authentic Save-a-Copy-as-XML document of FileMaker Pro 20 / Claris 26 is
+// refused with the formats that do work, rather than accepted into tables with
+// no fields (#87).
+func TestAnalyzeAndConvert_RejectsNativeSaveAsXML(t *testing.T) {
+	doc := `<?xml version="1.0" encoding="UTF-8"?><FMSaveAsXML><FMSaveAsXMLFile name="Recipes.fmp12">` +
+		`<BaseTableCatalog><BaseTable name="Recipes" id="129"/></BaseTableCatalog>` +
+		`<FieldsForTables><FieldCatalog><Field name="Title" datatype="text" fieldtype="normal"/></FieldCatalog></FieldsForTables>` +
+		`</FMSaveAsXMLFile></FMSaveAsXML>`
+
+	_, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if !errors.Is(err, ErrInvalidMigrationXML) {
+		t.Fatalf("expected an invalid-XML error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "FMSaveAsXML") || !strings.Contains(err.Error(), "Design Report") {
+		t.Fatalf("the refusal must name the format and the supported ones: %v", err)
+	}
+}
+
+// A design whose tables arrive without a single field was not understood, and
+// is refused rather than reported as a successful conversion (#87).
+func TestAnalyzeAndConvert_RefusesTablesWithNoFields(t *testing.T) {
+	doc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog></File></FMPReport>`
+
+	if _, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc}); !errors.Is(err, ErrInvalidMigrationXML) {
+		t.Fatalf("expected an invalid-XML error, got %v", err)
 	}
 }

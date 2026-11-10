@@ -14,13 +14,13 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
-	"github.com/file4base/file4base-app/server/internal/dataio"
+	"github.com/file4base/file4base-app/server/internal/data"
+	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/google/uuid"
 )
@@ -227,8 +227,18 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		Rejected:             make([]ReportItem, 0),
 		ManualActionRequired: make([]ReportItem, 0),
 	}
+	if report.SourceFormat == "filemaker_save_as_xml_native" {
+		// FMDeveloperTool 20+ / Claris 26 write <FMSaveAsXML>, whose grammar
+		// keeps fields in FieldsForTables/FieldCatalog and script steps in
+		// StepsForScripts. The converter does not read that grammar, and
+		// renaming the root to <FMPSaveAsXML> produces tables with no fields,
+		// so the document is refused with the formats that do work (#87).
+		return nil, fmt.Errorf("%w: <FMSaveAsXML> (FileMaker Pro 20 / Claris 26 \"Save a Copy as XML\") is not supported yet: %s",
+			ErrInvalidMigrationXML, supportedDesignFormats)
+	}
 	if report.SourceFormat == "unknown" {
-		return nil, fmt.Errorf("%w: root element <%s> is not a recognized FileMaker DDR (<FMPReport>, <FMPSaveAsXML>) or File4Base design document", ErrInvalidMigrationXML, root.Name)
+		return nil, fmt.Errorf("%w: root element <%s> is not a recognized FileMaker design document: %s",
+			ErrInvalidMigrationXML, root.Name, supportedDesignFormats)
 	}
 
 	if report.SolutionName == "" {
@@ -252,6 +262,11 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	colIDByTableCol := make(map[string]string)     // lower(tableName) + "." + lower(colName) -> colID
 	colTypeByTableCol := make(map[string]string)   // lower(tableName) + "." + lower(colName) -> FieldType
 
+	// The .fmp12 record reader addresses rows by the numeric table and field
+	// ids FileMaker assigns, which the DDR carries as id attributes (#91).
+	fmpTableMeta := make(map[int]string)                // fmpTableID -> sqlTableName
+	fmpFieldMeta := make(map[int]map[int]htmlFieldMeta) // fmpTableID -> fmpFieldID -> meta
+
 	baseTables := findNodes(root, "BaseTable", "Table", "table")
 	seenTables := make(map[string]bool)
 	for _, bt := range baseTables {
@@ -263,11 +278,16 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		if rawName == "" {
 			continue
 		}
-		sqlName := sanitizeIdentifier(rawName)
-		if seenTables[sqlName] {
-			continue
+		sqlName, tookFrom := uniqueSQLName(sanitizeIdentifier(rawName), seenTables)
+		if tookFrom != "" {
+			addReportItem(report, ReportItem{
+				Category:   CategoryTranslated,
+				Domain:     "table",
+				SourceName: rawName,
+				TargetName: sqlName,
+				Detail:     fmt.Sprintf("Table name normalizes to %q, which an earlier table already took; imported as %q instead of being discarded", tookFrom, sqlName),
+			})
 		}
-		seenTables[sqlName] = true
 
 		tID := uuid.NewString()
 		tableIDByName[strings.ToLower(rawName)] = tID
@@ -293,6 +313,15 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		colIDByTableCol[sqlName+".id"] = bTable.Columns[0].ID
 		colTypeByTableCol[sqlName+".id"] = "TEXT"
 
+		fmpTableID := 0
+		if raw := firstAttr(bt, "id", "ID"); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+				fmpTableID = parsed
+				fmpTableMeta[parsed] = sqlName
+				fmpFieldMeta[parsed] = make(map[int]htmlFieldMeta)
+			}
+		}
+
 		fieldNodes := findDirectOrCatalogChildren(bt, "FieldCatalog", "fields", "Field", "field")
 		seenCols := map[string]bool{"id": true}
 		for _, fn := range fieldNodes {
@@ -300,11 +329,36 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			if fRawName == "" {
 				continue
 			}
-			colName := sanitizeIdentifier(fRawName)
-			if seenCols[colName] {
-				continue
+			colName, tookFrom := uniqueSQLName(sanitizeIdentifier(fRawName), seenCols)
+			switch tookFrom {
+			case "":
+			case "id":
+				// File4Base manages its own TEXT primary key, so a source
+				// field named id keeps its definition under another name
+				// rather than disappearing behind the generated one (#89).
+				addReportItem(report, ReportItem{
+					Category:   CategoryTranslated,
+					Domain:     "field",
+					SourceName: sqlName + "." + fRawName,
+					TargetName: sqlName + "." + colName,
+					Detail:     fmt.Sprintf("File4Base manages its own TEXT primary key %q, so this source field was imported as %q", "id", colName),
+				})
+				addReportItem(report, ReportItem{
+					Category:   CategoryManualActionRequired,
+					Domain:     "field",
+					SourceName: sqlName + "." + fRawName,
+					TargetName: sqlName + "." + colName,
+					Detail:     fmt.Sprintf("Repoint anything that referenced the source field %q at %q, or at the generated primary key", fRawName, colName),
+				})
+			default:
+				addReportItem(report, ReportItem{
+					Category:   CategoryTranslated,
+					Domain:     "field",
+					SourceName: sqlName + "." + fRawName,
+					TargetName: sqlName + "." + colName,
+					Detail:     fmt.Sprintf("Field name normalizes to %q, which an earlier field already took; imported as %q instead of being discarded", tookFrom, colName),
+				})
 			}
-			seenCols[colName] = true
 
 			col, items := convertFieldNode(sqlName, fRawName, colName, fn)
 			for _, it := range items {
@@ -314,6 +368,20 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			colIDByTableCol[sqlName+"."+colName] = col.ID
 			colIDByTableCol[strings.ToLower(rawName)+"."+strings.ToLower(fRawName)] = col.ID
 			colTypeByTableCol[sqlName+"."+colName] = col.FieldType
+			if fmpTableID > 0 {
+				if raw := firstAttr(fn, "id", "ID"); raw != "" {
+					if fieldID, err := strconv.Atoi(raw); err == nil && fieldID > 0 {
+						fmpFieldMeta[fmpTableID][fieldID] = htmlFieldMeta{
+							TableID:   fmpTableID,
+							FieldID:   fieldID,
+							TableSQL:  sqlName,
+							RawName:   fRawName,
+							ColName:   colName,
+							FieldType: col.FieldType,
+						}
+					}
+				}
+			}
 			report.Counts.Fields++
 		}
 
@@ -327,6 +395,14 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		})
 	}
 	report.Counts.Tables = len(bundle.Tables)
+	if report.Counts.Tables > 0 && report.Counts.Fields == 0 {
+		// A design whose every table arrives without a single field was not
+		// understood, whatever its root element says; reporting it as a
+		// successful conversion hid an unread grammar behind empty tables
+		// (#87).
+		return nil, fmt.Errorf("%w: %d base table(s) were found but not one field, so this document's field catalog was not understood: %s",
+			ErrInvalidMigrationXML, report.Counts.Tables, supportedDesignFormats)
+	}
 
 	// 2. Extract Table Occurrences
 	occIDByName := make(map[string]string) // lower(occName) -> occID
@@ -419,7 +495,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	report.Counts.ValueLists = len(bundle.ValueLists)
 
 	// 5. Extract Layouts (and quarantine any layout triggers)
-	layoutNodes := findNodes(root, "Layout", "layout")
+	layoutNodes := findCatalogNodes(root, "Layout", "layout")
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName)
 		for _, it := range items {
@@ -432,7 +508,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	report.Counts.Layouts = len(bundle.Layouts)
 
 	// 6. Extract Scripts & Steps
-	scriptNodes := findNodes(root, "Script", "script")
+	scriptNodes := findCatalogNodes(root, "Script", "script")
 	defaultContextTable := ""
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
@@ -465,78 +541,13 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	report.Counts.Accounts = len(bundle.Users)
 
-	// 8. Parse optional FMPXMLRESULT / XML data files per table
+	// 8. Parse optional FMPXMLRESULT / XML data files and any attached .fmp12
+	// binary. Both routes go through the same reader, so an attachment sent
+	// with an XML design is read rather than ignored (#91).
 	tableRows := make(map[string][]map[string]interface{})
-	if len(req.DataFiles) > 0 {
-		tableKeys := make([]string, 0, len(req.DataFiles))
-		for k := range req.DataFiles {
-			tableKeys = append(tableKeys, k)
-		}
-		sort.Strings(tableKeys)
-		for _, rawTableKey := range tableKeys {
-			xmlContent := strings.TrimSpace(req.DataFiles[rawTableKey])
-			if xmlContent == "" {
-				continue
-			}
-			if IsFMP12Binary(rawTableKey, []byte(xmlContent)) {
-				return nil, ErrBinaryFMP12
-			}
-			sqlTable := canonicalTableName[strings.ToLower(strings.TrimSpace(rawTableKey))]
-			if sqlTable == "" {
-				sqlTable = sanitizeIdentifier(rawTableKey)
-			}
-			if tableIDByName[sqlTable] == "" {
-				addReportItem(report, ReportItem{
-					Category:   CategoryRejected,
-					Domain:     "data",
-					SourceName: rawTableKey,
-					Detail:     fmt.Sprintf("Data file targeting unknown table %q was rejected", rawTableKey),
-				})
-				continue
-			}
-			parsed, err := dataio.Parse([]byte(xmlContent), dataio.Options{Format: dataio.FormatXML})
-			if err != nil {
-				addReportItem(report, ReportItem{
-					Category:   CategoryRejected,
-					Domain:     "data",
-					SourceName: rawTableKey,
-					TargetName: sqlTable,
-					Detail:     fmt.Sprintf("Failed parsing FMPXMLRESULT / XML records: %v", err),
-				})
-				continue
-			}
-			rows := make([]map[string]interface{}, 0, len(parsed.Rows))
-			for _, rawRow := range parsed.Rows {
-				rec := make(map[string]interface{})
-				for colIdx, colHeader := range parsed.Columns {
-					if colIdx >= len(rawRow) {
-						continue
-					}
-					valStr := strings.TrimSpace(rawRow[colIdx])
-					if valStr == "" {
-						continue
-					}
-					colName := sanitizeIdentifier(colHeader)
-					fType := colTypeByTableCol[sqlTable+"."+colName]
-					if fType == "CALCULATION" || fType == "SUMMARY" {
-						continue // Server calculation engine computes these
-					}
-					rec[colName] = coerceDataValue(valStr, fType)
-				}
-				if len(rec) > 0 {
-					rows = append(rows, rec)
-				}
-			}
-			tableRows[sqlTable] = rows
-			report.Counts.RecordsReady += len(rows)
-			addReportItem(report, ReportItem{
-				Category:   CategoryPreserved,
-				Domain:     "data",
-				SourceName: rawTableKey,
-				TargetName: sqlTable,
-				Detail:     fmt.Sprintf("Parsed %d records from FMPXMLRESULT dataset", len(rows)),
-			})
-		}
+	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol,
+		fmpTableMeta, fmpFieldMeta, tableRows, report); err != nil {
+		return nil, err
 	}
 
 	return &ConvertedSolution{
@@ -1174,21 +1185,28 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 			enabled = false
 		}
 
-		params := make(map[string]interface{})
-		if pNode := findFirstChild(stNode, "params", "ParameterValues"); pNode != nil && strings.TrimSpace(pNode.Text) != "" {
-			_ = json.Unmarshal([]byte(pNode.Text), &params)
-		}
-		for k, v := range stNode.Attrs {
-			if k != "name" && k != "type" && k != "Name" && k != "enable" && k != "enabled" && k != "id" && k != "index" {
-				params[k] = v
-			}
+		lowerStep := strings.ToLower(rawStepName)
+		canonical, isSupported := supportedScriptSteps[lowerStep]
+		if !isSupported {
+			canonical = catalogOnlyScriptSteps[lowerStep]
 		}
 
-		lowerStep := strings.ToLower(rawStepName)
-		if canonical, ok := supportedScriptSteps[lowerStep]; ok {
+		params, structured, unmapped := decodeStepParams(stNode, canonical)
+		if len(unmapped) > 0 {
+			items = append(items, ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "script",
+				SourceName: fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1),
+				TargetName: name,
+				Detail: fmt.Sprintf("Step %q carries FileMaker options File4Base does not read (%s); they were kept under filemaker_parameters for review",
+					rawStepName, strings.Join(unmapped, ", ")),
+			})
+		}
+
+		if isSupported {
 			steps = append(steps, schema.BundleStep{
 				ID:          uuid.NewString(),
-				SequenceIdx: idx,
+				SequenceIdx: idx + 1,
 				StepType:    canonical,
 				Params:      params,
 				IsEnabled:   enabled,
@@ -1196,10 +1214,10 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 			continue
 		}
 
-		if canonical, ok := catalogOnlyScriptSteps[lowerStep]; ok {
+		if canonical != "" {
 			steps = append(steps, schema.BundleStep{
 				ID:          uuid.NewString(),
-				SequenceIdx: idx,
+				SequenceIdx: idx + 1,
 				StepType:    canonical,
 				Params:      params,
 				IsEnabled:   enabled,
@@ -1214,16 +1232,22 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 			continue
 		}
 
-		// Unsupported FileMaker script step: preserve as a disabled step so the script can still be inspected
-		params["original_filemaker_step"] = rawStepName
+		// Unsupported FileMaker script step: preserve as a disabled step so the
+		// script can still be inspected, carrying its original operands so
+		// nothing the source declared is lost (#88).
+		commentParams := map[string]interface{}{
+			"text":                    fmt.Sprintf("[UNSUPPORTED FM STEP: %s]", rawStepName),
+			"original_filemaker_step": rawStepName,
+		}
+		if len(structured) > 0 {
+			commentParams["filemaker_parameters"] = structured
+		}
 		steps = append(steps, schema.BundleStep{
 			ID:          uuid.NewString(),
-			SequenceIdx: idx,
+			SequenceIdx: idx + 1,
 			StepType:    "Comment",
-			Params: map[string]interface{}{
-				"text": fmt.Sprintf("[UNSUPPORTED FM STEP: %s]", rawStepName),
-			},
-			IsEnabled: false,
+			Params:      commentParams,
+			IsEnabled:   false,
 		})
 		items = append(items,
 			ReportItem{
@@ -1258,6 +1282,194 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 		IsActive:     true,
 		Steps:        steps,
 	}, items
+}
+
+// stepParamAttrs are the <Step> attributes that describe the step itself
+// rather than one of its operands.
+var stepParamAttrs = map[string]bool{
+	"name": true, "type": true, "Name": true, "enable": true,
+	"enabled": true, "active": true, "id": true, "index": true,
+}
+
+// decodeStepParams reads one <Step> element into File4Base step parameters.
+//
+// FileMaker writes a step's operands as child elements, not attributes: the
+// target of a Set Field is a <Field>, its value a <Calculation><Text>, the
+// destination of a Go to Layout a <Layout>, the called script of a Perform
+// Script a <Script> beside the <Calculation> holding the script parameter.
+// Copying attributes alone left every one of those empty while the report said
+// the script was preserved (#88).
+//
+// It returns the step parameters, the whole child structure for the audit
+// trail, and the names of the child elements it could not map, so a step that
+// carries semantics File4Base does not run is flagged rather than quietly
+// reduced.
+func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interface{}, map[string]interface{}, []string) {
+	params := make(map[string]interface{})
+	for k, v := range stNode.Attrs {
+		if !stepParamAttrs[k] {
+			params[k] = v
+		}
+	}
+
+	structured := decodeNodeChildren(stNode)
+	var unmapped []string
+	seenUnmapped := make(map[string]bool)
+	flagUnmapped := func(elementName string) {
+		if seenUnmapped[elementName] {
+			return
+		}
+		seenUnmapped[elementName] = true
+		unmapped = append(unmapped, elementName)
+	}
+
+	calcText := ""
+	for _, child := range stNode.Children {
+		switch child.Name {
+		case "Calculation", "calculation":
+			if text := calculationText(child); text != "" && calcText == "" {
+				calcText = text
+			}
+		case "Field", "field":
+			if fieldName := firstAttr(child, "name", "Name"); fieldName != "" {
+				params["field"] = sanitizeIdentifier(fieldName)
+				params["field_label"] = fieldName
+				if tbl := firstAttr(child, "table", "Table"); tbl != "" {
+					params["field_table"] = sanitizeIdentifier(tbl)
+				}
+			}
+		case "Layout", "layout":
+			if layoutName := firstAttr(child, "name", "Name"); layoutName != "" {
+				params["layout_name"] = layoutName
+			}
+		case "Script", "script":
+			if scriptName := firstAttr(child, "name", "Name"); scriptName != "" {
+				params["script_name"] = scriptName
+			}
+		case "Name", "VariableName":
+			if text := strings.TrimSpace(child.Text); text != "" {
+				params["name"] = text
+			}
+		case "Value", "value":
+			if text := calculationText(child); text != "" {
+				params["value"] = text
+			}
+		case "params", "ParameterValues":
+			decoded := false
+			if raw := strings.TrimSpace(child.Text); strings.HasPrefix(raw, "{") {
+				nested := make(map[string]interface{})
+				if json.Unmarshal([]byte(raw), &nested) == nil {
+					for k, v := range nested {
+						params[k] = v
+					}
+					decoded = true
+				}
+			}
+			if !decoded {
+				for k, v := range decodeNodeChildren(child) {
+					params[k] = v
+				}
+			}
+		case "FileReference", "ExternalDataSource":
+			if refName := firstAttr(child, "name", "Name"); refName != "" {
+				params["file_reference"] = refName
+			}
+			flagUnmapped(child.Name)
+		default:
+			flagUnmapped(child.Name)
+		}
+	}
+
+	if calcText != "" {
+		switch canonicalStep {
+		case "Set Field":
+			params["value"] = calcText
+		case "If", "Else If", "Exit Loop If":
+			params["condition"] = calcText
+		case "Set Variable":
+			if _, ok := params["value"]; !ok {
+				params["value"] = calcText
+			}
+		case "Open URL":
+			params["url"] = calcText
+		case "Perform Script":
+			params["script_parameter"] = calcText
+		case "Show Custom Dialog":
+			params["message"] = calcText
+		}
+		if _, ok := params["expression"]; !ok {
+			params["expression"] = calcText
+		}
+	}
+	if len(structured) > 0 {
+		params["filemaker_parameters"] = structured
+	}
+
+	return params, structured, unmapped
+}
+
+// calculationText reads the formula a <Calculation> element holds, which
+// FileMaker writes either as a <Text> child or as the element's own text.
+func calculationText(n *xmlNode) string {
+	if textNode := findFirstChild(n, "Text", "text"); textNode != nil {
+		if text := strings.TrimSpace(textNode.Text); text != "" {
+			return text
+		}
+	}
+	if calcNode := findFirstChild(n, "Calculation", "calculation"); calcNode != nil {
+		if text := calculationText(calcNode); text != "" {
+			return text
+		}
+	}
+	return strings.TrimSpace(n.Text)
+}
+
+// decodeNodeChildren turns an element's children into a map, keeping their
+// attributes, their text and their own children, so an operand File4Base does
+// not read is still carried into the imported step for review (#88).
+func decodeNodeChildren(n *xmlNode) map[string]interface{} {
+	out := make(map[string]interface{})
+	for _, child := range n.Children {
+		value := decodeNodeValue(child)
+		if value == nil {
+			continue
+		}
+		key := child.Name
+		switch existing := out[key].(type) {
+		case nil:
+			out[key] = value
+		case []interface{}:
+			out[key] = append(existing, value)
+		default:
+			out[key] = []interface{}{existing, value}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func decodeNodeValue(n *xmlNode) interface{} {
+	text := strings.TrimSpace(n.Text)
+	children := decodeNodeChildren(n)
+	if len(n.Attrs) == 0 && children == nil {
+		if text == "" {
+			return nil
+		}
+		return text
+	}
+	value := make(map[string]interface{}, len(n.Attrs)+2)
+	for k, v := range n.Attrs {
+		value[k] = v
+	}
+	if text != "" {
+		value["#text"] = text
+	}
+	for k, v := range children {
+		value[k] = v
+	}
+	return value
 }
 
 func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
@@ -1366,8 +1578,15 @@ func parseXMLTree(data []byte) (*xmlNode, error) {
 	return root, nil
 }
 
+// supportedDesignFormats names the design documents the converter reads, which
+// is what an unsupported document is refused with (#87).
+const supportedDesignFormats = "File4Base reads a Database Design Report exported from FileMaker Pro 12 to 19 " +
+	"(<FMPReport> XML or the HTML report), a <FMPSaveAsXML> design document, and its own design XML"
+
 func detectSourceFormat(root *xmlNode) string {
 	switch root.Name {
+	case "FMSaveAsXML":
+		return "filemaker_save_as_xml_native"
 	case "FMPReport":
 		return "filemaker_ddr_xml"
 	case "FMPSaveAsXML":
@@ -1442,6 +1661,53 @@ func findNodes(root *xmlNode, names ...string) []*xmlNode {
 	return out
 }
 
+// findCatalogNodes collects the nodes named names that define an object, which
+// is every one of them except those a script step points at: FileMaker writes
+// the called script of a Perform Script step as a nested <Script> element and
+// the destination of a Go to Layout step as a nested <Layout> element. Reading
+// those as definitions invented an empty script and a layout the source never
+// declared (#88).
+func findCatalogNodes(root *xmlNode, names ...string) []*xmlNode {
+	nameSet := make(map[string]bool, len(names))
+	for _, nm := range names {
+		nameSet[nm] = true
+	}
+	referenceParents := map[string]bool{
+		"Step": true, "step": true, "ScriptTrigger": true, "Trigger": true,
+		"ButtonAction": true, "ButtonBar": true,
+	}
+	var out []*xmlNode
+	var walk func(n *xmlNode, insideStep bool)
+	walk = func(n *xmlNode, insideStep bool) {
+		for _, c := range n.Children {
+			if nameSet[c.Name] && !insideStep {
+				out = append(out, c)
+			}
+			walk(c, insideStep || referenceParents[c.Name])
+		}
+	}
+	walk(root, false)
+	return out
+}
+
+// uniqueSQLName reserves base in taken, or the first free base_2, base_3 … when
+// base is already reserved. The second return value is the name that was
+// already taken, so the caller can report the collision rather than drop the
+// definition that lost it (#89).
+func uniqueSQLName(base string, taken map[string]bool) (string, string) {
+	if !taken[base] {
+		taken[base] = true
+		return base, ""
+	}
+	for n := 2; ; n++ {
+		candidate := fmt.Sprintf("%s_%d", base, n)
+		if !taken[candidate] {
+			taken[candidate] = true
+			return candidate, base
+		}
+	}
+}
+
 func findDirectOrCatalogChildren(parent *xmlNode, catalogName1, catalogName2, itemName1, itemName2 string) []*xmlNode {
 	var out []*xmlNode
 	for _, c := range parent.Children {
@@ -1479,6 +1745,80 @@ func sanitizeIdentifier(raw string) string {
 		res = "f_" + res
 	}
 	return res
+}
+
+// coerceSourceValue turns one cell of a record export into the value its field
+// holds, through the conversion every File4Base import runs. A number keeps
+// every digit the export wrote, because it is stored as the exact decimal it
+// was written as rather than passing through a float64, which rounded
+// 9007199254740993 to an even neighbour (#90).
+//
+// A fraction, which the .fmp12 binary reader meets but a FMPXMLRESULT export
+// does not write, is still read as a number.
+func coerceSourceValue(valStr, fieldType string) (interface{}, error) {
+	if fieldType == "NUMBER" {
+		if value, err := data.CoerceImportValue(dbal.FieldTypeNumber, valStr, data.DateISO); err == nil {
+			return value, nil
+		}
+		if f, ok := parseFractionOrFloat(valStr); ok {
+			return f, nil
+		}
+		return nil, errors.New("is not a number")
+	}
+	if fieldType == "DATE" {
+		// FMPXMLRESULT writes a date as MM/DD/YYYY; the import's MDY order
+		// reads that and an ISO date both.
+		return data.CoerceImportValue(dbal.FieldTypeDate, valStr, data.DateMDY)
+	}
+	if fieldType == "TIMESTAMP" {
+		if value, err := data.CoerceImportValue(dbal.FieldTypeTimestamp, valStr, data.DateISO); err == nil {
+			return value, nil
+		}
+		// A FileMaker timestamp is a MM/DD/YYYY date and a time, and a Time
+		// field holds a time of day on its own, which File4Base keeps in a
+		// TIMESTAMP column.
+		trimmed := strings.TrimSpace(valStr)
+		for _, layout := range []string{
+			"01/02/2006 15:04:05", "01/02/2006 15:04", "1/2/2006 15:04:05", "1/2/2006 15:04",
+			"01/02/2006", "1/2/2006",
+		} {
+			if at, err := time.Parse(layout, trimmed); err == nil {
+				return at.Format(time.RFC3339), nil
+			}
+		}
+		for _, layout := range []string{"15:04:05", "15:04"} {
+			if at, err := time.Parse(layout, trimmed); err == nil {
+				return at.Format(time.RFC3339), nil
+			}
+		}
+		return nil, errors.New("is not a date and time")
+	}
+	if fieldType == "TEXT" || fieldType == "" {
+		// A UUID is lower-cased so that a migrated key matches the ids
+		// File4Base generates, and nothing else about the text is touched.
+		if reUUIDHex.MatchString(strings.TrimSpace(valStr)) {
+			return strings.ToLower(strings.TrimSpace(valStr)), nil
+		}
+	}
+	return data.CoerceImportValue(agnosticFieldType(fieldType), valStr, data.DateISO)
+}
+
+// agnosticFieldType reads a bundle column's field type as the engine's own.
+func agnosticFieldType(fieldType string) dbal.AgnosticFieldType {
+	switch strings.ToUpper(strings.TrimSpace(fieldType)) {
+	case "NUMBER":
+		return dbal.FieldTypeNumber
+	case "DATE":
+		return dbal.FieldTypeDate
+	case "TIMESTAMP":
+		return dbal.FieldTypeTimestamp
+	case "BOOLEAN":
+		return dbal.FieldTypeBoolean
+	case "CONTAINER":
+		return dbal.FieldTypeContainer
+	default:
+		return dbal.FieldTypeText
+	}
 }
 
 func coerceDataValue(valStr, fieldType string) interface{} {
