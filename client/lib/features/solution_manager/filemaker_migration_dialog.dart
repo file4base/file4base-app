@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
+import 'package:file4base_client/core/utils/xml_encoding.dart';
 import 'package:flutter/material.dart';
 
 /// Assisted FileMaker DDR / Save-as-XML & FMPXMLRESULT Migration Dialog (#26).
@@ -99,12 +100,17 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         });
         return;
       }
-      final text = utf8.decode(file.bytes, allowMalformed: true);
+      // A Windows FileMaker export is UTF-16 with a byte order mark; reading
+      // it as UTF-8 produced replacement characters and interleaved NULs that
+      // the server could only reject as invalid XML (#99).
+      final text = decodeXmlBytes(file.bytes);
       setState(() {
         _designFileName = file.name;
         _designXmlCtrl.text = text;
         _report = null;
       });
+    } on XmlEncodingException catch (e) {
+      setState(() => _error = 'Cannot read "$_designFileName": ${e.message}');
     } catch (e) {
       setState(() => _error = 'Failed reading DDR file: $e');
     }
@@ -142,12 +148,14 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         allowedExtensions: ['xml'],
       );
       if (file == null) return;
-      final text = utf8.decode(file.bytes, allowMalformed: true);
+      final text = decodeXmlBytes(file.bytes);
       setState(() {
         _dataFiles[tableName] = text;
         _dataTableCtrl.clear();
         _report = null;
       });
+    } on XmlEncodingException catch (e) {
+      setState(() => _error = 'Cannot read that record export: ${e.message}');
     } catch (e) {
       setState(() => _error = 'Failed reading FMPXMLRESULT file: $e');
     }
