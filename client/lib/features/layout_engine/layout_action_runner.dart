@@ -158,9 +158,52 @@ class LayoutActionRunner {
     required this.apiClient,
     required this.host,
     this.peerTokenProvider,
+    this.windowSolution,
+    this.solutionName,
   });
   final ApiClient apiClient;
   final LayoutActionHost host;
+
+  /// The solution this runner's scripts belong to, when it is not the one on
+  /// screen (#107). It names the solution in messages; null means "this
+  /// solution".
+  final String? solutionName;
+
+  /// Null when the script runs in the solution whose window it is shown in,
+  /// which is every script but one performed from another solution (#107).
+  ///
+  /// When it is set, the script belongs to a solution with no window of its
+  /// own here: the window on screen belongs to [windowSolution], so a step
+  /// that acts on a window — New Record, Set Field, Go to Layout, … — would act
+  /// on the wrong solution's table. Such a step stops the script and says so.
+  final String? windowSolution;
+
+  /// Whether this runner's steps may act on the window on screen.
+  bool get hasWindow => windowSolution == null;
+
+  /// The steps that act on the window on screen: its layout, its found set,
+  /// its current record, or the session itself. A script performed from
+  /// another solution has no window here, so it cannot run these (#107).
+  static const windowSteps = <String>{
+    'new_record',
+    'duplicate_record',
+    'delete_record',
+    'delete_portal_row',
+    'commit_records',
+    'revert_record',
+    'go_to_record',
+    'enter_browse_mode',
+    'enter_find_mode',
+    'perform_find',
+    'show_all_records',
+    'enter_preview_mode',
+    'go_to_layout',
+    'set_field',
+    'adjust_window',
+    're_login',
+    'close_file',
+    'exit_application',
+  };
 
   /// Supplies a session token for another solution, so an `Import Records` or
   /// `Export Records` step whose transfer reaches a second solution can be
@@ -229,7 +272,10 @@ class LayoutActionRunner {
     } catch (e) {
       return LayoutActionResult.stopped('Could not load script "${name ?? id}": $e');
     }
-    if (script == null) return LayoutActionResult.stopped('Script "${name ?? id}" not found.');
+    // A script performed in another solution is named with its solution, so a
+    // message never leaves anyone guessing which "Receive" it was.
+    final where = solutionName == null ? '' : ' in the solution $solutionName';
+    if (script == null) return LayoutActionResult.stopped('Script "${name ?? id}" not found$where.');
 
     final execution = ScriptExecution(script: script, runner: this, depth: depth);
     while (!execution.atEnd) {
@@ -238,7 +284,7 @@ class LayoutActionRunner {
       switch (outcome.kind) {
         case StepOutcomeKind.stopped:
           return LayoutActionResult.stopped(
-              'Script "${script.name}" stopped at step $sequence: ${outcome.message}');
+              'Script "${script.name}"$where stopped at step $sequence: ${outcome.message}');
         case StepOutcomeKind.halted:
           // Every caller stops too, so the halt travels up instead of
           // looking like an ordinary return (#95).
@@ -265,6 +311,15 @@ class LayoutActionRunner {
         _resolveParamsText(params[key]?.toString() ?? fallback, vars);
 
     final norm = normalizeStepType(stepType);
+    if (!hasWindow && windowSteps.contains(norm)) {
+      // Running it would act on the window on screen, which belongs to the
+      // calling solution — a record created or a field set in the wrong
+      // table. The script stops instead of doing that, or of skipping it.
+      return LayoutActionResult.stopped(
+          'Step "$stepType" acts on a window, and this script was performed from the '
+          'solution $windowSolution, whose window is the one on screen. A script '
+          'performed in another solution runs only the steps that need no window.');
+    }
     switch (norm) {
       case 'comment':
         return const LayoutActionResult.ok();
@@ -359,6 +414,13 @@ class LayoutActionRunner {
           name = _extractQuoted(params['expression']?.toString() ?? '');
         }
         if (name.isEmpty) return const LayoutActionResult.stopped('Perform Script has no script name.');
+        final reference = params['file_reference']?.toString().trim() ?? '';
+        if (reference.isNotEmpty) {
+          // A script in another file is resolved in the solution that file
+          // became, and only there. Looking it up here would run whatever
+          // local script shares the name (#107).
+          return _performExternalScript(reference: reference, name: name, depth: depth + 1);
+        }
         return _performScript(name: name, depth: depth + 1);
       default:
         return LayoutActionResult.stopped(
@@ -366,6 +428,87 @@ class LayoutActionRunner {
             '(it needs the calculation engine / server script runner).');
     }
     return const LayoutActionResult.ok();
+  }
+
+  /// Performs the script [name] of the solution the file reference
+  /// [reference] is mapped to (#107).
+  ///
+  /// Every way this can fail stops the script and says which it was. None of
+  /// them falls back to a script of this solution with the same name: that is
+  /// a different script, and running it is the one outcome worse than
+  /// stopping.
+  ///
+  /// The script runs on a session the user opened in that solution, and with
+  /// no window: the window on screen belongs to the calling solution. Steps
+  /// that need no window — transfers, variables, If and Loop, Perform Script
+  /// within that solution, Exit and Halt, dialogs — run; the first step that
+  /// needs a window stops it. `Halt Script` in it stops every caller here
+  /// too, exactly as within one solution (#95).
+  ///
+  /// `$$global` variables are one set per client session, shared by every
+  /// solution a script reaches — unlike FileMaker, which keeps them per file.
+  Future<LayoutActionResult> _performExternalScript({
+    required String reference,
+    required String name,
+    required int depth,
+  }) async {
+    if (depth >= maxScriptDepth) {
+      return const LayoutActionResult.stopped('Perform Script is nested too deeply (possible recursion).');
+    }
+
+    FileReferenceResolution target;
+    try {
+      target = await apiClient.resolveFileReference(reference);
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) {
+        return LayoutActionResult.stopped(
+            'Perform Script calls "$name" in the file "$reference", and this solution has no '
+            'file reference of that name.');
+      }
+      if (e.statusCode == 409) {
+        return LayoutActionResult.stopped(
+            'Perform Script calls "$name" in the file "$reference", which is not mapped to a '
+            'solution yet. Map the file reference to the solution that file became; until '
+            'then the script cannot tell where "$name" is.');
+      }
+      return LayoutActionResult.stopped(
+          'Perform Script could not read the file reference "$reference": ${e.detail}');
+    } catch (e) {
+      return LayoutActionResult.stopped(
+          'Perform Script could not read the file reference "$reference": $e');
+    }
+
+    if (target.local) {
+      // The reference names this very solution: an ordinary Perform Script,
+      // with this solution's window.
+      return _performScript(name: name, depth: depth);
+    }
+
+    final token = await peerTokenProvider?.call(target.database);
+    if (token == null || token.isEmpty) {
+      return LayoutActionResult.stopped(
+          'Perform Script calls "$name" in the solution ${target.database} (file reference '
+          '"$reference"), and this session is not signed in to it. Sign in to '
+          '${target.database} and run the script again.');
+    }
+
+    final caller = this;
+    final external = LayoutActionRunner(
+      apiClient: apiClient.forPeerSession(token),
+      host: _WindowlessHost(host),
+      // Reaching back to the calling solution — a transfer in the called
+      // script whose far end is the caller, say — uses the session the user is
+      // already working in there. Any third solution is asked for as usual.
+      peerTokenProvider: (solution) async {
+        if (solution.toLowerCase() == target.callingDatabase.toLowerCase()) {
+          return caller.apiClient.authToken;
+        }
+        return caller.peerTokenProvider?.call(solution);
+      },
+      windowSolution: windowSolution ?? target.callingDatabase,
+      solutionName: target.database,
+    );
+    return external._performScript(name: name, depth: depth);
   }
 
   /// Names of the step parameters that can hold the transfer an
@@ -914,6 +1057,69 @@ class ScriptExecution {
     final condition = runner.extractCondition(params).trim();
     return condition.isEmpty ? '(empty)' : '"$condition"';
   }
+}
+
+/// The host of a script performed in another solution (#107): there is no
+/// window of that solution on screen, so nothing here touches one.
+///
+/// The runner never calls the window operations on it — it stops on those
+/// steps first ([LayoutActionRunner.windowSteps]) — so reaching one is a bug,
+/// and it says so rather than acting on the calling solution's window.
+/// Dialogs and URLs are not tied to a window and go to the real host. A merge
+/// token naming a field is left unresolved, because the record on screen is
+/// the calling solution's, not this one's; an expression that reads a field
+/// therefore stops the script instead of reading the wrong record.
+class _WindowlessHost implements LayoutActionHost {
+  _WindowlessHost(this._screen);
+
+  final LayoutActionHost _screen;
+
+  Never _noWindow(String operation) => throw StateError(
+      '$operation reached a script performed in another solution, which has no window here');
+
+  @override
+  Future<void> actionShowDialog(String title, String message) => _screen.actionShowDialog(title, message);
+
+  @override
+  Future<void> actionOpenUrl(String url) => _screen.actionOpenUrl(url);
+
+  @override
+  String actionResolveText(String text) => text;
+
+  @override
+  Future<void> actionNewRecord() async => _noWindow('New Record');
+  @override
+  Future<void> actionDuplicateRecord() async => _noWindow('Duplicate Record');
+  @override
+  Future<void> actionDeleteRecord({required bool confirm}) async => _noWindow('Delete Record');
+  @override
+  Future<void> actionCommitRecord() async => _noWindow('Commit Records');
+  @override
+  Future<void> actionRevertRecord() async => _noWindow('Revert Record');
+  @override
+  Future<void> actionGoToRecord(String target) async => _noWindow('Go to Record');
+  @override
+  Future<void> actionEnterFindMode() async => _noWindow('Enter Find Mode');
+  @override
+  Future<void> actionPerformFind() async => _noWindow('Perform Find');
+  @override
+  Future<void> actionShowAllRecords() async => _noWindow('Show All Records');
+  @override
+  Future<void> actionEnterPreviewMode() async => _noWindow('Enter Preview Mode');
+  @override
+  Future<void> actionEnterBrowseMode() async => _noWindow('Enter Browse Mode');
+  @override
+  Future<bool> actionGoToLayout(String layoutName) async => _noWindow('Go to Layout');
+  @override
+  Future<bool> actionSetField(String field, String value) async => _noWindow('Set Field');
+  @override
+  Future<void> actionAdjustWindow(String windowAction) async => _noWindow('Adjust Window');
+  @override
+  Future<void> actionReLogin() async => _noWindow('Re-Login');
+  @override
+  Future<void> actionCloseFile() async => _noWindow('Close File');
+  @override
+  Future<void> actionExitApplication() async => _noWindow('Exit Application');
 }
 
 class _IfFrame {

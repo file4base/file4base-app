@@ -4,11 +4,13 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:file4base_client/core/crypto/payload_cipher.dart';
+import 'package:file4base_client/core/models/file_reference_models.dart';
 import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/core/models/transfer_models.dart';
 import 'package:http/http.dart' as http;
 
 export '../crypto/payload_cipher.dart';
+export '../models/file_reference_models.dart';
 export '../models/script_models.dart';
 export '../models/transfer_models.dart';
 
@@ -1349,6 +1351,21 @@ class ApiClient {
       encryptRequests: encryptRequests,
     );
   }
+  /// A client for a session opened in another solution (#107): the same
+  /// server, the same transport and the same payload cipher, but every
+  /// request carries [token] instead of this client's own session.
+  ///
+  /// It has no [onUnauthorized] hook on purpose. A 401 from the other
+  /// solution means *that* session ended; it must not sign the user out of
+  /// the solution they are working in.
+  ApiClient._peer(this.baseUrl, _EncryptedHttpClient transport, String token) {
+    _httpClient = transport;
+    _authToken = token;
+  }
+
+  /// A client that speaks to another solution on a session opened there.
+  ApiClient forPeerSession(String token) => ApiClient._peer(baseUrl, _httpClient, token);
+
   String baseUrl;
   late final _EncryptedHttpClient _httpClient;
 
@@ -3108,6 +3125,21 @@ class ApiClient {
     );
     _checkResponse(response);
     return ScriptModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  // ==========================================
+  // File references API (#107)
+  // ==========================================
+
+  /// Where the file reference [name] goes. An unmapped reference (409) or an
+  /// unknown one (404) throws, and a `Perform Script` step stops on either.
+  Future<FileReferenceResolution> resolveFileReference(String name) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/file-references/${Uri.encodeComponent(name)}/resolve'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return FileReferenceResolution.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   // ==========================================

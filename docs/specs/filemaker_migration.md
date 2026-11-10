@@ -79,5 +79,33 @@ A converted step whose transfer reaches another solution also stops the script w
 
 ### What is still not migrated
 
-- **External file references on `Perform Script`.** A called script in another FileMaker file still resolves only within the converted solution; an unresolved one is reported rather than matched to a same-named local script.
-- **Scheduled and server-side execution.** A transfer runs when a client, or another authenticated caller, asks the endpoint for it. There is no File4Base-side schedule in this release, so a FileMaker Server schedule that ran an import has no automatic counterpart; the endpoint is what a scheduler of your own would call, with a session token for each end.
+- **Scheduled and server-side execution.** A transfer runs when a client, or another authenticated caller, asks the endpoint for it. There is no File4Base-side schedule in this release, so a FileMaker Server schedule that ran an import has no automatic counterpart; the endpoint is what a scheduler of your own would call, with a session token for each end (`#108`).
+
+---
+
+## 6. `Perform Script` Into Another File and File References (`#107`)
+
+A FileMaker `Perform Script` step can call a script in **another file**. The XML route keeps that file's name as the step's `file_reference` parameter. File4Base turns each such file into a **file reference**: a named design object (`sys_file_references`) that says which File4Base solution the file became. See [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 18.
+
+> **Correction.** Until `#107` the client runner ignored `file_reference` and looked the script up by name in the *current* solution, so a migrated step calling "Receive" in another file ran this solution's "Receive" if one existed. The `#96` version of this document said such a step was "reported rather than matched to a same-named local script"; that was not what the runner did. It is now.
+
+What the migration does:
+
+- every external file a converted `Perform Script` step calls becomes **one** file reference, matched case-insensitively, created **unmapped** (no solution) because nothing in the design document says which solution the file is;
+- each one is reported under **`manual_action_required`**, naming the steps that use it;
+- the step keeps its `file_reference` and its `script_name` exactly as the source wrote them.
+
+What the runner does with such a step:
+
+| Situation | Result |
+|---|---|
+| The reference is unmapped, or this solution has no reference of that name | The script **stops** and says which. |
+| The reference is mapped to another solution this session is not signed in to | The script **stops** and names the solution. |
+| The reference is mapped to this very solution | An ordinary `Perform Script`, with this solution's window. |
+| The reference is mapped to another solution and the user is signed in to it | The script runs **in that solution**, on that session, **without a window** (below). |
+
+In none of these cases is the script looked up in the calling solution. A same-named local script is a different script, and running it is worse than stopping.
+
+**A script performed in another solution has no window here.** The window on screen belongs to the calling solution, so a step that acts on a window — `New Record`, `Set Field`, `Go to Layout`, `Perform Find`, `Commit Records`, … — would act on the wrong solution's table. The first such step stops the script and names itself. Steps that need no window run: `Import Records` / `Export Records`, `Set Variable`, `If` / `Loop`, `Perform Script` within that solution, `Exit Script`, `Halt Script`, `Show Custom Dialog`, `Open URL`, `Comment`. A field reference is not answered from the record on screen, so an expression that reads one stops the script. A transfer in the called script that reaches back to the calling solution uses the session the user is working in there. `Halt Script` in the called script stops every caller (`#95`).
+
+`$$global` variables are one set per client session, shared by every solution a script reaches — unlike FileMaker, which keeps them per file.

@@ -2324,6 +2324,208 @@
         ]
       }
     },
+    "/api/v1/file-references": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List File References",
+        "description": "Named links from this solution's scripts to other solutions (#107). A reference holds no credentials.",
+        "responses": {
+          "200": {
+            "description": "List File References"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Create File Reference",
+        "description": "Requires the owner or admin role and an unlocked design. An empty database creates an unmapped reference.",
+        "responses": {
+          "201": {
+            "description": "Create File Reference"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "description": "A file reference with that name already exists"
+          },
+          "422": {
+            "description": "Invalid file reference"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/file-references/{idOrName}": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Get File Reference",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The file reference's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Get File Reference"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such file reference"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Update File Reference",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The file reference's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Update File Reference"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such file reference"
+          },
+          "409": {
+            "description": "A file reference with that name already exists"
+          },
+          "422": {
+            "description": "Invalid file reference"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Delete File Reference",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The file reference's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete File Reference"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such file reference"
+          }
+        }
+      }
+    },
+    "/api/v1/file-references/{idOrName}/resolve": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Resolve File Reference",
+        "description": "Where a Perform Script step that names the reference goes, and from where. 409 when the reference is not mapped to a solution yet.",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The file reference's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The solution the reference is mapped to, the calling solution, and whether they are the same"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such file reference"
+          },
+          "409": {
+            "description": "The file reference is not mapped to a solution"
+          }
+        }
+      }
+    },
     "/api/v1/transfers": {
       "get": {
         "tags": [

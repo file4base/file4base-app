@@ -121,6 +121,7 @@ func WriteHTML(report *Report) ([]byte, error) {
 		{"Data sources", strconv.Itoa(counts.DataSources)},
 		{"Menu sets", strconv.Itoa(counts.MenuSets)},
 		{"Transfers", strconv.Itoa(counts.Transfers)},
+		{"File references", strconv.Itoa(counts.FileReferences)},
 	} {
 		b.WriteString(`<li><b>` + pair[1] + `</b> ` + pair[0] + `</li>` + "\n")
 	}
@@ -381,6 +382,21 @@ func WriteHTML(report *Report) ([]byte, error) {
 				`</td><td>` + esc(t.MatchFields) + `</td><td>` + esc(t.OnUnmatched) +
 				`</td><td>` + esc(t.OnRejected) + `</td><td>` +
 				strings.Join(mappings, "<br>") + `</td></tr>` + "\n")
+		}
+		b.WriteString(`</tbody></table>` + "\n")
+	}
+
+	if len(report.FileReferences) > 0 {
+		b.WriteString(`<h2>File references</h2>` + "\n")
+		b.WriteString(`<p>The other solutions this solution's scripts call into. ` +
+			`A reference with no solution stops the step that uses it.</p>` + "\n")
+		b.WriteString(`<table><thead><tr><th>Name</th><th>Solution</th></tr></thead><tbody>` + "\n")
+		for _, f := range report.FileReferences {
+			target := `<code>` + esc(f.Database) + `</code>`
+			if f.Database == "" {
+				target = `<em>not mapped</em>`
+			}
+			b.WriteString(`<tr><td>` + esc(f.Name) + `</td><td>` + target + `</td></tr>` + "\n")
 		}
 		b.WriteString(`</tbody></table>` + "\n")
 	}
