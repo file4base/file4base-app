@@ -192,6 +192,16 @@ type BundleTransfer struct {
 	DateOrder   string             `msgpack:"date_order"`
 }
 
+// BundleFileReference carries a named link to another solution (#107). The
+// solution is named by its database name, as a reference always is. A
+// reference with no database is one that has not been mapped yet — the
+// assisted migration emits those for every external file a Perform Script
+// step calls.
+type BundleFileReference struct {
+	Name     string `msgpack:"name"`
+	Database string `msgpack:"database,omitempty"`
+}
+
 // BundleMenuSet carries a menu set (#52). Its items name scripts and layouts
 // by id, and layouts may name a menu set by id, so those ids are remapped on
 // import like every other reference.
@@ -220,6 +230,7 @@ type SolutionBundle struct {
 	DataSources        []BundleDataSource     `msgpack:"data_sources,omitempty"`
 	MenuSets           []BundleMenuSet        `msgpack:"menu_sets,omitempty"`
 	Transfers          []BundleTransfer       `msgpack:"transfers,omitempty"`
+	FileReferences     []BundleFileReference  `msgpack:"file_references,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
 }
@@ -304,6 +315,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	if err != nil {
 		return nil, fmt.Errorf("failed listing transfer definitions: %w", err)
 	}
+	fileReferences, err := s.ListFileReferences(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing file references: %w", err)
+	}
 
 	conn := opts.Connection
 	if conn.Engine == "" {
@@ -327,6 +342,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		DataSources:        make([]BundleDataSource, 0, len(dataSources)),
 		MenuSets:           make([]BundleMenuSet, 0, len(menuSets)),
 		Transfers:          make([]BundleTransfer, 0, len(transfers)),
+		FileReferences:     make([]BundleFileReference, 0, len(fileReferences)),
 		FileOptions:        withoutSecrets(opts.FileOptions),
 		PageSetup:          opts.PageSetup,
 	}
@@ -393,6 +409,9 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			MatchFields: t.MatchFields, Mode: t.Mode, OnUnmatched: t.OnUnmatched,
 			OnRejected: t.OnRejected, DateOrder: t.DateOrder,
 		})
+	}
+	for _, f := range fileReferences {
+		b.FileReferences = append(b.FileReferences, BundleFileReference{Name: f.Name, Database: f.Database})
 	}
 	for _, d := range dataSources {
 		b.DataSources = append(b.DataSources, BundleDataSource{
@@ -511,6 +530,7 @@ type ImportReport struct {
 	DataSourcesCreated      int                    `json:"data_sources_created"`
 	MenuSetsCreated         int                    `json:"menu_sets_created"`
 	TransfersCreated        int                    `json:"transfers_created"`
+	FileReferencesCreated   int                    `json:"file_references_created"`
 	AccountsPendingPassword []string               `json:"accounts_pending_password"`
 	FileOptions             map[string]interface{} `json:"file_options,omitempty"`
 	PageSetup               map[string]interface{} `json:"page_setup,omitempty"`
@@ -1008,6 +1028,23 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		}
 		undo = append(undo, func() { _ = s.DeleteTransfer(bg, created.ID) })
 		report.TransfersCreated++
+	}
+
+	// 8c. File references (#107), matched by name. A reference that already
+	// exists keeps the solution it is mapped to: restoring a bundle must not
+	// silently repoint a script at a different solution.
+	for _, f := range b.FileReferences {
+		if _, err := s.GetFileReferenceByName(ctx, f.Name); err == nil {
+			continue
+		} else if !errors.Is(err, ErrFileReferenceNotFound) {
+			return nil, rollback(fmt.Errorf("reading the file reference %q: %w", f.Name, err))
+		}
+		created, err := s.CreateFileReference(ctx, FileReferenceInput{Name: f.Name, Database: f.Database})
+		if err != nil {
+			return nil, rollback(fmt.Errorf("restoring the file reference %q: %w", f.Name, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteFileReference(bg, created.ID) })
+		report.FileReferencesCreated++
 	}
 
 	// 9. Menu sets (#52), matched by name. The script or layout a menu item

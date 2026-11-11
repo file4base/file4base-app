@@ -451,16 +451,57 @@ func TestAnalyzeAndConvert_DecodesNestedScriptStepParameters(t *testing.T) {
 		t.Fatalf("Perform Script external file: expected %q, got %v", "RemoteArchive", got)
 	}
 
-	// The external file target is a semantic File4Base does not run, so it is
-	// flagged rather than dropped in silence.
+	// The external file becomes a file reference of its own, unmapped,
+	// because nothing in the document says which solution it is (#107).
+	if len(res.Bundle.FileReferences) != 1 {
+		t.Fatalf("expected one file reference, got %d", len(res.Bundle.FileReferences))
+	}
+	if ref := res.Bundle.FileReferences[0]; ref.Name != "RemoteArchive" || ref.Database != "" {
+		t.Fatalf("expected an unmapped reference named RemoteArchive, got %+v", ref)
+	}
+
+	// ...and it is reported for someone to map, naming the step that uses it.
 	flagged := false
 	for _, item := range res.Report.ManualActionRequired {
-		if item.Domain == "script" && strings.Contains(item.Detail, "FileReference") {
+		if item.Domain == "script" && item.SourceName == "RemoteArchive" &&
+			strings.Contains(item.Detail, "Dispatch (step 3)") &&
+			strings.Contains(item.Detail, "never run a script of this solution") {
 			flagged = true
 		}
 	}
 	if !flagged {
-		t.Fatal("expected the unread FileReference operand to be flagged for manual action")
+		t.Fatalf("expected the external file to be reported for mapping, got %+v",
+			res.Report.ManualActionRequired)
+	}
+}
+
+// Several steps calling into the same external file share one reference, and
+// two files make two (#107).
+func TestAnalyzeAndConvert_OneFileReferencePerExternalFile(t *testing.T) {
+	xmlDoc := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Visits"><FieldCatalog><Field name="Notes" dataType="Text"/></FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog><ScriptCatalog>` +
+		`<Script name="Send"><StepList>` +
+		`<Step name="Perform Script" enable="True"><Script name="Receive" id="2"/><FileReference name="Results" id="1"/></Step>` +
+		`<Step name="Perform Script" enable="True"><Script name="Report" id="3"/><FileReference name="results" id="1"/></Step>` +
+		`<Step name="Perform Script" enable="True"><Script name="Archive" id="4"/><FileReference name="Archive" id="2"/></Step>` +
+		`<Step name="Perform Script" enable="True"><Script name="Local" id="5"/></Step>` +
+		`</StepList></Script></ScriptCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: xmlDoc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+
+	names := []string{}
+	for _, ref := range res.Bundle.FileReferences {
+		names = append(names, ref.Name)
+	}
+	if strings.Join(names, ",") != "Archive,Results" {
+		t.Fatalf("expected one reference per external file, case-insensitively, got %v", names)
+	}
+	if got, ok := res.Bundle.Scripts[0].Steps[3].Params["file_reference"]; ok {
+		t.Fatalf("a local Perform Script must not gain a file reference, got %v", got)
 	}
 }
 

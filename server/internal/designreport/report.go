@@ -113,6 +113,8 @@ type Report struct {
 	MenuSets      []MenuSet       `json:"menu_sets,omitempty" xml:"menu_sets>menu_set,omitempty"`
 	Transfers     []Transfer      `json:"transfers,omitempty" xml:"transfers>transfer,omitempty"`
 
+	FileReferences []FileReference `json:"file_references,omitempty" xml:"file_references>file_reference,omitempty"`
+
 	// Notes say what this report does not describe, so a reader is not left
 	// to assume that what is absent does not exist.
 	Notes []string `json:"notes" xml:"notes>note"`
@@ -133,6 +135,16 @@ type Counts struct {
 	DataSources   int `json:"data_sources" xml:"data_sources,attr"`
 	MenuSets      int `json:"menu_sets,omitempty" xml:"menu_sets,attr,omitempty"`
 	Transfers     int `json:"transfers,omitempty" xml:"transfers,attr,omitempty"`
+
+	FileReferences int `json:"file_references,omitempty" xml:"file_references,attr,omitempty"`
+}
+
+// FileReference is a named link from this solution's scripts to another
+// solution (#107). An empty Database is a reference nobody has mapped yet,
+// and a step that uses it stops.
+type FileReference struct {
+	Name     string `json:"name" xml:"name,attr"`
+	Database string `json:"database,omitempty" xml:"database,attr,omitempty"`
 }
 
 // Table is a base table and its fields.

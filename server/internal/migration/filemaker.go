@@ -573,6 +573,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 	}
 	report.Counts.Scripts = len(bundle.Scripts)
+	collectFileReferences(bundle, report)
 
 	// 7. Extract Accounts & Privilege Sets (always disabled until password reset)
 	accNodes := findNodes(root, "Account", "account")
@@ -1766,10 +1767,14 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 				}
 			}
 		case "FileReference", "ExternalDataSource":
+			// The client runner reads file_reference (#107): it resolves the
+			// script in the solution the reference is mapped to, and never in
+			// this one. collectFileReferences reports the reference itself.
 			if refName := firstAttr(child, "name", "Name"); refName != "" {
 				params["file_reference"] = refName
+			} else {
+				flagUnmapped(child.Name)
 			}
-			flagUnmapped(child.Name)
 		default:
 			flagUnmapped(child.Name)
 		}

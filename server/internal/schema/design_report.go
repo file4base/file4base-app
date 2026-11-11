@@ -238,6 +238,13 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 	}
 	report.Counts.Transfers = len(report.Transfers)
 
+	for _, f := range bundle.FileReferences {
+		report.FileReferences = append(report.FileReferences, designreport.FileReference{
+			Name: f.Name, Database: f.Database,
+		})
+	}
+	report.Counts.FileReferences = len(report.FileReferences)
+
 	for _, source := range bundle.DataSources {
 		report.DataSources = append(report.DataSources, designreport.DataSource{
 			Name: source.Name, Engine: source.Engine, Host: source.Host, Port: source.Port,

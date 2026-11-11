@@ -200,3 +200,18 @@ A committed run leaves its counts in global variables, so the steps after it can
 | `$$transferSkipped` | Records passed over for want of a match. |
 | `$$transferRejected` | Rows the destination could not hold. Non-zero only under `on_rejected: "skip"`, since `abort` stops the script. |
 | `$$transferCommitted` | `1` when the destination transaction was committed. |
+
+---
+
+## 6. `Perform Script` Into Another Solution (`#107`)
+
+`Perform Script` takes an optional `file_reference` parameter: the name of a **file reference**, a design object that maps a name to another solution (see [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 18). Without it, the step performs a script of this solution, as always.
+
+| Step parameter | Meaning |
+|---|---|
+| `script_name` | The script to perform. |
+| `file_reference` | Optional. The reference naming the solution the script belongs to. |
+
+With a `file_reference`, the script is looked up **only** in the solution the reference is mapped to — never in this one, whatever shares its name. The step stops the script when the reference is unknown, unmapped, or mapped to a solution this session is not signed in to, and names which.
+
+The called script runs on the session the user opened in that solution, and **without a window**: the window on screen belongs to the caller. Its first step that acts on a window (`New Record`, `Set Field`, `Go to Layout`, `Perform Find`, `Commit Records`, …) stops the script and names itself; a field reference is not answered from the record on screen. Everything else runs — transfers, variables, `If` / `Loop`, `Perform Script` within that solution, `Exit Script`, `Halt Script`, dialogs. `Halt Script` there stops every caller here. The Script Debugger runs the same state machine, so it does the same.

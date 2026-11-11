@@ -497,8 +497,9 @@ class ScriptCatalogItem {
       stepType: 'perform_script',
       label: '+ Perform Script',
       category: 'CONTROL & LOGIC',
-      description: 'Calls another script with an optional parameter.',
-      defaultParams: {'script_name': '', 'param': ''},
+      description: 'Calls another script with an optional parameter. Name a file reference to '
+          'call a script of another solution (#107).',
+      defaultParams: {'script_name': '', 'param': '', 'file_reference': ''},
     ),
     ScriptCatalogItem(
       stepType: 'pause_script',

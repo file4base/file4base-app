@@ -630,6 +630,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		})
 	}
 	report.Counts.Scripts = len(bundle.Scripts)
+	collectFileReferences(bundle, report)
 
 	// 5. Parse Layouts
 	layoutsSection := sectionBetween(rawHTML, `name="valLayoutsSectionAnchor_"`, `name="valScriptsSectionAnchor_"`)

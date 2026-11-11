@@ -287,6 +287,18 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			updated_at ` + ts + `,
 			CONSTRAINT uq_transfer_name UNIQUE (name)
 		);`,
+		// A named reference to another solution that this solution's
+		// scripts reach (#107): a Perform Script step names the reference,
+		// and the reference names the solution. An empty database_name is a
+		// reference that is not mapped yet, which a step refuses to use.
+		`CREATE TABLE IF NOT EXISTS sys_file_references (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			database_name VARCHAR(128),
+			created_at ` + ts + `,
+			updated_at ` + ts + `,
+			CONSTRAINT uq_file_reference_name UNIQUE (name)
+		);`,
 		// Capabilities granted per account role (#39). A role without a
 		// row holds every capability, so a database created before this
 		// table existed keeps working unrestricted.

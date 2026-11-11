@@ -2148,3 +2148,52 @@ One transfer writes **one destination table, inside one transaction**. A transfe
 - **Retrying is replaying.** A refused run wrote nothing, so the same request can simply be sent again. A *committed* run can be sent again too: with `mode: "update_matching"` and stable match keys, a replay updates the same records instead of duplicating them, so a transfer of parents and then children neither duplicates a parent nor orphans a child. `mode: "add"` is deliberately not replayable — it is for an append-only destination — and the capability parity matrix says so.
 
 Values cross through the same conversion a manual import runs (`data.CoerceImportValue`), so a number keeps its exact decimal, text keeps its spaces and its accents, a date is read in the definition's `date_order`, and a container crosses as the same bytes.
+
+---
+
+## 18. File References (`#107`)
+
+A **file reference** maps a name to another solution: it is what a `Perform Script` step names when it calls a script of another solution, and what the assisted migration creates for every external FileMaker file a converted `Perform Script` step calls. References are stored in `sys_file_references`, exported in the solution bundle (`file_references`) and listed in the Database Design Report.
+
+A reference holds **no credentials**: a script performed through it runs on a session the user opened in that solution. The mapping is explicit — a reference with no `database` is **unmapped**, which is how the migration creates one, and a step that uses it stops.
+
+Reading and resolving references is allowed for any authenticated session, because running a script needs it; creating, updating and deleting one requires the `owner` or `admin` role and an unlocked design. Every `{idOrName}` accepts the reference's `id` or its `name` (percent-encoded, case-insensitive).
+
+### `GET /api/v1/file-references`
+Lists the references, by name.
+
+#### Response `200 OK`
+```json
+[
+  { "id": "7c1e…", "name": "Results", "database": "results_db", "created_at": "…", "updated_at": "…" },
+  { "id": "9a04…", "name": "Archive", "database": "", "created_at": "…", "updated_at": "…" }
+]
+```
+
+### `POST /api/v1/file-references`
+Creates a reference. Body: `{ "name": "Results", "database": "results_db" }`; `database` may be empty. `201 Created`; `409 Conflict` when the name is taken (a step resolves by name, so names are unique); `422 Unprocessable Content` when the name is empty or `database` is not a solution database name.
+
+### `GET /api/v1/file-references/{idOrName}`
+Reads one reference. `404 Not Found` when there is none.
+
+### `GET /api/v1/file-references/{idOrName}/resolve`
+Answers where a `Perform Script` step that names the reference goes, and from where.
+
+#### Response `200 OK`
+```json
+{ "name": "Results", "database": "results_db", "calling_database": "dispatch_db", "local": false }
+```
+
+`calling_database` is the solution this session is signed in to — the one whose script is reaching out. `local` is `true` when the reference names that very solution, in which case the step is an ordinary `Perform Script`.
+
+`404 Not Found` when there is no such reference, and **`409 Conflict` when the reference is unmapped**: the reference exists and is refused because of its state. The client stops the script on either, and never falls back to a script of the calling solution.
+
+### `PUT /api/v1/file-references/{idOrName}`
+Renames a reference or maps it to another solution. Body as for `POST`.
+
+### `DELETE /api/v1/file-references/{idOrName}`
+Removes a reference. `204 No Content`.
+
+### Restoring a solution bundle
+
+References are matched by name. A reference the destination already has **keeps the solution it is mapped to**: restoring a bundle never repoints a script at a different solution.
