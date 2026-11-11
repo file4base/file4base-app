@@ -21,6 +21,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
 	"github.com/file4base/file4base-app/server/internal/localca"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
+	"github.com/file4base/file4base-app/server/internal/transfer"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -315,6 +316,24 @@ func main() {
 
 	log.Println("Server is ready and listening for requests.")
 
+	// Scheduled transfers (#108). Each due schedule is claimed in its
+	// solution's catalog before it runs, so several server processes over the
+	// same databases never run the same occurrence twice; one process can
+	// still be told not to run any with FILE4BASE_TRANSFER_SCHEDULER=false.
+	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
+	schedulerDone := make(chan struct{})
+	if envBool("FILE4BASE_TRANSFER_SCHEDULER", true) {
+		scheduler := transfer.NewScheduler(dbMgr)
+		go func() {
+			defer close(schedulerDone)
+			scheduler.Run(schedulerCtx)
+		}()
+		log.Printf("Transfer scheduler running (every %s)", scheduler.Interval)
+	} else {
+		close(schedulerDone)
+		log.Println("Transfer scheduler disabled (FILE4BASE_TRANSFER_SCHEDULER=false): scheduled transfers do not run in this process")
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-quit
@@ -335,7 +354,16 @@ func main() {
 		log.Printf("Server forced shutdown with error: %v", err)
 	}
 
-	// 4. Close database pool connections
+	// 4. Stop starting scheduled transfers and let the running ones finish
+	// their transaction, within the same shutdown deadline.
+	stopScheduler()
+	select {
+	case <-schedulerDone:
+	case <-ctx.Done():
+		log.Println("Warning: shutdown deadline reached while a scheduled transfer was still running")
+	}
+
+	// 5. Close database pool connections
 	dbMgr.Close()
 	log.Println("Server and database connections exited cleanly.")
 }

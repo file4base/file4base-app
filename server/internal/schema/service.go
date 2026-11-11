@@ -123,6 +123,9 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 	// The catalog is the same on every engine except its timestamp columns,
 	// whose type and default differ (TIMESTAMPTZ / DATETIME(6)).
 	ts := s.driver.Dialect().TimestampColumn()
+	// The same type with no default, for a time that may not have happened
+	// yet, such as a schedule's next or last run.
+	tsNullable := strings.TrimSpace(strings.SplitN(ts, " DEFAULT", 2)[0])
 	queries := []string{
 		`CREATE TABLE IF NOT EXISTS sys_tables (
 			id VARCHAR(36) PRIMARY KEY,
@@ -298,6 +301,40 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			created_at ` + ts + `,
 			updated_at ` + ts + `,
 			CONSTRAINT uq_file_reference_name UNIQUE (name)
+		);`,
+		// A transfer run on a cron schedule with nobody signed in (#108).
+		// It names an account in each solution to run as and stores no
+		// password or token; the accounts are checked again on every run.
+		// The two solutions it was authorized for are kept, so a definition
+		// changed to point elsewhere cannot inherit the authorization.
+		`CREATE TABLE IF NOT EXISTS sys_transfer_schedules (
+			id VARCHAR(36) PRIMARY KEY,
+			name VARCHAR(128) NOT NULL,
+			transfer_id VARCHAR(36) NOT NULL REFERENCES sys_transfers(id) ON DELETE CASCADE,
+			cron_expr VARCHAR(128) NOT NULL,
+			enabled BOOLEAN NOT NULL DEFAULT TRUE,
+			source_account VARCHAR(64) NOT NULL,
+			destination_account VARCHAR(64) NOT NULL,
+			source_database VARCHAR(128),
+			destination_database VARCHAR(128),
+			created_by VARCHAR(36),
+			created_at ` + ts + `,
+			updated_at ` + ts + `,
+			next_run_at ` + tsNullable + `,
+			last_run_at ` + tsNullable + `,
+			last_status VARCHAR(16),
+			last_error TEXT,
+			CONSTRAINT uq_transfer_schedule_name UNIQUE (name)
+		);`,
+		`CREATE TABLE IF NOT EXISTS sys_transfer_schedule_runs (
+			id VARCHAR(36) PRIMARY KEY,
+			schedule_id VARCHAR(36) NOT NULL REFERENCES sys_transfer_schedules(id) ON DELETE CASCADE,
+			trigger_kind VARCHAR(16) NOT NULL,
+			started_at ` + tsNullable + ` NOT NULL,
+			finished_at ` + tsNullable + ` NOT NULL,
+			status VARCHAR(16) NOT NULL,
+			error TEXT,
+			report TEXT
 		);`,
 		// Capabilities granted per account role (#39). A role without a
 		// row holds every capability, so a database created before this

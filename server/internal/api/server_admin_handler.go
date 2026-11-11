@@ -100,6 +100,12 @@ type BackupRecord struct {
 }
 
 // ScheduledJob represents a recurring server task (backup, script, or maintenance).
+//
+// These jobs are a plan, not a runner: this server keeps them in memory and
+// executes none of them. Executed is false and LastStatus says
+// "not executed" so the panel never reports work that did not happen (#108).
+// Scheduled record transfers, which do run, are served at
+// /api/v1/transfer-schedules.
 type ScheduledJob struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -108,10 +114,19 @@ type ScheduledJob struct {
 	Target      string `json:"target"`   // script name or maintenance op
 	CronExpr    string `json:"cron_expr"`
 	Enabled     bool   `json:"enabled"`
-	LastRunAt   string `json:"last_run_at"`
+	Executed    bool   `json:"executed"`
+	LastRunAt   string `json:"last_run_at,omitempty"`
 	LastStatus  string `json:"last_status"`
 	NextRunDesc string `json:"next_run_desc"`
 }
+
+// scheduledJobNotExecuted is the status of every Server Tools job: none of
+// them is run by this server.
+const scheduledJobNotExecuted = "not executed"
+
+// scheduledJobNote is what the panel shows instead of a next run that will
+// not happen.
+const scheduledJobNote = "Not executed by this server"
 
 // NotificationConfig holds SMTP and outgoing webhook settings for server alerts.
 type NotificationConfig struct {
@@ -295,9 +310,8 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 				Target:      "Full SQL + Catalog Snapshot",
 				CronExpr:    "0 2 * * *",
 				Enabled:     true,
-				LastRunAt:   now.Add(-6 * time.Hour).Format(time.RFC3339),
-				LastStatus:  "success",
-				NextRunDesc: "Daily at 02:00 UTC",
+				LastStatus:  scheduledJobNotExecuted,
+				NextRunDesc: scheduledJobNote,
 			},
 			{
 				ID:          "sched-weekly-vacuum",
@@ -307,9 +321,8 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 				Target:      "VACUUM ANALYZE",
 				CronExpr:    "0 3 * * 0",
 				Enabled:     true,
-				LastRunAt:   now.Add(-48 * time.Hour).Format(time.RFC3339),
-				LastStatus:  "success",
-				NextRunDesc: "Sundays at 03:00 UTC",
+				LastStatus:  scheduledJobNotExecuted,
+				NextRunDesc: scheduledJobNote,
 			},
 			{
 				ID:          "sched-version-check",
@@ -319,9 +332,8 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 				Target:      "Check Docker Hub & GitHub Releases",
 				CronExpr:    "0 */6 * * *",
 				Enabled:     true,
-				LastRunAt:   now.Add(-15 * time.Minute).Format(time.RFC3339),
-				LastStatus:  "success",
-				NextRunDesc: "Every 6 hours",
+				LastStatus:  scheduledJobNotExecuted,
+				NextRunDesc: scheduledJobNote,
 			},
 		},
 		notifications: NotificationConfig{
@@ -2095,10 +2107,12 @@ func (h *ServerAdminHandler) CreateSchedule(w http.ResponseWriter, r *http.Reque
 		job.CronExpr = "0 2 * * *"
 	}
 	job.Enabled = true
-	job.LastStatus = "scheduled"
-	if job.NextRunDesc == "" {
-		job.NextRunDesc = "Cron: " + job.CronExpr
-	}
+	// Nothing runs these jobs, so a new one is said to be what it is, and
+	// whatever the caller sent about runs is not taken on trust.
+	job.Executed = false
+	job.LastRunAt = ""
+	job.LastStatus = scheduledJobNotExecuted
+	job.NextRunDesc = scheduledJobNote
 
 	h.mu.Lock()
 	h.schedules = append(h.schedules, job)
@@ -2148,14 +2162,12 @@ func (h *ServerAdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reque
 			}
 			if patch.CronExpr != nil && strings.TrimSpace(*patch.CronExpr) != "" {
 				h.schedules[i].CronExpr = strings.TrimSpace(*patch.CronExpr)
-				h.schedules[i].NextRunDesc = "Cron: " + h.schedules[i].CronExpr
 			}
 			if patch.Enabled != nil {
 				h.schedules[i].Enabled = *patch.Enabled
 			}
-			if patch.NextRunDesc != nil && *patch.NextRunDesc != "" {
-				h.schedules[i].NextRunDesc = *patch.NextRunDesc
-			}
+			// next_run_desc is not taken from the caller: a job that never
+			// runs has no next run to describe.
 			cp := h.schedules[i]
 			updated = &cp
 			break
@@ -2178,33 +2190,39 @@ func (h *ServerAdminHandler) UpdateSchedule(w http.ResponseWriter, r *http.Reque
 	_ = json.NewEncoder(w).Encode(updated)
 }
 
-// RunScheduleNow executes a scheduled task immediately on demand.
+// RunScheduleNow is refused: this server has no runner for these jobs.
+//
+// It used to mark the job "success" and stamp a run time without running
+// anything, so the panel reported backups and maintenance that never
+// happened (#108). It now says plainly that nothing was run, and the audit
+// log records the attempt as such.
 func (h *ServerAdminHandler) RunScheduleNow(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sess := currentSession(r)
 
-	h.mu.Lock()
+	h.mu.RLock()
 	var found *ScheduledJob
 	for i := range h.schedules {
 		if h.schedules[i].ID == id {
-			h.schedules[i].LastRunAt = time.Now().UTC().Format(time.RFC3339)
-			h.schedules[i].LastStatus = "success"
 			cp := h.schedules[i]
 			found = &cp
 			break
 		}
 	}
-	h.mu.Unlock()
+	h.mu.RUnlock()
 
 	if found == nil {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Schedule Not Found", "no scheduled job matches that ID")
 		return
 	}
 
-	h.recordAudit("schedule", "Run Scheduled Job", sess.Username, sess.Database, found.Name, "success", "Triggered scheduled job on demand: "+found.Name)
+	h.recordAudit("schedule", "Run Scheduled Job", sess.Username, sess.Database, found.Name, "warning",
+		"Run requested but not executed: this server has no runner for "+found.JobType+" jobs")
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(found)
+	telemetry.WriteProblem(w, r, http.StatusConflict, "Job Not Executed",
+		"the "+found.JobType+" job \""+found.Name+"\" was not run: this server keeps Server Tools schedules "+
+			"as a plan and executes none of them. Scheduled record transfers do run; they are managed at "+
+			"/api/v1/transfer-schedules.")
 }
 
 // DeleteSchedule removes a scheduled task.

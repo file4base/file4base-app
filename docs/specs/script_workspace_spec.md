@@ -176,7 +176,9 @@ Both steps run a **transfer definition**: a named, persisted object recording th
 
 ### Where execution happens
 
-The step calls the server, which runs the transfer. Execution is therefore **client-triggered and server-performed**, and it is available wherever a script runs today: the desktop client, the Web Client and the Script Debugger. **There is no scheduled or server-side script runner in this release**, so a transfer never runs unattended on File4Base's own initiative; any scheduler must call the endpoint itself with a session token for each end.
+The step calls the server, which runs the transfer. Execution from a script is therefore **client-triggered and server-performed**, and it is available wherever a script runs today: the desktop client, the Web Client and the Script Debugger.
+
+A transfer can also run **unattended, on a schedule** (`#108`): the File4Base server runs a **transfer schedule** at the times its cron expression names, as an account an administrator of each solution designated. That runs the transfer definition only. **Scripts still run only in a client** — there is no server-side script runner — so a schedule cannot run a script, and the steps around an `Import Records` in a script have no scheduled counterpart. See [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 19.
 
 ### What stops the script
 

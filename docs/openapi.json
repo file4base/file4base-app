@@ -2741,6 +2741,244 @@
         }
       }
     },
+    "/api/v1/transfer-schedules": {
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "List Transfer Schedules",
+        "description": "Transfers run unattended on a UTC cron schedule (#108), as an account designated in each solution. No password or token is stored. Owner or admin only.",
+        "responses": {
+          "200": {
+            "description": "List Transfer Schedules"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Create Transfer Schedule",
+        "description": "Names a transfer, a cron expression and the account to run as in each solution. A far end in another solution needs a peer_token from an owner or administrator of it; the token is never stored. Both accounts are checked now and on every run.",
+        "responses": {
+          "201": {
+            "description": "Create Transfer Schedule"
+          },
+          "400": {
+            "description": "A peer_token is needed and absent, or offered when it is not needed"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such transfer"
+          },
+          "409": {
+            "description": "A schedule with that name already exists"
+          },
+          "422": {
+            "description": "Invalid transfer schedule"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/transfer-schedules/{id}": {
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Get Transfer Schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Get Transfer Schedule"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such schedule"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Update Transfer Schedule",
+        "description": "Changes name, cron or enabled. The transfer and the run-as accounts cannot change.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Update Transfer Schedule"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such schedule"
+          },
+          "422": {
+            "description": "Invalid transfer schedule"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Delete Transfer Schedule",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete Transfer Schedule"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such schedule"
+          }
+        }
+      }
+    },
+    "/api/v1/transfer-schedules/{id}/run": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Run Transfer Schedule Now",
+        "description": "Runs the schedule at once as its accounts, re-checked, and records the run. 200 when the destination was written, 422 with the recorded run when it was not.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run committed; the body is the recorded run"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such schedule"
+          },
+          "409": {
+            "description": "The schedule is already running"
+          },
+          "422": {
+            "description": "The run was refused or failed; the body is the recorded run"
+          }
+        }
+      }
+    },
+    "/api/v1/transfer-schedules/{id}/runs": {
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "List Transfer Schedule Runs",
+        "description": "The recorded runs, newest first; the 50 most recent are kept.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List Transfer Schedule Runs"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such schedule"
+          }
+        }
+      }
+    },
     "/api/v1/saved-finds": {
       "get": {
         "tags": [
@@ -5094,10 +5332,11 @@
         "tags": [
           "Server Administration"
         ],
-        "summary": "Execute Scheduled Cron Task Immediately",
+        "summary": "Run Planned Server Job (Not Executed)",
+        "description": "Server Tools jobs are a plan this server does not execute (#108). The request is refused with 409 and nothing is run. Scheduled record transfers, which do run, are at /api/v1/transfer-schedules.",
         "responses": {
-          "200": {
-            "description": "Execute Scheduled Cron Task Immediately"
+          "409": {
+            "description": "Job Not Executed: nothing was run"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
