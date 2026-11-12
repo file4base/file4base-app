@@ -621,6 +621,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	// 1. Tables and columns
 	tableIDs := map[string]string{}  // bundle table id -> destination id
 	columnIDs := map[string]string{} // bundle column id -> destination id
+	createdTables := map[string]bool{}
 	for _, t := range b.Tables {
 		name := dbal.NormalizeIdentifier(t.Name)
 		existing := plan.tables[name]
@@ -634,6 +635,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			undo = append(undo, func() { _ = s.DeleteTable(bg, created.ID) })
 			report.TablesCreated++
 			dstID = created.ID
+			createdTables[created.ID] = true
 			for _, c := range created.Columns {
 				existingCols[c.Name] = c.ID
 			}
@@ -714,6 +716,43 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		undo = append(undo, func() { _ = s.DeleteTableOccurrence(bg, created.ID) })
 		report.OccurrencesCreated++
 		occIDs[o.ID] = created.ID
+	}
+
+	// A table this import created came with a default occurrence named after
+	// the table itself. Where the file declares that table's occurrences, the
+	// default is not one of them and nothing in the file points at it, so it
+	// is an occurrence the import invented: a FileMaker file with the
+	// occurrences Surveys and SurveysByTitle over one base table arrived with
+	// four boxes in the graph instead of two, and comparing the migrated graph
+	// against the source's then failed on objects the source never had (#112).
+	//
+	// Only a table created here can have one, and only occurrences no
+	// declaration claimed are removed, so a solution file that carries no
+	// occurrences at all keeps the defaults it relies on. No undo is recorded:
+	// a rollback deletes the table itself, and its occurrences with it.
+	declaredFor := map[string]bool{}
+	for _, o := range b.TableOccurrences {
+		if dst, ok := tableIDs[o.BaseTableID]; ok {
+			declaredFor[dst] = true
+		}
+	}
+	if len(declaredFor) > 0 {
+		claimed := map[string]bool{}
+		for _, id := range occIDs {
+			claimed[id] = true
+		}
+		after, err := s.ListTableOccurrences(ctx)
+		if err != nil {
+			return nil, rollback(err)
+		}
+		for _, occ := range after {
+			if !createdTables[occ.BaseTableID] || !declaredFor[occ.BaseTableID] || claimed[occ.ID] {
+				continue
+			}
+			if err := s.DeleteTableOccurrence(ctx, occ.ID); err != nil {
+				return nil, rollback(fmt.Errorf("removing the default table occurrence %q, which this file does not declare: %w", occ.Name, err))
+			}
+		}
 	}
 
 	// 3. Relationships (an identical one is not duplicated)

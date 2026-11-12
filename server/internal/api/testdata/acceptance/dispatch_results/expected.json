@@ -1,0 +1,497 @@
+{
+  "fixture": "dispatch_results",
+  "provenance": "handwritten",
+  "provenance_note": "Derived by hand from the two design documents and record exports in this directory, against FileMaker's documented semantics and File4Base's documented identifier rule -- NOT recorded from a FileMaker run. The authentic-input gate of #112 stays open until a manifest with provenance \"filemaker\" replaces this one; see README.md.",
+  "source": {
+    "product": "FileMaker Pro",
+    "version": "19.6.3",
+    "locale": "English",
+    "encoding": "UTF-8"
+  },
+  "empty_marker": "<<empty>>",
+  "open_questions": [
+    "Whether an empty FMPXMLRESULT <DATA/> cell arrives as an empty string or as NULL is observable behaviour that only the source run settles; every such cell is written as <<empty>> here and both are accepted.",
+    "A migrated script arrives active, and the layout script trigger that would fire it arrives quarantined; the activation gate is therefore checked on the accounts and on the quarantine flag, not on the script body."
+  ],
+  "files": [
+    {
+      "name": "Dispatch",
+      "design": "dispatch_ddr.xml",
+      "solution_name": "Dispatch",
+      "data": {
+        "Surveys": "dispatch_surveys.xml",
+        "Answers": "dispatch_answers.xml"
+      },
+      "tables": [
+        {
+          "source": "Surveys",
+          "target": "surveys",
+          "columns": [
+            {
+              "source": "_Code",
+              "target": "code",
+              "type": "TEXT",
+              "nullable": false
+            },
+            {
+              "source": "Title",
+              "target": "title",
+              "type": "TEXT",
+              "nullable": true
+            },
+            {
+              "source": "Score",
+              "target": "score",
+              "type": "NUMBER",
+              "nullable": true
+            },
+            {
+              "source": "Mirror",
+              "target": "mirror",
+              "type": "CALCULATION",
+              "nullable": true,
+              "formula": "code"
+            },
+            {
+              "source": "SessionFilter",
+              "target": "sessionfilter",
+              "type": "TEXT",
+              "nullable": true
+            },
+            {
+              "source": "Tags",
+              "target": "tags",
+              "type": "TEXT",
+              "nullable": true
+            },
+            {
+              "source": "TotalScore",
+              "target": "totalscore",
+              "type": "NUMBER",
+              "nullable": true
+            }
+          ]
+        },
+        {
+          "source": "Answers",
+          "target": "answers",
+          "columns": [
+            {
+              "source": "_Code",
+              "target": "code",
+              "type": "TEXT",
+              "nullable": false
+            },
+            {
+              "source": "SurveyCode",
+              "target": "surveycode",
+              "type": "TEXT",
+              "nullable": true
+            },
+            {
+              "source": "Answer",
+              "target": "answer",
+              "type": "TEXT",
+              "nullable": true
+            },
+            {
+              "source": "Weight",
+              "target": "weight",
+              "type": "NUMBER",
+              "nullable": true
+            }
+          ]
+        }
+      ],
+      "occurrences": [
+        "Answers",
+        "AnswersSelf",
+        "Surveys",
+        "SurveysByTitle"
+      ],
+      "relationships": [
+        {
+          "name": "Answers_AnswersSelf",
+          "left": "Answers.surveycode",
+          "operator": "=",
+          "right": "AnswersSelf.surveycode",
+          "allow_creation": false,
+          "cascade_delete": false
+        },
+        {
+          "name": "Surveys_Answers",
+          "left": "Surveys.code",
+          "operator": "=",
+          "right": "Answers.surveycode",
+          "allow_creation": true,
+          "cascade_delete": true
+        },
+        {
+          "name": "SurveysByTitle_Answers",
+          "left": "SurveysByTitle.code",
+          "operator": "=",
+          "right": "Answers.surveycode",
+          "allow_creation": false,
+          "cascade_delete": false
+        }
+      ],
+      "value_lists": [
+        {
+          "name": "Answer Options",
+          "kind": "custom",
+          "values": [
+            "Yes",
+            "No",
+            "Unknown"
+          ]
+        }
+      ],
+      "layouts": [
+        {
+          "name": "Survey Form",
+          "table": "surveys"
+        }
+      ],
+      "scripts": [
+        {
+          "name": "Send Batch",
+          "context_table": "surveys",
+          "active": true,
+          "steps": [
+            {
+              "type": "Set Variable",
+              "enabled": true,
+              "params": {
+                "name": "$$Batch"
+              }
+            },
+            {
+              "type": "Go to Layout",
+              "enabled": true,
+              "params": {
+                "layout_name": "Survey Form"
+              }
+            },
+            {
+              "type": "Perform Find",
+              "enabled": true
+            },
+            {
+              "type": "Loop",
+              "enabled": true
+            },
+            {
+              "type": "Exit Loop If",
+              "enabled": true,
+              "params": {
+                "condition": "Score > 100"
+              }
+            },
+            {
+              "type": "Set Field",
+              "enabled": true,
+              "params": {
+                "field": "title",
+                "field_label": "Title",
+                "field_table": "surveys"
+              }
+            },
+            {
+              "type": "If",
+              "enabled": true,
+              "params": {
+                "condition": "Score < 0"
+              }
+            },
+            {
+              "type": "Halt Script",
+              "enabled": true
+            },
+            {
+              "type": "End If",
+              "enabled": true
+            },
+            {
+              "type": "End Loop",
+              "enabled": true
+            },
+            {
+              "type": "Perform Script",
+              "enabled": true,
+              "params": {
+                "file_reference": "Results",
+                "script_name": "Send Batch",
+                "script_parameter": "$$Batch"
+              }
+            },
+            {
+              "type": "Exit Script",
+              "enabled": true
+            },
+            {
+              "type": "Show Custom Dialog",
+              "enabled": false
+            }
+          ]
+        }
+      ],
+      "accounts": [
+        {
+          "name": "dispatcher",
+          "active": false
+        }
+      ],
+      "file_references": [
+        {
+          "name": "Results",
+          "mapped": false
+        }
+      ],
+      "records": {
+        "surveys": {
+          "key": "code",
+          "rows": [
+            {
+              "code": "SV-1",
+              "title": "Encuesta ñ – 日本",
+              "score": "10.25",
+              "mirror": "SV-1"
+            },
+            {
+              "code": "SV-2",
+              "title": "  padded  ",
+              "score": "0.1",
+              "mirror": "SV-2"
+            },
+            {
+              "code": "SV-3",
+              "title": "<<empty>>",
+              "score": "<<empty>>",
+              "mirror": "SV-3"
+            }
+          ]
+        },
+        "answers": {
+          "key": "code",
+          "rows": [
+            {
+              "code": "AN-1",
+              "surveycode": "SV-1",
+              "answer": "Yes",
+              "weight": "1.5"
+            },
+            {
+              "code": "AN-2",
+              "surveycode": "SV-1",
+              "answer": "No",
+              "weight": "2.25"
+            },
+            {
+              "code": "AN-3",
+              "surveycode": "SV-2",
+              "answer": "Unknown",
+              "weight": "0"
+            },
+            {
+              "code": "AN-4",
+              "surveycode": "SV-2",
+              "answer": "Yes",
+              "weight": "3.75"
+            }
+          ]
+        }
+      },
+      "triggers_quarantined": true
+    },
+    {
+      "name": "Results",
+      "design": "results_ddr.xml",
+      "solution_name": "Results",
+      "data": {
+        "Surveys": "results_surveys.xml"
+      },
+      "tables": [
+        {
+          "source": "Surveys",
+          "target": "surveys",
+          "columns": [
+            {
+              "source": "_Code",
+              "target": "code",
+              "type": "TEXT",
+              "nullable": false
+            },
+            {
+              "source": "Answer",
+              "target": "answer",
+              "type": "TEXT",
+              "nullable": true
+            },
+            {
+              "source": "Approved",
+              "target": "approved",
+              "type": "NUMBER",
+              "nullable": true
+            },
+            {
+              "source": "ReturnedAt",
+              "target": "returnedat",
+              "type": "TIMESTAMP",
+              "nullable": true
+            }
+          ]
+        }
+      ],
+      "occurrences": [
+        "Surveys"
+      ],
+      "relationships": [],
+      "value_lists": [],
+      "layouts": [
+        {
+          "name": "Result Form",
+          "table": "surveys"
+        }
+      ],
+      "scripts": [
+        {
+          "name": "Send Batch",
+          "context_table": "surveys",
+          "active": true,
+          "steps": [
+            {
+              "type": "Set Variable",
+              "enabled": true,
+              "params": {
+                "name": "$$Batch"
+              }
+            },
+            {
+              "type": "Set Field",
+              "enabled": true,
+              "params": {
+                "field": "approved",
+                "field_label": "Approved",
+                "field_table": "surveys"
+              }
+            },
+            {
+              "type": "Exit Script",
+              "enabled": true
+            }
+          ]
+        }
+      ],
+      "accounts": [
+        {
+          "name": "approver",
+          "active": false
+        }
+      ],
+      "file_references": [],
+      "records": {
+        "surveys": {
+          "key": "code",
+          "rows": [
+            {
+              "code": "SV-1",
+              "answer": "Yes",
+              "approved": "0"
+            }
+          ]
+        }
+      },
+      "triggers_quarantined": true
+    }
+  ],
+  "transfer": {
+    "name": "Dispatch to Results",
+    "note": "The source workflow returns results by stable business key. The definition is written here because the migration does not derive one from the source Import Records step; that gap is recorded in gates.cross_file_behavior.",
+    "source": {
+      "file": "Dispatch",
+      "table": "surveys"
+    },
+    "destination": {
+      "file": "Results",
+      "table": "surveys"
+    },
+    "match_fields": [
+      "code"
+    ],
+    "mappings": [
+      {
+        "source": "code",
+        "destination": "code"
+      },
+      {
+        "source": "title",
+        "destination": "answer"
+      }
+    ],
+    "mode": "update_matching",
+    "on_unmatched": "add",
+    "on_rejected": "abort",
+    "expected_first_run": {
+      "added": 2,
+      "updated": 1,
+      "rejected": 0,
+      "committed": true
+    },
+    "expected_replay": {
+      "added": 0,
+      "updated": 3,
+      "rejected": 0,
+      "committed": true,
+      "note": "no duplicate parents, no orphaned children, and the retained destination fields unchanged"
+    },
+    "expected_destination_after": {
+      "key": "code",
+      "rows": [
+        {
+          "code": "SV-1",
+          "answer": "Encuesta ñ – 日本",
+          "approved": "0"
+        },
+        {
+          "code": "SV-2",
+          "answer": "  padded  ",
+          "approved": "<<empty>>"
+        },
+        {
+          "code": "SV-3",
+          "answer": "<<empty>>",
+          "approved": "<<empty>>"
+        }
+      ]
+    },
+    "rejection_probe": {
+      "name": "Dispatch to Results (rejection probe)",
+      "mappings": [
+        {
+          "source": "code",
+          "destination": "code"
+        },
+        {
+          "source": "title",
+          "destination": "approved"
+        }
+      ],
+      "on_rejected": "abort",
+      "expected": {
+        "committed": false,
+        "min_rejected": 1,
+        "note": "text sent into a NUMBER destination field: the run is refused, every rejected row is named, and the destination is left exactly as the replay left it"
+      }
+    }
+  },
+  "gates": {
+    "authentic_input": "blocked: needs a manifest and exports generated by a real FileMaker installation",
+    "definition_identity": "covered by this harness",
+    "data_fidelity": "covered by this harness, less container bytes (no container field in this fixture yet)",
+    "field_behavior": "covered by this harness for calculations, validation and global/repeating reporting",
+    "workflow_behavior": "blocked: File4Base executes script steps in the Flutter client, so a server-side harness cannot run the migrated workflow",
+    "cross_file_behavior": "partly covered: the external reference and the transfer replay are checked; deriving the transfer definition from the source Import Records step is not implemented",
+    "access_and_activation": "covered by this harness: accounts, scripts and triggers must arrive inactive",
+    "reliable_result": "covered by this harness: preflight writes nothing and a failed apply leaves nothing behind"
+  }
+}

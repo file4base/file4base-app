@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Results.fmp12 design document for the #112 acceptance fixture.
+
+  Provenance: handwritten against the <FMPReport> grammar of a FileMaker Pro 19
+  Database Design Report; see README.md.
+
+  It deliberately repeats two names Dispatch also uses (the base table
+  "Surveys" and the script "Send Batch") and declares its own $$Batch
+  variable, so that a same-named local object can be shown never to stand in
+  for the external one (#96, #107).
+-->
+<FMPReport type="Report" version="19.0">
+  <File name="Results.fmp12">
+    <BaseTableCatalog>
+      <BaseTable id="1" name="Surveys">
+        <FieldCatalog>
+          <Field id="1" name="_Code" dataType="Text" fieldType="Normal">
+            <Validation message="False" valuelist="False" validateCalculation="False">
+              <NotEmpty value="True"/>
+              <Unique value="True"/>
+            </Validation>
+          </Field>
+          <Field id="2" name="Answer" dataType="Text" fieldType="Normal"/>
+          <Field id="3" name="Approved" dataType="Number" fieldType="Normal"/>
+          <Field id="4" name="ReturnedAt" dataType="Timestamp" fieldType="Normal"/>
+        </FieldCatalog>
+      </BaseTable>
+    </BaseTableCatalog>
+    <RelationshipGraph>
+      <TableList>
+        <Table id="1" name="Surveys" baseTable="Surveys" baseTableId="1"/>
+      </TableList>
+      <RelationshipList/>
+    </RelationshipGraph>
+    <LayoutCatalog>
+      <Layout name="Result Form" table="Surveys">
+        <Part type="body" height="240"/>
+        <Field name="_Code"/>
+        <Field name="Answer"/>
+        <Field name="Approved"/>
+      </Layout>
+    </LayoutCatalog>
+    <ScriptCatalog>
+      <Script name="Send Batch" contextTable="Surveys">
+        <StepList>
+          <Step id="141" name="Set Variable" enable="True">
+            <Field name="$$Batch"/>
+            <Calculation><Text>"results-local"</Text></Calculation>
+          </Step>
+          <Step id="76" name="Set Field" enable="True">
+            <Field name="Approved" table="Surveys"/>
+            <Calculation><Text>1</Text></Calculation>
+          </Step>
+          <Step id="103" name="Exit Script" enable="True">
+            <Calculation><Text>"approved"</Text></Calculation>
+          </Step>
+        </StepList>
+      </Script>
+    </ScriptCatalog>
+    <AccountCatalog>
+      <Account name="approver" privilegeSet="[Read-Only Access]"/>
+    </AccountCatalog>
+  </File>
+</FMPReport>

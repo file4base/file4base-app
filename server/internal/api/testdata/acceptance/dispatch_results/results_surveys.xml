@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Results :: Surveys records. The second file starts with one record only, so
+  the transfer replay has something to match on and something to add.
+-->
+<FMPXMLRESULT xmlns="http://www.filemaker.com/fmpxmlresult">
+  <PRODUCT BUILD="01-01-2026" NAME="FileMaker" VERSION="Pro 19.6.3"/>
+  <DATABASE DATEFORMAT="D/m/yyyy" LAYOUT="Result Form" NAME="Results.fmp12" RECORDS="1" TIMEFORMAT="k:mm:ss"/>
+  <METADATA>
+    <FIELD EMPTYOK="NO" MAXREPEAT="1" NAME="_Code" TYPE="TEXT"/>
+    <FIELD EMPTYOK="YES" MAXREPEAT="1" NAME="Answer" TYPE="TEXT"/>
+    <FIELD EMPTYOK="YES" MAXREPEAT="1" NAME="Approved" TYPE="NUMBER"/>
+  </METADATA>
+  <RESULTSET FOUND="1">
+    <ROW MODID="1" RECORDID="1">
+      <COL><DATA>SV-1</DATA></COL>
+      <COL><DATA>Yes</DATA></COL>
+      <COL><DATA>0</DATA></COL>
+    </ROW>
+  </RESULTSET>
+</FMPXMLRESULT>
