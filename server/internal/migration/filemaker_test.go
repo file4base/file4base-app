@@ -1074,3 +1074,54 @@ func TestAnalyzeAndConvert_CalculationReferencesFollowRenamedFields(t *testing.T
 		}
 	})
 }
+
+// A Set Variable step names a script variable, not a field: `$$Batch` is a
+// global and the sigil is the whole of that distinction. Sanitizing it as a
+// field name made the step write a local variable called `batch` while the
+// rest of the script went on reading an empty `$$Batch` (#112).
+func TestAnalyzeAndConvert_ScriptVariableOperandKeepsItsSigil(t *testing.T) {
+	doc := `<FMPReport><File name="Dispatch.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Surveys"><FieldCatalog>` +
+		`<Field name="Title" dataType="Text" fieldType="Normal"/>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog>` +
+		`<ScriptCatalog><Script name="Send Batch" contextTable="Surveys"><StepList>` +
+		`<Step name="Set Variable" enable="True"><Field name="$$Batch"/>` +
+		`<Calculation><Text>"B-1"</Text></Calculation></Step>` +
+		`<Step name="Set Variable" enable="True"><Field name="$row"/>` +
+		`<Calculation><Text>1</Text></Calculation></Step>` +
+		`<Step name="Set Field" enable="True"><Field name="Title" table="Surveys"/>` +
+		`<Calculation><Text>$$Batch</Text></Calculation></Step>` +
+		`</StepList></Script></ScriptCatalog></File></FMPReport>`
+
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if len(res.Bundle.Scripts) != 1 {
+		t.Fatalf("expected the one script the catalog declares, got %d", len(res.Bundle.Scripts))
+	}
+	steps := res.Bundle.Scripts[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("expected three steps, got %d", len(steps))
+	}
+
+	// The runner reads a variable's name from "name", and the sigil says
+	// whether it is global or local, so both have to survive verbatim.
+	for i, want := range []string{"$$Batch", "$row"} {
+		if got, _ := steps[i].Params["name"].(string); got != want {
+			t.Fatalf("step %d: the variable operand must stay %q, got %q (params: %+v)",
+				i+1, want, got, steps[i].Params)
+		}
+		if _, isField := steps[i].Params["field"]; isField {
+			t.Fatalf("step %d: a variable operand must not be migrated as a field: %+v", i+1, steps[i].Params)
+		}
+	}
+
+	// A real field operand is still pointed at the imported column.
+	if got, _ := steps[2].Params["field"].(string); got != "title" {
+		t.Fatalf("the Set Field operand must name the imported column, got %q", got)
+	}
+	if got, _ := steps[2].Params["field_label"].(string); got != "Title" {
+		t.Fatalf("the Set Field operand must keep the source spelling as its label, got %q", got)
+	}
+}
