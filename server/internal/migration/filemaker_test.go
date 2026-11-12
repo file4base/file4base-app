@@ -2,6 +2,7 @@ package migration
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -953,4 +954,123 @@ func TestAnalyzeAndConvert_ReadsLocalizedXMLScriptSteps(t *testing.T) {
 	if unknown.Report.Counts.UnsupportedCount == 0 {
 		t.Fatal("an unknown step must be reported as unsupported")
 	}
+}
+
+// #111 — a calculation has to read the fields as the import named them.
+//
+// The source below is the one from the issue: a text field `_code`, whose
+// leading underscore sanitizeIdentifier strips, and a calculation that reads
+// it. Before the fix the stored formula still said `_code` while the table
+// held `code`, so preflight reported two preserved fields and the apply then
+// failed on a formula naming a column the table does not have.
+func TestAnalyzeAndConvert_CalculationReferencesFollowRenamedFields(t *testing.T) {
+	design := func(fields string) string {
+		return `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+			`<BaseTable name="Visits" id="1"><FieldCatalog>` + fields +
+			`</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
+	}
+	formulaOf := func(t *testing.T, res *ConvertedSolution, table, column string) string {
+		t.Helper()
+		for _, tb := range res.Bundle.Tables {
+			if tb.Name != table {
+				continue
+			}
+			for _, col := range tb.Columns {
+				if col.Name != column {
+					continue
+				}
+				if col.CalculationFormula == nil {
+					t.Fatalf("column %q holds no calculation", column)
+				}
+				var payload map[string]interface{}
+				if err := json.Unmarshal([]byte(*col.CalculationFormula), &payload); err != nil {
+					t.Fatalf("calculation payload of %q is not JSON: %v", column, err)
+				}
+				formula, _ := payload["formula"].(string)
+				return formula
+			}
+		}
+		t.Fatalf("no column %q on table %q", column, table)
+		return ""
+	}
+
+	t.Run("a stripped leading underscore is followed into the formula", func(t *testing.T) {
+		res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design(
+			`<Field name="_code" dataType="Text"/>` +
+				`<Field name="Mirror" fieldType="Calculation" dataType="Text"><Calculation>_code</Calculation></Field>`)})
+		if err != nil {
+			t.Fatalf("conversion failed: %v", err)
+		}
+		if got := formulaOf(t, res, "visits", "mirror"); got != "code" {
+			t.Fatalf("the formula must read the imported column name; got %q, want %q", got, "code")
+		}
+	})
+
+	t.Run("a collision keeps each reference on its own field", func(t *testing.T) {
+		// Both source names sanitize to "code": the second is imported as
+		// "code_2" (#89). The two differ only in case, so resolving the
+		// references case-insensitively alone would make them ambiguous and
+		// point both calculations at one column.
+		res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design(
+			`<Field name="Code" dataType="Text"/>` +
+				`<Field name="code" dataType="Text"/>` +
+				`<Field name="FirstMirror" fieldType="Calculation" dataType="Text"><Calculation>Code</Calculation></Field>` +
+				`<Field name="SecondMirror" fieldType="Calculation" dataType="Text"><Calculation>code</Calculation></Field>`)})
+		if err != nil {
+			t.Fatalf("conversion failed: %v", err)
+		}
+		if got := formulaOf(t, res, "visits", "firstmirror"); got != "code" {
+			t.Fatalf("the first calculation must read %q; got %q", "code", got)
+		}
+		if got := formulaOf(t, res, "visits", "secondmirror"); got != "code_2" {
+			t.Fatalf("the second calculation must read %q; got %q", "code_2", got)
+		}
+	})
+
+	t.Run("quoted text and function names are left alone", func(t *testing.T) {
+		res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design(
+			`<Field name="_code" dataType="Text"/>` +
+				`<Field name="Mirror" fieldType="Calculation" dataType="Text">` +
+				`<Calculation>IF(_code = "_code"; UPPER(_code); "_code")</Calculation></Field>`)})
+		if err != nil {
+			t.Fatalf("conversion failed: %v", err)
+		}
+		got := formulaOf(t, res, "visits", "mirror")
+		want := `IF(code = "_code"; UPPER(code); "_code")`
+		if got != want {
+			t.Fatalf("only the field references may be rewritten;\n got %q\nwant %q", got, want)
+		}
+	})
+
+	t.Run("a reference the table cannot place is quarantined, not applied", func(t *testing.T) {
+		res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design(
+			`<Field name="code" dataType="Text"/>` +
+				`<Field name="Mirror" fieldType="Calculation" dataType="Number"><Calculation>missing + 1</Calculation></Field>`)})
+		if err != nil {
+			t.Fatalf("conversion failed: %v", err)
+		}
+		for _, tb := range res.Bundle.Tables {
+			for _, col := range tb.Columns {
+				if col.Name != "mirror" {
+					continue
+				}
+				if col.FieldType != "NUMBER" || col.CalculationFormula != nil {
+					t.Fatalf("an unresolvable formula must be stored as a plain column; got type %q formula %v",
+						col.FieldType, col.CalculationFormula)
+				}
+			}
+		}
+		if res.Report.Counts.UnsupportedCount == 0 {
+			t.Fatal("a formula naming a field the table does not have must be reported, not passed off as preserved")
+		}
+		var named bool
+		for _, item := range append(res.Report.Unsupported, res.Report.ManualActionRequired...) {
+			if strings.Contains(item.Detail, `"missing"`) {
+				named = true
+			}
+		}
+		if !named {
+			t.Fatal("the report must name the reference it could not place")
+		}
+	})
 }

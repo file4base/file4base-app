@@ -48,6 +48,16 @@ Before any database table, column, layout, script, account, or row is written, `
 | `rejected` | Invalid or unsafe items excluded from import. | `[Guest]` anonymous accounts; relationships referencing non-existent tables or columns; malformed XML datasets. |
 | `manual_action_required` | Explicit post-migration checklist for the solution owner. | Reviewing quarantined script triggers; setting passwords for migrated accounts; rewriting unsupported calculation formulas or script steps; normalizing repeating fields. |
 
+### Field names that had to change, and the formulas that read them (`#111`)
+
+An imported field does not always keep its source name: `sanitizeIdentifier` strips what a SQL identifier cannot carry, so `_code` becomes `code`, and two source names that normalize alike are told apart as `code` and `code_2` (`#89`). A calculation written against the source names would then read a column the table does not have.
+
+The converter therefore builds, per table, the complete map from every name a field can be referred to — what the source called it and what it was imported as — and resolves each calculation against that map once all of the table's fields are known:
+
+- A formula whose references all resolve is **rewritten** to the imported names and reported as `translated`, naming the formula before and after. Quoted text and function names are never touched, so `IF(_code = "_code"; UPPER(_code); "_code")` becomes `IF(code = "_code"; UPPER(code); "_code")`.
+- A name is matched by its exact spelling before it is matched case-insensitively, so a `Code`/`code` pair — two fields, imported as `code` and `code_2` — stays unambiguous.
+- Parsing is not proof. The formula parser accepts any identifier, so a reference to a field that does not exist parses perfectly. A formula naming something the map cannot place is **quarantined**: the column keeps the type the calculation would have produced and stores a plain value, `unsupported` names the reference that could not be placed, and `manual_action_required` says to repoint it. The alternative — reporting the field as preserved and failing the apply on it — is what `#111` reported.
+
 ---
 
 ## 4. Security & Quarantine Guarantees

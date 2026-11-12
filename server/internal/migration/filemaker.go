@@ -345,6 +345,12 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 		fieldNodes := findDirectOrCatalogChildren(bt, "FieldCatalog", "fields", "Field", "field")
 		seenCols := map[string]bool{"id": true}
+		// Every name this table's fields can be referred to by — what the
+		// source called them and what they ended up as — against which a
+		// calculation's references are resolved once the whole table is known
+		// (#111). File4Base's own primary key is referable as itself.
+		fieldRenames := newFieldNameMap()
+		fieldRenames.claim("id", "id", false)
 		for _, fn := range fieldNodes {
 			fRawName := firstAttr(fn, "name", "display_name", "Name")
 			if fRawName == "" {
@@ -386,6 +392,13 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 				addReportItem(report, it)
 			}
 			bTable.Columns = append(bTable.Columns, col)
+			// What the source called the field is the authoritative name: a
+			// formula written against this design used it. The imported name
+			// is added only where no source field already claims it, so a
+			// source field literally named like another field's imported
+			// column still wins for its own name.
+			fieldRenames.claim(fRawName, colName, true)
+			fieldRenames.claim(colName, colName, false)
 			colIDByTableCol[sqlName+"."+colName] = col.ID
 			colIDByTableCol[strings.ToLower(rawName)+"."+strings.ToLower(fRawName)] = col.ID
 			colTypeByTableCol[sqlName+"."+colName] = col.FieldType
@@ -404,6 +417,13 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 				}
 			}
 			report.Counts.Fields++
+		}
+
+		// Only now is the table's whole field map known, so only now can a
+		// calculation's references be resolved to the names the table ended
+		// up with (#111).
+		for _, it := range remapTableCalculations(sqlName, &bTable, fieldRenames, colTypeByTableCol) {
+			addReportItem(report, it)
 		}
 
 		bundle.Tables = append(bundle.Tables, bTable)
