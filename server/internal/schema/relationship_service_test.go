@@ -37,7 +37,7 @@ func TestRelationshipService_CRUD(t *testing.T) {
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
 	// 1. Create two tables with columns
-	ts := time.Now().UnixNano() % 1000000
+	ts := uniqueTestStamp()
 	t1Name := fmt.Sprintf("rel_t1_%d", ts)
 	t2Name := fmt.Sprintf("rel_t2_%d", ts)
 
@@ -182,7 +182,7 @@ func TestNewTablesDoNotShareAGraphPosition(t *testing.T) {
 	svc := schema.NewService(driver)
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
-	ts := time.Now().UnixNano() % 1000000
+	ts := uniqueTestStamp()
 	first, err := svc.CreateTable(ctx, "Graph A", fmt.Sprintf("graph_a_%d", ts))
 	require.NoError(t, err)
 	defer func() { _ = svc.DeleteTable(ctx, first.ID) }()

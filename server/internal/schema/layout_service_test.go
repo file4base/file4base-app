@@ -38,7 +38,7 @@ func TestLayoutService_CRUD(t *testing.T) {
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
 	// Create a table to ensure we have an occurrence
-	tblName := fmt.Sprintf("layouts_test_tbl_%d", time.Now().UnixNano()%1000000)
+	tblName := fmt.Sprintf("layouts_test_tbl_%d", uniqueTestStamp())
 	tbl, err := svc.CreateTable(ctx, "Layouts Test Table", tblName)
 	require.NoError(t, err)
 

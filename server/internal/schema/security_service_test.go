@@ -38,7 +38,7 @@ func TestSecurityService(t *testing.T) {
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
 	// EnsureSystemTables never provisions accounts on its own
-	ownerName := fmt.Sprintf("sec_owner_%d", time.Now().UnixNano()%1000000)
+	ownerName := fmt.Sprintf("sec_owner_%d", uniqueTestStamp())
 	_, errNoDefault := svc.Authenticate(ctx, "admin", "admin")
 	if errNoDefault == nil {
 		t.Log("an 'admin/admin' account already exists in this development database (created by an older version)")

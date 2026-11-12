@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -34,7 +33,7 @@ func TestSummarize(t *testing.T) {
 	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
 	dataSvc := data.NewService(driver)
 
-	name := fmt.Sprintf("summary_customers_%d", time.Now().UnixNano()%1000000)
+	name := fmt.Sprintf("summary_customers_%d", uniqueTestStamp())
 	tbl, err := schemaSvc.CreateTable(ctx, "Summary Customers", name)
 	require.NoError(t, err)
 	defer func() { _ = schemaSvc.DeleteTable(context.Background(), tbl.ID) }()

@@ -86,7 +86,7 @@ func TestSchemaHandler_OccurrencesAndRelationships(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ts := time.Now().UnixNano() % 1000000
+	ts := uniqueTestStamp()
 	t1Name := fmt.Sprintf("api_occ_t1_%d", ts)
 	t2Name := fmt.Sprintf("api_occ_t2_%d", ts)
 

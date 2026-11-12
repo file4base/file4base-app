@@ -104,7 +104,7 @@ type fixture struct {
 
 func newFixture(t *testing.T, ctx context.Context, mgr *dbal.MultiDatabaseManager) *fixture {
 	t.Helper()
-	stamp := time.Now().UnixNano() % 1000000
+	stamp := uniqueTestStamp()
 
 	dispatch := newSolution(t, ctx, mgr, fmt.Sprintf("f4b_dispatch_%d", stamp))
 	results := newSolution(t, ctx, mgr, fmt.Sprintf("f4b_results_%d", stamp))

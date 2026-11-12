@@ -39,7 +39,7 @@ func TestExecuteFind_MultipleRequests(t *testing.T) {
 	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
 	dataSvc := data.NewService(driver)
 
-	name := fmt.Sprintf("find_requests_%d", time.Now().UnixNano()%1000000)
+	name := fmt.Sprintf("find_requests_%d", uniqueTestStamp())
 	tbl, err := schemaSvc.CreateTable(ctx, "Find Requests", name)
 	require.NoError(t, err)
 	defer func() { _ = schemaSvc.DeleteTable(ctx, tbl.ID) }()

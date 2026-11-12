@@ -46,7 +46,7 @@ func TestValueLists(t *testing.T) {
 	svc := schema.NewService(driver)
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
-	stamp := time.Now().UnixNano() % 1000000
+	stamp := uniqueTestStamp()
 	name := fmt.Sprintf("value_list_customers_%d", stamp)
 	tbl, err := svc.CreateTable(ctx, "Value List Customers", name)
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestValueListsRoundTripThroughASolutionFile(t *testing.T) {
 	svc := schema.NewService(driver)
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
-	stamp := time.Now().UnixNano() % 1000000
+	stamp := uniqueTestStamp()
 	name := fmt.Sprintf("vl_roundtrip_%d", stamp)
 	tbl, err := svc.CreateTable(ctx, "VL Roundtrip", name)
 	require.NoError(t, err)

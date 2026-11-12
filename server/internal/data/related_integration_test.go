@@ -33,7 +33,7 @@ func newRelatedFixture(t *testing.T, ctx context.Context, driver dbal.DatabaseDr
 	schemaSvc := schema.NewService(driver)
 	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
 
-	stamp := time.Now().UnixNano() % 1000000
+	stamp := uniqueTestStamp()
 	f := &relatedFixture{
 		schemaSvc: schemaSvc,
 		dataSvc:   data.NewService(driver),

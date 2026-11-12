@@ -40,7 +40,7 @@ func TestSchemaService_LivePostgres(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. Create dynamic table
-	tableName := fmt.Sprintf("invoices_test_%d", time.Now().UnixNano()%1000000)
+	tableName := fmt.Sprintf("invoices_test_%d", uniqueTestStamp())
 	tbl, err := svc.CreateTable(ctx, "Customer Invoices", tableName)
 	require.NoError(t, err)
 	assert.NotEmpty(t, tbl.ID)
