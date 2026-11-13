@@ -51,10 +51,20 @@ client/windows/flutter/ephemeral/
 client/linux/flutter/ephemeral/
 
 # Database / Local storage mounts
-postgres_data/
-backups/
-data/
-mariadb_data/
+#
+# Anchored to the repository root. Written as bare `data/` these rules matched
+# a directory of that name at any depth, so `server/internal/data/` -- a Go
+# package -- was ignored, and a new source file added to it was silently left
+# out of every commit (the files already tracked there kept working, which is
+# what hid it). The runtime directories that are not at the root are named
+# explicitly instead.
+/postgres_data/
+/backups/
+/data/
+/mariadb_data/
+# TLS material the server generates for itself at runtime, including private
+# keys: ignored deliberately, and never to be committed.
+server/internal/api/data/
 *.db
 *.sqlite
 *.sqlite3

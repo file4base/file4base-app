@@ -180,7 +180,7 @@ func TestRunSchedule_RefusesADefinitionRepointedAtAnotherSolution(t *testing.T) 
 	f := newScheduleFixture(t, ctx, mgr)
 	sched := f.schedule(t, ctx, "0 2 * * *")
 
-	elsewhere := newSolution(t, ctx, mgr, fmt.Sprintf("f4b_elsewhere_%d", time.Now().UnixNano()%1000000))
+	elsewhere := newSolution(t, ctx, mgr, fmt.Sprintf("f4b_elsewhere_%d", uniqueTestStamp()))
 	elsewhere.createTable(t, ctx, "project_surveys",
 		column{"code", "Code", dbal.FieldTypeText},
 		column{"label", "Label", dbal.FieldTypeText},

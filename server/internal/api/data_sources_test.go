@@ -65,7 +65,7 @@ func TestAPI_ImportFromAnExternalSource(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	external := fmt.Sprintf("ext_members_%d", time.Now().UnixNano()%1000000)
+	external := fmt.Sprintf("ext_members_%d", uniqueTestStamp())
 	_, err = driver.DB().ExecContext(ctx, fmt.Sprintf(
 		`CREATE TABLE %s (full_name VARCHAR(64), city VARCHAR(64))`, external))
 	require.NoError(t, err)

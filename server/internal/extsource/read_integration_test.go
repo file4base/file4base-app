@@ -63,7 +63,7 @@ func TestReadFromAnotherDatabase(t *testing.T) {
 	}
 
 	// A table that is not File4Base's own: this is somebody else's database.
-	table := fmt.Sprintf("ext_people_%d", time.Now().UnixNano()%1000000)
+	table := fmt.Sprintf("ext_people_%d", uniqueTestStamp())
 	_, err = driver.DB().ExecContext(ctx, fmt.Sprintf(
 		`CREATE TABLE %s (person_id INT, full_name VARCHAR(64), fee NUMERIC(10,2))`, table))
 	require.NoError(t, err)

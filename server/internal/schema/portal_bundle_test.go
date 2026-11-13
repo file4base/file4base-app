@@ -35,7 +35,7 @@ func TestPortalsAndRelatedFieldsRoundTripThroughASolutionFile(t *testing.T) {
 	svc := schema.NewService(driver)
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
-	stamp := time.Now().UnixNano() % 1000000
+	stamp := uniqueTestStamp()
 	companies, err := svc.CreateTable(ctx, "Portal Companies", fmt.Sprintf("portal_companies_%d", stamp))
 	require.NoError(t, err)
 	defer func() { _ = svc.DeleteTable(context.Background(), companies.ID) }()

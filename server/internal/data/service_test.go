@@ -47,7 +47,7 @@ func TestDataService_CRUDAndFindMode(t *testing.T) {
 	require.ErrorIs(t, err, data.ErrTableNotFound)
 
 	// Create contacts table
-	tblName := fmt.Sprintf("contacts_test_%d", time.Now().UnixNano()%1000000)
+	tblName := fmt.Sprintf("contacts_test_%d", uniqueTestStamp())
 	tbl, err := schemaSvc.CreateTable(ctx, "Contacts Test", tblName)
 	require.NoError(t, err)
 

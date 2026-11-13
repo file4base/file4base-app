@@ -44,7 +44,7 @@ func TestCalculationFields(t *testing.T) {
 	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
 	dataSvc := data.NewService(driver)
 
-	name := fmt.Sprintf("calc_customers_%d", time.Now().UnixNano()%1000000)
+	name := fmt.Sprintf("calc_customers_%d", uniqueTestStamp())
 	tbl, err := schemaSvc.CreateTable(ctx, "Calc Customers", name)
 	require.NoError(t, err)
 	defer func() { _ = schemaSvc.DeleteTable(ctx, tbl.ID) }()

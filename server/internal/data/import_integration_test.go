@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dataio"
@@ -25,7 +24,7 @@ func newImportFixture(t *testing.T, ctx context.Context, driver dbal.DatabaseDri
 	schemaSvc := schema.NewService(driver)
 	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
 
-	name := fmt.Sprintf("import_customers_%d", time.Now().UnixNano()%1000000)
+	name := fmt.Sprintf("import_customers_%d", uniqueTestStamp())
 	tbl, err := schemaSvc.CreateTable(ctx, "Import Customers", name)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = schemaSvc.DeleteTable(context.Background(), tbl.ID) })

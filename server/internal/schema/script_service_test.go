@@ -52,7 +52,7 @@ func TestScriptService_UpdateRollsBackOnFailingStep(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	name := fmt.Sprintf("rollback_script_%d", time.Now().UnixNano()%1000000)
+	name := fmt.Sprintf("rollback_script_%d", uniqueTestStamp())
 	original := []schema.ScriptStepMetadata{
 		{SequenceIdx: 1, StepType: "go_to_layout", Params: json.RawMessage(`{"layout_name":"A"}`), IsEnabled: true},
 		{SequenceIdx: 2, StepType: "set_variable", Params: json.RawMessage(`{"variable":"$x"}`), IsEnabled: true},
@@ -96,7 +96,7 @@ func TestScriptService_CreateRollsBackOnFailingStep(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	name := fmt.Sprintf("create_rollback_%d", time.Now().UnixNano()%1000000)
+	name := fmt.Sprintf("create_rollback_%d", uniqueTestStamp())
 	steps := []schema.ScriptStepMetadata{
 		{SequenceIdx: 1, StepType: "valid_step", Params: json.RawMessage(`{}`), IsEnabled: true},
 		{SequenceIdx: 2, StepType: strings.Repeat("y", 100), Params: json.RawMessage(`{}`), IsEnabled: true},
@@ -136,7 +136,7 @@ func TestScriptService_CRUD(t *testing.T) {
 	require.NoError(t, svc.EnsureSystemTables(ctx))
 
 	// 1. Create Script with Steps
-	scriptName := fmt.Sprintf("test_script_%d", time.Now().UnixNano()%1000000)
+	scriptName := fmt.Sprintf("test_script_%d", uniqueTestStamp())
 	steps := []schema.ScriptStepMetadata{
 		{
 			SequenceIdx: 1,

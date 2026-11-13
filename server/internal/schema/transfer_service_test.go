@@ -55,7 +55,7 @@ func transferTestService(t *testing.T) (*schema.Service, context.Context) {
 // way: the catalog makes the name unique across the whole solution.
 func uniqueTransferName(t *testing.T) string {
 	t.Helper()
-	return fmt.Sprintf("%s_%d", t.Name(), time.Now().UnixNano()%1000000)
+	return fmt.Sprintf("%s_%d", t.Name(), uniqueTestStamp())
 }
 
 func TestCreateTransfer_StoresAndReadsBackTheWholeDefinition(t *testing.T) {
