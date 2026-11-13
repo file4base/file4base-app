@@ -12,7 +12,7 @@ One path, stated exactly:
 
 | Step | What is required |
 |---|---|
-| 1. Export the design | In FileMaker Pro, **Tools → Database Design Report**, as **XML** (`<FMPReport>`) or **HTML**. A `<FMPSaveAsXML>` design document is also read. |
+| 1. Export the design | In FileMaker Pro, **Tools → Database Design Report**, as **XML** (`<FMPReport>`) or **HTML**. A *Save a Copy as XML* document is also read: `<FMSaveAsXML>` from FileMaker Pro 20 / Claris 26, **exported with *Include details for analysis tools***, or the older `<FMPSaveAsXML>`. |
 | 2. Export the records | One `FMPXMLRESULT` export per table, or the `.fmp12` itself supplied as `fmp12_base64` for record extraction. |
 | 3. Convert, read-only | `POST /api/v1/solutions/migrate/preflight` returns the `ConversionReport` and writes nothing. |
 | 4. Apply | `POST /api/v1/solutions/migrate/apply`, into a fresh `target_database` or merged into the session's database. Either way a failure leaves nothing behind (`#97`). |
@@ -20,7 +20,9 @@ One path, stated exactly:
 
 Versions and languages this path is written against:
 
-- **Source**: FileMaker Pro **12 to 19**. Claris 26's *Save a Copy as XML* writes `<FMSaveAsXML>`, a different grammar, which is **refused by name** rather than half-read (`#87`).
+- **Source**: FileMaker Pro **12 to 19** for a Database Design Report, and **FileMaker Pro 20 / Claris 26** for a *Save a Copy as XML* export (`<FMSaveAsXML>`), which is read by relocating its field catalogs and step lists onto the objects they name (`#87`).
+
+  > **The `<FMSaveAsXML>` path is provisional, and the reason is not shyness.** Claris publishes no grammar for it; its own help calls the XML a preview that "may change significantly in future versions" and is "not intended for use in production systems". The reader is written against the structure an authentic export was reported to have, and no authentic export is committed as a fixture yet — the same gap `#112` names for the acceptance fixture, and it closes the same way. Two things keep a wrong guess from passing as a migration: a field catalog whose table cannot be resolved is reported rather than placed, and a document whose tables arrive with no fields at all is refused outright instead of importing empty tables. From FileMaker Pro 2026 the root carries `Has_DDR_INFO`, `True` only when the file was exported with *Include details for analysis tools*; without it the document carries no schema detail to read, and the report says so by name.
 - **Report languages**: **English** and **French** (`migration.SupportedDDRLocales`). The readers key off the anchors, table shapes and XML element names that every language shares, and translate only names that can mean one operation; anything else is quarantined with its own name (`#100`, `#103`).
 - **Encodings**: UTF-8 and UTF-16 with or without a byte order mark, as FileMaker on Windows writes them. UTF-32 and undecodable bytes are refused with what to do about it (`#99`).
 - **Target**: this revision of File4Base, server and client from one release.

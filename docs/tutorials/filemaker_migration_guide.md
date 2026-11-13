@@ -13,7 +13,7 @@ File4Base provides an **Assisted FileMaker Migration Engine** (`server/internal/
 ```mermaid
 flowchart LR
     subgraph Source["1. FileMaker Source Artifacts"]
-        DDR["Design Report\n• XML DDR (<FMPReport>)\n• Save as XML (<FMPSaveAsXML>)\n• HTML DDR (recipes.html)"]
+        DDR["Design Report\n• XML DDR (<FMPReport>)\n• Save as XML (<FMSaveAsXML> / <FMPSaveAsXML>)\n• HTML DDR (recipes.html)"]
         DATA["Record & Media Sources\n• Binary .fmp12 (HBAM2)\n• FMPXMLRESULT exports"]
     end
 
@@ -41,7 +41,7 @@ flowchart LR
 
 | Artifact | Supported Formats | What File4Base Extracts |
 |---|---|---|
-| **Design Structure (`design_xml`)** | • FileMaker XML DDR (`<FMPReport>`)<br>• FileMaker Save as XML (`<FMPSaveAsXML>`)<br>• FileMaker HTML DDR (`recipes.html` / `Summary.html`) | Base tables, fields (`Text`, `Number`, `Date`, `Timestamp`, `Container`, `Calculation`, `Summary`), Table Occurrences, Relationships (`=`, `≠`, `<`, `≤`, `>`, `≥`), Value Lists, Layouts (parts, fields, portals, merge labels, group buttons, web viewers), Scripts, and Accounts. |
+| **Design Structure (`design_xml`)** | • FileMaker XML DDR (`<FMPReport>`)<br>• FileMaker Save as XML (`<FMSaveAsXML>` from FileMaker Pro 20 / Claris 26, exported with *Include details for analysis tools*, or `<FMPSaveAsXML>`)<br>• FileMaker HTML DDR (`recipes.html` / `Summary.html`) | Base tables, fields (`Text`, `Number`, `Date`, `Timestamp`, `Container`, `Calculation`, `Summary`), Table Occurrences, Relationships (`=`, `≠`, `<`, `≤`, `>`, `≥`), Value Lists, Layouts (parts, fields, portals, merge labels, group buttons, web viewers), Scripts, and Accounts. |
 | **Records & Media (`fmp12_base64` / `data_files`)** | • Binary `.fmp12` container (`HBAM2` page scanner)<br>• `FMPXMLRESULT` XML exports per table | Table rows, primary/foreign UUID keys, embedded `JPEG` and `PNG` binary streams for `CONTAINER` columns (encoded as base64 data payloads), and pre-evaluated relational calculation/summary fields. |
 
 ---
