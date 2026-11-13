@@ -248,14 +248,16 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		Rejected:             make([]ReportItem, 0),
 		ManualActionRequired: make([]ReportItem, 0),
 	}
+	// FMDeveloperTool 20+ / Claris 26 write <FMSaveAsXML>, which keeps a
+	// table's fields in FieldsForTables and a script's steps in
+	// StepsForScripts instead of nesting them. The document is adapted into
+	// the shape the converter reads, and whatever could not be linked is
+	// reported (#87); a document that turns out to carry no schema at all is
+	// still refused by the empty-field check below rather than reported as a
+	// successful migration of nothing.
+	var saveAsXMLItems []ReportItem
 	if report.SourceFormat == "filemaker_save_as_xml_native" {
-		// FMDeveloperTool 20+ / Claris 26 write <FMSaveAsXML>, whose grammar
-		// keeps fields in FieldsForTables/FieldCatalog and script steps in
-		// StepsForScripts. The converter does not read that grammar, and
-		// renaming the root to <FMPSaveAsXML> produces tables with no fields,
-		// so the document is refused with the formats that do work (#87).
-		return nil, fmt.Errorf("%w: <FMSaveAsXML> (FileMaker Pro 20 / Claris 26 \"Save a Copy as XML\") is not supported yet: %s",
-			ErrInvalidMigrationXML, supportedDesignFormats)
+		saveAsXMLItems = adaptSaveAsXML(root)
 	}
 	if report.SourceFormat == "unknown" {
 		return nil, fmt.Errorf("%w: root element <%s> is not a recognized FileMaker design document: %s",
@@ -441,8 +443,17 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		// understood, whatever its root element says; reporting it as a
 		// successful conversion hid an unread grammar behind empty tables
 		// (#87).
+		advice := supportedDesignFormats
+		if report.SourceFormat == "filemaker_save_as_xml_native" {
+			// For this format the usual cause is one export option, not the
+			// wrong product: without "Include details for analysis tools" the
+			// document carries no schema detail to read (#87).
+			advice = "Export the file again from FileMaker with \"Include details for analysis tools\" selected " +
+				"(the root element then carries Has_DDR_INFO=\"True\"), or produce a Database Design Report instead. " +
+				supportedDesignFormats
+		}
 		return nil, fmt.Errorf("%w: %d base table(s) were found but not one field, so this document's field catalog was not understood: %s",
-			ErrInvalidMigrationXML, report.Counts.Tables, supportedDesignFormats)
+			ErrInvalidMigrationXML, report.Counts.Tables, advice)
 	}
 
 	// 2. Extract Table Occurrences
@@ -615,6 +626,10 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol,
 		fmpTableMeta, fmpFieldMeta, tableRows, report); err != nil {
 		return nil, err
+	}
+
+	for _, it := range saveAsXMLItems {
+		addReportItem(report, it)
 	}
 
 	return &ConvertedSolution{
@@ -2015,7 +2030,8 @@ func parseXMLTree(data []byte) (*xmlNode, error) {
 // supportedDesignFormats names the design documents the converter reads, which
 // is what an unsupported document is refused with (#87).
 const supportedDesignFormats = "File4Base reads a Database Design Report exported from FileMaker Pro 12 to 19 " +
-	"(<FMPReport> XML or the HTML report), a <FMPSaveAsXML> design document, and its own design XML"
+	"(<FMPReport> XML or the HTML report), a <FMSaveAsXML> or <FMPSaveAsXML> Save a Copy as XML document " +
+	"(FileMaker Pro 20 / Claris 26, exported with \"Include details for analysis tools\"), and its own design XML"
 
 func detectSourceFormat(root *xmlNode) string {
 	switch root.Name {
@@ -2049,10 +2065,26 @@ func extractSolutionName(root *xmlNode) string {
 	return ""
 }
 
+// firstAttr answers the first of keys the element carries.
+//
+// Each key is looked for as written first, so a document that spells an
+// attribute exactly as the reader expects keeps resolving in one map lookup
+// and in the order the caller asked for. Only then is the whole attribute set
+// compared case-insensitively: <FMSaveAsXML> writes datatype and fieldtype
+// where a Database Design Report writes dataType and fieldType, and matching
+// on the exact spelling alone read every field of such a document as an
+// untyped one (#87).
 func firstAttr(n *xmlNode, keys ...string) string {
 	for _, k := range keys {
 		if v, ok := n.Attrs[k]; ok && strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
+		}
+	}
+	for _, k := range keys {
+		for name, v := range n.Attrs {
+			if strings.EqualFold(name, k) && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v)
+			}
 		}
 	}
 	return ""

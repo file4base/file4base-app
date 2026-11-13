@@ -335,7 +335,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                           ),
                           decoration: const InputDecoration(
                             hintText:
-                                'Paste FileMaker DDR (XML or HTML) / <FMPSaveAsXML> here or choose a file above...',
+                                'Paste FileMaker DDR (XML or HTML) / Save a Copy as XML here or choose a file above...',
                             hintStyle: TextStyle(color: Colors.white38),
                             border: OutlineInputBorder(),
                             contentPadding: EdgeInsets.all(8),

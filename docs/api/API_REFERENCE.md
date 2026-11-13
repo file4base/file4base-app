@@ -1825,7 +1825,7 @@ Returns the active project's `solution_name`, `design_locked` flag, `file_option
 See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for the full conversion, trigger-quarantine, and disabled-account contract.
 
 ### `POST /api/v1/solutions/migrate/preflight`
-*Requires `admin` or `owner` role.* Runs a read-only dry-run conversion of a FileMaker Database Design Report (`<FMPReport>`), Save a Copy as XML (`<FMPSaveAsXML>`), or File4Base design XML document and optional `FMPXMLRESULT` record exports, returning a structured `ConversionReport` without modifying any database.
+*Requires `admin` or `owner` role.* Runs a read-only dry-run conversion of a FileMaker Database Design Report (`<FMPReport>`), Save a Copy as XML (`<FMSaveAsXML>` or `<FMPSaveAsXML>`), or File4Base design XML document and optional `FMPXMLRESULT` record exports, returning a structured `ConversionReport` without modifying any database.
 
 #### Request Body
 ```json
@@ -1870,7 +1870,7 @@ See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for t
 ### `POST /api/v1/solutions/migrate/apply`
 *Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report`, and the full `ConversionReport`.
 
-A failure anywhere after the first write leaves nothing behind: a newly created `target_database` is dropped, and a merge into the active database is undone from the design recorded before the merge — every design object the migration added is deleted and the recorded design re-imported (#97). `400` with `Migration Schema Import Error` or `Migration Data Import Error` therefore means the solution is as it was; should the restore itself be incomplete, the problem detail says so. An `fmp12_base64` attachment is validated with the request, so invalid base64 is `400` before any database is created (#91), and a design document whose field catalog was not understood — the `<FMSaveAsXML>` of FileMaker Pro 20 / Claris 26, or a Database Design Report in a language File4Base does not read — is `422 Invalid FileMaker XML` naming the formats and report languages that are supported (#87, #100).
+A failure anywhere after the first write leaves nothing behind: a newly created `target_database` is dropped, and a merge into the active database is undone from the design recorded before the merge — every design object the migration added is deleted and the recorded design re-imported (#97). `400` with `Migration Schema Import Error` or `Migration Data Import Error` therefore means the solution is as it was; should the restore itself be incomplete, the problem detail says so. An `fmp12_base64` attachment is validated with the request, so invalid base64 is `400` before any database is created (#91), and a design document whose field catalog was not understood — a Save a Copy as XML export taken without *Include details for analysis tools*, or a Database Design Report in a language File4Base does not read — is `422 Invalid FileMaker XML` naming the formats and report languages that are supported, and, for a `<FMSaveAsXML>` document, the export option to re-export with (#87, #100).
 
 ---
 

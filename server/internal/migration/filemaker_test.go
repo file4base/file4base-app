@@ -609,18 +609,33 @@ func TestAnalyzeAndConvert_ValidatesFMP12Attachment(t *testing.T) {
 // The authentic Save-a-Copy-as-XML document of FileMaker Pro 20 / Claris 26 is
 // refused with the formats that do work, rather than accepted into tables with
 // no fields (#87).
-func TestAnalyzeAndConvert_RejectsNativeSaveAsXML(t *testing.T) {
+// A native <FMSaveAsXML> export is read rather than refused: its fields live
+// in FieldsForTables, keyed to the base table they belong to, and its
+// attribute names are lower-cased (#87). This document names no base table on
+// its catalog and declares exactly one, so there is only one table the fields
+// can belong to.
+func TestAnalyzeAndConvert_ReadsNativeSaveAsXML(t *testing.T) {
 	doc := `<?xml version="1.0" encoding="UTF-8"?><FMSaveAsXML><FMSaveAsXMLFile name="Recipes.fmp12">` +
 		`<BaseTableCatalog><BaseTable name="Recipes" id="129"/></BaseTableCatalog>` +
 		`<FieldsForTables><FieldCatalog><Field name="Title" datatype="text" fieldtype="normal"/></FieldCatalog></FieldsForTables>` +
 		`</FMSaveAsXMLFile></FMSaveAsXML>`
 
-	_, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
-	if !errors.Is(err, ErrInvalidMigrationXML) {
-		t.Fatalf("expected an invalid-XML error, got %v", err)
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "FMSaveAsXML") || !strings.Contains(err.Error(), "Design Report") {
-		t.Fatalf("the refusal must name the format and the supported ones: %v", err)
+	if len(res.Bundle.Tables) != 1 {
+		t.Fatalf("expected the one declared base table, got %d", len(res.Bundle.Tables))
+	}
+	var sawTitle bool
+	for _, col := range res.Bundle.Tables[0].Columns {
+		if col.Name == "title" && col.FieldType == "TEXT" {
+			sawTitle = true
+		}
+	}
+	if !sawTitle {
+		t.Fatalf("the field of the relocated catalog must be migrated, with its lower-cased datatype read: %+v",
+			res.Bundle.Tables[0].Columns)
 	}
 }
 
