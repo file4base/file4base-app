@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Dispatch :: Surveys records, as a FileMaker FMPXMLRESULT export writes them.
+  Deterministic synthetic data: precise decimals, Unicode, untrimmed text and
+  a blank value, so data fidelity is measurable rather than approximate.
+-->
+<FMPXMLRESULT xmlns="http://www.filemaker.com/fmpxmlresult">
+  <PRODUCT BUILD="01-01-2026" NAME="FileMaker" VERSION="Pro 19.6.3"/>
+  <DATABASE DATEFORMAT="D/m/yyyy" LAYOUT="Survey Form" NAME="Dispatch.fmp12" RECORDS="3" TIMEFORMAT="k:mm:ss"/>
+  <METADATA>
+    <FIELD EMPTYOK="NO" MAXREPEAT="1" NAME="_Code" TYPE="TEXT"/>
+    <FIELD EMPTYOK="YES" MAXREPEAT="1" NAME="Title" TYPE="TEXT"/>
+    <FIELD EMPTYOK="YES" MAXREPEAT="1" NAME="Score" TYPE="NUMBER"/>
+    <FIELD EMPTYOK="YES" MAXREPEAT="1" NAME="SessionFilter" TYPE="TEXT"/>
+    <FIELD EMPTYOK="YES" MAXREPEAT="5" NAME="Tags" TYPE="TEXT"/>
+  </METADATA>
+  <RESULTSET FOUND="3">
+    <ROW MODID="4" RECORDID="1">
+      <COL><DATA>SV-1</DATA></COL>
+      <COL><DATA>Encuesta ñ – 日本</DATA></COL>
+      <COL><DATA>10.25</DATA></COL>
+      <COL><DATA></DATA></COL>
+      <COL><DATA>alpha</DATA><DATA>beta</DATA></COL>
+    </ROW>
+    <ROW MODID="2" RECORDID="2">
+      <COL><DATA>SV-2</DATA></COL>
+      <COL><DATA>  padded  </DATA></COL>
+      <COL><DATA>0.1</DATA></COL>
+      <COL><DATA></DATA></COL>
+      <COL><DATA></DATA></COL>
+    </ROW>
+    <ROW MODID="1" RECORDID="3">
+      <COL><DATA>SV-3</DATA></COL>
+      <COL><DATA></DATA></COL>
+      <COL><DATA></DATA></COL>
+      <COL><DATA></DATA></COL>
+      <COL><DATA></DATA></COL>
+    </ROW>
+  </RESULTSET>
+</FMPXMLRESULT>

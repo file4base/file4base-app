@@ -14,6 +14,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/clientip"
 	"github.com/file4base/file4base-app/server/internal/control"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/designreport"
 	"github.com/file4base/file4base-app/server/internal/migration"
@@ -1278,6 +1279,36 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		recordsInserted = dataReport.RecordsInserted
+	}
+
+	// A migrated calculation field has to hold its value from the start.
+	// FileMaker evaluates a calculation and has no column for it in a record
+	// export, so nothing in the imported rows fills one, and the bulk record
+	// import writes the values it was given rather than computing any: every
+	// migrated calculation came out empty until someone edited the record,
+	// which is a calculation reported as preserved that holds nothing (#112).
+	// The formulas are computed here, over the records just imported, the
+	// same way a changed formula is applied to the rows already stored.
+	if recordsInserted > 0 {
+		if driver, err := h.dbMgr.DriverFor(r.Context(), targetDB); err == nil {
+			dataSvc := data.NewService(driver)
+			for table := range converted.TableRows {
+				if _, err := dataSvc.RecalculateTable(r.Context(), table); err != nil {
+					// The design and the records are in: a formula that
+					// cannot be computed over them is that field's problem,
+					// not a reason to undo the migration. It is named in the
+					// report the caller reads instead of being swallowed.
+					converted.Report.ManualActionRequired = append(converted.Report.ManualActionRequired, migration.ReportItem{
+						Category:   migration.CategoryManualActionRequired,
+						Domain:     "field",
+						SourceName: table,
+						TargetName: table,
+						Detail: "The calculation fields of this table could not be computed over the imported " +
+							"records, so they are empty until the formulas are corrected: " + err.Error(),
+					})
+				}
+			}
+		}
 	}
 
 	if converted.Report.SolutionName != "" {

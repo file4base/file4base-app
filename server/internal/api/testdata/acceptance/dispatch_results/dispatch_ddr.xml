@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Dispatch.fmp12 design document for the #112 acceptance fixture.
+
+  Provenance: handwritten against the <FMPReport> grammar of a FileMaker Pro 19
+  Database Design Report. It is NOT a report FileMaker produced; see README.md.
+  It carries, deliberately, every construct the fixture scope names: a renamed
+  identifier, a calculation reading it, a summary field, a global field, a
+  repeating field, an occurrence alias, a self-join, a multi-predicate join, a
+  privilege reference, a value list, a script with operands, a loop, a find, a
+  nested Halt Script, an Exit Script result, and a Perform Script into another
+  file.
+-->
+<FMPReport type="Report" version="19.0">
+  <File name="Dispatch.fmp12">
+    <BaseTableCatalog>
+      <BaseTable id="1" name="Surveys">
+        <FieldCatalog>
+          <Field id="1" name="_Code" dataType="Text" fieldType="Normal">
+            <Storage global="False" maxRepetition="1"/>
+            <Validation message="False" valuelist="False" validateCalculation="False">
+              <NotEmpty value="True"/>
+              <Unique value="True"/>
+            </Validation>
+          </Field>
+          <Field id="2" name="Title" dataType="Text" fieldType="Normal"/>
+          <Field id="3" name="Score" dataType="Number" fieldType="Normal"/>
+          <Field id="4" name="Mirror" dataType="Text" fieldType="Calculation">
+            <Calculation><Text>_Code</Text></Calculation>
+          </Field>
+          <Field id="5" name="SessionFilter" dataType="Text" fieldType="Normal">
+            <Storage global="True" maxRepetition="1"/>
+          </Field>
+          <Field id="6" name="Tags" dataType="Text" fieldType="Normal">
+            <Storage global="False" maxRepetition="5"/>
+          </Field>
+          <Field id="7" name="TotalScore" dataType="Number" fieldType="Summary">
+            <SummaryField operation="Total" field="Score"/>
+          </Field>
+        </FieldCatalog>
+      </BaseTable>
+      <BaseTable id="2" name="Answers">
+        <FieldCatalog>
+          <Field id="1" name="_Code" dataType="Text" fieldType="Normal">
+            <Validation message="False" valuelist="False" validateCalculation="False">
+              <NotEmpty value="True"/>
+            </Validation>
+          </Field>
+          <Field id="2" name="SurveyCode" dataType="Text" fieldType="Normal"/>
+          <Field id="3" name="Answer" dataType="Text" fieldType="Normal"/>
+          <Field id="4" name="Weight" dataType="Number" fieldType="Normal"/>
+        </FieldCatalog>
+      </BaseTable>
+    </BaseTableCatalog>
+    <RelationshipGraph>
+      <TableList>
+        <Table id="1" name="Surveys" baseTable="Surveys" baseTableId="1"/>
+        <Table id="2" name="Answers" baseTable="Answers" baseTableId="2"/>
+        <Table id="3" name="SurveysByTitle" baseTable="Surveys" baseTableId="1"/>
+        <Table id="4" name="AnswersSelf" baseTable="Answers" baseTableId="2"/>
+      </TableList>
+      <RelationshipList>
+        <Relationship id="1" name="Surveys_Answers">
+          <LeftTable name="Surveys" cascadeCreate="False" cascadeDelete="False"/>
+          <RightTable name="Answers" cascadeCreate="True" cascadeDelete="True"/>
+          <JoinPredicateList>
+            <JoinPredicate type="Equal">
+              <LeftField><Field name="_Code" table="Surveys"/></LeftField>
+              <RightField><Field name="SurveyCode" table="Answers"/></RightField>
+            </JoinPredicate>
+          </JoinPredicateList>
+        </Relationship>
+        <Relationship id="2" name="SurveysByTitle_Answers">
+          <LeftTable name="SurveysByTitle" cascadeCreate="False" cascadeDelete="False"/>
+          <RightTable name="Answers" cascadeCreate="False" cascadeDelete="False"/>
+          <JoinPredicateList>
+            <JoinPredicate type="Equal">
+              <LeftField><Field name="_Code" table="SurveysByTitle"/></LeftField>
+              <RightField><Field name="SurveyCode" table="Answers"/></RightField>
+            </JoinPredicate>
+            <JoinPredicate type="Equal">
+              <LeftField><Field name="Title" table="SurveysByTitle"/></LeftField>
+              <RightField><Field name="Answer" table="Answers"/></RightField>
+            </JoinPredicate>
+          </JoinPredicateList>
+        </Relationship>
+        <Relationship id="3" name="Answers_AnswersSelf">
+          <LeftTable name="Answers" cascadeCreate="False" cascadeDelete="False"/>
+          <RightTable name="AnswersSelf" cascadeCreate="False" cascadeDelete="False"/>
+          <JoinPredicateList>
+            <JoinPredicate type="Equal">
+              <LeftField><Field name="SurveyCode" table="Answers"/></LeftField>
+              <RightField><Field name="SurveyCode" table="AnswersSelf"/></RightField>
+            </JoinPredicate>
+          </JoinPredicateList>
+        </Relationship>
+      </RelationshipList>
+    </RelationshipGraph>
+    <ValueListCatalog>
+      <ValueList name="Answer Options">
+        <CustomValues>
+          <Text>Yes</Text>
+          <Text>No</Text>
+          <Text>Unknown</Text>
+        </CustomValues>
+      </ValueList>
+    </ValueListCatalog>
+    <LayoutCatalog>
+      <Layout name="Survey Form" table="Surveys">
+        <Part type="body" height="300"/>
+        <Field name="_Code"/>
+        <Field name="Title"/>
+        <Field name="Score"/>
+        <ScriptTrigger event="OnRecordLoad" script="Send Batch"/>
+      </Layout>
+    </LayoutCatalog>
+    <ScriptCatalog>
+      <Script name="Send Batch" contextTable="Surveys">
+        <StepList>
+          <Step id="141" name="Set Variable" enable="True">
+            <Field name="$$Batch"/>
+            <Calculation><Text>"B-" &amp; Get ( CurrentDate )</Text></Calculation>
+          </Step>
+          <Step id="6" name="Go to Layout" enable="True">
+            <Layout name="Survey Form"/>
+          </Step>
+          <Step id="22" name="Perform Find" enable="True">
+            <Restore state="True"/>
+          </Step>
+          <Step id="71" name="Loop" enable="True"/>
+          <Step id="72" name="Exit Loop If" enable="True">
+            <Calculation><Text>Score &gt; 100</Text></Calculation>
+          </Step>
+          <Step id="76" name="Set Field" enable="True">
+            <Field name="Title" table="Surveys"/>
+            <Calculation><Text>UPPER ( Title )</Text></Calculation>
+          </Step>
+          <Step id="68" name="If" enable="True">
+            <Calculation><Text>Score &lt; 0</Text></Calculation>
+          </Step>
+          <Step id="4" name="Halt Script" enable="True"/>
+          <Step id="70" name="End If" enable="True"/>
+          <Step id="73" name="End Loop" enable="True"/>
+          <Step id="1" name="Perform Script" enable="True">
+            <Script name="Send Batch"/>
+            <FileReference name="Results"/>
+            <Calculation><Text>$$Batch</Text></Calculation>
+          </Step>
+          <Step id="103" name="Exit Script" enable="True">
+            <Calculation><Text>"dispatched"</Text></Calculation>
+          </Step>
+          <Step id="99" name="Show Custom Dialog" enable="False">
+            <Calculation><Text>"never runs"</Text></Calculation>
+          </Step>
+        </StepList>
+      </Script>
+    </ScriptCatalog>
+    <AccountCatalog>
+      <Account name="dispatcher" privilegeSet="[Data Entry Only]"/>
+    </AccountCatalog>
+  </File>
+</FMPReport>

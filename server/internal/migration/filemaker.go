@@ -1748,6 +1748,20 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			}
 		case "Field", "field":
 			if fieldName := firstAttr(child, "name", "Name"); fieldName != "" {
+				// FileMaker writes the target of a Set Variable in the same
+				// <Field> element it writes the target of a Set Field in, but
+				// a name beginning with `$` is a script variable, not a
+				// field: `$$Batch` is a global, `$row` a local, and the sigil
+				// is the whole of that distinction. Sanitizing it as a field
+				// turned `$$Batch` into `batch`, so the step wrote a local
+				// variable named `batch` while every later `$$Batch` in the
+				// same script read an empty global; and the runner looks for
+				// the variable under `name`, which nothing filled, so the
+				// step stopped the script instead (#112).
+				if strings.HasPrefix(fieldName, "$") {
+					params["name"] = fieldName
+					break
+				}
 				params["field"] = sanitizeIdentifier(fieldName)
 				params["field_label"] = fieldName
 				if tbl := firstAttr(child, "table", "Table"); tbl != "" {
