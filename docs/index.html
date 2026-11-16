@@ -441,7 +441,7 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm2 2h8v2H8V8zm0 4h8v2H8v-2zm0 4h5v2H8v-2z"/></svg>
       </div>
       <span class="brand-title">File4Base</span>
-      <span class="version-pill">v0.19.4</span>
+      <span class="version-pill">v0.20.0</span>
     </a>
 
     <div class="nav-actions">
@@ -537,7 +537,7 @@
       <section id="overview">
         <h1>File4Base Documentation</h1>
         <p class="lead-text">
-          File4Base (<strong>v0.19.4</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
+          File4Base (<strong>v0.20.0</strong>) is a modern, open-source rapid application database platform. Built with Go (Clean Architecture, multi-engine DBAL, REST API v1) on the backend and Flutter (macOS, Windows, Linux Desktop &amp; File4Base Web Client) on the frontend.
         </p>
 
         <div class="grid-2">
@@ -724,7 +724,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
       <!-- Security & User Accounts -->
       <section id="security-users">
-        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.19.4)</h2>
+        <h2>🛡️ Security, RBAC &amp; Multi-Factor Authentication (v0.20.0)</h2>
         <p>Security is strictly catalog-isolated and hardened across transport and authentication layers:</p>
         <ul>
           <li><strong>Per-Database Accounts &amp; Roles</strong>: Accounts belong exclusively to their database (<code>owner</code>, <code>admin</code>, <code>user</code>) with bcrypt password hashing and brute-force rate limiting on sign-in and database drop operations.</li>
@@ -777,13 +777,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
           <tbody>
             <tr>
               <td><code>file4base-api</code></td>
-              <td><code>cloudresources/file4base-api:0.19.4</code></td>
+              <td><code>cloudresources/file4base-api:0.20.0</code></td>
               <td><code>8080:8080</code></td>
               <td>Go REST API v1, DBAL &amp; Server Tools Backend</td>
             </tr>
             <tr>
               <td><code>file4base-web</code></td>
-              <td><code>cloudresources/file4base-web:0.19.4</code></td>
+              <td><code>cloudresources/file4base-web:0.20.0</code></td>
               <td><code>3000:80</code></td>
               <td>Nginx Web Client &amp; API/Swagger Reverse Proxy</td>
             </tr>
@@ -890,6 +890,33 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
         <h2>📋 Latest Releases &amp; Changelog</h2>
         <!-- AUTO-CHANGELOG:START -->
         <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
+          <h3 style="margin-top: 0;">Release <code>v0.20.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-11-16)</span></h3>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Added</p>
+          <ul>
+            <li><strong>The migration reads a <code>&lt;FMSaveAsXML&gt;</code> <em>Save a Copy as XML</em> export (#87).</strong> FileMaker Pro 20 / Claris 26 write that root, and it was refused by name: the format advertised as supported was the older <code>&lt;FMPSaveAsXML&gt;</code>. Its grammar is not the Database Design Report's — a base table's fields live in <code>FieldsForTables/FieldCatalog</code> and point back at the table instead of being nested in it, script steps live under <code>StepsForScripts</code>, and attribute names are lower-cased — so renaming the root was never a conversion path; it produced tables with no fields and no relationships. The document is now <strong>adapted</strong> before conversion: each field catalog is moved under the base table it names and each step list under the script it names, and <code>firstAttr</code> falls back to a case-insensitive attribute match so <code>datatype</code> and <code>fieldtype</code> resolve. A catalog naming a table the document does not declare is reported rather than dropped, and one naming no table is read as the only declared table's when there is exactly one and reported as unplaced when there are more — a field on the wrong table being worse than a field reported as unplaced. A document exported without <em>Include details for analysis tools</em> (<code>Has_DDR_INFO="False"</code>) is named as such in the report, and the refusal of a document whose tables arrive with no fields now says which export option to use.</li>
+            <li><strong>The acceptance fixture of #112 is executable.</strong> <code>server/internal/api/testdata/acceptance/dispatch_results</code> holds two linked FileMaker files — Dispatch and Results, parent surveys and child answers — with their <code>FMPXMLRESULT</code> record exports and an expected-results manifest, and <code>server/internal/api/acceptance_fixture_test.go</code> imports the whole application through the documented HTTP path (preflight, then apply, with nothing but the credential binding), reads the result back over the API as a client would, and compares it against the manifest. It collects every difference as a machine-readable finding instead of failing on the first one, so one run says how far the application actually migrated, and it creates no table, field, relationship, script or account of its own: if the import did not produce it, the finding says it is missing. The fixture covers definition identity (including an occurrence alias, a self-join and a multi-predicate join), data fidelity by business key with exact decimals, Unicode and untrimmed whitespace, field behaviour, access and activation, the read-only preflight, and the cross-file transfer with a replay and an injected rejection. The two gates it cannot meet are recorded as unmet on every run rather than skipped in silence: <strong>authentic input</strong>, because these inputs were written by hand and <code>expected.json</code> declares that provenance, and <strong>workflow execution</strong>, because File4Base runs script steps in the Flutter client. <code>docs/specs/filemaker_compatibility_scope.md</code> § 3 says what it found and what is still missing.</li>
+            <li><strong>The declared FileMaker compatibility scope (#112).</strong> <code>docs/specs/filemaker_compatibility_scope.md</code> states the one supported input path — Database Design Report (<code>&lt;FMPReport&gt;</code> XML or HTML) or <code>&lt;FMPSaveAsXML&gt;</code> from FileMaker Pro 12–19, records as <code>FMPXMLRESULT</code> or <code>fmp12_base64</code>, in English or French, UTF-8 or UTF-16 — together with the subset the first acceptance fixture covers, the declared capability boundaries, and the two artefacts that cannot be produced without an actual FileMaker installation: the working two-file solution with its authentic exports, and the source-generated expected-results manifest.</li>
+            <li><strong>Scripted record transfers between solutions (#96), first milestone.</strong> Sending records from one solution to another and getting results back had no scripted form at all: the client runner stopped on <code>Import Records</code>, <code>Export Records</code>, <code>Loop</code> and <code>End Loop</code>, and a manual CSV round trip was the only way to move a keyed found set. A <strong>transfer definition</strong> is now a design object of its own — stored in <code>sys_transfers</code>, exported in the solution bundle, listed in the Database Design Report — recording the source solution and table (optionally narrowed to a found set), the destination solution and table, explicit field mappings, stable match keys, the add/update mode, the unmatched-record policy, the rejected-row policy and the date interpretation. It is managed and run over <code>/api/v1/transfers</code> (<code>docs/api/API_REFERENCE.md</code> § 17).</li>
+            <li><strong>Perform Script into another solution (#107).</strong> A <code>Perform Script</code> step can name a <strong>file reference</strong>, a new design object (<code>sys_file_references</code>, <code>/api/v1/file-references</code>, exported in the solution bundle and listed in the Database Design Report) that maps a name to another solution explicitly. The step then performs the script of <em>that</em> solution, on a session the user opened there and with no window of its own: steps that need no window — transfers, variables, <code>If</code> / <code>Loop</code>, <code>Perform Script</code> within that solution, <code>Exit</code> / <code>Halt Script</code>, dialogs — run, and the first step that acts on a window stops the script and names itself, because the window on screen belongs to the calling solution. A transfer in the called script that reaches back to the caller uses the session the user is working in there, and <code>Halt Script</code> over there stops every caller here. An unknown or unmapped reference, or one to a solution the session is not signed in to, stops the script and says which. The assisted migration turns every external file a converted <code>Perform Script</code> step calls into an unmapped reference and reports it under <code>manual_action_required</code>; a restored bundle never repoints a reference the destination has already mapped.</li>
+            <li><strong>Scheduled transfers (#108).</strong> A transfer definition can now run unattended on a UTC cron schedule, run by the File4Base server itself (<code>/api/v1/transfer-schedules</code>, <code>sys_transfer_schedules</code>, with the 50 most recent runs of each kept in <code>sys_transfer_schedule_runs</code>).</li>
+          </ul>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Changed</p>
+          <ul>
+            <li><strong>The File4Base Web Client is compiled to WebAssembly.</strong> The browser bundle was built with <code>flutter build web --release</code>, which compiles Dart to JavaScript; the only <code>.wasm</code> files it served were CanvasKit's and Skwasm's, the renderer's own modules, so the application code itself ran as 5.1 MB of JavaScript. The image now builds with <code>flutter build web --wasm --release</code>: Dart is compiled to WasmGC (<code>main.dart.wasm</code>, 4.6 MB, loaded through <code>main.dart.mjs</code>), and Flutter emits the JavaScript bundle alongside it so the bootstrap falls back for a browser without WasmGC — no browser loses the client. Verified against the built image: a Chromium-based browser fetches <code>main.dart.mjs</code> and <code>main.dart.wasm</code> and never requests <code>main.dart.js</code>, the client renders and reaches the API. The image grows from 155 MB to 161 MB because both bundles ship, while the browser downloads slightly less than before.</li>
+            <li><strong>The integration tests no longer collide on their own table names.</strong> They suffixed each table with <code>time.Now().UnixNano() % 1000000</code>; on a host whose clock has microsecond resolution — macOS among others — every nanosecond reading is a whole multiple of 1000, leaving that expression only a thousand possible values, and nothing drops the tables afterwards. A developer's scratch database filled up until the suite failed on <code>table already exists</code> for reasons unrelated to the code under test. All fourteen test files now take their suffix from <code>uniqueTestStamp()</code>, the full nanosecond reading with random bits mixed in.</li>
+          </ul>
+          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
+          <ul>
+            <li><strong>A migrated <code>Set Variable</code> keeps its variable, sigil and all (#112).</strong> The step's operand was sanitized as if it were a field name, so <code>$$Batch</code> became <code>batch</code> — and the <code>$$</code> is the whole of the global-versus-local distinction, while the client runner reads a variable's name from a different parameter altogether. A migrated step therefore wrote a local variable nobody read, or stopped the script outright, while every later <code>$$Batch</code> in the same script read an empty global. A <code>$</code>-prefixed operand is now carried through verbatim as the variable it is; a real field operand is still pointed at the imported column and keeps the source spelling as its label.</li>
+            <li><strong>A migrated calculation field holds its value from the start (#112).</strong> FileMaker evaluates a calculation and writes no column for it in a record export, and the bulk record import stores the values it is given rather than computing any, so every calculation a migration reported as preserved was empty until someone edited the record — including the references #111 had just repointed. The formulas are now computed over the records the migration just imported, the same way a changed formula is applied to the rows already stored, and a formula that cannot be computed is named under <code>manual_action_required</code> instead of being swallowed.</li>
+            <li><strong>An import no longer invents table occurrences (#112).</strong> A table the import creates comes with a default occurrence named after the table, which a FileMaker file never declared: a file with the occurrences <code>Surveys</code> and <code>SurveysByTitle</code> over one base table arrived with four boxes in the relationship graph instead of two, so comparing the migrated graph against the source's failed on objects the source never had. Where a solution file declares a table's occurrences, the default one is now removed; a file that carries no occurrences at all keeps the defaults it relies on.</li>
+            <li><strong>A migrated calculation reads the fields as the import named them (#111).</strong> <code>sanitizeIdentifier</code> strips a leading underscore and two names that normalize alike are told apart as <code>code</code> and <code>code_2</code> (#89), but a calculation's formula was stored exactly as the source wrote it. A design with a text field <code>_code</code> and a calculation <code>Mirror = _code</code> therefore passed preflight with two preserved fields and nothing unsupported, and the apply then failed with <em>the formula of "mirror" reads "_code", which this table does not have</em> — a conversion reported as faithful that could not be applied. Every calculation of a table is now resolved against that table's complete source-to-target field map once all of its fields are known: references are repointed at the imported names and the change is reported as translated, while quoted text and function names are left exactly as they were. Because the parser accepts any identifier, a successful parse no longer passes for proof that the fields exist — a formula naming something the table does not have is <strong>quarantined</strong> as a stored column of the type the calculation would have produced, and the report names the reference it could not place. Names that differ only in case are resolved by their exact spelling first, so a <code>Code</code>/<code>code</code> pair stays unambiguous.</li>
+            <li><strong>A Perform Script that calls another file never runs a same-named script of this one (#107).</strong> The XML route of the migration kept a step's external file as <code>file_reference</code>, but the client runner ignored it and looked the script up by name in the <em>current</em> solution — so a migrated step calling "Receive" in another file ran this solution's "Receive" if one existed, exactly the fallback #96 rules out. The <code>#96</code> migration spec also described this wrongly, saying such a step was "reported rather than matched to a same-named local script"; it now says what the runner does.</li>
+            <li><strong>Server Tools no longer reports scheduled jobs that never ran (#108).</strong> The Server Tools schedules are kept in memory and executed by nothing, yet the panel showed invented last-run times with <code>success</code>, and <code>Run Now</code> stamped a fresh <code>success</code> without running anything — so a nightly backup could look healthy for months without one ever being taken. Every job now reports <code>executed: false</code> and <code>last_status: "not executed"</code> with no last run, <code>Run Now</code> answers <code>409</code> saying nothing was run (and the audit log records the request as a warning), and the docs that described these jobs as an executing scheduler say what they are.</li>
+            <li><strong>An imported container value is the file that went in.</strong> <code>ImportRecords</code> stored the base64 <em>text</em> of a container cell instead of the bytes it encodes, so reading the record back encoded it a second time and an imported image or document came out doubly encoded and no longer itself. The import now decodes the cell, as every other write path already did; the manual CSV/XLSX import of a container column is fixed by the same change. Found while proving that a container crosses a transfer unchanged (#96).</li>
+          </ul>
+        </div>
+        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
           <h3 style="margin-top: 0;">Release <code>v0.19.4</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-11-10)</span></h3>
           <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Fixed</p>
           <ul>
@@ -955,13 +982,6 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <li><strong>The in-app new-version banner (0.18.0) never appeared.</strong> It watched the service-worker update lifecycle, but modern Flutter ships a self-unregistering service worker (no caching worker), so those events never fired. The detector now records the version the page loaded with and polls the deployed <code>version.json</code>; when the deployed version differs, it shows the Actualizar/Cancelar bar (verified end-to-end).</li>
           </ul>
         </div>
-        <div style="border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 14px; background: var(--bg);">
-          <h3 style="margin-top: 0;">Release <code>v0.19.0</code> <span style="color: var(--text-muted); font-weight: 400; font-size: 0.9rem;">(2026-10-17)</span></h3>
-          <p style="margin: 10px 0 4px; font-weight: 600; color: var(--text-main);">Changed</p>
-          <ul>
-            <li>Version bump to validate the in-app new-version detection added in 0.18.0 (no functional changes).</li>
-          </ul>
-        </div>
         <p>View the full history in <a href="https://github.com/file4base/file4base-app/blob/main/CHANGELOG.md" target="_blank" rel="noopener"><code>CHANGELOG.md</code></a>.</p>
         <!-- AUTO-CHANGELOG:END -->
       </section>
@@ -991,7 +1011,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <strong>Include Environment Details</strong>:
             Always state:
             <ul>
-              <li><strong>File4Base Version</strong>: (e.g. <code>v0.19.4</code>)</li>
+              <li><strong>File4Base Version</strong>: (e.g. <code>v0.20.0</code>)</li>
               <li><strong>Operating System</strong>: macOS (Apple Silicon / Intel), Windows 11, Ubuntu 24.04, or Web Browser (Chrome/Firefox/Safari).</li>
               <li><strong>Database Engine</strong>: PostgreSQL 16 or MariaDB 11.</li>
             </ul>
@@ -1017,7 +1037,7 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <p>© 2024-2026 File4Base Project · Version v0.19.4 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
+    <p>© 2024-2026 File4Base Project · Version v0.20.0 · Licensed under GNU General Public License v3.0 (GPL-3.0) · Built with Go &amp; Flutter</p>
     <p>File4Base is an independent project. References to Claris products do not imply affiliation, sponsorship or endorsement. Claris, FileMaker and FileMaker WebDirect are trademarks of Claris International Inc.</p>
     <p><a href="https://github.com/file4base/file4base-app/blob/main/docs/LEGAL.md">Licensing and reference-material guidance</a></p>
   </footer>
