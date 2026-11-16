@@ -15,7 +15,10 @@ RUN flutter pub get
 
 # Copy sources and build
 COPY . .
-RUN flutter build web --release
+# --wasm compiles Dart to WebAssembly (WasmGC) instead of JavaScript. Flutter
+# emits the JavaScript bundle as well and the bootstrap picks at runtime, so a
+# browser without WasmGC still gets a working client.
+RUN flutter build web --wasm --release
 
 # ---- Stage 2: Nginx web server serving the compiled bundle ----
 FROM nginx:alpine
