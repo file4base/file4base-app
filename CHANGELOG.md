@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Two runs no longer race to publish the same GitHub Release.** Cutting a release pushes the version bump to `main` and then the `vX.Y.Z` tag, and each of those starts a run of `desktop_release.yml` whose `publish-release` job publishes the release for the same `VERSION`. On v0.20.0 both ran at once and landed on the same release id: one answered `HTTP 403` and the other `HTTP 404` uploading assets to it, because `gh release create` deletes the release it created when an upload fails. Every build job was green and **no release existed at all**. The job now takes a repository-wide concurrency group, queued rather than cancelled, so the second run finds the release already published and re-uploads with `--clobber` as the step was always written to do.
+
 ## [0.20.0] - 2026-11-16
 
 ### Added

@@ -366,6 +366,20 @@ jobs:
     needs: [test-server, build-macos, build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Only one run publishes a release at a time. Cutting a release pushes the
+    # version bump to main and then the tag, and both of those start a run of
+    # this workflow that reaches this job for the same VERSION. On v0.20.0 the
+    # two ran together, created and then raced on the same release id: one got
+    # HTTP 403 and the other HTTP 404 uploading to it, because `gh release
+    # create` deletes the release it created when its upload fails. The release
+    # ended up not existing at all, with every build green.
+    #
+    # Queued rather than cancelled: the second run then finds the release
+    # already there and re-uploads with --clobber, which is what the step below
+    # already does, instead of a half-published release being left behind.
+    concurrency:
+      group: publish-release-${{ github.repository }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
