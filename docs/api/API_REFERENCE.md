@@ -83,6 +83,9 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated list of browser origins allowed to call the API. |
 | `FILE4BASE_TRUSTED_PROXIES` | *(empty)* | Comma-separated IPs and CIDR ranges of reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be trusted when resolving the client address (audit log, session list, login throttle). Empty trusts no proxy, so those headers are ignored and the direct TCP peer is recorded — a client cannot forge the address attributed to it. Set it to your reverse proxy's address only (for the bundled Nginx web client, the Docker Compose network, e.g. `172.16.0.0/12,127.0.0.1,::1`). |
 | `ALLOW_PUBLIC_DATABASE_CREATION` | `true` | When `false`, only a signed-in owner can create databases. |
+| `MIGRATION_MAX_UPLOAD_BYTES` | `2GiB` | Largest multipart FileMaker migration request (§ 13, `migrate/preflight` and `migrate/apply`) a signed-in admin or owner may send. A byte count, or a number with a `KiB`, `MiB` or `GiB` suffix. Callers without a session are always held to the 64 MiB JSON ceiling. Behind the bundled Nginx Web Client, its `client_max_body_size` for `/api/v1/solutions/migrate/` (2g) must be raised as well. |
+| `MIGRATION_REQUEST_TIMEOUT` | `30m` | Time a migration preflight or apply may take, upload included (Go duration). Every other request keeps the 60-second limit. |
+| `MIGRATION_UPLOAD_DIR` | system temporary directory | Where an uploaded native database copy is written while it is received. It needs free space for the largest upload; the file is private (`0600`) and removed as soon as it has been read. |
 | `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools unless a super-owner exists (see `FILE4BASE_SUPER_OWNER`). |
 | `FILE4BASE_SUPER_OWNER` | *(empty)* | Bootstrap super-owners as `database:username` (comma-separated for several). These owner accounts sign in with full, server-wide control even before a `super_owner` flag is stored; they can then grant the privilege to other owners via `PUT /api/v1/security/users/{id}/super-owner`. |
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
@@ -1849,8 +1852,44 @@ bytes, binary calculations, timezone/time-duration behavior and required script
 operations still require qualification; an extracted record count is not an
 application-equivalence result.
 
-For a local native copy larger than the HTTP JSON request limit (64 MiB), run
-read-only preflight from `server/` without a base64 copy:
+#### Uploading a native copy (`multipart/form-data`)
+
+A JSON request is limited to 64 MiB, base64 included, and is answered with
+`413 Migration Request Too Large` above it. A native `.fmp12` copy of any
+production size is sent instead as `multipart/form-data` to the same endpoint
+(preflight and apply alike), with these parts:
+
+| Part | Required | Content |
+|---|---|---|
+| `request` | yes | The JSON request object above, without `fmp12_base64` (at most 64 MiB). |
+| `native` | no | The native database copy, raw bytes (no base64). |
+| `design` | no | The design document, raw. Use it instead of `design_xml`, not together with it. |
+
+```sh
+curl -H "Authorization: Bearer $TOKEN" \
+  -F 'request={"native_date_order":"dmy"};type=application/json' \
+  -F 'design=@/private/design.xml' \
+  -F 'native=@/private/source.fmp12' \
+  https://file4base.example/api/v1/solutions/migrate/preflight
+```
+
+The upload is written to a private temporary file (`MIGRATION_UPLOAD_DIR`) as
+it arrives and read back once, so the server never holds a base64 copy of it,
+and it is removed before the conversion starts. Its total size is limited by
+`MIGRATION_MAX_UPLOAD_BYTES` (default 2 GiB) for a signed-in session; without a
+session (only possible with `ALLOW_PUBLIC_DATABASE_CREATION`) the 64 MiB JSON
+ceiling still applies. Above the limit the answer is
+`413 Migration Upload Too Large`. A missing `request` part, an unknown or
+repeated part, an empty `native` part, or a native copy sent both as a part and
+as `fmp12_base64` is `400 Invalid Multipart Request`. The conversion, the
+report and the `422` refusals are the same as for the JSON form. Both
+migration routes may run for `MIGRATION_REQUEST_TIMEOUT` (default 30 minutes),
+upload included. Do not wrap the upload in the payload-encryption channel
+(`X-File4Base-Encrypted`): the server holds an encrypted body in memory and
+caps it at 512 MiB. The File4Base client sends it unwrapped; serve the API
+over TLS.
+
+The local command below audits a copy without any upload:
 
 ```sh
 go run ./cmd/migration-preflight -design /private/design.xml \
@@ -1861,8 +1900,8 @@ go run ./cmd/migration-preflight -design /private/design.xml \
 The report path must be new and is created with mode `0600`; its contents may
 contain confidential design information. The command writes that report only,
 never connects to a target, and never executes imported behavior. Exit code 2
-means the report contains rejections. This is an audit path, not a large-file
-apply endpoint.
+means the report contains rejections. To apply a large copy, upload it as
+described above.
 
 #### Response `200 OK`
 ```json
@@ -1894,7 +1933,7 @@ apply endpoint.
 ```
 
 ### `POST /api/v1/solutions/migrate/apply`
-*Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report`, and the full `ConversionReport`.
+*Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report`, and the full `ConversionReport`. Accepts the same JSON body as preflight, or the same `multipart/form-data` upload for a native copy above 64 MiB (see preflight).
 
 An explicitly attached native dataset that cannot be read or represented is
 refused with `422 Native Data Import Blocked` before any target write. Apply does

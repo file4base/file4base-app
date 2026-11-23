@@ -4823,6 +4823,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "description": "Migration Request Too Large (JSON above 64 MiB) or Migration Upload Too Large (multipart above the upload limit)."
           }
         },
         "requestBody": {
@@ -4832,8 +4835,33 @@
               "schema": {
                 "type": "object"
               }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request"
+                ],
+                "properties": {
+                  "request": {
+                    "type": "string",
+                    "description": "The JSON migration request (same fields as the JSON form, without fmp12_base64), at most 64 MiB."
+                  },
+                  "design": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The design document, raw. Use it instead of design_xml, not together with it."
+                  },
+                  "native": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The native .fmp12 database copy, raw bytes. Up to MIGRATION_MAX_UPLOAD_BYTES (default 2 GiB) for a signed-in admin or owner; 64 MiB without a session."
+                  }
+                }
+              }
             }
-          }
+          },
+          "description": "JSON, or multipart/form-data to upload a native .fmp12 copy above the 64 MiB JSON limit (#126)."
         }
       }
     },
@@ -4852,6 +4880,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "description": "Migration Request Too Large (JSON above 64 MiB) or Migration Upload Too Large (multipart above the upload limit)."
           }
         },
         "requestBody": {
@@ -4861,8 +4892,33 @@
               "schema": {
                 "type": "object"
               }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "request"
+                ],
+                "properties": {
+                  "request": {
+                    "type": "string",
+                    "description": "The JSON migration request (same fields as the JSON form, without fmp12_base64), at most 64 MiB."
+                  },
+                  "design": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The design document, raw. Use it instead of design_xml, not together with it."
+                  },
+                  "native": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The native .fmp12 database copy, raw bytes. Up to MIGRATION_MAX_UPLOAD_BYTES (default 2 GiB) for a signed-in admin or owner; 64 MiB without a session."
+                  }
+                }
+              }
             }
-          }
+          },
+          "description": "JSON, or multipart/form-data to upload a native .fmp12 copy above the 64 MiB JSON limit (#126)."
         }
       }
     },

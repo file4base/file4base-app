@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:file4base_client/core/api/api_client.dart';
@@ -69,7 +68,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
   String? _designFileName;
   final Map<String, String> _dataFiles = {};
   String? _fmp12FileName;
-  String? _fmp12Base64;
+  Uint8List? _fmp12Bytes;
 
   bool _isRunningPreflight = false;
   bool _isApplying = false;
@@ -125,7 +124,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
       if (file == null) return;
       setState(() {
         _fmp12FileName = file.name;
-        _fmp12Base64 = base64Encode(file.bytes);
+        _fmp12Bytes = file.bytes;
         _report = null;
       });
     } catch (e) {
@@ -179,7 +178,8 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         designXml: xml,
         solutionName: _solutionNameCtrl.text.trim(),
         dataFiles: _dataFiles,
-        fmp12Base64: _fmp12Base64,
+        fmp12Bytes: _fmp12Bytes,
+        fmp12FileName: _fmp12FileName,
       );
       if (!mounted) return;
       setState(() {
@@ -211,7 +211,8 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         designXml: xml,
         solutionName: _solutionNameCtrl.text.trim(),
         dataFiles: _dataFiles,
-        fmp12Base64: _fmp12Base64,
+        fmp12Bytes: _fmp12Bytes,
+        fmp12FileName: _fmp12FileName,
       );
       if (!mounted) return;
       setState(() {
@@ -400,7 +401,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                                 ),
                                 onDeleted: () => setState(() {
                                   _fmp12FileName = null;
-                                  _fmp12Base64 = null;
+                                  _fmp12Bytes = null;
                                 }),
                               ),
                             ..._dataFiles.keys.map(

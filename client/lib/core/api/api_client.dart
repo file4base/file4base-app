@@ -3502,23 +3502,26 @@ class ApiClient {
 
   /// Runs a read-only dry-run preflight conversion of a FileMaker DDR / XML / HTML
   /// design document and optional FMPXMLRESULT / .fmp12 data files (#26).
+  ///
+  /// A native copy ([fmp12Bytes]) is uploaded as `multipart/form-data` rather
+  /// than as base64 inside JSON, which the server limits to 64 MiB (#126).
   Future<MigrationReportModel> migratePreflight({
     required String designXml,
     String? solutionName,
     Map<String, String> dataFiles = const {},
-    String? fmp12Base64,
+    Uint8List? fmp12Bytes,
+    String? fmp12FileName,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/solutions/migrate/preflight'),
-      headers: _headers(contentType: 'application/json'),
-      body: jsonEncode({
-        'design_xml': designXml,
+    final response = await _postMigration(
+      '/api/v1/solutions/migrate/preflight',
+      designXml: designXml,
+      fields: {
         if (solutionName != null && solutionName.trim().isNotEmpty)
           'solution_name': solutionName.trim(),
         if (dataFiles.isNotEmpty) 'data_files': dataFiles,
-        if (fmp12Base64 != null && fmp12Base64.isNotEmpty)
-          'fmp12_base64': fmp12Base64,
-      }),
+      },
+      fmp12Bytes: fmp12Bytes,
+      fmp12FileName: fmp12FileName,
     );
     _checkResponse(response);
     final decoded = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
@@ -3530,37 +3533,76 @@ class ApiClient {
 
   /// Applies an assisted FileMaker DDR / XML / HTML + FMPXMLRESULT / .fmp12 migration into the
   /// current database or a newly created isolated target database (#26).
+  /// A native copy is uploaded as in [migratePreflight].
   Future<MigrationApplyResultModel> migrateApply({
     required String designXml,
     String? solutionName,
     Map<String, String> dataFiles = const {},
-    String? fmp12Base64,
+    Uint8List? fmp12Bytes,
+    String? fmp12FileName,
     String? targetDatabase,
     String? ownerUser,
     String? ownerPassword,
   }) async {
-    final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/solutions/migrate/apply'),
-      headers: _headers(contentType: 'application/json'),
-      body: jsonEncode({
-        'design_xml': designXml,
+    final response = await _postMigration(
+      '/api/v1/solutions/migrate/apply',
+      designXml: designXml,
+      fields: {
         if (solutionName != null && solutionName.trim().isNotEmpty)
           'solution_name': solutionName.trim(),
         if (dataFiles.isNotEmpty) 'data_files': dataFiles,
-        if (fmp12Base64 != null && fmp12Base64.isNotEmpty)
-          'fmp12_base64': fmp12Base64,
         if (targetDatabase != null && targetDatabase.trim().isNotEmpty)
           'target_database': targetDatabase.trim(),
         if (ownerUser != null && ownerUser.trim().isNotEmpty)
           'owner_user': ownerUser.trim(),
         if (ownerPassword != null && ownerPassword.isNotEmpty)
           'owner_password': ownerPassword,
-      }),
+      },
+      fmp12Bytes: fmp12Bytes,
+      fmp12FileName: fmp12FileName,
     );
     _checkResponse(response);
     return MigrationApplyResultModel.fromJson(
       Map<String, dynamic>.from(jsonDecode(response.body) as Map),
     );
+  }
+
+  /// Sends a migration request. Without a native copy it is the JSON form.
+  /// With one, it is a multipart upload: the JSON fields as the `request`
+  /// part, the design as the `design` part and the raw copy as the `native`
+  /// part, so neither has to fit in the 64 MiB JSON ceiling. The upload is not
+  /// wrapped in the payload-encryption channel, whose bodies the server holds
+  /// in memory; it relies on TLS like any other upload.
+  Future<http.Response> _postMigration(
+    String path, {
+    required String designXml,
+    required Map<String, dynamic> fields,
+    Uint8List? fmp12Bytes,
+    String? fmp12FileName,
+  }) async {
+    final uri = Uri.parse('$baseUrl$path');
+    if (fmp12Bytes == null || fmp12Bytes.isEmpty) {
+      return _httpClient.post(
+        uri,
+        headers: _headers(contentType: 'application/json'),
+        body: jsonEncode({'design_xml': designXml, ...fields}),
+      );
+    }
+    final name = fmp12FileName?.trim() ?? '';
+    final request = http.MultipartRequest('POST', uri)
+      ..headers.addAll(_headers())
+      ..fields['request'] = jsonEncode(fields)
+      ..files.add(http.MultipartFile.fromBytes(
+        'design',
+        utf8.encode(designXml),
+        filename: 'design.xml',
+      ))
+      ..files.add(http.MultipartFile.fromBytes(
+        'native',
+        fmp12Bytes,
+        filename: name.isEmpty ? 'source.fmp12' : name,
+      ));
+    return http.Response.fromStream(await _httpClient.send(request));
   }
 
   void close() {

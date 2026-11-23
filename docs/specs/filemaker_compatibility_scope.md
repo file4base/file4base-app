@@ -106,7 +106,10 @@ fixture required above. `records_detected` is not `records_ready`. Target type
 incompatibilities, populated containers that cannot be reconstructed, and unknown
 record encodings refuse native apply rather than becoming empty records or a
 schema-only success. The local `migration-preflight` command supports large-input
-audits; the HTTP JSON request limit is unchanged.
+audits. Native copies above the 64 MiB JSON request limit are preflighted and
+applied over HTTP as a `multipart/form-data` upload, up to
+`MIGRATION_MAX_UPLOAD_BYTES` (2 GiB by default) for a signed-in admin or owner
+(#126); the whole copy is still read into server memory once for conversion.
 
 Native design wrappers, referenced script-body lists and typed operands now have
 original synthetic regression coverage. Unread options remain in the report.
