@@ -58,6 +58,7 @@ var localizedScriptSteps = map[string]string{
 
 	// French — navigation and modes
 	"atteindre la mise en page":                     "Go to Layout",
+	"activer modèle":                                "Go to Layout",
 	"atteindre l'enregistrement/la requête/la page": "Go to Record/Request/Page",
 	"mode utilisation":                              "Enter Browse Mode",
 	"mode recherche":                                "Enter Find Mode",
@@ -74,6 +75,7 @@ var localizedScriptSteps = map[string]string{
 	"boucle":              "Loop",
 	"fin de boucle":       "End Loop",
 	"sortie de boucle si": "Exit Loop If",
+	"fin de boucle si":    "Exit Loop If",
 
 	// French — scripts, dialogs and the web
 	"exécuter un script":                "Perform Script",
@@ -81,6 +83,9 @@ var localizedScriptSteps = map[string]string{
 	"afficher boîte de dialogue perso.": "Show Custom Dialog",
 	"ouvrir url":                        "Open URL",
 	"commentaire":                       "Comment",
+	"# (commentaire)":                   "Comment",
+	"fin de script":                     "Exit Script",
+	"interrompre script":                "Halt Script",
 	"importer des enregistrements":      "Import Records",
 	"exporter des enregistrements":      "Export Records",
 	"insérer depuis url":                "Insert from URL",

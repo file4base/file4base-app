@@ -1154,6 +1154,21 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Attached data must not become a successful schema-only or partial import
+	// after extraction/conversion fails. Refuse before any target write.
+	if strings.TrimSpace(req.FMP12Base64) != "" || len(req.DataFiles) > 0 {
+		for _, item := range converted.Report.Rejected {
+			if item.Domain == "data" {
+				title := "Data Import Blocked"
+				if item.SourceName == "fmp12_binary" {
+					title = "Native Data Import Blocked"
+				}
+				telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, title, item.Detail)
+				return
+			}
+		}
+	}
+
 	createdNewDB := false
 	var targetSvc *schema.Service
 	if hasSession {

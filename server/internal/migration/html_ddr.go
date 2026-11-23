@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	reHTMLSolutionName  = regexp.MustCompile(`(?is)<a\s+name="valFileOptionOverviewSectionAnchor_"\s*(?:/>|>\s*</a>)\s*([^<]+)`)
+	reHTMLSolutionName = regexp.MustCompile(`(?is)<a\s+name="valFileOptionOverviewSectionAnchor_"\s*(?:/>|>\s*</a>)\s*([^<]+)`)
 	// The label before the anchor is the report's own wording ("Table Name:",
 	// "Nom de la table :"), so it is skipped rather than matched: the anchor
 	// is the same in every language (#100).
@@ -164,7 +164,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 	canonicalTableName := make(map[string]string)
 	colIDByTableCol := make(map[string]string)
 	colTypeByTableCol := make(map[string]string)
-	fmpTableMeta := make(map[int]string)               // fmpTableID -> sqlTableName
+	fmpTableMeta := make(map[int]string)                // fmpTableID -> sqlTableName
 	fmpFieldMeta := make(map[int]map[int]htmlFieldMeta) // fmpTableID -> fmpFieldID -> meta
 
 	// 1. Parse Base Tables & Fields
@@ -696,7 +696,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 
 	// 7. Parse optional FMPXMLRESULT data files and/or binary .fmp12 records
 	tableRows := make(map[string][]map[string]interface{})
-	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, fmpTableMeta, fmpFieldMeta, tableRows, report); err != nil {
+	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, fmpTableMeta, fmpFieldMeta, tableRows, report, nil); err != nil {
 		return nil, err
 	}
 
@@ -897,10 +897,11 @@ func parseHTMLScriptStepLine(line string) (string, map[string]interface{}) {
 	trimmed = strings.ReplaceAll(trimmed, "”", `"`)
 	if idx := strings.Index(trimmed, "["); idx > 0 && strings.HasSuffix(trimmed, "]") {
 		stepName := strings.TrimSpace(trimmed[:idx])
+		canonical, _, _ := canonicalScriptStepName(stepName)
 		inner := strings.TrimSpace(trimmed[idx+1 : len(trimmed)-1])
 		params["expression"] = inner
 		switch {
-		case strings.EqualFold(stepName, "Go to Layout"):
+		case canonical == "Go to Layout":
 			if q1 := strings.Index(inner, `"`); q1 >= 0 {
 				if q2 := strings.Index(inner[q1+1:], `"`); q2 >= 0 {
 					params["layout_name"] = inner[q1+1 : q1+1+q2]
@@ -908,17 +909,20 @@ func parseHTMLScriptStepLine(line string) (string, map[string]interface{}) {
 			} else if inner != "" {
 				params["layout_name"] = strings.TrimSpace(inner)
 			}
-		case strings.EqualFold(stepName, "If") || strings.EqualFold(stepName, "Else If"):
+		case canonical == "If" || canonical == "Else If" || canonical == "Exit Loop If":
 			params["condition"] = inner
-		case strings.EqualFold(stepName, "Set Variable"):
+		case canonical == "Set Variable":
 			parts := strings.SplitN(inner, ";", 2)
 			if len(parts) >= 1 {
 				params["name"] = strings.TrimSpace(parts[0])
 			}
 			if len(parts) == 2 {
 				valPart := strings.TrimSpace(parts[1])
-				if strings.HasPrefix(strings.ToLower(valPart), "value:") {
-					valPart = strings.TrimSpace(valPart[len("value:"):])
+				for _, label := range []string{"value:", "valeur:"} {
+					if strings.HasPrefix(strings.ToLower(valPart), label) {
+						valPart = strings.TrimSpace(valPart[len(label):])
+						break
+					}
 				}
 				params["value"] = valPart
 			}

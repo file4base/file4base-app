@@ -60,6 +60,7 @@ func adaptSaveAsXML(root *xmlNode) []ReportItem {
 
 	items = append(items, relocateFieldCatalogs(root)...)
 	items = append(items, relocateScriptSteps(root)...)
+	normalizeSaveAsXMLReferences(root)
 	return items
 }
 
@@ -101,7 +102,7 @@ func relocateFieldCatalogs(root *xmlNode) []ReportItem {
 	}
 
 	byName, byID := indexBaseTables(root)
-	declared := findNodes(root, "BaseTable", "baseTable")
+	declared := catalogDefinitions(root, []string{"BaseTableCatalog"}, "BaseTable", "baseTable")
 	var items []ReportItem
 
 	for _, holder := range holders {
@@ -139,6 +140,7 @@ func relocateFieldCatalogs(root *xmlNode) []ReportItem {
 			// Moved, not copied: leaving it under FieldsForTables as well
 			// would make the same element a child of two parents, and every
 			// walk of the tree would then meet its fields twice.
+			flattenNativeObjectList(catalog)
 			detach(holder, catalog)
 			owner.Children = append(owner.Children, catalog)
 		}
@@ -156,7 +158,7 @@ func relocateScriptSteps(root *xmlNode) []ReportItem {
 
 	byName := map[string]*xmlNode{}
 	byID := map[string]*xmlNode{}
-	for _, script := range findCatalogNodes(root, "Script", "script") {
+	for _, script := range catalogDefinitions(root, []string{"ScriptCatalog"}, "Script", "script") {
 		if name := firstAttr(script, "name", "Name"); name != "" {
 			byName[strings.ToLower(name)] = script
 		}
@@ -166,6 +168,28 @@ func relocateScriptSteps(root *xmlNode) []ReportItem {
 	}
 
 	var items []ReportItem
+	for _, holder := range holders {
+		// Native exports group each script body under a reference and an
+		// ObjectList; these are bodies, never additional script definitions.
+		for _, body := range holder.Children {
+			if body.Name != "Script" {
+				continue
+			}
+			ref := findFirstChild(body, "ScriptReference", "ScriptSourceReference")
+			list := findFirstChild(body, "ObjectList")
+			if ref == nil || list == nil {
+				continue
+			}
+			owner := resolveOwner(byName, byID, firstAttr(ref, "name", "Name"), firstAttr(ref, "id", "ID"))
+			if owner == nil {
+				items = append(items, ReportItem{Category: CategoryRejected, Domain: "script", SourceName: ownerLabel(firstAttr(ref, "name"), firstAttr(ref, "id")), Detail: "Native script body names an undeclared script; its steps were not imported"})
+				continue
+			}
+			detach(body, list)
+			list.Name = "StepList"
+			owner.Children = append(owner.Children, list)
+		}
+	}
 	for _, holder := range holders {
 		for _, list := range findNodes(holder, "StepList", "Steps", "steps") {
 			name, id := catalogOwner(list)
@@ -191,7 +215,7 @@ func relocateScriptSteps(root *xmlNode) []ReportItem {
 // indexBaseTables keys every declared base table by its name and by its id.
 func indexBaseTables(root *xmlNode) (byName, byID map[string]*xmlNode) {
 	byName, byID = map[string]*xmlNode{}, map[string]*xmlNode{}
-	for _, bt := range findNodes(root, "BaseTable", "baseTable") {
+	for _, bt := range catalogDefinitions(root, []string{"BaseTableCatalog"}, "BaseTable", "baseTable") {
 		if name := firstAttr(bt, "name", "Name"); name != "" {
 			byName[strings.ToLower(name)] = bt
 		}
@@ -250,4 +274,60 @@ func ownerLabel(name, id string) string {
 	default:
 		return "unnamed"
 	}
+}
+
+// flattenNativeObjectList unwraps only a catalog's immediate definition list.
+// Descendant operands and DDR_INFO are not object-definition catalogs.
+func flattenNativeObjectList(catalog *xmlNode) {
+	var children []*xmlNode
+	for _, child := range catalog.Children {
+		if child.Name == "ObjectList" {
+			children = append(children, child.Children...)
+		} else {
+			children = append(children, child)
+		}
+	}
+	catalog.Children = children
+}
+
+func normalizeSaveAsXMLReferences(root *xmlNode) {
+	for _, occ := range catalogDefinitions(root, []string{"TableOccurrenceCatalog"}, "TableOccurrence") {
+		source := findFirstChild(occ, "BaseTableSourceReference")
+		if source == nil {
+			continue
+		}
+		if external := findFirstChild(source, "DataSourceReference"); external != nil {
+			occ.Children = append(occ.Children, &xmlNode{Name: "FileReference", Attrs: external.Attrs})
+		}
+		if base := findFirstChild(source, "BaseTableReference"); base != nil {
+			occ.Children = append(occ.Children, base)
+		}
+	}
+	for _, rel := range catalogDefinitions(root, []string{"RelationshipCatalog"}, "Relationship") {
+		for _, sideName := range []string{"LeftTable", "RightTable"} {
+			side := findFirstChild(rel, sideName)
+			if side == nil {
+				continue
+			}
+			if ref := findFirstChild(side, "TableOccurrenceReference"); ref != nil {
+				side.Attrs["name"] = firstAttr(ref, "name", "Name")
+			}
+		}
+		for _, join := range findNodes(rel, "JoinPredicate") {
+			for _, sideName := range []string{"LeftField", "RightField"} {
+				side := findFirstChild(join, sideName)
+				if side == nil {
+					continue
+				}
+				if ref := findFirstChild(side, "FieldReference"); ref != nil {
+					ref.Name = "Field"
+				}
+			}
+		}
+	}
+}
+
+func nativeFolderMarker(node *xmlNode) bool {
+	value := firstAttr(node, "isFolder")
+	return value != "" && !strings.EqualFold(value, "false") && value != "0"
 }
