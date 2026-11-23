@@ -1373,6 +1373,19 @@ class ApiClient {
   /// It is kept in memory only and sent on every request.
   String? _authToken;
 
+  // Peer clients for one authenticated session share its script globals;
+  // another solution or sign-in has a different token and independent state.
+  // These keys and values remain in memory and are cleared with the session.
+  static final Map<(String, String), Map<String, String>> _scriptGlobals = {};
+  final Map<String, String> _anonymousScriptGlobals = {};
+
+  Map<String, String> get scriptGlobalVariables {
+    final token = _authToken;
+    if (token == null || token.isEmpty) return _anonymousScriptGlobals;
+    final server = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    return _scriptGlobals.putIfAbsent((server, token), () => <String, String>{});
+  }
+
   /// Invoked when the server answers 401 to a request other than sign-in,
   /// i.e. the session expired or was revoked and the user must sign in again.
   void Function()? onUnauthorized;
@@ -1393,8 +1406,8 @@ class ApiClient {
   void updateBaseUrl(String newUrl) {
     final normalized = newUrl.trim().replaceAll(RegExp(r'/+$'), '');
     if (normalized.isEmpty || normalized == baseUrl) return;
+    clearSession();
     baseUrl = normalized;
-    _authToken = null;
   }
 
   /// Whether this client currently holds a session token.
@@ -1405,6 +1418,12 @@ class ApiClient {
 
   /// Drops the session token locally without contacting the server.
   void clearSession() {
+    final token = _authToken;
+    if (token != null && token.isNotEmpty) {
+      final server = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+      _scriptGlobals.remove((server, token))?.clear();
+    }
+    _anonymousScriptGlobals.clear();
     _authToken = null;
   }
 
@@ -1431,7 +1450,7 @@ class ApiClient {
   void _checkResponse(http.Response response, {bool isSignIn = false}) {
     if (response.statusCode == 401 && !isSignIn) {
       // The session expired or was revoked on the server
-      _authToken = null;
+      clearSession();
       onUnauthorized?.call();
     }
     if (response.statusCode >= 400) {
@@ -2250,6 +2269,7 @@ class ApiClient {
     // Every later request runs under the session that was just opened. A
     // session replaced by a new sign-in is closed on the server as well.
     final previousToken = _authToken;
+    if (previousToken != result.token) clearSession();
     _authToken = result.token;
     if (previousToken != null && previousToken.isNotEmpty && previousToken != result.token) {
       unawaited(_revokeToken(previousToken));
@@ -2688,7 +2708,7 @@ class ApiClient {
   /// Signs out: closes the server session and forgets the token.
   Future<void> logout() async {
     final token = _authToken;
-    _authToken = null;
+    clearSession();
     if (token != null && token.isNotEmpty) {
       await _revokeToken(token);
     }
@@ -3544,6 +3564,7 @@ class ApiClient {
   }
 
   void close() {
+    clearSession();
     _httpClient.close();
   }
 }

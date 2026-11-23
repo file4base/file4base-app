@@ -48,7 +48,7 @@ The fixture #112 asks for is **two linked FileMaker files**, Dispatch and Result
 These are capability limits, stated so that an application depending on them is known to be unqualified rather than quietly mis-migrated:
 
 - An external script stops at operations that depend on a record or window context.
-- `$$` variables are shared across solutions rather than scoped per source file.
+- Database global fields are still represented as stored columns; their FileMaker session behavior is unqualified. Script `$$` variables are separate and now scoped to each authenticated solution session.
 - A transfer schedule runs a transfer, not an arbitrary migrated server script.
 - Repeating fields collapse to one column; `ExecuteSQL`, `Let` and `While` are not executed.
 
@@ -81,3 +81,21 @@ The fixture's design documents, record exports and manifest were **written by ha
 2. **The source-generated expected-results manifest.** Gate 1 of the fixture is *running the source workflow* and recording what FileMaker itself produced: final data, calculation results, script results and errors, and container hashes. Those numbers are the comparison; they cannot be written by hand without turning the test into a restatement of File4Base's own behaviour.
 
 Until both exist, this document declares the scope above, the harness measures everything it can against the handwritten fixture, and #112 stays open on the authentic-input and workflow-execution gates. A Claris-authorized trial installation is enough to produce them; so is any suitably licensed public FileMaker solution, provided its workflow can be run and its outcomes recorded.
+
+### Script call context
+
+The client passes supported text parameters and explicit return results through
+local, peer and self-reference script calls. Parameters and local variables are
+independent per invocation; no-result returns preserve the caller's previous
+subscript result and an explicit empty result clears it. Normal execution and the
+debugger use the same call state. Unsupported parameter/result expressions stop
+execution, and imported expressions outside the client runner's supported subset
+stop before modifying a record or showing a dialog. Unit coverage is not a
+source-generated workflow equivalence result.
+
+Script global variables share one in-memory map per server/session token. Peer
+clients using that same authenticated session observe the same values, while
+another solution or independent sign-in has a separate map. Logout, local session
+clear, HTTP 401, replacement sign-in, server change and client closure clear the
+session's values. This implements client script-variable isolation, not server
+script execution or session-scoped database global fields.

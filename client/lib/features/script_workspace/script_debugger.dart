@@ -55,14 +55,17 @@ class DebugStep {
 /// A script being stepped through.
 class ScriptDebugSession {
 
-  ScriptDebugSession({required this.script, required this.runner})
+  ScriptDebugSession({required this.script, required this.runner, this.parameter = ''})
       : steps = (List<ScriptStepModel>.from(script.steps)
               ..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx)))
             .map(DebugStep.new)
             .toList(),
-        _execution = ScriptExecution(script: script, runner: runner);
+        _execution = ScriptExecution(script: script, runner: runner, parameter: parameter);
   final ScriptModel script;
   final LayoutActionRunner runner;
+  final String parameter;
+  String? get scriptResult => _execution.returnValue;
+  String get lastScriptResult => _execution.callContext.lastScriptResult;
   final List<DebugStep> steps;
 
   /// The execution a normal run would drive. The debugger holds the only
@@ -103,7 +106,7 @@ class ScriptDebugSession {
     _index = 0;
     _finished = false;
     _message = null;
-    _execution = ScriptExecution(script: script, runner: runner);
+    _execution = ScriptExecution(script: script, runner: runner, parameter: parameter);
     for (final step in steps) {
       step.state = DebugStepState.pending;
     }
