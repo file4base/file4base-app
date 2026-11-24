@@ -410,6 +410,27 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   // null = idle/saved, true = saving, false = error
   final Map<String, bool?> _fieldSaving = {};
 
+  /// The mode last asked of the parent. The parent switches
+  /// [DataBrowserWidget.mode] on its next build, so a script step that runs
+  /// right after Enter Find Mode reads this instead of the stale mode.
+  OperationalMode? _requestedMode;
+
+  OperationalMode get _mode => _requestedMode ?? widget.mode;
+
+  void _requestMode(OperationalMode mode) {
+    if (widget.onModeChanged == null) return;
+    // Find mode opens on one blank request, set up now rather than when the
+    // parent rebuilds: the script steps that follow write into it first.
+    if (mode == OperationalMode.find && _mode != OperationalMode.find) _initFindControllers();
+    _requestedMode = mode;
+    widget.onModeChanged!.call(mode);
+  }
+
+  /// How many times each portal, by object id, was asked to reload its
+  /// related records (Refresh Portal, Refresh Window). A portal reloads when
+  /// its count changes.
+  final Map<String, int> _portalRefreshes = {};
+
   // ─── Reports (#32) ─────────────────────────────────────────────────────────
 
   /// True when the layout in hand groups or totals rather than just listing
@@ -1106,6 +1127,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   @override
   void didUpdateWidget(covariant DataBrowserWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // The parent has built with the mode it holds now. A mode this widget
+    // asked for has already been set up by [_requestMode].
+    final requestedHere = _requestedMode != null && _requestedMode == widget.mode;
+    _requestedMode = null;
     final columnsChanged = oldWidget.table.columns.length != widget.table.columns.length ||
         !_sameColumns(oldWidget.table.columns, widget.table.columns);
     final layoutChanged = oldWidget.layout != widget.layout ||
@@ -1123,7 +1148,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       }
     }
     if (oldWidget.table.id != widget.table.id || columnsChanged || layoutChanged) {
-      _initFindControllers();
+      final onlyRequestedMode = requestedHere &&
+          oldWidget.table.id == widget.table.id &&
+          !columnsChanged &&
+          oldWidget.layout == widget.layout;
+      if (!onlyRequestedMode) _initFindControllers();
       _rebuildFieldControllers();
       if (oldWidget.table.id != widget.table.id) {
         unawaited(_fetchRecords());
@@ -1395,7 +1424,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 onPressed: () {
                   Navigator.of(ctx).pop();
                   unawaited(_fetchRecords());
-                  widget.onModeChanged?.call(OperationalMode.browse);
+                  _requestMode(OperationalMode.browse);
                 },
                 child: const Text('Show All Records (Cancel)'),
               ),
@@ -1417,7 +1446,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         });
         _rebuildFieldControllers();
         widget.onRecordChanged?.call(_currentIndex, _records.length);
-        widget.onModeChanged?.call(OperationalMode.browse);
+        _requestMode(OperationalMode.browse);
         // A report totals the found set, so its figures are read again for
         // the set the find just returned (#32).
         if (_layoutIsReport) unawaited(_loadReportFigures());
@@ -1594,7 +1623,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 label: const Text('Cancel Find'),
                 onPressed: () {
                   deleteAllFindRequests();
-                  widget.onModeChanged?.call(OperationalMode.browse);
+                  _requestMode(OperationalMode.browse);
                   unawaited(_fetchRecords());
                 },
               ),
@@ -1763,7 +1792,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                   hasRecords ? () => actionDeleteRecord(confirm: true) : null,
                   color: Colors.red.shade700),
               const SizedBox(width: 10),
-              _barButton(Icons.search, 'Find', () => widget.onModeChanged?.call(OperationalMode.find)),
+              _barButton(Icons.search, 'Find', () => _requestMode(OperationalMode.find)),
               _barButton(Icons.sort, 'Sort', hasRecords ? _showSortDialog : null),
               _barButton(Icons.list_alt, 'Show All', _fetchRecords),
               const Spacer(),
@@ -3216,6 +3245,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           contents: portalContents,
           related: related,
           isDark: isDark,
+          refreshGeneration: _portalRefreshes[obj.id] ?? 0,
           onChanged: () => unawaited(_fetchRecords()),
         );
 
@@ -3567,22 +3597,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   @override
-  Future<void> actionEnterFindMode() async => widget.onModeChanged?.call(OperationalMode.find);
+  Future<void> actionEnterFindMode() async => _requestMode(OperationalMode.find);
 
   @override
-  Future<void> actionEnterBrowseMode() async => widget.onModeChanged?.call(OperationalMode.browse);
+  Future<void> actionEnterBrowseMode() async => _requestMode(OperationalMode.browse);
 
   @override
   Future<void> actionPerformFind() => _performFind();
 
   @override
   Future<void> actionShowAllRecords() async {
-    widget.onModeChanged?.call(OperationalMode.browse);
+    _requestMode(OperationalMode.browse);
     await _fetchRecords();
   }
 
   @override
-  Future<void> actionEnterPreviewMode() async => widget.onModeChanged?.call(OperationalMode.preview);
+  Future<void> actionEnterPreviewMode() async => _requestMode(OperationalMode.preview);
 
   @override
   Future<void> actionAdjustWindow(String windowAction) async =>
@@ -3716,7 +3746,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionEnterFindModeEx({List<Map<String, dynamic>>? requests, bool restore = false}) async {
-    widget.onModeChanged?.call(OperationalMode.find);
+    _requestMode(OperationalMode.find);
     if (restore && requests != null && requests.isNotEmpty) {
       final drafts = <FindRequestDraft>[];
       for (final req in requests) {
@@ -3768,7 +3798,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         _isFoundSet = true;
       });
       _rebuildFieldControllers();
-      widget.onModeChanged?.call(OperationalMode.browse);
+      _requestMode(OperationalMode.browse);
       widget.onRecordChanged?.call(_currentIndex, _records.length);
       return results.length;
     } catch (_) {
@@ -4037,12 +4067,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionPrint({bool dialog = true, Map<String, dynamic>? printSettings}) async {
-    widget.onModeChanged?.call(OperationalMode.preview);
+    _requestMode(OperationalMode.preview);
   }
 
   @override
   Future<void> actionSaveRecordsAsPdf({String? path, bool dialog = true, bool append = false}) async {
-    widget.onModeChanged?.call(OperationalMode.preview);
+    _requestMode(OperationalMode.preview);
   }
 
   @override
@@ -4085,7 +4115,156 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionRefreshWindow({bool flushJoinCache = false, bool flushExternalCache = false}) async {
-    await _fetchRecords();
+    // The found set, its order and the record in hand stay as they are:
+    // refreshing redraws what the window shows, it does not find again.
+    await _reloadCurrentRecord();
+    await actionRefreshPortal('');
+  }
+
+  /// Reads the record in hand again from the server and shows it, in place.
+  /// A record not yet committed, or one with an edit still being saved, is
+  /// left alone so that no typing is lost.
+  Future<void> _reloadCurrentRecord() async {
+    if (_mode != OperationalMode.browse || _records.isEmpty || _onDraft) return;
+    if (_fieldDebounceTimers.values.any((t) => t?.isActive ?? false)) return;
+    final index = _currentIndex;
+    final id = _records[index]['id']?.toString();
+    if (id == null) return;
+    Map<String, dynamic> row;
+    try {
+      row = await widget.apiClient.getRow(widget.table.name, id);
+    } on Exception {
+      // A record that cannot be read again keeps what it showed.
+      return;
+    }
+    if (!mounted || index >= _records.length || _records[index]['id']?.toString() != id) return;
+    setState(() => _records[index] = row);
+    for (final col in widget.table.columns) {
+      final ctrl = _fieldControllers[col.name];
+      if (ctrl != null) ctrl.text = recordFieldText(col, row);
+    }
+  }
+
+  @override
+  Future<bool> actionRefreshPortal(String objectName) async {
+    final objects = widget.layout?.objects ?? const <LayoutObjectModel>[];
+    final wanted = objectName.trim().toLowerCase();
+    final List<LayoutObjectModel> portals;
+    if (wanted.isEmpty) {
+      portals = objects.where((o) => o.type == 'portal').toList();
+    } else {
+      final found = objects
+          .where((o) => (o.name ?? '').toLowerCase() == wanted || o.id.toLowerCase() == wanted)
+          .firstOrNull;
+      if (found == null) return false;
+      if (found.type != 'portal') {
+        // FileMaker refreshes any other named object as Refresh Object does:
+        // what it shows is read again. The found set is not touched.
+        await _reloadCurrentRecord();
+        return true;
+      }
+      portals = [found];
+    }
+    if (mounted && portals.isNotEmpty) {
+      setState(() {
+        for (final portal in portals) {
+          _portalRefreshes[portal.id] = (_portalRefreshes[portal.id] ?? 0) + 1;
+        }
+      });
+    }
+    return true;
+  }
+
+  static String _occurrenceKey(String raw) =>
+      raw.trim().toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), '');
+
+  /// Whether [table], a table occurrence a script step names, is another
+  /// occurrence than the one this layout shows.
+  ///
+  /// With the relationship graph read, any name but the layout's own
+  /// occurrence (or its base table) is another one. Without it, only a field
+  /// the layout shows through a relationship from that occurrence says so,
+  /// and a name the window cannot place is taken as the layout's own, as
+  /// FileMaker requires the target to be on the layout.
+  bool _namesOtherOccurrence(String field, String? table) {
+    if (table == null || table.trim().isEmpty) return false;
+    final key = _occurrenceKey(table);
+    final layoutOccurrence = widget.layout?.tableOccurrence ?? '';
+    final graph = _occurrences;
+    final own = <String>{
+      _occurrenceKey(widget.table.name),
+      _occurrenceKey(layoutOccurrence),
+      _occurrenceKey(graph[layoutOccurrence]?.name ?? ''),
+    }..remove('');
+    if (own.contains(key)) return false;
+    if (graph.isNotEmpty) return true;
+    final objects = widget.layout?.objects ?? const <LayoutObjectModel>[];
+    return objects.any((o) {
+      final binding = o.fieldBinding;
+      if (binding == null || !binding.isRelated) return false;
+      if (binding.fieldName.toLowerCase() != field.toLowerCase()) return false;
+      final occurrence = binding.tableOccurrence ?? '';
+      return _occurrenceKey(occurrence) == key || _occurrenceKey(graph[occurrence]?.name ?? '') == key;
+    });
+  }
+
+  @override
+  String? actionFieldType(String field, {String? table}) {
+    if (_namesOtherOccurrence(field, table)) return null;
+    return widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull?.fieldType;
+  }
+
+  @override
+  Future<FieldInsertOutcome> actionInsertIntoField({
+    required String field,
+    required String text,
+    required bool replaceAll,
+    String? table,
+  }) async {
+    // A step that names a table occurrence is placed against the graph,
+    // read once if this layout never needed it.
+    if (table != null && table.trim().isNotEmpty && _occurrences.isEmpty) await _loadRelationshipGraph();
+    if (!mounted) return FieldInsertOutcome.noSuchField;
+    if (_namesOtherOccurrence(field, table)) return FieldInsertOutcome.relatedField;
+    final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
+    if (col == null || col.isPrimaryKey) return FieldInsertOutcome.noSuchField;
+
+    // The new content, and the caret after the inserted text, as typing
+    // leaves it.
+    TextEditingValue insert(String existing, TextSelection? selection, {required bool active}) {
+      if (replaceAll) {
+        return TextEditingValue(text: text, selection: TextSelection.collapsed(offset: text.length));
+      }
+      // The selection is replaced; a caret is a selection of nothing. A field
+      // that is not the active one gets the text at its end.
+      final sel = selection;
+      final range = active && sel != null && sel.isValid && sel.end <= existing.length
+          ? sel
+          : TextSelection.collapsed(offset: existing.length);
+      return TextEditingValue(
+        text: existing.replaceRange(range.start, range.end, text),
+        selection: TextSelection.collapsed(offset: range.start + text.length),
+      );
+    }
+
+    if (_mode == OperationalMode.find) {
+      // A find criterion, never the record behind the request.
+      final ctrl = _findControllers[col.name];
+      final existing = ctrl?.text ?? _currentFindRequest.values[col.name] ?? '';
+      final value = insert(existing, ctrl?.selection, active: _lastFocusedFindField == col.name);
+      ctrl?.value = value;
+      setState(() => _currentFindRequest.values[col.name] = value.text);
+      return FieldInsertOutcome.written;
+    }
+
+    if (_records.isEmpty) return FieldInsertOutcome.written;
+    final ctrl = _fieldControllers[col.name];
+    final existing = ctrl?.text ?? recordFieldText(col, _records[_currentIndex]);
+    final value = insert(existing, ctrl?.selection, active: _lastFocusedBrowseField == col.name);
+    _fieldDebounceTimers[col.name]?.cancel();
+    ctrl?.value = value;
+    await _saveField(col.name, value.text);
+    return FieldInsertOutcome.written;
   }
 
   @override
@@ -4149,11 +4328,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     } else if (lower.contains('prev') || lower.contains('anterior')) {
       previousRecord();
     } else if (lower.contains('find') || lower.contains('buscar')) {
-      widget.onModeChanged?.call(OperationalMode.find);
+      _requestMode(OperationalMode.find);
     } else if (lower.contains('print') ||
         lower.contains('imprimir') ||
         lower.contains('preview')) {
-      widget.onModeChanged?.call(OperationalMode.preview);
+      _requestMode(OperationalMode.preview);
     } else if (lower.contains('save') || lower.contains('guardar')) {
       unawaited(_saveCurrentRecord());
     } else if (lower.contains('home') ||
@@ -4590,7 +4769,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         label: const Text('Cancel Find'),
                         onPressed: () {
                           deleteAllFindRequests();
-                          widget.onModeChanged?.call(OperationalMode.browse);
+                          _requestMode(OperationalMode.browse);
                           unawaited(_fetchRecords());
                         },
                       ),

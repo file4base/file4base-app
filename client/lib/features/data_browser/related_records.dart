@@ -338,6 +338,7 @@ class PortalView extends StatefulWidget {
   const PortalView({
     required this.object, required this.contents, required this.related, required this.isDark, super.key,
     this.onChanged,
+    this.refreshGeneration = 0,
   });
   final LayoutObjectModel object;
 
@@ -351,6 +352,10 @@ class PortalView extends StatefulWidget {
   /// Called when a related record has been created or deleted, so the layout
   /// can refresh anything that counts them.
   final VoidCallback? onChanged;
+
+  /// Changes when a script asks this portal to reload its related records
+  /// (Refresh Portal, Refresh Window), whether or not the record changed.
+  final int refreshGeneration;
 
   @override
   State<PortalView> createState() => _PortalViewState();
@@ -385,6 +390,7 @@ class _PortalViewState extends State<PortalView> {
   void didUpdateWidget(PortalView old) {
     super.didUpdateWidget(old);
     if (old.related.recordId != widget.related.recordId ||
+        old.refreshGeneration != widget.refreshGeneration ||
         old.object.portalConfig.toString() != widget.object.portalConfig.toString()) {
       unawaited(_load());
     }

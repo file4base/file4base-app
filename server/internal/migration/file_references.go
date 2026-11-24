@@ -9,7 +9,7 @@ import (
 )
 
 // collectFileReferences gives every external file a converted Perform Script
-// step calls a file reference of its own (#107).
+// step calls, or an Open File step opens, a file reference of its own (#107).
 //
 // FileMaker names the other file; File4Base needs to know which solution that
 // is, and nothing in the design document says. So each reference is created
@@ -26,7 +26,7 @@ func collectFileReferences(bundle *schema.SolutionBundle, report *ConversionRepo
 
 	for _, script := range bundle.Scripts {
 		for _, step := range script.Steps {
-			if !strings.EqualFold(step.StepType, "Perform Script") {
+			if !strings.EqualFold(step.StepType, "Perform Script") && !strings.EqualFold(step.StepType, "Open File") {
 				continue
 			}
 			ref, _ := step.Params["file_reference"].(string)
@@ -68,7 +68,7 @@ func collectFileReferences(bundle *schema.SolutionBundle, report *ConversionRepo
 			Domain:     "script",
 			SourceName: u.name,
 			TargetName: u.name,
-			Detail: fmt.Sprintf("Perform Script calls a script in the external file %q (%s). "+
+			Detail: fmt.Sprintf("Scripts reach the external file %q (%s). "+
 				"A file reference of that name was created without a solution: map it to the "+
 				"File4Base solution that file became. Until it is mapped those steps stop the "+
 				"script; they never run a script of this solution that has the same name",

@@ -60,6 +60,80 @@ class ScriptWindowEntry {
   double? height;
 }
 
+/// One script error recorded while `Set Error Logging [On]` is active.
+///
+/// It carries the columns FileMaker writes to `ScriptErrors.log` that the
+/// client knows: when, which script and step, the error code, and the result
+/// of the step's custom debug calculation.
+class ScriptErrorLogEntry {
+  const ScriptErrorLogEntry({
+    required this.time,
+    required this.scriptName,
+    required this.stepName,
+    required this.line,
+    required this.errorCode,
+    this.customInfo = '',
+  });
+
+  final DateTime time;
+  final String scriptName;
+  final String stepName;
+
+  /// 1-based position of the step in its script.
+  final int line;
+  final int errorCode;
+  final String customInfo;
+
+  /// The entry as one tab-separated line, in FileMaker's column order.
+  String toLogLine() => [
+        time.toIso8601String(),
+        scriptName,
+        '$stepName ($line)',
+        '$errorCode',
+        customInfo,
+      ].join('\t');
+}
+
+/// `Set Error Logging` state of one solution session.
+///
+/// FileMaker keeps logging for the open file until a script turns it off or
+/// the file closes, across every script run in between. File4Base keeps it
+/// for the signed-in session of the solution, which is what an open file is
+/// here: a button script after the startup script that turned logging on is
+/// still logged.
+class ScriptErrorLogging {
+  /// Whether `Set Error Logging [On]` is active.
+  bool enabled = false;
+
+  /// The custom debug calculation, evaluated when an error is logged. Empty
+  /// when the step has none.
+  String customInfo = '';
+
+  /// The errors logged, oldest first. Bounded by [maxEntries]; the oldest
+  /// entries go first.
+  final List<ScriptErrorLogEntry> entries = <ScriptErrorLogEntry>[];
+
+  static const maxEntries = 1000;
+
+  void add(ScriptErrorLogEntry entry) {
+    entries.add(entry);
+    if (entries.length > maxEntries) entries.removeAt(0);
+  }
+}
+
+/// Where a script's insertion into a field landed.
+enum FieldInsertOutcome {
+  /// Written: into the find request in Find mode, the record otherwise.
+  written,
+
+  /// The table has no such field.
+  noSuchField,
+
+  /// The step names a field of another table occurrence than the layout's,
+  /// which the window cannot write.
+  relatedField,
+}
+
 /// Shared execution state for a script call tree (propagated from caller to
 /// nested `Perform Script` invocations, matching FileMaker semantics).
 class ScriptSessionState {
@@ -67,7 +141,18 @@ class ScriptSessionState {
   bool errorCapture = false;
 
   /// Most recent FileMaker error code (`Get(LastError)`).
-  int lastError = 0;
+  int get lastError => _lastError;
+  set lastError(int code) {
+    _lastError = code;
+    if (code != 0) errorRaised = true;
+  }
+
+  int _lastError = 0;
+
+  /// Set whenever a step reports a nonzero error. The script execution
+  /// clears it before each step and reads it after, so `Set Error Logging`
+  /// logs each error once, by the step that raised it.
+  bool errorRaised = false;
 
   /// Most recent `Show Custom Dialog` button index (`Get(LastMessageChoice)`).
   int lastMessageChoice = 1;
@@ -156,6 +241,30 @@ abstract class ExtendedLayoutActionHost {
   Future<String?> actionReadFromClipboard();
   Future<void> actionBeep();
   Future<void> actionRefreshWindow({bool flushJoinCache = false, bool flushExternalCache = false});
+
+  /// Reloads the related records of the portal named [objectName] on the
+  /// current layout, or of every portal when [objectName] is empty. Returns
+  /// false when the layout has no portal of that name.
+  Future<bool> actionRefreshPortal(String objectName);
+
+  /// The File4Base type (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, ...) of
+  /// [field] in the current table, or null when the table has no such field
+  /// or [table] names another table occurrence than the layout's.
+  String? actionFieldType(String field, {String? table});
+
+  /// Puts [text] into [field] as typing would: into the current find request
+  /// in Find mode — never into the record then — and into the record
+  /// otherwise. With [replaceAll] the text replaces the content; without it,
+  /// it replaces the selection of [field] when it is the active field, or
+  /// goes in at its caret, or at the end. [table] is the table occurrence the
+  /// step names, if any; a field of another occurrence than the layout's is
+  /// not written.
+  Future<FieldInsertOutcome> actionInsertIntoField({
+    required String field,
+    required String text,
+    required bool replaceAll,
+    String? table,
+  });
   Future<void> actionSendMail({
     String to = '',
     String cc = '',

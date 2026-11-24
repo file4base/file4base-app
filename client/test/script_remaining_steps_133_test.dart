@@ -114,16 +114,24 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
   }
 
   @override
-  Future<void> actionEnterFindMode() async => log.add('enter_find_mode');
+  Future<void> actionEnterFindMode() async {
+    findMode = true;
+    log.add('enter_find_mode');
+  }
   @override
   Future<void> actionEnterFindModeEx({List<Map<String, dynamic>>? requests, bool restore = false}) async {
+    findMode = true;
     log.add('enter_find_mode:restore=$restore,reqs=${requests?.length ?? 0}');
   }
 
   @override
-  Future<void> actionPerformFind() async => log.add('perform_find');
+  Future<void> actionPerformFind() async {
+    findMode = false;
+    log.add('perform_find');
+  }
   @override
   Future<int> actionPerformFindEx({List<Map<String, dynamic>>? requests, bool restore = false}) async {
+    findMode = false;
     log.add('perform_find:restore=$restore,reqs=${requests?.length ?? 0}');
     return nextFindCount ?? records.length;
   }
@@ -133,7 +141,10 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
   @override
   Future<void> actionEnterPreviewMode() async => log.add('enter_preview_mode');
   @override
-  Future<void> actionEnterBrowseMode() async => log.add('enter_browse_mode');
+  Future<void> actionEnterBrowseMode() async {
+    findMode = false;
+    log.add('enter_browse_mode');
+  }
 
   @override
   Future<bool> actionGoToLayout(String layoutName) async {
@@ -230,6 +241,7 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
   Future<bool> actionGoToField(String field, {bool select = false}) async {
     if (records.isEmpty || !currentRecord.containsKey(field)) return false;
     focusedField = field;
+    selectedField = select ? field : null;
     log.add('go_to_field:$field:select=$select');
     return true;
   }
@@ -327,6 +339,56 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
   @override
   Future<void> actionRefreshWindow({bool flushJoinCache = false, bool flushExternalCache = false}) async {
     log.add('refresh_window:join=$flushJoinCache,ext=$flushExternalCache');
+  }
+
+  /// Portals on the layout; [knownObjects] that are not portals are other
+  /// objects.
+  Set<String> knownPortals = <String>{'Lines'};
+
+  /// The type of each field, by name; a field not listed is text.
+  Map<String, String> fieldTypes = <String, String>{};
+
+  @override
+  Future<bool> actionRefreshPortal(String objectName) async {
+    if (objectName.isNotEmpty && !knownPortals.contains(objectName) && !knownObjects.contains(objectName)) {
+      return false;
+    }
+    log.add('refresh_portal:$objectName');
+    return true;
+  }
+
+  /// Table occurrences shown on the layout that are not its own.
+  Set<String> relatedOccurrences = <String>{};
+
+  /// Find mode: insertions go to [findRequest], not the record.
+  bool findMode = false;
+  final Map<String, String> findRequest = <String, String>{};
+
+  /// The field whose whole content is selected (Go to Field [Select], Select
+  /// All); an insertion replaces it.
+  String? selectedField;
+
+  @override
+  String? actionFieldType(String field, {String? table}) {
+    if (table != null && relatedOccurrences.contains(table)) return null;
+    return currentRecord.containsKey(field) ? (fieldTypes[field] ?? 'TEXT') : null;
+  }
+
+  @override
+  Future<FieldInsertOutcome> actionInsertIntoField({
+    required String field,
+    required String text,
+    required bool replaceAll,
+    String? table,
+  }) async {
+    if (table != null && relatedOccurrences.contains(table)) return FieldInsertOutcome.relatedField;
+    if (records.isEmpty || !currentRecord.containsKey(field)) return FieldInsertOutcome.noSuchField;
+    final target = findMode ? findRequest : currentRecord;
+    final replace = replaceAll || selectedField == field;
+    target[field] = replace ? text : '${target[field] ?? ''}$text';
+    if (selectedField == field) selectedField = null;
+    log.add('${findMode ? 'find_request' : 'insert'}:$field=${target[field]}');
+    return FieldInsertOutcome.written;
   }
 
   @override
@@ -597,5 +659,241 @@ void main() {
       'unsort_records',
       'delete_all_records:false',
     ]));
+  });
+
+
+  test('Insert Current Date, Select All, Refresh Portal and Set Error Logging', () async {
+    final now = DateTime.now();
+    final today = '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+    final host = _FullExtendedHost(records: [
+      {'name': 'Alpha', 'status': 'note ', 'visit_date': '2000-01-01', 'stamp': ''},
+    ])
+      ..fieldTypes = {'visit_date': 'DATE', 'stamp': 'TIMESTAMP'};
+    final runner = _runner(host, const {});
+    final script = ScriptModel.fromJson({
+      'id': 'dates',
+      'name': 'Dates',
+      'is_active': true,
+      'steps': [
+        _step(1, 'Set Error Logging', {'state': true, 'custom_debug_info': r'$i'}),
+        _step(2, 'Set Variable', {'name': r'$i', 'value': '7'}),
+        _step(3, 'Insert Current Date', {'field': 'visit_date', 'select': false}),
+        _step(4, 'Insert Current Date', {'field': 'status', 'select': false}),
+        _step(5, 'Insert Current Date', {'field': 'stamp', 'select': true}),
+        _step(6, 'Insert Current Date', {'target': r'$d', 'select': true}),
+        _step(7, 'Go to Field', {'field': 'name'}),
+        _step(8, 'Select All'),
+        _step(9, 'Set Error Capture', {'state': true}),
+        _step(10, 'Refresh Portal', {'object_name': 'Lines'}),
+        _step(11, 'Refresh Portal', {'object_name': 'Missing'}),
+        _step(12, 'Insert Current Date', {'field': 'nope'}),
+        _step(13, 'Set Variable', {'name': r'$e', 'value': 'Get(LastError)'}),
+        _step(14, 'Set Error Logging', {'state': false}),
+        _step(15, 'Go to Layout', {'layout_name': 'NoSuchLayout'}),
+      ],
+    });
+    final session = ScriptSessionState();
+    final execution = ScriptExecution(script: script, runner: runner, session: session);
+    while (!execution.atEnd) {
+      final outcome = await execution.advance();
+      expect(outcome.kind, isNot(StepOutcomeKind.stopped), reason: outcome.message);
+    }
+
+    final record = host.records[0];
+    expect(record['visit_date'], today, reason: 'a date field holds one date: the date replaces it');
+    expect(record['status'], 'note $today', reason: 'text without Select entire contents: appended');
+    expect(record['stamp'], '$today 00:00:00');
+    expect(execution.localVars[r'$d'], today);
+    expect(execution.localVars[r'$e'], '102');
+    expect(host.log, containsAll(<String>['go_to_field:name:select=true', 'refresh_portal:Lines']));
+    expect(host.log, isNot(contains('refresh_portal:Missing')));
+
+    // Logged: the two errors raised while logging was on, each once, with the
+    // step's line and the debug calculation's value. Not logged: the error
+    // raised after Off.
+    expect(runner.errorLogging.entries.map((e) => '${e.line}:${e.errorCode}:${e.customInfo}').toList(),
+        ['11:116:7', '12:102:7']);
+    expect(runner.errorLogging.entries.first.toLogLine(), contains('Refresh Portal (11)\t116\t7'));
+    expect(runner.errorLogging.enabled, isFalse);
+  });
+
+  group('Insert Current Date targets', () {
+    final now = DateTime.now();
+    final today = '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+
+    Future<ScriptExecution> runSteps(LayoutActionRunner runner, List<Map<String, dynamic>> steps,
+        {ScriptSessionState? session}) async {
+      final script = ScriptModel.fromJson({'id': 's', 'name': 'S', 'is_active': true, 'steps': steps});
+      final execution = ScriptExecution(script: script, runner: runner, session: session ?? ScriptSessionState());
+      while (!execution.atEnd) {
+        final outcome = await execution.advance();
+        expect(outcome.kind, isNot(StepOutcomeKind.stopped), reason: outcome.message);
+      }
+      return execution;
+    }
+
+    test('in Find mode the date goes into the find request, never the record', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'visit_date': '2000-01-01'},
+      ])
+        ..fieldTypes = {'visit_date': 'DATE'};
+      await runSteps(_runner(host, const {}), [
+        _step(1, 'Enter Find Mode', {'pause': false}),
+        _step(2, 'Insert Current Date', {'field': 'visit_date'}),
+      ]);
+      expect(host.findRequest['visit_date'], today);
+      expect(host.records[0]['visit_date'], '2000-01-01', reason: 'the stored record is not written');
+    });
+
+    test('a target that was named but not read never falls back to the active field', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': 'keep'},
+      ]);
+      final execution = await runSteps(_runner(host, const {}), [
+        _step(1, 'Set Error Capture', {'state': true}),
+        _step(2, 'Go to Field', {'field': 'status'}),
+        _step(3, 'Insert Current Date', {'target_unresolved': true, 'select': true}),
+        _step(4, 'Set Variable', {'name': r'$unresolved', 'value': 'Get(LastError)'}),
+        _step(5, 'Insert Current Date', {'target': 'Elsewhere::Notes', 'select': true}),
+        _step(6, 'Set Variable', {'name': r'$unreadable', 'value': 'Get(LastError)'}),
+        // The DDR form <Field>$today</Field>, decoded to name.
+        _step(7, 'Insert Current Date', {'name': r'$today', 'select': true}),
+      ]);
+      expect(execution.localVars[r'$unresolved'], '102');
+      expect(execution.localVars[r'$unreadable'], '102');
+      expect(execution.localVars[r'$today'], today);
+      expect(host.records[0]['status'], 'keep', reason: 'the active field is left alone');
+    });
+
+    test('a related field the window cannot write fails and writes nothing', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'posted_on': '2000-01-01'},
+      ])
+        ..relatedOccurrences = {'Payments'}
+        ..fieldTypes = {'posted_on': 'DATE'};
+      final execution = await runSteps(_runner(host, const {}), [
+        _step(1, 'Set Error Capture', {'state': true}),
+        _step(2, 'Insert Current Date', {'field': 'posted_on', 'field_table': 'Payments'}),
+        _step(3, 'Set Variable', {'name': r'$e', 'value': 'Get(LastError)'}),
+      ]);
+      expect(execution.localVars[r'$e'], '102');
+      expect(host.records[0]['posted_on'], '2000-01-01', reason: 'the layout table is not written instead');
+      expect(host.log.where((l) => l.startsWith('insert:')), isEmpty);
+    });
+
+    test('after Select All the date replaces the selection even without Select entire contents', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': 'pending'},
+      ]);
+      await runSteps(_runner(host, const {}), [
+        _step(1, 'Go to Field', {'field': 'status'}),
+        _step(2, 'Select All'),
+        _step(3, 'Insert Current Date', {'field': 'status', 'select': false}),
+        _step(4, 'Insert Current Date', {'field': 'status', 'select': false}),
+      ]);
+      expect(host.records[0]['status'], '$today$today',
+          reason: 'the selection is replaced once; the second insertion is at the caret after it');
+    });
+  });
+
+  group('Set Error Logging', () {
+    Future<void> runSteps(LayoutActionRunner runner, List<Map<String, dynamic>> steps) async {
+      final script = ScriptModel.fromJson({'id': 's', 'name': 'S', 'is_active': true, 'steps': steps});
+      // A fresh session each time, as each button click or trigger gets.
+      final execution = ScriptExecution(script: script, runner: runner, session: ScriptSessionState());
+      while (!execution.atEnd) {
+        await execution.advance();
+      }
+    }
+
+    final fail = _step(9, 'Go to Layout', {'layout_name': 'NoSuchLayout'});
+    final capture = _step(1, 'Set Error Capture', {'state': true});
+
+    test('stays on for the solution session until a script turns it off', () async {
+      final host = _FullExtendedHost();
+      final runner = _runner(host, const {});
+      await runSteps(runner, [_step(1, 'Set Error Logging', {'state': true})]);
+      await runSteps(runner, [capture, fail]);
+      expect(runner.errorLogging.entries, hasLength(1), reason: 'a later script run is still logged');
+
+      await runSteps(runner, [_step(1, 'Set Error Logging', {'state': false})]);
+      await runSteps(runner, [capture, fail]);
+      expect(runner.errorLogging.entries, hasLength(1), reason: 'nothing is logged after Off');
+
+      final otherSession = _runner(_FullExtendedHost(), const {});
+      expect(otherSession.errorLogging.enabled, isFalse, reason: 'another sign-in starts with logging off');
+    });
+
+    test('a step whose state was not read leaves logging off', () async {
+      final runner = _runner(_FullExtendedHost(), const {});
+      await runSteps(runner, [_step(1, 'Set Error Logging'), capture, fail]);
+      expect(runner.errorLogging.enabled, isFalse);
+      expect(runner.errorLogging.entries, isEmpty);
+    });
+  });
+
+  test('Open File resolves the file reference and checks the solution can be reached', () async {
+    final signedIn = <String>{'remote_db'};
+    final mock = MockClient((req) async {
+      final segments = req.url.pathSegments;
+      if (req.url.path == '/api/v1/databases') {
+        return http.Response(jsonEncode({'databases': ['this_db', 'remote_db']}), 200,
+            headers: {'content-type': 'application/json'});
+      }
+      if (segments.length == 5 && segments[2] == 'file-references' && segments[4] == 'resolve') {
+        final target = switch (segments[3]) {
+          'Self' => 'this_db',
+          'Archive' => 'remote_db',
+          'Retired' => 'gone_db',
+          _ => null,
+        };
+        if (segments[3] == 'Unmapped') {
+          return http.Response(jsonEncode({'title': 'File Reference Not Mapped', 'detail': 'unmapped'}), 409);
+        }
+        if (target == null) {
+          return http.Response(jsonEncode({'title': 'File Reference Not Found', 'detail': 'none'}), 404);
+        }
+        return http.Response(
+            jsonEncode({
+              'name': segments[3],
+              'database': target,
+              'calling_database': 'this_db',
+              'local': target == 'this_db',
+            }),
+            200,
+            headers: {'content-type': 'application/json'});
+      }
+      return http.Response('Not found', 404);
+    });
+    final runner = LayoutActionRunner(
+      apiClient: ApiClient(baseUrl: 'http://test:8080', httpClient: mock),
+      host: _FullExtendedHost(),
+      peerTokenProvider: (db) async => signedIn.contains(db) ? 'token-$db' : null,
+    );
+
+    Future<int> errorOf(String reference) async {
+      final context = ScriptCallContext(session: ScriptSessionState()..errorCapture = true);
+      final result = await runner.runStep('Open File', {'file_reference': reference, 'hidden': true},
+          depth: 0, callContext: context);
+      expect(result.completed, isTrue, reason: result.message);
+      return context.session.lastError;
+    }
+
+    expect(await errorOf('Self'), 0, reason: 'this solution is open');
+    expect(await errorOf('Archive'), 0, reason: 'installed, and the session is signed in to it');
+    expect(await errorOf('Retired'), 100, reason: 'mapped to a solution not installed here');
+    expect(await errorOf('Unmapped'), 100);
+    expect(await errorOf('Unknown'), 114);
+    expect(await errorOf(''), 100);
+
+    signedIn.clear();
+    expect(await errorOf('Archive'), 9, reason: 'the user has no session, so no privileges, there');
+    final stopped = await runner.runStep('Open File', {'file_reference': 'Archive'}, depth: 0);
+    expect(stopped.completed, isFalse);
+    expect(stopped.message, contains('not signed in'));
   });
 }

@@ -297,6 +297,13 @@ class LayoutActionRunner {
   /// called through a peer client. They never fall back to a caller's globals.
   Map<String, String> get globalVariables => apiClient.scriptGlobalVariables;
 
+  /// `Set Error Logging` state of this solution's session. It is attached to
+  /// the session's global variables, which live exactly as long as the
+  /// session, so it outlasts the script run that turned it on and is
+  /// dropped on sign-out.
+  ScriptErrorLogging get errorLogging => _errorLogging[globalVariables] ??= ScriptErrorLogging();
+  static final Expando<ScriptErrorLogging> _errorLogging = Expando<ScriptErrorLogging>('errorLogging');
+
   /// Normalizes both snake_case (`go_to_layout`) and FileMaker Title Case
   /// (`Go to Layout`, `Delete Portal Row`) step names into canonical keys.
   static String normalizeStepType(String raw) {
@@ -415,15 +422,14 @@ class LayoutActionRunner {
         _resolveParamsText(params[key]?.toString() ?? fallback, vars);
 
     final norm = normalizeStepType(stepType);
-    if (!hasWindow && windowSteps.contains(norm)) {
-      // Running it would act on the window on screen, which belongs to the
-      // calling solution — a record created or a field set in the wrong
-      // table. The script stops instead of doing that, or of skipping it.
-      return LayoutActionResult.stopped(
-          'Step "$stepType" acts on a window, and this script was performed from the '
-          'solution $windowSolution, whose window is the one on screen. A script '
-          'performed in another solution runs only the steps that need no window.');
-    }
+    // Running such a step would act on the window on screen, which belongs to
+    // the calling solution — a record created or a field set in the wrong
+    // table. The script stops instead of doing that, or of skipping it.
+    LayoutActionResult windowless() => LayoutActionResult.stopped(
+        'Step "$stepType" acts on a window, and this script was performed from the '
+        'solution $windowSolution, whose window is the one on screen. A script '
+        'performed in another solution runs only the steps that need no window.');
+    if (!hasWindow && windowSteps.contains(norm)) return windowless();
 
     // Helper: set FileMaker error code; if Set Error Capture [On] is active,
     // allow the script to continue and inspect Get(LastError).
@@ -488,6 +494,15 @@ class LayoutActionRunner {
           final s = rawState?.toString().trim().toLowerCase() ?? 'on';
           session.errorCapture = s != 'off' && s != 'false' && s != '0' && !s.contains('off') && !s.contains('désactiv');
         }
+        session.lastError = 0;
+        return const LayoutActionResult.ok();
+      case 'set_error_logging':
+        // Each nonzero error a later step reports is logged, with the custom
+        // debug calculation evaluated at that moment, until Off.
+        // A step whose state could not be read stays Off: logging is never
+        // switched on that the script did not ask for.
+        final logging = errorLogging..enabled = boolParam('state');
+        logging.customInfo = logging.enabled ? (params['custom_debug_info']?.toString() ?? '') : '';
         session.lastError = 0;
         return const LayoutActionResult.ok();
       case 'allow_user_abort':
@@ -820,6 +835,21 @@ class LayoutActionRunner {
             flushExternalCache: boolParam('flush_external_cache'),
           );
         }
+      case 'refresh_portal':
+        final rawPortal = params['object_name']?.toString() ?? '';
+        final portalName = params['object_name_is_calculation'] == true
+            ? resolveValue(rawPortal, vars, callContext: context)
+            : _resolveParamsText(rawPortal, vars);
+        if (portalName == null) {
+          return const LayoutActionResult.stopped('Refresh Portal calculation cannot be evaluated.');
+        }
+        // With no object named, FileMaker refreshes the active object; with
+        // none active either, every portal of the layout is reloaded.
+        final portal = portalName.trim().isNotEmpty ? portalName.trim() : session.activeObject;
+        if (ext != null && !await ext.actionRefreshPortal(portal)) {
+          return failOrCapture(116, 'Layout object "$portal" is not on this layout.');
+        }
+        session.lastError = 0;
       case 'beep':
         session.lastError = 0;
         if (ext != null) {
@@ -876,6 +906,8 @@ class LayoutActionRunner {
       case 'close_file':
         session.lastError = 0;
         await host.actionCloseFile();
+      case 'open_file':
+        return _openFile(params['file_reference']?.toString().trim() ?? '', session, failOrCapture);
       case 'exit_application':
         session.lastError = 0;
         await host.actionExitApplication();
@@ -994,6 +1026,88 @@ class LayoutActionRunner {
         }
         if (!await host.actionSetField(field, finalVal)) {
           return failOrCapture(102, 'Field "$field" is not in this table.');
+        }
+        session.lastError = 0;
+      case 'insert_current_date':
+        final now = DateTime.now();
+        final today = '${now.year.toString().padLeft(4, '0')}-'
+            '${now.month.toString().padLeft(2, '0')}-'
+            '${now.day.toString().padLeft(2, '0')}';
+        final selectAll = boolParam('select');
+        String textParam(String key) => params[key]?.toString().trim() ?? '';
+        final variable = [textParam('target'), textParam('name')]
+            .firstWhere((v) => v.startsWith(r'$'), orElse: () => '');
+        if (variable.isNotEmpty) {
+          // A variable target: Select entire contents replaces it, otherwise
+          // the date is appended to what it holds.
+          final existing = selectAll ? '' : (_lookupVariable(variable, vars, callContext: context) ?? '');
+          _setVariable(variable, '$existing$today', vars);
+          session.lastError = 0;
+          break;
+        }
+        if (!hasWindow) return windowless();
+        var field = textParam('field');
+        if (field.isEmpty) {
+          // Only a step that names no target at all writes the active field;
+          // one whose target could not be read fails rather than writing
+          // whatever field happens to be active.
+          final named = params['target_unresolved'] == true ||
+              ['target', 'name', 'target_field'].any((k) => textParam(k).isNotEmpty);
+          if (named) {
+            return failOrCapture(102, 'Insert Current Date names a target File4Base cannot read; '
+                'choose its target field again.');
+          }
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isEmpty) {
+          return failOrCapture(102, 'Insert Current Date has no target or active field.');
+        }
+        final table = textParam('field_table');
+        final fieldType = ext?.actionFieldType(field, table: table.isEmpty ? null : table)?.toUpperCase();
+        if (fieldType != null && const {'CALCULATION', 'SUMMARY', 'CONTAINER'}.contains(fieldType)) {
+          return failOrCapture(201, 'Insert Current Date cannot write the date into "$field", a '
+              '${fieldType.toLowerCase()} field.');
+        }
+        // A date field holds one date, so the date replaces it; a timestamp
+        // gets it at midnight. Elsewhere Select entire contents decides.
+        final value = fieldType == 'TIMESTAMP' ? '$today 00:00:00' : today;
+        final replaceAll = selectAll || fieldType == 'DATE' || fieldType == 'TIMESTAMP';
+        if (ext != null) {
+          final outcome = await ext.actionInsertIntoField(
+              field: field, text: value, replaceAll: replaceAll, table: table.isEmpty ? null : table);
+          switch (outcome) {
+            case FieldInsertOutcome.written:
+              break;
+            case FieldInsertOutcome.noSuchField:
+              return failOrCapture(102, 'Field "$field" is not in this table.');
+            case FieldInsertOutcome.relatedField:
+              return failOrCapture(102, 'Insert Current Date writes "$table::$field", a field of '
+                  'another table occurrence than this layout\'s, which a script cannot write yet. '
+                  'Nothing was written.');
+          }
+          session.lastError = 0;
+          break;
+        }
+        if (table.isNotEmpty) {
+          return failOrCapture(102, 'Insert Current Date writes "$table::$field", which this window '
+              'cannot write. Nothing was written.');
+        }
+        var plain = value;
+        if (!replaceAll) {
+          final token = '{{$field}}';
+          final existing = host.actionResolveText(token);
+          if (existing != token) plain = '$existing$value';
+        }
+        if (!await host.actionSetField(field, plain)) {
+          return failOrCapture(102, 'Field "$field" is not in this table.');
+        }
+        session.lastError = 0;
+      case 'select_all':
+        // Selects what the active field holds. With no window on screen, or
+        // no active field, there is nothing to select.
+        final activeField = ext?.actionActiveFieldName ?? session.activeField;
+        if (ext != null && activeField.isNotEmpty) {
+          await ext.actionGoToField(activeField, select: true);
         }
         session.lastError = 0;
       case 'replace_field_contents':
@@ -1289,6 +1403,68 @@ class LayoutActionRunner {
             'step "$stepType" is not supported by the client script runner yet '
             '(it needs the calculation engine / server script runner).');
     }
+    return const LayoutActionResult.ok();
+  }
+
+  /// Open File: makes sure the solution the file reference [reference] is
+  /// mapped to can be reached from this session.
+  ///
+  /// FileMaker runs the steps after Open File in the file that holds the
+  /// script, and so does File4Base: the window on screen stays where it is,
+  /// whether or not the step says Open hidden. What the step establishes is
+  /// that the solution is installed on this server and that the user is
+  /// signed in to it with an account of their own there, whose privileges
+  /// then govern every later step that reaches it.
+  Future<LayoutActionResult> _openFile(
+    String reference,
+    ScriptSessionState session,
+    LayoutActionResult Function(int code, String message) failOrCapture,
+  ) async {
+    if (reference.isEmpty) {
+      return failOrCapture(100, 'Open File names no file. Choose the file reference of the solution to open.');
+    }
+    FileReferenceResolution target;
+    try {
+      target = await apiClient.resolveFileReference(reference);
+    } on ApiException catch (e) {
+      if (e.statusCode == 404) {
+        return failOrCapture(114, 'Open File opens the file "$reference", and this solution has no '
+            'file reference of that name.');
+      }
+      if (e.statusCode == 409) {
+        return failOrCapture(100, 'Open File opens the file "$reference", which is not mapped to a '
+            'solution yet. Map the file reference to the solution that file became.');
+      }
+      return LayoutActionResult.stopped('Open File could not read the file reference "$reference": ${e.detail}');
+    } catch (e) {
+      return LayoutActionResult.stopped('Open File could not read the file reference "$reference": $e');
+    }
+    if (target.local) {
+      // The reference names this very solution, which is open.
+      session.lastError = 0;
+      return const LayoutActionResult.ok();
+    }
+
+    bool installed;
+    try {
+      final listing = await apiClient.listDatabases();
+      final names = listing['databases'];
+      installed = names is List && names.any((n) => n.toString().toLowerCase() == target.database.toLowerCase());
+    } catch (e) {
+      return LayoutActionResult.stopped('Open File could not list the solutions installed on this server: $e');
+    }
+    if (!installed) {
+      return failOrCapture(100, 'Open File opens the solution ${target.database} (file reference '
+          '"$reference"), which is not installed on this server.');
+    }
+
+    final token = await peerTokenProvider?.call(target.database);
+    if (token == null || token.isEmpty) {
+      return failOrCapture(9, 'Open File opens the solution ${target.database} (file reference '
+          '"$reference"), and this session is not signed in to it. Sign in to '
+          '${target.database} with your account there, then run the script again.');
+    }
+    session.lastError = 0;
     return const LayoutActionResult.ok();
   }
 
@@ -2108,13 +2284,38 @@ class ScriptExecution {
       return const StepOutcome(StepOutcomeKind.exited);
     }
 
+    // `_pc` is already past this step, so it is the step's 1-based line.
+    final line = _pc;
+    final session = callContext.session..errorRaised = false;
     final result = await runner.runStep(step.stepType, step.params, depth: depth, localVars: localVars, callContext: callContext);
+    if (session.errorRaised && runner.errorLogging.enabled) _logError(step, line);
+    // A Perform Script step's own errors are logged by the script it ran;
+    // clearing the flag keeps its caller from logging them a second time.
+    session.errorRaised = false;
     if (result.halted) return const StepOutcome(StepOutcomeKind.halted);
     if (!result.completed) return StepOutcome(StepOutcomeKind.stopped, result.message);
     if (result.exitLoop && _loopStack.isNotEmpty) {
       return _leaveLoop();
     }
     return const StepOutcome(StepOutcomeKind.ran);
+  }
+
+  /// Records the error the step at [line] just reported (`Set Error Logging`).
+  void _logError(ScriptStepModel step, int line) {
+    final logging = runner.errorLogging;
+    final expression = logging.customInfo.trim();
+    // FileMaker writes "?" for a debug calculation it cannot evaluate.
+    final info = expression.isEmpty
+        ? ''
+        : (runner.resolveValue(expression, localVars, callContext: callContext) ?? '?');
+    logging.add(ScriptErrorLogEntry(
+      time: DateTime.now(),
+      scriptName: script.name,
+      stepName: step.stepType,
+      line: line,
+      errorCode: callContext.session.lastError,
+      customInfo: info,
+    ));
   }
 
   /// Leaves the innermost loop: execution carries on after its End Loop.
