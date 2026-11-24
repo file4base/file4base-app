@@ -344,3 +344,77 @@ func TestNativeContainerPrefersEPSOverItsPreviews(t *testing.T) {
 		t.Fatalf("unexpected metadata: %+v", meta)
 	}
 }
+
+// A container cell refers to its Section 31 object by the hexadecimal form of
+// the object's path key, as FileMaker Pro 26 writes it: "12" is object 0x12,
+// never object 12, and a two-byte key such as "805A" is object 128+0x5A.
+func TestResolveSection31ObjectIDReadsHexPathKeys(t *testing.T) {
+	objects := map[int]*hbam7ContainerForks{}
+	for _, id := range []int{12, 18, 210, 218, 0x7f, 128 + 0x1234} {
+		objects[id] = newHBAM7ContainerForks()
+	}
+	ref := func(digits string) []byte {
+		return append(nativeEncoded([]byte(digits)), 0x41, 0x32, 0xda)
+	}
+	for _, tc := range []struct {
+		digits string
+		want   int
+		ok     bool
+	}{
+		{"12", 18, true},
+		{"7F", 0x7f, true},
+		{"8052", 210, true},
+		{"805A", 218, true},
+		{"805a", 218, true},
+		{"C01234", 128 + 0x1234, true},
+		{"0C", 12, true},
+		{"8", 0, false},             // odd length is not a key
+		{"13", 0, false},            // object 0x13 does not exist
+		{"", 0, false},              // no digits
+		{"8099", 0, false},          // object 281 does not exist
+		{"C01234FF", 0, false},      // longer than any key
+		{"805A/plan.jpg", 0, false}, // a path, not a key
+	} {
+		got, ok := resolveSection31ObjectID(ref(tc.digits), objects)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("reference %q resolved to %d, %v; want %d, %v", tc.digits, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// A container that stores only a reference to an image keeps its text in the
+// cell, starting with the picture size: the reference is still followed.
+func TestNativeContainerReferenceAfterSizeLine(t *testing.T) {
+	cell := &hbam7ContainerCell{hasData: true,
+		refPayload: nativeEncoded([]byte("size:4,4\rimagewin:/C:/pics/plan.jpg\rimage:plan.jpg"))}
+	var asked string
+	resolver := func(ref string) ([]byte, bool, error) {
+		asked = ref
+		return []byte("jpeg"), true, nil
+	}
+	got, missing, err := reconstructContainerCell(129, cell, newHBAM7ContainerStore(), resolver)
+	if err != nil || missing != "" || got == nil {
+		t.Fatalf("got %v, missing %q, err %v", got, missing, err)
+	}
+	if asked != "imagewin:/C:/pics/plan.jpg" || got.Meta.Filename != "plan.jpg" || string(got.Bytes) != "jpeg" {
+		t.Fatalf("resolved %q as %+v", asked, got.Meta)
+	}
+	if _, missing, err = reconstructContainerCell(129, cell, newHBAM7ContainerStore(), nil); err != nil || missing != "imagewin:/C:/pics/plan.jpg" {
+		t.Fatalf("without the file: missing %q, err %v", missing, err)
+	}
+}
+
+// FileMaker tries the listed references in order, including a bare file name.
+func TestNativeContainerReferenceTriesEveryPath(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		{"size:4,4\rimage:plan.jpg", "image:plan.jpg"},
+		{"size:4,4\rimagewin:/C:/old/plan.jpg\rimage:assets/plan.jpg", "image:assets/plan.jpg"},
+	} {
+		cell := &hbam7ContainerCell{hasData: true, refPayload: nativeEncoded([]byte(tc.text))}
+		resolver := func(ref string) ([]byte, bool, error) { return []byte("jpeg"), ref == tc.want, nil }
+		got, missing, err := reconstructContainerCell(129, cell, newHBAM7ContainerStore(), resolver)
+		if err != nil || missing != "" || got == nil || got.Meta.Filename != "plan.jpg" {
+			t.Errorf("%q: got %v, missing %q, err %v", tc.text, got, missing, err)
+		}
+	}
+}

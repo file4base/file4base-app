@@ -14,7 +14,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/containermeta"
@@ -348,44 +347,46 @@ func isExternalContainerScheme(scheme string) bool {
 // resolveSection31ObjectID resolves the internal Section 31 object ID encoded
 // in a record container cell's key=1 payload (observed in HBAM7 as leading
 // XOR-0x5a ASCII digits such as "01", "02", "03").
+// resolveSection31ObjectID maps a container cell's reference to the Section
+// 31 object holding its data. FileMaker writes the reference XOR 0x5a as the
+// hexadecimal form of the object's path key, in the same variable-length
+// encoding as every other path component: "52" is key 0x52, "805A" is the
+// two-byte key 80 5A, object 128+0x5A. Reading the digits as a decimal number
+// attached a container to the wrong object whenever its hexadecimal key also
+// spelled an existing decimal id ("12" is object 18, not 12).
 func resolveSection31ObjectID(refPayload []byte, tableObjects map[int]*hbam7ContainerForks) (int, bool) {
 	if len(refPayload) == 0 || len(tableObjects) == 0 {
 		return 0, false
 	}
-	xored := make([]byte, len(refPayload))
-	for i, b := range refPayload {
-		xored[i] = b ^ 0x5a
-	}
-	// Extract leading decimal digits.
-	end := 0
-	for end < len(xored) && xored[end] >= '0' && xored[end] <= '9' {
-		end++
-	}
-	if end > 0 {
-		if id, err := strconv.Atoi(string(xored[:end])); err == nil && tableObjects[id] != nil {
-			return id, true
+	// The key is followed by a control byte (0x1B) or ends the payload; a
+	// longer run or a path ("805A/plan.jpg") is not an object key.
+	digits := make([]byte, 0, 6)
+	for _, b := range refPayload {
+		c := b ^ 0x5a
+		if !isHexDigit(c) {
+			if c >= 0x20 {
+				return 0, false
+			}
+			break
 		}
-	}
-	// Fallback: leading hex digits (for object IDs encoded in hex).
-	hexEnd := 0
-	for hexEnd < len(xored) && ((xored[hexEnd] >= '0' && xored[hexEnd] <= '9') ||
-		(xored[hexEnd] >= 'a' && xored[hexEnd] <= 'f') ||
-		(xored[hexEnd] >= 'A' && xored[hexEnd] <= 'F')) {
-		hexEnd++
-	}
-	if hexEnd > 0 {
-		if id, err := strconv.ParseInt(string(xored[:hexEnd]), 16, 64); err == nil && tableObjects[int(id)] != nil {
-			return int(id), true
+		if len(digits) == 6 {
+			return 0, false
 		}
+		digits = append(digits, c)
 	}
-	// Fallback: 4-byte big-endian uint32 object ID.
-	if len(refPayload) >= 4 {
-		id := int(binary.BigEndian.Uint32(refPayload[:4]))
-		if tableObjects[id] != nil {
-			return id, true
-		}
+	key := make([]byte, hex.DecodedLen(len(digits)))
+	if _, err := hex.Decode(key, digits); err != nil || len(key) == 0 {
+		return 0, false
 	}
-	return 0, false
+	id := hbamPathInt(key)
+	if id < 1 || tableObjects[id] == nil {
+		return 0, false
+	}
+	return id, true
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // reconstructContainerCell resolves one populated HBAM7 container cell into
@@ -421,7 +422,9 @@ func reconstructContainerCell(
 	if len(fnamEntries) == 0 && len(cell.refPayload) > 0 {
 		// Check whether key=1 itself holds an external path reference.
 		if txt, err := decodeHBAM7Text(cell.refPayload); err == nil {
-			if parsed := parseTextContainerRefs(txt); len(parsed) > 0 && (isExternalContainerScheme(parsed[0].scheme) || strings.ContainsAny(parsed[0].path, `/\`)) {
+			// A reference-only container starts with its "size:" line
+			// ("size:640,480", "imagewin:/C:/…", "image:…").
+			if parsed := parseTextContainerRefs(txt); extractExternalContainerRef(parsed) != "" {
 				fnamEntries = parsed
 			}
 		}
@@ -464,8 +467,12 @@ func reconstructContainerCell(
 	}
 
 	// 5. External storage reference: look up referenced file or report it missing.
-	if extRef := extractExternalContainerRef(fnamEntries); extRef != "" {
-		if resolver != nil {
+	// FileMaker tries the listed paths in order until one opens.
+	if refs := extractExternalContainerRefs(fnamEntries); len(refs) > 0 {
+		for _, extRef := range refs {
+			if resolver == nil {
+				break
+			}
 			if fileBytes, found, err := resolver(extRef); err != nil {
 				return nil, "", err
 			} else if found {
@@ -485,7 +492,7 @@ func reconstructContainerCell(
 				}, "", nil
 			}
 		}
-		return nil, extRef, nil
+		return nil, refs[0], nil
 	}
 
 	return nil, "", fmt.Errorf("container cell has no reconstructable payload fork or external reference")
@@ -574,24 +581,38 @@ func extractContainerFilename(entries []fnamEntry) string {
 }
 
 func extractExternalContainerRef(entries []fnamEntry) string {
+	if refs := extractExternalContainerRefs(entries); len(refs) > 0 {
+		return refs[0]
+	}
+	return ""
+}
+
+// extractExternalContainerRefs lists the file references of a container in
+// the order FileMaker tries them: platform-specific and remote paths first,
+// then relative ones (file:, image:, movie:, which may be a bare file name).
+func extractExternalContainerRefs(entries []fnamEntry) []string {
+	var refs []string
 	for _, e := range entries {
 		if isExternalContainerScheme(e.scheme) && strings.TrimSpace(e.path) != "" {
-			return e.scheme + ":" + strings.TrimSpace(e.path)
+			refs = append(refs, e.scheme+":"+strings.TrimSpace(e.path))
 		}
 	}
 	for _, e := range entries {
-		if e.scheme == "size" {
+		if e.scheme == "size" || isExternalContainerScheme(e.scheme) {
 			continue
 		}
 		p := strings.TrimSpace(e.path)
-		if p != "" && (e.scheme == "file" || strings.ContainsAny(p, `/\`)) {
-			if e.scheme != "" {
-				return e.scheme + ":" + p
-			}
-			return p
+		if p == "" {
+			continue
+		}
+		switch {
+		case e.scheme == "file" || e.scheme == "image" || e.scheme == "movie":
+			refs = append(refs, e.scheme+":"+p)
+		case e.scheme == "" && strings.ContainsAny(p, `/\`):
+			refs = append(refs, p)
 		}
 	}
-	return ""
+	return refs
 }
 
 func detectContainerMIME(filename, forkTag string, payload []byte) string {
