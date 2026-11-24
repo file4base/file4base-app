@@ -358,11 +358,19 @@ func resolveSection31ObjectID(refPayload []byte, tableObjects map[int]*hbam7Cont
 	if len(refPayload) == 0 || len(tableObjects) == 0 {
 		return 0, false
 	}
+	// The key is followed by a control byte (0x1B) or ends the payload; a
+	// longer run or a path ("805A/plan.jpg") is not an object key.
 	digits := make([]byte, 0, 6)
 	for _, b := range refPayload {
 		c := b ^ 0x5a
-		if !isHexDigit(c) || len(digits) == 6 {
+		if !isHexDigit(c) {
+			if c >= 0x20 {
+				return 0, false
+			}
 			break
+		}
+		if len(digits) == 6 {
+			return 0, false
 		}
 		digits = append(digits, c)
 	}
@@ -459,8 +467,12 @@ func reconstructContainerCell(
 	}
 
 	// 5. External storage reference: look up referenced file or report it missing.
-	if extRef := extractExternalContainerRef(fnamEntries); extRef != "" {
-		if resolver != nil {
+	// FileMaker tries the listed paths in order until one opens.
+	if refs := extractExternalContainerRefs(fnamEntries); len(refs) > 0 {
+		for _, extRef := range refs {
+			if resolver == nil {
+				break
+			}
 			if fileBytes, found, err := resolver(extRef); err != nil {
 				return nil, "", err
 			} else if found {
@@ -480,7 +492,7 @@ func reconstructContainerCell(
 				}, "", nil
 			}
 		}
-		return nil, extRef, nil
+		return nil, refs[0], nil
 	}
 
 	return nil, "", fmt.Errorf("container cell has no reconstructable payload fork or external reference")
@@ -569,24 +581,38 @@ func extractContainerFilename(entries []fnamEntry) string {
 }
 
 func extractExternalContainerRef(entries []fnamEntry) string {
+	if refs := extractExternalContainerRefs(entries); len(refs) > 0 {
+		return refs[0]
+	}
+	return ""
+}
+
+// extractExternalContainerRefs lists the file references of a container in
+// the order FileMaker tries them: platform-specific and remote paths first,
+// then relative ones (file:, image:, movie:, which may be a bare file name).
+func extractExternalContainerRefs(entries []fnamEntry) []string {
+	var refs []string
 	for _, e := range entries {
 		if isExternalContainerScheme(e.scheme) && strings.TrimSpace(e.path) != "" {
-			return e.scheme + ":" + strings.TrimSpace(e.path)
+			refs = append(refs, e.scheme+":"+strings.TrimSpace(e.path))
 		}
 	}
 	for _, e := range entries {
-		if e.scheme == "size" {
+		if e.scheme == "size" || isExternalContainerScheme(e.scheme) {
 			continue
 		}
 		p := strings.TrimSpace(e.path)
-		if p != "" && (e.scheme == "file" || strings.ContainsAny(p, `/\`)) {
-			if e.scheme != "" {
-				return e.scheme + ":" + p
-			}
-			return p
+		if p == "" {
+			continue
+		}
+		switch {
+		case e.scheme == "file" || e.scheme == "image" || e.scheme == "movie":
+			refs = append(refs, e.scheme+":"+p)
+		case e.scheme == "" && strings.ContainsAny(p, `/\`):
+			refs = append(refs, p)
 		}
 	}
-	return ""
+	return refs
 }
 
 func detectContainerMIME(filename, forkTag string, payload []byte) string {

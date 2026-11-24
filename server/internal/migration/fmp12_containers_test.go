@@ -368,10 +368,12 @@ func TestResolveSection31ObjectIDReadsHexPathKeys(t *testing.T) {
 		{"805a", 218, true},
 		{"C01234", 128 + 0x1234, true},
 		{"0C", 12, true},
-		{"8", 0, false},    // odd length is not a key
-		{"13", 0, false},   // object 0x13 does not exist
-		{"", 0, false},     // no digits
-		{"8099", 0, false}, // object 281 does not exist
+		{"8", 0, false},             // odd length is not a key
+		{"13", 0, false},            // object 0x13 does not exist
+		{"", 0, false},              // no digits
+		{"8099", 0, false},          // object 281 does not exist
+		{"C01234FF", 0, false},      // longer than any key
+		{"805A/plan.jpg", 0, false}, // a path, not a key
 	} {
 		got, ok := resolveSection31ObjectID(ref(tc.digits), objects)
 		if got != tc.want || ok != tc.ok {
@@ -399,5 +401,20 @@ func TestNativeContainerReferenceAfterSizeLine(t *testing.T) {
 	}
 	if _, missing, err = reconstructContainerCell(129, cell, newHBAM7ContainerStore(), nil); err != nil || missing != "imagewin:/C:/pics/plan.jpg" {
 		t.Fatalf("without the file: missing %q, err %v", missing, err)
+	}
+}
+
+// FileMaker tries the listed references in order, including a bare file name.
+func TestNativeContainerReferenceTriesEveryPath(t *testing.T) {
+	for _, tc := range []struct{ text, want string }{
+		{"size:4,4\rimage:plan.jpg", "image:plan.jpg"},
+		{"size:4,4\rimagewin:/C:/old/plan.jpg\rimage:assets/plan.jpg", "image:assets/plan.jpg"},
+	} {
+		cell := &hbam7ContainerCell{hasData: true, refPayload: nativeEncoded([]byte(tc.text))}
+		resolver := func(ref string) ([]byte, bool, error) { return []byte("jpeg"), ref == tc.want, nil }
+		got, missing, err := reconstructContainerCell(129, cell, newHBAM7ContainerStore(), resolver)
+		if err != nil || missing != "" || got == nil || got.Meta.Filename != "plan.jpg" {
+			t.Errorf("%q: got %v, missing %q, err %v", tc.text, got, missing, err)
+		}
 	}
 }
