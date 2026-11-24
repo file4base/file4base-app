@@ -90,16 +90,17 @@ The following features from proprietary desktop/server ecosystems are **explicit
 
 Formulas are evaluated deterministically in Go by `server/internal/calc` ([`calculation_formulas.md`](calculation_formulas.md), `#30`) so PostgreSQL and MariaDB always produce identical results.
 
-### 3.1 Supported Operators & Grammar
-- **Arithmetic:** `+`, `-`, `*`, `/`, unary `+` / `-`
-- **Text Concatenation:** `&`
-- **Comparison:** `=`, `==`, `<>`, `!=`, `<`, `<=`, `>`, `>=` (case-insensitive text comparison matching Find mode; numeric coercion with strict error on invalid numeric text)
-- **Logical (short-circuiting):** `AND`, `OR`, `NOT`, boolean literals `true` / `false`
-- **Argument Separators:** Both `;` (FileMaker style) and `,` are accepted.
+### 3.1 Language and behaviour
+FileMaker's calculation grammar (field names with spaces, `Table::Field`, `${…}`, `$`/`$$` variables, `Let`, `While`, comments, `¶`, `≠ ≤ ≥ ^ xor`, locale decimal comma) and value rules (exact decimals, permissive text-to-number, case- and accent-insensitive comparison, FileMaker date/time arithmetic and text output). Pinned by 552 cases observed in FileMaker Pro 26.0.2 (`server/internal/calc/testdata/conformance.json`, **Verified** by `TestConformance`).
 
-### 3.2 Supported Calculation Functions (20 Built-In Functions)
-| Category | Supported Functions | Behavior |
-|---|---|---|
+### 3.2 Functions
+About 110 FileMaker functions: logical (`If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `Evaluate`, `GetField`, `Get(…)`), text, list, number (incl. `SetPrecision`, exact `Sqrt`/`Exp`/`Ln`/`Log`), aggregate, date/time, conversion and text-formatting functions, plus custom functions. Full list: [`calculation_formulas.md`](calculation_formulas.md).
+
+### 3.3 Not yet supported
+- Related-field reads at write time and unstored calculations: a migrated calculation that reads `Table::Field` is kept as a stored value and reported.
+- `ExecuteSQL`, JSON, cryptographic, container, plug-in and financial functions are reported as unsupported.
+
+---|---|---|
 | **Logical & Control** | `IF(test; whenTrue [; whenFalse])`, `ISEMPTY(value)`, `COALESCE(a; b; ...)` | Short-circuit conditional evaluation and empty/null checks. |
 | **Text Manipulation** | `UPPER(text)`, `LOWER(text)`, `TRIM(text)`, `LENGTH(text)`, `CONCAT(a; b; ...)`, `LEFT(text; n)`, `RIGHT(text; n)`, `MIDDLE(text; start; count)` | Unicode-aware character counting and slicing (1-based indexing). |
 | **Numeric & Row Math** | `ROUND(n [; places])`, `ABS(n)`, `SUM(a; b; ...)`, `MIN(a; b; ...)`, `MAX(a; b; ...)`, `AVERAGE(a; b; ...)` | Exact numeric rounding and multi-argument row calculations. |
