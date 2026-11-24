@@ -345,7 +345,10 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 		// (FNAM, FILE, JPEG, PNGf, PDF , FORK, ...) and key=0 headers (#125).
 		if len(c.path) >= 4 {
 			cfid := hbamPathInt(c.path[3])
-			if meta, ok := fields[table][cfid]; ok && !meta.Unstored && types[tables[table]+"."+meta.ColName] == "CONTAINER" {
+			if meta, ok := fields[table][cfid]; ok && meta.cachedOnly() {
+				return nil // not imported, inline files included
+			}
+			if meta, ok := fields[table][cfid]; ok && types[tables[table]+"."+meta.ColName] == "CONTAINER" {
 				ck := cellKey{table: table, row: row, field: cfid}
 				cc := containerCells[ck]
 				if cc == nil {
@@ -440,8 +443,8 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 			row := map[string]interface{}{}
 			for _, fid := range fieldIDs {
 				meta := fields[table][fid]
-				if meta.Unstored {
-					continue // recomputed, whatever its type: a cell left for it is stale
+				if meta.cachedOnly() {
+					continue // FileMaker's own answer, stale or a copy: see cachedOnly
 				}
 				kind := types[tables[table]+"."+meta.ColName]
 				if kind == "CONTAINER" {

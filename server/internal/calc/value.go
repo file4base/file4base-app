@@ -83,10 +83,16 @@ type Container struct {
 	Describe func(*Container) `json:"-"`
 }
 
+// containerValue is the value of a container. One that holds no file, such
+// as a reference whose record or field is gone, is empty, as reading it
+// directly gives nothing.
 func containerValue(c Container) value {
 	if c.Describe != nil {
 		c.Describe(&c)
 		c.Describe = nil
+	}
+	if c.Size <= 0 {
+		return empty
 	}
 	return value{kind: kindText, text: c.Filename, box: &c}
 }

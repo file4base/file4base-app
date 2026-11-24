@@ -91,7 +91,7 @@ func TestContainerResults(t *testing.T) {
 func TestContainerIsDescribedOnlyWhenRead(t *testing.T) {
 	calls := 0
 	ctx := &RecordContext{Record: Record{
-		"scan": Container{Table: "assets", Record: "r1", Field: "scan", Describe: func(c *Container) { calls++; c.Filename = "a.txt" }},
+		"scan": Container{Table: "assets", Record: "r1", Field: "scan", Describe: func(c *Container) { calls++; c.Filename, c.Size = "a.txt", 5 }},
 	}}
 	expr, _ := Parse(`"no container here"`)
 	if _, err := EvaluateWith(expr, ctx, ResultText); err != nil || calls != 0 {
@@ -100,5 +100,21 @@ func TestContainerIsDescribedOnlyWhenRead(t *testing.T) {
 	expr, _ = Parse(`scan & scan`)
 	if v, err := EvaluateWith(expr, ctx, ResultText); err != nil || v != "a.txta.txt" {
 		t.Fatalf("got %v, %v", v, err)
+	}
+}
+
+// A container that holds no file, as a reference to a record that is gone
+// describes to, is empty.
+func TestContainerWithoutAFileIsEmpty(t *testing.T) {
+	ctx := &RecordContext{Record: Record{
+		"gone": Container{Table: "assets", Record: "missing", Field: "scan", Describe: func(*Container) {}},
+	}}
+	expr, _ := Parse(`IsEmpty ( gone ) & "|" & GetAsText ( gone )`)
+	if v, err := EvaluateWith(expr, ctx, ResultText); err != nil || v != "1|" {
+		t.Fatalf("got %v, %v", v, err)
+	}
+	expr, _ = Parse(`gone`)
+	if v, err := EvaluateWith(expr, ctx, ResultContainer); err != nil || v != nil {
+		t.Fatalf("a container result of nothing is %#v, %v", v, err)
 	}
 }

@@ -105,6 +105,13 @@ func typedValue(table string, fields fieldSet, record map[string]interface{}, ke
 		if !ok {
 			return nil
 		}
+		if _, held := record[ref.Field]; held && ref.Table == table && ref.Record == fmt.Sprint(record["id"]) &&
+			fields.typeOf(ref.Field) == dbal.FieldTypeContainer {
+			// A container of this very record is read from the record, which
+			// holds what this request writes, not from the database, which
+			// does not have it yet.
+			return typedValue(table, fields, record, ref.Field, describe)
+		}
 		return calc.Container{Table: ref.Table, Record: ref.Record, Field: ref.Field, Describe: describe}
 	}
 	return calc.Typed(resultTypeOf(fields.typeOf(key)), record[key])

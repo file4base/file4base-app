@@ -179,3 +179,92 @@ func TestRelatedContainerCalculations(t *testing.T) {
 	require.NoError(t, guarded.AttachContainerMeta(ctx, p.left, []map[string]interface{}{got}))
 	require.Nil(t, got["first_scan"])
 }
+
+// Container results computed by one write see that write: a result chained on
+// another reads the file this request stores, an imported record's result
+// refers to the record itself, and a reference whose record is gone is empty.
+func TestContainerResultsWithinOneWrite(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	schemaSvc := schema.NewService(driver)
+	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
+	dataSvc := data.NewService(driver)
+	name := fmt.Sprintf("box_shots_%d", uniqueTestStamp())
+	tbl, err := schemaSvc.CreateTable(ctx, "Box Shots", name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = schemaSvc.DeleteTable(context.Background(), tbl.ID) })
+	for _, c := range []struct {
+		field   string
+		kind    dbal.AgnosticFieldType
+		formula *string
+	}{
+		{"code", dbal.FieldTypeText, nil},
+		{"photo", dbal.FieldTypeContainer, nil},
+		{"thumb", dbal.FieldTypeContainer, nil},
+		{"alias", dbal.FieldTypeCalculation, calcJSON(`photo`, "Container")},
+		{"preview", dbal.FieldTypeCalculation, calcJSON(`If ( GetContainerAttribute ( alias ; "fileSize" ) > 5 ; alias ; thumb )`, "Container")},
+	} {
+		_, err := schemaSvc.AddColumn(ctx, tbl.ID, schema.ColumnMetadata{
+			Name: c.field, DisplayName: c.field, FieldType: c.kind, IsNullable: true, CalculationFormula: c.formula})
+		require.NoError(t, err, c.field)
+	}
+	const small, large, tiny = "aGVsbG8=", "aGVsbG8gd29ybGQ=", "eHk=" // 5, 11 and 2 bytes
+	read := func(id string) map[string]interface{} {
+		t.Helper()
+		got, err := dataSvc.GetRow(ctx, name, id)
+		require.NoError(t, err)
+		require.NoError(t, dataSvc.AttachContainerMeta(ctx, name, []map[string]interface{}{got}))
+		return got
+	}
+
+	t.Run("a chained result reads the file being written", func(t *testing.T) {
+		row, err := dataSvc.InsertRow(ctx, name, map[string]interface{}{"code": "a", "photo": large, "thumb": tiny})
+		require.NoError(t, err)
+		id := row["id"].(string)
+		require.Equal(t, large, read(id)["preview"], "on insert")
+
+		_, err = dataSvc.UpdateRow(ctx, name, id, map[string]interface{}{"photo": small})
+		require.NoError(t, err)
+		require.Equal(t, tiny, read(id)["preview"], "on update, the new photo is too small")
+		_, err = dataSvc.UpdateRow(ctx, name, id, map[string]interface{}{"photo": large})
+		require.NoError(t, err)
+		require.Equal(t, large, read(id)["preview"], "on update, the new photo is large enough")
+	})
+
+	t.Run("an imported record's result refers to that record", func(t *testing.T) {
+		report, err := dataSvc.ImportRecords(ctx, name, parseCSV(t, "Code,Photo\nb,"+large+"\n"), data.ImportOptions{
+			Action:   data.ImportAdd,
+			Mappings: []data.ImportMapping{{Column: 0, Field: "code"}, {Column: 1, Field: "photo"}},
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, report.Added)
+		rows, err := dataSvc.ListRows(ctx, name, data.QueryOptions{Limit: 10})
+		require.NoError(t, err)
+		for _, r := range rows {
+			if r["code"] == "b" {
+				got := read(r["id"].(string))
+				require.Equal(t, large, got["alias"])
+				require.Equal(t, large, got["preview"])
+				return
+			}
+		}
+		t.Fatal("the imported record is missing")
+	})
+
+	t.Run("a reference to a record that is gone is empty", func(t *testing.T) {
+		row, err := dataSvc.InsertRow(ctx, name, map[string]interface{}{"code": "c", "photo": small})
+		require.NoError(t, err)
+		id := row["id"].(string)
+		d := driver.Dialect()
+		_, err = driver.DB().ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s = %s WHERE id = %s",
+			d.QuoteIdentifier(name), d.QuoteIdentifier("alias"), d.Placeholder(1), d.Placeholder(2)),
+			fmt.Sprintf(`{"table":%q,"record":"gone","field":"photo"}`, name), id)
+		require.NoError(t, err)
+		require.Nil(t, read(id)["alias"])
+		ev, err := dataSvc.EvaluateExpression(ctx, name, id, `IsEmpty ( alias ) & "|" & GetAsText ( alias )`, "Text")
+		require.NoError(t, err)
+		require.Equal(t, "1|", ev.Text)
+	})
+}

@@ -88,7 +88,10 @@ func (r *Report) RejectedCount() int { return len(r.Rejected) }
 // sourceDriver and destinationDriver are the two solutions' databases, each
 // already authorized for the account that presented it: this package never
 // opens a connection and never reads a credential. They may be the same
-// driver, for a transfer between two tables of one solution.
+// driver, for a transfer between two tables of one solution. The source is
+// read as sourceAccount, so a calculation that reaches a related table, or a
+// container result that refers to one, carries nothing of a table that
+// account may not read.
 //
 // The transaction boundary is the destination table: one transfer writes one
 // table, inside one transaction, so a row that cannot be stored takes the
@@ -99,6 +102,7 @@ func Run(
 	def *schema.TransferDefinition,
 	sourceDriver, destinationDriver dbal.DatabaseDriver,
 	sourceDatabase, destinationDatabase string,
+	sourceAccount Account,
 ) (*Report, error) {
 	if def == nil {
 		return nil, fmt.Errorf("%w: no transfer definition", ErrTransfer)
@@ -117,7 +121,7 @@ func Run(
 		Fields:              def.DestinationFields(),
 	}
 
-	source := data.NewService(sourceDriver)
+	source := readingAs(sourceDriver, sourceAccount)
 	destination := data.NewService(destinationDriver)
 
 	// Both ends are resolved before a single record moves. A mapping that

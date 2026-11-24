@@ -162,7 +162,8 @@ func (h *TransferHandler) RunTransfer(w http.ResponseWriter, r *http.Request) {
 
 	report, runErr := transfer.Run(r.Context(), def,
 		ends.source.driver, ends.destination.driver,
-		ends.source.database, ends.destination.database)
+		ends.source.database, ends.destination.database,
+		transfer.Account{ID: ends.source.session.UserID, Role: ends.source.session.Role})
 
 	response := TransferRunResponse{Report: report}
 	status := http.StatusOK

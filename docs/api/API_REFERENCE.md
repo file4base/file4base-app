@@ -1968,7 +1968,11 @@ the missing file path. The report counts `container_cells_detected`,
 `container_files_reconstructed` and `container_files_missing`. A Binary
 (Container) result calculation is migrated as a calculation with result type
 `Container`, and a cell left in the file for an unstored calculation of any
-type is not read: FileMaker recomputes it, so it is stale. Timezone and
+type is not read: FileMaker recomputes it, so it is stale. The files FileMaker
+kept for a Container calculation are not read either; one that cannot be
+converted (an HTML report's calculation reading another table) becomes an
+empty container field listed under `manual_action_required`. An HTML report's
+*Do not store* option marks a calculation unstored. Timezone and
 time-duration behavior still require qualification; an extracted record count
 is not an application-equivalence result.
 
@@ -2200,6 +2204,7 @@ A definition records *what moves where*. It holds no connection string, no accou
 - the session the request is made with authorizes **its own** solution — the invariant that a session reaches exactly the database it signed in to is unchanged;
 - the other end, when it is another solution, is authorized by **`peer_token`**: a session token obtained by signing in to that solution. A token for any third solution is refused, whatever role it holds there;
 - the source account must hold the `bulk_export` privilege and be able to read the source table; the destination account must hold `bulk_import` and have read-write access to the destination table;
+- the source is read as the source account: a calculation that reads a related table, and a Container result that refers to a file in one, give nothing of a table that account may not read, as through the data API (an `owner` or `admin` reads every table);
 - the peer account must still be in the state its session was opened with, the same check every authenticated request makes, so a revoked or demoted account cannot write through a transfer.
 
 Both ends being the same solution needs no `peer_token`, and offering one is refused as a mistake.

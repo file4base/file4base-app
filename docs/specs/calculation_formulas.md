@@ -124,7 +124,10 @@ being `field[n]` for a repetition), not a copy of it, stored or unstored; a
 read returns the file the reference names, as base64 with its metadata under
 `__container_meta`, exactly as a container field reads, and an export writes
 it the same way. The reference follows the field: a record whose file changes
-shows the new one. A Container calculation whose answer is not a container
+shows the new one. Within one write, a calculation reading a Container result
+of the same record sees the file that write stores, and a record added by an
+import refers to itself. A reference whose record or field is gone is empty:
+`IsEmpty` is 1 and a read gives nothing. A Container calculation whose answer is not a container
 (text, a number) is empty, as FileMaker shows no file. A file in a table the
 reader may not read is empty for that reader.
 
