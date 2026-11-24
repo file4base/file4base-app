@@ -349,6 +349,9 @@ func (s *Service) RelatedRows(
 	if err := s.AttachSourceText(ctx, target.TableName, related); err != nil {
 		return nil, err
 	}
+	if err := s.AttachContainerMeta(ctx, target.TableName, related); err != nil {
+		return nil, err
+	}
 	return related, nil
 }
 

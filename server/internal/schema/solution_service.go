@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/data"
+	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/msgpackguard"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
@@ -1626,6 +1627,11 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 			return nil, err
 		}
 		sourcetext.Attach(tableRows, texts)
+		cMeta, err := containermeta.LoadTable(ctx, db, dialect, tbl.Name)
+		if err != nil {
+			return nil, err
+		}
+		containermeta.Attach(tableRows, cMeta)
 		tablesData[tbl.Name] = tableRows
 	}
 
@@ -1683,6 +1689,8 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	tableNames := make([]string, 0, len(bundle.TablesData))
 	// The original texts a record carries (#124), by table and record index.
 	originals := map[string]map[int]map[string]string{}
+	// Container file metadata carried with records (#125), by table and index.
+	containerMetas := map[string]map[int]map[string]containermeta.Entry{}
 	for tableName, rows := range bundle.TablesData {
 		cols, ok := userTables[tableName]
 		if !ok {
@@ -1701,6 +1709,16 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 				}
 				originals[tableName][i] = texts
 			}
+			cm, err := containermeta.FromRecord(row, cols)
+			if err != nil {
+				return nil, fmt.Errorf("record %d of table %s: %w", i+1, tableName, err)
+			}
+			if len(cm) > 0 {
+				if containerMetas[tableName] == nil {
+					containerMetas[tableName] = map[int]map[string]containermeta.Entry{}
+				}
+				containerMetas[tableName][i] = cm
+			}
 			for k := range row {
 				if _, exists := cols[k]; !exists {
 					return nil, fmt.Errorf("record %d of table %s has field '%s', which is not a field of that table", i+1, tableName, k)
@@ -1712,6 +1730,11 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		// Created before the transaction: a database older than the table
 		// gets it here, and a failed statement would abort the transaction.
 		if err := sourcetext.Ensure(ctx, db); err != nil {
+			return nil, err
+		}
+	}
+	if len(containerMetas) > 0 {
+		if err := containermeta.Ensure(ctx, db); err != nil {
 			return nil, err
 		}
 	}
@@ -1778,6 +1801,11 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 				report.RecordsInserted++
 				if texts := originals[tableName][i]; len(texts) > 0 {
 					if err := sourcetext.Put(ctx, tx, dialect, tableName, fmt.Sprint(row["id"]), texts); err != nil {
+						return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
+					}
+				}
+				if cm := containerMetas[tableName][i]; len(cm) > 0 {
+					if err := containermeta.Put(ctx, tx, dialect, tableName, fmt.Sprint(row["id"]), cm); err != nil {
 						return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
 					}
 				}

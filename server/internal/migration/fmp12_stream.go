@@ -291,6 +291,10 @@ type nativeReadOptions struct {
 	designFileName string
 	// nativeFileName is the filename of the attached .fmp12 copy, if known.
 	nativeFileName string
+	// externalResolver resolves externally stored container references (#125).
+	externalResolver externalContainerResolver
+	// containers, when non-nil, receives container detection/reconstruction counts (#125).
+	containers *containerStats
 }
 
 func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]map[int]htmlFieldMeta, types map[string]string, opts nativeReadOptions) (map[string][]map[string]interface{}, map[string]int, error) {
@@ -300,11 +304,23 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 		row          string
 	}
 	cells := map[cellKey][][]byte{}
+	containerCells := map[cellKey]*hbam7ContainerCell{}
+	containerStore := newHBAM7ContainerStore()
+	stats := opts.containers
+	if stats == nil {
+		stats = &containerStats{}
+	}
+	if stats.ReconstructedByTbl == nil {
+		stats.ReconstructedByTbl = map[string]int{}
+	}
 	rows := map[int]map[string]bool{}
 	issues := map[string]int{}
 	catalogCollector := newHBAM7CatalogCollector()
 	err := walkHBAM7(source, func(c hbamChunk) error {
 		catalogCollector.observe(c)
+		if containerStore.observeSection31(c) {
+			return nil
+		}
 		if len(c.path) < 3 {
 			return nil
 		}
@@ -319,6 +335,24 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 			rows[table] = map[string]bool{}
 		}
 		rows[table][row] = true
+
+		// Container cells live at depth 4 ([table].[5].[row].[fid]) or depth 5
+		// ([table].[5].[row].[fid].[forkTag]) and legitimately use long keys
+		// (FNAM, FILE, JPEG, PNGf, PDF , FORK, ...) and key=0 headers (#125).
+		if len(c.path) >= 4 {
+			cfid := hbamPathInt(c.path[3])
+			if meta, ok := fields[table][cfid]; ok && types[tables[table]+"."+meta.ColName] == "CONTAINER" {
+				ck := cellKey{table: table, row: row, field: cfid}
+				cc := containerCells[ck]
+				if cc == nil {
+					cc = &hbam7ContainerCell{}
+					containerCells[ck] = cc
+				}
+				cc.observeRecordChunk(c)
+				return nil
+			}
+		}
+
 		if c.kind == 'l' && !rawValues {
 			issues["LONG_FIELD_KEY"]++
 			return nil
@@ -330,9 +364,7 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 		if len(c.path) == 4 {
 			fid = hbamPathInt(c.path[3])
 			keyLen = len(c.path[3])
-			// Key zero formats text but carries required binary metadata in
-			// a container. Do not discard it as text formatting.
-			if c.key == 0 && types[tables[table]+"."+fields[table][fid].ColName] != "CONTAINER" {
+			if c.key == 0 {
 				return nil
 			}
 		} else if len(c.path) != 3 {
@@ -393,24 +425,61 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 			ids = append(ids, row)
 		}
 		sort.Strings(ids)
-		for _, rowID := range ids {
+		for rowIdx, rowID := range ids {
 			row := map[string]interface{}{}
 			for _, fid := range fieldIDs {
 				meta := fields[table][fid]
-				repetitions := cells[cellKey{table: table, row: rowID, field: fid}]
-				if len(repetitions) == 0 {
-					continue
-				}
 				kind := types[tables[table]+"."+meta.ColName]
 				if kind == "CONTAINER" {
-					if !rawValues {
-						for _, part := range repetitions {
-							if len(part) > 0 {
-								issues["CONTAINER"]++
-								break
-							}
+					cc := containerCells[cellKey{table: table, row: rowID, field: fid}]
+					if cc == nil {
+						// Also handle depth-3 container reference payloads if present.
+						if reps := cells[cellKey{table: table, row: rowID, field: fid}]; len(reps) > 0 && len(reps[0]) > 0 {
+							cc = &hbam7ContainerCell{refPayload: reps[0], hasData: true}
 						}
 					}
+					if cc == nil || !cc.hasData {
+						continue
+					}
+					stats.CellsDetected++
+					reconstructed, missingRef, cerr := reconstructContainerCell(table, cc, containerStore, opts.externalResolver)
+					if cerr != nil {
+						if !rawValues {
+							stats.FilesMissing++
+							stats.Missing = append(stats.Missing, missingContainerFile{
+								Table:  tables[table],
+								Column: meta.ColName,
+								RowNum: rowIdx + 1,
+								Reason: cerr.Error(),
+							})
+							issues["CONTAINER"]++
+						}
+						continue
+					}
+					if missingRef != "" {
+						stats.FilesMissing++
+						stats.Missing = append(stats.Missing, missingContainerFile{
+							Table:   tables[table],
+							Column:  meta.ColName,
+							RowNum:  rowIdx + 1,
+							RefPath: missingRef,
+							Reason:  "external container file not found",
+						})
+						if !rawValues {
+							issues["CONTAINER_MISSING"]++
+						}
+						continue
+					}
+					if reconstructed != nil {
+						row[meta.ColName] = reconstructed.Bytes
+						addContainerMeta(row, meta.ColName, reconstructed.Meta)
+						stats.FilesReconstructed++
+						stats.ReconstructedByTbl[tables[table]]++
+					}
+					continue
+				}
+				repetitions := cells[cellKey{table: table, row: rowID, field: fid}]
+				if len(repetitions) == 0 {
 					continue
 				}
 				if kind == "CALCULATION" || kind == "SUMMARY" {
@@ -473,7 +542,7 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 		}
 		return nil, nil, &nativeValueError{Records: records, Counts: issues}
 	}
-	return out, map[string]int{}, nil
+	return out, stats.ReconstructedByTbl, nil
 }
 
 type nativeValueError struct {

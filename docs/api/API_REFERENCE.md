@@ -1870,10 +1870,29 @@ FileMaker's reading of the text (`12`, `-42`, or empty when there is none) and
 the record keeps the text as written (see `__source_text` in § 4).
 `counts.source_text_values` counts them and a `translated` item names their
 fields per dataset. Without `source_locale` the migration stays strict and the
-refusal says so. Values of several repetitions stay refused either way. Container
-bytes, binary calculations, timezone/time-duration behavior and required script
-operations still require qualification; an extracted record count is not an
-application-equivalence result.
+refusal says so. Values of several repetitions stay refused either way.
+
+Before extracting native `.fmp12` records, the HBAM7 reader compares the
+binary's internal table and field catalog (IDs, names and field classes/types)
+against the attached design (`#130`). Any missing, extra, renamed or retyped
+table or field — or a catalog-less binary — is refused with `rejected` entries
+listing each difference, `records_ready: 0`, and `422 Native Data Import
+Blocked` on `/apply`.
+
+Populated container fields in native `.fmp12` files are reconstructed from
+embedded Section 31 and inline HBAM7 forks (`#125`), choosing the original file
+(`FILE`, `PDF `, `FORK`, or the extension-matched media fork) over generated
+previews/thumbnails, verifying declared fork lengths, and storing the raw bytes
+in the `CONTAINER` column with original filename, MIME type, SHA-256 digest and
+byte size persisted in `sys_container_meta` and returned under `__container_meta`
+on Data API reads (and carried in `.f4data` bundles). Externally stored
+container references (`remote:`, `filemac:`, `filewin:`, `file:`, …) are
+resolved against `external_files` (map of relative path to base64 bytes; or
+`-external-containers` in `migration-preflight`), or explicitly rejected with
+the missing file path. The report counts `container_cells_detected`,
+`container_files_reconstructed` and `container_files_missing`. Binary
+calculations and timezone/time-duration behavior still require qualification; an
+extracted record count is not an application-equivalence result.
 
 #### Uploading a native copy (`multipart/form-data`)
 

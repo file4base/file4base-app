@@ -191,14 +191,40 @@ func populateDataRows(
 		if err != nil {
 			return err
 		}
+		extResolver := req.externalContainerResolver
+		if extResolver == nil && len(req.ExternalFiles) > 0 {
+			extResolver, err = buildMapExternalResolver(req.ExternalFiles)
+			if err != nil {
+				return err
+			}
+		}
+		cStats := &containerStats{ReconstructedByTbl: map[string]int{}}
 		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol,
 			nativeReadOptions{
-				dateOrder:      req.NativeDateOrder,
-				locale:         locale,
-				tableRawNames:  fmpTableRawNames,
-				designFileName: designFileName,
-				nativeFileName: req.NativeFileName,
+				dateOrder:        req.NativeDateOrder,
+				locale:           locale,
+				tableRawNames:    fmpTableRawNames,
+				designFileName:   designFileName,
+				nativeFileName:   req.NativeFileName,
+				externalResolver: extResolver,
+				containers:       cStats,
 			})
+		report.Counts.ContainerCellsDetected += cStats.CellsDetected
+		report.Counts.ContainerFilesReconstructed += cStats.FilesReconstructed
+		report.Counts.ContainerFilesMissing += cStats.FilesMissing
+		for _, miss := range cStats.Missing {
+			detail := fmt.Sprintf("Container cell %s.%s (row %d) could not be migrated: %s", miss.Table, miss.Column, miss.RowNum, miss.Reason)
+			if miss.RefPath != "" {
+				detail = fmt.Sprintf("External container file %q referenced by %s.%s (row %d) is missing", miss.RefPath, miss.Table, miss.Column, miss.RowNum)
+			}
+			addReportItem(report, ReportItem{
+				Category:   CategoryRejected,
+				Domain:     "data",
+				SourceName: fmt.Sprintf("%s.%s (row %d)", miss.Table, miss.Column, miss.RowNum),
+				TargetName: miss.Table + "." + miss.Column,
+				Detail:     detail,
+			})
+		}
 		if err != nil {
 			detail := fmt.Sprintf("Failed extracting records from .fmp12 binary: %v", err)
 			if _, ok := err.(*nativeCatalogMismatchError); ok {
@@ -244,7 +270,7 @@ func populateDataRows(
 				report.Counts.RecordsReady += len(rows)
 				detail := fmt.Sprintf("Extracted %d records from the native .fmp12 page tree", len(rows))
 				if containersCount[tbl] > 0 {
-					detail = fmt.Sprintf("Extracted %d records (including %d embedded container images) from .fmp12 HBAM2 binary", len(rows), containersCount[tbl])
+					detail = fmt.Sprintf("Extracted %d records (including %d reconstructed container file(s)) from the native .fmp12 page tree", len(rows), containersCount[tbl])
 				}
 				addReportItem(report, ReportItem{
 					Category:   CategoryPreserved,

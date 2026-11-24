@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
@@ -368,6 +369,9 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		// The original text of values a typed field cannot hold as they were
 		// written, such as "12-A" in a migrated FileMaker Number field (#124).
 		sourcetext.CreateTableSQL,
+		// Original filename, MIME type and SHA-256 metadata for migrated
+		// container fields (#125).
+		containermeta.CreateTableSQL,
 	}
 
 	db := s.driver.DB()
@@ -777,6 +781,9 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	if err := sourcetext.Ensure(ctx, db); err != nil {
 		return err
 	}
+	if err := containermeta.Ensure(ctx, db); err != nil {
+		return err
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -788,6 +795,9 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 		return fmt.Errorf("failed dropping column from physical table: %w", err)
 	}
 	if err := sourcetext.DeleteField(ctx, tx, dialect, tableName, colName); err != nil {
+		return err
+	}
+	if err := containermeta.DeleteField(ctx, tx, dialect, tableName, colName); err != nil {
 		return err
 	}
 
@@ -983,6 +993,9 @@ func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
 	if err := sourcetext.Ensure(ctx, db); err != nil {
 		return err
 	}
+	if err := containermeta.Ensure(ctx, db); err != nil {
+		return err
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -994,6 +1007,9 @@ func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
 		return fmt.Errorf("failed dropping physical table %s: %w", tableName, err)
 	}
 	if err := sourcetext.DeleteTable(ctx, tx, dialect, tableName); err != nil {
+		return err
+	}
+	if err := containermeta.DeleteTable(ctx, tx, dialect, tableName); err != nil {
 		return err
 	}
 
@@ -1154,5 +1170,8 @@ func (s *Service) TruncateTable(ctx context.Context, tableID string) error {
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", dialect.QuoteIdentifier(tableName))); err != nil {
 		return fmt.Errorf("failed truncating table %s: %w", tableName, err)
 	}
-	return sourcetext.DeleteTable(ctx, db, dialect, tableName)
+	if err := sourcetext.DeleteTable(ctx, db, dialect, tableName); err != nil {
+		return err
+	}
+	return containermeta.DeleteTable(ctx, db, dialect, tableName)
 }

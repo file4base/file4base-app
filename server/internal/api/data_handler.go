@@ -276,6 +276,10 @@ func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
 		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
 		return
 	}
+	if err := svc.AttachContainerMeta(r.Context(), table, rows); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rows)
@@ -322,6 +326,10 @@ func (h *DataHandler) GetRow(w http.ResponseWriter, r *http.Request) {
 		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
 		return
 	}
+	if err := svc.AttachContainerMeta(r.Context(), table, []map[string]interface{}{row}); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(row)
@@ -347,6 +355,10 @@ func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := svc.AttachSourceText(r.Context(), table, []map[string]interface{}{updated}); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
+		return
+	}
+	if err := svc.AttachContainerMeta(r.Context(), table, []map[string]interface{}{updated}); err != nil {
 		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
 		return
 	}
@@ -399,6 +411,10 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := svc.AttachSourceText(r.Context(), table, results); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
+		return
+	}
+	if err := svc.AttachContainerMeta(r.Context(), table, results); err != nil {
 		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
 		return
 	}

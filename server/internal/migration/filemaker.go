@@ -76,6 +76,11 @@ type SummaryCounts struct {
 	// SourceTextValues counts the values migrated with their original text
 	// beside FileMaker's reading of it (#124).
 	SourceTextValues int `json:"source_text_values,omitempty"`
+
+	// Container migration counts (#125).
+	ContainerCellsDetected      int `json:"container_cells_detected,omitempty"`
+	ContainerFilesReconstructed int `json:"container_files_reconstructed,omitempty"`
+	ContainerFilesMissing       int `json:"container_files_missing,omitempty"`
 }
 
 // ConversionReport is the deterministic preflight and post-import audit report
@@ -115,6 +120,25 @@ type MigrationRequest struct {
 	// refusing them; it also sets the date order when native_date_order is
 	// empty.
 	SourceLocale string `json:"source_locale,omitempty"`
+
+	// ExternalFiles maps relative external container paths to base64-encoded
+	// file contents when migrating externally stored container fields (#125).
+	ExternalFiles map[string]string `json:"external_files,omitempty"`
+
+	// externalContainerResolver is an optional local resolver set by CLI tools
+	// (such as migration-preflight -external-containers). Never populated from
+	// HTTP JSON input.
+	externalContainerResolver externalContainerResolver
+}
+
+// SetExternalContainerDir configures a safe local-directory resolver for
+// externally stored container references (#125). Intended for local CLI tools.
+func (r *MigrationRequest) SetExternalContainerDir(dir string) {
+	if strings.TrimSpace(dir) == "" {
+		r.externalContainerResolver = nil
+		return
+	}
+	r.externalContainerResolver = NewDirectoryExternalContainerResolver(dir)
 }
 
 // AnalyzeAndConvertNative audits an explicitly selected local native input
