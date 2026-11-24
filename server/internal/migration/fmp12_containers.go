@@ -14,7 +14,6 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/containermeta"
@@ -348,44 +347,38 @@ func isExternalContainerScheme(scheme string) bool {
 // resolveSection31ObjectID resolves the internal Section 31 object ID encoded
 // in a record container cell's key=1 payload (observed in HBAM7 as leading
 // XOR-0x5a ASCII digits such as "01", "02", "03").
+// resolveSection31ObjectID maps a container cell's reference to the Section
+// 31 object holding its data. FileMaker writes the reference XOR 0x5a as the
+// hexadecimal form of the object's path key, in the same variable-length
+// encoding as every other path component: "52" is key 0x52, "805A" is the
+// two-byte key 80 5A, object 128+0x5A. Reading the digits as a decimal number
+// attached a container to the wrong object whenever its hexadecimal key also
+// spelled an existing decimal id ("12" is object 18, not 12).
 func resolveSection31ObjectID(refPayload []byte, tableObjects map[int]*hbam7ContainerForks) (int, bool) {
 	if len(refPayload) == 0 || len(tableObjects) == 0 {
 		return 0, false
 	}
-	xored := make([]byte, len(refPayload))
-	for i, b := range refPayload {
-		xored[i] = b ^ 0x5a
-	}
-	// Extract leading decimal digits.
-	end := 0
-	for end < len(xored) && xored[end] >= '0' && xored[end] <= '9' {
-		end++
-	}
-	if end > 0 {
-		if id, err := strconv.Atoi(string(xored[:end])); err == nil && tableObjects[id] != nil {
-			return id, true
+	digits := make([]byte, 0, 6)
+	for _, b := range refPayload {
+		c := b ^ 0x5a
+		if !isHexDigit(c) || len(digits) == 6 {
+			break
 		}
+		digits = append(digits, c)
 	}
-	// Fallback: leading hex digits (for object IDs encoded in hex).
-	hexEnd := 0
-	for hexEnd < len(xored) && ((xored[hexEnd] >= '0' && xored[hexEnd] <= '9') ||
-		(xored[hexEnd] >= 'a' && xored[hexEnd] <= 'f') ||
-		(xored[hexEnd] >= 'A' && xored[hexEnd] <= 'F')) {
-		hexEnd++
+	key := make([]byte, hex.DecodedLen(len(digits)))
+	if _, err := hex.Decode(key, digits); err != nil || len(key) == 0 {
+		return 0, false
 	}
-	if hexEnd > 0 {
-		if id, err := strconv.ParseInt(string(xored[:hexEnd]), 16, 64); err == nil && tableObjects[int(id)] != nil {
-			return int(id), true
-		}
+	id := hbamPathInt(key)
+	if id < 1 || tableObjects[id] == nil {
+		return 0, false
 	}
-	// Fallback: 4-byte big-endian uint32 object ID.
-	if len(refPayload) >= 4 {
-		id := int(binary.BigEndian.Uint32(refPayload[:4]))
-		if tableObjects[id] != nil {
-			return id, true
-		}
-	}
-	return 0, false
+	return id, true
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // reconstructContainerCell resolves one populated HBAM7 container cell into

@@ -344,3 +344,38 @@ func TestNativeContainerPrefersEPSOverItsPreviews(t *testing.T) {
 		t.Fatalf("unexpected metadata: %+v", meta)
 	}
 }
+
+// A container cell refers to its Section 31 object by the hexadecimal form of
+// the object's path key, as FileMaker Pro 26 writes it: "12" is object 0x12,
+// never object 12, and a two-byte key such as "805A" is object 128+0x5A.
+func TestResolveSection31ObjectIDReadsHexPathKeys(t *testing.T) {
+	objects := map[int]*hbam7ContainerForks{}
+	for _, id := range []int{12, 18, 210, 218, 0x7f, 128 + 0x1234} {
+		objects[id] = newHBAM7ContainerForks()
+	}
+	ref := func(digits string) []byte {
+		return append(nativeEncoded([]byte(digits)), 0x41, 0x32, 0xda)
+	}
+	for _, tc := range []struct {
+		digits string
+		want   int
+		ok     bool
+	}{
+		{"12", 18, true},
+		{"7F", 0x7f, true},
+		{"8052", 210, true},
+		{"805A", 218, true},
+		{"805a", 218, true},
+		{"C01234", 128 + 0x1234, true},
+		{"0C", 12, true},
+		{"8", 0, false},    // odd length is not a key
+		{"13", 0, false},   // object 0x13 does not exist
+		{"", 0, false},     // no digits
+		{"8099", 0, false}, // object 281 does not exist
+	} {
+		got, ok := resolveSection31ObjectID(ref(tc.digits), objects)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("reference %q resolved to %d, %v; want %d, %v", tc.digits, got, ok, tc.want, tc.ok)
+		}
+	}
+}
