@@ -96,8 +96,10 @@ FileMaker's calculation grammar (field names with spaces, `Table::Field`, `${…
 ### 3.2 Functions
 About 110 FileMaker functions: logical (`If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `Evaluate`, `GetField`, `Get(…)`), text, list, number (incl. `SetPrecision`, exact `Sqrt`/`Exp`/`Ln`/`Log`), aggregate, date/time, conversion and text-formatting functions, plus custom functions. Full list: [`calculation_formulas.md`](calculation_formulas.md).
 
+Unstored calculations are computed on every read (record, list, find, portal rows, export) and may read related fields `Occurrence::Field` across any number of relationships from their context occurrence; a stored calculation reading a related field is refused. **Verified** by `TestUnstoredRelatedCalculation` (`internal/data`) and `TestRelatedCalculationsApply` (`internal/migration`) on PostgreSQL and MariaDB.
+
 ### 3.3 Not yet supported
-- Related-field reads at write time and unstored calculations: a migrated calculation that reads `Table::Field` is kept as a stored value and reported.
+- Find, sort and summary on an unstored calculation (refused with `422 Unstored Calculation`).
 - `ExecuteSQL`, JSON, cryptographic, container, plug-in and financial functions are reported as unsupported.
 
 ---|---|---|

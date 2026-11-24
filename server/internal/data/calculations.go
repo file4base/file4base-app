@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -17,15 +18,27 @@ type calculation struct {
 	// types is how the table's fields are stored, so that a value read back
 	// from SQL is seen by the formula as what it is (see calc.Typed).
 	types fieldSet
+	// unstored calculations are computed whenever a record is read, never
+	// written: FileMaker's "Do not store calculation results".
+	unstored bool
+	// occurrence is the table occurrence the formula is evaluated from, which
+	// decides the records its Occurrence::Field references reach.
+	occurrence string
 }
 
-// evaluate computes the calculation over a record.
-func (c calculation) evaluate(record map[string]interface{}) (interface{}, error) {
+// typedRecord is the record as the formula sees it.
+func (c calculation) typedRecord(record map[string]interface{}) calc.Record {
 	typed := make(calc.Record, len(record))
 	for name, v := range record {
 		typed[name] = calc.Typed(resultTypeOf(c.types[name]), v)
 	}
-	return calc.Evaluate(c.expr, typed, c.result)
+	return typed
+}
+
+// evaluate computes the calculation over a record. It reads no related
+// record: that is for an unstored calculation, computed on read.
+func (c calculation) evaluate(record map[string]interface{}) (interface{}, error) {
+	return calc.Evaluate(c.expr, c.typedRecord(record), c.result)
 }
 
 // resultTypeOf is the formula's view of a storage type.
@@ -48,18 +61,35 @@ func resultTypeOf(t dbal.AgnosticFieldType) calc.ResultType {
 type StoredCalculation struct {
 	Formula    string `json:"formula"`
 	ResultType string `json:"result_type"`
+	// Stored false computes the field whenever it is read instead of storing
+	// its result, as FileMaker does for a calculation that reads related
+	// records. Absent means stored.
+	Stored *bool `json:"stored,omitempty"`
+	// Context is the table occurrence the formula is evaluated from. Empty
+	// means the occurrence named like the table, or its first one.
+	Context string `json:"context,omitempty"`
 }
 
-// ParseStoredCalculation reads the formula a CALCULATION column was saved with.
-// Older columns hold the formula as plain text rather than as this object, so
+// IsStored reports whether the result is stored with the record.
+func (c StoredCalculation) IsStored() bool { return c.Stored == nil || *c.Stored }
+
+// ReadStoredCalculation reads what a CALCULATION column was saved with. Older
+// columns hold the formula as plain text rather than as this object, so
 // anything that is not the object is taken as the formula itself with a text
 // result.
-func ParseStoredCalculation(raw string) (formula string, result calc.ResultType) {
+func ReadStoredCalculation(raw string) StoredCalculation {
 	var stored StoredCalculation
 	if err := json.Unmarshal([]byte(raw), &stored); err == nil && stored.Formula != "" {
-		return stored.Formula, calc.ParseResultType(stored.ResultType)
+		return stored
 	}
-	return raw, calc.ResultText
+	return StoredCalculation{Formula: raw, ResultType: string(calc.ResultText)}
+}
+
+// ParseStoredCalculation reads the formula and result type a CALCULATION
+// column was saved with.
+func ParseStoredCalculation(raw string) (formula string, result calc.ResultType) {
+	stored := ReadStoredCalculation(raw)
+	return stored.Formula, calc.ParseResultType(stored.ResultType)
 }
 
 // tableCalculations loads the table's calculation fields, parses their
@@ -94,12 +124,13 @@ func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]ca
 		if err := rows.Scan(&name, &raw); err != nil {
 			return nil, err
 		}
-		formula, result := ParseStoredCalculation(raw)
-		expr, err := calc.Parse(formula)
+		stored := ReadStoredCalculation(raw)
+		expr, err := calc.Parse(stored.Formula)
 		if err != nil {
 			continue
 		}
-		parsed[name] = calculation{field: name, expr: expr, result: result, types: types}
+		parsed[name] = calculation{field: name, expr: expr, result: calc.ParseResultType(stored.ResultType),
+			types: types, unstored: !stored.IsStored(), occurrence: stored.Context}
 		reads[name] = expr.Fields()
 	}
 	if err := rows.Err(); err != nil {
@@ -143,6 +174,10 @@ func (s *Service) applyCalculations(ctx context.Context, tableName string, recor
 // rather than fetched again for each (#38).
 func applyCalculationsTo(calculations []calculation, record map[string]interface{}) error {
 	for _, c := range calculations {
+		if c.unstored {
+			record[c.field] = nil // computed when read, never stored
+			continue
+		}
 		answer, err := c.evaluate(record)
 		if err != nil {
 			return fmt.Errorf("%w: the formula of %q could not be computed: %s", ErrInvalidValue, c.field, err.Error())
@@ -177,6 +212,10 @@ func (s *Service) recalculateForUpdate(ctx context.Context, tableName, id string
 	}
 
 	for _, c := range calculations {
+		if c.unstored {
+			delete(updates, c.field) // computed when read, never stored
+			continue
+		}
 		answer, err := c.evaluate(merged)
 		if err != nil {
 			return fmt.Errorf("%w: the formula of %q could not be computed: %s", ErrInvalidValue, c.field, err.Error())
@@ -197,8 +236,8 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 	if err != nil {
 		return 0, err
 	}
-	if len(calculations) == 0 {
-		return 0, nil
+	if !slices.ContainsFunc(calculations, func(c calculation) bool { return !c.unstored }) {
+		return 0, nil // nothing is stored, so nothing is out of date
 	}
 
 	written := 0
@@ -221,6 +260,9 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 			}
 			updates := make(map[string]interface{}, len(calculations))
 			for _, c := range calculations {
+				if c.unstored {
+					continue // computed when read, never written
+				}
 				answer, err := c.evaluate(row)
 				if err != nil {
 					return written, fmt.Errorf("%w: the formula of %q could not be computed for record %s: %s",

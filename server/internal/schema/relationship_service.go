@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/google/uuid"
 )
@@ -220,6 +221,12 @@ func (s *Service) CreateRelationship(ctx context.Context, input CreateRelationsh
 		op = "="
 	}
 
+	for _, columnID := range []string{input.LeftColumnID, input.RightColumnID} {
+		if err := s.refuseUnstoredMatchField(ctx, columnID); err != nil {
+			return nil, err
+		}
+	}
+
 	relID := uuid.NewString()
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
@@ -346,6 +353,25 @@ func (s *Service) DeleteRelationship(ctx context.Context, id string) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return errors.New("relationship not found")
+	}
+	return nil
+}
+
+// refuseUnstoredMatchField refuses to match a relationship on an unstored
+// calculation: it is not kept in the database, so there is nothing to match.
+func (s *Service) refuseUnstoredMatchField(ctx context.Context, columnID string) error {
+	q := `SELECT name, field_type, calculation_formula FROM sys_columns WHERE id = $1`
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		q = `SELECT name, field_type, calculation_formula FROM sys_columns WHERE id = ?`
+	}
+	var name, fieldType string
+	var formula *string
+	if err := s.driver.DB().QueryRowContext(ctx, q, columnID).Scan(&name, &fieldType, &formula); err != nil {
+		return nil // an unknown column is refused by the insert itself
+	}
+	if fieldType == string(dbal.FieldTypeCalculation) && formula != nil && !data.ReadStoredCalculation(*formula).IsStored() {
+		return fmt.Errorf("%w: a relationship cannot match on %q, an unstored calculation: store its result first",
+			ErrInvalidFieldOptions, name)
 	}
 	return nil
 }

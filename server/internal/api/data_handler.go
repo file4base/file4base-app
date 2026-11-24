@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -103,7 +104,17 @@ func (h *DataHandler) authorizeAction(w http.ResponseWriter, r *http.Request, ta
 		}
 	}
 
-	return data.NewService(driver), true
+	dataSvc := data.NewService(driver)
+	if !sess.IsAdmin() {
+		// A calculation that reads related records reads them as the
+		// caller: a table they may not read gives <No Access>, not its data.
+		schemaSvc, userID := schema.NewService(driver), sess.UserID
+		dataSvc.WithReadAccess(func(ctx context.Context, table string) (bool, error) {
+			level, err := schemaSvc.TableAccess(ctx, userID, table)
+			return level != schema.AccessNone, err
+		})
+	}
+	return dataSvc, true
 }
 
 // EvaluateExpressionBody is what the Data Viewer asks (#50).
@@ -221,6 +232,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "No Match Value", err.Error())
 	case errors.Is(err, data.ErrUnknownField):
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Unknown Field", err.Error())
+	case errors.Is(err, data.ErrUnstoredField):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unstored Calculation", err.Error())
 	case errors.Is(err, validation.ErrValidation):
 		var ve *validation.Error
 		errors.As(err, &ve)

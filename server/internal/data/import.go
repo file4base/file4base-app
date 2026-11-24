@@ -468,6 +468,10 @@ func applyCalculationsForUpdate(
 	}
 
 	for _, c := range calculations {
+		if c.unstored {
+			delete(record, c.field) // computed when read, never stored
+			continue
+		}
 		answer, err := c.evaluate(merged)
 		if err != nil {
 			return fmt.Errorf("%w: the formula of %q could not be computed: %s",
