@@ -369,6 +369,10 @@ class ValueListItem {
   String get secondText => second ?? '';
 }
 
+/// The entries a value list offers now; `truncated` is true when it has more
+/// than the server gives.
+typedef ValueListOffer = ({List<ValueListItem> items, bool truncated});
+
 class TableOccurrenceModel {
 
   const TableOccurrenceModel({
@@ -1897,7 +1901,7 @@ class ApiClient {
   /// The entries a value list offers now. A list that includes only related
   /// values needs the record it is shown on ([table] and [recordId]) and
   /// offers nothing without it.
-  Future<List<ValueListItem>> valueListItems(String id, {String? table, String? recordId}) async {
+  Future<ValueListOffer> valueListItems(String id, {String? table, String? recordId}) async {
     final query = <String, String>{
       'table': ?table,
       'record_id': ?recordId,
@@ -1910,10 +1914,12 @@ class ApiClient {
     _checkResponse(response);
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     final items = body['items'] as List<dynamic>?;
-    if (items != null) {
-      return [for (final item in items) ValueListItem.fromJson(item as Map<String, dynamic>)];
-    }
-    return [for (final v in body['values'] as List<dynamic>? ?? []) ValueListItem(v.toString())];
+    return (
+      items: items != null
+          ? [for (final item in items) ValueListItem.fromJson(item as Map<String, dynamic>)]
+          : [for (final v in body['values'] as List<dynamic>? ?? []) ValueListItem(v.toString())],
+      truncated: body['truncated'] == true,
+    );
   }
 
   Future<ValueListModel> createValueList(ValueListModel list) async {

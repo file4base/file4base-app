@@ -1736,7 +1736,10 @@ func convertFieldValueList(
 		occ, fld := valueListFieldReference(secondary)
 		second := firstNonEmpty(occ, sourceOcc) + "::" + fld
 		secondID := ""
-		if fld != "" && (occ == "" || occTableByName[strings.ToLower(occ)] == tSQL) {
+		// The second field is read on the same record as the first, so it
+		// must come from the same occurrence: one of another occurrence of
+		// the table (a self-join, say) names a related record's value.
+		if fld != "" && (occ == "" || strings.EqualFold(occ, sourceOcc)) {
 			secondID = columnID(fld)
 		}
 		if secondID == "" {

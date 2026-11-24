@@ -191,7 +191,8 @@ func TestSaveAsXMLValueLists(t *testing.T) {
  <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Colours"/><ObjectList><Field id="1" name="Code" datatype="Text" fieldtype="Normal"/><Field id="2" name="Label" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog>
  <FieldCatalog><BaseTableReference id="130" name="Shades"/><ObjectList><Field id="1" name="Tone" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
  <TableOccurrenceCatalog><TableOccurrence id="7" name="Palette"><BaseTableSourceReference><BaseTableReference id="129" name="Colours"/></BaseTableSourceReference></TableOccurrence>
- <TableOccurrence id="8" name="Shade"><BaseTableSourceReference><BaseTableReference id="130" name="Shades"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
+ <TableOccurrence id="8" name="Shade"><BaseTableSourceReference><BaseTableReference id="130" name="Shades"/></BaseTableSourceReference></TableOccurrence>
+ <TableOccurrence id="9" name="Swatch"><BaseTableSourceReference><BaseTableReference id="129" name="Colours"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
  <ValueListCatalog>
   <ValueList id="1" name="Sizes"><Source value="Custom"></Source><CustomValues><Text><![CDATA[Small` + "\r" + `Medium` + "\r\r" + `Large]]></Text></CustomValues></ValueList>
   <ValueList id="2" name="Codes"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><ShowRelated value="False"></ShowRelated></Field></ValueList>
@@ -199,6 +200,7 @@ func TestSaveAsXMLValueLists(t *testing.T) {
   <ValueList id="4" name="Shared"><Source value="External"></Source></ValueList>
   <ValueList id="5" name="Gone"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="9" name="Deleted"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField></Field></ValueList>
   <ValueList id="6" name="Mixed"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="False" sort="False"><FieldReference id="1" name="Tone"><TableOccurrenceReference id="8" name="Shade"/></FieldReference></SecondaryField><ShowRelated value="True"><TableOccurrenceReference id="99" name="Elsewhere"/></ShowRelated></Field></ValueList>
+  <ValueList id="7" name="Self"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="False" sort="False"><FieldReference id="2" name="Label"><TableOccurrenceReference id="9" name="Swatch"/></FieldReference></SecondaryField></Field></ValueList>
  </ValueListCatalog>
  </AddAction></Structure></FMSaveAsXML>`
 	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
@@ -209,8 +211,8 @@ func TestSaveAsXMLValueLists(t *testing.T) {
 	for _, vl := range got.Bundle.ValueLists {
 		lists[vl.Name] = vl
 	}
-	if len(lists) != 4 {
-		t.Fatalf("value lists = %v, want Sizes, Codes, Labels and Mixed", lists)
+	if len(lists) != 5 {
+		t.Fatalf("value lists = %v, want Sizes, Codes, Labels, Mixed and Self", lists)
 	}
 	if lists["Sizes"].CustomValues != "Small\nMedium\nLarge" {
 		t.Fatalf("custom values = %q", lists["Sizes"].CustomValues)
@@ -223,7 +225,7 @@ func TestSaveAsXMLValueLists(t *testing.T) {
 	for _, o := range got.Bundle.TableOccurrences {
 		occurrences[o.Name] = o.ID
 	}
-	for _, n := range []string{"Codes", "Labels", "Mixed"} {
+	for _, n := range []string{"Codes", "Labels", "Mixed", "Self"} {
 		if vl := lists[n]; vl.Kind != "field" || vl.SourceColumnID == nil || *vl.SourceColumnID != columns["code"] {
 			t.Fatalf("%s not bound to Colours::Code: %+v", n, vl)
 		}
@@ -246,6 +248,11 @@ func TestSaveAsXMLValueLists(t *testing.T) {
 	if mixed := lists["Mixed"]; mixed.SecondColumnID != nil || mixed.RelatedOccurrenceID != nil {
 		t.Errorf("Mixed kept options it cannot honour: %+v", mixed)
 	}
+	// Swatch is another occurrence of Colours: its Label is a related
+	// record's, not the label of the record whose code is stored.
+	if self := lists["Self"]; self.SecondColumnID != nil {
+		t.Errorf("Self took its second field from another occurrence of the same table: %+v", self)
+	}
 
 	reported := map[string]string{}
 	for _, it := range append(got.Report.Unsupported, got.Report.ManualActionRequired...) {
@@ -255,7 +262,7 @@ func TestSaveAsXMLValueLists(t *testing.T) {
 	}
 	for _, want := range []struct{ name, text string }{
 		{"Mixed", "second field Shade::Tone"}, {"Mixed", `related from "Elsewhere"`},
-		{"Shared", "another FileMaker file"}, {"Gone", "Palette::Deleted"},
+		{"Shared", "another FileMaker file"}, {"Gone", "Palette::Deleted"}, {"Self", "second field Swatch::Label"},
 	} {
 		if !strings.Contains(reported[want.name], want.text) {
 			t.Errorf("%s report %q does not mention %q", want.name, reported[want.name], want.text)
@@ -278,11 +285,12 @@ func TestDDRFieldValueListOptions(t *testing.T) {
   <BaseTable id="1" name="Projects"><FieldCatalog><Field id="1" dataType="Text" fieldType="Normal" name="Ref"/></FieldCatalog></BaseTable>
   <BaseTable id="2" name="Tasks"><FieldCatalog><Field id="1" dataType="Text" fieldType="Normal" name="TaskID"/><Field id="2" dataType="Text" fieldType="Normal" name="Title"/><Field id="3" dataType="Text" fieldType="Normal" name="ProjectRef"/></FieldCatalog></BaseTable>
  </BaseTableCatalog>
- <RelationshipGraph><TableList><Table id="10" name="Projects" baseTable="Projects" baseTableId="1"/><Table id="11" name="Project Tasks" baseTable="Tasks" baseTableId="2"/></TableList>
+ <RelationshipGraph><TableList><Table id="10" name="Projects" baseTable="Projects" baseTableId="1"/><Table id="11" name="Project Tasks" baseTable="Tasks" baseTableId="2"/><Table id="12" name="Parent Task" baseTable="Tasks" baseTableId="2"/></TableList>
  <RelationshipList><Relationship id="1"><LeftTable name="Projects"/><RightTable name="Project Tasks"/><JoinPredicateList><JoinPredicate type="Equal"><LeftField><Field table="Projects" id="1" name="Ref"/></LeftField><RightField><Field table="Project Tasks" id="3" name="ProjectRef"/></RightField></JoinPredicate></JoinPredicateList></Relationship></RelationshipList></RelationshipGraph>
  <ValueListCatalog>
   <ValueList id="1" name="Task titles"><Source value="Field"/><PrimaryField show="True" sort="False"><Field table="Project Tasks" id="1" name="TaskID"/></PrimaryField><SecondaryField show="False" sort="True"><Field table="Project Tasks" id="2" name="Title"/></SecondaryField><ShowRelated value="True"><Table id="10" name="Projects"/></ShowRelated></ValueList>
   <ValueList id="2" name="Task ids"><Source value="Field"/><PrimaryField show="True" sort="True"><Field table="Project Tasks" id="1" name="TaskID"/></PrimaryField><ShowRelated value="False"/></ValueList>
+  <ValueList id="3" name="Task parents"><Source value="Field"/><PrimaryField show="True" sort="True"><Field table="Project Tasks" id="1" name="TaskID"/></PrimaryField><SecondaryField show="False" sort="False"><Field table="Parent Task" id="2" name="Title"/></SecondaryField><ShowRelated value="False"/></ValueList>
  </ValueListCatalog>
 </File></FMPReport>`
 	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
@@ -303,8 +311,8 @@ func TestDDRFieldValueListOptions(t *testing.T) {
 	for _, vl := range got.Bundle.ValueLists {
 		lists[vl.Name] = vl
 	}
-	if len(lists) != 2 {
-		t.Fatalf("value lists = %+v, want Task titles and Task ids; report %+v", lists, got.Report)
+	if len(lists) != 3 {
+		t.Fatalf("value lists = %+v, want Task titles, Task ids and Task parents; report %+v", lists, got.Report)
 	}
 
 	titles := lists["Task titles"]
@@ -324,9 +332,17 @@ func TestDDRFieldValueListOptions(t *testing.T) {
 	if ids := lists["Task ids"]; ids.SourceColumnID == nil || ids.SecondColumnID != nil || ids.RelatedOccurrenceID != nil {
 		t.Errorf("Task ids = %+v, want Tasks::TaskID alone", ids)
 	}
+	// Parent Task is another occurrence of Tasks (a self-join): its Title is
+	// the parent's, so it is not kept as the task's own second field.
+	if parents := lists["Task parents"]; parents.SourceColumnID == nil || parents.SecondColumnID != nil {
+		t.Errorf("Task parents = %+v, want Tasks::TaskID without a second field", parents)
+	}
 	for _, it := range got.Report.Unsupported {
-		if it.Domain == "value_list" {
-			t.Errorf("value list option reported as lost: %s", it.Detail)
+		if it.Domain != "value_list" {
+			continue
+		}
+		if it.SourceName != "Task parents" || !strings.Contains(it.Detail, "second field Parent Task::Title") {
+			t.Errorf("unexpected value list report: %s: %s", it.SourceName, it.Detail)
 		}
 	}
 }

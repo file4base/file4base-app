@@ -86,9 +86,10 @@ type ValueListInput struct {
 }
 
 // valueListOptionsSQL adds the options of a list taken from a field to
-// sys_value_lists. PostgreSQL skips a column that exists together with its
-// foreign key; MariaDB would add the key again each time, so there the key is
-// named and added only when it is missing.
+// sys_value_lists (server/migrations/004_value_list_field_options.sql). Each
+// foreign key is named fk_value_list_<column> on both engines. PostgreSQL
+// skips a column that exists together with its foreign key; MariaDB would add
+// the key again each time, so there the key is added only when it is missing.
 //
 // A deleted second field leaves the list with its first one; a deleted
 // occurrence takes the list with it, like a deleted source field does, rather
@@ -100,7 +101,8 @@ func valueListOptionsSQL(engine dbal.EngineType) []string {
 				ADD CONSTRAINT fk_value_list_%[1]s FOREIGN KEY IF NOT EXISTS (%[1]s) REFERENCES %[2]s(id) ON DELETE %[3]s;`,
 				column, target, onDelete)
 		}
-		return fmt.Sprintf(`ALTER TABLE sys_value_lists ADD COLUMN IF NOT EXISTS %s VARCHAR(36) REFERENCES %s(id) ON DELETE %s;`,
+		return fmt.Sprintf(`ALTER TABLE sys_value_lists ADD COLUMN IF NOT EXISTS %[1]s VARCHAR(36)
+			CONSTRAINT fk_value_list_%[1]s REFERENCES %[2]s(id) ON DELETE %[3]s;`,
 			column, target, onDelete)
 	}
 	return []string{
@@ -443,7 +445,7 @@ type ValueListRecord struct {
 // record in hand: the lines of a custom list, or the distinct values a field
 // holds.
 func (s *Service) ValueListValues(ctx context.Context, id string) ([]string, error) {
-	items, err := s.ValueListItems(ctx, id, nil, nil)
+	items, _, err := s.ValueListItems(ctx, id, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -461,16 +463,24 @@ func ItemValues(items []ValueListItem) []string {
 
 // ValueListItems resolves a list to the entries it offers right now: the
 // lines of a custom list in the order they were typed, or the values a field
-// holds, each once, sorted by the first or the second field.
+// holds, sorted by the first or the second field. truncated is true when a
+// list taken from a field has more entries than the maxDynamicValues given.
 //
+// A list taken from a field shows each entry once, as FileMaker does: one
+// entry per value, or with a second field one per distinct pair of values.
+// A list showing only its second field gives one entry per text it shows,
+// storing the least value of the records that show it, so two records with
+// the same text cannot look like one entry and store either value. (FileMaker
+// also offers each text once; it does not say which value it stores.)
+//
+// The values are read with reader, the caller's data service, so a table the
+// caller may not read offers nothing; without a reader every table is read.
 // A list that includes only related values offers those of the records
-// related to record, and nothing without one. They are read with reader, the
-// caller's data service, so a table the caller may not read offers nothing;
-// without a reader every table is read.
-func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueListRecord, reader *data.Service) ([]ValueListItem, error) {
+// related to record, and nothing without one.
+func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueListRecord, reader *data.Service) (items []ValueListItem, truncated bool, err error) {
 	list, err := s.GetValueList(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if list.Kind == ValueListCustom {
 		values := SplitCustomValues(list.CustomValues)
@@ -478,26 +488,30 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 		for i, value := range values {
 			items[i] = ValueListItem{Value: value}
 		}
-		return items, nil
+		return items, false, nil
 	}
 
 	src, err := s.valueListSource(ctx, list)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var items []ValueListItem
+	if reader == nil {
+		reader = data.NewService(s.driver)
+	}
+	order := entryOrder{bySecond: list.SortBy == ValueListSortSecond, secondOnly: list.ShowSecondOnly && src.second != ""}
 	if list.RelatedOccurrenceID != nil {
-		if reader == nil {
-			reader = data.NewService(s.driver)
-		}
 		items, err = s.relatedFieldItems(ctx, list, src, record, reader)
 	} else {
-		items, err = s.distinctFieldItems(ctx, src)
+		items, truncated, err = distinctFieldItems(ctx, src, order, reader)
+	}
+	if errors.Is(err, data.ErrNoAccess) {
+		return []ValueListItem{}, false, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return sortedItems(items, list.SortBy == ValueListSortSecond), nil
+	items, more := order.entries(items)
+	return items, truncated || more, nil
 }
 
 // SplitCustomValues turns the stored text into values: one per line, blank
@@ -553,38 +567,23 @@ func (s *Service) valueListSource(ctx context.Context, list *ValueList) (fieldSo
 	return src, nil
 }
 
-// distinctFieldItems reads the values the list's fields hold in every record.
-func (s *Service) distinctFieldItems(ctx context.Context, src fieldSource) ([]ValueListItem, error) {
-	dialect := s.driver.Dialect()
-	first := dialect.QuoteIdentifier(src.first)
-	columns := first
-	if src.second != "" {
-		columns += ", " + dialect.QuoteIdentifier(src.second)
-	}
-	sqlText := fmt.Sprintf("SELECT DISTINCT %s FROM %s WHERE %s IS NOT NULL LIMIT %d",
-		columns, dialect.QuoteIdentifier(src.table), first, maxDynamicValues)
-
-	rows, err := s.driver.DB().QueryContext(ctx, sqlText)
+// distinctFieldItems reads the entries the list's fields give in every
+// record, as the caller.
+func distinctFieldItems(ctx context.Context, src fieldSource, order entryOrder, reader *data.Service) ([]ValueListItem, bool, error) {
+	rows, more, err := reader.DistinctValues(ctx, src.table, data.DistinctQuery{
+		Field: src.first, Label: src.second, LabelOnly: order.secondOnly,
+		ByLabel: order.bySecond && src.second != "", Limit: maxDynamicValues,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed reading the values of %s.%s: %w", src.table, src.first, err)
+		return nil, false, err
 	}
-	defer rows.Close()
-
 	items := []ValueListItem{}
-	for rows.Next() {
-		var value, second sql.NullString
-		dest := []interface{}{&value}
-		if src.second != "" {
-			dest = append(dest, &second)
-		}
-		if err := rows.Scan(dest...); err != nil {
-			return nil, err
-		}
-		if item, ok := newItem(value.String, second.String, src.second != ""); ok {
+	for _, row := range rows {
+		if item, ok := newItem(row[src.first], row[src.second], src.second != ""); ok {
 			items = append(items, item)
 		}
 	}
-	return items, rows.Err()
+	return items, more, nil
 }
 
 // relatedFieldItems reads the values the list's fields hold in the records
@@ -617,14 +616,14 @@ func (s *Service) relatedFieldItems(
 		fields = append(fields, src.second)
 	}
 	rows, err := reader.RelatedValues(ctx, *list.RelatedOccurrenceID, record.ID, *list.SourceOccurrenceID, fields...)
-	if errors.Is(err, data.ErrRecordNotFound) || errors.Is(err, data.ErrNoAccess) {
+	if errors.Is(err, data.ErrRecordNotFound) {
 		return items, nil
 	}
 	if err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		item, ok := newItem(valueText(row[src.first]), valueText(row[src.second]), src.second != "")
+		item, ok := newItem(row[src.first], row[src.second], src.second != "")
 		if ok {
 			items = append(items, item)
 		}
@@ -646,50 +645,51 @@ func newItem(value, second string, hasSecond bool) (ValueListItem, bool) {
 	return item, true
 }
 
-// valueText is a value read through the data service, as text the way the
-// database driver gives the same value.
-func valueText(v interface{}) string {
-	switch t := v.(type) {
-	case nil:
-		return ""
-	case string:
-		return t
-	case []byte:
-		return string(t)
-	case time.Time:
-		return t.Format(time.RFC3339Nano)
-	default:
-		return fmt.Sprint(t)
-	}
+// entryOrder is how a list taken from a field orders its entries and which
+// of them are the same entry.
+type entryOrder struct {
+	bySecond   bool // sorted by the second field
+	secondOnly bool // showing only the second field
 }
 
-// sortedItems orders the entries by the field the list sorts by, then keeps
-// each value once and at most maxDynamicValues of them. A value the second
-// field gives two texts for is offered once, with the first in that order,
-// because both entries would store the same value.
-func sortedItems(items []ValueListItem, bySecond bool) []ValueListItem {
-	key := func(item ValueListItem) string {
-		if bySecond && item.Second != nil {
-			return *item.Second
+// entries orders items by the field the list sorts by, keeps each entry once
+// (see ValueListItems) and at most maxDynamicValues of them; more is true
+// when there were others. Two items are the same entry when they show the
+// same text with secondOnly, or else hold the same value and second value.
+func (o entryOrder) entries(items []ValueListItem) (kept []ValueListItem, more bool) {
+	second := func(item ValueListItem) string {
+		if item.Second == nil {
+			return ""
 		}
-		return item.Value
+		return *item.Second
 	}
 	sort.SliceStable(items, func(i, j int) bool {
-		if a, b := key(items[i]), key(items[j]); a != b {
-			return a < b
+		a, b := items[i], items[j]
+		if o.bySecond && second(a) != second(b) {
+			return second(a) < second(b)
 		}
-		return items[i].Value < items[j].Value
+		if a.Value != b.Value {
+			return a.Value < b.Value
+		}
+		return second(a) < second(b)
 	})
 	seen := map[string]bool{}
-	kept := items[:0]
+	kept = items[:0]
 	for _, item := range items {
-		if seen[item.Value] || len(kept) == maxDynamicValues {
+		key := item.Value + "\x00" + second(item)
+		if o.secondOnly {
+			key = second(item)
+		}
+		if seen[key] {
 			continue
 		}
-		seen[item.Value] = true
+		if len(kept) == maxDynamicValues {
+			return kept, true
+		}
+		seen[key] = true
 		kept = append(kept, item)
 	}
-	return kept
+	return kept, false
 }
 
 func (s *Service) valueListNameTaken(ctx context.Context, name, exceptID string) (bool, error) {

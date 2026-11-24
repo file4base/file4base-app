@@ -666,6 +666,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   final Map<String, ValueListModel> _valueLists = {};
   final Map<String, List<ValueListItem>> _valueListItems = {};
 
+  /// The lists that offer more entries than the server gave.
+  final Set<String> _truncatedValueLists = {};
+
+  /// For a list of related values: the record its entries are for, and the
+  /// latest request, so an answer that arrives late never replaces a newer one.
+  final Map<String, String?> _relatedValueListRecords = {};
+  final Map<String, int> _relatedValueListRequests = {};
+
   Future<void> _loadValueLists() async {
     try {
       final lists = await widget.apiClient.listValueLists();
@@ -692,25 +700,38 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       final shown = widget.layout?.objects.any((o) => o.fieldBinding?.valueListId == list.id) ?? false;
       if (!shown) return;
       final recordId = _records.isEmpty ? null : _records[_currentIndex]['id']?.toString();
-      _valueListItems[list.id] = const [];
+      // Another record's entries are not offered while this one's are read;
+      // the same record's stay until the new ones arrive.
+      if (!_relatedValueListRecords.containsKey(list.id) || _relatedValueListRecords[list.id] != recordId) {
+        _relatedValueListRecords[list.id] = recordId;
+        _valueListItems[list.id] = const [];
+        _truncatedValueLists.remove(list.id);
+      }
+      final request = (_relatedValueListRequests[list.id] ?? 0) + 1;
+      _relatedValueListRequests[list.id] = request;
       if (recordId == null) return;
       try {
-        final items =
+        final offer =
             await widget.apiClient.valueListItems(list.id, table: widget.table.name, recordId: recordId);
-        // The user may have moved on to another record meanwhile.
-        final now = _records.isEmpty ? null : _records[_currentIndex]['id']?.toString();
-        if (mounted && now == recordId) setState(() => _valueListItems[list.id] = items);
+        if (mounted && _relatedValueListRequests[list.id] == request) _applyValueListOffer(list.id, offer);
       } catch (_) {
-        // Already empty: the control offers nothing but the stored value.
+        // The control keeps what it offered: at least the stored value.
       }
       return;
     }
     try {
-      final items = await widget.apiClient.valueListItems(list.id);
-      if (mounted) setState(() => _valueListItems[list.id] = items);
+      final offer = await widget.apiClient.valueListItems(list.id);
+      if (mounted) _applyValueListOffer(list.id, offer);
     } catch (_) {
       if (mounted) setState(() => _valueListItems[list.id] = const []);
     }
+  }
+
+  void _applyValueListOffer(String id, ValueListOffer offer) {
+    setState(() {
+      _valueListItems[id] = offer.items;
+      offer.truncated ? _truncatedValueLists.add(id) : _truncatedValueLists.remove(id);
+    });
   }
 
   /// Resolves again the lists whose entries depend on the current record.
@@ -735,7 +756,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// field's beside it.
   static Widget _valueListLabel(ValueListItem item, {required bool showSecondOnly}) {
     const style = TextStyle(fontSize: 13);
-    if (showSecondOnly) return Text(item.secondText, style: style);
+    // A stored value the list does not offer has no second field to show.
+    if (showSecondOnly && item.second != null) return Text(item.secondText, style: style);
     if (item.second == null) return Text(item.value, style: style);
     return Text.rich(
       TextSpan(children: [
@@ -754,52 +776,70 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   ///
   /// Each entry stores its value; with [showSecondOnly] it shows its second
   /// field instead, and so does a value already stored that the list offers.
+  /// Two entries may store the same value with different second values.
+  /// [truncated] says the list has more entries than it offers.
   Widget _buildValueListControl({
     required String style,
     required List<ValueListItem> items,
     required String current,
     required ValueChanged<String> onChanged,
     bool showSecondOnly = false,
+    bool truncated = false,
   }) {
     final values = [for (final item in items) item.value];
+    // An entry whose value an earlier entry also stores gets its own key.
+    final seen = <String, int>{};
+    String keyOf(String prefix, String value) {
+      final n = seen[value] = (seen[value] ?? -1) + 1;
+      return n == 0 ? '$prefix-$value' : '$prefix-$value#$n';
+    }
+    const more = Text(
+      'More values than shown',
+      key: ValueKey('value-list-truncated'),
+      style: TextStyle(fontSize: 12, color: Colors.grey, fontStyle: FontStyle.italic),
+    );
     switch (style) {
       case FieldControlStyle.checkboxSet:
-        final chosen = current
-            .split('\n')
-            .map((v) => v.trim())
-            .where((v) => v.isNotEmpty)
-            .toSet();
+        final stored = <String>{
+          for (final v in current.split('\n'))
+            if (v.trim().isNotEmpty) v.trim(),
+        };
+        // A stored value the list does not offer (now) stays checked, after
+        // the list's, as FileMaker shows it; toggling another keeps it.
+        final shown = [
+          ...items,
+          for (final v in stored)
+            if (!values.contains(v)) ValueListItem(v),
+        ];
+        void toggle(String value) {
+          final next = Set<String>.from(stored);
+          next.contains(value) ? next.remove(value) : next.add(value);
+          onChanged({for (final item in shown) if (next.contains(item.value)) item.value}.join('\n'));
+        }
         return SingleChildScrollView(
           child: Wrap(
             spacing: 12,
             runSpacing: 2,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              for (final item in items)
+              for (final item in shown)
                 InkWell(
-                  key: ValueKey('checkbox-${item.value}'),
-                  onTap: () {
-                    final next = Set<String>.from(chosen);
-                    next.contains(item.value) ? next.remove(item.value) : next.add(item.value);
-                    onChanged(values.where(next.contains).join('\n'));
-                  },
+                  key: ValueKey(keyOf('checkbox', item.value)),
+                  onTap: () => toggle(item.value),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Checkbox(
                         visualDensity: VisualDensity.compact,
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        value: chosen.contains(item.value),
-                        onChanged: (_) {
-                          final next = Set<String>.from(chosen);
-                          next.contains(item.value) ? next.remove(item.value) : next.add(item.value);
-                          onChanged(values.where(next.contains).join('\n'));
-                        },
+                        value: stored.contains(item.value),
+                        onChanged: (_) => toggle(item.value),
                       ),
                       Flexible(child: _valueListLabel(item, showSecondOnly: showSecondOnly)),
                     ],
                   ),
                 ),
+              if (truncated) more,
             ],
           ),
         );
@@ -813,7 +853,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             children: [
               for (final item in items)
                 InkWell(
-                  key: ValueKey('radio-${item.value}'),
+                  key: ValueKey(keyOf('radio', item.value)),
                   onTap: () => onChanged(item.value),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -829,6 +869,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                     ],
                   ),
                 ),
+              if (truncated) more,
             ],
           ),
         );
@@ -838,14 +879,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         // hold a value the list no longer offers, so it is kept selectable.
         // A list showing only its second field shows it for the stored value
         // too; a value it no longer offers is shown as it is.
+        //
+        // Entries are told apart by their position, as two of them may store
+        // the same value: -1 is the empty entry and -2 the note that the list
+        // has more values than shown.
         final offered = List<ValueListItem>.from(items);
         final value = current.trim();
         if (value.isNotEmpty && !values.contains(value)) offered.insert(0, ValueListItem(value));
         const dash = Text('—', style: TextStyle(fontSize: 13));
-        return DropdownButtonFormField<String>(
+        return DropdownButtonFormField<int>(
           key: const ValueKey('value-list-control'),
           isExpanded: true,
-          initialValue: value.isEmpty ? null : value,
+          initialValue: value.isEmpty ? null : offered.indexWhere((item) => item.value == value),
           decoration: const InputDecoration(
             isDense: true,
             contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -853,12 +898,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           ),
           hint: dash,
           items: [
-            const DropdownMenuItem<String>(value: '', child: dash),
-            for (final item in offered)
-              DropdownMenuItem<String>(
-                value: item.value,
-                child: _valueListLabel(item, showSecondOnly: showSecondOnly && item.second != null),
+            const DropdownMenuItem<int>(value: -1, child: dash),
+            for (final (i, item) in offered.indexed)
+              DropdownMenuItem<int>(
+                value: i,
+                child: _valueListLabel(item, showSecondOnly: showSecondOnly),
               ),
+            if (truncated) const DropdownMenuItem<int>(value: -2, enabled: false, child: more),
           ],
           selectedItemBuilder: (_) => [
             dash,
@@ -867,8 +913,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 showSecondOnly && item.second != null ? item.secondText : item.value,
                 style: const TextStyle(fontSize: 13),
               ),
+            if (truncated) more,
           ],
-          onChanged: (v) => onChanged(v ?? ''),
+          onChanged: (i) => onChanged(i == null || i < 0 ? '' : offered[i].value),
         );
     }
   }
@@ -1023,6 +1070,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       final texts = record[sourceTextKey];
       if (texts is Map) texts.remove(colName);
       if (mounted) setState(() => _fieldSaving[colName] = null);
+      // The field may be a match field of a list of related values.
+      if (mounted && identical(record, _records.elementAtOrNull(_currentIndex))) _resolveRelatedValueLists();
     } catch (e) {
       if (mounted) {
         setState(() => _fieldSaving[colName] = false);
@@ -3076,6 +3125,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             style: obj.fieldBinding!.effectiveControlStyle(hasValueList: true),
             items: offered,
             showSecondOnly: _valueLists[obj.fieldBinding!.valueListId]?.showSecondOnly ?? false,
+            truncated: _truncatedValueLists.contains(obj.fieldBinding!.valueListId),
             current: ctrl?.text ?? '',
             onChanged: (value) {
               ctrl?.text = value;

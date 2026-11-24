@@ -60,9 +60,12 @@ const _fieldItems = [
 
 class _ValueListApi extends ApiClient {
 
-  _ValueListApi({required this.lists, required this.rows}) : super(baseUrl: 'http://localhost:1');
+  _ValueListApi({required this.lists, required this.rows, this.fieldItems = _fieldItems, this.truncated = false})
+      : super(baseUrl: 'http://localhost:1');
   final List<ValueListModel> lists;
   final List<Map<String, dynamic>> rows;
+  final List<ValueListItem> fieldItems;
+  final bool truncated;
   final List<Map<String, dynamic>> updates = [];
 
   /// The record each request for a list of related values was made for.
@@ -72,13 +75,14 @@ class _ValueListApi extends ApiClient {
   Future<List<ValueListModel>> listValueLists() async => lists;
 
   @override
-  Future<List<ValueListItem>> valueListItems(String id, {String? table, String? recordId}) async {
+  Future<ValueListOffer> valueListItems(String id, {String? table, String? recordId}) async {
     final list = lists.firstWhere((l) => l.id == id);
-    if (!list.isFromField) return [for (final v in list.customValueList) ValueListItem(v)];
-    if (!list.isRelated) return _fieldItems;
+    if (!list.isFromField) return (items: [for (final v in list.customValueList) ValueListItem(v)], truncated: false);
+    if (!list.isRelated) return (items: fieldItems, truncated: truncated);
     relatedRequests.add(table == null ? null : '$table/$recordId');
-    // Each record has one related code.
-    return recordId == 'r1' ? [_fieldItems.first] : [_fieldItems.last];
+    // Each record has one related code, r1's until its first change.
+    final first = recordId == 'r1' && updates.isEmpty;
+    return (items: first ? [_fieldItems.first] : [_fieldItems.last], truncated: false);
   }
 
   @override
@@ -128,6 +132,8 @@ Future<_ValueListApi> _pump(
   List<ValueListModel> lists = const [_customerTypes],
   String current = 'Continuing',
   List<Map<String, dynamic>>? rows,
+  List<ValueListItem> fieldItems = _fieldItems,
+  bool truncated = false,
 }) async {
   tester.view.physicalSize = const Size(1600, 900);
   tester.view.devicePixelRatio = 1.0;
@@ -135,6 +141,8 @@ Future<_ValueListApi> _pump(
 
   final api = _ValueListApi(
     lists: lists,
+    fieldItems: fieldItems,
+    truncated: truncated,
     rows: rows ??
         [
           {'id': 'r1', 'customer_type': current},
@@ -232,10 +240,11 @@ void main() {
       current: 'Lapsed',
     );
 
-    final dropdown = tester.widget<DropdownButtonFormField<String>>(
+    final dropdown = tester.widget<DropdownButtonFormField<int>>(
       find.byKey(const ValueKey('value-list-control')),
     );
-    expect(dropdown.initialValue, 'Lapsed');
+    expect(dropdown.initialValue, 0, reason: 'the stored value is kept as an entry of its own');
+    expect(find.text('Lapsed'), findsOneWidget);
   });
 
   testWidgets('a second field is shown beside each value, and the value is what is stored', (tester) async {
@@ -319,6 +328,111 @@ void main() {
     expect(api.relatedRequests.last, 'customers/r2');
     expect(find.text('Regular'), findsOneWidget);
     expect(find.text('Newcomer'), findsNothing);
+  });
+
+  testWidgets('a checkbox set keeps a stored value the list does not offer', (tester) async {
+    final api = await _pump(
+      tester,
+      FieldControlStyle.checkboxSet,
+      valueListId: _codesByLabel.id,
+      lists: const [_codesByLabel],
+      current: 'N\nRetired',
+    );
+
+    final retired = tester.widget<Checkbox>(
+        find.descendant(of: find.byKey(const ValueKey('checkbox-Retired')), matching: find.byType(Checkbox)));
+    expect(retired.value, isTrue, reason: 'it is shown, checked, after the values the list offers');
+    expect(find.text('Retired'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('checkbox-C')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(api.updates.last['customer_type'], 'N\nC\nRetired', reason: 'only the value toggled changes');
+
+    await tester.tap(find.byKey(const ValueKey('checkbox-N')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(api.updates.last['customer_type'], 'C\nRetired');
+  });
+
+  testWidgets('a list of related values is read again once a field of the record is saved', (tester) async {
+    final api = await _pump(
+      tester,
+      FieldControlStyle.radioButtonSet,
+      valueListId: _relatedCodes.id,
+      lists: const [_relatedCodes],
+      current: '',
+    );
+    expect(find.text('Newcomer'), findsOneWidget);
+    final before = api.relatedRequests.length;
+
+    await tester.tap(find.byKey(const ValueKey('radio-N')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(api.updates.last['customer_type'], 'N');
+    expect(api.relatedRequests.length, greaterThan(before));
+    expect(api.relatedRequests.last, 'customers/r1');
+    expect(find.text('Regular'), findsOneWidget, reason: 'the record now relates to other values');
+    expect(find.text('Newcomer'), findsNothing);
+  });
+
+  testWidgets('two entries storing the same value are both offered', (tester) async {
+    const twins = [
+      ValueListItem('N', second: 'Newcomer'),
+      ValueListItem('N', second: 'Novice'),
+      ValueListItem('C', second: 'Regular'),
+    ];
+    final api = await _pump(
+      tester,
+      FieldControlStyle.radioButtonSet,
+      valueListId: _codesByLabel.id,
+      lists: const [_codesByLabel],
+      current: 'N',
+      fieldItems: twins,
+    );
+    expect(find.text('Newcomer'), findsOneWidget);
+    expect(find.text('Novice'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('radio-N#1')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(api.updates, isEmpty, reason: 'Novice stores N, which the field already holds');
+    await tester.tap(find.byKey(const ValueKey('radio-C')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(api.updates.last['customer_type'], 'C');
+  });
+
+  testWidgets('a pop-up menu with two entries storing the same value opens and stores it', (tester) async {
+    final api = await _pump(
+      tester,
+      FieldControlStyle.popUpMenu,
+      valueListId: _codesByLabel.id,
+      lists: const [_codesByLabel],
+      current: 'C',
+      fieldItems: const [
+        ValueListItem('N', second: 'Newcomer'),
+        ValueListItem('N', second: 'Novice'),
+        ValueListItem('C', second: 'Regular'),
+      ],
+      truncated: true,
+    );
+    expect(find.text('Regular'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('value-list-control')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('value-list-truncated')), findsWidgets,
+        reason: 'a list cut by the server says so');
+    await tester.tap(find.text('Novice').last);
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(api.updates.last['customer_type'], 'N');
+  });
+
+  testWidgets('a radio button set says when the list has more values than shown', (tester) async {
+    await _pump(
+      tester,
+      FieldControlStyle.radioButtonSet,
+      valueListId: _customerCodes.id,
+      lists: const [_customerCodes],
+      truncated: true,
+    );
+    expect(find.byKey(const ValueKey('value-list-truncated')), findsOneWidget);
   });
 
   testWidgets('an edit box stays an edit box', (tester) async {

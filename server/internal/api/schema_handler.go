@@ -844,7 +844,9 @@ func (h *SchemaHandler) ListValueLists(w http.ResponseWriter, r *http.Request) {
 // ResolveValueList answers what the list offers right now: the lines of a
 // custom list, or the distinct values the field it reads holds. "values" are
 // the values an entry stores; "items" are the entries, with the second
-// field's value of a list that has one.
+// field's value of a list that has one. "truncated" is true when the list
+// has more entries than it gives. The values are read as the caller: a
+// table the caller may not read offers nothing.
 //
 // A list that includes only related values offers those of the records
 // related to the record it is shown on, given as ?table=<name>&record_id=<id>.
@@ -855,13 +857,15 @@ func (h *SchemaHandler) ResolveValueList(w http.ResponseWriter, r *http.Request)
 	if id := strings.TrimSpace(r.URL.Query().Get("record_id")); id != "" {
 		record = &schema.ValueListRecord{Table: strings.TrimSpace(r.URL.Query().Get("table")), ID: id}
 	}
-	items, err := schemaService(r).ValueListItems(r.Context(), chi.URLParam(r, "id"), record, callerDataService(r))
+	items, truncated, err := schemaService(r).ValueListItems(r.Context(), chi.URLParam(r, "id"), record, callerDataService(r))
 	if err != nil {
 		writeValueListError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"values": schema.ItemValues(items), "items": items})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"values": schema.ItemValues(items), "items": items, "truncated": truncated,
+	})
 }
 
 func (h *SchemaHandler) CreateValueList(w http.ResponseWriter, r *http.Request) {

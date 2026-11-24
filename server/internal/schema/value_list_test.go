@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/testdb"
@@ -358,7 +359,7 @@ func TestValueListFieldOptions(t *testing.T) {
 	type entry struct{ value, second string }
 	resolve := func(id string, record *schema.ValueListRecord) []entry {
 		t.Helper()
-		items, err := svc.ValueListItems(ctx, id, record, nil)
+		items, _, err := svc.ValueListItems(ctx, id, record, nil)
 		require.NoError(t, err)
 		out := []entry{}
 		for _, item := range items {
@@ -375,9 +376,10 @@ func TestValueListFieldOptions(t *testing.T) {
 		list := create(schema.ValueListInput{Name: "Task codes"})
 		assert.Equal(t, schema.ValueListSortFirst, list.SortBy)
 		assert.Nil(t, list.SecondColumnID)
-		items, err := svc.ValueListItems(ctx, list.ID, nil, nil)
+		items, truncated, err := svc.ValueListItems(ctx, list.ID, nil, nil)
 		require.NoError(t, err)
 		require.Len(t, items, 3)
+		assert.False(t, truncated)
 		assert.Nil(t, items[0].Second, "a list without a second field gives no second value")
 		values, err := svc.ValueListValues(ctx, list.ID)
 		require.NoError(t, err)
@@ -509,6 +511,149 @@ func TestValueListFieldOptions(t *testing.T) {
 		require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.table_constraints
 			WHERE table_schema = `+schemaOf+` AND table_name = 'sys_value_lists' AND constraint_type = 'FOREIGN KEY'`).Scan(&keys))
 		assert.Equal(t, 5, keys, "source table and field, second field, and the two occurrences")
+
+		// The keys carry the names server/migrations/004 gives them, so
+		// applying that file before the server starts adds none twice.
+		var named int
+		require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.table_constraints
+			WHERE table_schema = `+schemaOf+` AND table_name = 'sys_value_lists' AND constraint_type = 'FOREIGN KEY'
+			AND constraint_name IN ('fk_value_list_second_column_id', 'fk_value_list_source_occurrence_id',
+			                        'fk_value_list_related_occurrence_id')`).Scan(&named))
+		assert.Equal(t, 3, named)
+	})
+}
+
+// TestValueListEntries pins what a list taken from a field offers: the
+// caller's access, one entry per text it shows, values written as their field
+// shows them, and a limit that is applied after grouping and is reported.
+func TestValueListEntries(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database unavailable:", err)
+		return
+	}
+	defer driver.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+		return
+	}
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+
+	stamp := uniqueTestStamp()
+	name := fmt.Sprintf("vle_items_%d", stamp)
+	tbl, err := svc.CreateTable(ctx, name, name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.DeleteTable(context.Background(), tbl.ID) })
+	column := func(name string, fieldType dbal.AgnosticFieldType) *schema.ColumnMetadata {
+		col, err := svc.AddColumn(ctx, tbl.ID, schema.ColumnMetadata{
+			Name: name, DisplayName: name, FieldType: fieldType, IsNullable: true,
+		})
+		require.NoError(t, err)
+		return col
+	}
+	code, label := column("code", dbal.FieldTypeText), column("label", dbal.FieldTypeText)
+	day, amount := column("day", dbal.FieldTypeDate), column("amount", dbal.FieldTypeNumber)
+
+	// 600 codes share the label "Same"; a few more records have their own.
+	dialect := driver.Dialect()
+	var tuples []string
+	var args []interface{}
+	add := func(values ...interface{}) {
+		marks := make([]string, len(values))
+		for i := range values {
+			marks[i] = dialect.Placeholder(len(args) + i + 1)
+		}
+		tuples = append(tuples, "("+strings.Join(marks, ", ")+")")
+		args = append(args, values...)
+	}
+	for i := 0; i < 600; i++ {
+		add(fmt.Sprintf("r%d", i), fmt.Sprintf("C%03d", i), "Same", nil, nil)
+	}
+	add("r-a", "B1", "Alpha", "2026-06-15", "12.50")
+	add("r-b", "B2", "Alpha", "2026-06-15", "3")
+	add("r-c", "B1", "Beta", nil, nil)
+	_, err = driver.DB().ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (%s, %s, %s, %s, %s) VALUES %s",
+		dialect.QuoteIdentifier(name), dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier("code"),
+		dialect.QuoteIdentifier("label"), dialect.QuoteIdentifier("day"), dialect.QuoteIdentifier("amount"),
+		strings.Join(tuples, ", ")), args...)
+	require.NoError(t, err)
+
+	lists := 0
+	create := func(first *schema.ColumnMetadata, in schema.ValueListInput) string {
+		t.Helper()
+		lists++
+		in.Name = fmt.Sprintf("Entries %d %d", stamp, lists)
+		in.Kind, in.SourceTableID, in.SourceColumnID = schema.ValueListFromField, &tbl.ID, &first.ID
+		list, err := svc.CreateValueList(ctx, in)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.DeleteValueList(context.Background(), list.ID) })
+		return list.ID
+	}
+	type entry struct{ value, second string }
+	resolve := func(id string, reader *data.Service) ([]entry, bool) {
+		t.Helper()
+		items, truncated, err := svc.ValueListItems(ctx, id, nil, reader)
+		require.NoError(t, err)
+		out := []entry{}
+		for _, item := range items {
+			e := entry{value: item.Value}
+			if item.Second != nil {
+				e.second = *item.Second
+			}
+			out = append(out, e)
+		}
+		return out, truncated
+	}
+
+	t.Run("showing the second field only offers each text once", func(t *testing.T) {
+		id := create(code, schema.ValueListInput{SecondColumnID: &label.ID, ShowSecondOnly: true, SortBy: "second"})
+		got, truncated := resolve(id, nil)
+		assert.Equal(t, []entry{{"B1", "Alpha"}, {"B1", "Beta"}, {"C000", "Same"}}, got,
+			"600 records showing Same are one entry, storing the least code, and hide nothing")
+		assert.False(t, truncated)
+	})
+
+	t.Run("showing both fields offers each pair once", func(t *testing.T) {
+		id := create(code, schema.ValueListInput{SecondColumnID: &label.ID, SortBy: "second"})
+		got, truncated := resolve(id, nil)
+		require.Len(t, got, 500)
+		assert.Equal(t, []entry{{"B1", "Alpha"}, {"B2", "Alpha"}, {"B1", "Beta"}, {"C000", "Same"}}, got[:4],
+			"B1 shows two texts, so it is offered with each")
+		assert.True(t, truncated, "603 pairs, 500 offered")
+	})
+
+	t.Run("a long list is cut after grouping, and says so", func(t *testing.T) {
+		got, truncated := resolve(create(code, schema.ValueListInput{}), nil)
+		require.Len(t, got, 500)
+		assert.Equal(t, entry{value: "B1"}, got[0])
+		assert.Equal(t, entry{value: "C497"}, got[499], "the first 500 codes in order, each once")
+		assert.True(t, truncated)
+
+		got, truncated = resolve(create(label, schema.ValueListInput{}), nil)
+		assert.Equal(t, []entry{{value: "Alpha"}, {value: "Beta"}, {value: "Same"}}, got)
+		assert.False(t, truncated)
+	})
+
+	t.Run("dates and numbers read as their field shows them", func(t *testing.T) {
+		got, _ := resolve(create(day, schema.ValueListInput{}), nil)
+		assert.Equal(t, []entry{{value: "2026-06-15"}}, got)
+		got, _ = resolve(create(amount, schema.ValueListInput{}), nil)
+		assert.Equal(t, []entry{{value: "12.5"}, {value: "3"}}, got)
+	})
+
+	t.Run("a table the caller may not read offers nothing", func(t *testing.T) {
+		id := create(label, schema.ValueListInput{SecondColumnID: &code.ID})
+		denied := data.NewService(driver).WithReadAccess(func(context.Context, string) (bool, error) { return false, nil })
+		got, truncated := resolve(id, denied)
+		assert.Empty(t, got)
+		assert.False(t, truncated)
+
+		allowed := data.NewService(driver).WithReadAccess(func(context.Context, string) (bool, error) { return true, nil })
+		got, _ = resolve(id, allowed)
+		assert.NotEmpty(t, got)
 	})
 }
 

@@ -286,7 +286,8 @@ func (r *relatedReader) related(
 // what a value list that includes only related values offers (#31). The
 // path is the one an unstored calculation reading target from from would
 // follow, and every table on it, the first included, must be readable.
-func (s *Service) RelatedValues(ctx context.Context, from, recordID, target string, fields ...string) ([]map[string]interface{}, error) {
+// Each value is given as the text a client shows for its field (fieldText).
+func (s *Service) RelatedValues(ctx context.Context, from, recordID, target string, fields ...string) ([]map[string]string, error) {
 	r := s.newRelatedReader()
 	graph, err := r.occurrenceGraph(ctx)
 	if err != nil {
@@ -332,13 +333,20 @@ func (s *Service) RelatedValues(ctx context.Context, from, recordID, target stri
 			return nil, err
 		}
 		if len(rows) == 0 {
-			return rows, nil
+			return nil, nil
 		}
 	}
 	if err := r.fill(ctx, end.table, rows, fields); err != nil {
 		return nil, err
 	}
-	return rows, nil
+	out := make([]map[string]string, len(rows))
+	for i, row := range rows {
+		out[i] = make(map[string]string, len(fields))
+		for _, field := range fields {
+			out[i][field] = fieldText(endFields[field], row[field])
+		}
+	}
+	return out, nil
 }
 
 // follow reads, across one relationship, the records related to any of rows,
