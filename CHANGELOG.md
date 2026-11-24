@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **NUL characters in native Text values no longer block a permissive migration.** With a `source_locale`, a Text value holding NUL characters, which PostgreSQL text cannot store, is migrated with them removed and counted in a `translated` report item, instead of refusing the whole dataset. Without a locale it stays refused. `migration-preflight` gains `-source-locale` so a local audit can exercise the permissive path (#124), and prints `source_text_values`.
 - **Script steps are identified by their FileMaker instruction id.** A localized design report names each step in the client's language, and File4Base's French labels were written by hand: FileMaker Pro 26.0.2 actually writes `Ouvrir boîte dial. person.`, `Afficher enreg/requête/page`, `Afficher tous les enreg.`, `Importer enregistrements`… so Show Custom Dialog, Go to Record, Show All Records, Import/Export Records and others were quarantined as unsupported although the runner executes them. Each step is now resolved by its id through a table of 62 id/English-name pairs observed in FileMaker's own output (`step_ids.go`), and the French labels FileMaker actually writes are recognized when no id is present. An id that contradicts an English name is reported and the name wins; an id outside the table falls back to the name. Steps the runner cannot execute are reported with their English name.
 
 ### Added

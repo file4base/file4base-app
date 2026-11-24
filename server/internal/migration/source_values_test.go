@@ -231,3 +231,28 @@ func TestSupportedSourceLocalesMatchTheClient(t *testing.T) {
 		t.Fatalf("supported locales %v, the client offers %v", got, want)
 	}
 }
+
+func TestNativeNULTextIsRepairedOnlyWithSourceLocale(t *testing.T) {
+	fields := map[int]map[int]htmlFieldMeta{129: {1: {ColName: "note"}, 2: {ColName: "only_nul"}}}
+	types := map[string]string{"visits.note": "TEXT", "visits.only_nul": "TEXT"}
+	file := nativeVisit(map[byte]string{1: "ab\x00cd", 2: "\x00"})
+
+	stripped := 0
+	if _, _, err := readHBAM7RecordsWith(file, map[int]string{129: "visits"}, fields, types,
+		nativeReadOptions{nulStripped: &stripped}); err == nil {
+		t.Fatal("without a locale a NUL in Text must stay refused")
+	}
+	fr, _ := parseSourceLocale("fr-FR")
+	rows, _, err := readHBAM7RecordsWith(file, map[int]string{129: "visits"}, fields, types,
+		nativeReadOptions{locale: fr, nulStripped: &stripped})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := rows["visits"][0]
+	if row["note"] != "abcd" || stripped != 2 {
+		t.Fatalf("NUL repair: row %+v, stripped %d", row, stripped)
+	}
+	if _, ok := row["only_nul"]; ok {
+		t.Fatalf("a value made only of NUL is empty: %+v", row)
+	}
+}

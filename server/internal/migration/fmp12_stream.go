@@ -284,6 +284,11 @@ type nativeReadOptions struct {
 	// locale, when named, migrates permissive values with their original
 	// text instead of refusing them (#124).
 	locale *sourceLocale
+	// nulStripped, when set, counts Text values whose NUL characters were
+	// removed: with a named locale the migration repairs values the target
+	// cannot store instead of refusing the dataset. PostgreSQL text cannot
+	// hold NUL, and FileMaker shows nothing for it.
+	nulStripped *int
 }
 
 func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]map[int]htmlFieldMeta, types map[string]string, opts nativeReadOptions) (map[string][]map[string]interface{}, map[string]int, error) {
@@ -417,8 +422,15 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 					continue
 				}
 				if !rawValues && strings.ContainsRune(text, 0) {
-					issues["NUL_TEXT"]++
-					continue
+					if opts.locale == nil || opts.nulStripped == nil {
+						issues["NUL_TEXT"]++
+						continue
+					}
+					text = strings.ReplaceAll(text, "\x00", "")
+					*opts.nulStripped++
+					if text == "" {
+						continue
+					}
 				}
 				var value interface{}
 				switch {

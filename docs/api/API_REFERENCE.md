@@ -1916,7 +1916,7 @@ The local command below audits a copy without any upload:
 
 ```sh
 go run ./cmd/migration-preflight -design /private/design.xml \
-  -native /private/source.fmp12 -native-date-order dmy \
+  -native /private/source.fmp12 -native-date-order dmy -source-locale fr-FR \
   -report /private/new-migration-report.json
 ```
 

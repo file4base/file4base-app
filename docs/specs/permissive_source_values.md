@@ -165,4 +165,7 @@ has one, the way the record shows it.
 - **Locale-aware number display.** A plain decimal of a decimal-comma file is
   stored as a number without original text and shown with a decimal point.
 - **Merge fields and print previews** show the typed value.
-- **NUL characters in Text** remain refused (PostgreSQL text cannot hold them).
+- **NUL characters in Text.** PostgreSQL text cannot hold them. Without a
+  `source_locale` they are refused; with one they are removed from the value,
+  the rest of the text is kept, and the report counts the values repaired. The
+  removed characters are not kept as original text.

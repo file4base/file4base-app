@@ -16,6 +16,7 @@ func run() int {
 	design := flag.String("design", "", "design XML file")
 	native := flag.String("native", "", "native database copy")
 	order := flag.String("native-date-order", "iso", "native date order: iso, dmy, mdy")
+	sourceLocale := flag.String("source-locale", "", "locale the source file writes numbers and dates in (source_locale), e.g. fr-FR")
 	output := flag.String("report", "", "new private report file (must not already exist)")
 	flag.Parse()
 	if *design == "" || *native == "" || *output == "" {
@@ -32,7 +33,7 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "cannot read native input")
 		return 1
 	}
-	converted, err := migration.AnalyzeAndConvertNative(migration.MigrationRequest{DesignXML: string(designBytes), NativeDateOrder: *order}, nativeBytes)
+	converted, err := migration.AnalyzeAndConvertNative(migration.MigrationRequest{DesignXML: string(designBytes), NativeDateOrder: *order, SourceLocale: *sourceLocale}, nativeBytes)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "input conversion failed; no target was changed")
 		return 1
@@ -51,7 +52,7 @@ func run() int {
 		return 1
 	}
 	counts := converted.Report.Counts
-	fmt.Printf("tables=%d detected_records=%d ready_records=%d rejected=%d unsupported=%d manual_actions=%d\n", counts.Tables, counts.RecordsDetected, counts.RecordsReady, counts.RejectedCount, counts.UnsupportedCount, counts.ManualActionCount)
+	fmt.Printf("tables=%d detected_records=%d ready_records=%d source_text_values=%d rejected=%d unsupported=%d manual_actions=%d\n", counts.Tables, counts.RecordsDetected, counts.RecordsReady, counts.SourceTextValues, counts.RejectedCount, counts.UnsupportedCount, counts.ManualActionCount)
 	if counts.RejectedCount > 0 {
 		return 2
 	}
