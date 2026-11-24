@@ -2039,7 +2039,7 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			} else {
 				params["dialog"] = false
 			}
-		case "SetState", "State", "Capture", "Boolean":
+		case "Set", "SetState", "State", "Capture", "Boolean":
 			if v, ok := xmlAttrBool(child, "state", "value"); ok {
 				params["state"] = v
 			} else if raw := strings.TrimSpace(firstAttr(child, "value", "state")); raw != "" {
@@ -2224,7 +2224,7 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			} else if raw := firstAttr(child, "value", "state"); raw != "" {
 				params["state"] = strings.ToLower(raw)
 			}
-		case "FlushCache", "FlushCachedJoinResults", "FlushCachedExternalData":
+		case "FlushCache", "FlushCachedJoinResults", "FlushCachedExternalData", "FlushSQLData":
 			if v, ok := xmlAttrBool(child, "state", "value"); ok {
 				params[strings.ToLower(child.Name)] = v
 			} else {

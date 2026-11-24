@@ -63,8 +63,8 @@ func run() int {
 		return 1
 	}
 	counts := converted.Report.Counts
-	fmt.Printf("tables=%d detected_records=%d ready_records=%d containers_detected=%d containers_reconstructed=%d containers_missing=%d rejected=%d unsupported=%d manual_actions=%d\n",
-		counts.Tables, counts.RecordsDetected, counts.RecordsReady,
+	fmt.Printf("tables=%d detected_records=%d ready_records=%d source_text_values=%d containers_detected=%d containers_reconstructed=%d containers_missing=%d rejected=%d unsupported=%d manual_actions=%d\n",
+		counts.Tables, counts.RecordsDetected, counts.RecordsReady, counts.SourceTextValues,
 		counts.ContainerCellsDetected, counts.ContainerFilesReconstructed, counts.ContainerFilesMissing,
 		counts.RejectedCount, counts.UnsupportedCount, counts.ManualActionCount)
 	if counts.RejectedCount > 0 {

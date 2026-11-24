@@ -139,6 +139,23 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 			} else {
 				unknown = append(unknown, "Parameter.LayoutReferenceContainer")
 			}
+		case "Records":
+			// Go to Record/Request/Page in Save a Copy as XML: <List name="Next">
+			// with optional <Boolean type="Exit after last" value="True"/> and
+			// optional <Calculation> for By Calculation (#133/#137).
+			list := findFirstChild(parameter, "List")
+			if list == nil {
+				unknown = append(unknown, "Parameter.Records")
+				continue
+			}
+			decodeRowPageLocation(list, out)
+			for _, flag := range list.Children {
+				if flag.Name == "Boolean" && strings.EqualFold(firstAttr(flag, "type"), "Exit after last") {
+					if v, ok := xmlAttrBool(flag, "value", "state"); ok {
+						out["exit_after_last"] = v
+					}
+				}
+			}
 		case "List":
 			if child == nil {
 				unknown = append(unknown, "Parameter.List")

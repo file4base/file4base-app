@@ -199,16 +199,27 @@ func populateDataRows(
 			}
 		}
 		cStats := &containerStats{ReconstructedByTbl: map[string]int{}}
+		nulStripped := 0
 		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol,
 			nativeReadOptions{
 				dateOrder:        req.NativeDateOrder,
 				locale:           locale,
+				nulStripped:      &nulStripped,
 				tableRawNames:    fmpTableRawNames,
 				designFileName:   designFileName,
 				nativeFileName:   req.NativeFileName,
 				externalResolver: extResolver,
 				containers:       cStats,
 			})
+		if err == nil && nulStripped > 0 {
+			addReportItem(report, ReportItem{
+				Category:   CategoryTranslated,
+				Domain:     "data",
+				SourceName: "fmp12_binary",
+				Detail: fmt.Sprintf("%d Text value(s) held NUL characters, which the target cannot store; "+
+					"the NUL characters were removed and the rest of each value kept", nulStripped),
+			})
+		}
 		report.Counts.ContainerCellsDetected += cStats.CellsDetected
 		report.Counts.ContainerFilesReconstructed += cStats.FilesReconstructed
 		report.Counts.ContainerFilesMissing += cStats.FilesMissing
@@ -231,9 +242,9 @@ func populateDataRows(
 				detail = err.Error()
 			} else if issue, ok := err.(*nativeValueError); ok {
 				report.Counts.RecordsDetected += issue.Records
-				if locale == nil && (issue.Counts["NUMBER"] > 0 || issue.Counts["DATE"] > 0 || issue.Counts["TIMESTAMP"] > 0) {
+				if locale == nil && (issue.Counts["NUMBER"] > 0 || issue.Counts["DATE"] > 0 || issue.Counts["TIMESTAMP"] > 0 || issue.Counts["NUL_TEXT"] > 0) {
 					detail += "; name the source file's locale (source_locale) to migrate permissive Number, Date and " +
-						"Time values with their original text instead of refusing them"
+						"Time values with their original text and remove NUL characters from Text instead of refusing them"
 				}
 			}
 			addReportItem(report, ReportItem{

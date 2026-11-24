@@ -284,6 +284,9 @@ type nativeReadOptions struct {
 	// locale, when named, migrates permissive values with their original
 	// text instead of refusing them (#124).
 	locale *sourceLocale
+	// nulStripped, when set, counts Text values whose NUL characters were
+	// removed under source_locale (#135).
+	nulStripped *int
 	// tableRawNames maps source table IDs to the raw base table names from the
 	// attached design, used to verify the .fmp12 catalog before reading rows (#130).
 	tableRawNames map[int]string
@@ -502,8 +505,15 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 					continue
 				}
 				if !rawValues && strings.ContainsRune(text, 0) {
-					issues["NUL_TEXT"]++
-					continue
+					if opts.locale == nil || opts.nulStripped == nil {
+						issues["NUL_TEXT"]++
+						continue
+					}
+					text = strings.ReplaceAll(text, "\x00", "")
+					*opts.nulStripped++
+					if text == "" {
+						continue
+					}
 				}
 				var value interface{}
 				switch {

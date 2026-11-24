@@ -240,3 +240,36 @@ func TestSupportedSourceLocalesMatchTheClient(t *testing.T) {
 		t.Fatalf("supported locales %v, the client offers %v", got, want)
 	}
 }
+
+func TestNativeNULTextIsRepairedOnlyWithSourceLocale(t *testing.T) {
+	payload := appendHBAM7TableCatalog(nil, 129, "Visits", []testHBAM7FieldSpec{
+		{id: 1, name: "Note", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 2, name: "Only Nul", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+	})
+	payload = appendHBAM7SingleRow(payload, 129, 1, map[byte]string{1: "ab\x00cd", 2: "\x00"})
+	file := buildSyntheticHBAM7(payload)
+	fields := map[int]map[int]htmlFieldMeta{129: {
+		1: {ColName: "note", RawName: "Note", FieldType: "TEXT"},
+		2: {ColName: "only_nul", RawName: "Only Nul", FieldType: "TEXT"},
+	}}
+	types := map[string]string{"visits.note": "TEXT", "visits.only_nul": "TEXT"}
+
+	stripped := 0
+	if _, _, err := readHBAM7RecordsWith(file, map[int]string{129: "visits"}, fields, types,
+		nativeReadOptions{nulStripped: &stripped}); err == nil {
+		t.Fatal("without a locale a NUL in Text must stay refused")
+	}
+	fr, _ := parseSourceLocale("fr-FR")
+	rows, _, err := readHBAM7RecordsWith(file, map[int]string{129: "visits"}, fields, types,
+		nativeReadOptions{locale: fr, nulStripped: &stripped})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := rows["visits"][0]
+	if row["note"] != "abcd" || stripped != 2 {
+		t.Fatalf("NUL repair: row %+v, stripped %d", row, stripped)
+	}
+	if _, ok := row["only_nul"]; ok {
+		t.Fatalf("a value made only of NUL is empty: %+v", row)
+	}
+}
