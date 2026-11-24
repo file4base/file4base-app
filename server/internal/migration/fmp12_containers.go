@@ -824,6 +824,21 @@ func parseExternalStorageFile(b []byte) (externalStorageFile, bool) {
 	}, true
 }
 
+// externalStorageDescriptor returns the stored-file descriptor of an open
+// storage container. FileMaker writes it in the "file" fork for a file, but
+// for a picture it writes it in the image fork itself ("jpeg", "PNGf", ...),
+// which then holds the descriptor instead of the image.
+func externalStorageDescriptor(forks *hbam7ContainerForks) (externalStorageFile, bool) {
+	for _, tag := range append([]string{"file"}, forks.payloadTags()...) {
+		if raw, _, ok := forks.forkData(tag); ok {
+			if info, ok := parseExternalStorageFile(raw); ok {
+				return info, true
+			}
+		}
+	}
+	return externalStorageFile{}, false
+}
+
 // externalStorageContainer resolves a container that FileMaker keeps in
 // external storage. Open storage ("REMO": 8 bytes, then the folder relative
 // to the field's base directory, NUL-terminated) is read through the resolver
@@ -840,8 +855,7 @@ func externalStorageContainer(forks *hbam7ContainerForks, filename string, resol
 	if !ok {
 		return nil, "", false, nil
 	}
-	raw, _, _ := forks.forkData("file")
-	info, ok := parseExternalStorageFile(raw)
+	info, ok := externalStorageDescriptor(forks)
 	if !ok || len(remo) < 8 {
 		return nil, "", true, fmt.Errorf("the open external storage descriptor is incomplete")
 	}

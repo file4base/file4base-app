@@ -3,6 +3,7 @@ package migration
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -160,5 +161,28 @@ func TestParseExternalStorageFile(t *testing.T) {
 		if _, ok := parseExternalStorageFile(bad); ok {
 			t.Errorf("parse(%q) accepted an incomplete descriptor", bad)
 		}
+	}
+}
+
+// For a picture in open external storage, FileMaker writes the stored-file
+// descriptor in the image fork ("jpeg") rather than in a "file" fork.
+func TestExternalStorageDescriptorInImageFork(t *testing.T) {
+	data := []byte("not really a jpeg")
+	sum := md5.Sum(data) // NOSONAR: FileMaker's own checksum
+	desc := append([]byte{byte(len(data)), 0, 0, 0, 0, 0, 0, 0}, sum[:]...)
+	desc = append(desc, []byte("logo.jpg\x00")...)
+	forks := newHBAM7ContainerForks()
+	forks.inlineForks["REMO"] = append(make([]byte, 8), []byte("Files/deco\x00")...)
+	forks.inlineForks["jpeg"] = desc
+	var asked string
+	out, missing, handled, err := externalStorageContainer(forks, "", func(ref string) ([]byte, bool, error) {
+		asked = ref
+		return data, true, nil
+	})
+	if err != nil || !handled || missing != "" || out == nil {
+		t.Fatalf("out=%v missing=%q handled=%v err=%v", out, missing, handled, err)
+	}
+	if asked != "Files/deco/logo.jpg" || !bytes.Equal(out.Bytes, data) || out.Meta.Filename != "logo.jpg" {
+		t.Fatalf("asked %q, got %q as %q", asked, out.Bytes, out.Meta.Filename)
 	}
 }
