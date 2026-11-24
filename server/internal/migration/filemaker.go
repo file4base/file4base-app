@@ -94,6 +94,9 @@ type ConversionReport struct {
 	Unsupported          []ReportItem  `json:"unsupported"`
 	Rejected             []ReportItem  `json:"rejected"`
 	ManualActionRequired []ReportItem  `json:"manual_action_required"`
+	// ExternalOccurrences lists the occurrences of another file's tables,
+	// which are migrated unbound (#107).
+	ExternalOccurrences []ExternalOccurrenceReport `json:"external_occurrences,omitempty"`
 }
 
 // MigrationRequest is the payload accepted by the preflight and apply endpoints.
@@ -541,6 +544,11 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			for _, it := range items {
 				addReportItem(report, it)
 			}
+			// The field's FileMaker id, by which another file that reads
+			// this table names it when it could not read its name (#107).
+			if sourceID := strings.TrimSpace(firstAttr(fn, "id", "ID")); schema.ValidSourceFieldID(sourceID) {
+				col.SourceFieldID = sourceID
+			}
 			bTable.Columns = append(bTable.Columns, col)
 			// What the source called the field is the authoritative name: a
 			// formula written against this design used it. The imported name
@@ -605,7 +613,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 
 	// 2. Extract Table Occurrences
-	occIDByName := make(map[string]string) // lower(occName) -> occID
+	dataSources := readExternalDataSources(root)
+	externalOccs := make(map[string]string)     // lower(occName) -> occID, of another file's table
+	occIDByName := make(map[string]string)      // lower(occName) -> occID
 	deletedOccurrences := make(map[string]bool) // lower(occName) of occurrences on deleted tables
 	occTableByName := make(map[string]string)
 	tablesWithOccurrence := make(map[string]bool) // sqlTableName -> the graph names an occurrence of it
@@ -631,9 +641,40 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			continue
 		}
 		if ref := findFirstChild(on, "FileReference"); ref != nil {
+			// An occurrence of another file's table: migrated unbound, its
+			// table resolved when its file reference is bound (#107). It is
+			// never matched to a table of this file, whatever its source
+			// table id: that id belongs to the other file.
+			refName := strings.TrimSpace(firstAttr(ref, "name", "Name"))
+			src, known := dataSources[strings.ToLower(refName)]
+			if refName == "" || (known && !src.fileMaker) {
+				addReportItem(report, ReportItem{
+					Category: CategoryRejected, Domain: "occurrence", SourceName: occName,
+					Detail: fmt.Sprintf("External table occurrence reads the data source %q, which is not a FileMaker file; File4Base does not migrate it", refName),
+				})
+				continue
+			}
+			table := ""
+			if baseName := firstAttr(on, "baseTable", "base_table", "BaseTable"); baseName != "" {
+				table = sanitizeIdentifier(baseName)
+			}
+			occID := uuid.NewString()
+			occIDByName[strings.ToLower(occName)] = occID
+			externalOccs[strings.ToLower(occName)] = occID
+			bundle.TableOccurrences = append(bundle.TableOccurrences, schema.BundleOccurrence{
+				ID:       occID,
+				Name:     occName,
+				XPos:     float64(80 + (idx%4)*260),
+				YPos:     float64(80 + (idx/4)*180),
+				External: &schema.BundleExternalOccurrence{FileReference: refName, Table: table},
+			})
+			addExternalFileReference(bundle, refName, src.paths)
+			report.ExternalOccurrences = append(report.ExternalOccurrences, ExternalOccurrenceReport{
+				Occurrence: occName, DataSource: refName, Paths: append([]string{}, src.paths...), Table: table,
+			})
 			addReportItem(report, ReportItem{
-				Category: CategoryRejected, Domain: "occurrence", SourceName: occName,
-				Detail: fmt.Sprintf("External table occurrence refers to file %q; import and bind that dependency before this occurrence can be migrated", firstAttr(ref, "name", "Name")),
+				Category: CategoryManualActionRequired, Domain: "occurrence", SourceName: occName, TargetName: occName,
+				Detail: fmt.Sprintf("Table occurrence of a table of the file %q: migrate and install that file too, then bind the file reference %q to it and verify; reading its records from this solution is not available yet", refName, refName),
 			})
 			continue
 		}
@@ -734,7 +775,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 	}
 	for _, rn := range relNodes {
-		rel, items := convertRelationshipNode(rn, occIDByName, occTableByName, colIDByTableCol, fieldNamesByTable)
+		rel, items := convertRelationshipNode(rn, occIDByName, occTableByName, colIDByTableCol, fieldNamesByTable, externalOccs)
 		if rel == nil {
 			if left, right := relationshipSides(rn); deletedOccurrences[strings.ToLower(left)] || deletedOccurrences[strings.ToLower(right)] {
 				items = []ReportItem{{
@@ -756,7 +797,8 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// so only now can a calculation be read with the names it was written
 	// against, bound to the names the import gave them (#111), and its
 	// related fields checked to be reachable.
-	binding := newFormulaBinding(bundle, fieldNamesByTable, locale)
+	externalFields := externalFieldRefs(root, externalOccs)
+	binding := newFormulaBinding(bundle, fieldNamesByTable, locale, externalFields)
 	for i := range bundle.Tables {
 		for _, it := range bindTableCalculations(&bundle.Tables[i], binding, colTypeByTableCol) {
 			addReportItem(report, it)
@@ -766,7 +808,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 4. Extract Value Lists
 	vlNodes := catalogDefinitions(root, []string{"ValueListCatalog", "value_lists"}, "ValueList", "value_list")
 	for _, vn := range vlNodes {
-		vl, items := convertValueListNode(vn, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable)
+		vl, items := convertValueListNode(vn, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable, externalOccs)
 		for _, item := range items {
 			addReportItem(report, item)
 		}
@@ -810,6 +852,41 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	report.Counts.Scripts = len(bundle.Scripts)
 	collectFileReferences(bundle, report)
+	for i := range bundle.FileReferences {
+		// A reference a script names is given its data source's paths.
+		if src, ok := dataSources[strings.ToLower(bundle.FileReferences[i].Name)]; ok && len(bundle.FileReferences[i].Paths) == 0 {
+			bundle.FileReferences[i].Paths = src.paths
+		}
+	}
+	if len(report.ExternalOccurrences) > 0 {
+		fields := externalReportFields(bundle, externalFields)
+		for i := range report.ExternalOccurrences {
+			e := &report.ExternalOccurrences[i]
+			e.Fields = fields[strings.ToLower(e.Occurrence)]
+			if e.Fields == nil {
+				e.Fields = []string{}
+			}
+			var ids []string
+			for _, f := range e.Fields {
+				if id, ok := schema.ExternalFieldSourceID(f); ok {
+					ids = append(ids, id)
+				}
+			}
+			if len(ids) > 0 {
+				// FileMaker could not open the other file when it wrote
+				// this one, so it named these fields by their id only.
+				addReportItem(report, ReportItem{
+					Category: CategoryManualActionRequired, Domain: "occurrence", SourceName: e.Occurrence, TargetName: e.Occurrence,
+					Detail: fmt.Sprintf("The document names %d field(s) of the file %q only by their FileMaker id (%s), as FileMaker does when that file is not reachable as it saves the design; "+
+						"they are kept as #<id> and found by that id when the file reference %q is bound to the solution migrated from that file, whose table must have every one of them",
+						len(ids), e.DataSource, strings.Join(ids, ", "), e.DataSource),
+				})
+			}
+			if e.Paths == nil {
+				e.Paths = []string{}
+			}
+		}
+	}
 
 	// 7. Extract Accounts & Privilege Sets (always disabled until password reset)
 	accNodes := catalogDefinitions(root, []string{"AccountCatalog", "accounts"}, "Account", "account")
@@ -941,7 +1018,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 	// Determine calculation or summary formula if present
 	calcText, calcContext := "", ""
 	if calcNode := findFirstChild(fn, "Calculation", "calculation"); calcNode != nil {
-		calcText = calculationText(calcNode)
+		calcText = markNamelessFieldReferences(calcNode, calculationText(calcNode))
 		// The occurrence the formula is evaluated from, which decides the
 		// records its related fields reach.
 		calcContext = firstAttr(calcNode, "table")
@@ -1306,6 +1383,7 @@ func convertRelationshipNode(
 	occTableByName map[string]string,
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
+	externalOccs map[string]string,
 ) (*schema.BundleRelationship, []ReportItem) {
 	relName := firstAttr(rn, "name", "Name", "id")
 	leftOcc := firstAttr(rn, "left", "leftTable", "LeftTable")
@@ -1410,6 +1488,27 @@ func convertRelationshipNode(
 		return columnID
 	}
 
+	// resolveSide is one side of a criterion, as the LeftColumn* of a
+	// predicate: the imported column, or on an occurrence of another file's
+	// table, the field's name as that file's migration gives it (#107).
+	resolveSide := func(occurrence, table, field string, end *xmlNode) schema.BundlePredicate {
+		if _, external := externalOccs[strings.ToLower(occurrence)]; external {
+			if field == "" && end != nil {
+				// A field of a file FileMaker could not open when it wrote
+				// the document: named only by its id, resolved by that id
+				// when the file reference is bound.
+				if fieldNode := findFirstChild(end, "Field", "field", "FieldReference"); fieldNode != nil {
+					field = referencedFieldName(fieldNode)
+				}
+			}
+			if field == "" {
+				return schema.BundlePredicate{}
+			}
+			return schema.BundlePredicate{LeftColumnName: externalFieldName(field)}
+		}
+		return schema.BundlePredicate{LeftColumnID: resolveColumn(table, field, end)}
+	}
+
 	var predicates []schema.BundlePredicate
 	var resolved, unresolved, unsupported []string
 	for _, c := range criteria {
@@ -1418,18 +1517,22 @@ func convertRelationshipNode(
 			unsupported = append(unsupported, fmt.Sprintf("%s.%s %q %s.%s", leftOcc, c.leftField, c.op, rightOcc, c.rightField))
 			continue
 		}
-		text := fmt.Sprintf("%s.%s %s %s.%s", leftOcc, c.leftField, normOp, rightOcc, c.rightField)
-		leftColID, rightColID := "", ""
+		var left, right schema.BundlePredicate
 		if leftOccID != "" && rightOccID != "" {
-			leftColID = resolveColumn(leftTbl, c.leftField, c.leftEnd)
-			rightColID = resolveColumn(rightTbl, c.rightField, c.rightEnd)
+			left = resolveSide(leftOcc, leftTbl, c.leftField, c.leftEnd)
+			right = resolveSide(rightOcc, rightTbl, c.rightField, c.rightEnd)
 		}
-		if leftColID == "" || rightColID == "" {
+		text := fmt.Sprintf("%s.%s %s %s.%s", leftOcc, firstNonEmpty(c.leftField, left.LeftColumnName), normOp,
+			rightOcc, firstNonEmpty(c.rightField, right.LeftColumnName))
+		if (left.LeftColumnID == "" && left.LeftColumnName == "") || (right.LeftColumnID == "" && right.LeftColumnName == "") {
 			unresolved = append(unresolved, text)
 			continue
 		}
 		resolved = append(resolved, text)
-		predicates = append(predicates, schema.BundlePredicate{LeftColumnID: leftColID, Operator: normOp, RightColumnID: rightColID})
+		predicates = append(predicates, schema.BundlePredicate{
+			LeftColumnID: left.LeftColumnID, LeftColumnName: left.LeftColumnName, Operator: normOp,
+			RightColumnID: right.LeftColumnID, RightColumnName: right.LeftColumnName,
+		})
 	}
 
 	if len(unresolved) > 0 || len(unsupported) > 0 {
@@ -1473,12 +1576,19 @@ func convertRelationshipNode(
 		}
 	}
 
+	detail := strings.Join(resolved, " AND ")
+	for _, side := range []string{leftOcc, rightOcc} {
+		if _, external := externalOccs[strings.ToLower(side)]; external {
+			detail += fmt.Sprintf("; %s is an occurrence of another file's table, whose fields are verified when its file reference is bound", side)
+			break
+		}
+	}
 	items := []ReportItem{{
 		Category:   CategoryPreserved,
 		Domain:     "relationship",
 		SourceName: relName,
 		TargetName: relName,
-		Detail:     strings.Join(resolved, " AND "),
+		Detail:     detail,
 	}}
 
 	rel := &schema.BundleRelationship{
@@ -1564,6 +1674,7 @@ func convertValueListNode(
 	occIDByName map[string]string,
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
+	externalOccs map[string]string,
 ) (*schema.BundleValueList, []ReportItem) {
 	name := firstAttr(vn, "name", "Name")
 	if name == "" {
@@ -1588,7 +1699,7 @@ func convertValueListNode(
 		}}
 	}
 	if kind == "field" || kind == "fromfield" || findFirstChild(vn, "Field") != nil {
-		return convertFieldValueList(vn, name, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable)
+		return convertFieldValueList(vn, name, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable, externalOccs)
 	}
 
 	var vals []string
@@ -1678,6 +1789,7 @@ func convertFieldValueList(
 	occIDByName map[string]string,
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
+	externalOccs map[string]string,
 ) (*schema.BundleValueList, []ReportItem) {
 	tblName := firstAttr(vn, "table", "base_table")
 	fldName := firstAttr(vn, "field")
@@ -1697,6 +1809,26 @@ func convertFieldValueList(
 			occName, fldName = occ, fld
 		}
 	}
+	if occID, external := externalOccs[strings.ToLower(firstNonEmpty(occName, tblName))]; external && fldName != "" {
+		// Values from a field of another file's table, named through the
+		// occurrence; it lists nothing until another solution's records can be
+		// read through a bound file reference (#107).
+		source := firstNonEmpty(occName, tblName) + "::" + readableFieldRefs(fldName)
+		items := []ReportItem{{
+			Category: CategoryPreserved, Domain: "value_list", SourceName: name, TargetName: name,
+			Detail: fmt.Sprintf("Dynamic field value list from %s, a field of another file's table; it lists no value until that file's records can be read from this solution", source),
+		}}
+		if rel := findFirstChild(options, "ShowRelated"); secondary != nil || (rel != nil && isTrue(firstAttr(rel, "value"))) {
+			items = append(items, ReportItem{
+				Category: CategoryUnsupported, Domain: "value_list", SourceName: name, TargetName: name,
+				Detail: fmt.Sprintf("Value list %q lost its second field and related-values options, which a list of another file's table does not keep yet", name),
+			})
+		}
+		return &schema.BundleValueList{
+			ID: uuid.NewString(), Name: name, Kind: "field",
+			SourceOccurrenceID: &occID, SourceColumnName: externalFieldName(fldName),
+		}, items
+	}
 	tSQL := canonicalTableName[strings.ToLower(tblName)]
 	if occName != "" || tSQL == "" {
 		if t := occTableByName[strings.ToLower(firstNonEmpty(occName, tblName))]; t != "" {
@@ -1705,6 +1837,9 @@ func convertFieldValueList(
 	}
 	tID := tableIDByName[tSQL]
 	columnID := func(field string) string {
+		if id, ok := namelessFieldID(field); ok {
+			return colIDByTableCol[tSQL+".#"+id]
+		}
 		column := sanitizeIdentifier(field)
 		if names := fieldNamesByTable[tSQL]; names != nil {
 			if resolved, ok := names.resolve(field); ok {
@@ -1715,7 +1850,7 @@ func convertFieldValueList(
 	}
 	cID := columnID(fldName)
 	sourceOcc := firstNonEmpty(occName, tblName)
-	source := sourceOcc + "::" + fldName
+	source := sourceOcc + "::" + readableFieldRefs(fldName)
 	if tID == "" || cID == "" {
 		return nil, []ReportItem{{
 			Category:   CategoryManualActionRequired,
@@ -1794,16 +1929,17 @@ func convertFieldValueList(
 }
 
 // valueListFieldReference is the occurrence and the name of the field a
-// <PrimaryField> or <SecondaryField> names, in either grammar.
+// <PrimaryField> or <SecondaryField> names, in either grammar; a field named
+// only by its id is its marker "#<id>".
 func valueListFieldReference(n *xmlNode) (occurrence, field string) {
 	if ref := findFirstChild(n, "FieldReference"); ref != nil {
 		if to := findFirstChild(ref, "TableOccurrenceReference"); to != nil {
 			occurrence = firstAttr(to, "name")
 		}
-		return occurrence, firstAttr(ref, "name")
+		return occurrence, referencedFieldName(ref)
 	}
 	if f := findFirstChild(n, "Field"); f != nil {
-		return firstAttr(f, "table"), firstAttr(f, "name")
+		return firstAttr(f, "table"), referencedFieldName(f)
 	}
 	return "", ""
 }
@@ -1836,9 +1972,15 @@ func convertLayoutNode(
 		return nil, []ReportItem{{Category: CategoryRejected, Domain: "layout", SourceName: name,
 			Detail: fmt.Sprintf("Layout references unresolved table occurrence %q; its records must not be shown from an unrelated table", occName)}}
 	}
-	if occID == "" && occName == "" && len(occurrences) > 0 {
-		occID = occurrences[0].ID
-		occName = occurrences[0].Name
+	if occID == "" && occName == "" {
+		// The first occurrence of one of this file's tables: an occurrence
+		// of another file's is never a default.
+		for _, o := range occurrences {
+			if o.External == nil {
+				occID, occName = o.ID, o.Name
+				break
+			}
+		}
 	}
 
 	// Check if an explicit File4Base JSON layout definition exists
@@ -1892,13 +2034,27 @@ func convertLayoutNode(
 		objs := make([]map[string]interface{}, 0)
 		for idx, fn := range fieldNodes {
 			fName := firstAttr(fn, "field", "name", "Name")
+			colName := sanitizeIdentifier(fName)
+			// The occurrence the field is shown from is kept. A field of
+			// another file's table is named as that file's migration names
+			// it (or by its id marker), and is never bound to a column of
+			// this file that happens to share its name.
+			fieldOcc := firstAttr(fn, "table", "Table")
+			if externalOcc, field := externalLayoutField(fn, occurrences); field != "" {
+				fieldOcc, colName = externalOcc, field
+				if fName == "" {
+					fName = field
+				}
+			}
 			if fName == "" {
 				continue
 			}
-			colName := sanitizeIdentifier(fName)
 			binding := map[string]interface{}{
 				"field_name":    colName,
 				"control_style": "edit_box",
+			}
+			if fieldOcc != "" {
+				binding["table_occurrence"] = fieldOcc
 			}
 			// How many repetitions of a repeating field the object shows.
 			if n, ok := parseRepetitions(firstAttr(fn, "numOfReps", "repetitions")); ok {
@@ -1949,7 +2105,7 @@ func convertLayoutNode(
 		Domain:     "layout",
 		SourceName: name,
 		TargetName: name,
-		Detail:     fmt.Sprintf("Layout bound to table occurrence %q", occName),
+		Detail:     layoutOccurrenceDetail(occName, occurrences, occID),
 	})
 
 	return &schema.BundleLayout{
@@ -1958,6 +2114,18 @@ func convertLayoutNode(
 		TableOccurrenceID: occID,
 		Definition:        def,
 	}, items
+}
+
+// layoutOccurrenceDetail says which occurrence a layout shows, and when it is
+// one of another file's tables, that its records are not read from here yet.
+func layoutOccurrenceDetail(occName string, occurrences []schema.BundleOccurrence, occID string) string {
+	for _, o := range occurrences {
+		if o.ID == occID && o.External != nil {
+			return fmt.Sprintf("Layout bound to table occurrence %q, of a table of the file %q; it shows no record until that file's records can be read from this solution",
+				occName, o.External.FileReference)
+		}
+	}
+	return fmt.Sprintf("Layout bound to table occurrence %q", occName)
 }
 
 func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleScript, []ReportItem) {

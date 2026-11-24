@@ -143,8 +143,9 @@ type Counts struct {
 // solution (#107). An empty Database is a reference nobody has mapped yet,
 // and a step that uses it stops.
 type FileReference struct {
-	Name     string `json:"name" xml:"name,attr"`
-	Database string `json:"database,omitempty" xml:"database,attr,omitempty"`
+	Name     string   `json:"name" xml:"name,attr"`
+	Database string   `json:"database,omitempty" xml:"database,attr,omitempty"`
+	Paths    []string `json:"paths,omitempty" xml:"path,omitempty"`
 }
 
 // Table is a base table and its fields.
@@ -177,9 +178,14 @@ type Field struct {
 
 // Occurrence is a table occurrence: the name a relationship and a layout
 // reach a table by.
+//
+// An occurrence of another solution's table names the file reference it goes
+// through as DataSource, and BaseTable is that table's name there (empty
+// while it is not known).
 type Occurrence struct {
-	Name      string `json:"name" xml:"name,attr"`
-	BaseTable string `json:"base_table" xml:"base_table,attr"`
+	Name       string `json:"name" xml:"name,attr"`
+	BaseTable  string `json:"base_table" xml:"base_table,attr"`
+	DataSource string `json:"data_source,omitempty" xml:"data_source,attr,omitempty"`
 }
 
 // Relationship is one join of the graph, read left to right as parent to

@@ -47,8 +47,27 @@ func TestNativeGraphUsesSourceIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 		if external {
-			if len(got.Bundle.Relationships) != 0 {
-				t.Fatal("external table ID substituted with a same-ID local table")
+			// The occurrence is of the other file's table 7, never of this
+			// file's table 7: it is migrated unbound, and its join names
+			// the other file's fields instead of pointing at local ones.
+			var occ *schema.BundleOccurrence
+			for i := range got.Bundle.TableOccurrences {
+				if got.Bundle.TableOccurrences[i].Name == "Alias" {
+					occ = &got.Bundle.TableOccurrences[i]
+				}
+			}
+			if occ == nil || occ.External == nil || occ.BaseTableID != "" {
+				t.Fatalf("external table ID substituted with a same-ID local table: %+v", occ)
+			}
+			if occ.External.FileReference != "Peer.fmp12" || occ.External.Table != "outdatedname" {
+				t.Fatalf("external occurrence: %+v", occ.External)
+			}
+			if len(got.Bundle.Relationships) != 1 {
+				t.Fatalf("the join through the external occurrence was not migrated: %+v", got.Report.Rejected)
+			}
+			rel := got.Bundle.Relationships[0]
+			if rel.LeftColumnID != "" || rel.RightColumnID != "" || rel.LeftColumnName != "code" || rel.RightColumnName != "code" {
+				t.Fatalf("external join must name the other file's fields: %+v", rel)
 			}
 			continue
 		}

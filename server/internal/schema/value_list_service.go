@@ -67,6 +67,13 @@ type ValueList struct {
 	SourceOccurrenceID  *string `json:"source_occurrence_id,omitempty"`
 	RelatedOccurrenceID *string `json:"related_occurrence_id,omitempty"`
 
+	// SourceColumnName names the field of a list taken from a field of
+	// another solution's table (#107): the list has no SourceTableID or
+	// SourceColumnID, SourceOccurrenceID is the external occurrence the
+	// field is read through, and the field is named, since it has no id
+	// here. Empty for every other list.
+	SourceColumnName string `json:"source_column_name,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -83,6 +90,7 @@ type ValueListInput struct {
 	SortBy              string  `json:"sort_by"`
 	SourceOccurrenceID  *string `json:"source_occurrence_id"`
 	RelatedOccurrenceID *string `json:"related_occurrence_id"`
+	SourceColumnName    string  `json:"source_column_name,omitempty"`
 }
 
 // valueListOptionsSQL adds the options of a list taken from a field to
@@ -156,7 +164,7 @@ func normalizeValueListInput(in ValueListInput) (ValueListInput, error) {
 		in.Kind = ValueListCustom
 		in.SourceTableID, in.SourceColumnID, in.SecondColumnID = nil, nil, nil
 		in.SourceOccurrenceID, in.RelatedOccurrenceID = nil, nil
-		in.ShowSecondOnly, in.SortBy = false, ""
+		in.ShowSecondOnly, in.SortBy, in.SourceColumnName = false, "", ""
 		if strings.TrimSpace(in.CustomValues) == "" {
 			return in, fmt.Errorf("%w: a custom value list needs at least one value", ErrInvalidFieldOptions)
 		}
@@ -164,6 +172,10 @@ func normalizeValueListInput(in ValueListInput) (ValueListInput, error) {
 		in.Kind = ValueListFromField
 		in.CustomValues = ""
 		in.SourceTableID, in.SourceColumnID = optionalID(in.SourceTableID), optionalID(in.SourceColumnID)
+		if in.SourceTableID == nil && in.SourceColumnID == nil && strings.TrimSpace(in.SourceColumnName) != "" {
+			return normalizeExternalFieldList(in)
+		}
+		in.SourceColumnName = ""
 		if in.SourceTableID == nil || in.SourceColumnID == nil {
 			return in, fmt.Errorf("%w: a value list taken from a field needs the table and the field to read", ErrInvalidFieldOptions)
 		}
@@ -171,6 +183,28 @@ func normalizeValueListInput(in ValueListInput) (ValueListInput, error) {
 	default:
 		return in, fmt.Errorf("%w: a value list is either %q or %q", ErrInvalidFieldOptions, ValueListCustom, ValueListFromField)
 	}
+	return in, nil
+}
+
+// normalizeExternalFieldList checks a list taken from a field of another
+// solution's table: named, through an occurrence, without the options a list
+// of this solution's field has. The occurrence is checked to be external when
+// the list is saved, the field when its file reference is verified.
+func normalizeExternalFieldList(in ValueListInput) (ValueListInput, error) {
+	in.SourceOccurrenceID = optionalID(in.SourceOccurrenceID)
+	if in.SourceOccurrenceID == nil {
+		return in, fmt.Errorf("%w: a value list taken from a field of another solution needs the table occurrence it is read through", ErrInvalidFieldOptions)
+	}
+	name, err := normalizeExternalField(in.SourceColumnName)
+	if err != nil {
+		return in, fmt.Errorf("%w: a value list taken from a field of another solution needs the field's name: %v", ErrInvalidFieldOptions, err)
+	}
+	in.SourceColumnName = name
+	if optionalID(in.SecondColumnID) != nil || optionalID(in.RelatedOccurrenceID) != nil || in.ShowSecondOnly ||
+		strings.EqualFold(strings.TrimSpace(in.SortBy), ValueListSortSecond) {
+		return in, fmt.Errorf("%w: a value list taken from a field of another solution has no second field or related values yet", ErrInvalidFieldOptions)
+	}
+	in.SecondColumnID, in.RelatedOccurrenceID, in.SortBy = nil, nil, ValueListSortFirst
 	return in, nil
 }
 
@@ -211,6 +245,19 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 		return nil
 	}
 	db := s.driver.DB()
+	if in.SourceTableID == nil {
+		// A field of another solution's table: the occurrence must be one
+		// of that table.
+		occ, err := s.GetTableOccurrence(ctx, *in.SourceOccurrenceID)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
+		}
+		if occ.External == nil {
+			return fmt.Errorf("%w: %q is an occurrence of a table of this solution: name the table and the field instead",
+				ErrInvalidFieldOptions, occ.Name)
+		}
+		return nil
+	}
 	inTable := func(columnID string) (bool, error) {
 		var n int
 		q := fmt.Sprintf(`SELECT COUNT(*) FROM sys_columns WHERE id = %s AND table_id = %s`,
@@ -235,13 +282,14 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 	}
 
 	baseTable := func(occurrenceID string) (string, error) {
-		var tableID string
+		// An occurrence of another solution's table has none.
+		var tableID sql.NullString
 		q := fmt.Sprintf(`SELECT base_table_id FROM sys_table_occurrences WHERE id = %s`, s.valueListPlaceholder(1))
 		err := db.QueryRowContext(ctx, q, occurrenceID).Scan(&tableID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
-		return tableID, err
+		return tableID.String, err
 	}
 	if tableID, err := baseTable(*in.RelatedOccurrenceID); err != nil {
 		return err
@@ -259,6 +307,9 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 // prepareValueList checks a list before it is written: its definition, that
 // its name is free, and what it refers to.
 func (s *Service) prepareValueList(ctx context.Context, in ValueListInput, exceptID string) (ValueListInput, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return in, err
+	}
 	in, err := normalizeValueListInput(in)
 	if err != nil {
 		return in, err
@@ -302,20 +353,23 @@ func (s *Service) CreateValueList(ctx context.Context, in ValueListInput) (*Valu
 		SortBy:              in.SortBy,
 		SourceOccurrenceID:  in.SourceOccurrenceID,
 		RelatedOccurrenceID: in.RelatedOccurrenceID,
+		SourceColumnName:    in.SourceColumnName,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
 
-	marks := make([]string, 13)
+	marks := make([]string, 14)
 	for i := range marks {
 		marks[i] = s.valueListPlaceholder(i + 1)
 	}
 	q := `INSERT INTO sys_value_lists (id, name, kind, custom_values, source_table_id, source_column_id,
-	      second_column_id, show_second_only, sort_by, source_occurrence_id, related_occurrence_id, created_at, updated_at)
+	      second_column_id, show_second_only, sort_by, source_occurrence_id, related_occurrence_id, created_at, updated_at,
+	      source_column_name)
 	      VALUES (` + strings.Join(marks, ", ") + `)`
 	if _, err := s.driver.DB().ExecContext(ctx, q, list.ID, list.Name, list.Kind, list.CustomValues,
 		list.SourceTableID, list.SourceColumnID, list.SecondColumnID, list.ShowSecondOnly, nullableSort(list.SortBy),
-		list.SourceOccurrenceID, list.RelatedOccurrenceID, list.CreatedAt, list.UpdatedAt); err != nil {
+		list.SourceOccurrenceID, list.RelatedOccurrenceID, list.CreatedAt, list.UpdatedAt,
+		nullable(list.SourceColumnName)); err != nil {
 		return nil, fmt.Errorf("failed creating value list %q: %w", list.Name, err)
 	}
 	return list, nil
@@ -332,11 +386,12 @@ func (s *Service) UpdateValueList(ctx context.Context, id string, in ValueListIn
 	p := s.valueListPlaceholder
 	q := fmt.Sprintf(`UPDATE sys_value_lists SET name = %s, kind = %s, custom_values = %s,
 	                  source_table_id = %s, source_column_id = %s, second_column_id = %s, show_second_only = %s,
-	                  sort_by = %s, source_occurrence_id = %s, related_occurrence_id = %s, updated_at = %s WHERE id = %s`,
-		p(1), p(2), p(3), p(4), p(5), p(6), p(7), p(8), p(9), p(10), p(11), p(12))
+	                  sort_by = %s, source_occurrence_id = %s, related_occurrence_id = %s, updated_at = %s,
+	                  source_column_name = %s WHERE id = %s`,
+		p(1), p(2), p(3), p(4), p(5), p(6), p(7), p(8), p(9), p(10), p(11), p(12), p(13))
 	res, err := s.driver.DB().ExecContext(ctx, q, in.Name, in.Kind, in.CustomValues,
 		in.SourceTableID, in.SourceColumnID, in.SecondColumnID, in.ShowSecondOnly, nullableSort(in.SortBy),
-		in.SourceOccurrenceID, in.RelatedOccurrenceID, now, id)
+		in.SourceOccurrenceID, in.RelatedOccurrenceID, now, nullable(in.SourceColumnName), id)
 	if err != nil {
 		return nil, fmt.Errorf("failed updating value list %s: %w", id, err)
 	}
@@ -384,8 +439,12 @@ func (s *Service) ListValueLists(ctx context.Context) ([]ValueList, error) {
 // readValueLists reads the lists a clause selects. A database created before
 // a list had field options gets their columns the first time one is read.
 func (s *Service) readValueLists(ctx context.Context, clause string, args ...interface{}) ([]ValueList, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	q := `SELECT id, name, kind, custom_values, source_table_id, source_column_id, second_column_id,
-	      show_second_only, sort_by, source_occurrence_id, related_occurrence_id, created_at, updated_at
+	      show_second_only, sort_by, source_occurrence_id, related_occurrence_id, created_at, updated_at,
+	      source_column_name
 	      FROM sys_value_lists ` + clause
 	rows, err := s.driver.DB().QueryContext(ctx, q, args...)
 	if err != nil {
@@ -401,14 +460,14 @@ func (s *Service) readValueLists(ctx context.Context, clause string, args ...int
 	lists := []ValueList{}
 	for rows.Next() {
 		var list ValueList
-		var custom, sortBy sql.NullString
+		var custom, sortBy, columnName sql.NullString
 		var showSecondOnly sql.NullBool
 		if err := rows.Scan(&list.ID, &list.Name, &list.Kind, &custom, &list.SourceTableID, &list.SourceColumnID,
 			&list.SecondColumnID, &showSecondOnly, &sortBy, &list.SourceOccurrenceID, &list.RelatedOccurrenceID,
-			&list.CreatedAt, &list.UpdatedAt); err != nil {
+			&list.CreatedAt, &list.UpdatedAt, &columnName); err != nil {
 			return nil, err
 		}
-		list.CustomValues = custom.String
+		list.CustomValues, list.SourceColumnName = custom.String, columnName.String
 		if list.Kind == ValueListFromField {
 			// A list written before it had these options, or whose second
 			// field was deleted, shows and sorts by its first field.
@@ -490,6 +549,9 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 		}
 		return items, false, nil
 	}
+	if list.SourceTableID == nil || list.SourceColumnID == nil {
+		return nil, false, s.externalValueListError(ctx, list)
+	}
 
 	src, err := s.valueListSource(ctx, list)
 	if err != nil {
@@ -512,6 +574,22 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 	}
 	items, more := order.entries(items)
 	return items, truncated || more, nil
+}
+
+// externalValueListError is why a list taken from a field of another
+// solution's table offers nothing: those records cannot be read from here
+// yet (#107). Nothing of this solution is offered in their place.
+func (s *Service) externalValueListError(ctx context.Context, list *ValueList) error {
+	e := &data.ExternalUnavailableError{Reason: data.ExternalMissing}
+	if list.SourceOccurrenceID != nil {
+		if occ, err := s.GetTableOccurrence(ctx, *list.SourceOccurrenceID); err == nil {
+			e.Occurrence = occ.Name
+			if occ.External != nil {
+				e.Reference, e.Database = occ.External.FileReference, occ.External.Database
+			}
+		}
+	}
+	return e
 }
 
 // SplitCustomValues turns the stored text into values: one per line, blank

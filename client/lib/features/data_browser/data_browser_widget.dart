@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/features/data_browser/external_layout.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/data_browser/report_view.dart';
 import 'package:file4base_client/features/layout_engine/chart_view.dart';
@@ -40,6 +41,7 @@ class DataBrowserWidget extends StatefulWidget {
     this.onExitApplication,
     this.onAdjustWindow,
     this.onGoHome,
+    this.externalOccurrences = const {},
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -71,6 +73,15 @@ class DataBrowserWidget extends StatefulWidget {
   final VoidCallback? onExitApplication;
   final ValueChanged<String>? onAdjustWindow;
   final VoidCallback? onGoHome;
+
+  /// Lowercased names and ids of the occurrences of another solution's table
+  /// (#107). A field object of one of them is shown as unavailable, never
+  /// bound to a local column of the same name.
+  final Set<String> externalOccurrences;
+
+  /// What [obj] shows when it is a field of an external occurrence, else null.
+  String? externalFieldNoticeOf(LayoutObjectModel obj) =>
+      obj.type == 'field' ? externalFieldNotice(obj.fieldBinding, externalOccurrences) : null;
 
   @override
   State<DataBrowserWidget> createState() => DataBrowserWidgetState();
@@ -2324,6 +2335,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     bool isDark,
   ) {
     if (obj.type == 'field') {
+      final external = widget.externalFieldNoticeOf(obj);
+      if (external != null) {
+        return relatedNotice(external, isDark: isDark, radius: obj.style.cornerRadius);
+      }
       final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
       final col = widget.table.columns
           .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
@@ -2756,6 +2771,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               if (!isFindMode &&
                   !layout.objects.any((o) =>
                       o.type == 'field' &&
+                      widget.externalFieldNoticeOf(o) == null &&
                       (o.fieldBinding?.allowBrowseEntry ?? true) &&
                       !_isComputed(o.fieldBinding?.fieldName ?? o.text)))
                 Container(
@@ -2978,6 +2994,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         );
 
       case 'field':
+        // A field of another solution's table (#107) cannot be read yet: it
+        // is shown as unavailable, in every mode, and takes no entry.
+        final external = widget.externalFieldNoticeOf(obj);
+        if (external != null) {
+          return relatedNotice(external, isDark: isDark, radius: obj.style.cornerRadius);
+        }
         // A field of a related record: `Companies::company_address` on a
         // Customers layout (#36). It is read through the relationship, not
         // from the record in hand, so none of what follows applies.

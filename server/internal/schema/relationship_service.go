@@ -13,17 +13,24 @@ import (
 	"github.com/google/uuid"
 )
 
+// CreateOccurrenceInput creates a table occurrence: of a base table of this
+// solution (BaseTableID), or of a table of another solution (External).
 type CreateOccurrenceInput struct {
-	BaseTableID string  `json:"base_table_id"`
-	Name        string  `json:"name"`
-	XPos        float64 `json:"x_pos"`
-	YPos        float64 `json:"y_pos"`
+	BaseTableID string                   `json:"base_table_id"`
+	Name        string                   `json:"name"`
+	XPos        float64                  `json:"x_pos"`
+	YPos        float64                  `json:"y_pos"`
+	External    *ExternalOccurrenceInput `json:"external,omitempty"`
 }
 
+// UpdateOccurrenceInput renames or moves an occurrence. ExternalTable names
+// the table of an external occurrence in the other solution (empty when not
+// known); an occurrence is never turned from local to external or back.
 type UpdateOccurrenceInput struct {
-	Name *string  `json:"name,omitempty"`
-	XPos *float64 `json:"x_pos,omitempty"`
-	YPos *float64 `json:"y_pos,omitempty"`
+	Name          *string  `json:"name,omitempty"`
+	XPos          *float64 `json:"x_pos,omitempty"`
+	YPos          *float64 `json:"y_pos,omitempty"`
+	ExternalTable *string  `json:"external_table,omitempty"`
 }
 
 // CreateRelationshipInput creates a relationship. Its match criteria are
@@ -54,27 +61,48 @@ type UpdateRelationshipInput struct {
 	SortRelated   *string                 `json:"sort_related,omitempty"`
 }
 
-// CreateTableOccurrence registers a new occurrence of a base table
+// CreateTableOccurrence registers a new occurrence of a base table, or of a
+// table of another solution through a file reference.
 func (s *Service) CreateTableOccurrence(ctx context.Context, input CreateOccurrenceInput) (*TableOccurrence, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return nil, errors.New("occurrence name cannot be empty")
 	}
-	if strings.TrimSpace(input.BaseTableID) == "" {
+	baseTableID := strings.TrimSpace(input.BaseTableID)
+	var external *ExternalOccurrence
+	switch {
+	case input.External != nil && baseTableID != "":
+		return nil, fmt.Errorf("%w: an occurrence has either a base table or an external data source, not both", ErrInvalidOccurrence)
+	case input.External != nil:
+		ref, err := s.fileReferenceByIDOrName(ctx, input.External.FileReference)
+		if err != nil {
+			return nil, err
+		}
+		table, err := normalizeExternalTable(input.External.Table)
+		if err != nil {
+			return nil, err
+		}
+		external = &ExternalOccurrence{FileReferenceID: ref.ID, FileReference: ref.Name, Database: ref.Database, Table: table}
+	case baseTableID == "":
 		return nil, errors.New("base_table_id cannot be empty")
 	}
 
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
-	// Verify base table exists
-	qCheckTbl := `SELECT id FROM sys_tables WHERE id = $1 LIMIT 1`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		qCheckTbl = `SELECT id FROM sys_tables WHERE id = ? LIMIT 1`
-	}
-	var existingTblID string
-	if err := db.QueryRowContext(ctx, qCheckTbl, input.BaseTableID).Scan(&existingTblID); err != nil {
-		return nil, fmt.Errorf("base table '%s' not found: %w", input.BaseTableID, err)
+	if external == nil {
+		// Verify base table exists
+		qCheckTbl := `SELECT id FROM sys_tables WHERE id = $1 LIMIT 1`
+		if dialect.Engine() == dbal.EngineMariaDB {
+			qCheckTbl = `SELECT id FROM sys_tables WHERE id = ? LIMIT 1`
+		}
+		var existingTblID string
+		if err := db.QueryRowContext(ctx, qCheckTbl, baseTableID).Scan(&existingTblID); err != nil {
+			return nil, fmt.Errorf("base table '%s' not found: %w", baseTableID, err)
+		}
 	}
 
 	xPos := input.XPos
@@ -87,26 +115,39 @@ func (s *Service) CreateTableOccurrence(ctx context.Context, input CreateOccurre
 	occID := uuid.NewString()
 	now := time.Now().UTC()
 
-	qIns := `INSERT INTO sys_table_occurrences (id, base_table_id, name, x_pos, y_pos, created_at) VALUES ($1, $2, $3, $4, $5, $6)`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		qIns = `INSERT INTO sys_table_occurrences (id, base_table_id, name, x_pos, y_pos, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+	var err error
+	if external == nil {
+		qIns := `INSERT INTO sys_table_occurrences (id, base_table_id, name, x_pos, y_pos, created_at) VALUES ($1, $2, $3, $4, $5, $6)`
+		if dialect.Engine() == dbal.EngineMariaDB {
+			qIns = `INSERT INTO sys_table_occurrences (id, base_table_id, name, x_pos, y_pos, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+		}
+		_, err = db.ExecContext(ctx, qIns, occID, baseTableID, name, xPos, yPos, now)
+	} else {
+		marks := make([]string, 7)
+		for i := range marks {
+			marks[i] = dialect.Placeholder(i + 1)
+		}
+		qIns := `INSERT INTO sys_table_occurrences (id, name, x_pos, y_pos, created_at, file_reference_id, external_table) VALUES (` +
+			strings.Join(marks, ", ") + `)`
+		_, err = db.ExecContext(ctx, qIns, occID, name, xPos, yPos, now, external.FileReferenceID, nullable(external.Table))
 	}
-
-	if _, err := db.ExecContext(ctx, qIns, occID, input.BaseTableID, name, xPos, yPos, now); err != nil {
+	if err != nil {
 		return nil, fmt.Errorf("failed creating table occurrence: %w", err)
 	}
 
 	return &TableOccurrence{
 		ID:          occID,
-		BaseTableID: input.BaseTableID,
+		BaseTableID: baseTableID,
 		Name:        name,
 		XPos:        xPos,
 		YPos:        yPos,
 		CreatedAt:   now,
+		External:    external,
 	}, nil
 }
 
-// UpdateTableOccurrence updates the name and/or coordinates of an existing table occurrence
+// UpdateTableOccurrence updates the name and/or coordinates of an existing
+// table occurrence, and the table of an external one.
 func (s *Service) UpdateTableOccurrence(ctx context.Context, id string, input UpdateOccurrenceInput) (*TableOccurrence, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, errors.New("occurrence id cannot be empty")
@@ -115,15 +156,22 @@ func (s *Service) UpdateTableOccurrence(ctx context.Context, id string, input Up
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
-	// Fetch current record
-	qGet := `SELECT id, base_table_id, name, x_pos, y_pos, created_at FROM sys_table_occurrences WHERE id = $1`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		qGet = `SELECT id, base_table_id, name, x_pos, y_pos, created_at FROM sys_table_occurrences WHERE id = ?`
+	cur, err := s.GetTableOccurrence(ctx, id)
+	if err != nil {
+		return nil, err
 	}
-
-	var cur TableOccurrence
-	if err := db.QueryRowContext(ctx, qGet, id).Scan(&cur.ID, &cur.BaseTableID, &cur.Name, &cur.XPos, &cur.YPos, &cur.CreatedAt); err != nil {
-		return nil, fmt.Errorf("table occurrence not found: %w", err)
+	if input.ExternalTable != nil {
+		if cur.External == nil {
+			return nil, fmt.Errorf("%w: %q is an occurrence of a table of this solution, not of another solution", ErrInvalidOccurrence, cur.Name)
+		}
+		table, err := normalizeExternalTable(*input.ExternalTable)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.setExternalTable(ctx, id, table); err != nil {
+			return nil, err
+		}
+		cur.External.Table = table
 	}
 
 	newName := cur.Name
@@ -151,7 +199,7 @@ func (s *Service) UpdateTableOccurrence(ctx context.Context, id string, input Up
 	cur.Name = newName
 	cur.XPos = newX
 	cur.YPos = newY
-	return &cur, nil
+	return cur, nil
 }
 
 // DeleteTableOccurrence deletes a table occurrence
@@ -217,17 +265,21 @@ func (s *Service) ListRelationships(ctx context.Context) ([]RelationshipMetadata
 // relationshipColumns is what scanRelationshipMetadata reads, from
 // sys_relationships r joined to the columns of its first criterion as lc and
 // rc.
+//
+// A side on an occurrence of another solution's table has no column id; its
+// field is the name kept with it.
 const relationshipColumns = `r.id, r.name, r.left_occurrence_id, r.left_column_id, r.right_occurrence_id, r.right_column_id,
 	r.operator, r.allow_creation, r.cascade_delete, r.sort_related, r.created_at,
-	COALESCE(lc.name, ''), COALESCE(rc.name, '')`
+	COALESCE(lc.name, r.left_column_name, ''), COALESCE(rc.name, r.right_column_name, '')`
 
 func scanRelationshipMetadata(row interface{ Scan(...any) error }) (r RelationshipMetadata, leftName, rightName string, err error) {
-	var sortRelated, operator sql.NullString
+	var sortRelated, operator, leftColumn, rightColumn sql.NullString
 	err = row.Scan(
-		&r.ID, &r.Name, &r.LeftOccurrenceID, &r.LeftColumnID, &r.RightOccurrenceID, &r.RightColumnID,
+		&r.ID, &r.Name, &r.LeftOccurrenceID, &leftColumn, &r.RightOccurrenceID, &rightColumn,
 		&operator, &r.AllowCreation, &r.CascadeDelete, &sortRelated, &r.CreatedAt,
 		&leftName, &rightName,
 	)
+	r.LeftColumnID, r.RightColumnID = leftColumn.String, rightColumn.String
 	r.SortRelated = sortRelated.String
 	r.Operator = operator.String
 	if r.Operator == "" {
@@ -279,8 +331,8 @@ func (s *Service) CreateRelationship(ctx context.Context, input CreateRelationsh
 		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, qIns, relID, name, input.LeftOccurrenceID, first.LeftColumnID, first.LeftColumnName,
-		input.RightOccurrenceID, first.RightColumnID, first.RightColumnName, first.Operator,
+	if _, err := tx.ExecContext(ctx, qIns, relID, name, input.LeftOccurrenceID, nullable(first.LeftColumnID), first.LeftColumnName,
+		input.RightOccurrenceID, nullable(first.RightColumnID), first.RightColumnName, first.Operator,
 		input.AllowCreation, input.CascadeDelete, sortRelatedVal, now); err != nil {
 		return nil, fmt.Errorf("failed creating relationship: %w", err)
 	}
@@ -346,10 +398,10 @@ func (s *Service) UpdateRelationship(ctx context.Context, id string, input Updat
 			return nil, err
 		}
 		first := predicates[0]
-		set("left_column_id", first.LeftColumnID)
+		set("left_column_id", nullable(first.LeftColumnID))
 		set("left_column_name", first.LeftColumnName)
 		set("operator", first.Operator)
-		set("right_column_id", first.RightColumnID)
+		set("right_column_id", nullable(first.RightColumnID))
 		set("right_column_name", first.RightColumnName)
 	case input.Operator != nil && strings.TrimSpace(*input.Operator) != "":
 		op, err := NormalizeRelationshipOperator(*input.Operator)

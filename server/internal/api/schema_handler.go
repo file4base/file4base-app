@@ -358,6 +358,12 @@ func writeSchemaError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, schema.ErrTableExists):
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Table Already Exists", err.Error())
 		return
+	case errors.Is(err, schema.ErrInvalidOccurrence):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Table Occurrence", err.Error())
+		return
+	case errors.Is(err, data.ErrExternalUnavailable):
+		writeExternalUnavailable(w, r, err)
+		return
 	}
 	telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 }
@@ -473,13 +479,19 @@ func (h *SchemaHandler) CreateOccurrence(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if input.BaseTableID == "" || input.Name == "" {
-		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "base_table_id and name are required")
+	// An occurrence is of a table of this solution (base_table_id) or of
+	// another solution's, through a file reference (external).
+	if (input.BaseTableID == "" && input.External == nil) || input.Name == "" {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "base_table_id (or external) and name are required")
 		return
 	}
 
 	occ, err := schemaService(r).CreateTableOccurrence(r.Context(), input)
 	if err != nil {
+		if errors.Is(err, schema.ErrInvalidOccurrence) || errors.Is(err, schema.ErrFileReferenceNotFound) {
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Table Occurrence", err.Error())
+			return
+		}
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
 	}

@@ -44,6 +44,9 @@ const maxFileReferenceName = 128
 //
 // A reference holds no credentials: a script performed through it runs on a
 // session the user opened in that solution.
+//
+// Table occurrences of the other solution's tables (external occurrences) go
+// through a reference too: it is the unit they are bound by.
 type FileReference struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -51,6 +54,11 @@ type FileReference struct {
 	// Database is the solution's database name, or empty while the reference
 	// is not mapped.
 	Database string `json:"database"`
+
+	// Paths are FileMaker's paths to the file, in the order it tries them
+	// (file:Name, fmnet:/host/Name). They are informative: they suggest
+	// which solution to map the reference to, and are never opened.
+	Paths []string `json:"paths,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -60,10 +68,15 @@ type FileReference struct {
 func (f *FileReference) IsMapped() bool { return strings.TrimSpace(f.Database) != "" }
 
 // FileReferenceInput is what a caller supplies to save or replace a reference.
+// Paths left out of an update keep the reference's paths.
 type FileReferenceInput struct {
-	Name     string `json:"name"`
-	Database string `json:"database"`
+	Name     string   `json:"name"`
+	Database string   `json:"database"`
+	Paths    []string `json:"paths,omitempty"`
 }
+
+// maxFileReferencePaths bounds the paths a reference keeps, as text.
+const maxFileReferencePaths = 4096
 
 func (s *Service) fileReferencePlaceholder(n int) string {
 	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
@@ -81,6 +94,19 @@ func checkFileReference(in FileReferenceInput) (FileReferenceInput, error) {
 		return in, fmt.Errorf("%w: the name of a file reference is at most %d characters",
 			ErrInvalidFileReference, maxFileReferenceName)
 	}
+	var paths []string
+	for _, p := range in.Paths {
+		for _, line := range strings.FieldsFunc(p, func(r rune) bool { return r == '\n' || r == '\r' }) {
+			if line = strings.TrimSpace(line); line != "" {
+				paths = append(paths, line)
+			}
+		}
+	}
+	in.Paths = paths
+	if len(strings.Join(paths, "\n")) > maxFileReferencePaths {
+		return in, fmt.Errorf("%w: the paths of a file reference are at most %d characters",
+			ErrInvalidFileReference, maxFileReferencePaths)
+	}
 	in.Database = strings.TrimSpace(in.Database)
 	if in.Database != "" {
 		if !dbal.IsValidDatabaseName(in.Database) {
@@ -97,6 +123,9 @@ func checkFileReference(in FileReferenceInput) (FileReferenceInput, error) {
 
 // CreateFileReference stores a new file reference.
 func (s *Service) CreateFileReference(ctx context.Context, in FileReferenceInput) (*FileReference, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	in, err := checkFileReference(in)
 	if err != nil {
 		return nil, err
@@ -112,15 +141,16 @@ func (s *Service) CreateFileReference(ctx context.Context, in FileReferenceInput
 		ID:        uuid.NewString(),
 		Name:      in.Name,
 		Database:  in.Database,
+		Paths:     in.Paths,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	q := fmt.Sprintf(`INSERT INTO sys_file_references (id, name, database_name, created_at, updated_at)
-	                  VALUES (%s, %s, %s, %s, %s)`,
+	q := fmt.Sprintf(`INSERT INTO sys_file_references (id, name, database_name, created_at, updated_at, paths)
+	                  VALUES (%s, %s, %s, %s, %s, %s)`,
 		s.fileReferencePlaceholder(1), s.fileReferencePlaceholder(2), s.fileReferencePlaceholder(3),
-		s.fileReferencePlaceholder(4), s.fileReferencePlaceholder(5))
+		s.fileReferencePlaceholder(4), s.fileReferencePlaceholder(5), s.fileReferencePlaceholder(6))
 	if _, err := s.driver.DB().ExecContext(ctx, q,
-		ref.ID, ref.Name, ref.Database, ref.CreatedAt, ref.UpdatedAt); err != nil {
+		ref.ID, ref.Name, ref.Database, ref.CreatedAt, ref.UpdatedAt, joinPaths(ref.Paths)); err != nil {
 		return nil, fmt.Errorf("failed saving the file reference %q: %w", ref.Name, err)
 	}
 	return ref, nil
@@ -128,9 +158,15 @@ func (s *Service) CreateFileReference(ctx context.Context, in FileReferenceInput
 
 // UpdateFileReference renames a reference or maps it to another solution.
 func (s *Service) UpdateFileReference(ctx context.Context, id string, in FileReferenceInput) (*FileReference, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	current, err := s.GetFileReference(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if in.Paths == nil {
+		in.Paths = current.Paths
 	}
 	in, err = checkFileReference(in)
 	if err != nil {
@@ -143,20 +179,32 @@ func (s *Service) UpdateFileReference(ctx context.Context, id string, in FileRef
 	}
 
 	now := time.Now().UTC()
-	q := fmt.Sprintf(`UPDATE sys_file_references SET name = %s, database_name = %s, updated_at = %s WHERE id = %s`,
+	q := fmt.Sprintf(`UPDATE sys_file_references SET name = %s, database_name = %s, updated_at = %s, paths = %s WHERE id = %s`,
 		s.fileReferencePlaceholder(1), s.fileReferencePlaceholder(2),
-		s.fileReferencePlaceholder(3), s.fileReferencePlaceholder(4))
-	if _, err := s.driver.DB().ExecContext(ctx, q, in.Name, in.Database, now, id); err != nil {
+		s.fileReferencePlaceholder(3), s.fileReferencePlaceholder(4), s.fileReferencePlaceholder(5))
+	if _, err := s.driver.DB().ExecContext(ctx, q, in.Name, in.Database, now, joinPaths(in.Paths), id); err != nil {
 		return nil, fmt.Errorf("failed updating the file reference %s: %w", id, err)
 	}
 	return &FileReference{
-		ID: id, Name: in.Name, Database: in.Database,
+		ID: id, Name: in.Name, Database: in.Database, Paths: in.Paths,
 		CreatedAt: current.CreatedAt, UpdatedAt: now,
 	}, nil
 }
 
-// DeleteFileReference removes a file reference.
+// DeleteFileReference removes a file reference. One that table occurrences go
+// through is kept: they would be left pointing at nothing.
 func (s *Service) DeleteFileReference(ctx context.Context, id string) error {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return err
+	}
+	var users int
+	qUsers := fmt.Sprintf(`SELECT COUNT(*) FROM sys_table_occurrences WHERE file_reference_id = %s`, s.fileReferencePlaceholder(1))
+	if err := s.driver.DB().QueryRowContext(ctx, qUsers, id).Scan(&users); err != nil {
+		return fmt.Errorf("failed checking the uses of the file reference %s: %w", id, err)
+	}
+	if users > 0 {
+		return fmt.Errorf("%w: %d table occurrence(s) go through it; delete them first", ErrFileReferenceInUse, users)
+	}
 	q := fmt.Sprintf(`DELETE FROM sys_file_references WHERE id = %s`, s.fileReferencePlaceholder(1))
 	res, err := s.driver.DB().ExecContext(ctx, q, id)
 	if err != nil {
@@ -168,10 +216,13 @@ func (s *Service) DeleteFileReference(ctx context.Context, id string) error {
 	return nil
 }
 
-const fileReferenceColumns = `id, name, database_name, created_at, updated_at`
+const fileReferenceColumns = `id, name, database_name, created_at, updated_at, paths`
 
 // GetFileReference reads one file reference by id.
 func (s *Service) GetFileReference(ctx context.Context, id string) (*FileReference, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	q := fmt.Sprintf(`SELECT %s FROM sys_file_references WHERE id = %s`,
 		fileReferenceColumns, s.fileReferencePlaceholder(1))
 	ref, err := scanFileReference(s.driver.DB().QueryRowContext(ctx, q, id))
@@ -184,6 +235,9 @@ func (s *Service) GetFileReference(ctx context.Context, id string) (*FileReferen
 // GetFileReferenceByName reads one file reference by name, case-insensitively,
 // which is how a script step names it.
 func (s *Service) GetFileReferenceByName(ctx context.Context, name string) (*FileReference, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("%w: (no name)", ErrFileReferenceNotFound)
@@ -199,6 +253,9 @@ func (s *Service) GetFileReferenceByName(ctx context.Context, name string) (*Fil
 
 // ListFileReferences reads the file references, by name.
 func (s *Service) ListFileReferences(ctx context.Context) ([]FileReference, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	q := fmt.Sprintf(`SELECT %s FROM sys_file_references ORDER BY name ASC`, fileReferenceColumns)
 	rows, err := s.driver.DB().QueryContext(ctx, q)
 	if err != nil {
@@ -229,10 +286,18 @@ func (s *Service) fileReferenceNameTaken(ctx context.Context, name, exceptID str
 
 func scanFileReference(row rowScanner) (*FileReference, error) {
 	var ref FileReference
-	var database sql.NullString
-	if err := row.Scan(&ref.ID, &ref.Name, &database, &ref.CreatedAt, &ref.UpdatedAt); err != nil {
+	var database, paths sql.NullString
+	if err := row.Scan(&ref.ID, &ref.Name, &database, &ref.CreatedAt, &ref.UpdatedAt, &paths); err != nil {
 		return nil, err
 	}
 	ref.Database = database.String
+	if paths.String != "" {
+		ref.Paths = strings.Split(paths.String, "\n")
+	}
 	return &ref, nil
+}
+
+// joinPaths stores paths one per line, NULL when there are none.
+func joinPaths(paths []string) interface{} {
+	return nullable(strings.Join(paths, "\n"))
 }

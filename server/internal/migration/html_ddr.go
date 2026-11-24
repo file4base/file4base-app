@@ -325,6 +325,9 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			for _, it := range items {
 				addReportItem(report, it)
 			}
+			if rf.fmpFieldID > 0 {
+				col.SourceFieldID = strconv.Itoa(rf.fmpFieldID)
+			}
 			if rf.reps > 1 {
 				col.MaxRepetitions = rf.reps
 				addReportItem(report, ReportItem{Category: CategoryPreserved, Domain: "field",

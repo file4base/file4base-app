@@ -32,6 +32,7 @@ type DesignSnapshot struct {
 	scriptIDs     map[string]bool
 	valueListIDs  map[string]bool
 	userIDs       map[string]bool
+	fileRefIDs    map[string]bool
 }
 
 // SnapshotDesign records the design of the active database so that
@@ -51,6 +52,7 @@ func (s *Service) SnapshotDesign(ctx context.Context, solutionName string) (*Des
 		scriptIDs:     map[string]bool{},
 		valueListIDs:  map[string]bool{},
 		userIDs:       map[string]bool{},
+		fileRefIDs:    map[string]bool{},
 	}
 
 	tables, err := s.ListTables(ctx)
@@ -101,6 +103,13 @@ func (s *Service) SnapshotDesign(ctx context.Context, solutionName string) (*Des
 	}
 	for _, u := range users {
 		snap.userIDs[u.ID] = true
+	}
+	refs, err := s.ListFileReferences(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range refs {
+		snap.fileRefIDs[f.ID] = true
 	}
 	return snap, nil
 }
@@ -178,6 +187,16 @@ func (s *Service) RestoreDesign(ctx context.Context, snap *DesignSnapshot) error
 		for _, v := range valueLists {
 			if !snap.valueListIDs[v.ID] {
 				fail("value list "+v.Name, s.DeleteValueList(ctx, v.ID))
+			}
+		}
+	}
+	// File references after the occurrences that go through them.
+	if refs, err := s.ListFileReferences(ctx); err != nil {
+		fail("file references", err)
+	} else {
+		for _, f := range refs {
+			if !snap.fileRefIDs[f.ID] {
+				fail("file reference "+f.Name, s.DeleteFileReference(ctx, f.ID))
 			}
 		}
 	}

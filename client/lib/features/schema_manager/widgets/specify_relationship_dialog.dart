@@ -156,6 +156,11 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
 
   bool get _isEditing => widget.initialRelationship != null;
 
+  /// Whether a side is an occurrence of another solution's table. Its fields
+  /// are not in this solution's catalog, so its criteria are kept as they
+  /// are, by field name, rather than edited from field lists.
+  bool get _hasExternalSide => (_leftOccurrence?.isExternal ?? false) || (_rightOccurrence?.isExternal ?? false);
+
   /// The criterion the field lists and the operator currently show.
   RelationshipPredicateModel? get _editingCriterion {
     if (_leftColumn == null || _rightColumn == null) return null;
@@ -178,6 +183,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   /// Whether the field lists show something other than the selected
   /// criterion, which Change (or OK) would apply.
   bool get _hasPendingChange {
+    if (_hasExternalSide) return false;
     final editing = _editingCriterion;
     final selected = _selectedPredicate;
     return editing != null && selected != null && _predicates[selected] != editing;
@@ -282,6 +288,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   /// criterion applied as Change would apply it.
   List<RelationshipPredicateModel> get _resultPredicates {
     final result = List<RelationshipPredicateModel>.of(_predicates);
+    if (_hasExternalSide) return result;
     final index = _selectedPredicate;
     if (_hasPendingChange && _criterionProblem(_editingCriterion, replacing: index) == null) {
       result[index!] = _editingCriterion!;
@@ -292,6 +299,10 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   /// Why OK is unavailable, if it is.
   String? get _blockingProblem {
     if (_leftOccurrence == null || _rightOccurrence == null) return 'Select a table occurrence on each side.';
+    if (_hasExternalSide) {
+      if (!_isEditing) return 'A relationship to an occurrence of another file cannot be created here yet.';
+      return _predicates.isEmpty ? 'Add at least one match criterion.' : null;
+    }
     for (final (occurrence, column) in [(_leftOccurrence, _leftColumn), (_rightOccurrence, _rightColumn)]) {
       if ((_getTableForOccurrence(occurrence)?.columns ?? []).isEmpty) {
         return 'The table of "${occurrence!.name}" has no fields to match.';
@@ -324,6 +335,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
     final selected = _selectedPredicate;
     final allEqual = _resultPredicates.every((p) => p.operator == '=');
     final problem = _blockingProblem;
+    final editable = !_hasExternalSide;
 
     Widget actionButton(String label, IconData icon, VoidCallback? onPressed) => TextButton.icon(
           onPressed: onPressed,
@@ -343,22 +355,22 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey),
               ),
             ),
-            actionButton('Add', Icons.add, _addPredicate),
-            actionButton('Change', Icons.edit_outlined, selected == null ? null : _changePredicate),
-            actionButton('Delete', Icons.delete_outline, selected == null ? null : _deletePredicate),
+            actionButton('Add', Icons.add, editable ? _addPredicate : null),
+            actionButton('Change', Icons.edit_outlined, !editable || selected == null ? null : _changePredicate),
+            actionButton('Delete', Icons.delete_outline, !editable || selected == null ? null : _deletePredicate),
             IconButton(
               tooltip: 'Move up',
               visualDensity: VisualDensity.compact,
               iconSize: 18,
               icon: const Icon(Icons.arrow_upward),
-              onPressed: selected == null || selected == 0 ? null : () => _movePredicate(-1),
+              onPressed: !editable || selected == null || selected == 0 ? null : () => _movePredicate(-1),
             ),
             IconButton(
               tooltip: 'Move down',
               visualDensity: VisualDensity.compact,
               iconSize: 18,
               icon: const Icon(Icons.arrow_downward),
-              onPressed: selected == null || selected >= _predicates.length - 1 ? null : () => _movePredicate(1),
+              onPressed: !editable || selected == null || selected >= _predicates.length - 1 ? null : () => _movePredicate(1),
             ),
           ],
         ),
@@ -417,6 +429,15 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                   },
                 ),
         ),
+        if (_hasExternalSide && _isEditing)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'One side is a table of another file: its criteria are kept as they are, by field name, '
+              'and cannot be edited here yet.',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
+          ),
         if (_hasPendingChange)
           Padding(
             padding: const EdgeInsets.only(top: 4),

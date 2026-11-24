@@ -264,52 +264,11 @@ func (h *TransferHandler) authorizeEnds(
 func (h *TransferHandler) resolvePeer(
 	w http.ResponseWriter, r *http.Request, token, database, side string,
 ) (transferEnd, bool) {
-	var end transferEnd
-	if token == "" {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Peer Token Required",
-			"the "+side+" of this transfer is the solution "+database+
-				", so the request needs a peer_token: a session token obtained by signing in to it")
-		return end, false
-	}
-	if h.sessions == nil || h.dbMgr == nil {
-		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Transfers Unavailable",
-			"this server cannot authorize the far end of a transfer")
-		return end, false
-	}
-
-	sess, ok := h.sessions.Get(token)
-	if !ok {
-		telemetry.WriteProblem(w, r, http.StatusForbidden, "Peer Token Rejected",
-			"the peer_token is not a valid session; sign in to "+database+" again")
-		return end, false
-	}
-	if !strings.EqualFold(sess.Database, database) {
-		telemetry.WriteProblem(w, r, http.StatusForbidden, "Peer Token Rejected",
-			"the peer_token is a session of another solution; the "+side+
-				" of this transfer is "+database)
-		return end, false
-	}
-
-	driver, err := h.dbMgr.DriverFor(r.Context(), sess.Database)
-	if err != nil {
-		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Database Unavailable",
-			"the solution "+database+" is not reachable")
-		return end, false
-	}
-
-	// The peer account must still be in the state its session was opened
-	// with, the same check every authenticated request makes. Without it a
-	// revoked or demoted account could still write through a transfer.
-	stamp, err := schema.NewService(driver).CurrentAccountStamp(r.Context(), sess.UserID)
-	if err != nil || stamp != sess.Stamp {
-		h.sessions.Revoke(token)
-		telemetry.WriteProblem(w, r, http.StatusForbidden, "Peer Token Rejected",
-			"the account of the peer_token is no longer in the state it signed in with; "+
-				"sign in to "+database+" again")
-		return end, false
-	}
-
-	return transferEnd{database: sess.Database, driver: driver, session: sess}, true
+	return resolvePeerSession(w, r, h.dbMgr, h.sessions, token, database, peerPurpose{
+		what:           "the " + side + " of this transfer",
+		unavailable:    "Transfers Unavailable",
+		unavailableWhy: "this server cannot authorize the far end of a transfer",
+	})
 }
 
 // endAllows checks that one end's account may do the work the transfer asks

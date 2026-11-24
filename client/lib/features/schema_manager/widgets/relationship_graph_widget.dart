@@ -5,6 +5,33 @@ import 'package:file4base_client/features/schema_manager/widgets/specify_relatio
 import 'package:file4base_client/features/schema_manager/widgets/specify_table_dialog.dart';
 import 'package:flutter/material.dart';
 
+/// The fields a graph card lists for an occurrence of another solution's
+/// table: those its relationships match on, by name, in the order they are
+/// first used. The other solution's catalog is not read here, so these are
+/// the only fields the graph knows.
+List<String> externalFieldNames(TableOccurrenceModel occ, List<RelationshipModel> relationships) {
+  final names = <String>[];
+  void add(String? name) {
+    if (name != null && name.isNotEmpty && !names.contains(name)) names.add(name);
+  }
+  for (final rel in relationships) {
+    for (final p in rel.predicates) {
+      if (rel.leftOccurrenceId == occ.id) add(p.leftColumnName);
+      if (rel.rightOccurrenceId == occ.id) add(p.rightColumnName);
+    }
+  }
+  return names;
+}
+
+/// The row of a card a criterion's field is drawn from: by id for a local
+/// table, by name for an external occurrence.
+int _fieldRow(TableModel? table, TableOccurrenceModel occ, List<RelationshipModel> relationships, String columnId, String? columnName) {
+  final index = occ.isExternal
+      ? externalFieldNames(occ, relationships).indexOf(columnName ?? '')
+      : (table?.columns ?? const <ColumnModel>[]).indexWhere((c) => c.id == columnId);
+  return index < 0 ? 0 : index;
+}
+
 class RelationshipGraphWidget extends StatefulWidget {
 
   const RelationshipGraphWidget({
@@ -56,15 +83,13 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     super.dispose();
   }
 
-  TableModel? _getTable(String baseTableId) {
+  TableModel? _getTable(String? baseTableId) {
+    if (baseTableId == null) return null;
     return widget.tables.where((t) => t.id == baseTableId).firstOrNull;
   }
 
-  Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, bool isExit) {
-    final tbl = _getTable(occ.baseTableId);
-    final cols = tbl?.columns ?? [];
-    var colIndex = cols.indexWhere((c) => c.id == columnId);
-    if (colIndex < 0) colIndex = 0;
+  Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, String? columnName, bool isExit) {
+    final colIndex = _fieldRow(_getTable(occ.baseTableId), occ, _relationships, columnId, columnName);
 
     final isCollapsed = _collapsedOccurrences.contains(occ.id);
     final yOffset = isCollapsed ? (_headerHeight / 2) : (_headerHeight + (colIndex * _rowHeight) + (_rowHeight / 2));
@@ -429,8 +454,9 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       if (leftOcc == null || rightOcc == null) continue;
 
       final isLeftLeft = leftOcc.xPos < rightOcc.xPos;
-      final p1 = _getAnchorPoint(leftOcc, rel.leftColumnId, isLeftLeft);
-      final p2 = _getAnchorPoint(rightOcc, rel.rightColumnId, !isLeftLeft);
+      final first = rel.predicates.first;
+      final p1 = _getAnchorPoint(leftOcc, first.leftColumnId, first.leftColumnName, isLeftLeft);
+      final p2 = _getAnchorPoint(rightOcc, first.rightColumnId, first.rightColumnName, !isLeftLeft);
 
       final midX = (p1.dx + p2.dx) / 2;
       final midY = (p1.dy + p2.dy) / 2;
@@ -517,6 +543,10 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     final isCollapsed = _collapsedOccurrences.contains(occ.id);
     final tbl = _getTable(occ.baseTableId);
     final columns = tbl?.columns ?? [];
+    final external = occ.external;
+    // An occurrence of another solution's table has no local columns: it
+    // lists the fields its relationships match on, by name.
+    final externalFields = external == null ? const <String>[] : externalFieldNames(occ, _relationships);
 
     return Positioned(
       left: occ.xPos,
@@ -605,17 +635,52 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                     ),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
-                        occ.name,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: isSelected
-                              ? (isDark ? const Color(0xFFE0F2FE) : const Color(0xFF0C4A6E))
-                              : (isDark ? Colors.white : const Color(0xFF0F172A)),
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      child: external == null
+                          ? Text(
+                              occ.name,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: isSelected
+                                    ? (isDark ? const Color(0xFFE0F2FE) : const Color(0xFF0C4A6E))
+                                    : (isDark ? Colors.white : const Color(0xFF0F172A)),
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          // As in FileMaker, an occurrence of another file's
+                          // table has an italic title naming its data source.
+                          : Tooltip(
+                              message: [
+                                'Data source: ${external.fileReference}',
+                                if (external.database.isNotEmpty) 'Solution: ${external.database}',
+                                'Table: ${external.table.isNotEmpty ? external.table : '(not bound yet)'}',
+                              ].join('\n'),
+                              child: Text.rich(
+                                TextSpan(
+                                  children: [
+                                    TextSpan(text: occ.name),
+                                    TextSpan(
+                                      text: '  ${external.fileReference}',
+                                      style: TextStyle(
+                                        fontSize: 10.5,
+                                        fontWeight: FontWeight.normal,
+                                        color: isDark ? Colors.grey[400] : Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                key: ValueKey('external-occurrence-title-${occ.id}'),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  fontStyle: FontStyle.italic,
+                                  color: isSelected
+                                      ? (isDark ? const Color(0xFFE0F2FE) : const Color(0xFF0C4A6E))
+                                      : (isDark ? Colors.white : const Color(0xFF0F172A)),
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                     ),
                     InkWell(
                       onTap: () {
@@ -639,7 +704,29 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
 
               // Fields List
               if (!isCollapsed) ...[
-                if (columns.isEmpty)
+                if (external != null)
+                  ...externalFields.map((name) => Container(
+                        height: _rowHeight,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Row(
+                          children: [
+                            Icon(Icons.commit, size: 11, color: Colors.grey[500]),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                name,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontStyle: FontStyle.italic,
+                                  color: isDark ? Colors.grey[300] : Colors.grey[800],
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ))
+                else if (columns.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(8.0),
                     child: Text(
@@ -702,15 +789,13 @@ class _RelationshipLinesPainter extends CustomPainter {
   final Set<String> collapsedOccurrences;
   final bool isDark;
 
-  TableModel? _getTable(String baseTableId) {
+  TableModel? _getTable(String? baseTableId) {
+    if (baseTableId == null) return null;
     return tables.where((t) => t.id == baseTableId).firstOrNull;
   }
 
-  Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, bool isExit) {
-    final tbl = _getTable(occ.baseTableId);
-    final cols = tbl?.columns ?? [];
-    var colIndex = cols.indexWhere((c) => c.id == columnId);
-    if (colIndex < 0) colIndex = 0;
+  Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, String? columnName, bool isExit) {
+    final colIndex = _fieldRow(_getTable(occ.baseTableId), occ, relationships, columnId, columnName);
 
     final isCollapsed = collapsedOccurrences.contains(occ.id);
     final yOffset = isCollapsed
@@ -733,8 +818,8 @@ class _RelationshipLinesPainter extends CustomPainter {
 
       // One line per match criterion, between the fields it compares.
       for (final criterion in rel.predicates) {
-        final p1 = _getAnchorPoint(leftOcc, criterion.leftColumnId, isLeftLeft);
-        final p2 = _getAnchorPoint(rightOcc, criterion.rightColumnId, !isLeftLeft);
+        final p1 = _getAnchorPoint(leftOcc, criterion.leftColumnId, criterion.leftColumnName, isLeftLeft);
+        final p2 = _getAnchorPoint(rightOcc, criterion.rightColumnId, criterion.rightColumnName, !isLeftLeft);
 
         final paint = Paint()
           ..color = isSelected

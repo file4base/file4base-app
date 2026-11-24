@@ -26,7 +26,7 @@ import (
 // Each side of a criterion is kept as the field's id and its name. The id is
 // what the criterion is resolved by whenever it is there; the name is kept so
 // that a side whose field has no local id — an occurrence of another
-// solution's table — can be stored the same way later.
+// solution's table — is stored the same way: with no id, by its name.
 
 // RelationshipPredicatesTable holds every criterion of a relationship but its
 // first.
@@ -34,16 +34,16 @@ const RelationshipPredicatesTable = "sys_relationship_predicates"
 
 // relationshipPredicatesSQL creates the table; ts is the engine's timestamp
 // column type. server/migrations/002_relationship_predicates.sql is the same
-// statement for PostgreSQL.
+// statement for PostgreSQL, with the column ids made optional by 003.
 func relationshipPredicatesSQL(ts string) string {
 	return `CREATE TABLE IF NOT EXISTS ` + RelationshipPredicatesTable + ` (
 			id VARCHAR(36) PRIMARY KEY,
 			relationship_id VARCHAR(36) NOT NULL REFERENCES sys_relationships(id) ON DELETE CASCADE,
 			sequence_idx INT NOT NULL,
-			left_column_id VARCHAR(36) NOT NULL REFERENCES sys_columns(id) ON DELETE CASCADE,
+			left_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
 			left_column_name VARCHAR(64),
 			operator VARCHAR(8) NOT NULL DEFAULT '=',
-			right_column_id VARCHAR(36) NOT NULL REFERENCES sys_columns(id) ON DELETE CASCADE,
+			right_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
 			right_column_name VARCHAR(64),
 			created_at ` + ts + `,
 			CONSTRAINT uq_relationship_predicate UNIQUE (relationship_id, sequence_idx)
@@ -60,7 +60,8 @@ var relationshipColumnNamesSQL = []string{
 // RelationshipPredicate is one match criterion of a relationship: a field of
 // the left occurrence, compared with a field of the right occurrence. A field
 // is named by its id; its name is returned with it, and is ignored on input
-// when the id is given.
+// when the id is given. A field of an occurrence of another solution's table
+// has no id here and is named by its name alone.
 type RelationshipPredicate struct {
 	LeftColumnID    string `json:"left_column_id"`
 	LeftColumnName  string `json:"left_column_name,omitempty"`
@@ -143,17 +144,33 @@ func (s *Service) checkPredicates(ctx context.Context, leftOccurrenceID, rightOc
 		}
 		p.Operator = op
 		p.LeftColumnID, p.RightColumnID = strings.TrimSpace(p.LeftColumnID), strings.TrimSpace(p.RightColumnID)
-		if p.LeftColumnID == "" || p.RightColumnID == "" {
+		if (p.LeftColumnID == "" && leftTable != "") || (p.RightColumnID == "" && rightTable != "") {
 			return nil, fmt.Errorf("%w: criterion %d needs a field on each side", ErrInvalidRelationship, n)
 		}
 		for _, side := range []struct {
-			column, occurrence, table string
-			name                      *string
+			column     *string
+			occurrence string
+			table      string
+			name       *string
 		}{
-			{p.LeftColumnID, leftName, leftTable, &p.LeftColumnName},
-			{p.RightColumnID, rightName, rightTable, &p.RightColumnName},
+			{&p.LeftColumnID, leftName, leftTable, &p.LeftColumnName},
+			{&p.RightColumnID, rightName, rightTable, &p.RightColumnName},
 		} {
-			name, table, err := s.columnTable(ctx, side.column)
+			if side.table == "" {
+				// An occurrence of another solution's table: its field is
+				// named, and checked when the file reference is verified.
+				if strings.TrimSpace(*side.name) == "" {
+					return nil, fmt.Errorf("%w: criterion %d needs the name of the field of %q, an occurrence of another solution's table",
+						ErrInvalidRelationship, n, side.occurrence)
+				}
+				name, err := normalizeExternalField(*side.name)
+				if err != nil {
+					return nil, fmt.Errorf("%w: criterion %d: %v", ErrInvalidRelationship, n, err)
+				}
+				*side.column, *side.name = "", name
+				continue
+			}
+			name, table, err := s.columnTable(ctx, *side.column)
 			if err != nil {
 				return nil, fmt.Errorf("%w: criterion %d: %v", ErrInvalidRelationship, n, err)
 			}
@@ -163,7 +180,7 @@ func (s *Service) checkPredicates(ctx context.Context, leftOccurrenceID, rightOc
 			}
 			*side.name = name
 			if op != "×" {
-				if err := s.refuseUnstoredMatchField(ctx, side.column); err != nil {
+				if err := s.refuseUnstoredMatchField(ctx, *side.column); err != nil {
 					return nil, err
 				}
 			}
@@ -173,13 +190,16 @@ func (s *Service) checkPredicates(ctx context.Context, leftOccurrenceID, rightOc
 	return out, nil
 }
 
+// occurrenceTable reads an occurrence's name and base table; the table is
+// empty for an occurrence of another solution's table.
 func (s *Service) occurrenceTable(ctx context.Context, occurrenceID string) (name, tableID string, err error) {
 	q := `SELECT name, base_table_id FROM sys_table_occurrences WHERE id = ` + s.driver.Dialect().Placeholder(1)
-	err = s.driver.DB().QueryRowContext(ctx, q, occurrenceID).Scan(&name, &tableID)
+	var table sql.NullString
+	err = s.driver.DB().QueryRowContext(ctx, q, occurrenceID).Scan(&name, &table)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", fmt.Errorf("%w: table occurrence %q not found", ErrInvalidRelationship, occurrenceID)
 	}
-	return name, tableID, err
+	return name, table.String, err
 }
 
 func (s *Service) columnTable(ctx context.Context, columnID string) (name, tableID string, err error) {
@@ -222,7 +242,7 @@ func (s *Service) writeExtraPredicates(ctx context.Context, tx *sql.Tx, relation
 	now := time.Now().UTC()
 	for i, p := range predicates[1:] {
 		if _, err := tx.ExecContext(ctx, ins, uuid.NewString(), relationshipID, i+1,
-			p.LeftColumnID, p.LeftColumnName, p.Operator, p.RightColumnID, p.RightColumnName, now); err != nil {
+			nullable(p.LeftColumnID), p.LeftColumnName, p.Operator, nullable(p.RightColumnID), p.RightColumnName, now); err != nil {
 			return fmt.Errorf("failed saving criterion %d of the relationship: %w", i+2, err)
 		}
 	}
@@ -257,9 +277,11 @@ func (s *Service) extraPredicates(ctx context.Context, relationshipID string) (m
 	for rows.Next() {
 		var id string
 		var p RelationshipPredicate
-		if err := rows.Scan(&id, &p.LeftColumnID, &p.LeftColumnName, &p.Operator, &p.RightColumnID, &p.RightColumnName); err != nil {
+		var left, right sql.NullString
+		if err := rows.Scan(&id, &left, &p.LeftColumnName, &p.Operator, &right, &p.RightColumnName); err != nil {
 			return nil, err
 		}
+		p.LeftColumnID, p.RightColumnID = left.String, right.String
 		out[id] = append(out[id], p)
 	}
 	return out, rows.Err()

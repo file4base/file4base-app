@@ -393,6 +393,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "Invalid Table Occurrence: neither base_table_id nor external, both, an unknown file reference or an invalid table name."
           }
         }
       }
@@ -2310,6 +2313,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
           }
         },
         "parameters": [
@@ -2503,6 +2509,9 @@
           },
           "404": {
             "description": "No such file reference"
+          },
+          "409": {
+            "description": "File Reference In Use: table occurrences go through it."
           }
         }
       }
@@ -3553,6 +3562,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
           }
         },
         "parameters": [
@@ -4029,6 +4041,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
           }
         },
         "parameters": [
@@ -4852,7 +4867,7 @@
         "summary": "Analyze FileMaker DDR XML / FMPXMLRESULT Migration Bundle",
         "responses": {
           "200": {
-            "description": "Analyze FileMaker DDR XML / FMPXMLRESULT Migration Bundle"
+            "description": "Analyze FileMaker DDR XML / FMPXMLRESULT Migration Bundle. report.external_occurrences lists each occurrence of another file's table (occurrence, data_source, paths, table, fields, suggested_database, cycle); each is also a manual action."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -5650,6 +5665,142 @@
           }
         }
       }
+    },
+    "/api/v1/file-references/{idOrName}/bind": {
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Bind File Reference",
+        "description": "Maps the reference to a solution and resolves the table of each external occurrence through it, reading that solution's catalog with a session of its own (peer_token, owner or admin there). A table is resolved only when tables names it or exactly one table holds every field used; otherwise the occurrence stays unbound with its candidates. Everything is checked first: an unknown occurrence or table in tables answers 422 and writes nothing; otherwise the mapping and the tables are saved together. Reads no record. Requires admin and an unlocked design.",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The file reference's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "peer_token"
+                ],
+                "properties": {
+                  "database": {
+                    "type": "string",
+                    "description": "The solution to map the reference to; defaults to the one it is mapped to."
+                  },
+                  "peer_token": {
+                    "type": "string",
+                    "description": "A session token of that solution."
+                  },
+                  "tables": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Table to bind, by occurrence name."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification of every occurrence through the reference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalBindingReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Peer Token Required"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such file reference"
+          },
+          "422": {
+            "description": "Invalid file reference or table name"
+          }
+        }
+      }
+    },
+    "/api/v1/file-references/{idOrName}/verify": {
+      "post": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Verify File Reference",
+        "description": "Reports each external occurrence through the reference as unbound, bound or mismatch against the solution it is mapped to. Writes nothing. An unmapped reference needs no peer_token. Requires admin (owner or admin role): the report names layouts and fields of both solutions.",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "The file reference's id, or its name (percent-encoded).",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "peer_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification of every occurrence through the reference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalBindingReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Peer Token Required"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "No such file reference"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5735,6 +5886,11 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "source_field_id": {
+            "type": "string",
+            "pattern": "^[0-9]{1,32}$",
+            "description": "FileMaker id of the field a migrated column comes from, set by the migration and by restoring a solution bundle; absent for a column created here. Another solution's external occurrences find the field by it when their document names it by id only (#107)."
           }
         }
       },
@@ -5820,7 +5976,8 @@
             "type": "string"
           },
           "base_table_id": {
-            "type": "string"
+            "type": "string",
+            "description": "Absent on an external occurrence."
           },
           "name": {
             "type": "string",
@@ -5833,8 +5990,12 @@
           "y_pos": {
             "type": "number",
             "example": 120
+          },
+          "external": {
+            "$ref": "#/components/schemas/ExternalOccurrence"
           }
-        }
+        },
+        "description": "A table occurrence: of a base table of this solution (base_table_id), or of another solution's table (external, no base_table_id)."
       },
       "Relationship": {
         "type": "object",
@@ -5881,10 +6042,7 @@
       },
       "RelationshipPredicate": {
         "type": "object",
-        "required": [
-          "left_column_id",
-          "right_column_id"
-        ],
+        "required": [],
         "properties": {
           "left_column_id": {
             "type": "string",
@@ -5892,7 +6050,7 @@
           },
           "left_column_name": {
             "type": "string",
-            "readOnly": true
+            "description": "The field's name. Required, instead of the id, on a side on an occurrence of another solution's table."
           },
           "operator": {
             "type": "string",
@@ -5904,9 +6062,10 @@
           },
           "right_column_name": {
             "type": "string",
-            "readOnly": true
+            "description": "The field's name. Required, instead of the id, on a side on an occurrence of another solution's table."
           }
-        }
+        },
+        "description": "One match criterion. A side on an external occurrence names its field (left_column_name / right_column_name) and has no column id."
       },
       "Layout": {
         "type": "object",
@@ -6166,6 +6325,130 @@
             "format": "password"
           }
         }
+      },
+      "ExternalUnavailableProblem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProblemDetails"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "external_unavailable"
+                ]
+              },
+              "reference": {
+                "type": "string",
+                "description": "The file reference the occurrence goes through."
+              },
+              "database": {
+                "type": "string",
+                "description": "The solution the reference is mapped to; empty while unmapped."
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "missing"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ExternalOccurrence": {
+        "type": "object",
+        "description": "What an occurrence of another solution's table holds in place of a base table (#107).",
+        "properties": {
+          "file_reference_id": {
+            "type": "string",
+            "readOnly": true
+          },
+          "file_reference": {
+            "type": "string",
+            "description": "The file reference, by id or name on create; its name in responses."
+          },
+          "database": {
+            "type": "string",
+            "readOnly": true,
+            "description": "The solution the reference is mapped to; empty while unmapped."
+          },
+          "table": {
+            "type": "string",
+            "description": "The table's name in that solution; empty while unbound."
+          }
+        }
+      },
+      "ExternalOccurrenceStatus": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "table": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unbound",
+              "bound",
+              "mismatch"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Fields used through the occurrence, by name; a field the migrated document names by FileMaker id only is its marker \"#<id>\"."
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tables holding every field used (a marker by source_field_id), when the table is not known. Never chosen automatically."
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resolved": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "For each \"#<id>\" marker, the field of the bound table whose source_field_id it is. The stored marker is kept."
+          }
+        }
+      },
+      "ExternalBindingReport": {
+        "type": "object",
+        "properties": {
+          "file_reference_id": {
+            "type": "string"
+          },
+          "file_reference": {
+            "type": "string"
+          },
+          "database": {
+            "type": "string"
+          },
+          "occurrences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalOccurrenceStatus"
+            }
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -6192,6 +6475,16 @@
           "application/problem+json": {
             "schema": {
               "$ref": "#/components/schemas/ProblemDetails"
+            }
+          }
+        }
+      },
+      "ExternalUnavailable": {
+        "description": "The request reads records through an occurrence of another solution's table, which cannot be read from here yet (#107). Never answered from a local table.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ExternalUnavailableProblem"
             }
           }
         }

@@ -58,6 +58,9 @@ type BundleColumn struct {
 	// MaxRepetitions is absent for a field that does not repeat, so bundles
 	// written before repeating fields read as they always did.
 	MaxRepetitions int `msgpack:"max_repetitions,omitempty"`
+	// SourceFieldID is the field's FileMaker id, kept by the migration and
+	// absent otherwise (#107).
+	SourceFieldID string `msgpack:"source_field_id,omitempty"`
 }
 
 type BundleTable struct {
@@ -68,18 +71,43 @@ type BundleTable struct {
 	Columns     []BundleColumn `msgpack:"columns"`
 }
 
+// BundleOccurrence is a table occurrence of a solution file: of one of its
+// tables (BaseTableID), or of a table of another solution (External, with no
+// BaseTableID).
 type BundleOccurrence struct {
-	ID          string  `msgpack:"id"`
-	BaseTableID string  `msgpack:"base_table_id"`
-	Name        string  `msgpack:"name"`
-	XPos        float64 `msgpack:"x_pos"`
-	YPos        float64 `msgpack:"y_pos"`
+	ID          string                    `msgpack:"id"`
+	BaseTableID string                    `msgpack:"base_table_id,omitempty"`
+	Name        string                    `msgpack:"name"`
+	XPos        float64                   `msgpack:"x_pos"`
+	YPos        float64                   `msgpack:"y_pos"`
+	External    *BundleExternalOccurrence `msgpack:"external,omitempty"`
+}
+
+// BundleExternalOccurrence names the file reference an external occurrence
+// goes through, by name, and the table's name in the other solution, empty
+// while it is not known.
+type BundleExternalOccurrence struct {
+	FileReference string `msgpack:"file_reference"`
+	Table         string `msgpack:"table,omitempty"`
+}
+
+// bundleOccurrence converts a catalog occurrence to a solution file's.
+func bundleOccurrence(o TableOccurrence) BundleOccurrence {
+	b := BundleOccurrence{ID: o.ID, BaseTableID: o.BaseTableID, Name: o.Name, XPos: o.XPos, YPos: o.YPos}
+	if o.External != nil {
+		b.External = &BundleExternalOccurrence{FileReference: o.External.FileReference, Table: o.External.Table}
+	}
+	return b
 }
 
 // BundleRelationship is a relationship of a solution file. Its first match
 // criterion is LeftColumnID, Operator and RightColumnID. A relationship with
 // more than one also lists all of them, the first included, in Predicates; a
 // file written before relationships could have several has none there.
+//
+// A side on an occurrence of another solution's table has no column id: its
+// field is named, by LeftColumnName or RightColumnName for the first
+// criterion and in Predicates for every one.
 type BundleRelationship struct {
 	ID                string            `msgpack:"id"`
 	Name              string            `msgpack:"name"`
@@ -92,10 +120,13 @@ type BundleRelationship struct {
 	AllowCreation     bool              `msgpack:"allow_creation"`
 	CascadeDelete     bool              `msgpack:"cascade_delete"`
 	SortRelated       string            `msgpack:"sort_related"`
+	LeftColumnName    string            `msgpack:"left_column_name,omitempty"`
+	RightColumnName   string            `msgpack:"right_column_name,omitempty"`
 }
 
 // BundlePredicate is one match criterion of a relationship of a solution
-// file. The field names are informative: a criterion is resolved by its ids.
+// file. The field names are informative: a criterion is resolved by its ids,
+// except on a side of an external occurrence, which has only its name.
 type BundlePredicate struct {
 	LeftColumnID    string `msgpack:"left_column_id"`
 	LeftColumnName  string `msgpack:"left_column_name,omitempty"`
@@ -110,17 +141,29 @@ func (r BundleRelationship) PredicateList() []BundlePredicate {
 	if len(r.Predicates) > 0 {
 		return r.Predicates
 	}
-	return []BundlePredicate{{LeftColumnID: r.LeftColumnID, Operator: r.Operator, RightColumnID: r.RightColumnID}}
+	return []BundlePredicate{{
+		LeftColumnID: r.LeftColumnID, LeftColumnName: r.LeftColumnName, Operator: r.Operator,
+		RightColumnID: r.RightColumnID, RightColumnName: r.RightColumnName,
+	}}
 }
 
 // WithPredicates sets the relationship's criteria: the first is also its
 // pair, and the list is kept only when there is more than one, so a
-// single-criterion relationship is written as it always was.
+// single-criterion relationship is written as it always was. The pair keeps a
+// field's name only on a side that has no id, an external one.
 func (r *BundleRelationship) WithPredicates(predicates []BundlePredicate) {
 	if len(predicates) == 0 {
 		return
 	}
-	r.LeftColumnID, r.Operator, r.RightColumnID = predicates[0].LeftColumnID, predicates[0].Operator, predicates[0].RightColumnID
+	first := predicates[0]
+	r.LeftColumnID, r.Operator, r.RightColumnID = first.LeftColumnID, first.Operator, first.RightColumnID
+	r.LeftColumnName, r.RightColumnName = "", ""
+	if first.LeftColumnID == "" {
+		r.LeftColumnName = first.LeftColumnName
+	}
+	if first.RightColumnID == "" {
+		r.RightColumnName = first.RightColumnName
+	}
 	r.Predicates = nil
 	if len(predicates) > 1 {
 		r.Predicates = predicates
@@ -203,6 +246,10 @@ type BundleValueList struct {
 	SortBy              string  `msgpack:"sort_by,omitempty"`
 	SourceOccurrenceID  *string `msgpack:"source_occurrence_id,omitempty"`
 	RelatedOccurrenceID *string `msgpack:"related_occurrence_id,omitempty"`
+	// A list taken from a field of another solution's table has no source
+	// table or field: SourceOccurrenceID is the external occurrence it is
+	// read through and the field is named, as it has no id here (#107).
+	SourceColumnName string `msgpack:"source_column_name,omitempty"`
 }
 
 // remappedID is an optional reference of a bundle rewritten to the
@@ -267,10 +314,12 @@ type BundleTransfer struct {
 // solution is named by its database name, as a reference always is. A
 // reference with no database is one that has not been mapped yet — the
 // assisted migration emits those for every external file a Perform Script
-// step calls.
+// step calls, and for every External Data Source of the file, with its
+// FileMaker paths.
 type BundleFileReference struct {
-	Name     string `msgpack:"name"`
-	Database string `msgpack:"database,omitempty"`
+	Name     string   `msgpack:"name"`
+	Database string   `msgpack:"database,omitempty"`
+	Paths    []string `msgpack:"paths,omitempty"`
 }
 
 // BundleMenuSet carries a menu set (#52). Its items name scripts and layouts
@@ -428,12 +477,13 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			if c.MaxRepetitions > 1 {
 				col.MaxRepetitions = c.MaxRepetitions
 			}
+			col.SourceFieldID = c.SourceFieldID
 			bt.Columns = append(bt.Columns, col)
 		}
 		b.Tables = append(b.Tables, bt)
 	}
 	for _, o := range occurrences {
-		b.TableOccurrences = append(b.TableOccurrences, BundleOccurrence{ID: o.ID, BaseTableID: o.BaseTableID, Name: o.Name, XPos: o.XPos, YPos: o.YPos})
+		b.TableOccurrences = append(b.TableOccurrences, bundleOccurrence(o))
 	}
 	for _, r := range relationships {
 		br := BundleRelationship{
@@ -469,6 +519,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			SourceTableID: vl.SourceTableID, SourceColumnID: vl.SourceColumnID,
 			SecondColumnID: vl.SecondColumnID, ShowSecondOnly: vl.ShowSecondOnly, SortBy: vl.SortBy,
 			SourceOccurrenceID: vl.SourceOccurrenceID, RelatedOccurrenceID: vl.RelatedOccurrenceID,
+			SourceColumnName: vl.SourceColumnName,
 		})
 	}
 	for _, f := range savedFinds {
@@ -490,7 +541,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		})
 	}
 	for _, f := range fileReferences {
-		b.FileReferences = append(b.FileReferences, BundleFileReference{Name: f.Name, Database: f.Database})
+		b.FileReferences = append(b.FileReferences, BundleFileReference{Name: f.Name, Database: f.Database, Paths: f.Paths})
 	}
 	for _, d := range dataSources {
 		b.DataSources = append(b.DataSources, BundleDataSource{
@@ -743,7 +794,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				col, err := s.addColumn(ctx, dstID, ColumnMetadata{
 					Name: cname, DisplayName: c.DisplayName, FieldType: dbal.AgnosticFieldType(c.FieldType), IsNullable: c.IsNullable,
 					DefaultValue: c.DefaultValue, CalculationFormula: c.CalculationFormula, ValidationRules: c.ValidationRules,
-					MaxRepetitions: c.MaxRepetitions,
+					MaxRepetitions: c.MaxRepetitions, SourceFieldID: c.SourceFieldID,
 				}, true)
 				if err != nil {
 					return nil, rollback(fmt.Errorf("adding field %s to table %s: %w", cname, name, err))
@@ -762,6 +813,24 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		}
 	}
 
+	// 1b. File references (#107), matched by name, before the occurrences
+	// that go through them. A reference that already exists keeps the
+	// solution it is mapped to: restoring a bundle must not silently repoint
+	// a script or an occurrence at a different solution.
+	for _, f := range b.FileReferences {
+		if _, err := s.GetFileReferenceByName(ctx, f.Name); err == nil {
+			continue
+		} else if !errors.Is(err, ErrFileReferenceNotFound) {
+			return nil, rollback(fmt.Errorf("reading the file reference %q: %w", f.Name, err))
+		}
+		created, err := s.CreateFileReference(ctx, FileReferenceInput{Name: f.Name, Database: f.Database, Paths: f.Paths})
+		if err != nil {
+			return nil, rollback(fmt.Errorf("restoring the file reference %q: %w", f.Name, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteFileReference(bg, created.ID) })
+		report.FileReferencesCreated++
+	}
+
 	// 2. Table occurrences (tables created above brought their default one)
 	currentOccs, err := s.ListTableOccurrences(ctx)
 	if err != nil {
@@ -775,7 +844,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	for _, o := range b.TableOccurrences {
 		dstTable := tableIDs[o.BaseTableID]
 		if existing, ok := occByName[o.Name]; ok {
-			if existing.BaseTableID != dstTable {
+			if o.External == nil && existing.BaseTableID != dstTable ||
+				o.External != nil && (existing.External == nil || !strings.EqualFold(existing.External.FileReference, strings.TrimSpace(o.External.FileReference))) {
 				return nil, rollback(fmt.Errorf("table occurrence %q already exists for another table", o.Name))
 			}
 			if existing.XPos != o.XPos || existing.YPos != o.YPos {
@@ -793,7 +863,12 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			occIDs[o.ID] = existing.ID
 			continue
 		}
-		created, err := s.CreateTableOccurrence(ctx, CreateOccurrenceInput{BaseTableID: dstTable, Name: o.Name, XPos: o.XPos, YPos: o.YPos})
+		in := CreateOccurrenceInput{BaseTableID: dstTable, Name: o.Name, XPos: o.XPos, YPos: o.YPos}
+		if o.External != nil {
+			in.BaseTableID = ""
+			in.External = &ExternalOccurrenceInput{FileReference: o.External.FileReference, Table: o.External.Table}
+		}
+		created, err := s.CreateTableOccurrence(ctx, in)
 		if err != nil {
 			return nil, rollback(fmt.Errorf("creating table occurrence %q: %w", o.Name, err))
 		}
@@ -853,7 +928,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			if err != nil {
 				op = p.Operator
 			}
-			parts = append(parts, p.LeftColumnID, op, p.RightColumnID)
+			parts = append(parts, predicateSide(p.LeftColumnID, p.LeftColumnName), op, predicateSide(p.RightColumnID, p.RightColumnName))
 		}
 		return strings.Join(parts, "|")
 	}
@@ -869,7 +944,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		predicates := make([]RelationshipPredicate, len(filePredicates))
 		for i, p := range filePredicates {
 			predicates[i] = RelationshipPredicate{
-				LeftColumnID: columnIDs[p.LeftColumnID], Operator: p.Operator, RightColumnID: columnIDs[p.RightColumnID],
+				LeftColumnID: columnIDs[p.LeftColumnID], LeftColumnName: p.LeftColumnName, Operator: p.Operator,
+				RightColumnID: columnIDs[p.RightColumnID], RightColumnName: p.RightColumnName,
 			}
 		}
 		in := CreateRelationshipInput{
@@ -983,7 +1059,11 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	// its table, fields and occurrences rewritten to the destination's ids.
 	for _, vl := range b.ValueLists {
 		in := ValueListInput{Name: vl.Name, Kind: vl.Kind, CustomValues: vl.CustomValues}
-		if vl.Kind == ValueListFromField {
+		if vl.Kind == ValueListFromField && vl.SourceTableID == nil && vl.SourceOccurrenceID != nil {
+			// Taken from a field of another solution's table (#107).
+			occ := occIDs[*vl.SourceOccurrenceID]
+			in.SourceOccurrenceID, in.SourceColumnName = &occ, vl.SourceColumnName
+		} else if vl.Kind == ValueListFromField {
 			srcTable, srcColumn := "", ""
 			if vl.SourceTableID != nil {
 				srcTable = tableIDs[*vl.SourceTableID]
@@ -1012,6 +1092,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 					SourceTableID: p.SourceTableID, SourceColumnID: p.SourceColumnID,
 					SecondColumnID: p.SecondColumnID, ShowSecondOnly: p.ShowSecondOnly, SortBy: p.SortBy,
 					SourceOccurrenceID: p.SourceOccurrenceID, RelatedOccurrenceID: p.RelatedOccurrenceID,
+					SourceColumnName: p.SourceColumnName,
 				})
 			})
 			report.ValueListsUpdated++
@@ -1183,23 +1264,6 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		report.TransfersCreated++
 	}
 
-	// 8c. File references (#107), matched by name. A reference that already
-	// exists keeps the solution it is mapped to: restoring a bundle must not
-	// silently repoint a script at a different solution.
-	for _, f := range b.FileReferences {
-		if _, err := s.GetFileReferenceByName(ctx, f.Name); err == nil {
-			continue
-		} else if !errors.Is(err, ErrFileReferenceNotFound) {
-			return nil, rollback(fmt.Errorf("reading the file reference %q: %w", f.Name, err))
-		}
-		created, err := s.CreateFileReference(ctx, FileReferenceInput{Name: f.Name, Database: f.Database})
-		if err != nil {
-			return nil, rollback(fmt.Errorf("restoring the file reference %q: %w", f.Name, err))
-		}
-		undo = append(undo, func() { _ = s.DeleteFileReference(bg, created.ID) })
-		report.FileReferencesCreated++
-	}
-
 	// 9. Menu sets (#52), matched by name. The script or layout a menu item
 	// references is named by id, so those are rewritten to the destination's
 	// ids; layouts that name a menu set by id are rewritten to match.
@@ -1358,19 +1422,43 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 			if err := ValidateFieldOptions(c.DefaultValue); err != nil {
 				return nil, invalid("table %s: field %s: %v", name, cname, err)
 			}
+			if !ValidSourceFieldID(c.SourceFieldID) {
+				return nil, invalid("table %s: field %s has a source field id that is not a FileMaker field id", name, cname)
+			}
 		}
 	}
 
-	occTable := map[string]string{} // occurrence id -> table id
+	fileReferenceNames := map[string]bool{}
+	for _, f := range b.FileReferences {
+		fileReferenceNames[strings.ToLower(strings.TrimSpace(f.Name))] = true
+	}
+	occTable := map[string]string{} // occurrence id -> table id, "" for an external one
+	occExternal := map[string]bool{}
 	occNames := map[string]bool{}
 	for _, o := range b.TableOccurrences {
-		if o.ID == "" || occTable[o.ID] != "" || strings.TrimSpace(o.Name) == "" || occNames[o.Name] {
+		if _, dup := occTable[o.ID]; o.ID == "" || dup || strings.TrimSpace(o.Name) == "" || occNames[o.Name] {
 			return nil, invalid("table occurrence %q has a missing or duplicate id or name", o.Name)
+		}
+		occNames[o.Name] = true
+		if o.External != nil {
+			// An occurrence of another solution's table goes through one of
+			// the file's references, and has no table of the file.
+			if o.BaseTableID != "" {
+				return nil, invalid("table occurrence %q is both of a table of the file and of another solution", o.Name)
+			}
+			if !fileReferenceNames[strings.ToLower(strings.TrimSpace(o.External.FileReference))] {
+				return nil, invalid("table occurrence %q goes through a file reference that is not in the file", o.Name)
+			}
+			if _, err := normalizeExternalTable(o.External.Table); err != nil {
+				return nil, invalid("table occurrence %q: %v", o.Name, err)
+			}
+			occTable[o.ID], occExternal[o.ID] = "", true
+			continue
 		}
 		if tableByID[o.BaseTableID] == nil {
 			return nil, invalid("table occurrence %q refers to a table that is not in the file", o.Name)
 		}
-		occTable[o.ID], occNames[o.Name] = o.BaseTableID, true
+		occTable[o.ID] = o.BaseTableID
 	}
 	for _, r := range b.Relationships {
 		if len(r.Predicates) > 0 {
@@ -1383,10 +1471,20 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 			if _, err := NormalizeRelationshipOperator(p.Operator); err != nil {
 				return nil, invalid("relationship %q: %v", r.Name, err)
 			}
-			for _, side := range []struct{ occ, col string }{{r.LeftOccurrenceID, p.LeftColumnID}, {r.RightOccurrenceID, p.RightColumnID}} {
+			for _, side := range []struct{ occ, col, name string }{
+				{r.LeftOccurrenceID, p.LeftColumnID, p.LeftColumnName},
+				{r.RightOccurrenceID, p.RightColumnID, p.RightColumnName},
+			} {
 				tbl, ok := occTable[side.occ]
 				if !ok {
 					return nil, invalid("relationship %q refers to a table occurrence that is not in the file", r.Name)
+				}
+				if occExternal[side.occ] {
+					// The field of another solution's table is named.
+					if _, err := normalizeExternalField(side.name); side.col != "" || err != nil {
+						return nil, invalid("relationship %q must name the field of its external table occurrence", r.Name)
+					}
+					continue
 				}
 				if columnTable[side.col] != tbl {
 					return nil, invalid("relationship %q refers to a field that is not in its table occurrence's table", r.Name)
@@ -1475,7 +1573,18 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 			return nil, invalid("value list %q appears twice", vl.Name)
 		}
 		seenValueLists[key] = true
-		if vl.Kind == ValueListFromField {
+		if vl.Kind == ValueListFromField && vl.SourceTableID == nil && vl.SourceOccurrenceID != nil {
+			// Taken from a field of another solution's table: named, through
+			// one of the file's external occurrences, without the options a
+			// list of this solution's field has.
+			_, nameErr := normalizeExternalField(vl.SourceColumnName)
+			if vl.SourceColumnID != nil || !occExternal[*vl.SourceOccurrenceID] || nameErr != nil {
+				return nil, invalid("value list %q reads a field of another solution's table that is not named through one of the file's external occurrences", vl.Name)
+			}
+			if vl.SecondColumnID != nil || vl.RelatedOccurrenceID != nil || vl.ShowSecondOnly {
+				return nil, invalid("value list %q reads a field of another solution's table with a second field or related values, which are not supported yet", vl.Name)
+			}
+		} else if vl.Kind == ValueListFromField {
 			if vl.SourceColumnID == nil || columnTable[*vl.SourceColumnID] == "" {
 				return nil, invalid("value list %q reads a field that is not in the file", vl.Name)
 			}
@@ -1527,7 +1636,7 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 	}
 	for _, o := range b.TableOccurrences {
 		for _, d := range occs {
-			if d.Name == o.Name && tableNameByID[d.BaseTableID] != dbal.NormalizeIdentifier(tableByID[o.BaseTableID].Name) {
+			if d.Name == o.Name && !sameOccurrenceTarget(d, o, tableNameByID, tableByID) {
 				return nil, invalid("table occurrence %q already exists for another table", o.Name)
 			}
 		}
@@ -1558,6 +1667,33 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 		plan.userIDs[uname] = u.ID
 	}
 	return plan, nil
+}
+
+// predicateSide keys one side of a criterion: its column id, or the name of
+// a field of another solution's table, which has none.
+func predicateSide(id, name string) string {
+	if id != "" {
+		return id
+	}
+	return "#" + externalFieldKey(name)
+}
+
+// sameOccurrenceTarget reports whether an occurrence of the destination is
+// one the file's occurrence of the same name can be merged with: of the same
+// table, or both external through the same file reference.
+func sameOccurrenceTarget(d TableOccurrence, o BundleOccurrence, tableNameByID map[string]string, tableByID map[string]*BundleTable) bool {
+	if d.External != nil || o.External != nil {
+		if d.External == nil || o.External == nil ||
+			!strings.EqualFold(strings.TrimSpace(d.External.FileReference), strings.TrimSpace(o.External.FileReference)) {
+			return false
+		}
+		// Two tables of the other solution are two targets: the occurrence
+		// is not silently pointed at the other one. An unbound side takes
+		// the table of the other.
+		have, want := dbal.NormalizeIdentifier(d.External.Table), dbal.NormalizeIdentifier(o.External.Table)
+		return have == "" || want == "" || have == want
+	}
+	return tableNameByID[d.BaseTableID] == dbal.NormalizeIdentifier(tableByID[o.BaseTableID].Name)
 }
 
 // remapSteps gives the steps fresh IDs (step IDs are global in the

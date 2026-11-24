@@ -90,6 +90,10 @@ type ColumnMetadata struct {
 	// repetition package for how the others are stored).
 	MaxRepetitions int       `json:"max_repetitions"`
 	CreatedAt      time.Time `json:"created_at"`
+	// SourceFieldID is the id FileMaker gave the field, kept by the
+	// migration, so another solution's occurrences that name the field only
+	// by id find it (#107). Empty for a field not migrated from FileMaker.
+	SourceFieldID string `json:"source_field_id,omitempty"`
 }
 
 // RelationshipMetadata represents an occurrence join in sys_relationships.
@@ -161,25 +165,30 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			validation_rules TEXT,
 			max_repetitions INT NOT NULL DEFAULT 1,
 			created_at ` + ts + `,
+			source_field_id VARCHAR(32),
 			CONSTRAINT uq_table_column UNIQUE (table_id, name)
 		);`,
 		// Repeating fields (see migrations/003_repeating_fields.sql).
 		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS max_repetitions INT NOT NULL DEFAULT 1;`,
+		// FileMaker field ids (see migrations/005_external_occurrences.sql).
+		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS source_field_id VARCHAR(32);`,
 		`CREATE TABLE IF NOT EXISTS sys_table_occurrences (
 			id VARCHAR(36) PRIMARY KEY,
-			base_table_id VARCHAR(36) NOT NULL REFERENCES sys_tables(id) ON DELETE CASCADE,
+			base_table_id VARCHAR(36) REFERENCES sys_tables(id) ON DELETE CASCADE,
 			name VARCHAR(64) NOT NULL UNIQUE,
 			x_pos DOUBLE PRECISION DEFAULT 100,
 			y_pos DOUBLE PRECISION DEFAULT 100,
-			created_at ` + ts + `
+			created_at ` + ts + `,
+			file_reference_id VARCHAR(36),
+			external_table VARCHAR(64)
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_relationships (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
 			left_occurrence_id VARCHAR(36) NOT NULL REFERENCES sys_table_occurrences(id) ON DELETE CASCADE,
-			left_column_id VARCHAR(36) NOT NULL REFERENCES sys_columns(id) ON DELETE CASCADE,
+			left_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
 			right_occurrence_id VARCHAR(36) NOT NULL REFERENCES sys_table_occurrences(id) ON DELETE CASCADE,
-			right_column_id VARCHAR(36) NOT NULL REFERENCES sys_columns(id) ON DELETE CASCADE,
+			right_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
 			operator VARCHAR(8) DEFAULT '=',
 			allow_creation BOOLEAN DEFAULT FALSE,
 			cascade_delete BOOLEAN DEFAULT FALSE,
@@ -208,7 +217,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			source_table_id VARCHAR(36) REFERENCES sys_tables(id) ON DELETE CASCADE,
 			source_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
 			created_at ` + ts + `,
-			updated_at ` + ts + `
+			updated_at ` + ts + `,
+			source_column_name VARCHAR(64)
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_users (
 			id VARCHAR(36) PRIMARY KEY,
@@ -322,6 +332,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			database_name VARCHAR(128),
 			created_at ` + ts + `,
 			updated_at ` + ts + `,
+			paths TEXT,
 			CONSTRAINT uq_file_reference_name UNIQUE (name)
 		);`,
 		// A transfer run on a cron schedule with nobody signed in (#108).
@@ -404,6 +415,12 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			return fmt.Errorf("failed creating system tables: %w", err)
 		}
 	}
+	// A catalog created before external table occurrences existed is
+	// brought to their shape, every time: a restored backup may be older.
+	if err := s.ensureExternalOccurrenceColumns(ctx); err != nil {
+		return err
+	}
+	upgradedCatalogs.Store(db, true)
 
 	provisionUser := func(username, password, role string) {
 		username = strings.ToLower(strings.TrimSpace(username))
@@ -615,6 +632,9 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 // relationships they read through, so it passes deferCheck and checks each
 // formula once everything is in place (checkCalculation).
 func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetadata, deferCheck bool) (*ColumnMetadata, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	name := dbal.NormalizeIdentifier(col.Name)
 	if err := dbal.CheckIdentifier("column", name); err != nil {
 		return nil, err
@@ -634,6 +654,10 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	}
 	if col.MaxRepetitions > 1 && col.IsPrimaryKey {
 		return nil, fmt.Errorf("%w: the primary key cannot have repetitions", ErrInvalidFieldOptions)
+	}
+	col.SourceFieldID = strings.TrimSpace(col.SourceFieldID)
+	if !ValidSourceFieldID(col.SourceFieldID) {
+		return nil, fmt.Errorf("%w: source_field_id is a FileMaker field id, digits only", ErrInvalidFieldOptions)
 	}
 
 	// Retrieve target table name
@@ -705,11 +729,11 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	}
 
 	// Insert into sys_columns
-	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, source_field_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	}
-	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt, col.MaxRepetitions); err != nil {
+	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt, col.MaxRepetitions, nullable(col.SourceFieldID)); err != nil {
 		return nil, fmt.Errorf("failed registering column in sys_columns: %w", err)
 	}
 	if err := s.syncUniqueIndex(ctx, tx, tableName, col.Name, col.FieldType, rules); err != nil {
@@ -1025,6 +1049,10 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 
 // ListTables retrieves all registered tables with their columns
 func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
+	// Columns are read with their source_field_id (#107).
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	db := s.driver.DB()
 	rows, err := db.QueryContext(ctx, `SELECT id, name, display_name, COALESCE(description, ''), created_at, updated_at FROM sys_tables ORDER BY display_name ASC`)
 	if err != nil {
@@ -1043,9 +1071,9 @@ func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
 
 	// Fetch columns for each table
 	for i := range tables {
-		colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+		colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
 		if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
-			colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+			colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
 		}
 		cRows, err := db.QueryContext(ctx, colQuery, tables[i].ID)
 		if err != nil {
@@ -1056,7 +1084,7 @@ func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
 		for cRows.Next() {
 			var c ColumnMetadata
 			var fType string
-			if err := cRows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions); err != nil {
+			if err := cRows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions, &c.SourceFieldID); err != nil {
 				cRows.Close()
 				return nil, err
 			}

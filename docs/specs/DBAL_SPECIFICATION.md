@@ -167,7 +167,7 @@ To allow dynamic table and field creation without code recompilation, metadata i
 - `operator` (`=`, `!=`, `<`, `<=`, `>`, `>=`)
 - `cascade_delete` (Boolean)
 - `allow_creation` (Boolean, allow creating related records via portal)
-- `left_column_name`, `right_column_name` (field names kept beside the ids)
+- `left_column_name`, `right_column_name` (field names kept beside the ids; the only name of a side on an occurrence of another solution's table, whose `*_column_id` is NULL)
 
 ### 4. `sys_relationship_predicates` (Further Match Criteria)
 A relationship's first match criterion is the row above; each further one is a row here, and a record is related when it meets all of them.
@@ -175,6 +175,18 @@ A relationship's first match criterion is the row above; each further one is a r
 - `sequence_idx` (Integer, from 1, unique per relationship)
 - `left_column_id`, `right_column_id` (FK -> `sys_columns.id`, cascade delete), with `left_column_name`, `right_column_name`
 - `operator` (`=`, `≠`, `<`, `≤`, `>`, `≥`, `×`)
+- `left_column_id`, `right_column_id` are NULL on a side on an occurrence of another solution's table, named by `*_column_name`.
+
+### 5. `sys_table_occurrences` and `sys_file_references` (Other Solutions' Tables)
+An occurrence of a table of **another solution** (`#107`) has a NULL `base_table_id` and instead:
+- `file_reference_id` (`sys_file_references.id`): the reference it goes through;
+- `external_table` (the table's name in that solution, NULL until bound; names, not ids, because ids differ between databases).
+
+A file reference keeps `paths` (TEXT, one FileMaker path per line) beside its `name` and `database_name`. A value list taken from a field of another solution's table has NULL `source_table_id`/`source_column_id`, its external occurrence in `source_occurrence_id`, and the field in `source_column_name`.
+
+`sys_columns.source_field_id` (VARCHAR(32), digits, NULL for a column created here) keeps the FileMaker id of the field a migrated column comes from. A field of another solution that the source document names by id only is stored as the marker `#<id>` in `*_column_name` and `source_column_name` (an identifier never contains `#`), and matched against the other solution's `source_field_id` when the reference is bound.
+
+A catalog created before these columns existed is upgraded by `EnsureSystemTables`, and the first time an occurrence, a file reference, a value list or the columns of a table are used on it (`server/migrations/005_external_occurrences.sql`): the catalog is read first, so an upgraded one is only read.
 
 ---
 
