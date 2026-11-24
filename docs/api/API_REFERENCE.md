@@ -982,7 +982,7 @@ A list is either `custom` (values typed in, one per line in `custom_values`) or 
 | Method and path | Role | Does |
 | --- | --- | --- |
 | `GET /api/v1/value-lists` | any session | Lists the value lists, by name. |
-| `GET /api/v1/value-lists/{id}/values` | any session | Resolves a list to the values it offers right now: `{"values": ["New", "Continuing"]}`. For a `field` list this reads the table, so the answer reflects the data as it is. |
+| `GET /api/v1/value-lists/{id}/values` | any session | Resolves a list to what it offers right now (see below). For a `field` list this reads the table as the caller, so the answer reflects the data as it is and a table the caller may not read offers nothing. |
 | `POST /api/v1/value-lists` | admin | Creates one. |
 | `PUT /api/v1/value-lists/{id}` | admin | Replaces its definition. |
 | `DELETE /api/v1/value-lists/{id}` | admin | Removes it. Layout fields that pointed at it fall back to a plain edit box; no record data changes. |
@@ -1007,9 +1007,47 @@ or
 }
 ```
 
-A list with no name, a `custom` list with no values, or a `field` list without its table and field answers `422 Invalid Field Options`. Two lists cannot share a name (`409 Value List Already Exists`). An id that is not there answers `404 Value List Not Found`.
+A `field` list may also have the options FileMaker gives such a list. Left out, the list offers the first field's values, sorted by them, from every record, as before.
 
-Value lists are carried in the solution file and matched by name on import, so re-importing the same file updates them instead of making copies; a `field` list has its table and column rewritten to the destination's ids.
+| Field | Means |
+| --- | --- |
+| `second_column_id` | A second field of the same table, shown beside the first. Choosing an entry always stores the first field's value. |
+| `show_second_only` | Show the second field's value in place of the first's (pop-up menu, drop-down list, checkboxes and radio buttons, including the value a record already holds). Needs a second field. |
+| `sort_by` | `first` (default) or `second`: the field the values are sorted by. `second` needs a second field. |
+| `related_occurrence_id` | Include only the values of the records related to the current record of this table occurrence, following the relationship graph from it, across as many relationships as the path takes. |
+| `source_occurrence_id` | The occurrence of the list's table the related values are read through; required with `related_occurrence_id`, and cleared without it. |
+
+```json
+{
+  "name": "Tasks Of The Project",
+  "kind": "field",
+  "source_table_id": "…",
+  "source_column_id": "…",
+  "second_column_id": "…",
+  "show_second_only": true,
+  "sort_by": "second",
+  "related_occurrence_id": "…",
+  "source_occurrence_id": "…"
+}
+```
+
+Resolving answers the values entries store, and the entries themselves with the second field's value of a list that has one:
+
+```json
+{
+  "values": ["T1", "T3"],
+  "items": [{"value": "T1", "second": "Review"}, {"value": "T3", "second": "Write"}],
+  "truncated": false
+}
+```
+
+A `field` list offers each entry once, as FileMaker does: each value once, or with a second field each distinct pair of values once, so a value the second field gives two texts for is offered with each (both store it). A list showing only its second field offers each text once, storing the least value of the records that show it; FileMaker also shows each text once (it does not document which value it stores), so make the second field unique where that matters. A record with nothing in the first field offers nothing. Values are written as their field shows them: a date as `YYYY-MM-DD`, a timestamp in RFC 3339, a number without padding zeros. A `field` list offers at most 500 entries, the first in its sort order, counted after repeats are merged; `truncated` is `true` when there are more.
+
+Values are read as the caller: a table the caller may not read offers nothing (there are no field-level privileges; both fields are of the list's table). A list of related values is resolved for the record it is shown on, `GET /api/v1/value-lists/{id}/values?table=<table name>&record_id=<id>`; without a record, or for a record of a table other than the one the list starts from, it offers nothing. Related records are read as the caller, so a table on the way that they may not read offers nothing.
+
+A list with no name, a `custom` list with no values, or a `field` list without its table and field answers `422 Invalid Field Options`, as does a second field of another table, `show_second_only` or `sort_by: "second"` without a second field, an unknown starting occurrence, or related values read through an occurrence of another table. Deleting the second field leaves the list with its first; deleting either occurrence deletes the list. Two lists cannot share a name (`409 Value List Already Exists`). An id that is not there answers `404 Value List Not Found`.
+
+Value lists are carried in the solution file and matched by name on import, so re-importing the same file updates them instead of making copies; a `field` list has its table, fields and occurrences rewritten to the destination's ids.
 
 A layout's field object says which control it uses and which list fills it:
 

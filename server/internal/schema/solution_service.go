@@ -185,15 +185,30 @@ type BundleAccount struct {
 
 // SolutionBundle is the content of a .f4p solution file.
 // BundleValueList carries a value list (#31). A list taken from a field keeps
-// the source table and column ids so they can be remapped on import, like
-// every other reference in the bundle.
+// the ids of its table, fields and occurrences so they can be remapped on
+// import, like every other reference in the bundle.
 type BundleValueList struct {
-	ID             string  `msgpack:"id"`
-	Name           string  `msgpack:"name"`
-	Kind           string  `msgpack:"kind"`
-	CustomValues   string  `msgpack:"custom_values,omitempty"`
-	SourceTableID  *string `msgpack:"source_table_id,omitempty"`
-	SourceColumnID *string `msgpack:"source_column_id,omitempty"`
+	ID                  string  `msgpack:"id"`
+	Name                string  `msgpack:"name"`
+	Kind                string  `msgpack:"kind"`
+	CustomValues        string  `msgpack:"custom_values,omitempty"`
+	SourceTableID       *string `msgpack:"source_table_id,omitempty"`
+	SourceColumnID      *string `msgpack:"source_column_id,omitempty"`
+	SecondColumnID      *string `msgpack:"second_column_id,omitempty"`
+	ShowSecondOnly      bool    `msgpack:"show_second_only,omitempty"`
+	SortBy              string  `msgpack:"sort_by,omitempty"`
+	SourceOccurrenceID  *string `msgpack:"source_occurrence_id,omitempty"`
+	RelatedOccurrenceID *string `msgpack:"related_occurrence_id,omitempty"`
+}
+
+// remappedID is an optional reference of a bundle rewritten to the
+// destination's id; nil stays nil.
+func remappedID(ids map[string]string, id *string) *string {
+	if id == nil {
+		return nil
+	}
+	mapped := ids[*id]
+	return &mapped
 }
 
 // BundleSavedFind carries a named find (#34). It names the table by name, as
@@ -444,6 +459,8 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		b.ValueLists = append(b.ValueLists, BundleValueList{
 			ID: vl.ID, Name: vl.Name, Kind: vl.Kind, CustomValues: vl.CustomValues,
 			SourceTableID: vl.SourceTableID, SourceColumnID: vl.SourceColumnID,
+			SecondColumnID: vl.SecondColumnID, ShowSecondOnly: vl.ShowSecondOnly, SortBy: vl.SortBy,
+			SourceOccurrenceID: vl.SourceOccurrenceID, RelatedOccurrenceID: vl.RelatedOccurrenceID,
 		})
 	}
 	for _, f := range savedFinds {
@@ -954,7 +971,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 
 	// 5b. Value lists (#31). A list is matched by name, so importing the same
 	// file twice does not make a second copy; a list taken from a field has
-	// its table and column rewritten to the destination's ids.
+	// its table, fields and occurrences rewritten to the destination's ids.
 	for _, vl := range b.ValueLists {
 		in := ValueListInput{Name: vl.Name, Kind: vl.Kind, CustomValues: vl.CustomValues}
 		if vl.Kind == ValueListFromField {
@@ -969,6 +986,10 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				return nil, rollback(fmt.Errorf("value list %q reads a field that is not in this file", vl.Name))
 			}
 			in.SourceTableID, in.SourceColumnID = &srcTable, &srcColumn
+			in.SecondColumnID = remappedID(columnIDs, vl.SecondColumnID)
+			in.ShowSecondOnly, in.SortBy = vl.ShowSecondOnly, vl.SortBy
+			in.SourceOccurrenceID = remappedID(occIDs, vl.SourceOccurrenceID)
+			in.RelatedOccurrenceID = remappedID(occIDs, vl.RelatedOccurrenceID)
 		}
 
 		if prev := plan.valueLists[strings.ToLower(strings.TrimSpace(vl.Name))]; prev != nil {
@@ -980,6 +1001,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				_, _ = s.UpdateValueList(bg, p.ID, ValueListInput{
 					Name: p.Name, Kind: p.Kind, CustomValues: p.CustomValues,
 					SourceTableID: p.SourceTableID, SourceColumnID: p.SourceColumnID,
+					SecondColumnID: p.SecondColumnID, ShowSecondOnly: p.ShowSecondOnly, SortBy: p.SortBy,
+					SourceOccurrenceID: p.SourceOccurrenceID, RelatedOccurrenceID: p.RelatedOccurrenceID,
 				})
 			})
 			report.ValueListsUpdated++
@@ -1449,6 +1472,15 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 			}
 			if vl.SourceTableID == nil || columnTable[*vl.SourceColumnID] != *vl.SourceTableID {
 				return nil, invalid("value list %q reads a field that is not in its own table", vl.Name)
+			}
+			if vl.SecondColumnID != nil && columnTable[*vl.SecondColumnID] != *vl.SourceTableID {
+				return nil, invalid("value list %q has a second field that is not in its own table", vl.Name)
+			}
+			if vl.RelatedOccurrenceID != nil && occTable[*vl.RelatedOccurrenceID] == "" {
+				return nil, invalid("value list %q starts its related values from a table occurrence that is not in the file", vl.Name)
+			}
+			if vl.SourceOccurrenceID != nil && occTable[*vl.SourceOccurrenceID] != *vl.SourceTableID {
+				return nil, invalid("value list %q reads its related values through a table occurrence that is not of its table", vl.Name)
 			}
 		}
 	}

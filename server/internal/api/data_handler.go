@@ -104,17 +104,24 @@ func (h *DataHandler) authorizeAction(w http.ResponseWriter, r *http.Request, ta
 		}
 	}
 
+	return callerDataService(r), true
+}
+
+// callerDataService is the data service of a request's database, reading
+// related records as the caller: a calculation or a value list that reads a
+// table they may not read gets <No Access>, not its data.
+func callerDataService(r *http.Request) *data.Service {
+	driver, _ := dbal.DriverFromContext(r.Context())
+	sess := currentSession(r)
 	dataSvc := data.NewService(driver)
 	if !sess.IsAdmin() {
-		// A calculation that reads related records reads them as the
-		// caller: a table they may not read gives <No Access>, not its data.
 		schemaSvc, userID := schema.NewService(driver), sess.UserID
 		dataSvc.WithReadAccess(func(ctx context.Context, table string) (bool, error) {
 			level, err := schemaSvc.TableAccess(ctx, userID, table)
 			return level != schema.AccessNone, err
 		})
 	}
-	return dataSvc, true
+	return dataSvc
 }
 
 // EvaluateExpressionBody is what the Data Viewer asks (#50).

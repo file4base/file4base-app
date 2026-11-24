@@ -177,6 +177,16 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 				column = columnName[*list.SourceColumnID]
 			}
 			reported.Source = strings.TrimSuffix(table+"::"+column, "::")
+			if list.SecondColumnID != nil {
+				reported.Second = columnName[*list.SecondColumnID]
+				reported.ShowSecondOnly = list.ShowSecondOnly
+			}
+			if list.SortBy == ValueListSortSecond {
+				reported.SortBy = list.SortBy
+			}
+			if list.RelatedOccurrenceID != nil {
+				reported.RelatedFrom = occurrenceName[*list.RelatedOccurrenceID]
+			}
 		} else {
 			reported.Values = SplitCustomValues(list.CustomValues)
 		}

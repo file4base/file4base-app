@@ -486,6 +486,34 @@ void valueListTests() {
       expect(back.kind, ValueListModel.kindFromField);
       expect(back.sourceColumnId, 'c1');
     });
+
+    test('its field options round-trip through JSON, and default as FileMaker does', () {
+      const original = ValueListModel(
+        id: 'v3',
+        name: 'Codes',
+        kind: ValueListModel.kindFromField,
+        sourceTableId: 't1',
+        sourceColumnId: 'c1',
+        secondColumnId: 'c2',
+        showSecondOnly: true,
+        sortBy: ValueListModel.sortSecond,
+        sourceOccurrenceId: 'o2',
+        relatedOccurrenceId: 'o1',
+      );
+      final back = ValueListModel.fromJson({'id': 'v3', ...original.toJson()});
+      expect(back.secondColumnId, 'c2');
+      expect(back.showSecondOnly, isTrue);
+      expect(back.sortBy, ValueListModel.sortSecond);
+      expect(back.sourceOccurrenceId, 'o2');
+      expect(back.relatedOccurrenceId, 'o1');
+      expect(back.isRelated, isTrue);
+
+      final plain = ValueListModel.fromJson(const {'id': 'v4', 'name': 'Cities', 'kind': 'field'});
+      expect(plain.secondColumnId, isNull);
+      expect(plain.showSecondOnly, isFalse);
+      expect(plain.sortBy, ValueListModel.sortFirst);
+      expect(plain.isRelated, isFalse);
+    });
   });
 
   group('a field control style', () {

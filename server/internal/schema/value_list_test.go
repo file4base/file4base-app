@@ -3,9 +3,11 @@ package schema_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/testdb"
@@ -248,3 +250,411 @@ func TestValueListsRoundTripThroughASolutionFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, values)
 }
+
+// A list taken from a field can show a second field beside the first or in
+// its place, be sorted by either, and include only the values of the records
+// related to the record it is shown on (#31).
+func TestValueListFieldOptions(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database not available:", err)
+		return
+	}
+	defer driver.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+		return
+	}
+
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+	// Applying the catalog again must not add anything twice.
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+
+	stamp := uniqueTestStamp()
+	names := map[string]string{
+		"clients":  fmt.Sprintf("vlo_clients_%d", stamp),
+		"projects": fmt.Sprintf("vlo_projects_%d", stamp),
+		"tasks":    fmt.Sprintf("vlo_tasks_%d", stamp),
+	}
+	tables := map[string]*schema.TableMetadata{}
+	for key, name := range names {
+		tbl, err := svc.CreateTable(ctx, name, name)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.DeleteTable(context.Background(), tbl.ID) })
+		tables[key] = tbl
+	}
+	column := func(table, name string) *schema.ColumnMetadata {
+		col, err := svc.AddColumn(ctx, tables[table].ID, schema.ColumnMetadata{
+			Name: name, DisplayName: name, FieldType: dbal.FieldTypeText, IsNullable: true,
+		})
+		require.NoError(t, err)
+		return col
+	}
+	clientCode := column("clients", "code")
+	projectClient, projectRef := column("projects", "client_code"), column("projects", "ref")
+	taskCode, taskTitle, taskProject := column("tasks", "task_code"), column("tasks", "title"), column("tasks", "project_ref")
+
+	occurrence := map[string]string{}
+	occurrences, err := svc.ListTableOccurrences(ctx)
+	require.NoError(t, err)
+	for _, o := range occurrences {
+		for key, tbl := range tables {
+			if o.BaseTableID == tbl.ID {
+				occurrence[key] = o.ID
+			}
+		}
+	}
+	relate := func(left, right string, leftCol, rightCol *schema.ColumnMetadata) {
+		rel, err := svc.CreateRelationship(ctx, schema.CreateRelationshipInput{
+			Name:             fmt.Sprintf("vlo_%s_%s_%d", left, right, stamp),
+			LeftOccurrenceID: occurrence[left], LeftColumnID: leftCol.ID,
+			RightOccurrenceID: occurrence[right], RightColumnID: rightCol.ID, Operator: "=",
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.DeleteRelationship(context.Background(), rel.ID) })
+	}
+	relate("clients", "projects", clientCode, projectClient)
+	relate("projects", "tasks", projectRef, taskProject)
+
+	inserted := 0
+	insert := func(table string, values map[string]string) string {
+		inserted++
+		id := fmt.Sprintf("%s-%d-%d", table, stamp, inserted)
+		dialect := driver.Dialect()
+		cols, marks, args := []string{dialect.QuoteIdentifier("id")}, []string{dialect.Placeholder(1)}, []interface{}{id}
+		for col, value := range values {
+			cols = append(cols, dialect.QuoteIdentifier(col))
+			marks = append(marks, dialect.Placeholder(len(marks)+1))
+			args = append(args, value)
+		}
+		q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", dialect.QuoteIdentifier(names[table]),
+			strings.Join(cols, ", "), strings.Join(marks, ", "))
+		_, err := driver.DB().ExecContext(ctx, q, args...)
+		require.NoError(t, err)
+		return id
+	}
+	client := insert("clients", map[string]string{"code": "C1"})
+	insert("clients", map[string]string{"code": "C2"})
+	projectA := insert("projects", map[string]string{"client_code": "C1", "ref": "A"})
+	projectB := insert("projects", map[string]string{"client_code": "C2", "ref": "B"})
+	for _, task := range [][3]string{{"T3", "Write", "A"}, {"T1", "Review", "A"}, {"T2", "Plan", "B"}, {"T1", "Review", "A"}, {"", "Untitled", "A"}} {
+		insert("tasks", map[string]string{"task_code": task[0], "title": task[1], "project_ref": task[2]})
+	}
+
+	tasksTable := tables["tasks"].ID
+	create := func(in schema.ValueListInput) *schema.ValueList {
+		t.Helper()
+		in.Name = fmt.Sprintf("%s %d", in.Name, stamp)
+		in.Kind = schema.ValueListFromField
+		in.SourceTableID, in.SourceColumnID = &tasksTable, &taskCode.ID
+		list, err := svc.CreateValueList(ctx, in)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.DeleteValueList(context.Background(), list.ID) })
+		return list
+	}
+	type entry struct{ value, second string }
+	resolve := func(id string, record *schema.ValueListRecord) []entry {
+		t.Helper()
+		items, _, err := svc.ValueListItems(ctx, id, record, nil)
+		require.NoError(t, err)
+		out := []entry{}
+		for _, item := range items {
+			e := entry{value: item.Value}
+			if item.Second != nil {
+				e.second = *item.Second
+			}
+			out = append(out, e)
+		}
+		return out
+	}
+
+	t.Run("a list of one field keeps FileMaker's defaults", func(t *testing.T) {
+		list := create(schema.ValueListInput{Name: "Task codes"})
+		assert.Equal(t, schema.ValueListSortFirst, list.SortBy)
+		assert.Nil(t, list.SecondColumnID)
+		items, truncated, err := svc.ValueListItems(ctx, list.ID, nil, nil)
+		require.NoError(t, err)
+		require.Len(t, items, 3)
+		assert.False(t, truncated)
+		assert.Nil(t, items[0].Second, "a list without a second field gives no second value")
+		values, err := svc.ValueListValues(ctx, list.ID)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"T1", "T2", "T3"}, values)
+	})
+
+	t.Run("a second field is offered beside the first, sorted by either", func(t *testing.T) {
+		byFirst := create(schema.ValueListInput{Name: "Tasks by code", SecondColumnID: &taskTitle.ID})
+		assert.Equal(t, []entry{{"T1", "Review"}, {"T2", "Plan"}, {"T3", "Write"}}, resolve(byFirst.ID, nil),
+			"each value once, and no entry without a first value to store")
+
+		bySecond := create(schema.ValueListInput{
+			Name: "Tasks by title", SecondColumnID: &taskTitle.ID, ShowSecondOnly: true, SortBy: "second",
+		})
+		got, err := svc.GetValueList(ctx, bySecond.ID)
+		require.NoError(t, err)
+		assert.True(t, got.ShowSecondOnly)
+		assert.Equal(t, schema.ValueListSortSecond, got.SortBy)
+		assert.Equal(t, []entry{{"T2", "Plan"}, {"T1", "Review"}, {"T3", "Write"}}, resolve(bySecond.ID, nil))
+	})
+
+	t.Run("only related values follow the relationships from the record in hand", func(t *testing.T) {
+		fromProject := create(schema.ValueListInput{
+			Name: "Tasks of the project", SecondColumnID: &taskTitle.ID, SortBy: "second",
+			RelatedOccurrenceID: ptr(occurrence["projects"]), SourceOccurrenceID: ptr(occurrence["tasks"]),
+		})
+		assert.Equal(t, []entry{{"T1", "Review"}, {"T3", "Write"}},
+			resolve(fromProject.ID, &schema.ValueListRecord{Table: names["projects"], ID: projectA}))
+		assert.Equal(t, []entry{{"T2", "Plan"}},
+			resolve(fromProject.ID, &schema.ValueListRecord{Table: names["projects"], ID: projectB}))
+
+		assert.Empty(t, resolve(fromProject.ID, nil), "without a record there is nothing related")
+		assert.Empty(t, resolve(fromProject.ID, &schema.ValueListRecord{Table: names["clients"], ID: client}),
+			"a record of another table is not one the relationship starts from")
+		assert.Empty(t, resolve(fromProject.ID, &schema.ValueListRecord{Table: names["projects"], ID: "no-such-record"}))
+
+		// Two relationships away: a client's projects' tasks.
+		fromClient := create(schema.ValueListInput{
+			Name: "Tasks of the client", RelatedOccurrenceID: ptr(occurrence["clients"]), SourceOccurrenceID: ptr(occurrence["tasks"]),
+		})
+		assert.Equal(t, []entry{{value: "T1"}, {value: "T3"}},
+			resolve(fromClient.ID, &schema.ValueListRecord{Table: names["clients"], ID: client}))
+	})
+
+	t.Run("options that do not fit together are refused", func(t *testing.T) {
+		otherTable := tables["projects"].ID
+		for name, in := range map[string]schema.ValueListInput{
+			"second field of another table":  {SecondColumnID: &projectRef.ID},
+			"sorted by a missing second":     {SortBy: "second"},
+			"second only without a second":   {ShowSecondOnly: true},
+			"an unknown sort":                {SecondColumnID: &taskTitle.ID, SortBy: "third"},
+			"related without its occurrence": {RelatedOccurrenceID: ptr(occurrence["projects"])},
+			"related from nowhere":           {RelatedOccurrenceID: ptr("no-such-occurrence"), SourceOccurrenceID: ptr(occurrence["tasks"])},
+			"read through another table":     {RelatedOccurrenceID: ptr(occurrence["projects"]), SourceOccurrenceID: ptr(occurrence["clients"])},
+			"first field of another table":   {SourceTableID: &otherTable},
+		} {
+			in.Name, in.Kind = fmt.Sprintf("Refused %s %d", name, stamp), schema.ValueListFromField
+			if in.SourceTableID == nil {
+				in.SourceTableID = &tasksTable
+			}
+			in.SourceColumnID = &taskCode.ID
+			_, err := svc.CreateValueList(ctx, in)
+			assert.ErrorIs(t, err, schema.ErrInvalidFieldOptions, name)
+		}
+	})
+
+	t.Run("a custom list carries none of the field options", func(t *testing.T) {
+		list, err := svc.CreateValueList(ctx, schema.ValueListInput{
+			Name: fmt.Sprintf("Plain %d", stamp), Kind: schema.ValueListCustom, CustomValues: "a",
+			SecondColumnID: &taskTitle.ID, ShowSecondOnly: true, RelatedOccurrenceID: ptr(occurrence["projects"]),
+		})
+		require.NoError(t, err)
+		defer func() { _ = svc.DeleteValueList(ctx, list.ID) }()
+		assert.Nil(t, list.SecondColumnID)
+		assert.False(t, list.ShowSecondOnly)
+		assert.Nil(t, list.RelatedOccurrenceID)
+		assert.Empty(t, list.SortBy)
+	})
+
+	t.Run("the options survive Save and Open", func(t *testing.T) {
+		list := create(schema.ValueListInput{
+			Name: "Exported", SecondColumnID: &taskTitle.ID, ShowSecondOnly: true, SortBy: "second",
+			RelatedOccurrenceID: ptr(occurrence["projects"]), SourceOccurrenceID: ptr(occurrence["tasks"]),
+		})
+		file, err := svc.ExportSolution(ctx, schema.ExportOptions{SolutionName: "VL Options"})
+		require.NoError(t, err)
+		bundle, err := schema.DecodeSolutionBundle(file)
+		require.NoError(t, err)
+		var exported *schema.BundleValueList
+		for i := range bundle.ValueLists {
+			if bundle.ValueLists[i].ID == list.ID {
+				exported = &bundle.ValueLists[i]
+			}
+		}
+		require.NotNil(t, exported)
+		assert.Equal(t, taskTitle.ID, *exported.SecondColumnID)
+		assert.True(t, exported.ShowSecondOnly)
+		assert.Equal(t, schema.ValueListSortSecond, exported.SortBy)
+		assert.Equal(t, occurrence["projects"], *exported.RelatedOccurrenceID)
+
+		_, err = svc.ImportSolution(ctx, file)
+		require.NoError(t, err)
+		reimported, err := svc.GetValueList(ctx, list.ID)
+		require.NoError(t, err)
+		assert.Equal(t, list.SecondColumnID, reimported.SecondColumnID)
+		assert.Equal(t, list.RelatedOccurrenceID, reimported.RelatedOccurrenceID)
+		assert.Equal(t, list.SourceOccurrenceID, reimported.SourceOccurrenceID)
+		assert.True(t, reimported.ShowSecondOnly)
+	})
+
+	t.Run("deleting the second field leaves the list with its first", func(t *testing.T) {
+		extra := column("tasks", "label")
+		list := create(schema.ValueListInput{Name: "Labelled", SecondColumnID: &extra.ID, ShowSecondOnly: true, SortBy: "second"})
+		require.NoError(t, svc.DeleteColumn(ctx, tasksTable, extra.ID))
+		got, err := svc.GetValueList(ctx, list.ID)
+		require.NoError(t, err)
+		assert.Nil(t, got.SecondColumnID)
+		assert.False(t, got.ShowSecondOnly)
+		assert.Equal(t, schema.ValueListSortFirst, got.SortBy)
+		assert.Equal(t, []entry{{value: "T1"}, {value: "T2"}, {value: "T3"}}, resolve(list.ID, nil))
+	})
+
+	t.Run("the catalog has each foreign key once", func(t *testing.T) {
+		schemaOf := "current_schema()"
+		if driver.Dialect().Engine() == dbal.EngineMariaDB {
+			schemaOf = "DATABASE()"
+		}
+		var keys int
+		require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.table_constraints
+			WHERE table_schema = `+schemaOf+` AND table_name = 'sys_value_lists' AND constraint_type = 'FOREIGN KEY'`).Scan(&keys))
+		assert.Equal(t, 5, keys, "source table and field, second field, and the two occurrences")
+
+		// The keys carry the names server/migrations/004 gives them, so
+		// applying that file before the server starts adds none twice.
+		var named int
+		require.NoError(t, driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.table_constraints
+			WHERE table_schema = `+schemaOf+` AND table_name = 'sys_value_lists' AND constraint_type = 'FOREIGN KEY'
+			AND constraint_name IN ('fk_value_list_second_column_id', 'fk_value_list_source_occurrence_id',
+			                        'fk_value_list_related_occurrence_id')`).Scan(&named))
+		assert.Equal(t, 3, named)
+	})
+}
+
+// TestValueListEntries pins what a list taken from a field offers: the
+// caller's access, one entry per text it shows, values written as their field
+// shows them, and a limit that is applied after grouping and is reported.
+func TestValueListEntries(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database unavailable:", err)
+		return
+	}
+	defer driver.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+		return
+	}
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+
+	stamp := uniqueTestStamp()
+	name := fmt.Sprintf("vle_items_%d", stamp)
+	tbl, err := svc.CreateTable(ctx, name, name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.DeleteTable(context.Background(), tbl.ID) })
+	column := func(name string, fieldType dbal.AgnosticFieldType) *schema.ColumnMetadata {
+		col, err := svc.AddColumn(ctx, tbl.ID, schema.ColumnMetadata{
+			Name: name, DisplayName: name, FieldType: fieldType, IsNullable: true,
+		})
+		require.NoError(t, err)
+		return col
+	}
+	code, label := column("code", dbal.FieldTypeText), column("label", dbal.FieldTypeText)
+	day, amount := column("day", dbal.FieldTypeDate), column("amount", dbal.FieldTypeNumber)
+
+	// 600 codes share the label "Same"; a few more records have their own.
+	dialect := driver.Dialect()
+	var tuples []string
+	var args []interface{}
+	add := func(values ...interface{}) {
+		marks := make([]string, len(values))
+		for i := range values {
+			marks[i] = dialect.Placeholder(len(args) + i + 1)
+		}
+		tuples = append(tuples, "("+strings.Join(marks, ", ")+")")
+		args = append(args, values...)
+	}
+	for i := 0; i < 600; i++ {
+		add(fmt.Sprintf("r%d", i), fmt.Sprintf("C%03d", i), "Same", nil, nil)
+	}
+	add("r-a", "B1", "Alpha", "2026-06-15", "12.50")
+	add("r-b", "B2", "Alpha", "2026-06-15", "3")
+	add("r-c", "B1", "Beta", nil, nil)
+	_, err = driver.DB().ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (%s, %s, %s, %s, %s) VALUES %s",
+		dialect.QuoteIdentifier(name), dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier("code"),
+		dialect.QuoteIdentifier("label"), dialect.QuoteIdentifier("day"), dialect.QuoteIdentifier("amount"),
+		strings.Join(tuples, ", ")), args...)
+	require.NoError(t, err)
+
+	lists := 0
+	create := func(first *schema.ColumnMetadata, in schema.ValueListInput) string {
+		t.Helper()
+		lists++
+		in.Name = fmt.Sprintf("Entries %d %d", stamp, lists)
+		in.Kind, in.SourceTableID, in.SourceColumnID = schema.ValueListFromField, &tbl.ID, &first.ID
+		list, err := svc.CreateValueList(ctx, in)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.DeleteValueList(context.Background(), list.ID) })
+		return list.ID
+	}
+	type entry struct{ value, second string }
+	resolve := func(id string, reader *data.Service) ([]entry, bool) {
+		t.Helper()
+		items, truncated, err := svc.ValueListItems(ctx, id, nil, reader)
+		require.NoError(t, err)
+		out := []entry{}
+		for _, item := range items {
+			e := entry{value: item.Value}
+			if item.Second != nil {
+				e.second = *item.Second
+			}
+			out = append(out, e)
+		}
+		return out, truncated
+	}
+
+	t.Run("showing the second field only offers each text once", func(t *testing.T) {
+		id := create(code, schema.ValueListInput{SecondColumnID: &label.ID, ShowSecondOnly: true, SortBy: "second"})
+		got, truncated := resolve(id, nil)
+		assert.Equal(t, []entry{{"B1", "Alpha"}, {"B1", "Beta"}, {"C000", "Same"}}, got,
+			"600 records showing Same are one entry, storing the least code, and hide nothing")
+		assert.False(t, truncated)
+	})
+
+	t.Run("showing both fields offers each pair once", func(t *testing.T) {
+		id := create(code, schema.ValueListInput{SecondColumnID: &label.ID, SortBy: "second"})
+		got, truncated := resolve(id, nil)
+		require.Len(t, got, 500)
+		assert.Equal(t, []entry{{"B1", "Alpha"}, {"B2", "Alpha"}, {"B1", "Beta"}, {"C000", "Same"}}, got[:4],
+			"B1 shows two texts, so it is offered with each")
+		assert.True(t, truncated, "603 pairs, 500 offered")
+	})
+
+	t.Run("a long list is cut after grouping, and says so", func(t *testing.T) {
+		got, truncated := resolve(create(code, schema.ValueListInput{}), nil)
+		require.Len(t, got, 500)
+		assert.Equal(t, entry{value: "B1"}, got[0])
+		assert.Equal(t, entry{value: "C497"}, got[499], "the first 500 codes in order, each once")
+		assert.True(t, truncated)
+
+		got, truncated = resolve(create(label, schema.ValueListInput{}), nil)
+		assert.Equal(t, []entry{{value: "Alpha"}, {value: "Beta"}, {value: "Same"}}, got)
+		assert.False(t, truncated)
+	})
+
+	t.Run("dates and numbers read as their field shows them", func(t *testing.T) {
+		got, _ := resolve(create(day, schema.ValueListInput{}), nil)
+		assert.Equal(t, []entry{{value: "2026-06-15"}}, got)
+		got, _ = resolve(create(amount, schema.ValueListInput{}), nil)
+		assert.Equal(t, []entry{{value: "12.5"}, {value: "3"}}, got)
+	})
+
+	t.Run("a table the caller may not read offers nothing", func(t *testing.T) {
+		id := create(label, schema.ValueListInput{SecondColumnID: &code.ID})
+		denied := data.NewService(driver).WithReadAccess(func(context.Context, string) (bool, error) { return false, nil })
+		got, truncated := resolve(id, denied)
+		assert.Empty(t, got)
+		assert.False(t, truncated)
+
+		allowed := data.NewService(driver).WithReadAccess(func(context.Context, string) (bool, error) { return true, nil })
+		got, _ = resolve(id, allowed)
+		assert.NotEmpty(t, got)
+	})
+}
+
+func ptr(s string) *string { return &s }

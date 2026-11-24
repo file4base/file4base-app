@@ -2320,6 +2320,24 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "table",
+            "in": "query",
+            "required": false,
+            "description": "Table of the record the list is shown on, for a list of related values",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "record_id",
+            "in": "query",
+            "required": false,
+            "description": "Record the list is shown on, for a list of related values",
+            "schema": {
+              "type": "string"
+            }
           }
         ]
       }
@@ -3542,6 +3560,24 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "table",
+            "in": "query",
+            "required": false,
+            "description": "Table of the record the list is shown on, for a list of related values",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "record_id",
+            "in": "query",
+            "required": false,
+            "description": "Record the list is shown on, for a list of related values",
             "schema": {
               "type": "string"
             }

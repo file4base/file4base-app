@@ -187,15 +187,20 @@ func TestNativeFrenchControlFlowNames(t *testing.T) {
 // on a table occurrence; options File4Base cannot reproduce are reported.
 func TestSaveAsXMLValueLists(t *testing.T) {
 	doc := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
- <BaseTableCatalog><BaseTable id="129" name="Colours"/></BaseTableCatalog>
- <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Colours"/><ObjectList><Field id="1" name="Code" datatype="Text" fieldtype="Normal"/><Field id="2" name="Label" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
- <TableOccurrenceCatalog><TableOccurrence id="7" name="Palette"><BaseTableSourceReference><BaseTableReference id="129" name="Colours"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
+ <BaseTableCatalog><BaseTable id="129" name="Colours"/><BaseTable id="130" name="Shades"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Colours"/><ObjectList><Field id="1" name="Code" datatype="Text" fieldtype="Normal"/><Field id="2" name="Label" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog>
+ <FieldCatalog><BaseTableReference id="130" name="Shades"/><ObjectList><Field id="1" name="Tone" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <TableOccurrenceCatalog><TableOccurrence id="7" name="Palette"><BaseTableSourceReference><BaseTableReference id="129" name="Colours"/></BaseTableSourceReference></TableOccurrence>
+ <TableOccurrence id="8" name="Shade"><BaseTableSourceReference><BaseTableReference id="130" name="Shades"/></BaseTableSourceReference></TableOccurrence>
+ <TableOccurrence id="9" name="Swatch"><BaseTableSourceReference><BaseTableReference id="129" name="Colours"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
  <ValueListCatalog>
   <ValueList id="1" name="Sizes"><Source value="Custom"></Source><CustomValues><Text><![CDATA[Small` + "\r" + `Medium` + "\r\r" + `Large]]></Text></CustomValues></ValueList>
   <ValueList id="2" name="Codes"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><ShowRelated value="False"></ShowRelated></Field></ValueList>
-  <ValueList id="3" name="Labels"><Source value="FromField"></Source><Field><PrimaryField show="False" sort="False"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="True" sort="True"><FieldReference id="2" name="Label"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></SecondaryField><ShowRelated value="True"><TableOccurrenceReference id="7" name="Palette"/></ShowRelated></Field></ValueList>
+  <ValueList id="3" name="Labels"><Source value="FromField"></Source><Field><PrimaryField show="False" sort="False"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="True" sort="True"><FieldReference id="2" name="Label"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></SecondaryField><ShowRelated value="True"><TableOccurrenceReference id="8" name="Shade"/></ShowRelated></Field></ValueList>
   <ValueList id="4" name="Shared"><Source value="External"></Source></ValueList>
   <ValueList id="5" name="Gone"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="9" name="Deleted"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField></Field></ValueList>
+  <ValueList id="6" name="Mixed"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="False" sort="False"><FieldReference id="1" name="Tone"><TableOccurrenceReference id="8" name="Shade"/></FieldReference></SecondaryField><ShowRelated value="True"><TableOccurrenceReference id="99" name="Elsewhere"/></ShowRelated></Field></ValueList>
+  <ValueList id="7" name="Self"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="False" sort="False"><FieldReference id="2" name="Label"><TableOccurrenceReference id="9" name="Swatch"/></FieldReference></SecondaryField></Field></ValueList>
  </ValueListCatalog>
  </AddAction></Structure></FMSaveAsXML>`
 	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
@@ -206,23 +211,49 @@ func TestSaveAsXMLValueLists(t *testing.T) {
 	for _, vl := range got.Bundle.ValueLists {
 		lists[vl.Name] = vl
 	}
-	if len(lists) != 3 {
-		t.Fatalf("value lists = %v, want Sizes, Codes and Labels", lists)
+	if len(lists) != 5 {
+		t.Fatalf("value lists = %v, want Sizes, Codes, Labels, Mixed and Self", lists)
 	}
 	if lists["Sizes"].CustomValues != "Small\nMedium\nLarge" {
 		t.Fatalf("custom values = %q", lists["Sizes"].CustomValues)
 	}
-	var code string
+	columns := map[string]string{}
 	for _, c := range got.Bundle.Tables[0].Columns {
-		if c.Name == "code" {
-			code = c.ID
-		}
+		columns[c.Name] = c.ID
 	}
-	for _, n := range []string{"Codes", "Labels"} {
-		if vl := lists[n]; vl.Kind != "field" || vl.SourceColumnID == nil || *vl.SourceColumnID != code {
+	occurrences := map[string]string{}
+	for _, o := range got.Bundle.TableOccurrences {
+		occurrences[o.Name] = o.ID
+	}
+	for _, n := range []string{"Codes", "Labels", "Mixed", "Self"} {
+		if vl := lists[n]; vl.Kind != "field" || vl.SourceColumnID == nil || *vl.SourceColumnID != columns["code"] {
 			t.Fatalf("%s not bound to Colours::Code: %+v", n, vl)
 		}
 	}
+	if vl := lists["Codes"]; vl.SecondColumnID != nil || vl.ShowSecondOnly || vl.SortBy != "" || vl.RelatedOccurrenceID != nil {
+		t.Errorf("a list of one field gained options: %+v", vl)
+	}
+
+	labels := lists["Labels"]
+	if labels.SecondColumnID == nil || *labels.SecondColumnID != columns["label"] {
+		t.Errorf("Labels second field = %v, want Colours::Label", labels.SecondColumnID)
+	}
+	if !labels.ShowSecondOnly || labels.SortBy != schema.ValueListSortSecond {
+		t.Errorf("Labels must show and sort by its second field only: %+v", labels)
+	}
+	if labels.RelatedOccurrenceID == nil || *labels.RelatedOccurrenceID != occurrences["Shade"] ||
+		labels.SourceOccurrenceID == nil || *labels.SourceOccurrenceID != occurrences["Palette"] {
+		t.Errorf("Labels must include only the values related from Shade, read through Palette: %+v", labels)
+	}
+	if mixed := lists["Mixed"]; mixed.SecondColumnID != nil || mixed.RelatedOccurrenceID != nil {
+		t.Errorf("Mixed kept options it cannot honour: %+v", mixed)
+	}
+	// Swatch is another occurrence of Colours: its Label is a related
+	// record's, not the label of the record whose code is stored.
+	if self := lists["Self"]; self.SecondColumnID != nil {
+		t.Errorf("Self took its second field from another occurrence of the same table: %+v", self)
+	}
+
 	reported := map[string]string{}
 	for _, it := range append(got.Report.Unsupported, got.Report.ManualActionRequired...) {
 		if it.Domain == "value_list" {
@@ -230,14 +261,88 @@ func TestSaveAsXMLValueLists(t *testing.T) {
 		}
 	}
 	for _, want := range []struct{ name, text string }{
-		{"Labels", "second field"}, {"Labels", "only related values"},
-		{"Shared", "another FileMaker file"}, {"Gone", "Palette::Deleted"},
+		{"Mixed", "second field Shade::Tone"}, {"Mixed", `related from "Elsewhere"`},
+		{"Shared", "another FileMaker file"}, {"Gone", "Palette::Deleted"}, {"Self", "second field Swatch::Label"},
 	} {
 		if !strings.Contains(reported[want.name], want.text) {
 			t.Errorf("%s report %q does not mention %q", want.name, reported[want.name], want.text)
 		}
 	}
-	if _, ok := reported["Codes"]; ok {
-		t.Errorf("plain field list reported: %s", reported["Codes"])
+	for _, n := range []string{"Codes", "Labels"} {
+		if detail, ok := reported[n]; ok {
+			t.Errorf("%s reported as lost: %s", n, detail)
+		}
+	}
+}
+
+// A DDR writes the options of a list taken from a field in the value list
+// itself, naming each field with <Field table name>, where table is the
+// field's table occurrence, and the occurrence related values start from
+// with <ShowRelated><Table name>.
+func TestDDRFieldValueListOptions(t *testing.T) {
+	doc := `<FMPReport type="Report" version="21.0v1"><File name="Synthetic.fmp12">
+ <BaseTableCatalog>
+  <BaseTable id="1" name="Projects"><FieldCatalog><Field id="1" dataType="Text" fieldType="Normal" name="Ref"/></FieldCatalog></BaseTable>
+  <BaseTable id="2" name="Tasks"><FieldCatalog><Field id="1" dataType="Text" fieldType="Normal" name="TaskID"/><Field id="2" dataType="Text" fieldType="Normal" name="Title"/><Field id="3" dataType="Text" fieldType="Normal" name="ProjectRef"/></FieldCatalog></BaseTable>
+ </BaseTableCatalog>
+ <RelationshipGraph><TableList><Table id="10" name="Projects" baseTable="Projects" baseTableId="1"/><Table id="11" name="Project Tasks" baseTable="Tasks" baseTableId="2"/><Table id="12" name="Parent Task" baseTable="Tasks" baseTableId="2"/></TableList>
+ <RelationshipList><Relationship id="1"><LeftTable name="Projects"/><RightTable name="Project Tasks"/><JoinPredicateList><JoinPredicate type="Equal"><LeftField><Field table="Projects" id="1" name="Ref"/></LeftField><RightField><Field table="Project Tasks" id="3" name="ProjectRef"/></RightField></JoinPredicate></JoinPredicateList></Relationship></RelationshipList></RelationshipGraph>
+ <ValueListCatalog>
+  <ValueList id="1" name="Task titles"><Source value="Field"/><PrimaryField show="True" sort="False"><Field table="Project Tasks" id="1" name="TaskID"/></PrimaryField><SecondaryField show="False" sort="True"><Field table="Project Tasks" id="2" name="Title"/></SecondaryField><ShowRelated value="True"><Table id="10" name="Projects"/></ShowRelated></ValueList>
+  <ValueList id="2" name="Task ids"><Source value="Field"/><PrimaryField show="True" sort="True"><Field table="Project Tasks" id="1" name="TaskID"/></PrimaryField><ShowRelated value="False"/></ValueList>
+  <ValueList id="3" name="Task parents"><Source value="Field"/><PrimaryField show="True" sort="True"><Field table="Project Tasks" id="1" name="TaskID"/></PrimaryField><SecondaryField show="False" sort="False"><Field table="Parent Task" id="2" name="Title"/></SecondaryField><ShowRelated value="False"/></ValueList>
+ </ValueListCatalog>
+</File></FMPReport>`
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := map[string]string{}
+	for _, table := range got.Bundle.Tables {
+		for _, c := range table.Columns {
+			columns[table.Name+"."+c.Name] = c.ID
+		}
+	}
+	occurrences := map[string]string{}
+	for _, o := range got.Bundle.TableOccurrences {
+		occurrences[o.Name] = o.ID
+	}
+	lists := map[string]schema.BundleValueList{}
+	for _, vl := range got.Bundle.ValueLists {
+		lists[vl.Name] = vl
+	}
+	if len(lists) != 3 {
+		t.Fatalf("value lists = %+v, want Task titles, Task ids and Task parents; report %+v", lists, got.Report)
+	}
+
+	titles := lists["Task titles"]
+	if titles.SourceColumnID == nil || *titles.SourceColumnID != columns["tasks.taskid"] {
+		t.Fatalf("Task titles not bound to Tasks::TaskID: %+v (columns %v)", titles, columns)
+	}
+	if titles.SecondColumnID == nil || *titles.SecondColumnID != columns["tasks.title"] {
+		t.Errorf("Task titles second field = %v, want Tasks::Title", titles.SecondColumnID)
+	}
+	if titles.ShowSecondOnly || titles.SortBy != schema.ValueListSortSecond {
+		t.Errorf("Task titles must show both fields, sorted by the second: %+v", titles)
+	}
+	if titles.RelatedOccurrenceID == nil || *titles.RelatedOccurrenceID != occurrences["Projects"] ||
+		titles.SourceOccurrenceID == nil || *titles.SourceOccurrenceID != occurrences["Project Tasks"] {
+		t.Errorf("Task titles must include only the tasks related from Projects: %+v", titles)
+	}
+	if ids := lists["Task ids"]; ids.SourceColumnID == nil || ids.SecondColumnID != nil || ids.RelatedOccurrenceID != nil {
+		t.Errorf("Task ids = %+v, want Tasks::TaskID alone", ids)
+	}
+	// Parent Task is another occurrence of Tasks (a self-join): its Title is
+	// the parent's, so it is not kept as the task's own second field.
+	if parents := lists["Task parents"]; parents.SourceColumnID == nil || parents.SecondColumnID != nil {
+		t.Errorf("Task parents = %+v, want Tasks::TaskID without a second field", parents)
+	}
+	for _, it := range got.Report.Unsupported {
+		if it.Domain != "value_list" {
+			continue
+		}
+		if it.SourceName != "Task parents" || !strings.Contains(it.Detail, "second field Parent Task::Title") {
+			t.Errorf("unexpected value list report: %s: %s", it.SourceName, it.Detail)
+		}
 	}
 }
