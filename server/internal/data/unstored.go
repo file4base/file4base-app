@@ -280,6 +280,67 @@ func (r *relatedReader) related(
 	return out, nil
 }
 
+// RelatedValues reads fields of the records of the occurrence target that
+// are related to the record recordID of the occurrence from, across as many
+// relationships as the path between the two takes, each record once. It is
+// what a value list that includes only related values offers (#31). The
+// path is the one an unstored calculation reading target from from would
+// follow, and every table on it, the first included, must be readable.
+func (s *Service) RelatedValues(ctx context.Context, from, recordID, target string, fields ...string) ([]map[string]interface{}, error) {
+	r := s.newRelatedReader()
+	graph, err := r.occurrenceGraph(ctx)
+	if err != nil {
+		return nil, err
+	}
+	start, ok := graph.byID[from]
+	if !ok {
+		return nil, fmt.Errorf("there is no table occurrence %q", from)
+	}
+	end, ok := graph.byID[target]
+	if !ok {
+		return nil, fmt.Errorf("there is no table occurrence %q", target)
+	}
+	path, err := graph.path(start, end)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.checkRead(ctx, start.table); err != nil {
+		return nil, err
+	}
+	for _, h := range path {
+		if err := r.checkRead(ctx, h.to.TableName); err != nil {
+			return nil, err
+		}
+	}
+	endFields, err := r.tableFields(ctx, end.table)
+	if err != nil {
+		return nil, err
+	}
+	for _, field := range fields {
+		if err := checkField(endFields, end.table, field); err != nil {
+			return nil, err
+		}
+	}
+
+	row, err := s.GetRow(ctx, start.table, recordID)
+	if err != nil {
+		return nil, err
+	}
+	rows := []map[string]interface{}{row}
+	for i, h := range path {
+		if rows, err = r.follow(ctx, h, rows, i == len(path)-1); err != nil {
+			return nil, err
+		}
+		if len(rows) == 0 {
+			return rows, nil
+		}
+	}
+	if err := r.fill(ctx, end.table, rows, fields); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // follow reads, across one relationship, the records related to any of rows,
 // each once, in the relationship's sort order when it is the last step. A
 // record is related when it meets every criterion of the relationship.
@@ -356,6 +417,7 @@ func (r *relatedReader) follow(ctx context.Context, h hop, rows []map[string]int
 // occurrenceGraph is the relationship graph: table occurrences joined by
 // relationships.
 type occurrenceGraph struct {
+	byID    map[string]occurrence
 	byName  map[string]occurrence // lower-case name
 	byTable map[string][]occurrence
 	edges   map[string][]hop // occurrence id -> the steps out of it
@@ -375,7 +437,8 @@ func (r *relatedReader) occurrenceGraph(ctx context.Context) (*occurrenceGraph, 
 	if r.graph != nil {
 		return r.graph, nil
 	}
-	g := &occurrenceGraph{byName: map[string]occurrence{}, byTable: map[string][]occurrence{}, edges: map[string][]hop{}}
+	g := &occurrenceGraph{byID: map[string]occurrence{}, byName: map[string]occurrence{},
+		byTable: map[string][]occurrence{}, edges: map[string][]hop{}}
 	rows, err := r.s.driver.DB().QueryContext(ctx,
 		`SELECT o.id, o.name, t.name FROM sys_table_occurrences o JOIN sys_tables t ON t.id = o.base_table_id ORDER BY o.created_at, o.name`)
 	if err != nil {
@@ -387,6 +450,7 @@ func (r *relatedReader) occurrenceGraph(ctx context.Context) (*occurrenceGraph, 
 		if err := rows.Scan(&o.id, &o.name, &o.table); err != nil {
 			return nil, err
 		}
+		g.byID[o.id] = o
 		g.byName[strings.ToLower(o.name)] = o
 		g.byTable[o.table] = append(g.byTable[o.table], o)
 	}

@@ -27,6 +27,7 @@ class ManageValueListsDialog extends ConsumerStatefulWidget {
 class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog> {
   List<ValueListModel> _lists = [];
   List<TableModel> _tables = [];
+  List<TableOccurrenceModel> _occurrences = [];
   bool _loading = true;
   String? _error;
 
@@ -46,11 +47,13 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
       final results = await Future.wait([
         client.listValueLists(),
         client.listTables().catchError((_) => <TableModel>[]),
+        client.listOccurrences().catchError((_) => <TableOccurrenceModel>[]),
       ]);
       if (!mounted) return;
       setState(() {
         _lists = results[0] as List<ValueListModel>;
         _tables = results[1] as List<TableModel>;
+        _occurrences = results[2] as List<TableOccurrenceModel>;
         _loading = false;
       });
     } catch (e) {
@@ -65,7 +68,7 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
   Future<void> _edit({ValueListModel? existing}) async {
     final saved = await showDialog<ValueListModel>(
       context: context,
-      builder: (_) => _ValueListEditor(existing: existing, tables: _tables),
+      builder: (_) => _ValueListEditor(existing: existing, tables: _tables, occurrences: _occurrences),
     );
     if (saved == null) return;
 
@@ -122,7 +125,12 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
     for (final table in _tables) {
       for (final col in table.columns) {
         if (col.id == list.sourceColumnId) {
-          return '${table.displayName} · ${col.displayName}';
+          var label = '${table.displayName} · ${col.displayName}';
+          final second = table.columns.where((c) => c.id == list.secondColumnId).firstOrNull;
+          if (second != null) label += list.showSecondOnly ? ', showing ${second.displayName}' : ' and ${second.displayName}';
+          final related = _occurrences.where((o) => o.id == list.relatedOccurrenceId).firstOrNull;
+          if (related != null) label += ', related from ${related.name}';
+          return label;
         }
       }
     }
@@ -264,9 +272,10 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
 /// Creating or changing one value list.
 class _ValueListEditor extends StatefulWidget {
 
-  const _ValueListEditor({required this.existing, required this.tables});
+  const _ValueListEditor({required this.existing, required this.tables, this.occurrences = const []});
   final ValueListModel? existing;
   final List<TableModel> tables;
+  final List<TableOccurrenceModel> occurrences;
 
   @override
   State<_ValueListEditor> createState() => _ValueListEditorState();
@@ -278,6 +287,13 @@ class _ValueListEditorState extends State<_ValueListEditor> {
   late String _kind;
   String? _sourceTableId;
   String? _sourceColumnId;
+  bool _useSecond = false;
+  String? _secondColumnId;
+  bool _showSecondOnly = false;
+  String _sortBy = ValueListModel.sortFirst;
+  bool _related = false;
+  String? _relatedOccurrenceId;
+  String? _sourceOccurrenceId;
   String? _error;
 
   @override
@@ -289,6 +305,13 @@ class _ValueListEditorState extends State<_ValueListEditor> {
     _kind = existing?.kind ?? ValueListModel.kindCustom;
     _sourceTableId = existing?.sourceTableId;
     _sourceColumnId = existing?.sourceColumnId;
+    _secondColumnId = existing?.secondColumnId;
+    _useSecond = _secondColumnId != null;
+    _showSecondOnly = existing?.showSecondOnly ?? false;
+    _sortBy = existing?.sortBy ?? ValueListModel.sortFirst;
+    _relatedOccurrenceId = existing?.relatedOccurrenceId;
+    _sourceOccurrenceId = existing?.sourceOccurrenceId;
+    _related = _relatedOccurrenceId != null;
   }
 
   @override
@@ -301,6 +324,19 @@ class _ValueListEditorState extends State<_ValueListEditor> {
   List<ColumnModel> get _sourceColumns {
     final table = widget.tables.where((t) => t.id == _sourceTableId).firstOrNull;
     return table?.columns.where((c) => !c.isPrimaryKey).toList() ?? const [];
+  }
+
+  /// The occurrences of the list's table, one of which the related values are
+  /// read through.
+  List<TableOccurrenceModel> get _sourceOccurrences =>
+      widget.occurrences.where((o) => o.baseTableId == _sourceTableId).toList();
+
+  void _chooseTable(String? id) {
+    _sourceTableId = id;
+    _sourceColumnId = null;
+    _secondColumnId = null;
+    final through = _sourceOccurrences;
+    _sourceOccurrenceId = through.length == 1 ? through.single.id : null;
   }
 
   void _save() {
@@ -317,15 +353,123 @@ class _ValueListEditorState extends State<_ValueListEditor> {
       setState(() => _error = 'Choose the table and the field to take the values from.');
       return;
     }
+    final fromField = _kind == ValueListModel.kindFromField;
+    final second = fromField && _useSecond ? _secondColumnId : null;
+    if (fromField && _useSecond && second == null) {
+      setState(() => _error = 'Choose the second field, or stop displaying one.');
+      return;
+    }
+    final related = fromField && _related;
+    if (related && (_relatedOccurrenceId == null || _sourceOccurrenceId == null)) {
+      setState(() => _error = 'Choose the occurrence the related values start from, and the one they are read through.');
+      return;
+    }
 
     Navigator.of(context).pop(ValueListModel(
       id: widget.existing?.id ?? '',
       name: name,
       kind: _kind,
       customValues: _kind == ValueListModel.kindCustom ? _valuesController.text : '',
-      sourceTableId: _kind == ValueListModel.kindFromField ? _sourceTableId : null,
-      sourceColumnId: _kind == ValueListModel.kindFromField ? _sourceColumnId : null,
+      sourceTableId: fromField ? _sourceTableId : null,
+      sourceColumnId: fromField ? _sourceColumnId : null,
+      secondColumnId: second,
+      showSecondOnly: second != null && _showSecondOnly,
+      sortBy: second != null ? _sortBy : ValueListModel.sortFirst,
+      relatedOccurrenceId: related ? _relatedOccurrenceId : null,
+      sourceOccurrenceId: related ? _sourceOccurrenceId : null,
     ));
+  }
+
+  /// FileMaker's Specify Fields for Value List options: a second field, the
+  /// sort, and including only related values.
+  List<Widget> _fieldOptions() {
+    const small = TextStyle(fontSize: 13);
+    final hasSecond = _useSecond && _secondColumnId != null;
+    return [
+      const SizedBox(height: 8),
+      CheckboxListTile(
+        key: const ValueKey('value-list-use-second'),
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        controlAffinity: ListTileControlAffinity.leading,
+        value: _useSecond,
+        onChanged: _sourceTableId == null ? null : (v) => setState(() => _useSecond = v ?? false),
+        title: const Text('Also display values from a second field', style: small),
+      ),
+      if (_useSecond) ...[
+        DropdownButtonFormField<String>(
+          key: ValueKey('value-list-second-column-$_sourceTableId'),
+          initialValue: _secondColumnId,
+          decoration: const InputDecoration(labelText: 'Second field', border: OutlineInputBorder(), isDense: true),
+          items: _sourceColumns
+              .map((c) => DropdownMenuItem(value: c.id, child: Text(c.displayName)))
+              .toList(),
+          onChanged: (v) => setState(() => _secondColumnId = v),
+        ),
+        CheckboxListTile(
+          key: const ValueKey('value-list-show-second-only'),
+          contentPadding: EdgeInsets.zero,
+          dense: true,
+          controlAffinity: ListTileControlAffinity.leading,
+          value: _showSecondOnly,
+          onChanged: (v) => setState(() => _showSecondOnly = v ?? false),
+          title: const Text('Show values only from the second field', style: small),
+          subtitle: const Text("Choosing one still stores the first field's value.",
+              style: TextStyle(fontSize: 11, color: Colors.grey)),
+        ),
+      ],
+      const SizedBox(height: 8),
+      const Text('Sort values using', style: small),
+      const SizedBox(height: 8),
+      SegmentedButton<String>(
+        key: const ValueKey('value-list-sort-by'),
+        segments: [
+          const ButtonSegment(value: ValueListModel.sortFirst, label: Text('First field')),
+          ButtonSegment(value: ValueListModel.sortSecond, label: const Text('Second field'), enabled: hasSecond),
+        ],
+        selected: {if (hasSecond) _sortBy else ValueListModel.sortFirst},
+        onSelectionChanged: (v) => setState(() => _sortBy = v.first),
+      ),
+      const SizedBox(height: 8),
+      CheckboxListTile(
+        key: const ValueKey('value-list-related'),
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        controlAffinity: ListTileControlAffinity.leading,
+        value: _related,
+        onChanged: _sourceTableId == null
+            ? null
+            : (v) => setState(() {
+                  _related = v ?? false;
+                  final through = _sourceOccurrences;
+                  if (_sourceOccurrenceId == null && through.length == 1) _sourceOccurrenceId = through.single.id;
+                }),
+        title: const Text('Include only related values starting from', style: small),
+      ),
+      if (_related) ...[
+        DropdownButtonFormField<String>(
+          key: const ValueKey('value-list-related-occurrence'),
+          initialValue: _relatedOccurrenceId,
+          decoration: const InputDecoration(
+              labelText: 'Starting from occurrence', border: OutlineInputBorder(), isDense: true),
+          items: widget.occurrences
+              .map((o) => DropdownMenuItem(value: o.id, child: Text(o.name)))
+              .toList(),
+          onChanged: (v) => setState(() => _relatedOccurrenceId = v),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          key: ValueKey('value-list-source-occurrence-$_sourceTableId'),
+          initialValue: _sourceOccurrenceId,
+          decoration: const InputDecoration(
+              labelText: 'Values read through occurrence', border: OutlineInputBorder(), isDense: true),
+          items: _sourceOccurrences
+              .map((o) => DropdownMenuItem(value: o.id, child: Text(o.name)))
+              .toList(),
+          onChanged: (v) => setState(() => _sourceOccurrenceId = v),
+        ),
+      ],
+    ];
   }
 
   @override
@@ -385,10 +529,7 @@ class _ValueListEditorState extends State<_ValueListEditor> {
                   items: widget.tables
                       .map((t) => DropdownMenuItem(value: t.id, child: Text(t.displayName)))
                       .toList(),
-                  onChanged: (v) => setState(() {
-                    _sourceTableId = v;
-                    _sourceColumnId = null;
-                  }),
+                  onChanged: (v) => setState(() => _chooseTable(v)),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -401,6 +542,7 @@ class _ValueListEditorState extends State<_ValueListEditor> {
                       .toList(),
                   onChanged: _sourceTableId == null ? null : (v) => setState(() => _sourceColumnId = v),
                 ),
+                ..._fieldOptions(),
               ],
               if (_error != null) ...[
                 const SizedBox(height: 12),

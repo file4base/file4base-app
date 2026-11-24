@@ -311,6 +311,20 @@ func WriteHTML(report *Report) ([]byte, error) {
 			values := strings.Join(list.Values, ", ")
 			if list.Source != "" {
 				values = "from " + list.Source
+				if list.Second != "" {
+					values += ", showing " + list.Second
+					if list.ShowSecondOnly {
+						values += " in its place"
+					} else {
+						values += " beside it"
+					}
+				}
+				if list.SortBy != "" {
+					values += ", sorted by the " + list.SortBy + " field"
+				}
+				if list.RelatedFrom != "" {
+					values += ", only values related from " + list.RelatedFrom
+				}
 			}
 			b.WriteString(`<tr><td>` + esc(list.Name) + `</td><td>` + esc(list.Kind) + `</td><td>` +
 				esc(values) + `</td></tr>` + "\n")

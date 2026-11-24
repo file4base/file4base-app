@@ -659,15 +659,19 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   // ─── Value lists (#31) ─────────────────────────────────────────────────────
 
-  /// The values each list offers, resolved on demand. A list taken from a
-  /// field is resolved by the server, so it reflects the data as it is now.
-  final Map<String, List<String>> _valueListValues = {};
+  /// The value lists of the database, and the entries each offers, resolved
+  /// on demand. A list taken from a field is resolved by the server, so it
+  /// reflects the data as it is now; one that includes only related values is
+  /// resolved again for each record it is shown on.
+  final Map<String, ValueListModel> _valueLists = {};
+  final Map<String, List<ValueListItem>> _valueListItems = {};
 
   Future<void> _loadValueLists() async {
     try {
       final lists = await widget.apiClient.listValueLists();
       if (!mounted) return;
       for (final list in lists) {
+        _valueLists[list.id] = list;
         unawaited(_resolveValueList(list));
       }
     } catch (_) {
@@ -678,24 +682,68 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   Future<void> _resolveValueList(ValueListModel list) async {
     if (!list.isFromField) {
-      if (mounted) setState(() => _valueListValues[list.id] = list.customValueList);
+      if (mounted) {
+        setState(() => _valueListItems[list.id] = [for (final v in list.customValueList) ValueListItem(v)]);
+      }
+      return;
+    }
+    if (list.isRelated) {
+      // Only a list the layout shows is worth a request per record.
+      final shown = widget.layout?.objects.any((o) => o.fieldBinding?.valueListId == list.id) ?? false;
+      if (!shown) return;
+      final recordId = _records.isEmpty ? null : _records[_currentIndex]['id']?.toString();
+      _valueListItems[list.id] = const [];
+      if (recordId == null) return;
+      try {
+        final items =
+            await widget.apiClient.valueListItems(list.id, table: widget.table.name, recordId: recordId);
+        // The user may have moved on to another record meanwhile.
+        final now = _records.isEmpty ? null : _records[_currentIndex]['id']?.toString();
+        if (mounted && now == recordId) setState(() => _valueListItems[list.id] = items);
+      } catch (_) {
+        // Already empty: the control offers nothing but the stored value.
+      }
       return;
     }
     try {
-      final values = await widget.apiClient.valueListValues(list.id);
-      if (mounted) setState(() => _valueListValues[list.id] = values);
+      final items = await widget.apiClient.valueListItems(list.id);
+      if (mounted) setState(() => _valueListItems[list.id] = items);
     } catch (_) {
-      if (mounted) setState(() => _valueListValues[list.id] = const []);
+      if (mounted) setState(() => _valueListItems[list.id] = const []);
     }
   }
 
-  /// The values a field object offers, or null when it is a plain edit box.
-  List<String>? _valuesFor(FieldBindingModel binding) {
+  /// Resolves again the lists whose entries depend on the current record.
+  void _resolveRelatedValueLists() {
+    for (final list in _valueLists.values) {
+      if (list.isRelated) unawaited(_resolveValueList(list));
+    }
+  }
+
+  /// The entries a field object offers, or null when it is a plain edit box.
+  /// A list of related values stays a control while it offers nothing: what
+  /// it offers depends on the record.
+  List<ValueListItem>? _itemsFor(FieldBindingModel binding) {
     final id = binding.valueListId;
     if (id == null || !FieldControlStyle.needsValueList(binding.controlStyle)) return null;
-    final values = _valueListValues[id];
-    if (values == null || values.isEmpty) return null;
-    return values;
+    final items = _valueListItems[id];
+    if (items == null || (items.isEmpty && !(_valueLists[id]?.isRelated ?? false))) return null;
+    return items;
+  }
+
+  /// What an entry shows: its second field only, or its value with the second
+  /// field's beside it.
+  static Widget _valueListLabel(ValueListItem item, {required bool showSecondOnly}) {
+    const style = TextStyle(fontSize: 13);
+    if (showSecondOnly) return Text(item.secondText, style: style);
+    if (item.second == null) return Text(item.value, style: style);
+    return Text.rich(
+      TextSpan(children: [
+        TextSpan(text: item.value),
+        TextSpan(text: '  ${item.second}', style: const TextStyle(color: Colors.grey)),
+      ]),
+      style: style,
+    );
   }
 
   /// Draws the control a value list fills: a drop-down, a pop-up menu, a set
@@ -703,12 +751,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   ///
   /// A checkbox set holds several values; they are kept in the field as a
   /// newline-separated list, which is how FileMaker stores them too.
+  ///
+  /// Each entry stores its value; with [showSecondOnly] it shows its second
+  /// field instead, and so does a value already stored that the list offers.
   Widget _buildValueListControl({
     required String style,
-    required List<String> values,
+    required List<ValueListItem> items,
     required String current,
     required ValueChanged<String> onChanged,
+    bool showSecondOnly = false,
   }) {
+    final values = [for (final item in items) item.value];
     switch (style) {
       case FieldControlStyle.checkboxSet:
         final chosen = current
@@ -722,12 +775,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             runSpacing: 2,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              for (final value in values)
+              for (final item in items)
                 InkWell(
-                  key: ValueKey('checkbox-$value'),
+                  key: ValueKey('checkbox-${item.value}'),
                   onTap: () {
                     final next = Set<String>.from(chosen);
-                    next.contains(value) ? next.remove(value) : next.add(value);
+                    next.contains(item.value) ? next.remove(item.value) : next.add(item.value);
                     onChanged(values.where(next.contains).join('\n'));
                   },
                   child: Row(
@@ -736,14 +789,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       Checkbox(
                         visualDensity: VisualDensity.compact,
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        value: chosen.contains(value),
+                        value: chosen.contains(item.value),
                         onChanged: (_) {
                           final next = Set<String>.from(chosen);
-                          next.contains(value) ? next.remove(value) : next.add(value);
+                          next.contains(item.value) ? next.remove(item.value) : next.add(item.value);
                           onChanged(values.where(next.contains).join('\n'));
                         },
                       ),
-                      Flexible(child: Text(value, style: const TextStyle(fontSize: 13))),
+                      Flexible(child: _valueListLabel(item, showSecondOnly: showSecondOnly)),
                     ],
                   ),
                 ),
@@ -758,21 +811,21 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             runSpacing: 2,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              for (final value in values)
+              for (final item in items)
                 InkWell(
-                  key: ValueKey('radio-$value'),
-                  onTap: () => onChanged(value),
+                  key: ValueKey('radio-${item.value}'),
+                  onTap: () => onChanged(item.value),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Radio<String>(
                         visualDensity: VisualDensity.compact,
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        value: value,
+                        value: item.value,
                         groupValue: current.trim(),
                         onChanged: (v) => onChanged(v ?? ''),
                       ),
-                      Flexible(child: Text(value, style: const TextStyle(fontSize: 13))),
+                      Flexible(child: _valueListLabel(item, showSecondOnly: showSecondOnly)),
                     ],
                   ),
                 ),
@@ -783,9 +836,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       default:
         // Drop-down list and pop-up menu are the same control; the record may
         // hold a value the list no longer offers, so it is kept selectable.
-        final items = List<String>.from(values);
+        // A list showing only its second field shows it for the stored value
+        // too; a value it no longer offers is shown as it is.
+        final offered = List<ValueListItem>.from(items);
         final value = current.trim();
-        if (value.isNotEmpty && !items.contains(value)) items.insert(0, value);
+        if (value.isNotEmpty && !values.contains(value)) offered.insert(0, ValueListItem(value));
+        const dash = Text('—', style: TextStyle(fontSize: 13));
         return DropdownButtonFormField<String>(
           key: const ValueKey('value-list-control'),
           isExpanded: true,
@@ -795,11 +851,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             border: OutlineInputBorder(),
           ),
-          hint: const Text('—', style: TextStyle(fontSize: 13)),
+          hint: dash,
           items: [
-            const DropdownMenuItem<String>(value: '', child: Text('—', style: TextStyle(fontSize: 13))),
-            for (final v in items)
-              DropdownMenuItem<String>(value: v, child: Text(v, style: const TextStyle(fontSize: 13))),
+            const DropdownMenuItem<String>(value: '', child: dash),
+            for (final item in offered)
+              DropdownMenuItem<String>(
+                value: item.value,
+                child: _valueListLabel(item, showSecondOnly: showSecondOnly && item.second != null),
+              ),
+          ],
+          selectedItemBuilder: (_) => [
+            dash,
+            for (final item in offered)
+              Text(
+                showSecondOnly && item.second != null ? item.secondText : item.value,
+                style: const TextStyle(fontSize: 13),
+              ),
           ],
           onChanged: (v) => onChanged(v ?? ''),
         );
@@ -864,6 +931,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     _fieldFocusNodes.clear();
     _fieldDebounceTimers.clear();
     _fieldSaving.clear();
+    _resolveRelatedValueLists();
 
     if (_records.isEmpty) return;
     final record = _records[_currentIndex];
@@ -3002,11 +3070,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
         // A field bound to a value list is filled from a control rather than
         // typed into (#31).
-        final offered = computed ? null : _valuesFor(obj.fieldBinding!);
+        final offered = computed ? null : _itemsFor(obj.fieldBinding!);
         if (offered != null) {
           return _buildValueListControl(
             style: obj.fieldBinding!.effectiveControlStyle(hasValueList: true),
-            values: offered,
+            items: offered,
+            showSecondOnly: _valueLists[obj.fieldBinding!.valueListId]?.showSecondOnly ?? false,
             current: ctrl?.text ?? '',
             onChanged: (value) {
               ctrl?.text = value;

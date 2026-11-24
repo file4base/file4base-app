@@ -55,7 +55,7 @@ Golden fixtures produced by each side are read by the other side's tests:
 
 **account**: `id`, `username`, `role` (`owner`, `admin` or `user`), `is_active`, `permissions` (array of `{layout_id, access_level}`, `access_level` being `read_write`, `read_only` or `none`).
 
-**value list**: `id`, `name`, `kind`, `custom_values` (optional), `source_table_id` and `source_column_id` (optional, remapped on import).
+**value list**: `id`, `name`, `kind`, `custom_values` (optional), `source_table_id`, `source_column_id` and `second_column_id` (optional, remapped on import), `show_second_only` and `sort_by` (optional), `related_occurrence_id` and `source_occurrence_id` (optional, remapped on import).
 
 **saved find**: `name`, `table_name`, `requests` (array of `{values, omit}`, `values` being field name to the criterion as typed). Matched by table and name on import; the account that saved it is not carried, so a restored find has no owner.
 

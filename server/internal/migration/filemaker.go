@@ -764,7 +764,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 4. Extract Value Lists
 	vlNodes := catalogDefinitions(root, []string{"ValueListCatalog", "value_lists"}, "ValueList", "value_list")
 	for _, vn := range vlNodes {
-		vl, items := convertValueListNode(vn, tableIDByName, canonicalTableName, occTableByName, colIDByTableCol, fieldNamesByTable)
+		vl, items := convertValueListNode(vn, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable)
 		for _, item := range items {
 			addReportItem(report, item)
 		}
@@ -1559,6 +1559,7 @@ func convertValueListNode(
 	tableIDByName map[string]string,
 	canonicalTableName map[string]string,
 	occTableByName map[string]string,
+	occIDByName map[string]string,
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
 ) (*schema.BundleValueList, []ReportItem) {
@@ -1585,7 +1586,7 @@ func convertValueListNode(
 		}}
 	}
 	if kind == "field" || kind == "fromfield" || findFirstChild(vn, "Field") != nil {
-		return convertFieldValueList(vn, name, tableIDByName, canonicalTableName, occTableByName, colIDByTableCol, fieldNamesByTable)
+		return convertFieldValueList(vn, name, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable)
 	}
 
 	var vals []string
@@ -1649,40 +1650,49 @@ func splitValueListLines(text string) []string {
 }
 
 // convertFieldValueList binds a value list that takes its values from a
-// field. A DDR names the field with table and name attributes on <Field>;
-// Save a Copy as XML nests <PrimaryField><FieldReference name> with its
-// table occurrence, and the options File4Base cannot reproduce yet (second
-// field, related values only) are reported rather than silently dropped.
+// field, with the options FileMaker gives such a list: a second field of the
+// same table shown beside the first or in its place, the field the values are
+// sorted by, and including only the values related to the current record of a
+// table occurrence.
+//
+// Save a Copy as XML nests the options in <Field>: <PrimaryField> and
+// <SecondaryField> each hold a <FieldReference name> with its
+// <TableOccurrenceReference name>, and <ShowRelated value> the occurrence the
+// related values start from. A DDR writes the same elements in the value list
+// itself, naming a field with <Field table name> and the occurrence with
+// <Table name>. A design document written by hand may name the field with
+// table and field attributes, on the list or on <Field>.
+//
+// Both write show="False" on the first field when only the second is shown,
+// and sort="True" on the field the values are sorted by. An option whose
+// field or occurrence was not migrated is reported rather than silently
+// dropped.
 func convertFieldValueList(
 	vn *xmlNode,
 	name string,
 	tableIDByName map[string]string,
 	canonicalTableName map[string]string,
 	occTableByName map[string]string,
+	occIDByName map[string]string,
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
 ) (*schema.BundleValueList, []ReportItem) {
 	tblName := firstAttr(vn, "table", "base_table")
 	fldName := firstAttr(vn, "field")
-	fChild := findFirstChild(vn, "Field")
-	var primary, secondary *xmlNode
-	if fChild != nil {
-		if tblName == "" {
-			tblName = firstAttr(fChild, "table")
+	options := vn
+	if fChild := findFirstChild(vn, "Field"); fChild != nil {
+		if findFirstChild(fChild, "PrimaryField") != nil {
+			options = fChild
 		}
-		if fldName == "" {
-			fldName = firstAttr(fChild, "name")
-		}
-		primary = findFirstChild(fChild, "PrimaryField")
-		secondary = findFirstChild(fChild, "SecondaryField")
+		tblName = firstNonEmpty(tblName, firstAttr(fChild, "table"))
+		fldName = firstNonEmpty(fldName, firstAttr(fChild, "name"))
 	}
+	primary := findFirstChild(options, "PrimaryField")
+	secondary := findFirstChild(options, "SecondaryField")
 	occName := ""
 	if primary != nil {
-		if ref := findFirstChild(primary, "FieldReference"); ref != nil {
-			fldName = firstAttr(ref, "name")
-			if to := findFirstChild(ref, "TableOccurrenceReference"); to != nil {
-				occName = firstAttr(to, "name")
-			}
+		if occ, fld := valueListFieldReference(primary); fld != "" {
+			occName, fldName = occ, fld
 		}
 	}
 	tSQL := canonicalTableName[strings.ToLower(tblName)]
@@ -1692,14 +1702,18 @@ func convertFieldValueList(
 		}
 	}
 	tID := tableIDByName[tSQL]
-	column := sanitizeIdentifier(fldName)
-	if names := fieldNamesByTable[tSQL]; names != nil {
-		if resolved, ok := names.resolve(fldName); ok {
-			column = resolved
+	columnID := func(field string) string {
+		column := sanitizeIdentifier(field)
+		if names := fieldNamesByTable[tSQL]; names != nil {
+			if resolved, ok := names.resolve(field); ok {
+				column = resolved
+			}
 		}
+		return colIDByTableCol[tSQL+"."+column]
 	}
-	cID := colIDByTableCol[tSQL+"."+column]
-	source := firstNonEmpty(occName, tblName) + "::" + fldName
+	cID := columnID(fldName)
+	sourceOcc := firstNonEmpty(occName, tblName)
+	source := sourceOcc + "::" + fldName
 	if tID == "" || cID == "" {
 		return nil, []ReportItem{{
 			Category:   CategoryManualActionRequired,
@@ -1708,25 +1722,60 @@ func convertFieldValueList(
 			Detail:     fmt.Sprintf("Value list %q takes its values from %s, which was not migrated; recreate it in Manage Database > Value Lists", name, source),
 		}}
 	}
+	vl := &schema.BundleValueList{
+		ID:             uuid.NewString(),
+		Name:           name,
+		Kind:           "field",
+		SourceTableID:  &tID,
+		SourceColumnID: &cID,
+	}
+	detail := fmt.Sprintf("Dynamic field value list from %s", source)
+	var lost []string
+
+	if secondary != nil {
+		occ, fld := valueListFieldReference(secondary)
+		second := firstNonEmpty(occ, sourceOcc) + "::" + fld
+		secondID := ""
+		if fld != "" && (occ == "" || occTableByName[strings.ToLower(occ)] == tSQL) {
+			secondID = columnID(fld)
+		}
+		if secondID == "" {
+			lost = append(lost, fmt.Sprintf("its second field %s (it now shows the first field only)", second))
+		} else {
+			vl.SecondColumnID = &secondID
+			vl.ShowSecondOnly = primary != nil && strings.EqualFold(firstAttr(primary, "show"), "false")
+			if isTrue(firstAttr(secondary, "sort")) {
+				vl.SortBy = schema.ValueListSortSecond
+			}
+			detail += ", showing " + second
+		}
+	}
+
+	if rel := findFirstChild(options, "ShowRelated"); rel != nil && isTrue(firstAttr(rel, "value")) {
+		from := ""
+		if ref := findFirstChild(rel, "TableOccurrenceReference", "Table"); ref != nil {
+			from = firstAttr(ref, "name", "Name")
+		}
+		startID := occIDByName[strings.ToLower(from)]
+		sourceID := ""
+		if occTableByName[strings.ToLower(sourceOcc)] == tSQL {
+			sourceID = occIDByName[strings.ToLower(sourceOcc)]
+		}
+		if startID == "" || sourceID == "" {
+			lost = append(lost, fmt.Sprintf("including only the values related from %q (it now lists every record)", from))
+		} else {
+			vl.RelatedOccurrenceID, vl.SourceOccurrenceID = &startID, &sourceID
+			detail += ", only the values related from " + from
+		}
+	}
+
 	items := []ReportItem{{
 		Category:   CategoryPreserved,
 		Domain:     "value_list",
 		SourceName: name,
 		TargetName: name,
-		Detail:     fmt.Sprintf("Dynamic field value list from %s", source),
+		Detail:     detail,
 	}}
-	var lost []string
-	if secondary != nil && isTrue(firstAttr(secondary, "show")) {
-		lost = append(lost, "the values of its second field")
-	}
-	if primary != nil && !isTrue(firstAttr(primary, "show")) && secondary != nil {
-		lost = append(lost, "showing only the second field (it now shows the first)")
-	}
-	if fChild != nil {
-		if rel := findFirstChild(fChild, "ShowRelated"); rel != nil && isTrue(firstAttr(rel, "value")) {
-			lost = append(lost, "including only related values (it now lists every record)")
-		}
-	}
 	if len(lost) > 0 {
 		items = append(items, ReportItem{
 			Category:   CategoryUnsupported,
@@ -1736,13 +1785,22 @@ func convertFieldValueList(
 			Detail:     fmt.Sprintf("Value list %q lost %s", name, strings.Join(lost, ", ")),
 		})
 	}
-	return &schema.BundleValueList{
-		ID:             uuid.NewString(),
-		Name:           name,
-		Kind:           "field",
-		SourceTableID:  &tID,
-		SourceColumnID: &cID,
-	}, items
+	return vl, items
+}
+
+// valueListFieldReference is the occurrence and the name of the field a
+// <PrimaryField> or <SecondaryField> names, in either grammar.
+func valueListFieldReference(n *xmlNode) (occurrence, field string) {
+	if ref := findFirstChild(n, "FieldReference"); ref != nil {
+		if to := findFirstChild(ref, "TableOccurrenceReference"); to != nil {
+			occurrence = firstAttr(to, "name")
+		}
+		return occurrence, firstAttr(ref, "name")
+	}
+	if f := findFirstChild(n, "Field"); f != nil {
+		return firstAttr(f, "table"), firstAttr(f, "name")
+	}
+	return "", ""
 }
 
 func convertLayoutNode(

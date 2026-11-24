@@ -239,6 +239,11 @@ class ValueListModel {
     this.customValues = '',
     this.sourceTableId,
     this.sourceColumnId,
+    this.secondColumnId,
+    this.showSecondOnly = false,
+    this.sortBy = sortFirst,
+    this.sourceOccurrenceId,
+    this.relatedOccurrenceId,
   });
 
   factory ValueListModel.fromJson(Map<String, dynamic> json) => ValueListModel(
@@ -248,12 +253,21 @@ class ValueListModel {
         customValues: json['custom_values'] as String? ?? '',
         sourceTableId: json['source_table_id'] as String?,
         sourceColumnId: json['source_column_id'] as String?,
+        secondColumnId: json['second_column_id'] as String?,
+        showSecondOnly: json['show_second_only'] as bool? ?? false,
+        sortBy: json['sort_by'] as String? ?? sortFirst,
+        sourceOccurrenceId: json['source_occurrence_id'] as String?,
+        relatedOccurrenceId: json['related_occurrence_id'] as String?,
       );
   /// A fixed list the designer typed.
   static const String kindCustom = 'custom';
 
   /// The values a field already holds, so the list grows with the data.
   static const String kindFromField = 'field';
+
+  /// What a list taken from a field is sorted by.
+  static const String sortFirst = 'first';
+  static const String sortSecond = 'second';
 
   final String id;
   final String name;
@@ -265,7 +279,25 @@ class ValueListModel {
   final String? sourceTableId;
   final String? sourceColumnId;
 
+  /// A second field of the same table, shown beside the first one, or in its
+  /// place with [showSecondOnly]. Choosing an entry still stores the first
+  /// field's value.
+  final String? secondColumnId;
+  final bool showSecondOnly;
+
+  /// [sortFirst] or [sortSecond].
+  final String sortBy;
+
+  /// With [relatedOccurrenceId], the list offers only the values of the
+  /// records related to the current record of that occurrence, read through
+  /// [sourceOccurrenceId], an occurrence of the list's table.
+  final String? sourceOccurrenceId;
+  final String? relatedOccurrenceId;
+
   bool get isFromField => kind == kindFromField;
+
+  /// True when what the list offers depends on the record it is shown on.
+  bool get isRelated => isFromField && relatedOccurrenceId != null;
 
   /// The values of a custom list, in order, without blanks or repeats. A list
   /// taken from a field is resolved by the server instead.
@@ -286,6 +318,11 @@ class ValueListModel {
         'custom_values': customValues,
         'source_table_id': sourceTableId,
         'source_column_id': sourceColumnId,
+        'second_column_id': secondColumnId,
+        'show_second_only': showSecondOnly,
+        'sort_by': sortBy,
+        'source_occurrence_id': sourceOccurrenceId,
+        'related_occurrence_id': relatedOccurrenceId,
       };
 
   ValueListModel copyWith({
@@ -294,6 +331,11 @@ class ValueListModel {
     String? customValues,
     String? sourceTableId,
     String? sourceColumnId,
+    String? secondColumnId,
+    bool? showSecondOnly,
+    String? sortBy,
+    String? sourceOccurrenceId,
+    String? relatedOccurrenceId,
   }) =>
       ValueListModel(
         id: id,
@@ -302,7 +344,29 @@ class ValueListModel {
         customValues: customValues ?? this.customValues,
         sourceTableId: sourceTableId ?? this.sourceTableId,
         sourceColumnId: sourceColumnId ?? this.sourceColumnId,
+        secondColumnId: secondColumnId ?? this.secondColumnId,
+        showSecondOnly: showSecondOnly ?? this.showSecondOnly,
+        sortBy: sortBy ?? this.sortBy,
+        sourceOccurrenceId: sourceOccurrenceId ?? this.sourceOccurrenceId,
+        relatedOccurrenceId: relatedOccurrenceId ?? this.relatedOccurrenceId,
       );
+}
+
+/// One entry a value list offers: the [value] choosing it stores and, for a
+/// list with a second field, that field's value on the same record.
+class ValueListItem {
+  const ValueListItem(this.value, {this.second});
+
+  factory ValueListItem.fromJson(Map<String, dynamic> json) => ValueListItem(
+        json['value']?.toString() ?? '',
+        second: json['second']?.toString(),
+      );
+
+  final String value;
+  final String? second;
+
+  /// What the entry shows when the list shows only its second field.
+  String get secondText => second ?? '';
 }
 
 class TableOccurrenceModel {
@@ -1830,14 +1894,26 @@ class ApiClient {
 
   /// The values a list offers right now: the lines of a custom list, or the
   /// distinct values the field it reads holds.
-  Future<List<String>> valueListValues(String id) async {
+  /// The entries a value list offers now. A list that includes only related
+  /// values needs the record it is shown on ([table] and [recordId]) and
+  /// offers nothing without it.
+  Future<List<ValueListItem>> valueListItems(String id, {String? table, String? recordId}) async {
+    final query = <String, String>{
+      'table': ?table,
+      'record_id': ?recordId,
+    };
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/api/v1/value-lists/$id/values'),
+      Uri.parse('$baseUrl/api/v1/value-lists/$id/values')
+          .replace(queryParameters: query.isEmpty ? null : query),
       headers: _headers(),
     );
     _checkResponse(response);
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    return (body['values'] as List<dynamic>? ?? []).map((v) => v.toString()).toList();
+    final items = body['items'] as List<dynamic>?;
+    if (items != null) {
+      return [for (final item in items) ValueListItem.fromJson(item as Map<String, dynamic>)];
+    }
+    return [for (final v in body['values'] as List<dynamic>? ?? []) ValueListItem(v.toString())];
   }
 
   Future<ValueListModel> createValueList(ValueListModel list) async {

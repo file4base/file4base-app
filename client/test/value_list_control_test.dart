@@ -20,6 +20,44 @@ const _table = TableModel(id: 't1', name: 'customers', displayName: 'Customers',
   ColumnModel(id: 'c1', tableId: 't1', name: 'customer_type', displayName: 'Customer Type', fieldType: 'TEXT'),
 ]);
 
+// A list taken from a field: the server answers it, here from [_fieldItems].
+const _customerCodes = ValueListModel(
+  id: 'vl-codes',
+  name: 'Customer Codes',
+  kind: ValueListModel.kindFromField,
+  sourceTableId: 't2',
+  sourceColumnId: 'c-code',
+  secondColumnId: 'c-label',
+);
+
+const _codesByLabel = ValueListModel(
+  id: 'vl-codes-by-label',
+  name: 'Customer Codes by Label',
+  kind: ValueListModel.kindFromField,
+  sourceTableId: 't2',
+  sourceColumnId: 'c-code',
+  secondColumnId: 'c-label',
+  showSecondOnly: true,
+);
+
+// Only the codes related to the record it is shown on.
+const _relatedCodes = ValueListModel(
+  id: 'vl-related',
+  name: 'Related Codes',
+  kind: ValueListModel.kindFromField,
+  sourceTableId: 't2',
+  sourceColumnId: 'c-code',
+  secondColumnId: 'c-label',
+  showSecondOnly: true,
+  sourceOccurrenceId: 'o-codes',
+  relatedOccurrenceId: 'o-customers',
+);
+
+const _fieldItems = [
+  ValueListItem('N', second: 'Newcomer'),
+  ValueListItem('C', second: 'Regular'),
+];
+
 class _ValueListApi extends ApiClient {
 
   _ValueListApi({required this.lists, required this.rows}) : super(baseUrl: 'http://localhost:1');
@@ -27,12 +65,21 @@ class _ValueListApi extends ApiClient {
   final List<Map<String, dynamic>> rows;
   final List<Map<String, dynamic>> updates = [];
 
+  /// The record each request for a list of related values was made for.
+  final List<String?> relatedRequests = [];
+
   @override
   Future<List<ValueListModel>> listValueLists() async => lists;
 
   @override
-  Future<List<String>> valueListValues(String id) async =>
-      lists.firstWhere((l) => l.id == id).customValueList;
+  Future<List<ValueListItem>> valueListItems(String id, {String? table, String? recordId}) async {
+    final list = lists.firstWhere((l) => l.id == id);
+    if (!list.isFromField) return [for (final v in list.customValueList) ValueListItem(v)];
+    if (!list.isRelated) return _fieldItems;
+    relatedRequests.add(table == null ? null : '$table/$recordId');
+    // Each record has one related code.
+    return recordId == 'r1' ? [_fieldItems.first] : [_fieldItems.last];
+  }
 
   @override
   Future<List<Map<String, dynamic>>> listRows(String table,
@@ -80,6 +127,7 @@ Future<_ValueListApi> _pump(
   String? valueListId,
   List<ValueListModel> lists = const [_customerTypes],
   String current = 'Continuing',
+  List<Map<String, dynamic>>? rows,
 }) async {
   tester.view.physicalSize = const Size(1600, 900);
   tester.view.devicePixelRatio = 1.0;
@@ -87,9 +135,10 @@ Future<_ValueListApi> _pump(
 
   final api = _ValueListApi(
     lists: lists,
-    rows: [
-      {'id': 'r1', 'customer_type': current},
-    ],
+    rows: rows ??
+        [
+          {'id': 'r1', 'customer_type': current},
+        ],
   );
 
   await tester.pumpWidget(MaterialApp(
@@ -187,6 +236,89 @@ void main() {
       find.byKey(const ValueKey('value-list-control')),
     );
     expect(dropdown.initialValue, 'Lapsed');
+  });
+
+  testWidgets('a second field is shown beside each value, and the value is what is stored', (tester) async {
+    final api = await _pump(
+      tester,
+      FieldControlStyle.radioButtonSet,
+      valueListId: _customerCodes.id,
+      lists: const [_customerCodes],
+      current: 'C',
+    );
+
+    expect(find.text('N  Newcomer'), findsOneWidget);
+    expect(find.text('C  Regular'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('radio-N')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(api.updates.last['customer_type'], 'N');
+  });
+
+  testWidgets('showing the second field only shows it for the stored value too, and stores the first',
+      (tester) async {
+    final api = await _pump(
+      tester,
+      FieldControlStyle.popUpMenu,
+      valueListId: _codesByLabel.id,
+      lists: const [_codesByLabel],
+      current: 'C',
+    );
+
+    expect(find.text('Regular'), findsOneWidget, reason: 'the stored C is shown as its label');
+    expect(find.text('C'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('value-list-control')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Newcomer').last);
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(api.updates.last['customer_type'], 'N');
+    expect(find.text('Newcomer'), findsOneWidget);
+  });
+
+  testWidgets('a checkbox set showing the second field only keeps the first field values', (tester) async {
+    final api = await _pump(
+      tester,
+      FieldControlStyle.checkboxSet,
+      valueListId: _codesByLabel.id,
+      lists: const [_codesByLabel],
+      current: 'N',
+    );
+
+    expect(find.text('Newcomer'), findsOneWidget);
+    expect(find.text('Regular'), findsOneWidget);
+    expect(find.text('N'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('checkbox-C')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+
+    expect(api.updates.last['customer_type'], 'N\nC');
+  });
+
+  testWidgets('a list of related values follows the current record', (tester) async {
+    final api = await _pump(
+      tester,
+      FieldControlStyle.radioButtonSet,
+      valueListId: _relatedCodes.id,
+      lists: const [_relatedCodes],
+      rows: [
+        {'id': 'r1', 'customer_type': ''},
+        {'id': 'r2', 'customer_type': ''},
+      ],
+    );
+
+    expect(api.relatedRequests.last, 'customers/r1');
+    expect(find.text('Newcomer'), findsOneWidget);
+    expect(find.text('Regular'), findsNothing);
+
+    await tester.tap(find.byTooltip('Last record'));
+    await tester.pumpAndSettle();
+
+    expect(api.relatedRequests.last, 'customers/r2');
+    expect(find.text('Regular'), findsOneWidget);
+    expect(find.text('Newcomer'), findsNothing);
   });
 
   testWidgets('an edit box stays an edit box', (tester) async {

@@ -281,12 +281,19 @@ type Step struct {
 	ParametersJSON JSONValue `json:"parameters,omitempty" xml:"-"`
 }
 
-// ValueList is a value list and where its values come from.
+// ValueList is a value list and where its values come from. A list taken
+// from a field may show a second field of the same table beside the first,
+// or alone, be sorted by it, and include only the values related to the
+// current record of an occurrence.
 type ValueList struct {
-	Name   string   `json:"name" xml:"name,attr"`
-	Kind   string   `json:"kind" xml:"kind,attr"`
-	Values []string `json:"values,omitempty" xml:"values>value,omitempty"`
-	Source string   `json:"source,omitempty" xml:"source,attr,omitempty"`
+	Name           string   `json:"name" xml:"name,attr"`
+	Kind           string   `json:"kind" xml:"kind,attr"`
+	Values         []string `json:"values,omitempty" xml:"values>value,omitempty"`
+	Source         string   `json:"source,omitempty" xml:"source,attr,omitempty"`
+	Second         string   `json:"second_field,omitempty" xml:"second_field,attr,omitempty"`
+	ShowSecondOnly bool     `json:"show_second_only,omitempty" xml:"show_second_only,attr,omitempty"`
+	SortBy         string   `json:"sort_by,omitempty" xml:"sort_by,attr,omitempty"`
+	RelatedFrom    string   `json:"related_from,omitempty" xml:"related_from,attr,omitempty"`
 }
 
 // Account is a user account, without anything secret.
