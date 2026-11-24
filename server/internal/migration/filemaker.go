@@ -1601,7 +1601,7 @@ func convertLayoutNode(
 ) (*schema.BundleLayout, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(ln, "name", "Name")
-	if name == "" || nativeFolderMarker(ln) {
+	if name == "" || nativeFolderMarker(ln) || nativeSeparatorMarker(ln) {
 		return nil, nil
 	}
 	occName := firstAttr(ln, "table_occurrence", "table", "tableOccurrence")
@@ -1609,6 +1609,10 @@ func convertLayoutNode(
 		if tRef := findFirstChild(ln, "Table", "TableOccurrenceReference"); tRef != nil {
 			occName = firstAttr(tRef, "name", "Name")
 		}
+	}
+	if occName == deletedTableOccurrence {
+		return nil, []ReportItem{{Category: CategoryUnsupported, Domain: "layout", SourceName: name,
+			Detail: "Layout is based on a table occurrence that was deleted in FileMaker, so it shows no records there; it was not migrated"}}
 	}
 	occID := occIDByName[strings.ToLower(occName)]
 	hasExplicitOccurrence := occName != "" || findFirstChild(ln, "Table", "TableOccurrenceReference") != nil
@@ -1738,7 +1742,7 @@ func convertLayoutNode(
 func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleScript, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(sn, "name", "Name")
-	if name == "" || nativeFolderMarker(sn) {
+	if name == "" || nativeFolderMarker(sn) || nativeSeparatorMarker(sn) {
 		return nil, nil
 	}
 	ctxTable := firstAttr(sn, "context_table", "contextTable")
