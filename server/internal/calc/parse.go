@@ -284,6 +284,25 @@ func ParseWith(src string, opts Options) (*Expr, error) {
 	return &Expr{root: root, src: src, lib: opts.Library, known: known}, nil
 }
 
+// isCustom reports whether the solution defines a custom function of that
+// (upper-case) name, which then takes the place of a built-in one.
+func (p *parser) isCustom(upper string) bool {
+	if p.lib == nil {
+		return false
+	}
+	_, ok := p.lib.funcs[upper]
+	return ok
+}
+
+// isConstant reports whether name is a custom function without parameters.
+func (p *parser) isConstant(name string) bool {
+	if p.lib == nil {
+		return false
+	}
+	cf, ok := p.lib.funcs[strings.ToUpper(name)]
+	return ok && len(cf.params) == 0
+}
+
 func parseFormula(src string, known *names, lib *Library, params []string) (node, error) {
 	if strings.TrimSpace(src) == "" {
 		return nil, errorAt(0, "the formula is empty")
@@ -553,13 +572,17 @@ func (p *parser) parsePrimary() (node, error) {
 				return p.parseCall(t)
 			case p.bound(t.text):
 				return localNode{name: strings.ToLower(t.text), at: t.pos}, nil
+			case p.isConstant(t.text):
+				// A custom function without parameters is called by its
+				// name alone, as FileMaker writes it: kVAT * price.
+				return callNode{name: strings.ToUpper(t.text), at: t.pos}, nil
 			case strings.EqualFold(t.text, "true"):
 				return numberNode{value: decimal.NewFromInt(1), at: t.pos}, nil
 			case strings.EqualFold(t.text, "false"):
 				return numberNode{value: decimal.Zero, at: t.pos}, nil
 			case strings.EqualFold(t.text, "pi"):
 				return callNode{name: "PI", at: t.pos}, nil
-			case strings.EqualFold(t.text, "random"):
+			case strings.EqualFold(t.text, "random") && !p.isCustom("RANDOM"):
 				return callNode{name: "RANDOM", at: t.pos}, nil
 			case strings.EqualFold(t.text, "self"):
 				// The object the formula belongs to (a layout object's

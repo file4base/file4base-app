@@ -165,13 +165,13 @@ func logicalFunctions() map[string]function {
 			if strings.TrimSpace(src) == "" {
 				return boolValue(true), nil
 			}
-			_, perr := parseFormula(src, ev.known, ev.lib, nil)
+			_, perr := parseFormula(src, ev.known.strictCopy(), ev.lib, nil)
 			return boolValue(perr == nil), nil
 		}},
 		// GetLayoutObjectAttribute reads a named object of the layout the user
 		// is on. A calculation stored with a record has no layout, so it is an
 		// error here, as it is in FileMaker when the object is not on screen.
-		"GETLAYOUTOBJECTATTRIBUTE": {minArgs: 2, maxArgs: 5, lazy: func(ev *evaluator, c callNode) (value, error) {
+		"GETLAYOUTOBJECTATTRIBUTE": {minArgs: 2, maxArgs: 4, lazy: func(ev *evaluator, c callNode) (value, error) {
 			return empty, errorAt(c.at, "GetLayoutObjectAttribute needs a layout, and this calculation is not shown on one")
 		}},
 		"GETFIELD": fixed(1, func(ev *evaluator, c callNode, a []value) (value, error) {
@@ -216,13 +216,7 @@ func (ev *evaluator) evaluateText(c callNode) (value, error) {
 	if strings.TrimSpace(src) == "" {
 		return empty, nil
 	}
-	known := ev.known
-	if known != nil {
-		strict := *known
-		strict.strict = true
-		known = &strict
-	}
-	root, err := parseFormula(src, known, ev.lib, nil)
+	root, err := parseFormula(src, ev.known.strictCopy(), ev.lib, nil)
 	if err != nil {
 		return empty, errorAt(c.at, "Evaluate cannot read its formula: %v", err)
 	}
@@ -954,6 +948,9 @@ func (ev *evaluator) aggregateArgs(c callNode) ([]value, error) {
 			// FileMaker (error 1214): one argument must be a field, whose
 			// related records or repetitions are summarised.
 			return nil, errorAt(c.at, "%s needs a field, or two values or more", c.name)
+		}
+		if f.missing {
+			return nil, errorAt(f.at, "%s::%s refers to a table or field that was deleted in FileMaker", f.table, f.name)
 		}
 		if f.table != "" && f.repetition == nil {
 			return ev.relatedValues(f)

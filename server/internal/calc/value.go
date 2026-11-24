@@ -274,13 +274,26 @@ func (v value) asText(loc *Locale) string {
 func (v value) asDay(loc *Locale) (int64, bool) {
 	switch v.kind {
 	case kindDate, kindNumber:
-		return v.num.IntPart(), true
+		return dayPart(v.num), true
 	case kindTimestamp:
-		return v.num.Div(decimal.NewFromInt(secondsPerDay)).Floor().IntPart() + 1, true
+		return dayPart(v.num.Div(decimal.NewFromInt(secondsPerDay)).Floor()) + 1, true
 	case kindText:
 		return loc.parseDate(v.text)
 	}
 	return 0, false
+}
+
+// dayPart is the whole day number of n, held far outside the dates FileMaker
+// knows rather than wrapping when n does not fit an int64.
+func dayPart(n decimal.Decimal) int64 {
+	limit := decimal.NewFromInt(1e12)
+	switch {
+	case n.GreaterThan(limit):
+		return 1e12
+	case n.LessThan(limit.Neg()):
+		return -1e12
+	}
+	return n.IntPart()
 }
 
 // asSeconds reads the value as a time of day in seconds.

@@ -16,6 +16,8 @@ func TestEdgeInputsAnswerOrFailCleanly(t *testing.T) {
 		`If ( IsValid ( SerialIncrement ( "INV٢" ; 1 ) ) ; 1 ; 1 )`: "1",
 		`Sqrt ( 1e310 ) = 1e155`:                                    "1",
 		`Last ( 7 )`:                                                "7",
+		`IsValid ( GetAsDate ( 18446744073709551617 ) )`:            "0",
+		`IsValidExpression ( "GetLayoutObjectAttribute ( 1 ; 2 ; 3 ; 4 ; 5 )" )`: "0",
 	}
 	for formula, want := range cases {
 		expr, err := Parse(formula)
@@ -132,5 +134,37 @@ func TestSelfAndLayoutObjectsNeedALayout(t *testing.T) {
 		if _, err := EvaluateValue(expr, &RecordContext{}); err == nil {
 			t.Errorf("%q: want an error", formula)
 		}
+	}
+}
+
+func TestAstraPass3Regressions(t *testing.T) {
+	// A custom function named Random replaces the built-in.
+	lib, err := NewLibrary([]CustomFunction{{Name: "Random", Formula: "4"}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expr, err := ParseWith("Random + 1", Options{Library: lib})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, err := EvaluateValue(expr, &RecordContext{}); err != nil || v.Text(nil) != "5" {
+		t.Errorf("custom Random + 1 = %v, %v; want 5", v, err)
+	}
+	// An aggregate over a deleted field is the deleted-reference error.
+	expr, err = Parse("Sum ( Orders::<Field Missing> )")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EvaluateValue(expr, &RecordContext{}); err == nil || !strings.Contains(err.Error(), "deleted") {
+		t.Errorf("Sum of a deleted field: %v", err)
+	}
+	// IsValidExpression is as strict as Evaluate about a French decimal.
+	fr, _ := LocaleFor("fr")
+	expr, err = ParseWith(`IsValidExpression ( "1.5" )`, Options{Locale: &fr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, err := EvaluateValue(expr, &RecordContext{}); err != nil || v.Text(&fr) != "0" {
+		t.Errorf(`IsValidExpression ( "1.5" ) in French = %v, %v; want 0`, v, err)
 	}
 }

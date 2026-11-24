@@ -90,6 +90,16 @@ type names struct {
 	strict bool
 }
 
+// strictCopy is the names as Evaluate and IsValidExpression read them.
+func (n *names) strictCopy() *names {
+	if n == nil {
+		return nil
+	}
+	c := *n
+	c.strict = true
+	return &c
+}
+
 // point is the other character read as a decimal point besides the locale's.
 func (n *names) point() rune {
 	if n != nil && n.strict {
