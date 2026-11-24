@@ -94,7 +94,7 @@ abstract class LayoutActionHost {
 /// stopped early (unsupported step, missing script, ...).
 class LayoutActionResult {
 
-  const LayoutActionResult.ok()
+  const LayoutActionResult.ok({this.scriptResult})
       : completed = true,
         halted = false,
         message = null;
@@ -105,16 +105,30 @@ class LayoutActionResult {
   const LayoutActionResult.haltedAll()
       : completed = true,
         halted = true,
-        message = null;
+        message = null,
+        scriptResult = null;
 
   const LayoutActionResult.stopped(this.message)
       : completed = false,
-        halted = false;
+        halted = false,
+        scriptResult = null;
   final bool completed;
 
   /// True when a Halt Script step ended the whole execution session.
   final bool halted;
   final String? message;
+
+  /// Null means the script returned no explicit result. An explicit empty
+  /// string is a result and clears the caller's previous sub-script result.
+  final String? scriptResult;
+}
+
+/// Parameter and most recent sub-script result belonging to one invocation.
+/// Each nested call gets its own context and its own local variables.
+class ScriptCallContext {
+  ScriptCallContext({this.parameter = ''});
+  final String parameter;
+  String lastScriptResult = '';
 }
 
 /// What happened to one step of a script.
@@ -217,8 +231,9 @@ class LayoutActionRunner {
 
   static const maxScriptDepth = 8;
 
-  /// Session-scoped `$$global` script variables (including `$$lastLayout`).
-  static final Map<String, String> globalVariables = <String, String>{};
+  /// Globals belong to this solution's authenticated session, including when
+  /// called through a peer client. They never fall back to a caller's globals.
+  Map<String, String> get globalVariables => apiClient.scriptGlobalVariables;
 
   /// Normalizes both snake_case (`go_to_layout`) and FileMaker Title Case
   /// (`Go to Layout`, `Delete Portal Row`) step names into canonical keys.
@@ -249,14 +264,18 @@ class LayoutActionRunner {
       if (action.scriptId == null && (action.scriptName == null || action.scriptName!.isEmpty)) {
         return const LayoutActionResult.stopped('This button has no script selected.');
       }
-      return _performScript(id: action.scriptId, name: action.scriptName, depth: 0);
+      final parameter = resolveValue(action.parameter ?? '', <String, String>{});
+      if (parameter == null) {
+        return const LayoutActionResult.stopped('Cannot evaluate the script parameter.');
+      }
+      return _performScript(id: action.scriptId, name: action.scriptName, depth: 0, parameter: parameter);
     }
     final step = action.stepType;
     if (step == null) return const LayoutActionResult.stopped('This button has no step selected.');
     return runStep(step, action.params, depth: 0);
   }
 
-  Future<LayoutActionResult> _performScript({required int depth, String? id, String? name}) async {
+  Future<LayoutActionResult> _performScript({required int depth, String? id, String? name, String parameter = ''}) async {
     if (depth >= maxScriptDepth) {
       return const LayoutActionResult.stopped('Perform Script is nested too deeply (possible recursion).');
     }
@@ -277,7 +296,7 @@ class LayoutActionRunner {
     final where = solutionName == null ? '' : ' in the solution $solutionName';
     if (script == null) return LayoutActionResult.stopped('Script "${name ?? id}" not found$where.');
 
-    final execution = ScriptExecution(script: script, runner: this, depth: depth);
+    final execution = ScriptExecution(script: script, runner: this, depth: depth, parameter: parameter);
     while (!execution.atEnd) {
       final sequence = execution.currentSequence;
       final outcome = await execution.advance();
@@ -290,14 +309,14 @@ class LayoutActionRunner {
           // looking like an ordinary return (#95).
           return const LayoutActionResult.haltedAll();
         case StepOutcomeKind.exited:
-          return const LayoutActionResult.ok();
+          return LayoutActionResult.ok(scriptResult: execution.returnValue);
         case StepOutcomeKind.ran:
         case StepOutcomeKind.skipped:
         case StepOutcomeKind.controlFlow:
           break;
       }
     }
-    return const LayoutActionResult.ok();
+    return LayoutActionResult.ok(scriptResult: execution.returnValue);
   }
 
   Future<LayoutActionResult> runStep(
@@ -305,8 +324,10 @@ class LayoutActionRunner {
     Map<String, dynamic> params, {
     required int depth,
     Map<String, String>? localVars,
+    ScriptCallContext? callContext,
   }) async {
     final vars = localVars ?? <String, String>{};
+    final context = callContext ?? ScriptCallContext();
     String p(String key, [String fallback = '']) =>
         _resolveParamsText(params[key]?.toString() ?? fallback, vars);
 
@@ -340,7 +361,7 @@ class LayoutActionRunner {
         if (!params.containsKey('value') && !params.containsKey('formula') && !params.containsKey('text') && !params.containsKey('calc')) {
           return LayoutActionResult.stopped('Step "$stepType" is not supported without a value.');
         }
-        return _execSetVariable(params, vars);
+        return _execSetVariable(params, vars, callContext: context);
       case 'new_record':
         await host.actionNewRecord();
       case 'duplicate_record':
@@ -392,17 +413,32 @@ class LayoutActionRunner {
       case 'set_field':
         final field = params['field']?.toString() ?? '';
         if (field.isEmpty) return const LayoutActionResult.stopped('Set Field has no field selected.');
-        if (!await host.actionSetField(field, p('value'))) {
+        final value = params['value_is_calculation'] == true
+            ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
+            : p('value');
+        if (value == null) {
+          return const LayoutActionResult.stopped('Set Field calculation is not supported in this context.');
+        }
+        if (!await host.actionSetField(field, value)) {
           return LayoutActionResult.stopped('Field "$field" is not in this table.');
         }
       case 'show_dialog':
-        await host.actionShowDialog(p('title', 'Message'), p('message'));
+        final title = params['title_is_calculation'] == true
+            ? resolveValue(params['title']?.toString() ?? '', vars, callContext: context)
+            : p('title', 'Message');
+        final message = params['message_is_calculation'] == true
+            ? resolveValue(params['message']?.toString() ?? '', vars, callContext: context)
+            : p('message');
+        if (title == null || message == null) {
+          return const LayoutActionResult.stopped('Dialog calculation is not supported in this context.');
+        }
+        await host.actionShowDialog(title, message);
       case 'open_url':
         var rawUrl = params['url']?.toString() ?? '';
         if (rawUrl.isEmpty) {
           rawUrl = params['expression']?.toString() ?? '';
         }
-        final url = _resolveExpressionValue(rawUrl, vars);
+        final url = _resolveExpressionValue(rawUrl, vars, callContext: context);
         if (url.isEmpty) return const LayoutActionResult.stopped('Open URL has no URL.');
         await host.actionOpenUrl(url);
       case 'pause_script':
@@ -414,14 +450,24 @@ class LayoutActionRunner {
           name = _extractQuoted(params['expression']?.toString() ?? '');
         }
         if (name.isEmpty) return const LayoutActionResult.stopped('Perform Script has no script name.');
+        final parameter = resolveValue((params['script_parameter'] ?? params['parameter'])?.toString() ?? '', vars, callContext: context);
+        if (parameter == null) {
+          return const LayoutActionResult.stopped('Perform Script cannot evaluate its parameter.');
+        }
         final reference = params['file_reference']?.toString().trim() ?? '';
+        LayoutActionResult result;
         if (reference.isNotEmpty) {
           // A script in another file is resolved in the solution that file
           // became, and only there. Looking it up here would run whatever
           // local script shares the name (#107).
-          return _performExternalScript(reference: reference, name: name, depth: depth + 1);
+          result = await _performExternalScript(reference: reference, name: name, depth: depth + 1, parameter: parameter);
+        } else {
+          result = await _performScript(name: name, depth: depth + 1, parameter: parameter);
         }
-        return _performScript(name: name, depth: depth + 1);
+        if (result.completed && !result.halted && result.scriptResult != null) {
+          context.lastScriptResult = result.scriptResult!;
+        }
+        return result;
       default:
         return LayoutActionResult.stopped(
             'step "$stepType" is not supported by the client script runner yet '
@@ -451,6 +497,7 @@ class LayoutActionRunner {
     required String reference,
     required String name,
     required int depth,
+    required String parameter,
   }) async {
     if (depth >= maxScriptDepth) {
       return const LayoutActionResult.stopped('Perform Script is nested too deeply (possible recursion).');
@@ -481,7 +528,7 @@ class LayoutActionRunner {
     if (target.local) {
       // The reference names this very solution: an ordinary Perform Script,
       // with this solution's window.
-      return _performScript(name: name, depth: depth);
+      return _performScript(name: name, depth: depth, parameter: parameter);
     }
 
     final token = await peerTokenProvider?.call(target.database);
@@ -508,7 +555,7 @@ class LayoutActionRunner {
       windowSolution: windowSolution ?? target.callingDatabase,
       solutionName: target.database,
     );
-    return external._performScript(name: name, depth: depth);
+    return external._performScript(name: name, depth: depth, parameter: parameter);
   }
 
   /// Names of the step parameters that can hold the transfer an
@@ -630,7 +677,7 @@ class LayoutActionRunner {
     return params['expression']?.toString().trim() ?? '';
   }
 
-  LayoutActionResult _execSetVariable(Map<String, dynamic> params, Map<String, String> localVars) {
+  LayoutActionResult _execSetVariable(Map<String, dynamic> params, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     var name = params['name']?.toString().trim() ?? '';
     var valExpr = params['value']?.toString().trim() ?? '';
     if (name.isEmpty) {
@@ -650,7 +697,7 @@ class LayoutActionRunner {
     if (name.isEmpty) {
       return const LayoutActionResult.stopped('Set Variable has no variable name.');
     }
-    final resolved = resolveValue(valExpr, localVars);
+    final resolved = resolveValue(valExpr, localVars, callContext: callContext);
     if (resolved == null) {
       // Guessing an unreadable value as empty wrote an empty variable and let
       // the script carry on as though it had a value (#93).
@@ -676,7 +723,7 @@ class LayoutActionRunner {
     if (key.startsWith(r'$$')) {
       return globalVariables[key];
     }
-    return localVars[key] ?? globalVariables['\$$key'];
+    return localVars[key];
   }
 
   String _resolveParamsText(String raw, Map<String, String> localVars) {
@@ -687,8 +734,8 @@ class LayoutActionRunner {
     return host.actionResolveText(raw);
   }
 
-  String _resolveExpressionValue(String raw, Map<String, String> localVars) =>
-      resolveValue(raw, localVars) ?? '';
+  String _resolveExpressionValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) =>
+      resolveValue(raw, localVars, callContext: callContext) ?? '';
 
   /// The value of one expression, or null when it is not an expression this
   /// runner can evaluate.
@@ -699,12 +746,18 @@ class LayoutActionRunner {
   /// this layout does not have — is null, so the caller stops the script
   /// rather than treating it as an empty field: an empty string made
   /// `1 = 0` true and wrote empty variables (#93).
-  String? resolveValue(String raw, Map<String, String> localVars) {
+  String? resolveValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     final expr = raw.trim();
     if (expr.isEmpty) return '';
     if ((expr.startsWith('"') && expr.endsWith('"') && expr.length >= 2) ||
         (expr.startsWith("'") && expr.endsWith("'") && expr.length >= 2)) {
       return host.actionResolveText(expr.substring(1, expr.length - 1));
+    }
+    final scriptGet = RegExp(r'^get\s*\(\s*(scriptparameter|scriptresult)\s*\)$', caseSensitive: false).firstMatch(expr);
+    if (scriptGet != null) {
+      return scriptGet.group(1)!.toLowerCase() == 'scriptparameter'
+          ? callContext?.parameter ?? ''
+          : callContext?.lastScriptResult ?? '';
     }
     // A numeric literal is its own value, not the name of a field.
     if (num.tryParse(expr) != null) return expr;
@@ -741,7 +794,7 @@ class LayoutActionRunner {
   /// when it is a non-zero number or a non-empty text. Null is the answer for
   /// anything else, and a script stops on it rather than taking a branch
   /// chosen by guesswork (#93).
-  bool? evaluateCondition(String rawExpr, Map<String, String> localVars) {
+  bool? evaluateCondition(String rawExpr, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     var expr = rawExpr.trim();
     if (expr.isEmpty) return true;
     while (expr.startsWith('(') && expr.endsWith(')')) {
@@ -751,7 +804,7 @@ class LayoutActionRunner {
     if (orParts.length > 1) {
       var answer = false;
       for (final part in orParts) {
-        final one = evaluateCondition(part, localVars);
+        final one = evaluateCondition(part, localVars, callContext: callContext);
         if (one == null) return null;
         answer = answer || one;
       }
@@ -761,18 +814,18 @@ class LayoutActionRunner {
     if (andParts.length > 1) {
       var answer = true;
       for (final part in andParts) {
-        final one = evaluateCondition(part, localVars);
+        final one = evaluateCondition(part, localVars, callContext: callContext);
         if (one == null) return null;
         answer = answer && one;
       }
       return answer;
     }
     if (expr.toLowerCase().startsWith('not ')) {
-      final inner = evaluateCondition(expr.substring(4), localVars);
+      final inner = evaluateCondition(expr.substring(4), localVars, callContext: callContext);
       return inner == null ? null : !inner;
     }
     if (expr.startsWith('!') && !expr.startsWith('!=')) {
-      final inner = evaluateCondition(expr.substring(1), localVars);
+      final inner = evaluateCondition(expr.substring(1), localVars, callContext: callContext);
       return inner == null ? null : !inner;
     }
     final isEmptyMatch = RegExp(r'^isempty\s*\(\s*(.+)\s*\)$', caseSensitive: false).firstMatch(expr);
@@ -780,7 +833,7 @@ class LayoutActionRunner {
       final inner = isEmptyMatch.group(1)!;
       // A field this context does not have is not an empty field, so the
       // question cannot be answered.
-      final value = resolveValue(inner, localVars);
+      final value = resolveValue(inner, localVars, callContext: callContext);
       return value?.trim().isEmpty;
     }
 
@@ -789,13 +842,13 @@ class LayoutActionRunner {
     for (final op in <String>['<=', '>=', '!=', '<>', '≠', '≤', '≥', '=', '<', '>']) {
       final idx = expr.indexOf(op);
       if (idx <= 0) continue;
-      final left = resolveValue(expr.substring(0, idx), localVars);
-      final right = resolveValue(expr.substring(idx + op.length), localVars);
+      final left = resolveValue(expr.substring(0, idx), localVars, callContext: callContext);
+      final right = resolveValue(expr.substring(idx + op.length), localVars, callContext: callContext);
       if (left == null || right == null) return null;
       return _compareValues(op, left, right);
     }
 
-    final value = resolveValue(expr, localVars);
+    final value = resolveValue(expr, localVars, callContext: callContext);
     if (value == null) return null;
     final number = num.tryParse(value.trim());
     if (number != null) return number != 0;
@@ -855,9 +908,10 @@ class LayoutActionRunner {
 /// really interprets (#94).
 class ScriptExecution {
 
-  ScriptExecution({required this.script, required this.runner, this.depth = 0, Map<String, String>? localVars})
+  ScriptExecution({required this.script, required this.runner, this.depth = 0, Map<String, String>? localVars, String parameter = ''})
       : steps = List<ScriptStepModel>.from(script.steps)
           ..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx)),
+        callContext = ScriptCallContext(parameter: parameter),
         localVars = localVars ?? <String, String>{} {
     _hasEndIf = steps.any((s) => s.isEnabled && LayoutActionRunner.normalizeStepType(s.stepType) == 'end_if');
     _hasEndLoop = steps.any((s) => s.isEnabled && LayoutActionRunner.normalizeStepType(s.stepType) == 'end_loop');
@@ -871,6 +925,9 @@ class ScriptExecution {
 
   /// The script's `$local` variables, shared by every step of this run.
   final Map<String, String> localVars;
+  final ScriptCallContext callContext;
+  String? _returnValue;
+  String? get returnValue => _returnValue;
 
   final List<_IfFrame> _ifStack = <_IfFrame>[];
   final List<_LoopFrame> _loopStack = <_LoopFrame>[];
@@ -912,7 +969,7 @@ class ScriptExecution {
           final parentActive = isExecuting;
           var taken = false;
           if (parentActive) {
-            final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars);
+            final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext);
             if (condition == null) {
               return StepOutcome(StepOutcomeKind.stopped,
                   'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -927,7 +984,7 @@ class ScriptExecution {
             if (!top.parentActive || top.branchTaken) {
               top.active = false;
             } else {
-              final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars);
+              final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext);
               if (condition == null) {
                 return StepOutcome(StepOutcomeKind.stopped,
                     'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -978,7 +1035,7 @@ class ScriptExecution {
                 'Exit Loop If is not inside a Loop');
           }
           final condition = runner.evaluateCondition(
-              runner.extractCondition(step.params), localVars);
+              runner.extractCondition(step.params), localVars, callContext: callContext);
           if (condition == null) {
             return StepOutcome(StepOutcomeKind.stopped,
                 'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -1009,9 +1066,20 @@ class ScriptExecution {
     }
 
     if (norm == 'halt_script') return const StepOutcome(StepOutcomeKind.halted);
-    if (norm == 'exit_script') return const StepOutcome(StepOutcomeKind.exited);
+    if (norm == 'exit_script') {
+      if (step.params.containsKey('result') || step.params.containsKey('expression')) {
+        final expression = (step.params['result'] ?? step.params['expression'])?.toString() ?? '';
+        final value = runner.resolveValue(expression, localVars, callContext: callContext);
+        if (value == null) {
+          return const StepOutcome(StepOutcomeKind.stopped, 'Exit Script cannot evaluate its result.');
+        }
+        _returnValue = value;
+      }
+      _pc = steps.length;
+      return const StepOutcome(StepOutcomeKind.exited);
+    }
 
-    final result = await runner.runStep(step.stepType, step.params, depth: depth, localVars: localVars);
+    final result = await runner.runStep(step.stepType, step.params, depth: depth, localVars: localVars, callContext: callContext);
     if (result.halted) return const StepOutcome(StepOutcomeKind.halted);
     if (!result.completed) return StepOutcome(StepOutcomeKind.stopped, result.message);
     return const StepOutcome(StepOutcomeKind.ran);

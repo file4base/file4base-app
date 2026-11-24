@@ -195,4 +195,19 @@ Functional references consulted were Claris Pro Help
 No documentation expression or examples were copied. Maintainer review is
 pending.
 
+## Script call context and session isolation — 2026-11-13
+
+Codex assisted original changes to the client runner, debugger and API session
+lifecycle, with synthetic call/context/session regressions. Functional semantics
+were checked against current Claris Pro Help on 2026-11-13:
+[Get(ScriptParameter)](https://help.claris.com/en/pro-help/content/get-scriptparameter.html),
+[Get(ScriptResult)](https://help.claris.com/en/pro-help/content/get-scriptresult.html),
+[Exit Script](https://help.claris.com/en/pro-help/content/exit-script.html),
+[Perform Script](https://help.claris.com/en/pro-help/content/perform-script.html),
+and [Using variables](https://help.claris.com/en/pro-help/content/using-variables.html).
+These rolling references inform compatibility behavior; no vendor prose, sample
+code or assets are copied. Public inputs use original synthetic scripts and fake
+sessions. Private source scripts remain excluded. Changes retain GPL-3.0-only;
+maintainer review and actual source-generated workflow qualification are pending.
+
 Claude Code (Claude Opus 5.5) assisted rebasing this work onto v0.20.0, re-running the server and client suites and reviewing the public diff for confidential material on 2026-11-23.

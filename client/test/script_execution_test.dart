@@ -646,10 +646,10 @@ void main() {
           reason: 'the far solution is the one a token was asked for');
       expect(host.did, ['commit_records'],
           reason: 'nothing was rejected, so the branch after the transfer ran');
-      expect(LayoutActionRunner.globalVariables[r'$$transferadded'], '2');
-      expect(LayoutActionRunner.globalVariables[r'$$transferupdated'], '1');
-      expect(LayoutActionRunner.globalVariables[r'$$transferrejected'], '0');
-      expect(LayoutActionRunner.globalVariables[r'$$transfercommitted'], '1');
+      expect(runner.globalVariables[r'$$transferadded'], '2');
+      expect(runner.globalVariables[r'$$transferupdated'], '1');
+      expect(runner.globalVariables[r'$$transferrejected'], '0');
+      expect(runner.globalVariables[r'$$transfercommitted'], '1');
     });
 
     test('a refused transfer stops the script and says which rows were rejected',

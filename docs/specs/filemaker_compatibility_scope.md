@@ -62,7 +62,7 @@ The fixture #112 asks for is **two linked FileMaker files**, Dispatch and Result
 These are capability limits, stated so that an application depending on them is known to be unqualified rather than quietly mis-migrated:
 
 - An external script stops at operations that depend on a record or window context.
-- `$$` variables are shared across solutions rather than scoped per source file.
+- Database global fields are still represented as stored columns; their FileMaker session behavior is unqualified. Script `$$` variables are separate and now scoped to each authenticated solution session.
 - A transfer schedule runs a transfer, not an arbitrary migrated server script.
 - Repeating fields collapse to one column; `ExecuteSQL`, `Let` and `While` are not executed.
 
@@ -113,3 +113,21 @@ original synthetic regression coverage. Unread options remain in the report.
 Permissive source values (text in Number fields, localized decimals, invalid
 dates), time/duration and timezone behavior, database global fields/repetitions,
 original container streams and external contexts remain application-level gates.
+
+### Script call context
+
+The client passes supported text parameters and explicit return results through
+local, peer and self-reference script calls. Parameters and local variables are
+independent per invocation; no-result returns preserve the caller's previous
+subscript result and an explicit empty result clears it. Normal execution and the
+debugger use the same call state. Unsupported parameter/result expressions stop
+execution, and imported expressions outside the client runner's supported subset
+stop before modifying a record or showing a dialog. Unit coverage is not a
+source-generated workflow equivalence result.
+
+Script global variables share one in-memory map per server/session token. Peer
+clients using that same authenticated session observe the same values, while
+another solution or independent sign-in has a separate map. Logout, local session
+clear, HTTP 401, replacement sign-in, server change and client closure clear the
+session's values. This implements client script-variable isolation, not server
+script execution or session-scoped database global fields.

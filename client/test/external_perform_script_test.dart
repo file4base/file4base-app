@@ -233,8 +233,6 @@ Map<String, dynamic> _callerScript({String reference = 'Results'}) => _script('d
 Map<String, dynamic> get _impostor => _script('d2', 'Receive', [_step(1, 'new_record')]);
 
 void main() {
-  setUp(LayoutActionRunner.globalVariables.clear);
-
   group('a reference that goes nowhere stops the script, and never runs a local namesake', () {
     test('an unmapped reference, as the migration creates it', () async {
       final server = _TwoSolutions();
@@ -324,8 +322,10 @@ void main() {
     expect(server.runs, [
       {'on': _results, 'peer_token': _dispatchToken},
     ]);
-    expect(LayoutActionRunner.globalVariables[r'$$returned'], 'yes');
-    expect(LayoutActionRunner.globalVariables[r'$$transferupdated'], '2');
+    expect(runner.globalVariables[r'$$returned'], isNull,
+        reason: 'the peer script owns its globals in the Results session');
+    expect(runner.apiClient.forPeerSession(_resultsToken).scriptGlobalVariables[r'$$returned'], 'yes');
+    expect(runner.apiClient.forPeerSession(_resultsToken).scriptGlobalVariables[r'$$transferupdated'], '2');
   });
 
   test('a step that acts on a window stops the script instead of acting on the wrong one', () async {
@@ -406,6 +406,75 @@ void main() {
     expect(result.completed, isTrue, reason: result.message);
     expect(host.did, ['new_record', 'commit_records'],
         reason: 'a script of this solution has this solution\'s window');
+  });
+
+  tearDown(() {
+    // The fake server intentionally reuses its synthetic tokens between tests.
+    final api = ApiClient(baseUrl: 'http://test-server:8080');
+    api.forPeerSession(_dispatchToken).clearSession();
+    api.forPeerSession(_resultsToken).clearSession();
+    api.close();
+  });
+
+  for (final local in [false, true]) {
+    test('parameters and results survive a ${local ? "self" : "peer"} file reference', () async {
+      final server = _TwoSolutions();
+      final reference = local ? 'Self' : 'Results';
+      server.dispatch.fileReferences[reference] = local ? _dispatch : _results;
+      server.dispatch.scripts['d1'] = _script('d1', 'Send', [
+        _step(1, 'perform_script', {
+          'script_name': 'Receive',
+          'file_reference': reference,
+          'script_parameter': 'Get ( ScriptParameter )',
+        }),
+        _step(2, 'show_dialog', {
+          'message': 'Get ( ScriptResult )',
+          'message_is_calculation': true,
+        }),
+        _step(3, 'exit_script', {'result': 'Get ( ScriptParameter )'}),
+      ]);
+      final destination = local ? server.dispatch : server.results;
+      destination.scripts['child'] = _script('child', 'Receive', [
+        _step(1, 'exit_script', {'result': 'Get ( ScriptParameter )'}),
+        _step(2, 'new_record'),
+      ]);
+      final host = _ScreenHost();
+      final runner = await _signedIn(server, host, peerSessions: {_results: _resultsToken});
+      final result = await runner.run(const ButtonActionModel.performScript(
+        id: 'd1', name: 'Send', parameter: '"  transferred argument  "',
+      ));
+
+      expect(result.completed, isTrue, reason: result.message);
+      expect(result.scriptResult, '  transferred argument  ');
+      expect(host.dialogs, ['  transferred argument  ']);
+      expect(host.did, isEmpty);
+      expect(server.log.any((l) => l.startsWith('$_results GET')), !local);
+    });
+  }
+
+  test('same-named globals belong to each file across repeated external calls', () async {
+    final server = _TwoSolutions();
+    server.dispatch.fileReferences['Results'] = _results;
+    server.dispatch.scripts['d1'] = _script('d1', 'Send', [
+      _step(1, 'set_variable', {'name': r'$$same', 'value': '"Dispatch"'}),
+      _step(2, 'perform_script', {'script_name': 'Receive', 'file_reference': 'Results'}),
+      _step(3, 'perform_script', {'script_name': 'Read', 'file_reference': 'Results'}),
+      _step(4, 'show_dialog', {'message': r'$$same', 'message_is_calculation': true}),
+      _step(5, 'exit_script', {'result': 'Get ( ScriptResult )'}),
+    ]);
+    server.results.scripts['r1'] = _script('r1', 'Receive', [
+      _step(1, 'set_variable', {'name': r'$$same', 'value': '"Results"'}),
+    ]);
+    server.results.scripts['r2'] = _script('r2', 'Read', [
+      _step(1, 'exit_script', {'result': r'$$same'}),
+    ]);
+    final host = _ScreenHost();
+    final runner = await _signedIn(server, host, peerSessions: {_results: _resultsToken});
+    final result = await _run(runner, 'd1', 'Send');
+    expect(result.completed, isTrue, reason: result.message);
+    expect(result.scriptResult, 'Results');
+    expect(host.dialogs, ['Dispatch']);
+    expect(runner.globalVariables[r'$$same'], 'Dispatch');
   });
 
   test('a Perform Script with no file reference is unchanged', () async {
