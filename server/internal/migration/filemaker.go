@@ -13,12 +13,10 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
@@ -561,13 +559,6 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			report.Counts.Fields++
 		}
 
-		// Only now is the table's whole field map known, so only now can a
-		// calculation's references be resolved to the names the table ended
-		// up with (#111).
-		for _, it := range remapTableCalculations(sqlName, &bTable, fieldRenames, colTypeByTableCol) {
-			addReportItem(report, it)
-		}
-
 		bundle.Tables = append(bundle.Tables, bTable)
 		addReportItem(report, ReportItem{
 			Category:   CategoryPreserved,
@@ -700,6 +691,16 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 	}
 	report.Counts.Occurrences = len(bundle.TableOccurrences)
+
+	// Only now are every table's fields and every occurrence known, so only
+	// now can a calculation be read with the names it was written against
+	// and bound to the names the import gave them (#111).
+	binding := newFormulaBinding(bundle, fieldNamesByTable, locale)
+	for i := range bundle.Tables {
+		for _, it := range bindTableCalculations(&bundle.Tables[i], binding, colTypeByTableCol) {
+			addReportItem(report, it)
+		}
+	}
 
 	// 3. Extract Relationships
 	relNodes := catalogDefinitions(root, []string{"RelationshipCatalog", "relationships"}, "Relationship", "relationship")
@@ -908,41 +909,26 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 
 	if fieldKind == "CALCULATION" || rawType == "CALCULATION" || (calcText != "" && rawType != "SUMMARY" && fieldKind != "SUMMARY") {
 		resultType := normalizeCalcResultType(rawType)
-		expr, translatedNote, ok := translateAndValidateFormula(calcText)
+		formula := formulaText(calcText)
 		// Binary calculation results cannot be evaluated or stored as text.
 		// Keep a container column and report missing calculation behavior.
-		if rawType == "BINARY" || rawType == "CONTAINER" || rawType == "BLOB" {
+		binary := rawType == "BINARY" || rawType == "CONTAINER" || rawType == "BLOB"
+		if binary {
 			resultType = "Container"
-			ok = false
 		}
-		if ok {
+		if formula != "" && !binary {
+			// Kept as the source wrote it: it is read and bound to the
+			// imported fields once every table and occurrence is known.
 			payload, _ := json.Marshal(map[string]interface{}{
-				"formula":     expr,
+				"formula":     formula,
 				"result_type": resultType,
 			})
 			s := string(payload)
 			col.FieldType = "CALCULATION"
 			col.CalculationFormula = &s
-			if translatedNote != "" {
-				items = append(items, ReportItem{
-					Category:   CategoryTranslated,
-					Domain:     "field",
-					SourceName: tableSQL + "." + rawFieldName,
-					TargetName: tableSQL + "." + colName,
-					Detail:     translatedNote,
-				})
-			} else {
-				items = append(items, ReportItem{
-					Category:   CategoryPreserved,
-					Domain:     "field",
-					SourceName: tableSQL + "." + rawFieldName,
-					TargetName: tableSQL + "." + colName,
-					Detail:     fmt.Sprintf("Calculation field (%s): %s", resultType, expr),
-				})
-			}
 			return col, items
 		}
-		// Formula uses unsupported FileMaker functions: preserve column as stored value and flag for manual review
+		// Nothing to compute, or a container result: a stored column, reported.
 		col.FieldType = mapBasicFieldType(resultType)
 		items = append(items,
 			ReportItem{
@@ -1231,67 +1217,6 @@ func convertFieldAutoEnter(tableSQL, rawFieldName, colName string, an *xmlNode, 
 			})
 	}
 	return items
-}
-
-var (
-	reGetCurrentDate      = regexp.MustCompile(`(?i)Get\s*\(\s*CurrentDate\s*\)`)
-	reGetCurrentTimestamp = regexp.MustCompile(`(?i)Get\s*\(\s*(CurrentTimestamp|CurrentHostTimestamp)\s*\)`)
-)
-
-func translateAndValidateFormula(raw string) (string, string, bool) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return "", "", false
-	}
-	// If raw is already a File4Base JSON calculation specification, unwrap it
-	if strings.HasPrefix(trimmed, "{") {
-		var parsed map[string]interface{}
-		if err := json.Unmarshal([]byte(trimmed), &parsed); err == nil {
-			if expr, ok := parsed["formula"].(string); ok && strings.TrimSpace(expr) != "" {
-				trimmed = strings.TrimSpace(expr)
-			} else if expr, ok := parsed["expression"].(string); ok && strings.TrimSpace(expr) != "" {
-				trimmed = strings.TrimSpace(expr)
-			}
-		}
-	}
-
-	translated := trimmed
-	var notes []string
-	if reGetCurrentDate.MatchString(translated) {
-		translated = reGetCurrentDate.ReplaceAllString(translated, "TODAY()")
-		notes = append(notes, "Get(CurrentDate) -> TODAY()")
-	}
-	if reGetCurrentTimestamp.MatchString(translated) {
-		translated = reGetCurrentTimestamp.ReplaceAllString(translated, "NOW()")
-		notes = append(notes, "Get(CurrentTimestamp) -> NOW()")
-	}
-	if strings.Contains(translated, "≠") {
-		translated = strings.ReplaceAll(translated, "≠", "<>")
-		notes = append(notes, "≠ -> <>")
-	}
-	if strings.Contains(translated, "≤") {
-		translated = strings.ReplaceAll(translated, "≤", "<=")
-		notes = append(notes, "≤ -> <=")
-	}
-	if strings.Contains(translated, "≥") {
-		translated = strings.ReplaceAll(translated, "≥", ">=")
-		notes = append(notes, "≥ -> >=")
-	}
-
-	expr, err := calc.Parse(translated)
-	if err != nil {
-		return translated, "", false
-	}
-	// A related field (Lines::Amount) cannot be read when a record is
-	// written yet: such a calculation would make every write fail, so it is
-	// kept as a stored value and reported until related reads are supported.
-	if len(expr.RelatedFields()) > 0 {
-		return translated, "", false
-	}
-	if len(notes) > 0 {
-		return translated, fmt.Sprintf("Translated formula (%s): %s", strings.Join(notes, ", "), translated), true
-	}
-	return translated, "", true
 }
 
 func normalizeCalcResultType(rawType string) string {
