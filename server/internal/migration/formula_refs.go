@@ -87,9 +87,17 @@ type formulaBinding struct {
 }
 
 // boundOccurrence is an imported table occurrence: its name and its table.
-type boundOccurrence struct{ id, name, table string }
+// An occurrence of another file's table has no table of this file.
+type boundOccurrence struct {
+	id, name, table string
+	external        bool
+}
 
-func newFormulaBinding(bundle *schema.SolutionBundle, fields map[string]*fieldNameMap, loc *sourceLocale) formulaBinding {
+// newFormulaBinding reads the converted bundle's occurrences and
+// relationships. externalFields are the source names of the fields used
+// through each occurrence of another file's table (by lower-cased name),
+// which is all the document says of that table.
+func newFormulaBinding(bundle *schema.SolutionBundle, fields map[string]*fieldNameMap, loc *sourceLocale, externalFields map[string][]string) formulaBinding {
 	tableByID := make(map[string]string, len(bundle.Tables))
 	for _, t := range bundle.Tables {
 		tableByID[t.ID] = t.Name
@@ -100,6 +108,13 @@ func newFormulaBinding(bundle *schema.SolutionBundle, fields map[string]*fieldNa
 		matchColumns: map[string]bool{},
 	}
 	for _, occ := range bundle.TableOccurrences {
+		if occ.External != nil {
+			// Its fields are named as the other file's migration names
+			// them; the binding checks they are there.
+			b.occurrences[occ.Name] = externalFields[strings.ToLower(occ.Name)]
+			b.occByName[strings.ToLower(occ.Name)] = boundOccurrence{id: occ.ID, name: occ.Name, external: true}
+			continue
+		}
 		table := tableByID[occ.BaseTableID]
 		if names := fields[table]; names != nil {
 			b.occurrences[occ.Name] = names.sources
@@ -271,6 +286,9 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 				return calc.QuoteName(column), ok
 			}
 			occ, ok := b.occByName[strings.ToLower(occurrence)]
+			if ok && occ.external {
+				return calc.QuoteName(occ.name) + "::" + calc.QuoteName(externalFieldName(field)), true
+			}
 			if !ok || b.fields[occ.table] == nil {
 				return "", false
 			}
@@ -349,8 +367,8 @@ func (c boundCalculation) quarantine(why, action string, colTypes map[string]str
 	colTypes[c.target] = c.col.FieldType
 	return []ReportItem{
 		{Category: CategoryUnsupported, Domain: "field", SourceName: c.source, TargetName: c.target,
-			Detail: fmt.Sprintf("Calculation %q %s; converted to a stored %s column instead of being applied", c.formula, why, c.col.FieldType)},
-		{Category: CategoryManualActionRequired, Domain: "field", SourceName: c.source, TargetName: c.target, Detail: action},
+			Detail: fmt.Sprintf("Calculation %q %s; converted to a stored %s column instead of being applied", readableFieldRefs(c.formula), readableFieldRefs(why), c.col.FieldType)},
+		{Category: CategoryManualActionRequired, Domain: "field", SourceName: c.source, TargetName: c.target, Detail: readableFieldRefs(action)},
 	}
 }
 
@@ -454,7 +472,7 @@ func ownTableFormula(raw string) (string, bool) {
 func quotedList(names []string) string {
 	quoted := make([]string, 0, len(names))
 	for _, name := range names {
-		quoted = append(quoted, fmt.Sprintf("%q", name))
+		quoted = append(quoted, fmt.Sprintf("%q", readableFieldRefs(name)))
 	}
 	switch len(quoted) {
 	case 0:

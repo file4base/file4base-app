@@ -1102,6 +1102,11 @@ func (h *SolutionHandler) MigratePreflight(w http.ResponseWriter, r *http.Reques
 		writeMigrationConversionError(w, r, err, "Migration Preflight Error")
 		return
 	}
+	self := []string{in.req.TargetDatabase, converted.Report.SolutionName}
+	if hasSession && strings.TrimSpace(in.req.TargetDatabase) == "" {
+		self = append(self, sess.Database)
+	}
+	h.annotateExternalOccurrences(r.Context(), converted.Report, hasSession, self...)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(struct {
@@ -1328,6 +1333,7 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		_, _ = targetSvc.RenameSolution(r.Context(), targetDB, converted.Report.SolutionName)
 	}
 	h.syncProjectRecord(r.Context(), targetDB, targetSvc, nil, nil)
+	h.annotateExternalOccurrences(r.Context(), converted.Report, hasSession, targetDB, converted.Report.SolutionName)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

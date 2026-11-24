@@ -17,6 +17,7 @@ import 'package:file4base_client/features/auth/database_login_dialog.dart';
 import 'package:file4base_client/features/connection/server_connection_dialog.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/export_records_dialog.dart';
+import 'package:file4base_client/features/data_browser/external_layout.dart';
 import 'package:file4base_client/features/data_browser/saved_finds_dialog.dart';
 import 'package:file4base_client/features/data_io/import_records_dialog.dart';
 import 'package:file4base_client/features/data_io/manage_data_sources_dialog.dart';
@@ -156,6 +157,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   StorageDirectoryRef? _activeSolutionDirectory;
   List<TableModel> _tables = [];
   TableModel? _selectedTable;
+  // The solution's table occurrences, to tell a layout on another
+  // solution's table (#107) from a local one.
+  List<TableOccurrenceModel> _occurrences = const [];
+  // Set while the active layout is on an external occurrence: no local
+  // table is selected and record commands are disabled.
+  TableOccurrenceModel? _externalLayoutOccurrence;
   LayoutDefinitionModel? _activeLayout;
   bool _isLoadingTables = false;
   bool _isToolbarVisible = true;
@@ -740,6 +747,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       try {
         layouts = await client.listLayouts();
       } catch (_) {}
+      var occurrences = <TableOccurrenceModel>[];
+      try {
+        occurrences = await client.listOccurrences();
+      } catch (_) {}
       unawaited(_loadMenuSets());
       unawaited(_loadSolutionMeta());
 
@@ -806,6 +817,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         setState(() {
           _tables = tables;
           _serverLayouts = layouts;
+          _occurrences = occurrences;
+          _externalLayoutOccurrence = null;
           _isLoadingTables = false;
 
           if (layouts.isNotEmpty) {
@@ -880,6 +893,22 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
   void _applyLayout(LayoutModel layoutModel, [List<TableModel>? tablesList]) {
     final tables = tablesList ?? _tables;
+    // A layout on another solution's table is never bound to a local
+    // table: Browse, New and Delete would act on that table's records.
+    final external = externalOccurrenceOfLayout(layoutModel, _occurrences);
+    _externalLayoutOccurrence = external;
+    if (external != null) {
+      _selectedTable = null;
+      try {
+        _activeLayout = LayoutDefinitionModel.fromJson(layoutModel.definition).copyWith(
+          id: layoutModel.id,
+          name: layoutModel.name,
+        );
+      } catch (_) {
+        _activeLayout = null;
+      }
+      return;
+    }
     final toName = layoutModel.definition['table_occurrence']?.toString().toLowerCase();
     TableModel? matchTable;
     if (toName != null) {
@@ -2333,8 +2362,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onExportRecords: _handleExportRecords,
                   onImportRecords: _handleImportRecords,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
-                  onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
-                  onDuplicateRecord: () => _dataBrowserKey.currentState?.duplicateRecord(),
+                  onNewRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.createNewRecord(),
+                  onDuplicateRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.duplicateRecord(),
                   onSortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.sortRecords() : null,
                   onUnsortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.unsort() : null,
                   onCommitRecord: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.commitRecord() : null,
@@ -2342,15 +2371,17 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onGoToRecord: mode == OperationalMode.browse
                       ? (target) => _dataBrowserKey.currentState?.goToRecordNamed(target)
                       : null,
-                  onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
-                  onShowAllRecords: () {
-                    unawaited(_changeMode(OperationalMode.browse));
-                    _dataBrowserKey.currentState?.fetchRecords();
-                  },
+                  onDeleteRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                  onShowAllRecords: _externalLayoutOccurrence != null
+                      ? null
+                      : () {
+                          unawaited(_changeMode(OperationalMode.browse));
+                          _dataBrowserKey.currentState?.fetchRecords();
+                        },
                   onManageValueLists: _currentUser == null
                       ? null
                       : () => ManageValueListsDialog.show(context),
-                  onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
+                  onPerformFind: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.performFind(),
                   onNewFindRequest: mode == OperationalMode.find
                       ? () => _dataBrowserKey.currentState?.newFindRequest()
                       : null,
@@ -2684,13 +2715,15 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                                 setState(() => _isFindOmit = val);
                                 _dataBrowserKey.currentState?.toggleOmit(val);
                               },
-                              onPerformFind: () => _dataBrowserKey.currentState?.performFind(),
-                              onShowAllRecords: () {
-                                unawaited(_changeMode(OperationalMode.browse));
-                                _dataBrowserKey.currentState?.fetchRecords();
-                              },
-                              onNewRecord: () => _dataBrowserKey.currentState?.createNewRecord(),
-                              onDeleteRecord: () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                              onPerformFind: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.performFind(),
+                              onShowAllRecords: _externalLayoutOccurrence != null
+                                  ? null
+                                  : () {
+                                      unawaited(_changeMode(OperationalMode.browse));
+                                      _dataBrowserKey.currentState?.fetchRecords();
+                                    },
+                              onNewRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.createNewRecord(),
+                              onDeleteRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
                               selectedTool: _activeLayoutTool,
                               onToolSelected: (tool) => setState(() => _activeLayoutTool = tool),
                               strokeWidth: _layoutStrokeWidth,
@@ -3206,6 +3239,14 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final external = _externalLayoutOccurrence;
+    if (external != null) {
+      return ExternalLayoutPlaceholder(
+        layoutName: _activeLayout?.name ?? '',
+        occurrence: external,
+      );
+    }
+
     if (_tables.isEmpty || _selectedTable == null) {
       return _buildWelcomeScreen(context, mode);
     }
@@ -3220,6 +3261,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           table: _selectedTable!,
           apiClient: client,
           layout: _activeLayout,
+          externalOccurrences: externalOccurrenceKeys(_occurrences),
           mode: mode,
           onModeChanged: _changeMode,
           onTableModified: _loadTables,

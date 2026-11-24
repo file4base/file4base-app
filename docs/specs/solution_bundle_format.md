@@ -33,17 +33,20 @@ Golden fixtures produced by each side are read by the other side's tests:
 | `users` | array of account | |
 | `saved_finds` | array of saved find | Optional. |
 | `data_sources` | array of data source | Optional. Connections only; they hold no password. |
+| `file_references` | array of file reference | Optional. FileMaker's External Data Sources of type FileMaker: the other solutions the design names. |
 | `privileges` | array of role privileges | Optional. Absent in files written before extended privileges existed, which leaves the destination's own grants untouched. |
 | `file_options` | map | Client settings (File Options), opaque to the server. Never contains `default_password`. |
 | `page_setup` | map | Client settings (Page Setup), opaque to the server. |
 
 **table**: `id`, `name`, `display_name`, `description`, `columns` (array of column).
 
-**column**: `id`, `name`, `display_name`, `field_type`, `is_nullable`, `is_primary_key`, and the optional strings `default_value` (field options JSON), `calculation_formula`, `validation_rules`, and `max_repetitions` (integer, written only when above 1).
+**column**: `id`, `name`, `display_name`, `field_type`, `is_nullable`, `is_primary_key`, and the optional strings `default_value` (field options JSON), `calculation_formula`, `validation_rules`, and `max_repetitions` (integer, written only when above 1), and `source_field_id` (optional string of digits: the FileMaker id of the field a migrated column comes from, written only when known; `#107`).
 
-**occurrence**: `id`, `base_table_id`, `name`, `x_pos`, `y_pos`.
+**occurrence**: `id`, `base_table_id`, `name`, `x_pos`, `y_pos`, and `external` (optional). An occurrence of a table of **another solution** (FileMaker's external table occurrence, `#107`) has no `base_table_id` and an `external` map instead: `file_reference` (the name of a file reference of the bundle) and `table` (optional: the table's name in that solution, absent while it is not known). A bundle without external occurrences is encoded exactly as before.
 
 **relationship**: `id`, `name`, `left_occurrence_id`, `left_column_id`, `right_occurrence_id`, `right_column_id`, `operator`, `allow_creation`, `cascade_delete`, `sort_related`, and `predicates` (optional array of predicate).
+
+A side on an external occurrence has no column id: `left_column_name` or `right_column_name` (optional, after the other keys) names the field of the other solution, and the id is empty. Both are omitted on local sides. A field known only by its FileMaker id is named by the marker `#<id>` there, in `source_column_name` and in formulas and layout definitions; it is resolved against the other solution's `source_field_id` when the reference is bound.
 
 **predicate**: `left_column_id`, `left_column_name` (optional), `operator`, `right_column_id`, `right_column_name` (optional). A relationship with several match criteria lists all of them in order, the first being the relationship's own `left_column_id`, `operator` and `right_column_id`; a single-criterion relationship omits `predicates`, so its encoding is unchanged. Each predicate's columns must belong to its side's occurrence table. See [relationships_and_portals.md](relationships_and_portals.md#several-match-criteria).
 
@@ -55,7 +58,9 @@ Golden fixtures produced by each side are read by the other side's tests:
 
 **account**: `id`, `username`, `role` (`owner`, `admin` or `user`), `is_active`, `permissions` (array of `{layout_id, access_level}`, `access_level` being `read_write`, `read_only` or `none`).
 
-**value list**: `id`, `name`, `kind`, `custom_values` (optional), `source_table_id`, `source_column_id` and `second_column_id` (optional, remapped on import), `show_second_only` and `sort_by` (optional), `related_occurrence_id` and `source_occurrence_id` (optional, remapped on import).
+**value list**: `id`, `name`, `kind`, `custom_values` (optional), `source_table_id`, `source_column_id` and `second_column_id` (optional, remapped on import), `show_second_only` and `sort_by` (optional), `related_occurrence_id` and `source_occurrence_id` (optional, remapped on import), and `source_column_name` (optional). A list taken from a field of another solution's table has no `source_table_id` or `source_column_id`: `source_occurrence_id` is the external occurrence it is read through and `source_column_name` names the field. It has no second field or related values yet.
+
+**file reference**: `name`, `database` (optional: the solution it is mapped to) and `paths` (optional: the FileMaker paths of the data source, kept for the operator who binds it). Matched by name on import; a reference the destination has already mapped is never repointed.
 
 **saved find**: `name`, `table_name`, `requests` (array of `{values, omit}`, `values` being field name to the criterion as typed). Matched by table and name on import; the account that saved it is not carried, so a restored find has no owner.
 
@@ -75,9 +80,10 @@ IDs only link objects inside the bundle. They are never assumed to exist in the 
 4. **Writing.** Missing tables, columns, occurrences, relationships, scripts and accounts are created; matched layouts and scripts are updated with the bundle's version; existing tables, columns and accounts are left as they are.
 5. **Accounts.** A missing account is created **disabled**, with a random password nobody knows, with its role and its layout permissions. An owner enables it and sets its password in Manage Security. Existing accounts are never changed. Restoring never widens access: a disabled account stays disabled, and an `owner` account can only be restored by an owner.
 6. **Saved finds.** A find is created when the destination's table has none with that name; the fields it searches must exist there. Existing finds are left as they are.
-7. **Data sources.** A connection is created when the destination has none with that name. It arrives without a password, so one must be given at import time or in the server's environment before it can be read.
-8. **Extended privileges.** The grants in `privileges` replace the destination's, by role; the owner's are always stored fully granted. A bundle without the key changes nothing.
-9. **Failure.** If any write fails, everything the import created is removed and every layout or script it updated gets its previous version back, and the request fails with the reason.
+7. **File references and external occurrences.** A file reference is created when the destination has none with that name, before the occurrences that go through it. An external occurrence is matched by name like any other; an existing occurrence with the same name that is local, goes through another reference, or names another table there (when both name one), is a conflict and the import is refused: an occurrence is never silently retargeted. Nothing is bound on import: binding and verifying are separate requests (see [relationships_and_portals.md](relationships_and_portals.md#occurrences-of-another-solutions-table)).
+8. **Data sources.** A connection is created when the destination has none with that name. It arrives without a password, so one must be given at import time or in the server's environment before it can be read.
+9. **Extended privileges.** The grants in `privileges` replace the destination's, by role; the owner's are always stored fully granted. A bundle without the key changes nothing.
+10. **Failure.** If any write fails, everything the import created is removed and every layout or script it updated gets its previous version back, and the request fails with the reason.
 
 The response reports what happened: `tables_created`, `columns_created`, `occurrences_created`, `relationships_created`, `layouts_created`, `layouts_updated`, `scripts_created`, `scripts_updated`, `accounts_created`, `saved_finds_created`, `data_sources_created`, `privileges_updated` and `accounts_pending_password` (usernames that need a password before they can sign in).
 

@@ -172,6 +172,15 @@ func (s *Service) checkRelatedReads(ctx context.Context, tableID, fieldName, con
 			return fmt.Errorf("%w: the formula of %q reads %s::%s, but there is no table occurrence %q",
 				ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field, ref.Table)
 		}
+		if to.tableID == "" {
+			// A field of another solution's table: it is checked when the
+			// file reference the occurrence goes through is verified.
+			if !reachable[to.id] {
+				return fmt.Errorf("%w: the formula of %q reads %s::%s, but no relationship leads from %s to %s",
+					ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field, from.name, to.name)
+			}
+			continue
+		}
 		if columnsOf[to.tableID] == nil {
 			columns, err := s.listColumns(ctx, to.tableID)
 			if err != nil {
@@ -255,11 +264,15 @@ func (s *Service) occurrenceGraph(ctx context.Context) (*occurrenceGraph, error)
 	defer rows.Close()
 	for rows.Next() {
 		var o occurrenceRef
-		if err := rows.Scan(&o.id, &o.name, &o.tableID); err != nil {
+		var table sql.NullString
+		if err := rows.Scan(&o.id, &o.name, &table); err != nil {
 			return nil, err
 		}
+		o.tableID = table.String // empty for an occurrence of another solution's table
 		g.byName[strings.ToLower(o.name)] = o
-		g.byTable[o.tableID] = append(g.byTable[o.tableID], o)
+		if o.tableID != "" {
+			g.byTable[o.tableID] = append(g.byTable[o.tableID], o)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

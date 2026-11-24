@@ -394,6 +394,46 @@ class ValueListItem {
 /// than the server gives.
 typedef ValueListOffer = ({List<ValueListItem> items, bool truncated});
 
+/// Where an external table occurrence's records live: a file reference
+/// (FileMaker's external data source) and the table of the solution it is
+/// mapped to. The table is empty until the reference is bound.
+@immutable
+class ExternalOccurrenceModel {
+
+  const ExternalOccurrenceModel({
+    required this.fileReferenceId,
+    required this.fileReference,
+    this.table = '',
+    this.database = '',
+  });
+
+  factory ExternalOccurrenceModel.fromJson(Map<String, dynamic> json) {
+    return ExternalOccurrenceModel(
+      fileReferenceId: json['file_reference_id'] as String? ?? '',
+      fileReference: json['file_reference'] as String? ?? '',
+      table: json['table'] as String? ?? '',
+      database: json['database'] as String? ?? '',
+    );
+  }
+  final String fileReferenceId;
+
+  /// The data source name, as FileMaker shows it in the graph.
+  final String fileReference;
+
+  /// The table in the other solution, or empty while unbound.
+  final String table;
+
+  /// The solution the reference is mapped to, or empty while unmapped.
+  final String database;
+
+  Map<String, dynamic> toJson() => {
+    'file_reference_id': fileReferenceId,
+    'file_reference': fileReference,
+    if (table.isNotEmpty) 'table': table,
+    if (database.isNotEmpty) 'database': database,
+  };
+}
+
 class TableOccurrenceModel {
 
   const TableOccurrenceModel({
@@ -402,29 +442,40 @@ class TableOccurrenceModel {
     required this.name,
     required this.xPos,
     required this.yPos,
+    this.external,
   });
 
   factory TableOccurrenceModel.fromJson(Map<String, dynamic> json) {
+    final external = json['external'];
     return TableOccurrenceModel(
       id: json['id'] as String,
-      baseTableId: json['base_table_id'] as String,
+      baseTableId: json['base_table_id'] as String?,
       name: json['name'] as String? ?? '',
       xPos: (json['x_pos'] as num?)?.toDouble() ?? 100.0,
       yPos: (json['y_pos'] as num?)?.toDouble() ?? 100.0,
+      external: external is Map<String, dynamic> ? ExternalOccurrenceModel.fromJson(external) : null,
     );
   }
   final String id;
-  final String baseTableId;
+
+  /// The local base table, or null for an occurrence of another solution's
+  /// table ([external]).
+  final String? baseTableId;
   final String name;
   final double xPos;
   final double yPos;
+  final ExternalOccurrenceModel? external;
+
+  /// Whether the occurrence's records live in another solution.
+  bool get isExternal => external != null;
 
   Map<String, dynamic> toJson() => {
     'id': id,
-    'base_table_id': baseTableId,
+    if (baseTableId != null) 'base_table_id': baseTableId,
     'name': name,
     'x_pos': xPos,
     'y_pos': yPos,
+    if (external != null) 'external': external!.toJson(),
   };
 
   TableOccurrenceModel copyWith({
@@ -440,6 +491,7 @@ class TableOccurrenceModel {
       name: name ?? this.name,
       xPos: xPos ?? this.xPos,
       yPos: yPos ?? this.yPos,
+      external: external,
     );
   }
 }
@@ -459,8 +511,8 @@ class RelationshipPredicateModel {
 
   factory RelationshipPredicateModel.fromJson(Map<String, dynamic> json) {
     return RelationshipPredicateModel(
-      leftColumnId: json['left_column_id'] as String,
-      rightColumnId: json['right_column_id'] as String,
+      leftColumnId: json['left_column_id'] as String? ?? '',
+      rightColumnId: json['right_column_id'] as String? ?? '',
       operator: json['operator'] as String? ?? '=',
       leftColumnName: json['left_column_name'] as String?,
       rightColumnName: json['right_column_name'] as String?,
@@ -482,21 +534,30 @@ class RelationshipPredicateModel {
     );
   }
 
+  /// A side on an occurrence of another solution's table has no local field
+  /// id: it is sent by its field name, which the server resolves there.
   Map<String, dynamic> toJson() => {
     'left_column_id': leftColumnId,
+    if (leftColumnId.isEmpty && leftColumnName != null) 'left_column_name': leftColumnName,
     'operator': operator,
     'right_column_id': rightColumnId,
+    if (rightColumnId.isEmpty && rightColumnName != null) 'right_column_name': rightColumnName,
   };
+
+  /// What names each side: its field id, or its field name on an external
+  /// occurrence, which has no local id.
+  String get _leftKey => leftColumnId.isEmpty ? '::${leftColumnName ?? ''}' : leftColumnId;
+  String get _rightKey => rightColumnId.isEmpty ? '::${rightColumnName ?? ''}' : rightColumnId;
 
   @override
   bool operator ==(Object other) =>
       other is RelationshipPredicateModel &&
-      other.leftColumnId == leftColumnId &&
-      other.rightColumnId == rightColumnId &&
+      other._leftKey == _leftKey &&
+      other._rightKey == _rightKey &&
       other.operator == operator;
 
   @override
-  int get hashCode => Object.hash(leftColumnId, operator, rightColumnId);
+  int get hashCode => Object.hash(_leftKey, operator, _rightKey);
 }
 
 class RelationshipModel {
@@ -521,9 +582,9 @@ class RelationshipModel {
       id: json['id'] as String,
       name: json['name'] as String? ?? '',
       leftOccurrenceId: json['left_occurrence_id'] as String,
-      leftColumnId: json['left_column_id'] as String,
+      leftColumnId: json['left_column_id'] as String? ?? '',
       rightOccurrenceId: json['right_occurrence_id'] as String,
-      rightColumnId: json['right_column_id'] as String,
+      rightColumnId: json['right_column_id'] as String? ?? '',
       operator: json['operator'] as String? ?? '=',
       allowCreation: json['allow_creation'] as bool? ?? false,
       cascadeDelete: json['cascade_delete'] as bool? ?? false,

@@ -518,6 +518,11 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 // every relationship of the table whose "Delete related records" option is on
 // takes its matching records with it, down the whole chain (#36).
 func (s *Service) DeleteRow(ctx context.Context, tableName string, id string) error {
+	// A cascade that would reach another solution's table is refused before
+	// anything is deleted, rather than half done (#107).
+	if err := s.checkCascadePlan(ctx, tableName); err != nil {
+		return err
+	}
 	return s.deleteRow(ctx, tableName, id, map[string]struct{}{})
 }
 

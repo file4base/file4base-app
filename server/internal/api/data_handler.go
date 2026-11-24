@@ -231,6 +231,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Import Failed", err.Error())
 	case errors.Is(err, data.ErrInvalidSummary):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Summary Field", err.Error())
+	case errors.Is(err, data.ErrExternalUnavailable):
+		writeExternalUnavailable(w, r, err)
 	case errors.Is(err, data.ErrRelationshipNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Relationship Not Found", err.Error())
 	case errors.Is(err, data.ErrCreationNotAllowed):

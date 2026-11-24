@@ -250,7 +250,9 @@ func (r *Relationship) Sides(fromTable, targetOccurrence string) (source, target
 }
 
 // relationshipSelect resolves both sides in one statement: the occurrence
-// gives the base table, and the match column gives its name.
+// gives the base table, and the match column gives its name. The inner joins
+// leave out every relationship with a side on an occurrence of another
+// solution's table, which has neither a local table nor local columns.
 const relationshipSelect = `SELECT r.id, r.name, r.operator, r.allow_creation, r.cascade_delete, r.sort_related,
 		lo.id, lo.name, lt.name, lc.name,
 		ro.id, ro.name, rt.name, rc.name
@@ -271,6 +273,12 @@ func (s *Service) Relationship(ctx context.Context, id string) (*Relationship, e
 	dialect := s.driver.Dialect()
 	rel, err := scanRelationship(s.driver.DB().QueryRowContext(ctx, relationshipQuery+dialect.Placeholder(1), id))
 	if errors.Is(err, sql.ErrNoRows) {
+		// The statement resolves local sides only. A relationship to an
+		// occurrence of another solution's table is refused by name, never
+		// read against a table of this one.
+		if external := s.externalSide(ctx, id); external != nil {
+			return nil, external
+		}
 		return nil, fmt.Errorf("%w: %s", ErrRelationshipNotFound, id)
 	}
 	if err != nil {
@@ -685,6 +693,40 @@ func trueLiteral(dialect dbal.Dialect) string {
 		return "TRUE"
 	}
 	return "1"
+}
+
+// checkCascadePlan follows, table by table, every relationship a delete from
+// tableName may cascade through, and refuses the delete when one of them
+// reaches an occurrence of another solution's table: its records cannot be
+// deleted from here, and deleting the local ones first would leave the
+// cascade half done. It reads no record, so it refuses even when nothing
+// would match through that relationship.
+func (s *Service) checkCascadePlan(ctx context.Context, tableName string) error {
+	visited := map[string]bool{tableName: true}
+	queue := []string{tableName}
+	for len(queue) > 0 {
+		table := queue[0]
+		queue = queue[1:]
+		relationships, err := s.cascadingRelationships(ctx, table)
+		if err != nil {
+			return err
+		}
+		for _, relID := range relationships {
+			rel, err := s.Relationship(ctx, relID)
+			if errors.Is(err, ErrExternalUnavailable) {
+				return err
+			}
+			if err != nil {
+				// Anything else is met, and answered, by the delete itself.
+				continue
+			}
+			if next := rel.Right.TableName; next != "" && !visited[next] {
+				visited[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return nil
 }
 
 // cascadeDelete deletes the records that belong to the one about to be deleted,

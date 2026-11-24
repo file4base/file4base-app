@@ -108,9 +108,11 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 
 	// ─── The graph ────────────────────────────────────────────────────────
 	for _, occurrence := range bundle.TableOccurrences {
-		report.Occurrences = append(report.Occurrences, designreport.Occurrence{
-			Name: occurrence.Name, BaseTable: tableName[occurrence.BaseTableID],
-		})
+		reported := designreport.Occurrence{Name: occurrence.Name, BaseTable: tableName[occurrence.BaseTableID]}
+		if ext := occurrence.External; ext != nil {
+			reported.BaseTable, reported.DataSource = ext.Table, ext.FileReference
+		}
+		report.Occurrences = append(report.Occurrences, reported)
 	}
 	report.Counts.Occurrences = len(report.Occurrences)
 
@@ -118,10 +120,10 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 		reported := designreport.Relationship{
 			Name:          relationship.Name,
 			Left:          occurrenceName[relationship.LeftOccurrenceID],
-			LeftField:     columnName[relationship.LeftColumnID],
+			LeftField:     firstNonEmpty(columnName[relationship.LeftColumnID], relationship.LeftColumnName),
 			Operator:      relationship.Operator,
 			Right:         occurrenceName[relationship.RightOccurrenceID],
-			RightField:    columnName[relationship.RightColumnID],
+			RightField:    firstNonEmpty(columnName[relationship.RightColumnID], relationship.RightColumnName),
 			AllowCreation: relationship.AllowCreation,
 			CascadeDelete: relationship.CascadeDelete,
 			SortRelated:   relationship.SortRelated,
@@ -129,7 +131,9 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 		if len(relationship.Predicates) > 1 {
 			for _, p := range relationship.Predicates {
 				reported.Predicates = append(reported.Predicates, designreport.Predicate{
-					LeftField: columnName[p.LeftColumnID], Operator: p.Operator, RightField: columnName[p.RightColumnID],
+					LeftField:  firstNonEmpty(columnName[p.LeftColumnID], p.LeftColumnName),
+					Operator:   p.Operator,
+					RightField: firstNonEmpty(columnName[p.RightColumnID], p.RightColumnName),
 				})
 			}
 		}
@@ -175,6 +179,11 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 			}
 			if list.SourceColumnID != nil {
 				column = columnName[*list.SourceColumnID]
+			}
+			if list.SourceTableID == nil && list.SourceOccurrenceID != nil {
+				// A field of another solution's table, named through its
+				// external occurrence.
+				table, column = occurrenceName[*list.SourceOccurrenceID], list.SourceColumnName
 			}
 			reported.Source = strings.TrimSuffix(table+"::"+column, "::")
 			if list.SecondColumnID != nil {
@@ -258,7 +267,7 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 
 	for _, f := range bundle.FileReferences {
 		report.FileReferences = append(report.FileReferences, designreport.FileReference{
-			Name: f.Name, Database: f.Database,
+			Name: f.Name, Database: f.Database, Paths: f.Paths,
 		})
 	}
 	report.Counts.FileReferences = len(report.FileReferences)
@@ -501,4 +510,14 @@ func describeTransferEnd(end TransferEnd) string {
 		return end.Table
 	}
 	return end.Database + "." + end.Table
+}
+
+// firstNonEmpty is the first of values that is not empty.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }

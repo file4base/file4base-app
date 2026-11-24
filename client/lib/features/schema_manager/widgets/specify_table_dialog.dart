@@ -84,9 +84,38 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
     });
   }
 
+  /// What an occurrence of another solution's table shows instead of the
+  /// table list: where its records live, read-only. Turning it into an
+  /// occurrence of a local table is not offered, so it cannot happen by
+  /// accident; only its name can change.
+  List<Widget> _externalSource(ThemeData theme, ExternalOccurrenceModel external) {
+    final muted = TextStyle(fontSize: 13, color: theme.textTheme.bodySmall?.color ?? Colors.grey[700]);
+    Widget line(String label, String value) => Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 100, child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
+              Expanded(child: Text(value, style: muted)),
+            ],
+          ),
+        );
+    return [
+      Text(
+        'This occurrence shows a table of another file. Its data source is set when the file reference is bound.',
+        style: TextStyle(fontSize: 12.5, color: theme.textTheme.bodySmall?.color ?? Colors.grey[700], height: 1.3),
+      ),
+      const SizedBox(height: 16),
+      line('Data source:', external.fileReference),
+      line('Solution:', external.database.isNotEmpty ? external.database : '(not mapped yet)'),
+      line('Table:', external.table.isNotEmpty ? external.table : '(not bound yet)'),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final external = widget.initialOccurrence?.external;
 
     return AlertDialog(
       title: Row(
@@ -102,6 +131,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (external != null) ..._externalSource(theme, external) else ...[
             Text(
               'Select a table from this file or another data source to include in the graph. The same table can appear more than once.',
               style: TextStyle(fontSize: 12.5, color: theme.textTheme.bodySmall?.color ?? Colors.grey[700], height: 1.3),
@@ -189,6 +219,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
                       },
                     ),
             ),
+            ],
             const SizedBox(height: 16),
             Row(
               children: [
@@ -218,11 +249,11 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _selectedTable == null || _nameController.text.trim().isEmpty
+          onPressed: (external == null && _selectedTable == null) || _nameController.text.trim().isEmpty
               ? null
               : () {
                   Navigator.of(context).pop({
-                    'base_table_id': _selectedTable!.id,
+                    if (external == null) 'base_table_id': _selectedTable!.id,
                     'name': _nameController.text.trim(),
                   });
                 },

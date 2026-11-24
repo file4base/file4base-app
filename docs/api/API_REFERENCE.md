@@ -34,6 +34,23 @@ When an error occurs (HTTP 4xx or 5xx), the response body is encoded as `applica
 }
 ```
 
+#### `424 Failed Dependency`: `external_unavailable`
+A request that reads records through an occurrence of **another solution's table** (§ 18, external occurrences) is refused, never answered from a table of this solution:
+```json
+{
+  "type": "https://file4base.org/errors/external-unavailable",
+  "title": "External Table Unavailable",
+  "status": 424,
+  "detail": "…",
+  "instance": "/api/v1/data/orders/42/related",
+  "code": "external_unavailable",
+  "reference": "Customers",
+  "database": "customers_db",
+  "reason": "missing"
+}
+```
+`reference` is the file reference to fix, `database` the solution it is mapped to (empty while unmapped). `reason` is `missing` while records of another solution cannot be read from here.
+
 ---
 
 ## Authentication & Authorization
@@ -216,6 +233,7 @@ Retrieves all registered user database tables and their column definitions.
   }
 ]
 ```
+A column migrated from FileMaker also carries `source_field_id`, the id FileMaker gave its field (a string of digits), by which another solution's external occurrences find it when their document names it by id only (§ 18). It is set by the migration and by restoring a solution bundle, and absent for a column created here.
 
 ### `POST /api/v1/schemas/tables`
 Creates a new physical table and registers it in `sys_tables` and `sys_table_occurrences`.
@@ -342,8 +360,17 @@ Creates a new Table Occurrence tied to a base table.
 }
 ```
 
+An occurrence of a table of **another solution** names a file reference (by id or name) instead, and optionally the table's name there; it is returned with `external` and no `base_table_id`:
+```json
+{
+  "name": "Order Customers",
+  "external": { "file_reference": "Customers", "table": "customers" }
+}
+```
+Response `external`: `file_reference_id`, `file_reference`, `database` (the solution the reference is mapped to, or empty), `table` (empty while unbound). Neither `base_table_id` nor `external`, both, an unknown reference or an invalid table name answer `422 Invalid Table Occurrence`. A relationship side on it gives `left_column_name`/`right_column_name` (in `predicates`) instead of a column id. See § 18.
+
 ### `PUT /api/v1/schemas/occurrences/{id}`
-Updates an occurrence name and/or its canvas coordinates `(x_pos, y_pos)`.
+Updates an occurrence name and/or its canvas coordinates `(x_pos, y_pos)`; `external_table` changes the table of an external occurrence (empty unbinds it). An occurrence is never turned from local to external or back.
 ```json
 {
   "name": "CUSTOMERS 2",
@@ -1037,6 +1064,7 @@ A `field` list may also have the options FileMaker gives such a list. Left out, 
 | `sort_by` | `first` (default) or `second`: the field the values are sorted by. `second` needs a second field. |
 | `related_occurrence_id` | Include only the values of the records related to the current record of this table occurrence, following the relationship graph from it, across as many relationships as the path takes. |
 | `source_occurrence_id` | The occurrence of the list's table the related values are read through; required with `related_occurrence_id`, and cleared without it. |
+| `source_column_name` | A field of **another solution's table**, by name: the list has no `source_table_id` or `source_column_id`, and `source_occurrence_id` is the external occurrence it is read through (§ 18). No second field or related values yet. Resolving it answers `424 external_unavailable`. |
 
 ```json
 {
@@ -1976,6 +2004,18 @@ empty container field listed under `manual_action_required`. An HTML report's
 time-duration behavior still require qualification; an extracted record count
 is not an application-equivalence result.
 
+#### External table occurrences
+An occurrence of a table of another FileMaker file is migrated unbound (§ 18) and listed both under `manual_action_required` and in `external_occurrences`:
+```json
+"external_occurrences": [{
+  "occurrence": "Order Customers", "data_source": "Customers",
+  "paths": ["fmnet:/host.example/Customers", "file:Customers.fmp12"],
+  "fields": ["code", "full_name"],
+  "suggested_database": "customers_db", "cycle": true
+}]
+```
+`table` is present when the document names it. A field the document names by id only appears in `fields` as `#<id>`, with a `manual_action_required` item listing the ids. `suggested_database` is the one installed solution whose database or solution name matches a path of the data source, when exactly one does; `cycle` (signed-in callers only) is `true` when that solution's own external occurrences lead back to the file being migrated. Nothing is bound: bind each reference after installing both files. `/apply` returns the same report.
+
 #### Uploading a native copy (`multipart/form-data`)
 
 A JSON request is limited to 64 MiB, base64 included, and is answered with
@@ -2374,7 +2414,7 @@ Lists the references, by name.
 ```
 
 ### `POST /api/v1/file-references`
-Creates a reference. Body: `{ "name": "Results", "database": "results_db" }`; `database` may be empty. `201 Created`; `409 Conflict` when the name is taken (a step resolves by name, so names are unique); `422 Unprocessable Content` when the name is empty or `database` is not a solution database name.
+Creates a reference. Body: `{ "name": "Results", "database": "results_db", "paths": ["fmnet:/host/Results.fmp12"] }`; `database` may be empty, `paths` (the FileMaker paths of a migrated data source) is optional. `201 Created`; `409 Conflict` when the name is taken (a step resolves by name, so names are unique); `422 Unprocessable Content` when the name is empty or `database` is not a solution database name.
 
 ### `GET /api/v1/file-references/{idOrName}`
 Reads one reference. `404 Not Found` when there is none.
@@ -2395,7 +2435,40 @@ Answers where a `Perform Script` step that names the reference goes, and from wh
 Renames a reference or maps it to another solution. Body as for `POST`.
 
 ### `DELETE /api/v1/file-references/{idOrName}`
-Removes a reference. `204 No Content`.
+Removes a reference. `204 No Content`; `409 File Reference In Use` while table occurrences go through it.
+
+### External table occurrences
+
+An occurrence of a table of another solution goes through a file reference and names the table there (`external`, § 2). The migration creates them **unbound**: the reference unmapped, the table empty when the document does not name it. Binding and verifying read the other solution's catalog — never a record — with a session of that solution, passed as `peer_token` (an `owner` or `admin` session there, as for transfers, § 17): a reference holds no credentials. Without it, `400 Peer Token Required`; a token of another solution, or of a `user`, `403`.
+
+### `POST /api/v1/file-references/{idOrName}/bind`
+*Requires `admin` or `owner` role and an unlocked design.* Maps the reference to `database` (or keeps the solution it is mapped to) and resolves the table of every occurrence through it: the table `tables` names for it (by occurrence name, case-insensitive), else the one table of that solution holding every field used through the occurrence, preferring one named like the occurrence. When none or several qualify the occurrence stays unbound and its `candidates` are listed: a table is never guessed. Everything is checked before anything is written: a `tables` key that is not an occurrence through this reference, or a table that does not exist in that solution, answers `422 Unprocessable Content` and leaves the reference and its occurrences as they were; otherwise the mapping and the tables are saved together.
+```json
+{ "database": "customers_db", "peer_token": "…", "tables": { "Order Customers": "customers" } }
+```
+
+#### Response `200 OK`
+```json
+{
+  "file_reference_id": "7c1e…", "file_reference": "Customers", "database": "customers_db",
+  "occurrences": [
+    { "id": "…", "name": "Order Customers", "table": "customers", "status": "bound", "fields": ["code", "full_name"] },
+    { "id": "…", "name": "Invoice Customers", "table": "", "status": "unbound", "fields": ["code"],
+      "candidates": ["customers", "customers_archive"], "problems": ["the table of \"Invoice Customers\" in customers_db is not known: choose one of the candidates"] }
+  ]
+}
+```
+`status` is `unbound` (unmapped, or the table is not known), `bound` (the table and every field used through the occurrence exist there, and each match field has the type of its local counterpart) or `mismatch` (with `problems`).
+
+A field the migrated document names **by FileMaker id only** is listed in `fields` as its marker `#<id>` (FileMaker writes an empty name when the other file was not reachable as it saved the design). It is found in the other solution's table by the `source_field_id` its migration kept on each column, so a candidate table must have every marker's id; once bound, `resolved` gives the field each marker was found as:
+```json
+{ "id": "…", "name": "Order Customers", "table": "customers", "status": "bound",
+  "fields": ["#1", "#3"], "resolved": { "#1": "code", "#3": "full_name" } }
+```
+A table without one of the ids is a `mismatch` naming the id, and so is a table where several fields have it (an ambiguity, naming them all: none is picked). The stored marker is kept: the next bind resolves it again. A marker is written only for a field the document names by id alone; a FileMaker field actually named `#4` is a name like any other.
+
+### `POST /api/v1/file-references/{idOrName}/verify`
+*Requires `admin` or `owner` role* (`403 Forbidden` otherwise: the report names layouts and fields of both solutions). The same report, without writing anything. Body `{ "peer_token": "…" }`; an unmapped reference needs none (every occurrence is `unbound`).
 
 ### Restoring a solution bundle
 
