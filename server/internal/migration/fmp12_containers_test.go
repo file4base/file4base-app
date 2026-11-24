@@ -285,3 +285,62 @@ func TestNativeContainerExternalStorageResolutionAndMissingReport(t *testing.T) 
 		t.Fatalf("path traversal should never resolve: found=%v err=%v", found, err)
 	}
 }
+
+func convertSingleSection31Container(t *testing.T, fnam []byte, forks map[string][]byte, declared map[string]uint32) *ConvertedSolution {
+	t.Helper()
+	payload := appendHBAM7TableCatalog(nil, 129, "Documents", []testHBAM7FieldSpec{
+		{id: 1, name: "Title", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 2, name: "Attachment", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeContainer},
+	})
+	payload = appendHBAM7SingleRow(payload, 129, 1, map[byte]string{1: "Logo"})
+	payload = appendSection5ContainerRef(payload, 129, 1, 2, "01")
+	payload = appendSection31Object(payload, 129, 1, fnam, forks, declared)
+	converted, err := AnalyzeAndConvertNative(MigrationRequest{DesignXML: containerDesign}, buildSyntheticHBAM7(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return converted
+}
+
+// A production file held forks whose segments ran past the declared length:
+// the declared bytes ended exactly on a segment boundary with the image's own
+// end marker, and the extra segments were left over from a longer version.
+func TestNativeContainerIgnoresStaleSegmentsPastDeclaredLength(t *testing.T) {
+	image := append(append([]byte{0xff, 0xd8, 0xff, 0xe0}, bytes.Repeat([]byte{0x11}, 26)...), 0xff, 0xd9) // 32 bytes: two segments
+	stale := bytes.Repeat([]byte{0x51, 0x45, 0x14, 0x00}, 5)                                               // 20 bytes: two more
+	c := convertSingleSection31Container(t, encodeHBAM7FNAM("image", "logo.jpg"),
+		map[string][]byte{"JPEG": append(append([]byte{}, image...), stale...)},
+		map[string]uint32{"JPEG": uint32(len(image))})
+	if c.Report.Counts.RejectedCount != 0 || c.Report.Counts.ContainerFilesReconstructed != 1 {
+		t.Fatalf("stale tail refused: %+v %+v", c.Report.Counts, c.Report.Rejected)
+	}
+	if got := c.TableRows["documents"][0]["attachment"].([]byte); !bytes.Equal(got, image) {
+		t.Fatalf("got %x, want the declared %d bytes", got, len(image))
+	}
+}
+
+func TestNativeContainerRefusesDeclaredLengthInsideASegment(t *testing.T) {
+	content := bytes.Repeat([]byte{0xab}, 48) // three 16-byte segments
+	c := convertSingleSection31Container(t, encodeHBAM7FNAM("image", "logo.jpg"),
+		map[string][]byte{"JPEG": content}, map[string]uint32{"JPEG": 40})
+	if c.Report.Counts.ContainerFilesReconstructed != 0 || c.Report.Counts.ContainerFilesMissing != 1 {
+		t.Fatalf("a length that is not a segment boundary was accepted: %+v", c.Report.Counts)
+	}
+}
+
+func TestNativeContainerPrefersEPSOverItsPreviews(t *testing.T) {
+	eps := []byte("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\nshowpage\n%%EOF\n")
+	c := convertSingleSection31Container(t, nil, map[string][]byte{
+		"EPS ": eps,
+		"JPEG": {0xff, 0xd8, 0xff, 0xe0, 0xff, 0xd9},
+		"PICT": {0x00, 0x11, 0x02, 0xff},
+	}, nil)
+	row := c.TableRows["documents"][0]
+	if got, _ := row["attachment"].([]byte); !bytes.Equal(got, eps) {
+		t.Fatalf("got %q, want the EPS original", got)
+	}
+	meta := row[containermeta.Key].(map[string]containermeta.Entry)["attachment"]
+	if meta.MimeType != "application/postscript" || meta.Filename != "container.eps" {
+		t.Fatalf("unexpected metadata: %+v", meta)
+	}
+}
