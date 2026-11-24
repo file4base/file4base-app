@@ -179,7 +179,12 @@ func nativeVisit(values map[byte]string) []byte {
 	file := make([]byte, 3*4096)
 	copy(file[15:20], "HBAM7")
 	binary.BigEndian.PutUint16(file[4096+12:], 2)
-	payload := []byte{0x28, 0x80, 1, 0x20, 5, 0x20, 1}
+	payload := appendHBAM7TableCatalog(nil, 129, "Visits", []testHBAM7FieldSpec{
+		{id: 1, name: "Amount", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeNumber},
+		{id: 2, name: "Visited", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeDate},
+		{id: 3, name: "Lasted", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeTime},
+	})
+	payload = append(payload, 0x28, 0x80, 1, 0x20, 5, 0x20, 1)
 	for id := byte(1); id < 16; id++ {
 		value, ok := values[id]
 		if !ok {
@@ -195,7 +200,11 @@ func nativeVisit(values map[byte]string) []byte {
 }
 
 func TestNativeRecordsWithSourceLocaleKeepOriginalText(t *testing.T) {
-	fields := map[int]map[int]htmlFieldMeta{129: {1: {ColName: "amount"}, 2: {ColName: "visited"}, 3: {ColName: "lasted"}}}
+	fields := map[int]map[int]htmlFieldMeta{129: {
+		1: {ColName: "amount", RawName: "Amount", FieldType: "NUMBER"},
+		2: {ColName: "visited", RawName: "Visited", FieldType: "DATE"},
+		3: {ColName: "lasted", RawName: "Lasted", FieldType: "TIMESTAMP"},
+	}}
 	types := map[string]string{"visits.amount": "NUMBER", "visits.visited": "DATE", "visits.lasted": "TIMESTAMP"}
 	file := nativeVisit(map[byte]string{1: "(4x2)", 2: "13/11/2026", 3: "49:30:00"})
 

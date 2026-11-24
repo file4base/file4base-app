@@ -13,6 +13,38 @@ func nativeEncoded(bytes []byte) []byte {
 	return out
 }
 
+type testHBAM7FieldSpec struct {
+	id         byte
+	name       string
+	fieldClass byte
+	dataType   byte
+}
+
+func appendHBAM7TableCatalog(payload []byte, tableID int, tableName string, fields []testHBAM7FieldSpec) []byte {
+	tHi := byte(0x80 | ((tableID - 128) >> 8))
+	tLo := byte((tableID - 128) & 0xff)
+	// [3].[16].[5].[tableID] key 16 = tableName
+	payload = append(payload, 0x20, 3, 0x20, 16, 0x20, 5, 0x28, tHi, tLo)
+	payload = append(payload, 0x06, 16, byte(len(tableName)))
+	payload = append(payload, nativeEncoded([]byte(tableName))...)
+	payload = append(payload, 0x40, 0x40, 0x40, 0x40)
+	// [tableID].[3].[5].[fid] key 2 = [class, dataType], key 16 = fieldName
+	if len(fields) > 0 {
+		payload = append(payload, 0x28, tHi, tLo, 0x20, 3, 0x20, 5)
+		for _, f := range fields {
+			payload = append(payload, 0x20, f.id)
+			if f.fieldClass != 0 || f.dataType != 0 {
+				payload = append(payload, 0x02, 2, f.fieldClass, f.dataType)
+			}
+			payload = append(payload, 0x06, 16, byte(len(f.name)))
+			payload = append(payload, nativeEncoded([]byte(f.name))...)
+			payload = append(payload, 0x40)
+		}
+		payload = append(payload, 0x40, 0x40, 0x40)
+	}
+	return payload
+}
+
 func TestNativeUnicodePreservesSourceText(t *testing.T) {
 	for _, tc := range []struct {
 		bytes []byte
@@ -46,7 +78,11 @@ func TestNativeRecordsUsePathsAcrossPages(t *testing.T) {
 	// The source value deliberately contains the byte pattern the old reader
 	// guessed was a record boundary. It is data inside a length-delimited cell.
 	value := nativeEncoded([]byte{0x0f, 0x1a, 0x1a, 0x1a, 0x7a, 0x5f, 0xda})
-	page := []byte{0x28, 0x80, 1, 0x20, 5, 0x28, 0x81, 0x10, 0x06, 1, byte(len(value))}
+	page := appendHBAM7TableCatalog(nil, 129, "Visits", []testHBAM7FieldSpec{
+		{id: 1, name: "Text", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 2, name: "Long", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+	})
+	page = append(page, 0x28, 0x80, 1, 0x20, 5, 0x28, 0x81, 0x10, 0x06, 1, byte(len(value)))
 	page = append(page, value...)
 	copy(file[2*4096+20:], page)
 	// Record 400, field 2, split across two chunks on its continuation page.
@@ -56,7 +92,10 @@ func TestNativeRecordsUsePathsAcrossPages(t *testing.T) {
 	page = append(page, nativeEncoded([]byte("cd"))...)
 	page = append(page, 0x40, 0x40, 0x28, 0x81, 0x11) // blank record 401
 	copy(file[3*4096+20:], page)
-	fields := map[int]map[int]htmlFieldMeta{129: {1: {ColName: "text"}, 2: {ColName: "long"}}}
+	fields := map[int]map[int]htmlFieldMeta{129: {
+		1: {ColName: "text", RawName: "Text", FieldType: "TEXT"},
+		2: {ColName: "long", RawName: "Long", FieldType: "TEXT"},
+	}}
 	got, _, err := readHBAM7Records(file, map[int]string{129: "visits"}, fields, map[string]string{"visits.text": "TEXT", "visits.long": "TEXT"}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -74,12 +113,15 @@ func TestNativeRecordTokensRemainDistinct(t *testing.T) {
 	file := make([]byte, 3*4096)
 	copy(file[15:20], "HBAM7")
 	binary.BigEndian.PutUint16(file[4096+12:], 2)
-	payload := []byte{0x28, 0x80, 1, 0x20, 5, 0x30, 0xc0, 1, 0x10, 0x06, 1, 1}
+	payload := appendHBAM7TableCatalog(nil, 129, "Visits", []testHBAM7FieldSpec{
+		{id: 1, name: "Code", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+	})
+	payload = append(payload, 0x28, 0x80, 1, 0x20, 5, 0x30, 0xc0, 1, 0x10, 0x06, 1, 1)
 	payload = append(payload, nativeEncoded([]byte("A"))...)
 	payload = append(payload, 0x40, 0x30, 0xc1, 1, 0x10, 0x06, 1, 1)
 	payload = append(payload, nativeEncoded([]byte("B"))...)
 	copy(file[2*4096+20:], payload)
-	got, _, err := readHBAM7Records(file, map[int]string{129: "visits"}, map[int]map[int]htmlFieldMeta{129: {1: {ColName: "code"}}}, map[string]string{"visits.code": "TEXT"}, "")
+	got, _, err := readHBAM7Records(file, map[int]string{129: "visits"}, map[int]map[int]htmlFieldMeta{129: {1: {ColName: "code", RawName: "Code", FieldType: "TEXT"}}}, map[string]string{"visits.code": "TEXT"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,12 +150,19 @@ func TestNativeUnrepresentableValuesReturnNoPartialRows(t *testing.T) {
 	file := make([]byte, 3*4096)
 	copy(file[15:20], "HBAM7")
 	binary.BigEndian.PutUint16(file[4096+12:], 2)
-	payload := []byte{0x28, 0x80, 1, 0x20, 5, 0x20, 1, 0x06, 1, 4}
+	payload := appendHBAM7TableCatalog(nil, 129, "Visits", []testHBAM7FieldSpec{
+		{id: 1, name: "Number", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeNumber},
+		{id: 2, name: "Text", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+	})
+	payload = append(payload, 0x28, 0x80, 1, 0x20, 5, 0x20, 1, 0x06, 1, 4)
 	payload = append(payload, nativeEncoded([]byte("12-A"))...)
 	payload = append(payload, 0x06, 2, 3)
 	payload = append(payload, nativeEncoded([]byte{'A', 0, 'B'})...)
 	copy(file[2*4096+20:], payload)
-	fields := map[int]map[int]htmlFieldMeta{129: {1: {ColName: "number"}, 2: {ColName: "text"}}}
+	fields := map[int]map[int]htmlFieldMeta{129: {
+		1: {ColName: "number", RawName: "Number", FieldType: "NUMBER"},
+		2: {ColName: "text", RawName: "Text", FieldType: "TEXT"},
+	}}
 	types := map[string]string{"visits.number": "NUMBER", "visits.text": "TEXT"}
 	rows, _, err := readHBAM7Records(file, map[int]string{129: "visits"}, fields, types, "")
 	issue, ok := err.(*nativeValueError)

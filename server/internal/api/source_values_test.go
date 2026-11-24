@@ -28,7 +28,12 @@ func syntheticNativeRecord(values map[byte]string) []byte {
 	file := make([]byte, 3*4096)
 	copy(file[15:20], "HBAM7")
 	binary.BigEndian.PutUint16(file[4096+12:], 2)
-	payload := []byte{0x28, 0x80, 1, 0x20, 5, 0x20, 1}
+	payload := appendSyntheticHBAM7Catalog(nil, 129, "Visits", []syntheticCatalogField{
+		{id: 1, name: "Amount", fieldClass: 1, dataType: 2},
+		{id: 2, name: "Visited", fieldClass: 1, dataType: 3},
+		{id: 3, name: "Doubled", fieldClass: 2, dataType: 2},
+	})
+	payload = append(payload, 0x28, 0x80, 1, 0x20, 5, 0x20, 1)
 	for id := byte(1); id < 16; id++ {
 		value, ok := values[id]
 		if !ok {

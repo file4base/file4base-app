@@ -54,14 +54,16 @@ func isHTMLDDR(raw string) bool {
 }
 
 type htmlFieldMeta struct {
-	TableID    int
-	FieldID    int
-	TableSQL   string
-	RawName    string
-	ColName    string
-	FieldType  string
-	RawOptions string
-	Formula    string
+	TableID        int
+	FieldID        int
+	TableSQL       string
+	RawName        string
+	ColName        string
+	FieldType      string
+	SourceKind     string // NORMAL, CALCULATION, SUMMARY
+	SourceDataType string // TEXT, NUMBER, DATE, TIME, TIMESTAMP, CONTAINER
+	RawOptions     string
+	Formula        string
 }
 
 type htmlPortalDef struct {
@@ -131,11 +133,13 @@ type htmlParsedLayout struct {
 func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) {
 	rawHTML := req.DesignXML
 
+	designFileName := ""
+	if m := reHTMLSolutionName.FindStringSubmatch(rawHTML); len(m) > 1 {
+		designFileName = strings.TrimSpace(cleanHTMLText(m[1]))
+	}
 	solName := strings.TrimSpace(req.SolutionName)
-	if solName == "" {
-		if m := reHTMLSolutionName.FindStringSubmatch(rawHTML); len(m) > 1 {
-			solName = strings.TrimSuffix(cleanHTMLText(m[1]), ".fmp12")
-		}
+	if solName == "" && designFileName != "" {
+		solName = strings.TrimSuffix(designFileName, ".fmp12")
 	}
 	if solName == "" {
 		solName = "Migrated_Solution"
@@ -165,6 +169,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 	colIDByTableCol := make(map[string]string)
 	colTypeByTableCol := make(map[string]string)
 	fmpTableMeta := make(map[int]string)                // fmpTableID -> sqlTableName
+	fmpTableRawNames := make(map[int]string)            // fmpTableID -> raw source table name
 	fmpFieldMeta := make(map[int]map[int]htmlFieldMeta) // fmpTableID -> fmpFieldID -> meta
 
 	// 1. Parse Base Tables & Fields
@@ -186,6 +191,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		}
 		seenTables[sqlName] = true
 		fmpTableMeta[fmpTblID] = sqlName
+		fmpTableRawNames[fmpTblID] = rawTableName
 		fmpFieldMeta[fmpTblID] = make(map[int]htmlFieldMeta)
 
 		tID := uuid.NewString()
@@ -274,14 +280,17 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 
 		for _, rf := range rawFields {
 			if fmpTblID > 0 && rf.fmpFieldID > 0 {
+				srcKind, srcDataType := classifyHTMLFieldSourceType(rf.rawType)
 				fmpFieldMeta[fmpTblID][rf.fmpFieldID] = htmlFieldMeta{
-					TableID:    fmpTblID,
-					FieldID:    rf.fmpFieldID,
-					TableSQL:   sqlName,
-					RawName:    rf.rawName,
-					ColName:    rf.colName,
-					FieldType:  rf.rawType,
-					RawOptions: rf.rawOptions,
+					TableID:        fmpTblID,
+					FieldID:        rf.fmpFieldID,
+					TableSQL:       sqlName,
+					RawName:        rf.rawName,
+					ColName:        rf.colName,
+					FieldType:      rf.rawType,
+					SourceKind:     srcKind,
+					SourceDataType: srcDataType,
+					RawOptions:     rf.rawOptions,
 				}
 			}
 			if seenCols[rf.colName] {
@@ -696,7 +705,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 
 	// 7. Parse optional FMPXMLRESULT data files and/or binary .fmp12 records
 	tableRows := make(map[string][]map[string]interface{})
-	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, fmpTableMeta, fmpFieldMeta, tableRows, report, nil); err != nil {
+	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, fmpTableMeta, fmpTableRawNames, fmpFieldMeta, designFileName, tableRows, report, nil); err != nil {
 		return nil, err
 	}
 
@@ -705,6 +714,43 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		TableRows: tableRows,
 		Report:    report,
 	}, nil
+}
+
+func classifyHTMLFieldSourceType(rawType string) (string, string) {
+	translated, _ := englishFieldTypeWords(rawType)
+	upper := strings.ToUpper(strings.TrimSpace(translated))
+	kind := "NORMAL"
+	if strings.Contains(upper, "SUMMARY") {
+		kind = "SUMMARY"
+	} else if strings.Contains(upper, "CALCULATION") || strings.Contains(upper, "CALCULATED") {
+		kind = "CALCULATION"
+	}
+	for _, token := range []struct {
+		needle string
+		canon  string
+	}{
+		{"TIMESTAMP", "TIMESTAMP"},
+		{"DATETIME", "TIMESTAMP"},
+		{"CONTAINER", "CONTAINER"},
+		{"BINARY", "CONTAINER"},
+		{"BLOB", "CONTAINER"},
+		{"NUMBER", "NUMBER"},
+		{"NUMERIC", "NUMBER"},
+		{"DECIMAL", "NUMBER"},
+		{"INTEGER", "NUMBER"},
+		{"FLOAT", "NUMBER"},
+		{"DATE", "DATE"},
+		{"TIME", "TIME"},
+		{"TEXT", "TEXT"},
+	} {
+		if strings.Contains(upper, token.needle) {
+			return kind, token.canon
+		}
+	}
+	if kind != "NORMAL" {
+		return kind, kind
+	}
+	return kind, upper
 }
 
 func extractRawFieldOptions(cellHTML string) string {

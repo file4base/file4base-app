@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/file4base/file4base-app/server/internal/migration"
 )
@@ -32,7 +33,11 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "cannot read native input")
 		return 1
 	}
-	converted, err := migration.AnalyzeAndConvertNative(migration.MigrationRequest{DesignXML: string(designBytes), NativeDateOrder: *order}, nativeBytes)
+	converted, err := migration.AnalyzeAndConvertNative(migration.MigrationRequest{
+		DesignXML:       string(designBytes),
+		NativeDateOrder: *order,
+		NativeFileName:  filepath.Base(*native),
+	}, nativeBytes)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "input conversion failed; no target was changed")
 		return 1

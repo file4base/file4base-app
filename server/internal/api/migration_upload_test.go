@@ -20,6 +20,35 @@ import (
 // below hold records for.
 const nativeVisitsDesign = `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog><BaseTable id="129" name="Visits"><FieldCatalog><Field id="1" name="Amount" dataType="Number"/></FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`
 
+type syntheticCatalogField struct {
+	id         byte
+	name       string
+	fieldClass byte
+	dataType   byte
+}
+
+func appendSyntheticHBAM7Catalog(payload []byte, tableID int, tableName string, fields []syntheticCatalogField) []byte {
+	tHi := byte(0x80 | ((tableID - 128) >> 8))
+	tLo := byte((tableID - 128) & 0xff)
+	payload = append(payload, 0x20, 3, 0x20, 16, 0x20, 5, 0x28, tHi, tLo, 0x06, 16, byte(len(tableName)))
+	for _, b := range []byte(tableName) {
+		payload = append(payload, b^0x5a)
+	}
+	payload = append(payload, 0x40, 0x40, 0x40, 0x40)
+	if len(fields) > 0 {
+		payload = append(payload, 0x28, tHi, tLo, 0x20, 3, 0x20, 5)
+		for _, f := range fields {
+			payload = append(payload, 0x20, f.id, 0x02, 2, f.fieldClass, f.dataType, 0x06, 16, byte(len(f.name)))
+			for _, b := range []byte(f.name) {
+				payload = append(payload, b^0x5a)
+			}
+			payload = append(payload, 0x40)
+		}
+		payload = append(payload, 0x40, 0x40, 0x40)
+	}
+	return payload
+}
+
 // syntheticNativeFile builds an original HBAM7 file whose single leaf block
 // holds one Visits record with Amount = value, followed by padPages empty
 // pages that are not part of the leaf chain.
@@ -27,7 +56,10 @@ func syntheticNativeFile(value string, padPages int) []byte {
 	file := make([]byte, (3+padPages)*4096)
 	copy(file[15:20], "HBAM7")
 	binary.BigEndian.PutUint16(file[4096+12:], 2)
-	payload := []byte{0x28, 0x80, 1, 0x20, 5, 0x20, 1, 0x06, 1, byte(len(value))}
+	payload := appendSyntheticHBAM7Catalog(nil, 129, "Visits", []syntheticCatalogField{
+		{id: 1, name: "Amount", fieldClass: 1, dataType: 2},
+	})
+	payload = append(payload, 0x28, 0x80, 1, 0x20, 5, 0x20, 1, 0x06, 1, byte(len(value)))
 	for _, b := range []byte(value) {
 		payload = append(payload, b^0x5a)
 	}

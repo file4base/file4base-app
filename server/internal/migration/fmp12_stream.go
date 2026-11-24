@@ -284,6 +284,13 @@ type nativeReadOptions struct {
 	// locale, when named, migrates permissive values with their original
 	// text instead of refusing them (#124).
 	locale *sourceLocale
+	// tableRawNames maps source table IDs to the raw base table names from the
+	// attached design, used to verify the .fmp12 catalog before reading rows (#130).
+	tableRawNames map[int]string
+	// designFileName is the filename declared by the design document, if any.
+	designFileName string
+	// nativeFileName is the filename of the attached .fmp12 copy, if known.
+	nativeFileName string
 }
 
 func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]map[int]htmlFieldMeta, types map[string]string, opts nativeReadOptions) (map[string][]map[string]interface{}, map[string]int, error) {
@@ -295,7 +302,9 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 	cells := map[cellKey][][]byte{}
 	rows := map[int]map[string]bool{}
 	issues := map[string]int{}
+	catalogCollector := newHBAM7CatalogCollector()
 	err := walkHBAM7(source, func(c hbamChunk) error {
+		catalogCollector.observe(c)
 		if len(c.path) < 3 {
 			return nil
 		}
@@ -357,6 +366,13 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 		return nil
 	})
 	if err != nil {
+		return nil, nil, err
+	}
+	catalog, err := catalogCollector.build()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := verifyHBAM7Catalog(catalog, tables, opts.tableRawNames, fields, opts.designFileName, opts.nativeFileName); err != nil {
 		return nil, nil, err
 	}
 	out := map[string][]map[string]interface{}{}

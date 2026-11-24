@@ -23,7 +23,9 @@ func populateDataRows(
 	tableIDByName map[string]string,
 	colTypeByTableCol map[string]string,
 	fmpTableMeta map[int]string,
+	fmpTableRawNames map[int]string,
 	fmpFieldMeta map[int]map[int]htmlFieldMeta,
+	designFileName string,
 	tableRows map[string][]map[string]interface{},
 	report *ConversionReport,
 	fieldNamesByTable map[string]*fieldNameMap,
@@ -190,10 +192,18 @@ func populateDataRows(
 			return err
 		}
 		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol,
-			nativeReadOptions{dateOrder: req.NativeDateOrder, locale: locale})
+			nativeReadOptions{
+				dateOrder:      req.NativeDateOrder,
+				locale:         locale,
+				tableRawNames:  fmpTableRawNames,
+				designFileName: designFileName,
+				nativeFileName: req.NativeFileName,
+			})
 		if err != nil {
 			detail := fmt.Sprintf("Failed extracting records from .fmp12 binary: %v", err)
-			if issue, ok := err.(*nativeValueError); ok {
+			if _, ok := err.(*nativeCatalogMismatchError); ok {
+				detail = err.Error()
+			} else if issue, ok := err.(*nativeValueError); ok {
 				report.Counts.RecordsDetected += issue.Records
 				if locale == nil && (issue.Counts["NUMBER"] > 0 || issue.Counts["DATE"] > 0 || issue.Counts["TIMESTAMP"] > 0) {
 					detail += "; name the source file's locale (source_locale) to migrate permissive Number, Date and " +

@@ -105,6 +105,10 @@ type MigrationRequest struct {
 	OwnerUser       string            `json:"owner_user,omitempty"`
 	OwnerPassword   string            `json:"owner_password,omitempty"`
 
+	// NativeFileName is the filename of the attached .fmp12 copy when known
+	// (set by migration-preflight and multipart uploads for diagnostics).
+	NativeFileName string `json:"native_file_name,omitempty"`
+
 	// SourceLocale is the locale the source file writes numbers and dates
 	// in, such as "fr-FR" (#124). Naming it migrates permissive values, such
 	// as "12-A" in a Number field, with their original text instead of
@@ -332,6 +336,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// The .fmp12 record reader addresses rows by the numeric table and field
 	// ids FileMaker assigns, which the DDR carries as id attributes (#91).
 	fmpTableMeta := make(map[int]string)                // fmpTableID -> sqlTableName
+	fmpTableRawNames := make(map[int]string)            // fmpTableID -> raw source table name
 	fmpFieldMeta := make(map[int]map[int]htmlFieldMeta) // fmpTableID -> fmpFieldID -> meta
 
 	baseTables := catalogDefinitions(root, []string{"BaseTableCatalog", "tables"}, "BaseTable", "Table", "table")
@@ -389,6 +394,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
 				fmpTableID = parsed
 				fmpTableMeta[parsed] = sqlName
+				fmpTableRawNames[parsed] = rawName
 				fmpFieldMeta[parsed] = make(map[int]htmlFieldMeta)
 			}
 		}
@@ -458,13 +464,16 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			if fmpTableID > 0 {
 				if raw := firstAttr(fn, "id", "ID"); raw != "" {
 					if fieldID, err := strconv.Atoi(raw); err == nil && fieldID > 0 {
+						srcKind, srcDataType := classifyXMLFieldSourceType(fn, col.FieldType)
 						fmpFieldMeta[fmpTableID][fieldID] = htmlFieldMeta{
-							TableID:   fmpTableID,
-							FieldID:   fieldID,
-							TableSQL:  sqlName,
-							RawName:   fRawName,
-							ColName:   colName,
-							FieldType: col.FieldType,
+							TableID:        fmpTableID,
+							FieldID:        fieldID,
+							TableSQL:       sqlName,
+							RawName:        fRawName,
+							ColName:        colName,
+							FieldType:      col.FieldType,
+							SourceKind:     srcKind,
+							SourceDataType: srcDataType,
 						}
 					}
 				}
@@ -699,8 +708,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// binary. Both routes go through the same reader, so an attachment sent
 	// with an XML design is read rather than ignored (#91).
 	tableRows := make(map[string][]map[string]interface{})
+	designFileName := extractDeclaredFileName(root)
 	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol,
-		fmpTableMeta, fmpFieldMeta, tableRows, report, fieldNamesByTable); err != nil {
+		fmpTableMeta, fmpTableRawNames, fmpFieldMeta, designFileName, tableRows, report, fieldNamesByTable); err != nil {
 		return nil, err
 	}
 
@@ -2223,15 +2233,55 @@ func detectSourceFormat(root *xmlNode) string {
 }
 
 func extractSolutionName(root *xmlNode) string {
-	if s := firstAttr(root, "solution", "name", "file", "File"); s != "" {
+	if s := extractDeclaredFileName(root); s != "" {
 		return strings.TrimSuffix(s, ".fmp12")
 	}
-	if f := findFirstChild(root, "File", "Database"); f != nil {
+	return ""
+}
+
+func extractDeclaredFileName(root *xmlNode) string {
+	if s := firstAttr(root, "solution", "name", "file", "File"); s != "" {
+		return s
+	}
+	if f := findFirstChild(root, "File", "Database", "FMSaveAsXMLFile"); f != nil {
 		if s := firstAttr(f, "name", "Name"); s != "" {
-			return strings.TrimSuffix(s, ".fmp12")
+			return s
 		}
 	}
 	return ""
+}
+
+func classifyXMLFieldSourceType(fn *xmlNode, fallbackFieldType string) (string, string) {
+	rawType := strings.ToUpper(strings.TrimSpace(firstAttr(fn, "dataType", "type", "Type")))
+	fieldKind := strings.ToUpper(strings.TrimSpace(firstAttr(fn, "fieldType", "kind")))
+	if fieldKind == "CALCULATED" {
+		fieldKind = "CALCULATION"
+	}
+	calcText := ""
+	if calcNode := findFirstChild(fn, "Calculation", "calculation"); calcNode != nil {
+		calcText = calculationText(calcNode)
+	}
+	kind := "NORMAL"
+	if fieldKind == "SUMMARY" || rawType == "SUMMARY" {
+		kind = "SUMMARY"
+	} else if fieldKind == "CALCULATION" || rawType == "CALCULATION" || calcText != "" {
+		kind = "CALCULATION"
+	}
+	dataType := rawType
+	if dataType == "" {
+		dataType = strings.ToUpper(strings.TrimSpace(fallbackFieldType))
+	}
+	switch dataType {
+	case "BINARY", "BLOB", "CONTAINER":
+		dataType = "CONTAINER"
+	case "NUMERIC", "DECIMAL", "INTEGER", "FLOAT", "NUMBER":
+		dataType = "NUMBER"
+	case "DATETIME", "TIMESTAMP":
+		dataType = "TIMESTAMP"
+	case "CALCULATED":
+		dataType = "CALCULATION"
+	}
+	return kind, dataType
 }
 
 // firstAttr answers the first of keys the element carries.

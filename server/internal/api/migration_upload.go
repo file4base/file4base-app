@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -141,6 +142,7 @@ func (h *SolutionHandler) readMultipartMigration(w http.ResponseWriter, r *http.
 		sawNative             bool
 		designXML             string
 		nativeBytes           []byte
+		nativeFileName        string
 	)
 	for {
 		part, err := reader.NextPart()
@@ -192,6 +194,9 @@ func (h *SolutionHandler) readMultipartMigration(w http.ResponseWriter, r *http.
 				return nil, false
 			}
 			sawNative = true
+			if fn := strings.TrimSpace(part.FileName()); fn != "" {
+				nativeFileName = filepath.Base(fn)
+			}
 			nativeBytes, err = spoolMigrationPart(part, h.opts.MigrationUploadDir)
 			if err != nil {
 				failed(err)
@@ -225,6 +230,9 @@ func (h *SolutionHandler) readMultipartMigration(w http.ResponseWriter, r *http.
 			return nil, false
 		}
 		in.native = nativeBytes
+		if nativeFileName != "" && strings.TrimSpace(in.req.NativeFileName) == "" {
+			in.req.NativeFileName = nativeFileName
+		}
 	}
 	return &in, true
 }
