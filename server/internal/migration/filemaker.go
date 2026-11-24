@@ -599,6 +599,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 	// 2. Extract Table Occurrences
 	occIDByName := make(map[string]string) // lower(occName) -> occID
+	deletedOccurrences := make(map[string]bool) // lower(occName) of occurrences on deleted tables
 	occTableByName := make(map[string]string)
 	tablesWithOccurrence := make(map[string]bool) // sqlTableName -> the graph names an occurrence of it
 	occNodes := catalogDefinitions(root, []string{"TableOccurrenceCatalog", "occurrences"}, "TableOccurrence", "occurrence")
@@ -634,6 +635,16 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			if btRef := findFirstChild(on, "BaseTableReference"); btRef != nil {
 				baseName = firstAttr(btRef, "name", "Name")
 			}
+		}
+		if baseTableDeleted(on, baseName) {
+			// FileMaker keeps an occurrence whose base table was deleted,
+			// shown as <Table Missing>; it has no records to migrate.
+			deletedOccurrences[strings.ToLower(occName)] = true
+			addReportItem(report, ReportItem{
+				Category: CategoryUnsupported, Domain: "occurrence", SourceName: occName,
+				Detail: "Table occurrence is based on a table that was deleted in FileMaker; it was not migrated",
+			})
+			continue
 		}
 		tID := tableIDByName[strings.ToLower(baseName)]
 		tSQL := canonicalTableName[strings.ToLower(baseName)]
@@ -717,6 +728,14 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	for _, rn := range relNodes {
 		rel, items := convertRelationshipNode(rn, occIDByName, occTableByName, colIDByTableCol, fieldNamesByTable)
+		if rel == nil {
+			if left, right := relationshipSides(rn); deletedOccurrences[strings.ToLower(left)] || deletedOccurrences[strings.ToLower(right)] {
+				items = []ReportItem{{
+					Category: CategoryUnsupported, Domain: "relationship", SourceName: firstAttr(rn, "name", "Name", "id"),
+					Detail: fmt.Sprintf("Relationship %s - %s joins a table occurrence whose table was deleted in FileMaker; it was not migrated", left, right),
+				}}
+			}
+		}
 		for _, item := range items {
 			addReportItem(report, item)
 		}
@@ -753,7 +772,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 5. Extract Layouts (and quarantine any layout triggers)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	for _, ln := range layoutNodes {
-		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName)
+		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
@@ -1684,6 +1703,7 @@ func convertLayoutNode(
 	occurrences []schema.BundleOccurrence,
 	occIDByName map[string]string,
 	occTableByName map[string]string,
+	deletedOccurrences map[string]bool,
 ) (*schema.BundleLayout, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(ln, "name", "Name")
@@ -1696,7 +1716,7 @@ func convertLayoutNode(
 			occName = firstAttr(tRef, "name", "Name")
 		}
 	}
-	if occName == deletedTableOccurrence {
+	if occName == deletedTableOccurrence || deletedOccurrences[strings.ToLower(occName)] {
 		return nil, []ReportItem{{Category: CategoryUnsupported, Domain: "layout", SourceName: name,
 			Detail: "Layout is based on a table occurrence that was deleted in FileMaker, so it shows no records there; it was not migrated"}}
 	}
@@ -2914,4 +2934,30 @@ func firstNonEmpty(values ...string) string {
 // isTrue reads a FileMaker boolean attribute ("True"/"False").
 func isTrue(value string) bool {
 	return strings.EqualFold(strings.TrimSpace(value), "true")
+}
+
+// baseTableDeleted reports an occurrence whose base table was deleted: the
+// source reference is empty, or names FileMaker's placeholder.
+func baseTableDeleted(on *xmlNode, baseName string) bool {
+	if baseName == deletedBaseTable {
+		return true
+	}
+	if baseName != "" || firstAttr(on, "baseTableId", "baseTableID", "base_table_id") != "" {
+		return false
+	}
+	src := findFirstChild(on, "BaseTableSourceReference")
+	return src != nil && findFirstChild(src, "BaseTableReference") == nil && len(src.Children) == 0
+}
+
+// relationshipSides names the two occurrences a relationship joins.
+func relationshipSides(rn *xmlNode) (string, string) {
+	left := firstAttr(rn, "left", "leftTable", "LeftTable")
+	right := firstAttr(rn, "right", "rightTable", "RightTable")
+	if n := findFirstChild(rn, "LeftTable", "leftTable"); left == "" && n != nil {
+		left = firstAttr(n, "name", "Name")
+	}
+	if n := findFirstChild(rn, "RightTable", "rightTable"); right == "" && n != nil {
+		right = firstAttr(n, "name", "Name")
+	}
+	return left, right
 }
