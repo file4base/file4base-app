@@ -2328,7 +2328,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       final col = widget.table.columns
           .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
           .firstOrNull;
-      if (col != null && col.fieldType.toUpperCase() == 'CONTAINER') {
+      if (col != null && col.storageType == 'CONTAINER') {
         final bytes = _tryDecodeBase64Image(rec[col.name]?.toString());
         return InkWell(
           onTap: () async {
@@ -3316,7 +3316,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     bool isDark,
     String key,
   ) {
-    if (col.fieldType.toUpperCase() == 'CONTAINER') {
+    if (col.storageType == 'CONTAINER') {
       return _buildContainerFieldObject(obj, col, record, isDark, key: key);
     }
 

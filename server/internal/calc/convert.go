@@ -17,6 +17,25 @@ func conversionFunctions() map[string]function {
 			}
 			return textValue(a[0].asText(ev.loc)), nil
 		}),
+		// GetContainerAttribute ( container ; "filename" | "fileSize" ):
+		// what is known of the file without reading it. Any other attribute
+		// is empty.
+		"GETCONTAINERATTRIBUTE": fixed(2, func(ev *evaluator, _ callNode, a []value) (value, error) {
+			box := a[0].box
+			if box == nil {
+				return empty, nil
+			}
+			switch strings.ToLower(strings.TrimSpace(a[1].asText(ev.loc))) {
+			case "filename":
+				return textValue(box.Filename), nil
+			case "filesize":
+				if box.Size <= 0 {
+					return empty, nil
+				}
+				return intValue(box.Size), nil
+			}
+			return empty, nil
+		}),
 		"GETASNUMBER": fixed(1, func(ev *evaluator, _ callNode, a []value) (value, error) {
 			n, ok := a[0].numberOrEmpty(ev.loc)
 			if !ok {

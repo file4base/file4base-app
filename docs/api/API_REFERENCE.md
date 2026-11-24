@@ -470,6 +470,8 @@ Queries rows with optional pagination and sorting.
 
 CONTAINER fields are returned as base64 strings (standard alphabet, with padding); `POST` and `PUT` accept base64 strings for them and store the decoded bytes, and a value that is not valid base64 answers `400 Invalid Value`.
 
+A calculation field whose result type is `Container` reads like a CONTAINER field: the file its formula answers, as base64, with that file's metadata under `__container_meta` keyed by the calculation's own name. Its column stores only a reference to the container field it answered (`{"table","record","field"}`), never a copy of the file, so the value follows that field; an unstored one is computed on read. Exports write it the same way as a container. A file in a table the caller may not read reads as `null`. See [calculation_formulas.md](../specs/calculation_formulas.md#containers).
+
 **Original texts (#124).** A record migrated from FileMaker can hold values whose source text a typed field cannot keep as written, such as `12-A` in a Number field. The field holds FileMaker's reading of it (`12`), which sorting, finds, summaries and calculations use, and the record carries the text as written under the reserved key `__source_text` (field name → text), present only when it has any:
 
 ```json
@@ -687,9 +689,11 @@ read access to the table, nothing more.
 
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
-answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`
-or `Boolean`, and the answer comes back in that shape, exactly as a
-calculation field with that result type would store it. At most 50
+answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`,
+`Boolean` or `Container`, and the answer comes back in that shape, exactly as a
+calculation field with that result type would store it. A `Container` answer's
+`value` is the container (`table`, `record`, `field`, `filename`, `mime_type`,
+`sha256`, `size`), its `text` the file's name; a container read as text is its name. At most 50
 expressions in one request.
 
 #### Response `200 OK`
@@ -1961,9 +1965,12 @@ container references (`remote:`, `filemac:`, `filewin:`, `file:`, …) are
 resolved against `external_files` (map of relative path to base64 bytes; or
 `-external-containers` in `migration-preflight`), or explicitly rejected with
 the missing file path. The report counts `container_cells_detected`,
-`container_files_reconstructed` and `container_files_missing`. Binary
-calculations and timezone/time-duration behavior still require qualification; an
-extracted record count is not an application-equivalence result.
+`container_files_reconstructed` and `container_files_missing`. A Binary
+(Container) result calculation is migrated as a calculation with result type
+`Container`, and a cell left in the file for an unstored calculation of any
+type is not read: FileMaker recomputes it, so it is stale. Timezone and
+time-duration behavior still require qualification; an extracted record count
+is not an application-equivalence result.
 
 #### Uploading a native copy (`multipart/form-data`)
 

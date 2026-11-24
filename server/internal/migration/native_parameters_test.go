@@ -1,6 +1,11 @@
 package migration
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/file4base/file4base-app/server/internal/schema"
+)
 
 func TestNativeStructureCatalogsAndOperands(t *testing.T) {
 	// Original synthetic design in the native wrapper grammar. No source export
@@ -52,14 +57,27 @@ func TestNativeStructureCatalogsAndOperands(t *testing.T) {
 	}
 }
 
-func TestBinaryCalculationCannotBecomeText(t *testing.T) {
-	result, err := AnalyzeAndConvert(MigrationRequest{DesignXML: `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog><BaseTable id="129" name="Visits"><FieldCatalog><Field id="1" name="Attachment" dataType="Binary" fieldType="Calculation"><Calculation><Text>"unavailable"</Text></Calculation></Field></FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`})
+func TestContainerCalculationIsMigrated(t *testing.T) {
+	result, err := AnalyzeAndConvert(MigrationRequest{DesignXML: `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog><BaseTable id="129" name="Visits"><FieldCatalog><Field id="1" name="Attachment" dataType="Binary" fieldType="Calculation"><Calculation><Text>If ( Kind = "a" ; Front ; Back )</Text></Calculation></Field><Field id="2" name="Kind" dataType="Text" fieldType="Normal"/><Field id="3" name="Front" dataType="Binary" fieldType="Normal"/><Field id="4" name="Back" dataType="Binary" fieldType="Normal"/></FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>`})
 	if err != nil {
 		t.Fatal(err)
 	}
-	column := result.Bundle.Tables[0].Columns[1]
-	if column.FieldType != "CONTAINER" || column.CalculationFormula != nil || result.Report.Counts.UnsupportedCount == 0 {
-		t.Fatal("binary calculation was misreported as a supported text calculation")
+	var column *schema.BundleColumn
+	for i, c := range result.Bundle.Tables[0].Columns {
+		if c.DisplayName == "Attachment" {
+			column = &result.Bundle.Tables[0].Columns[i]
+		}
+	}
+	if column == nil || column.FieldType != "CALCULATION" || column.CalculationFormula == nil {
+		t.Fatalf("a container calculation is not migrated as a calculation: %#v", column)
+	}
+	if !strings.Contains(*column.CalculationFormula, `"result_type":"Container"`) {
+		t.Fatalf("result type lost: %s", *column.CalculationFormula)
+	}
+	for _, item := range append(result.Report.Unsupported, result.Report.ManualActionRequired...) {
+		if strings.Contains(item.SourceName, "Attachment") {
+			t.Fatalf("a container calculation is still reported: %+v", item)
+		}
 	}
 }
 
@@ -146,5 +164,41 @@ func TestNativeOccurrenceOnDeletedTable(t *testing.T) {
 	}
 	if len(result.Bundle.Layouts) != 1 || len(result.Bundle.Relationships) != 0 {
 		t.Fatalf("layouts %d, relationships %d", len(result.Bundle.Layouts), len(result.Bundle.Relationships))
+	}
+}
+
+// An unstored calculation is computed whenever it is shown, so a cell a
+// native file still holds for it is stale: it is not read, whatever its type,
+// even when it refers to a container object the table does not have.
+func TestNativeUnstoredCalculationCellsAreIgnored(t *testing.T) {
+	const design = `<FMPReport><File name="Assets.fmp12"><BaseTableCatalog>` +
+		`<BaseTable id="129" name="Documents"><FieldCatalog>` +
+		`<Field id="1" name="Title" dataType="Text"/>` +
+		`<Field id="2" name="Attachment" dataType="Container"/>` +
+		`<Field id="3" name="Shown" dataType="Binary" fieldType="Calculated"><Calculation><Text>Attachment</Text></Calculation><Storage storeCalculationResults="False"/></Field>` +
+		`<Field id="4" name="Unknown" dataType="Binary" fieldType="Calculated"><Calculation><Text>NoSuchFunction ( Attachment )</Text></Calculation><Storage storeCalculationResults="False"/></Field>` +
+		`</FieldCatalog></BaseTable>` +
+		`</BaseTableCatalog></File></FMPReport>`
+	payload := appendHBAM7TableCatalog(nil, 129, "Documents", []testHBAM7FieldSpec{
+		{id: 1, name: "Title", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 2, name: "Attachment", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeContainer},
+		{id: 3, name: "Shown", fieldClass: hbamFieldClassCalculation, dataType: hbamDataTypeContainer},
+		{id: 4, name: "Unknown", fieldClass: hbamFieldClassCalculation, dataType: hbamDataTypeContainer},
+	})
+	payload = appendHBAM7SingleRow(payload, 129, 1, map[byte]string{1: "Plan"})
+	// Both calculations point at object 2, which this table does not hold.
+	payload = appendSection5ContainerRef(payload, 129, 1, 3, "02")
+	payload = appendSection5ContainerRef(payload, 129, 1, 4, "02")
+
+	converted, err := AnalyzeAndConvertNative(MigrationRequest{DesignXML: design}, buildSyntheticHBAM7(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if converted.Report.Counts.RejectedCount != 0 || converted.Report.Counts.RecordsReady != 1 || converted.Report.Counts.ContainerFilesMissing != 0 {
+		t.Fatalf("a stale cell of an unstored calculation refused the record: %+v", converted.Report.Counts)
+	}
+	row := converted.TableRows["documents"][0]
+	if row["title"] != "Plan" || row["shown"] != nil || row["unknown"] != nil {
+		t.Fatalf("unexpected row: %#v", row)
 	}
 }

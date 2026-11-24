@@ -1199,7 +1199,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   }
 
   Widget _buildCalculationTab(ThemeData theme, bool isDark) {
-    final resultTypes = ['Text', 'Number', 'Date', 'Time', 'Timestamp'];
+    final resultTypes = ['Text', 'Number', 'Date', 'Time', 'Timestamp', 'Container'];
     final isCalculation = widget.column.fieldType == 'CALCULATION';
     final isSummary = widget.column.fieldType == 'SUMMARY';
 

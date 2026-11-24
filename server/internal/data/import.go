@@ -658,6 +658,10 @@ func (s *Service) ExportRecords(
 	if err := s.AttachSourceText(ctx, tableName, rows); err != nil {
 		return nil, err
 	}
+	// A container result exports as the container it refers to.
+	if err := s.resolveContainerResults(ctx, tableName, rows); err != nil {
+		return nil, err
+	}
 	for _, row := range rows {
 		originals, _ := row[sourcetext.Key].(map[string]string)
 		cells := make([]string, len(chosen))

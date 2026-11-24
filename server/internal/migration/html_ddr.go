@@ -68,6 +68,10 @@ type htmlFieldMeta struct {
 	// Repetitions is the field's maximum number of repetitions, 1 when it
 	// does not repeat.
 	Repetitions int
+	// Unstored is an unstored calculation: FileMaker computes it whenever
+	// it is shown, so a cell a native file still holds for it is stale and
+	// is not read.
+	Unstored bool
 }
 
 type htmlPortalDef struct {
@@ -846,6 +850,8 @@ func convertHTMLField(
 			resType = "Date"
 		} else if strings.Contains(upperType, "TIMESTAMP") || strings.Contains(upperType, "TIME") {
 			resType = "Timestamp"
+		} else if strings.Contains(upperType, "CONTAINER") {
+			resType = "Container"
 		}
 		formula := extractHTMLFormula(rawOptions, tableSQL, rawTableName, knownSameTableCols)
 		expr, ok := ownTableFormula(formula)
