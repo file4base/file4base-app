@@ -111,7 +111,11 @@ func newFormulaBinding(bundle *schema.SolutionBundle, fields map[string]*fieldNa
 	for _, rel := range bundle.Relationships {
 		b.links[rel.LeftOccurrenceID] = append(b.links[rel.LeftOccurrenceID], rel.RightOccurrenceID)
 		b.links[rel.RightOccurrenceID] = append(b.links[rel.RightOccurrenceID], rel.LeftOccurrenceID)
-		b.matchColumns[rel.LeftColumnID], b.matchColumns[rel.RightColumnID] = true, true
+		for _, p := range rel.PredicateList() {
+			if p.Operator != "×" { // a Cartesian criterion reads no field
+				b.matchColumns[p.LeftColumnID], b.matchColumns[p.RightColumnID] = true, true
+			}
+		}
 	}
 	return b
 }

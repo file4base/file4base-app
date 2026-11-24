@@ -115,7 +115,7 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 	report.Counts.Occurrences = len(report.Occurrences)
 
 	for _, relationship := range bundle.Relationships {
-		report.Relationships = append(report.Relationships, designreport.Relationship{
+		reported := designreport.Relationship{
 			Name:          relationship.Name,
 			Left:          occurrenceName[relationship.LeftOccurrenceID],
 			LeftField:     columnName[relationship.LeftColumnID],
@@ -125,7 +125,15 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 			AllowCreation: relationship.AllowCreation,
 			CascadeDelete: relationship.CascadeDelete,
 			SortRelated:   relationship.SortRelated,
-		})
+		}
+		if len(relationship.Predicates) > 1 {
+			for _, p := range relationship.Predicates {
+				reported.Predicates = append(reported.Predicates, designreport.Predicate{
+					LeftField: columnName[p.LeftColumnID], Operator: p.Operator, RightField: columnName[p.RightColumnID],
+				})
+			}
+		}
+		report.Relationships = append(report.Relationships, reported)
 	}
 	report.Counts.Relationships = len(report.Relationships)
 

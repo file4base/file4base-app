@@ -167,6 +167,14 @@ To allow dynamic table and field creation without code recompilation, metadata i
 - `operator` (`=`, `!=`, `<`, `<=`, `>`, `>=`)
 - `cascade_delete` (Boolean)
 - `allow_creation` (Boolean, allow creating related records via portal)
+- `left_column_name`, `right_column_name` (field names kept beside the ids)
+
+### 4. `sys_relationship_predicates` (Further Match Criteria)
+A relationship's first match criterion is the row above; each further one is a row here, and a record is related when it meets all of them.
+- `relationship_id` (FK -> `sys_relationships.id`, cascade delete)
+- `sequence_idx` (Integer, from 1, unique per relationship)
+- `left_column_id`, `right_column_id` (FK -> `sys_columns.id`, cascade delete), with `left_column_name`, `right_column_name`
+- `operator` (`=`, `≠`, `<`, `≤`, `>`, `≥`, `×`)
 
 ---
 

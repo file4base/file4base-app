@@ -26,24 +26,32 @@ type UpdateOccurrenceInput struct {
 	YPos *float64 `json:"y_pos,omitempty"`
 }
 
+// CreateRelationshipInput creates a relationship. Its match criteria are
+// Predicates, in order; a client that sends none gives its one criterion as
+// LeftColumnID, Operator and RightColumnID, as before relationships could
+// have several.
 type CreateRelationshipInput struct {
-	Name              string  `json:"name"`
-	LeftOccurrenceID  string  `json:"left_occurrence_id"`
-	LeftColumnID      string  `json:"left_column_id"`
-	RightOccurrenceID string  `json:"right_occurrence_id"`
-	RightColumnID     string  `json:"right_column_id"`
-	Operator          string  `json:"operator"`
-	AllowCreation     bool    `json:"allow_creation"`
-	CascadeDelete     bool    `json:"cascade_delete"`
-	SortRelated       *string `json:"sort_related,omitempty"`
+	Name              string                  `json:"name"`
+	LeftOccurrenceID  string                  `json:"left_occurrence_id"`
+	LeftColumnID      string                  `json:"left_column_id"`
+	RightOccurrenceID string                  `json:"right_occurrence_id"`
+	RightColumnID     string                  `json:"right_column_id"`
+	Operator          string                  `json:"operator"`
+	Predicates        []RelationshipPredicate `json:"predicates,omitempty"`
+	AllowCreation     bool                    `json:"allow_creation"`
+	CascadeDelete     bool                    `json:"cascade_delete"`
+	SortRelated       *string                 `json:"sort_related,omitempty"`
 }
 
+// UpdateRelationshipInput changes a relationship. Predicates, when sent,
+// replaces every criterion; Operator alone changes the first one's operator.
 type UpdateRelationshipInput struct {
-	Name          *string `json:"name,omitempty"`
-	Operator      *string `json:"operator,omitempty"`
-	AllowCreation *bool   `json:"allow_creation,omitempty"`
-	CascadeDelete *bool   `json:"cascade_delete,omitempty"`
-	SortRelated   *string `json:"sort_related,omitempty"`
+	Name          *string                 `json:"name,omitempty"`
+	Operator      *string                 `json:"operator,omitempty"`
+	Predicates    []RelationshipPredicate `json:"predicates,omitempty"`
+	AllowCreation *bool                   `json:"allow_creation,omitempty"`
+	CascadeDelete *bool                   `json:"cascade_delete,omitempty"`
+	SortRelated   *string                 `json:"sort_related,omitempty"`
 }
 
 // CreateTableOccurrence registers a new occurrence of a base table
@@ -174,72 +182,91 @@ func (s *Service) DeleteTableOccurrence(ctx context.Context, id string) error {
 // ListRelationships returns all relationships defined in sys_relationships
 func (s *Service) ListRelationships(ctx context.Context) ([]RelationshipMetadata, error) {
 	db := s.driver.DB()
-	rows, err := db.QueryContext(ctx, `SELECT id, name, left_occurrence_id, left_column_id, right_occurrence_id, right_column_id, operator, allow_creation, cascade_delete, sort_related, created_at FROM sys_relationships ORDER BY created_at ASC`)
+	rows, err := db.QueryContext(ctx, `SELECT `+relationshipColumns+` FROM sys_relationships r
+		LEFT JOIN sys_columns lc ON lc.id = r.left_column_id
+		LEFT JOIN sys_columns rc ON rc.id = r.right_column_id
+		ORDER BY r.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	items := make([]RelationshipMetadata, 0)
+	names := make([][2]string, 0)
 	for rows.Next() {
-		var r RelationshipMetadata
-		var sortRelated sql.NullString
-		if err := rows.Scan(
-			&r.ID,
-			&r.Name,
-			&r.LeftOccurrenceID,
-			&r.LeftColumnID,
-			&r.RightOccurrenceID,
-			&r.RightColumnID,
-			&r.Operator,
-			&r.AllowCreation,
-			&r.CascadeDelete,
-			&sortRelated,
-			&r.CreatedAt,
-		); err != nil {
+		r, leftName, rightName, err := scanRelationshipMetadata(rows)
+		if err != nil {
 			return nil, err
 		}
-		if sortRelated.Valid {
-			r.SortRelated = sortRelated.String
-		}
 		items = append(items, r)
+		names = append(names, [2]string{leftName, rightName})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	extra, err := s.extraPredicates(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].attachPredicates(names[i][0], names[i][1], extra[items[i].ID])
 	}
 	return items, nil
 }
 
-// CreateRelationship registers a new relationship between two table occurrence fields
+// relationshipColumns is what scanRelationshipMetadata reads, from
+// sys_relationships r joined to the columns of its first criterion as lc and
+// rc.
+const relationshipColumns = `r.id, r.name, r.left_occurrence_id, r.left_column_id, r.right_occurrence_id, r.right_column_id,
+	r.operator, r.allow_creation, r.cascade_delete, r.sort_related, r.created_at,
+	COALESCE(lc.name, ''), COALESCE(rc.name, '')`
+
+func scanRelationshipMetadata(row interface{ Scan(...any) error }) (r RelationshipMetadata, leftName, rightName string, err error) {
+	var sortRelated, operator sql.NullString
+	err = row.Scan(
+		&r.ID, &r.Name, &r.LeftOccurrenceID, &r.LeftColumnID, &r.RightOccurrenceID, &r.RightColumnID,
+		&operator, &r.AllowCreation, &r.CascadeDelete, &sortRelated, &r.CreatedAt,
+		&leftName, &rightName,
+	)
+	r.SortRelated = sortRelated.String
+	r.Operator = operator.String
+	if r.Operator == "" {
+		r.Operator = "="
+	}
+	return r, leftName, rightName, err
+}
+
+// CreateRelationship registers a new relationship between two table
+// occurrences, matched on every one of its criteria.
 func (s *Service) CreateRelationship(ctx context.Context, input CreateRelationshipInput) (*RelationshipMetadata, error) {
 	if strings.TrimSpace(input.LeftOccurrenceID) == "" || strings.TrimSpace(input.RightOccurrenceID) == "" {
 		return nil, errors.New("left_occurrence_id and right_occurrence_id are required")
 	}
-	if strings.TrimSpace(input.LeftColumnID) == "" || strings.TrimSpace(input.RightColumnID) == "" {
-		return nil, errors.New("left_column_id and right_column_id are required")
+	predicates, err := input.predicateList()
+	if err != nil {
+		return nil, err
 	}
-
-	op := strings.TrimSpace(input.Operator)
-	if op == "" {
-		op = "="
+	if predicates, err = s.checkPredicates(ctx, input.LeftOccurrenceID, input.RightOccurrenceID, predicates); err != nil {
+		return nil, err
 	}
-
-	for _, columnID := range []string{input.LeftColumnID, input.RightColumnID} {
-		if err := s.refuseUnstoredMatchField(ctx, columnID); err != nil {
-			return nil, err
-		}
-	}
+	first := predicates[0]
 
 	relID := uuid.NewString()
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		name = fmt.Sprintf("rel_%s_%s", input.LeftOccurrenceID[:8], input.RightOccurrenceID[:8])
+		name = fmt.Sprintf("rel_%s_%s", input.LeftOccurrenceID[:min(8, len(input.LeftOccurrenceID))], input.RightOccurrenceID[:min(8, len(input.RightOccurrenceID))])
 	}
 	now := time.Now().UTC()
 
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
+	if err := s.ensureRelationshipPredicates(ctx); err != nil {
+		return nil, err
+	}
 
-	qIns := `INSERT INTO sys_relationships (id, name, left_occurrence_id, left_column_id, right_occurrence_id, right_column_id, operator, allow_creation, cascade_delete, sort_related, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
+	qIns := `INSERT INTO sys_relationships (id, name, left_occurrence_id, left_column_id, left_column_name, right_occurrence_id, right_column_id, right_column_name, operator, allow_creation, cascade_delete, sort_related, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		qIns = `INSERT INTO sys_relationships (id, name, left_occurrence_id, left_column_id, right_occurrence_id, right_column_id, operator, allow_creation, cascade_delete, sort_related, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		qIns = `INSERT INTO sys_relationships (id, name, left_occurrence_id, left_column_id, left_column_name, right_occurrence_id, right_column_id, right_column_name, operator, allow_creation, cascade_delete, sort_related, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	}
 
 	var sortRelatedVal interface{}
@@ -247,18 +274,34 @@ func (s *Service) CreateRelationship(ctx context.Context, input CreateRelationsh
 		sortRelatedVal = *input.SortRelated
 	}
 
-	if _, err := db.ExecContext(ctx, qIns, relID, name, input.LeftOccurrenceID, input.LeftColumnID, input.RightOccurrenceID, input.RightColumnID, op, input.AllowCreation, input.CascadeDelete, sortRelatedVal, now); err != nil {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, qIns, relID, name, input.LeftOccurrenceID, first.LeftColumnID, first.LeftColumnName,
+		input.RightOccurrenceID, first.RightColumnID, first.RightColumnName, first.Operator,
+		input.AllowCreation, input.CascadeDelete, sortRelatedVal, now); err != nil {
 		return nil, fmt.Errorf("failed creating relationship: %w", err)
+	}
+	if len(predicates) > 1 {
+		if err := s.writeExtraPredicates(ctx, tx, relID, predicates); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	res := &RelationshipMetadata{
 		ID:                relID,
 		Name:              name,
 		LeftOccurrenceID:  input.LeftOccurrenceID,
-		LeftColumnID:      input.LeftColumnID,
+		LeftColumnID:      first.LeftColumnID,
 		RightOccurrenceID: input.RightOccurrenceID,
-		RightColumnID:     input.RightColumnID,
-		Operator:          op,
+		RightColumnID:     first.RightColumnID,
+		Operator:          first.Operator,
+		Predicates:        predicates,
 		AllowCreation:     input.AllowCreation,
 		CascadeDelete:     input.CascadeDelete,
 		CreatedAt:         now,
@@ -278,38 +321,40 @@ func (s *Service) UpdateRelationship(ctx context.Context, id string, input Updat
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
-	qGet := `SELECT id, name, left_occurrence_id, left_column_id, right_occurrence_id, right_column_id, operator, allow_creation, cascade_delete, sort_related, created_at FROM sys_relationships WHERE id = $1`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		qGet = `SELECT id, name, left_occurrence_id, left_column_id, right_occurrence_id, right_column_id, operator, allow_creation, cascade_delete, sort_related, created_at FROM sys_relationships WHERE id = ?`
-	}
-
-	var cur RelationshipMetadata
-	var sortRelated sql.NullString
-	if err := db.QueryRowContext(ctx, qGet, id).Scan(
-		&cur.ID,
-		&cur.Name,
-		&cur.LeftOccurrenceID,
-		&cur.LeftColumnID,
-		&cur.RightOccurrenceID,
-		&cur.RightColumnID,
-		&cur.Operator,
-		&cur.AllowCreation,
-		&cur.CascadeDelete,
-		&sortRelated,
-		&cur.CreatedAt,
-	); err != nil {
+	qGet := `SELECT ` + relationshipColumns + ` FROM sys_relationships r
+		LEFT JOIN sys_columns lc ON lc.id = r.left_column_id
+		LEFT JOIN sys_columns rc ON rc.id = r.right_column_id
+		WHERE r.id = ` + dialect.Placeholder(1)
+	cur, leftName, rightName, err := scanRelationshipMetadata(db.QueryRowContext(ctx, qGet, id))
+	if err != nil {
 		return nil, fmt.Errorf("relationship not found: %w", err)
 	}
-	if sortRelated.Valid {
-		cur.SortRelated = sortRelated.String
+	extra, err := s.extraPredicates(ctx, id)
+	if err != nil {
+		return nil, err
 	}
+	cur.attachPredicates(leftName, rightName, extra[id])
 
 	if input.Name != nil && strings.TrimSpace(*input.Name) != "" {
 		cur.Name = strings.TrimSpace(*input.Name)
 	}
-	if input.Operator != nil && strings.TrimSpace(*input.Operator) != "" {
-		cur.Operator = strings.TrimSpace(*input.Operator)
+	rewrite := false
+	switch {
+	case input.Predicates != nil:
+		predicates, err := s.checkPredicates(ctx, cur.LeftOccurrenceID, cur.RightOccurrenceID, input.Predicates)
+		if err != nil {
+			return nil, err
+		}
+		cur.Predicates, rewrite = predicates, true
+	case input.Operator != nil && strings.TrimSpace(*input.Operator) != "":
+		op, err := NormalizeRelationshipOperator(*input.Operator)
+		if err != nil {
+			return nil, err
+		}
+		cur.Predicates[0].Operator = op
 	}
+	first := cur.Predicates[0]
+	cur.LeftColumnID, cur.Operator, cur.RightColumnID = first.LeftColumnID, first.Operator, first.RightColumnID
 	if input.AllowCreation != nil {
 		cur.AllowCreation = *input.AllowCreation
 	}
@@ -319,14 +364,31 @@ func (s *Service) UpdateRelationship(ctx context.Context, id string, input Updat
 	if input.SortRelated != nil {
 		cur.SortRelated = *input.SortRelated
 	}
-
-	qUpd := `UPDATE sys_relationships SET name = $1, operator = $2, allow_creation = $3, cascade_delete = $4, sort_related = $5 WHERE id = $6`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		qUpd = `UPDATE sys_relationships SET name = ?, operator = ?, allow_creation = ?, cascade_delete = ?, sort_related = ? WHERE id = ?`
+	if err := s.ensureRelationshipPredicates(ctx); err != nil {
+		return nil, err
 	}
 
-	if _, err := db.ExecContext(ctx, qUpd, cur.Name, cur.Operator, cur.AllowCreation, cur.CascadeDelete, cur.SortRelated, id); err != nil {
+	qUpd := `UPDATE sys_relationships SET name = $1, left_column_id = $2, left_column_name = $3, operator = $4, right_column_id = $5, right_column_name = $6, allow_creation = $7, cascade_delete = $8, sort_related = $9 WHERE id = $10`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		qUpd = `UPDATE sys_relationships SET name = ?, left_column_id = ?, left_column_name = ?, operator = ?, right_column_id = ?, right_column_name = ?, allow_creation = ?, cascade_delete = ?, sort_related = ? WHERE id = ?`
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, qUpd, cur.Name, first.LeftColumnID, first.LeftColumnName, first.Operator,
+		first.RightColumnID, first.RightColumnName, cur.AllowCreation, cur.CascadeDelete, cur.SortRelated, id); err != nil {
 		return nil, fmt.Errorf("failed updating relationship: %w", err)
+	}
+	if rewrite {
+		if err := s.writeExtraPredicates(ctx, tx, id, cur.Predicates); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return &cur, nil

@@ -1325,21 +1325,33 @@ func convertRelationshipNode(
 		rightOcc = firstAttr(rightTableNode, "name", "Name")
 	}
 
-	predicates := findNodes(rn, "JoinPredicate", "Predicate")
-	var extraPredicates []string
-	for i, jp := range predicates {
-		predOp := firstAttr(jp, "type", "operator")
+	// Every join predicate is a criterion of the relationship, and a record is
+	// related when it meets all of them. A relationship written with
+	// attributes only has the one they name. All criteria join the same two
+	// occurrences, the relationship's own.
+	type sourceCriterion struct {
+		op, leftField, rightField string
+		leftEnd, rightEnd         *xmlNode // <LeftField> / <RightField>, which may carry the field's source id
+	}
+	var criteria []sourceCriterion
+	for i, jp := range findNodes(rn, "JoinPredicate", "Predicate") {
 		lOcc, lField := joinPredicateEndpoint(jp, "LeftField", "leftField")
 		rOcc, rField := joinPredicateEndpoint(jp, "RightField", "rightField")
+		c := sourceCriterion{
+			op: firstAttr(jp, "type", "operator"), leftField: lField, rightField: rField,
+			leftEnd: findFirstChild(jp, "LeftField", "leftField"), rightEnd: findFirstChild(jp, "RightField", "rightField"),
+		}
 		if i == 0 {
-			if op == "" {
-				op = predOp
+			// The relationship's own attributes, where it has them, describe
+			// its first criterion.
+			if op != "" {
+				c.op = op
 			}
-			if leftField == "" {
-				leftField = lField
+			if leftField != "" {
+				c.leftField = leftField
 			}
-			if rightField == "" {
-				rightField = rField
+			if rightField != "" {
+				c.rightField = rightField
 			}
 			if leftOcc == "" {
 				leftOcc = lOcc
@@ -1347,10 +1359,19 @@ func convertRelationshipNode(
 			if rightOcc == "" {
 				rightOcc = rOcc
 			}
-			continue
 		}
-		extraPredicates = append(extraPredicates,
-			fmt.Sprintf("%s.%s %s %s.%s", lOcc, lField, normalizeRelOperator(predOp), rOcc, rField))
+		if lOcc != "" && rOcc != "" && !strings.EqualFold(leftOcc, rightOcc) &&
+			strings.EqualFold(lOcc, rightOcc) && strings.EqualFold(rOcc, leftOcc) {
+			// A criterion written from the other side: Right::b > Left::a is
+			// Left::a < Right::b.
+			c.leftField, c.rightField = c.rightField, c.leftField
+			c.leftEnd, c.rightEnd = c.rightEnd, c.leftEnd
+			c.op = mirrorRelOperator(normalizeRelOperator(c.op))
+		}
+		criteria = append(criteria, c)
+	}
+	if len(criteria) == 0 {
+		criteria = []sourceCriterion{{op: op, leftField: leftField, rightField: rightField}}
 	}
 
 	if relName == "" {
@@ -1362,61 +1383,61 @@ func convertRelationshipNode(
 	leftTbl := occTableByName[strings.ToLower(leftOcc)]
 	rightTbl := occTableByName[strings.ToLower(rightOcc)]
 
-	leftName, rightName := sanitizeIdentifier(leftField), sanitizeIdentifier(rightField)
-	if names := fieldNamesByTable[leftTbl]; names != nil {
-		if resolved, ok := names.resolve(leftField); ok {
-			leftName = resolved
+	// resolveColumn finds the imported column of a criterion's field: by the
+	// field's source id when the DDR gives one, otherwise by its name.
+	resolveColumn := func(table, field string, end *xmlNode) string {
+		name := sanitizeIdentifier(field)
+		if names := fieldNamesByTable[table]; names != nil {
+			if resolved, ok := names.resolve(field); ok {
+				name = resolved
+			}
 		}
-	}
-	if names := fieldNamesByTable[rightTbl]; names != nil {
-		if resolved, ok := names.resolve(rightField); ok {
-			rightName = resolved
+		columnID := colIDByTableCol[table+"."+name]
+		if columnID == "" {
+			columnID = colIDByTableCol[strings.ToLower(table)+"."+strings.ToLower(field)]
 		}
-	}
-	leftColID := colIDByTableCol[leftTbl+"."+leftName]
-	if leftColID == "" {
-		leftColID = colIDByTableCol[strings.ToLower(leftTbl)+"."+strings.ToLower(leftField)]
-	}
-	rightColID := colIDByTableCol[rightTbl+"."+rightName]
-	if rightColID == "" {
-		rightColID = colIDByTableCol[strings.ToLower(rightTbl)+"."+strings.ToLower(rightField)]
-	}
-	if len(predicates) > 0 {
-		for _, side := range []struct {
-			names  []string
-			table  string
-			column *string
-		}{
-			{[]string{"LeftField", "leftField"}, leftTbl, &leftColID},
-			{[]string{"RightField", "rightField"}, rightTbl, &rightColID},
-		} {
-			if endpoint := findFirstChild(predicates[0], side.names...); endpoint != nil {
-				if field := findFirstChild(endpoint, "Field", "field"); field != nil {
-					if sourceID := firstAttr(field, "id", "ID"); sourceID != "" {
-						*side.column = colIDByTableCol[side.table+".#"+sourceID]
-					}
+		if end != nil {
+			if fieldNode := findFirstChild(end, "Field", "field"); fieldNode != nil {
+				if sourceID := firstAttr(fieldNode, "id", "ID"); sourceID != "" {
+					columnID = colIDByTableCol[table+".#"+sourceID]
 				}
 			}
 		}
+		return columnID
 	}
 
-	if leftOccID == "" || rightOccID == "" || leftColID == "" || rightColID == "" {
+	var predicates []schema.BundlePredicate
+	var resolved, unresolved []string
+	for _, c := range criteria {
+		normOp := normalizeRelOperator(c.op)
+		text := fmt.Sprintf("%s.%s %s %s.%s", leftOcc, c.leftField, normOp, rightOcc, c.rightField)
+		leftColID, rightColID := "", ""
+		if leftOccID != "" && rightOccID != "" {
+			leftColID = resolveColumn(leftTbl, c.leftField, c.leftEnd)
+			rightColID = resolveColumn(rightTbl, c.rightField, c.rightEnd)
+		}
+		if leftColID == "" || rightColID == "" {
+			unresolved = append(unresolved, text)
+			continue
+		}
+		resolved = append(resolved, text)
+		predicates = append(predicates, schema.BundlePredicate{LeftColumnID: leftColID, Operator: normOp, RightColumnID: rightColID})
+	}
+
+	if len(unresolved) > 0 {
+		// A relationship missing one of its criteria would relate — and
+		// cascade deletes to — records the source never related, so it is
+		// refused whole rather than migrated wider than it was.
+		detail := fmt.Sprintf("Unresolvable join endpoints (%s)", strings.Join(unresolved, ", "))
+		if len(criteria) > 1 {
+			detail = fmt.Sprintf("Unresolvable join endpoints in %d of its %d criteria (%s)",
+				len(unresolved), len(criteria), strings.Join(unresolved, ", "))
+		}
 		return nil, []ReportItem{{
 			Category:   CategoryRejected,
 			Domain:     "relationship",
 			SourceName: relName,
-			Detail:     fmt.Sprintf("Unresolvable join endpoints (%s.%s -> %s.%s)", leftOcc, leftField, rightOcc, rightField),
-		}}
-	}
-
-	normOp := normalizeRelOperator(op)
-	detail := fmt.Sprintf("%s.%s %s %s.%s", leftOcc, leftField, normOp, rightOcc, rightField)
-	if normOp == "x" {
-		return nil, []ReportItem{{
-			Category:   CategoryUnsupported,
-			Domain:     "relationship",
-			SourceName: relName,
-			Detail:     "Cartesian product (x) relationship is not supported in File4Base",
+			Detail:     detail,
 		}}
 	}
 
@@ -1438,42 +1459,20 @@ func convertRelationshipNode(
 		Domain:     "relationship",
 		SourceName: relName,
 		TargetName: relName,
-		Detail:     detail,
+		Detail:     strings.Join(resolved, " AND "),
 	}}
-	if len(extraPredicates) > 0 {
-		// A File4Base relationship joins one pair of fields, so the further
-		// predicates of a multi-predicate join are named rather than dropped
-		// in silence (#101).
-		items = append(items,
-			ReportItem{
-				Category:   CategoryUnsupported,
-				Domain:     "relationship",
-				SourceName: relName,
-				TargetName: relName,
-				Detail: fmt.Sprintf("Only the first join predicate was migrated; %d further predicate(s) were not: %s",
-					len(extraPredicates), strings.Join(extraPredicates, ", ")),
-			},
-			ReportItem{
-				Category:   CategoryManualActionRequired,
-				Domain:     "relationship",
-				SourceName: relName,
-				TargetName: relName,
-				Detail:     "Rebuild the remaining join predicates of this relationship in Manage Database > Relationships, or narrow the join with a calculated key field",
-			})
-	}
 
-	return &schema.BundleRelationship{
+	rel := &schema.BundleRelationship{
 		ID:                uuid.NewString(),
 		Name:              relName,
 		LeftOccurrenceID:  leftOccID,
-		LeftColumnID:      leftColID,
 		RightOccurrenceID: rightOccID,
-		RightColumnID:     rightColID,
-		Operator:          normOp,
 		AllowCreation:     allowCreate,
 		CascadeDelete:     cascadeDelete,
 		SortRelated:       sortRelated,
-	}, items
+	}
+	rel.WithPredicates(predicates)
+	return rel, items
 }
 
 // joinPredicateEndpoint reads one side of a native DDR join predicate, whose
@@ -1505,11 +1504,26 @@ func normalizeRelOperator(op string) string {
 		return ">"
 	case "≥", ">=", "greaterthanorequal":
 		return "≥"
-	case "x", "cartesian", "cartesianproduct":
-		return "x"
+	case "x", "×", "cartesian", "cartesianproduct":
+		return "×"
 	default:
 		return "="
 	}
+}
+
+// mirrorRelOperator is a comparison read from the other side: a < b is b > a.
+func mirrorRelOperator(op string) string {
+	switch op {
+	case "<":
+		return ">"
+	case "≤":
+		return "≥"
+	case ">":
+		return "<"
+	case "≥":
+		return "≤"
+	}
+	return op
 }
 
 func convertValueListNode(

@@ -209,9 +209,10 @@ func (s *Service) checkUnstorable(ctx context.Context, col ColumnMetadata, formu
 	if col.ID == "" {
 		return nil
 	}
-	q := `SELECT name FROM sys_relationships WHERE left_column_id = $1 OR right_column_id = $1`
+	// A Cartesian criterion (×) reads no field, so it does not count.
+	q := `SELECT name FROM sys_relationships WHERE (left_column_id = $1 OR right_column_id = $1) AND COALESCE(operator, '=') <> '×'`
 	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
-		q = `SELECT name FROM sys_relationships WHERE left_column_id = ? OR right_column_id = ?`
+		q = `SELECT name FROM sys_relationships WHERE (left_column_id = ? OR right_column_id = ?) AND COALESCE(operator, '=') <> '×'`
 	}
 	args := []interface{}{col.ID}
 	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
@@ -220,7 +221,14 @@ func (s *Service) checkUnstorable(ctx context.Context, col ColumnMetadata, formu
 	var relationship string
 	err := s.driver.DB().QueryRowContext(ctx, q, args...).Scan(&relationship)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		// Nor may a criterion after the first match on it.
+		d := s.driver.Dialect()
+		qMore := `SELECT r.name FROM ` + RelationshipPredicatesTable + ` p JOIN sys_relationships r ON r.id = p.relationship_id
+			WHERE p.operator <> '×' AND (p.left_column_id = ` + d.Placeholder(1) + ` OR p.right_column_id = ` + d.Placeholder(2) + `)`
+		err = s.driver.DB().QueryRowContext(ctx, qMore, col.ID, col.ID).Scan(&relationship)
+		if errors.Is(err, sql.ErrNoRows) || dbal.IsUndefinedTable(err) {
+			return nil
+		}
 	}
 	if err != nil {
 		return err

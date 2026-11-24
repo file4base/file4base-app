@@ -7,6 +7,7 @@ import 'package:file4base_client/core/crypto/payload_cipher.dart';
 import 'package:file4base_client/core/models/file_reference_models.dart';
 import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/core/models/transfer_models.dart';
+import 'package:flutter/foundation.dart' show immutable;
 import 'package:http/http.dart' as http;
 
 export '../crypto/payload_cipher.dart';
@@ -354,6 +355,61 @@ class TableOccurrenceModel {
   }
 }
 
+/// One match criterion of a relationship: a left field, a comparison and a
+/// right field. A record is related when it meets every criterion.
+@immutable
+class RelationshipPredicateModel {
+
+  const RelationshipPredicateModel({
+    required this.leftColumnId,
+    required this.rightColumnId,
+    this.operator = '=',
+    this.leftColumnName,
+    this.rightColumnName,
+  });
+
+  factory RelationshipPredicateModel.fromJson(Map<String, dynamic> json) {
+    return RelationshipPredicateModel(
+      leftColumnId: json['left_column_id'] as String,
+      rightColumnId: json['right_column_id'] as String,
+      operator: json['operator'] as String? ?? '=',
+      leftColumnName: json['left_column_name'] as String?,
+      rightColumnName: json['right_column_name'] as String?,
+    );
+  }
+  final String leftColumnId;
+  final String rightColumnId;
+  final String operator;
+  final String? leftColumnName;
+  final String? rightColumnName;
+
+  RelationshipPredicateModel copyWith({String? leftColumnId, String? rightColumnId, String? operator}) {
+    return RelationshipPredicateModel(
+      leftColumnId: leftColumnId ?? this.leftColumnId,
+      rightColumnId: rightColumnId ?? this.rightColumnId,
+      operator: operator ?? this.operator,
+      leftColumnName: leftColumnId == null ? leftColumnName : null,
+      rightColumnName: rightColumnId == null ? rightColumnName : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'left_column_id': leftColumnId,
+    'operator': operator,
+    'right_column_id': rightColumnId,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is RelationshipPredicateModel &&
+      other.leftColumnId == leftColumnId &&
+      other.rightColumnId == rightColumnId &&
+      other.operator == operator;
+
+  @override
+  int get hashCode => Object.hash(leftColumnId, operator, rightColumnId);
+}
+
 class RelationshipModel {
 
   const RelationshipModel({
@@ -367,9 +423,11 @@ class RelationshipModel {
     this.allowCreation = false,
     this.cascadeDelete = false,
     this.sortRelated,
+    this._predicates,
   });
 
   factory RelationshipModel.fromJson(Map<String, dynamic> json) {
+    final rawPredicates = json['predicates'] as List<dynamic>?;
     return RelationshipModel(
       id: json['id'] as String,
       name: json['name'] as String? ?? '',
@@ -381,6 +439,11 @@ class RelationshipModel {
       allowCreation: json['allow_creation'] as bool? ?? false,
       cascadeDelete: json['cascade_delete'] as bool? ?? false,
       sortRelated: json['sort_related'] as String?,
+      predicates: rawPredicates == null || rawPredicates.isEmpty
+          ? null
+          : rawPredicates
+              .map((item) => RelationshipPredicateModel.fromJson(item as Map<String, dynamic>))
+              .toList(),
     );
   }
   final String id;
@@ -393,6 +456,14 @@ class RelationshipModel {
   final bool allowCreation;
   final bool cascadeDelete;
   final String? sortRelated;
+  final List<RelationshipPredicateModel>? _predicates;
+
+  /// Every match criterion in order. The first is the relationship's own
+  /// left field, operator and right field; a server that predates multiple
+  /// criteria sends only that pair.
+  List<RelationshipPredicateModel> get predicates =>
+      _predicates ??
+      [RelationshipPredicateModel(leftColumnId: leftColumnId, rightColumnId: rightColumnId, operator: operator)];
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -405,6 +476,7 @@ class RelationshipModel {
     'allow_creation': allowCreation,
     'cascade_delete': cascadeDelete,
     if (sortRelated != null) 'sort_related': sortRelated,
+    'predicates': predicates.map((p) => p.toJson()).toList(),
   };
 }
 
@@ -2052,6 +2124,7 @@ class ApiClient {
     bool allowCreation = false,
     bool cascadeDelete = false,
     String? sortRelated,
+    List<RelationshipPredicateModel>? predicates,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/schemas/relationships'),
@@ -2066,12 +2139,15 @@ class ApiClient {
         'allow_creation': allowCreation,
         'cascade_delete': cascadeDelete,
         'sort_related': ?sortRelated,
+        if (predicates != null) 'predicates': predicates.map((p) => p.toJson()).toList(),
       }),
     );
     _checkResponse(response);
     return RelationshipModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  /// Updates a relationship. [predicates], when given, replaces every match
+  /// criterion; otherwise the criteria are left as they are.
   Future<RelationshipModel> updateRelationship(
     String id, {
     String? name,
@@ -2079,6 +2155,7 @@ class ApiClient {
     bool? allowCreation,
     bool? cascadeDelete,
     String? sortRelated,
+    List<RelationshipPredicateModel>? predicates,
   }) async {
     final response = await _httpClient.put(
       Uri.parse('$baseUrl/api/v1/schemas/relationships/$id'),
@@ -2089,6 +2166,7 @@ class ApiClient {
         'allow_creation': ?allowCreation,
         'cascade_delete': ?cascadeDelete,
         'sort_related': ?sortRelated,
+        if (predicates != null) 'predicates': predicates.map((p) => p.toJson()).toList(),
       }),
     );
     _checkResponse(response);

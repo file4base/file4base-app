@@ -148,6 +148,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
           allowCreation: res['allow_creation'] as bool? ?? false,
           cascadeDelete: res['cascade_delete'] as bool? ?? false,
           sortRelated: res['sort_related'] as String?,
+          predicates: res['predicates'] as List<RelationshipPredicateModel>?,
         );
 
         setState(() {
@@ -187,6 +188,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
           allowCreation: res['allow_creation'] as bool?,
           cascadeDelete: res['cascade_delete'] as bool?,
           sortRelated: res['sort_related'] as String?,
+          predicates: res['predicates'] as List<RelationshipPredicateModel>?,
         );
 
         setState(() {
@@ -434,49 +436,62 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       final midY = (p1.dy + p2.dy) / 2;
       final isSelected = _selectedRelationshipId == rel.id;
 
+      // One operator per match criterion, in order: "=" for a single one,
+      // "= ≠ <" for three.
+      final predicates = rel.predicates;
+      final badgeText = predicates.map((p) => p.operator).join(' ');
+      final badgeWidth = predicates.length <= 1 ? 34.0 : 18.0 + 14.0 * predicates.length;
+
       widgets.add(
         Positioned(
-          left: midX - 16,
+          left: midX - badgeWidth / 2 + 1,
           top: midY - 12,
-          child: GestureDetector(
-            onTap: () {
-              setState(() {
-                _selectedRelationshipId = rel.id;
-                _selectedOccurrenceId = null;
-              });
-            },
-            onDoubleTap: () => _showEditRelationshipDialog(rel),
-            child: Container(
-              width: 34,
-              height: 22,
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? (isDark ? const Color(0xFF0C4A6E) : const Color(0xFFE0F2FE))
-                    : (isDark ? const Color(0xFF1E293B) : Colors.white),
-                border: Border.all(
+          child: Tooltip(
+            message: predicates
+                .map((p) =>
+                    '${_criterionSide(leftOcc, p.leftColumnId, p.leftColumnName)} ${p.operator} '
+                    '${_criterionSide(rightOcc, p.rightColumnId, p.rightColumnName)}')
+                .join('\nand '),
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedRelationshipId = rel.id;
+                  _selectedOccurrenceId = null;
+                });
+              },
+              onDoubleTap: () => _showEditRelationshipDialog(rel),
+              child: Container(
+                width: badgeWidth,
+                height: 22,
+                decoration: BoxDecoration(
                   color: isSelected
-                      ? const Color(0xFF0284C7)
-                      : (isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1)),
-                  width: isSelected ? 1.8 : 1.0,
-                ),
-                borderRadius: BorderRadius.circular(11),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
-                    blurRadius: 3,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-              child: Center(
-                child: Text(
-                  rel.operator,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
+                      ? (isDark ? const Color(0xFF0C4A6E) : const Color(0xFFE0F2FE))
+                      : (isDark ? const Color(0xFF1E293B) : Colors.white),
+                  border: Border.all(
                     color: isSelected
-                        ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0369A1))
-                        : (isDark ? Colors.white : const Color(0xFF1E293B)),
+                        ? const Color(0xFF0284C7)
+                        : (isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1)),
+                    width: isSelected ? 1.8 : 1.0,
+                  ),
+                  borderRadius: BorderRadius.circular(11),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.12),
+                      blurRadius: 3,
+                      offset: const Offset(0, 1),
+                    ),
+                  ],
+                ),
+                child: Center(
+                  child: Text(
+                    badgeText,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: isSelected
+                          ? (isDark ? const Color(0xFF38BDF8) : const Color(0xFF0369A1))
+                          : (isDark ? Colors.white : const Color(0xFF1E293B)),
+                    ),
                   ),
                 ),
               ),
@@ -487,6 +502,14 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     }
 
     return widgets;
+  }
+
+  String _criterionSide(TableOccurrenceModel occ, String columnId, String? storedName) {
+    final column = _getTable(occ.baseTableId)?.columns.where((c) => c.id == columnId).firstOrNull;
+    final field = column == null
+        ? (storedName ?? columnId)
+        : (column.displayName.isNotEmpty ? column.displayName : column.name);
+    return '${occ.name}::$field';
   }
 
   Widget _buildOccurrenceCard(BuildContext context, TableOccurrenceModel occ, bool isDark) {
@@ -706,38 +729,41 @@ class _RelationshipLinesPainter extends CustomPainter {
       if (leftOcc == null || rightOcc == null) continue;
 
       final isLeftLeft = leftOcc.xPos < rightOcc.xPos;
-      final p1 = _getAnchorPoint(leftOcc, rel.leftColumnId, isLeftLeft);
-      final p2 = _getAnchorPoint(rightOcc, rel.rightColumnId, !isLeftLeft);
-
       final isSelected = selectedRelationshipId == rel.id;
 
-      final paint = Paint()
-        ..color = isSelected
-            ? const Color(0xFF0284C7)
-            : (isDark ? const Color(0xFF64748B) : const Color(0xFF64748B))
-        ..strokeWidth = isSelected ? 2.5 : 1.5
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round;
+      // One line per match criterion, between the fields it compares.
+      for (final criterion in rel.predicates) {
+        final p1 = _getAnchorPoint(leftOcc, criterion.leftColumnId, isLeftLeft);
+        final p2 = _getAnchorPoint(rightOcc, criterion.rightColumnId, !isLeftLeft);
 
-      // Draw smooth orthogonal curve between the two anchors
-      final path = Path();
-      path.moveTo(p1.dx, p1.dy);
+        final paint = Paint()
+          ..color = isSelected
+              ? const Color(0xFF0284C7)
+              : (isDark ? const Color(0xFF64748B) : const Color(0xFF64748B))
+          ..strokeWidth = isSelected ? 2.5 : 1.5
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round;
 
-      final dx = (p2.dx - p1.dx).abs();
-      final controlPoint1 = Offset(p1.dx + (isLeftLeft ? dx * 0.4 : -dx * 0.4), p1.dy);
-      final controlPoint2 = Offset(p2.dx + (isLeftLeft ? -dx * 0.4 : dx * 0.4), p2.dy);
+        // Draw smooth orthogonal curve between the two anchors
+        final path = Path();
+        path.moveTo(p1.dx, p1.dy);
 
-      path.cubicTo(controlPoint1.dx, controlPoint1.dy, controlPoint2.dx, controlPoint2.dy, p2.dx, p2.dy);
-      canvas.drawPath(path, paint);
+        final dx = (p2.dx - p1.dx).abs();
+        final controlPoint1 = Offset(p1.dx + (isLeftLeft ? dx * 0.4 : -dx * 0.4), p1.dy);
+        final controlPoint2 = Offset(p2.dx + (isLeftLeft ? -dx * 0.4 : dx * 0.4), p2.dy);
 
-      // Draw anchor dot at start and end
-      final dotPaint = Paint()
-        ..color = isSelected
-            ? const Color(0xFF0284C7)
-            : (isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569))
-        ..style = PaintingStyle.fill;
-      canvas.drawCircle(p1, 3.0, dotPaint);
-      canvas.drawCircle(p2, 3.0, dotPaint);
+        path.cubicTo(controlPoint1.dx, controlPoint1.dy, controlPoint2.dx, controlPoint2.dy, p2.dx, p2.dy);
+        canvas.drawPath(path, paint);
+
+        // Draw anchor dot at start and end
+        final dotPaint = Paint()
+          ..color = isSelected
+              ? const Color(0xFF0284C7)
+              : (isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569))
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(p1, 3.0, dotPaint);
+        canvas.drawCircle(p2, 3.0, dotPaint);
+      }
     }
   }
 
