@@ -1,0 +1,161 @@
+0,000001 & ""
+0,0000001
+1/1000000
+1/10000000
+1/100000000
+1/1000000000
+1/10000000000
+1/100000000000
+0,0000012345
+0,00000000012345
+1e19
+1e20
+1,5e20
+123e18
+1e20 + 1
+-1e20
+1e21
+12e20
+1/3 * 1e-6
+1/3 / 1000000000000
+2 ^ 70
+1e100
+1e-100
+1/3 * 1e20
+"" + ""
+"" * 2
+-"" + 0
+Abs ( "" ) + 0
+GetAsNumber ( "" ) + 1
+Sum ( "" ; "" )
+Average ( "" ; "" )
+Max ( "" ; 1 )
+Count ( "" ; "" )
+"Z" < "a"
+"a" < "B"
+"1" < "a"
+" " < "a"
+"-" < "a"
+"a-b" < "ab"
+"Ö" < "p"
+"oe" < "Œ"
+Proper ( "a_b c1d x2y" )
+Proper ( "élan" )
+WordCount ( "1.5" )
+WordCount ( "a1" )
+WordCount ( "don't" )
+WordCount ( "a—b" )
+WordCount ( "a·b" )
+WordCount ( "3,5 kg" )
+WordCount ( "a.1" )
+WordCount ( "1.a" )
+WordCount ( "a,1" )
+WordCount ( "1:a" )
+WordCount ( "a'b" )
+WordCount ( "a-1" )
+WordCount ( "1-2" )
+WordCount ( "#a @b" )
+Trim ( " a " & Char ( 160 ) )
+Length ( Trim ( Char ( 160 ) & "a" ) )
+Timestamp ( Date ( 1 ; 1 ; 2026 ) ; Time ( 1 ; 2 ; 3,5 ) )
+GetAsTime ( "13:00" )
+Time ( 13 ; 0 ; 0 )
+GetAsTime ( Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 5 ; 7 ) ) )
+Time ( 13 ; 0 ; 0 ) < "9:00:00"
+Date ( 11 ; 24 ; 2026 ) + 0,5
+Choose ( "" ; "a" ; "b" )
+If ( "" ; 1 ; 2 )
+Left ( "abc" ; "" )
+Left ( "abc" ; "x" )
+Middle ( "abc" ; "" ; 2 )
+Substitute ( "" ; "" ; "x" )
+Round ( 1 / 3 ; 2 ) & ""
+Round ( 0,5 ; 0 )
+Round ( -0,5 ; 0 )
+Int ( -0,5 ) & ""
+0 * -1
+-0
+Ceiling ( "" )
+Mod ( "" ; 2 )
+Div ( "" ; 2 )
+Mod ( 5 ; "" )
+Lg ( 1000 )
+Log ( 2 )
+Ln ( 2 )
+Sqrt ( 3 )
+Sqrt ( 0,25 )
+2 ^ 0,25
+( -8 ) ^ ( 1 / 3 )
+0 ^ 0
+0 ^ -1
+( -2 ) ^ 0,5
+( -2 ) ^ 3
+Truncate ( 1 / 3 ; 20 )
+Int ( 1 / 3 * 3 )
+Floor ( 10 / 3 * 3 )
+1 / 3 * 3 = 1
+Abs ( -0 )
+Length ( 1 / 3 )
+Exact ( 1 / 3 ; ",3333333333333333" )
+Evaluate ( "1.5" )
+SetPrecision ( 1 / 3 ; 2 ) * 3
+1 / 3 = ,3333333333333333
+Let ( [ x = 1 ; $y = 2 ] ; x + $y )
+Case ( "" ; 1 ; 2 )
+List ( "a" ; List ( "b" ; "c" ) )
+ValueCount ( "a" & Char ( 10 ) & "b" )
+ValueCount ( "a" & Char ( 8232 ) & "b" )
+GetValue ( "a" & Char ( 10 ) & "b" ; 2 )
+Code ( LeftValues ( "a" & Char ( 10 ) & "b" ; 1 ) )
+Code ( FilterValues ( "a" & Char ( 10 ) & "b" ; "a" ) )
+Substitute ( "a¶b" ; Char ( 10 ) ; "x" )
+Length ( "a" & Char ( 13 ) & Char ( 10 ) & "b" )
+ValueCount ( "a" & Char ( 13 ) & Char ( 10 ) & "b" )
+PatternCount ( "a¶b" ; Char ( 13 ) )
+Upper ( 1,5 )
+Length ( -0,5 )
+GetAsText ( -0,5 )
+Position ( 12345 ; 3 ; 1 ; 1 )
+Date ( 2 ; 29 ; 2025 )
+Date ( 1 ; 1 ; 0 )
+Date ( 1 ; 1 ; 10000 )
+Date ( 1 ; 1 ; 4001 )
+Date ( 12 ; 31 ; 4000 ) + 1
+GetAsDate ( 0 )
+GetAsDate ( -1 )
+Date ( 1 ; 1 ; 26 )
+GetAsDate ( "1/2/50" )
+GetAsDate ( "1/2/30" )
+GetAsDate ( "01/02/2026 13:00" )
+GetAsDate ( " 24/11/2026 " )
+GetAsDate ( "24/11/2026x" )
+DayOfWeek ( "" )
+Month ( 0 )
+GetAsTime ( "1:2:3,25" )
+GetAsTime ( "13:45:10 PM" )
+GetAsTime ( "1:30 PM" )
+GetAsTime ( "12" )
+GetAsTime ( 1,5 )
+Time ( 1 ; 2 ; 3 ) & ""
+GetAsTime ( "25:61:61" )
+GetAsTimestamp ( "24/11/2026 1:2:3" )
+GetAsTimestamp ( "2026-11-24 13:00:00" )
+GetAsTimestamp ( Date ( 11 ; 24 ; 2026 ) )
+GetAsTimestamp ( "24/11/2026 13:45:10,5" )
+GetAsDate ( "24.11.2026" ) + 1
+GetAsDate ( "24-11-2026" ) + 1
+GetAsNumber ( GetAsDate ( "24.11.2026" ) )
+Hour ( "25:00:00" )
+Seconds ( "1:2:3,5" )
+Max ( "a" ; "B" )
+Min ( "é" ; "e" )
+UniqueValues ( "1¶01¶1,0" )
+UniqueValues ( "1¶01¶1,0" ; 2 )
+SortValues ( "b¶B¶a¶A" )
+SortValues ( "2¶10¶x¶" ; 2 )
+FilterValues ( "A¶a" ; "A" )
+"Straße" = "STRASSE"
+Position ( "Straße" ; "SS" ; 1 ; 1 )
+Upper ( "straße" ) = "STRASSE"
+Lower ( "ΣΑ" )
+Proper ( "ÆON ŒUF" )

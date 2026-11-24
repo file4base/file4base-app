@@ -71,6 +71,13 @@ func (s *Service) checkCalculation(ctx context.Context, tableID, columnID, field
 		return fmt.Errorf("%w: the formula of %q is not valid: %s", ErrInvalidFieldOptions, fieldName, err.Error())
 	}
 
+	for _, ref := range expr.RelatedFields() {
+		if ref.Missing {
+			return fmt.Errorf("%w: the formula of %q reads %s::%s, a table or field that was deleted in FileMaker",
+				ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field)
+		}
+	}
+
 	columns, err := s.listColumns(ctx, tableID)
 	if err != nil {
 		return err

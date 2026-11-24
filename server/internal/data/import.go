@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
@@ -469,7 +468,7 @@ func applyCalculationsForUpdate(
 	}
 
 	for _, c := range calculations {
-		answer, err := calc.Evaluate(c.expr, calc.Record(merged), c.result)
+		answer, err := c.evaluate(merged)
 		if err != nil {
 			return fmt.Errorf("%w: the formula of %q could not be computed: %s",
 				ErrInvalidValue, c.field, err.Error())

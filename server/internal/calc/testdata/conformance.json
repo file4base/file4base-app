@@ -1,0 +1,4294 @@
+{
+ "source": "FileMaker Pro 26.0.2 (French), new file with French system formats, 2026-11-24. Each formula was run through Evaluate in an unstored calculation; text is Quote's output read back, error is EvaluationError.",
+ "cases": [
+  {
+   "formula": "1 + 1",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "1 / 3",
+   "locale": "fr-FR",
+   "text": ",3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "2 / 3",
+   "locale": "fr-FR",
+   "text": ",6666666666666667",
+   "error": 0
+  },
+  {
+   "formula": "200 / 3",
+   "locale": "fr-FR",
+   "text": "66,6666666666666667",
+   "error": 0
+  },
+  {
+   "formula": "10 / 4",
+   "locale": "fr-FR",
+   "text": "2,5",
+   "error": 0
+  },
+  {
+   "formula": "1 / 7 * 7",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "-7 / 2",
+   "locale": "fr-FR",
+   "text": "-3,5",
+   "error": 0
+  },
+  {
+   "formula": "1 / 0",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 15
+  },
+  {
+   "formula": "0 / 5",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "2 ^ 10",
+   "locale": "fr-FR",
+   "text": "1024",
+   "error": 0
+  },
+  {
+   "formula": "-2 ^ 2",
+   "locale": "fr-FR",
+   "text": "4",
+   "error": 0
+  },
+  {
+   "formula": "2 ^ -1",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": "1e3",
+   "locale": "fr-FR",
+   "text": "1000",
+   "error": 0
+  },
+  {
+   "formula": "100",
+   "locale": "fr-FR",
+   "text": "100",
+   "error": 0
+  },
+  {
+   "formula": "1000000",
+   "locale": "fr-FR",
+   "text": "1000000",
+   "error": 0
+  },
+  {
+   "formula": "12345678901234567890",
+   "locale": "fr-FR",
+   "text": "12345678901234567890",
+   "error": 0
+  },
+  {
+   "formula": "\"Mary\" * 2",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"abc\" + 1",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"12 €\" + 1",
+   "locale": "fr-FR",
+   "text": "13",
+   "error": 0
+  },
+  {
+   "formula": "\"a1b2\" + 0",
+   "locale": "fr-FR",
+   "text": "12",
+   "error": 0
+  },
+  {
+   "formula": "\"-5x\" + 0",
+   "locale": "fr-FR",
+   "text": "-5",
+   "error": 0
+  },
+  {
+   "formula": "\"(5)\" + 0",
+   "locale": "fr-FR",
+   "text": "-5",
+   "error": 0
+  },
+  {
+   "formula": "\"1.5\" + 0",
+   "locale": "fr-FR",
+   "text": "15",
+   "error": 0
+  },
+  {
+   "formula": "\"1,5\" + 0",
+   "locale": "fr-FR",
+   "text": "1,5",
+   "error": 0
+  },
+  {
+   "formula": "\"1e3\" + 0",
+   "locale": "fr-FR",
+   "text": "1000",
+   "error": 0
+  },
+  {
+   "formula": "\"\" + 1",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"\" & \"\"",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "1 & 2",
+   "locale": "fr-FR",
+   "text": "12",
+   "error": 0
+  },
+  {
+   "formula": "1/3 & \"\"",
+   "locale": "fr-FR",
+   "text": ",3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "\"abc\" = \"ABC\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"abc\" = \"abc \"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"10\" < \"9\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "10 < 9",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"10\" < 9",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"abc\" = 0",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"\" = 0",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "0 = \"\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"0\" = 0",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"a\" < \"b\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"é\" = \"e\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "If ( \"abc\" ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "If ( \"a1\" ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "If ( \"0\" ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "If ( \"\" ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "If ( -1 ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "If ( 1 = 2 ; \"a\" ; 1 = 1 ; \"b\" ; \"c\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1202
+  },
+  {
+   "formula": "If ( 0 ; \"a\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Case ( 0 ; \"a\" ; 0 ; \"b\" ; \"c\" )",
+   "locale": "fr-FR",
+   "text": "c",
+   "error": 0
+  },
+  {
+   "formula": "Case ( 0 ; \"a\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Choose ( 1 ; \"a\" ; \"b\" ; \"c\" )",
+   "locale": "fr-FR",
+   "text": "b",
+   "error": 0
+  },
+  {
+   "formula": "Choose ( 5 ; \"a\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Choose ( -1 ; \"a\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "not 0",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "not \"abc\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "1 and \"x\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "1 xor 1",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "1 xor 0",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "3 > 2 > 1",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "1 < 2 = 1",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "IsEmpty ( \"\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "IsEmpty ( \" \" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "IsEmpty ( 0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( 7 ; 3 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( -7 ; 3 )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( 7 ; -3 )",
+   "locale": "fr-FR",
+   "text": "-2",
+   "error": 0
+  },
+  {
+   "formula": "Div ( 7 ; 2 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Div ( -7 ; 2 )",
+   "locale": "fr-FR",
+   "text": "-4",
+   "error": 0
+  },
+  {
+   "formula": "Sign ( -0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Sqrt ( 2 )",
+   "locale": "fr-FR",
+   "text": "1,414213562373095",
+   "error": 0
+  },
+  {
+   "formula": "Sqrt ( -1 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 14
+  },
+  {
+   "formula": "Exp ( 1 )",
+   "locale": "fr-FR",
+   "text": "2,7182818284590452",
+   "error": 0
+  },
+  {
+   "formula": "Ln ( 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 14
+  },
+  {
+   "formula": "Log ( 1000 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Pi",
+   "locale": "fr-FR",
+   "text": "3,1415926535897932",
+   "error": 0
+  },
+  {
+   "formula": "Sum ( 1 ; 2 ; \"3\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "6",
+   "error": 0
+  },
+  {
+   "formula": "Count ( 1 ; \"\" ; \"a\" ; 0 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Average ( 1 ; 2 ; \"\" )",
+   "locale": "fr-FR",
+   "text": "1,5",
+   "error": 0
+  },
+  {
+   "formula": "Min ( 3 ; \"2\" ; 10 )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"a\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "b",
+   "error": 0
+  },
+  {
+   "formula": "Max ( 2 ; \"10\" )",
+   "locale": "fr-FR",
+   "text": "10",
+   "error": 0
+  },
+  {
+   "formula": "List ( \"a\" ; \"\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "a\rb",
+   "error": 0
+  },
+  {
+   "formula": "List ( \"\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Length ( \"héllo\" )",
+   "locale": "fr-FR",
+   "text": "5",
+   "error": 0
+  },
+  {
+   "formula": "Length ( \"\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Upper ( \"éa\" )",
+   "locale": "fr-FR",
+   "text": "ÉA",
+   "error": 0
+  },
+  {
+   "formula": "Proper ( \"jean-pierre o'neil mcDONALD 3rd\" )",
+   "locale": "fr-FR",
+   "text": "Jean-Pierre O'Neil Mcdonald 3rd",
+   "error": 0
+  },
+  {
+   "formula": "Trim ( \"  a  b  \" )",
+   "locale": "fr-FR",
+   "text": "a  b",
+   "error": 0
+  },
+  {
+   "formula": "TrimAll ( \"  a   b  \" ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "a b",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"abcdef\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "ab",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"abc\" ; -1 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Right ( \"abcdef\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "ef",
+   "error": 0
+  },
+  {
+   "formula": "Middle ( \"abcdef\" ; 2 ; 3 )",
+   "locale": "fr-FR",
+   "text": "bcd",
+   "error": 0
+  },
+  {
+   "formula": "Middle ( \"abcdef\" ; 0 ; 3 )",
+   "locale": "fr-FR",
+   "text": "abc",
+   "error": 0
+  },
+  {
+   "formula": "Middle ( \"abcdef\" ; 5 ; 10 )",
+   "locale": "fr-FR",
+   "text": "ef",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"Banana\" ; \"an\" ; 1 ; 2 )",
+   "locale": "fr-FR",
+   "text": "4",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"Banana\" ; \"AN\" ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"Banana\" ; \"an\" ; 6 ; -1 )",
+   "locale": "fr-FR",
+   "text": "4",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"Banana\" ; \"an\" ; 0 ; 1 )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"Banana\" ; \"\" ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "PatternCount ( \"aaaa\" ; \"aa\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "PatternCount ( \"Banana\" ; \"AN\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"aXbXc\" ; \"x\" ; \"-\" )",
+   "locale": "fr-FR",
+   "text": "aXbXc",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"aXbXc\" ; \"X\" ; \"-\" )",
+   "locale": "fr-FR",
+   "text": "a-b-c",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"abc\" ; [ \"a\" ; \"b\" ] ; [ \"b\" ; \"c\" ] )",
+   "locale": "fr-FR",
+   "text": "ccc",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"abc\" ; \"\" ; \"z\" )",
+   "locale": "fr-FR",
+   "text": "abc",
+   "error": 0
+  },
+  {
+   "formula": "Replace ( \"abcdef\" ; 2 ; 3 ; \"XY\" )",
+   "locale": "fr-FR",
+   "text": "aXYef",
+   "error": 0
+  },
+  {
+   "formula": "Replace ( \"abc\" ; 10 ; 1 ; \"Z\" )",
+   "locale": "fr-FR",
+   "text": "abcZ",
+   "error": 0
+  },
+  {
+   "formula": "Replace ( \"abc\" ; 0 ; 1 ; \"Z\" )",
+   "locale": "fr-FR",
+   "text": "Zbc",
+   "error": 0
+  },
+  {
+   "formula": "Filter ( \"a1-b2.c3\" ; \"0123456789\" )",
+   "locale": "fr-FR",
+   "text": "123",
+   "error": 0
+  },
+  {
+   "formula": "Filter ( \"ABC\" ; \"abc\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Exact ( \"a\" ; \"A\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"Hello, world! It's a test.  ok\" )",
+   "locale": "fr-FR",
+   "text": "7",
+   "error": 0
+  },
+  {
+   "formula": "LeftWords ( \"  one two-three four\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "one two",
+   "error": 0
+  },
+  {
+   "formula": "RightWords ( \"one two three.\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "two three",
+   "error": 0
+  },
+  {
+   "formula": "MiddleWords ( \"one two three four\" ; 2 ; 2 )",
+   "locale": "fr-FR",
+   "text": "two three",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"1.5 kg l'arbre e-mail\" )",
+   "locale": "fr-FR",
+   "text": "7",
+   "error": 0
+  },
+  {
+   "formula": "Char ( 65 )",
+   "locale": "fr-FR",
+   "text": "A",
+   "error": 0
+  },
+  {
+   "formula": "Char ( 6566 )",
+   "locale": "fr-FR",
+   "text": "ᦦ",
+   "error": 0
+  },
+  {
+   "formula": "Code ( \"AB\" )",
+   "locale": "fr-FR",
+   "text": "6600065",
+   "error": 0
+  },
+  {
+   "formula": "Code ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Quote ( \"a\\\"b¶c\\\\d\" )",
+   "locale": "fr-FR",
+   "text": "\"a\\\"b¶c\\d\"",
+   "error": 0
+  },
+  {
+   "formula": "SerialIncrement ( \"INV0099\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "INV0100",
+   "error": 0
+  },
+  {
+   "formula": "SerialIncrement ( \"abc\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "abc1",
+   "error": 0
+  },
+  {
+   "formula": "SerialIncrement ( \"a9b9\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "a9b10",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"a¶¶b¶\" )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"a¶b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"¶\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "GetValue ( \"a¶¶b\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "GetValue ( \"a¶b\" ; 3 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "LeftValues ( \"a¶b¶c\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "a\rb\r",
+   "error": 0
+  },
+  {
+   "formula": "RightValues ( \"a¶b¶c\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "c\r",
+   "error": 0
+  },
+  {
+   "formula": "MiddleValues ( \"a¶b¶c\" ; 2 ; 5 )",
+   "locale": "fr-FR",
+   "text": "b\rc\r",
+   "error": 0
+  },
+  {
+   "formula": "FilterValues ( \"a¶b¶A¶c\" ; \"a¶c\" )",
+   "locale": "fr-FR",
+   "text": "a\rA\rc\r",
+   "error": 0
+  },
+  {
+   "formula": "FilterValues ( \"a¶b\" ; \"x\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "UniqueValues ( \"a¶A¶b\" )",
+   "locale": "fr-FR",
+   "text": "a\rb\r",
+   "error": 0
+  },
+  {
+   "formula": "SortValues ( \"b¶a¶C\" )",
+   "locale": "fr-FR",
+   "text": "a\rb\rC\r",
+   "error": 0
+  },
+  {
+   "formula": "List ( \"a¶\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "a\r\rb",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"12abc3.4.5\" )",
+   "locale": "fr-FR",
+   "text": "12345",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"-\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1.234,5\" )",
+   "locale": "fr-FR",
+   "text": "1234,5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"  42  \" )",
+   "locale": "fr-FR",
+   "text": "42",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1-2\" )",
+   "locale": "fr-FR",
+   "text": "12",
+   "error": 0
+  },
+  {
+   "formula": "GetAsText ( 1/3 )",
+   "locale": "fr-FR",
+   "text": ",3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"24/11/2026\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"11/24/2026\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "GetAsDate ( \"2026-11-24\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500,
+   "note": "File4Base also reads ISO 8601 dates, the form it stores and exchanges; FileMaker refuses them."
+  },
+  {
+   "formula": "GetAsDate ( \"31/02/2026\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "GetAsDate ( 739579 )",
+   "locale": "fr-FR",
+   "text": "24/11/2025",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"13:45\" )",
+   "locale": "fr-FR",
+   "text": "13:45:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"49:30:00\" )",
+   "locale": "fr-FR",
+   "text": "49:30:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"1:2:3\" )",
+   "locale": "fr-FR",
+   "text": "01:02:03",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( 3600 )",
+   "locale": "fr-FR",
+   "text": "01:00:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"24/11/2026 13:45:10\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 13:45:10",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( 0 )",
+   "locale": "fr-FR",
+   "text": "01/01/0001 00:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( 1 )",
+   "locale": "fr-FR",
+   "text": "01/01/0001 00:00:01",
+   "error": 0
+  },
+  {
+   "formula": "GetAsBoolean ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "GetAsBoolean ( 2 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 13 ; 1 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "01/01/2027",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 2 ; 30 ; 2024 )",
+   "locale": "fr-FR",
+   "text": "01/03/2024",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 0 ; 1 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "01/12/2025",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 1 ; 0 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "31/12/2025",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 1 ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "01/01/0001",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( Date ( 1 ; 1 ; 1 ) )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "739944",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) + 7",
+   "locale": "fr-FR",
+   "text": "01/12/2026",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 1 ; 1 ; 2027 ) - Date ( 11 ; 24 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "38",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) & \"\"",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) * 1",
+   "locale": "fr-FR",
+   "text": "739944",
+   "error": 0
+  },
+  {
+   "formula": "Year ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "2026",
+   "error": 0
+  },
+  {
+   "formula": "Month ( \"24/11/2026\" )",
+   "locale": "fr-FR",
+   "text": "11",
+   "error": 0
+  },
+  {
+   "formula": "Day ( \"24/11/2026\" )",
+   "locale": "fr-FR",
+   "text": "24",
+   "error": 0
+  },
+  {
+   "formula": "DayOfWeek ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "DayOfYear ( Date ( 12 ; 31 ; 2024 ) )",
+   "locale": "fr-FR",
+   "text": "366",
+   "error": 0
+  },
+  {
+   "formula": "DayName ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "mardi",
+   "error": 0
+  },
+  {
+   "formula": "MonthName ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "novembre",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYear ( Date ( 1 ; 1 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYear ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "48",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYearFiscal ( Date ( 1 ; 1 ; 2026 ) ; 2 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYearFiscal ( Date ( 12 ; 29 ; 2025 ) ; 2 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 13 ; 45 ; 10 )",
+   "locale": "fr-FR",
+   "text": "13:45:10",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 25 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "25:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Time ( -1 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "-01:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 13 ; 45 ; 10 ) + 60",
+   "locale": "fr-FR",
+   "text": "13:46:10",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 13 ; 45 ; 10 ) & \"\"",
+   "locale": "fr-FR",
+   "text": "13:45:10",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( Time ( 13 ; 45 ; 10 ) )",
+   "locale": "fr-FR",
+   "text": "49510",
+   "error": 0
+  },
+  {
+   "formula": "Hour ( Time ( 49 ; 30 ; 0 ) )",
+   "locale": "fr-FR",
+   "text": "49",
+   "error": 0
+  },
+  {
+   "formula": "Minute ( \"13:45:10\" )",
+   "locale": "fr-FR",
+   "text": "45",
+   "error": 0
+  },
+  {
+   "formula": "Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 45 ; 10 ) )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 13:45:10",
+   "error": 0
+  },
+  {
+   "formula": "Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 25 ; 0 ; 0 ) )",
+   "locale": "fr-FR",
+   "text": "25/11/2026 01:00",
+   "error": 0
+  },
+  {
+   "formula": "Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 45 ; 10 ) ) + 60",
+   "locale": "fr-FR",
+   "text": "24/11/2026 13:46:10",
+   "error": 0
+  },
+  {
+   "formula": "Timestamp ( Date ( 11 ; 24 ; 2026 ) ; 0 ) - Timestamp ( Date ( 11 ; 23 ; 2026 ) ; 0 )",
+   "locale": "fr-FR",
+   "text": "24:00:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( Timestamp ( Date ( 1 ; 2 ; 1 ) ; 0 ) )",
+   "locale": "fr-FR",
+   "text": "86400",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) + Time ( 1 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 01:00",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) = \"24/11/2026\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) < Date ( 11 ; 25 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Let ( x = 2 ; x * 3 )",
+   "locale": "fr-FR",
+   "text": "6",
+   "error": 0
+  },
+  {
+   "formula": "Let ( [ a = 1 ; b = a + 1 ] ; a & b )",
+   "locale": "fr-FR",
+   "text": "12",
+   "error": 0
+  },
+  {
+   "formula": "Let ( [ a = 1 ; a = a + 1 ] ; a )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Let ( [ a = 1 ; b = Let ( a = 5 ; a ) ] ; a & b )",
+   "locale": "fr-FR",
+   "text": "15",
+   "error": 0
+  },
+  {
+   "formula": "Let ( [ $x = 5 ] ; $x * 2 )",
+   "locale": "fr-FR",
+   "text": "10",
+   "error": 0
+  },
+  {
+   "formula": "Let ( [ $$g = \"z\" ] ; $$g )",
+   "locale": "fr-FR",
+   "text": "z",
+   "error": 0
+  },
+  {
+   "formula": "While ( [ i = 0 ; out = \"\" ] ; i < 3 ; [ i = i + 1 ; out = out & i ] ; out )",
+   "locale": "fr-FR",
+   "text": "123",
+   "error": 0
+  },
+  {
+   "formula": "While ( [ i = 0 ] ; i < 0 ; [ i = i + 1 ] ; i )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Evaluate ( \"1 + 2\" )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Evaluate ( \"\\\"a\\\" & \\\"b\\\"\" )",
+   "locale": "fr-FR",
+   "text": "ab",
+   "error": 0
+  },
+  {
+   "formula": "Evaluate ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "IsValidExpression ( \"1 +\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "IsValidExpression ( \"Upper ( \\\"a\\\" )\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"a¶b\"",
+   "locale": "fr-FR",
+   "text": "a\rb",
+   "error": 0
+  },
+  {
+   "formula": "\"tab\there\"",
+   "locale": "fr-FR",
+   "text": "tab\there",
+   "error": 0
+  },
+  {
+   "formula": "\"back\\\\slash\"",
+   "locale": "fr-FR",
+   "text": "back\\slash",
+   "error": 0
+  },
+  {
+   "formula": "\"quote\\\"inside\"",
+   "locale": "fr-FR",
+   "text": "quote\"inside",
+   "error": 0
+  },
+  {
+   "formula": "\"pilcrow\\¶literal\"",
+   "locale": "fr-FR",
+   "text": "pilcrow¶literal",
+   "error": 0
+  },
+  {
+   "formula": "Upper ( \"ß\" )",
+   "locale": "fr-FR",
+   "text": "ß",
+   "error": 0
+  },
+  {
+   "formula": "Lower ( \"İ\" )",
+   "locale": "fr-FR",
+   "text": "i",
+   "error": 0
+  },
+  {
+   "formula": "Length ( \"👍\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"👍a\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "👍",
+   "error": 0
+  },
+  {
+   "formula": "Exact ( \"é\" ; \"é\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"Français\" ; \"ç\" ; \"c\" )",
+   "locale": "fr-FR",
+   "text": "Francais",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"ÉCOLE\" ; \"é\" ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "PatternCount ( \"Ééé\" ; \"é\" )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "\"É\" = \"é\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"Ecole\" < \"École\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"école\" < \"ecolf\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "SetPrecision ( 1 / 3 ; 20 )",
+   "locale": "fr-FR",
+   "text": ",33333333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "SetPrecision ( 2 / 3 ; 5 )",
+   "locale": "fr-FR",
+   "text": ",6666666666666667",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 1 / 3 ; 20 )",
+   "locale": "fr-FR",
+   "text": ",3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "1 / 3 * 3",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "99999999999999999999 + 1",
+   "locale": "fr-FR",
+   "text": "1,0E+20",
+   "error": 0
+  },
+  {
+   "formula": "1e20 & \"\"",
+   "locale": "fr-FR",
+   "text": "1,0E+20",
+   "error": 0
+  },
+  {
+   "formula": "1e-5 & \"\"",
+   "locale": "fr-FR",
+   "text": ",00001",
+   "error": 0
+  },
+  {
+   "formula": "123456789012345678 & \"\"",
+   "locale": "fr-FR",
+   "text": "123456789012345678",
+   "error": 0
+  },
+  {
+   "formula": "Ceiling ( 1e-20 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Random < 1",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Length ( Get ( UUID ) )",
+   "locale": "fr-FR",
+   "text": "36",
+   "error": 0
+  },
+  {
+   "formula": "Middle ( Get ( UUID ) ; 15 ; 1 )",
+   "locale": "fr-FR",
+   "text": "C",
+   "error": 0,
+   "note": "Random: a single sample of a random identifier."
+  },
+  {
+   "formula": "Exp ( 0 ) & \"\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Sqrt ( 16 ) & \"\"",
+   "locale": "fr-FR",
+   "text": "4",
+   "error": 0
+  },
+  {
+   "formula": "Abs ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Round ( \"\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Int ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Upper ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"\" ; 3 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "-\"\"",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "-\"abc\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "- \"5\"",
+   "locale": "fr-FR",
+   "text": "-5",
+   "error": 0
+  },
+  {
+   "formula": "+\"5\"",
+   "locale": "fr-FR",
+   "text": "5",
+   "error": 0
+  },
+  {
+   "formula": "\"5\" * \"4\"",
+   "locale": "fr-FR",
+   "text": "20",
+   "error": 0
+  },
+  {
+   "formula": "\"5\" & \"4\"",
+   "locale": "fr-FR",
+   "text": "54",
+   "error": 0
+  },
+  {
+   "formula": "\"5\" + \"4\"",
+   "locale": "fr-FR",
+   "text": "9",
+   "error": 0
+  },
+  {
+   "formula": "2 * \"\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Sum ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "Count ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "List ( Date ( 1 ; 2 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "Min ( Date ( 1 ; 2 ; 2026 ) ; Date ( 1 ; 1 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "01/01/2026",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"10\" ; \"9\" )",
+   "locale": "fr-FR",
+   "text": "9",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"b\" ; 9 )",
+   "locale": "fr-FR",
+   "text": "9",
+   "error": 0
+  },
+  {
+   "formula": "Quote ( \"a\\\\b\" )",
+   "locale": "fr-FR",
+   "text": "\"a\\b\"",
+   "error": 0
+  },
+  {
+   "formula": "Quote ( \"x\\¶y\" )",
+   "locale": "fr-FR",
+   "text": "\"x\\¶y\"",
+   "error": 0
+  },
+  {
+   "formula": "Quote ( \"a\\\\\" )",
+   "locale": "fr-FR",
+   "text": "\"a\\\\\"",
+   "error": 0
+  },
+  {
+   "formula": "Quote ( \"\\\\\\\"\" )",
+   "locale": "fr-FR",
+   "text": "\"\\\\\\\"\"",
+   "error": 0
+  },
+  {
+   "formula": "\"a\\zb\"",
+   "locale": "fr-FR",
+   "text": "a\\zb",
+   "error": 0
+  },
+  {
+   "formula": "\"a\\nb\"",
+   "locale": "fr-FR",
+   "text": "a\\nb",
+   "error": 0
+  },
+  {
+   "formula": "Length ( \"a\\zb\" )",
+   "locale": "fr-FR",
+   "text": "4",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"école\" ; \"e\" ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "5",
+   "error": 0
+  },
+  {
+   "formula": "PatternCount ( \"éèe\" ; \"e\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"é\" ; \"e\" ; \"x\" )",
+   "locale": "fr-FR",
+   "text": "é",
+   "error": 0
+  },
+  {
+   "formula": "Exact ( \"é\" ; \"e\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"a\" = \"à\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"a\" < \"à\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"à\" < \"b\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "FilterValues ( \"é¶e\" ; \"e\" )",
+   "locale": "fr-FR",
+   "text": "e\r",
+   "error": 0
+  },
+  {
+   "formula": "UniqueValues ( \"é¶e¶E\" )",
+   "locale": "fr-FR",
+   "text": "é\r",
+   "error": 0
+  },
+  {
+   "formula": "SortValues ( \"é¶f¶e¶Z\" )",
+   "locale": "fr-FR",
+   "text": "e\ré\rf\rZ\r",
+   "error": 0
+  },
+  {
+   "formula": "\"Œ\" = \"oe\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"æ\" < \"b\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"ß\" = \"ss\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"10\" ; \"9\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "9",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"b\" ; \"a\" ; 0 )",
+   "locale": "fr-FR",
+   "text": "b",
+   "error": 0
+  },
+  {
+   "formula": "Min ( \"b\" ; \"a\" )",
+   "locale": "fr-FR",
+   "text": "a",
+   "error": 0
+  },
+  {
+   "formula": "Min ( \"b\" ; 3 )",
+   "locale": "fr-FR",
+   "text": "b",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"2\" ; \"10\" ; \"x\" )",
+   "locale": "fr-FR",
+   "text": "x",
+   "error": 0
+  },
+  {
+   "formula": "\"abc\" > 5",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"5\" > 10",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "5 > \"10\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"5\" = 5,0",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"05\" = 5",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"\" < 1",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"\" < \"a\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Sum ( 5 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "Count ( 5 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "List ( 5 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "Max ( 5 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "Average ( 5 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1214
+  },
+  {
+   "formula": "Abs ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Round ( \"abc\" ; 0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"abc\" * 1",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"abc\" ) * 1",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Floor ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Int ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Sign ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Sign ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "1/3 * 1000000",
+   "locale": "fr-FR",
+   "text": "333333,333333333333",
+   "error": 0
+  },
+  {
+   "formula": "-1/3",
+   "locale": "fr-FR",
+   "text": "-,3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "100000000000000000000",
+   "locale": "fr-FR",
+   "text": "1,0E+20",
+   "error": 0
+  },
+  {
+   "formula": "0,1 * 3",
+   "locale": "fr-FR",
+   "text": ",3",
+   "error": 0
+  },
+  {
+   "formula": "1 - 0,9",
+   "locale": "fr-FR",
+   "text": ",1",
+   "error": 0
+  },
+  {
+   "formula": "0,1 + 0,2",
+   "locale": "fr-FR",
+   "text": ",3",
+   "error": 0
+  },
+  {
+   "formula": "1,50",
+   "locale": "fr-FR",
+   "text": "1,5",
+   "error": 0
+  },
+  {
+   "formula": "0,5 & \"\"",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": "-0,5",
+   "locale": "fr-FR",
+   "text": "-,5",
+   "error": 0
+  },
+  {
+   "formula": "123456789,123456789",
+   "locale": "fr-FR",
+   "text": "123456789,123456789",
+   "error": 0
+  },
+  {
+   "formula": "10000000000000000000000 / 3",
+   "locale": "fr-FR",
+   "text": "3333333333333333333333,3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "2 ^ 0,5",
+   "locale": "fr-FR",
+   "text": "1,414213562373095",
+   "error": 0
+  },
+  {
+   "formula": "2 ^ 100",
+   "locale": "fr-FR",
+   "text": "1267650600228229401496703205376",
+   "error": 0
+  },
+  {
+   "formula": "2 ^ 64",
+   "locale": "fr-FR",
+   "text": "18446744073709551616",
+   "error": 0
+  },
+  {
+   "formula": "1/3 + 1/3 + 1/3",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "10 / 3 * 3",
+   "locale": "fr-FR",
+   "text": "10",
+   "error": 0
+  },
+  {
+   "formula": "1 / 3 - 0,3333333333333333",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "0,5",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": ",5",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": "5,",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1218
+  },
+  {
+   "formula": "12345678901234567,5",
+   "locale": "fr-FR",
+   "text": "12345678901234567,5",
+   "error": 0
+  },
+  {
+   "formula": "0,000000000000000001",
+   "locale": "fr-FR",
+   "text": "1,0E-18",
+   "error": 0
+  },
+  {
+   "formula": "1 / 1000000000000",
+   "locale": "fr-FR",
+   "text": "1,0E-12",
+   "error": 0
+  },
+  {
+   "formula": "123456789012345678901",
+   "locale": "fr-FR",
+   "text": "123456789012345678901",
+   "error": 0
+  },
+  {
+   "formula": "-123456789012345678901",
+   "locale": "fr-FR",
+   "text": "-123456789012345678901",
+   "error": 0
+  },
+  {
+   "formula": "1e15 * 100000",
+   "locale": "fr-FR",
+   "text": "1,0E+20",
+   "error": 0
+  },
+  {
+   "formula": "1,5e3",
+   "locale": "fr-FR",
+   "text": "1500",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 2,5 ; 0 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Round ( -2,5 ; 0 )",
+   "locale": "fr-FR",
+   "text": "-3",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 1,005 ; 2 )",
+   "locale": "fr-FR",
+   "text": "1,01",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 1234,5678 ; -2 )",
+   "locale": "fr-FR",
+   "text": "1200",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 1,25 ; 1 )",
+   "locale": "fr-FR",
+   "text": "1,3",
+   "error": 0
+  },
+  {
+   "formula": "Round ( -1,25 ; 1 )",
+   "locale": "fr-FR",
+   "text": "-1,3",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 1,35 ; 1 )",
+   "locale": "fr-FR",
+   "text": "1,4",
+   "error": 0
+  },
+  {
+   "formula": "Truncate ( -1,99 ; 1 )",
+   "locale": "fr-FR",
+   "text": "-1,9",
+   "error": 0
+  },
+  {
+   "formula": "Truncate ( 1234,5 ; -2 )",
+   "locale": "fr-FR",
+   "text": "1200",
+   "error": 0
+  },
+  {
+   "formula": "Int ( -3,7 )",
+   "locale": "fr-FR",
+   "text": "-3",
+   "error": 0
+  },
+  {
+   "formula": "Int ( 3,7 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Floor ( -3,2 )",
+   "locale": "fr-FR",
+   "text": "-4",
+   "error": 0
+  },
+  {
+   "formula": "Ceiling ( -3,2 )",
+   "locale": "fr-FR",
+   "text": "-3",
+   "error": 0
+  },
+  {
+   "formula": "Abs ( -3,5 )",
+   "locale": "fr-FR",
+   "text": "3,5",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( 7,5 ; 2 )",
+   "locale": "fr-FR",
+   "text": "1,5",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( -7,5 ; 2 )",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": "Div ( 7,5 ; 2 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "If ( 0,0001 ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Choose ( 1,7 ; \"a\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "b",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"abc\" ; 2,9 )",
+   "locale": "fr-FR",
+   "text": "ab",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"abc\" ; 2,5 )",
+   "locale": "fr-FR",
+   "text": "ab",
+   "error": 0
+  },
+  {
+   "formula": "Middle ( \"abcdef\" ; 2,5 ; 2 )",
+   "locale": "fr-FR",
+   "text": "bc",
+   "error": 0
+  },
+  {
+   "formula": "Middle ( \"abc\" ; -1 ; 2 )",
+   "locale": "fr-FR",
+   "text": "ab",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 0 ; 0 ; 1,5 )",
+   "locale": "fr-FR",
+   "text": "00:00:01,5",
+   "error": 0
+  },
+  {
+   "formula": "Seconds ( Time ( 0 ; 0 ; 1,5 ) )",
+   "locale": "fr-FR",
+   "text": "1,5",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 0 ; 90 ; 0 )",
+   "locale": "fr-FR",
+   "text": "01:30:00",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 0 ; 0 ; 3725 )",
+   "locale": "fr-FR",
+   "text": "01:02:05",
+   "error": 0
+  },
+  {
+   "formula": "Hour ( -1 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Hour ( 3600,5 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( 3600,5 )",
+   "locale": "fr-FR",
+   "text": "01:00:00,5",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) - 0,5",
+   "locale": "fr-FR",
+   "text": "23/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24,7 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsText ( Date ( 1 ; 1 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "01/01/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsText ( Time ( 1 ; 2 ; 3 ) )",
+   "locale": "fr-FR",
+   "text": "01:02:03",
+   "error": 0
+  },
+  {
+   "formula": "GetAsText ( 1000000,10 )",
+   "locale": "fr-FR",
+   "text": "1000000,1",
+   "error": 0
+  },
+  {
+   "formula": "GetAsText ( 0,5 )",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": "Length ( 1,50 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "\"x\" & 1,25",
+   "locale": "fr-FR",
+   "text": "x1,25",
+   "error": 0
+  },
+  {
+   "formula": "List ( 1,50 ; 2 )",
+   "locale": "fr-FR",
+   "text": "1,5\r2",
+   "error": 0
+  },
+  {
+   "formula": "1 = 1,0",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1,5\" )",
+   "locale": "fr-FR",
+   "text": "1,5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1.5\" )",
+   "locale": "fr-FR",
+   "text": "15",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"(5)\" )",
+   "locale": "fr-FR",
+   "text": "-5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"5-\" )",
+   "locale": "fr-FR",
+   "text": "5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1 000,5\" )",
+   "locale": "fr-FR",
+   "text": "1000,5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1e3\" )",
+   "locale": "fr-FR",
+   "text": "1000",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"e5\" )",
+   "locale": "fr-FR",
+   "text": "5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1,2,3\" )",
+   "locale": "fr-FR",
+   "text": "1,23",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"-1,5e2\" )",
+   "locale": "fr-FR",
+   "text": "-150",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1E-2\" )",
+   "locale": "fr-FR",
+   "text": ",01",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"x1e3\" )",
+   "locale": "fr-FR",
+   "text": "13",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"1e\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"12 345\" )",
+   "locale": "fr-FR",
+   "text": "12345",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"+5\" )",
+   "locale": "fr-FR",
+   "text": "5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"--5\" )",
+   "locale": "fr-FR",
+   "text": "-5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"5%\" )",
+   "locale": "fr-FR",
+   "text": "5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \",5\" )",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"0,10\" )",
+   "locale": "fr-FR",
+   "text": ",1",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"13h45\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 501
+  },
+  {
+   "formula": "GetAsTime ( \"13:45,5\" )",
+   "locale": "fr-FR",
+   "text": "00:13:45,5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"1:2\" )",
+   "locale": "fr-FR",
+   "text": "01:02:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 501
+  },
+  {
+   "formula": "GetAsTime ( \"-0:30\" )",
+   "locale": "fr-FR",
+   "text": "-00:30:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"1/2/26\" )",
+   "locale": "fr-FR",
+   "text": "01/02/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"1/2/1926\" )",
+   "locale": "fr-FR",
+   "text": "01/02/1926",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"24.11.2026\" )",
+   "locale": "fr-FR",
+   "text": "24.11.2026",
+   "error": 0,
+   "note": "FileMaker returns the text unchanged when the separators are not the locale's; File4Base returns the date."
+  },
+  {
+   "formula": "GetAsDate ( \"24-11-2026\" )",
+   "locale": "fr-FR",
+   "text": "24-11-2026",
+   "error": 0,
+   "note": "FileMaker returns the text unchanged when the separators are not the locale's; File4Base returns the date."
+  },
+  {
+   "formula": "GetAsDate ( \"24/11\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0,
+   "note": "Depends on the current year (observed in 2026)."
+  },
+  {
+   "formula": "GetAsDate ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "GetAsDate ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"24/11/2026\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 00:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"24/11/2026 13:45\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 13:45",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( 63900000000 )",
+   "locale": "fr-FR",
+   "text": "29/11/2025 08:00",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYear ( Date ( 12 ; 31 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "53",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYear ( Date ( 1 ; 3 ; 2027 ) )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "DayOfWeek ( Date ( 11 ; 29 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYearFiscal ( Date ( 12 ; 31 ; 2024 ) ; 2 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WeekOfYearFiscal ( Date ( 1 ; 1 ; 2026 ) ; 1 )",
+   "locale": "fr-FR",
+   "text": "53",
+   "error": 0
+  },
+  {
+   "formula": "DayName ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "MonthName ( 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "Year ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Year ( 739944 )",
+   "locale": "fr-FR",
+   "text": "2026",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( -7,5 ; -2 )",
+   "locale": "fr-FR",
+   "text": "-1,5",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( 7 ; 0 )",
+   "locale": "fr-FR",
+   "text": "7",
+   "error": 0
+  },
+  {
+   "formula": "Div ( 7 ; 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 15
+  },
+  {
+   "formula": "Lg ( 8 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Log ( 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 14
+  },
+  {
+   "formula": "Sqrt ( 1/9 )",
+   "locale": "fr-FR",
+   "text": ",3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "Exp ( 2 )",
+   "locale": "fr-FR",
+   "text": "7,3890560989306502",
+   "error": 0
+  },
+  {
+   "formula": "Ln ( 10 )",
+   "locale": "fr-FR",
+   "text": "2,3025850929940457",
+   "error": 0
+  },
+  {
+   "formula": "Sin ( Pi / 6 )",
+   "locale": "fr-FR",
+   "text": ",4999999999999999",
+   "error": 0
+  },
+  {
+   "formula": "Cos ( 0 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Atan ( 1 ) * 4",
+   "locale": "fr-FR",
+   "text": "3,1415926535897931",
+   "error": 0
+  },
+  {
+   "formula": "Degrees ( Pi )",
+   "locale": "fr-FR",
+   "text": "180",
+   "error": 0
+  },
+  {
+   "formula": "Random * 0",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "SetPrecision ( Pi ; 30 )",
+   "locale": "fr-FR",
+   "text": "3,14159265358979323846264338328",
+   "error": 0
+  },
+  {
+   "formula": "SetPrecision ( 1 / 7 ; 400 )",
+   "locale": "fr-FR",
+   "text": ",1428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571428571429",
+   "error": 0
+  },
+  {
+   "formula": "SetPrecision ( 2 ^ 0,5 ; 20 )",
+   "locale": "fr-FR",
+   "text": "1,4142135623730950488",
+   "error": 0
+  },
+  {
+   "formula": "SetPrecision ( Sqrt ( 2 ) ; 20 )",
+   "locale": "fr-FR",
+   "text": "1,4142135623730950488",
+   "error": 0
+  },
+  {
+   "formula": "Round ( Sqrt ( 2 ) ; 20 )",
+   "locale": "fr-FR",
+   "text": "1,414213562373095",
+   "error": 0
+  },
+  {
+   "formula": "If ( 1 ; \"a\" ; 1 / 0 )",
+   "locale": "fr-FR",
+   "text": "a",
+   "error": 0
+  },
+  {
+   "formula": "If ( 0 ; 1 / 0 ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "b",
+   "error": 0
+  },
+  {
+   "formula": "Case ( 1 ; \"a\" ; 1 / 0 )",
+   "locale": "fr-FR",
+   "text": "a",
+   "error": 0
+  },
+  {
+   "formula": "1 or 1 / 0",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "0 and 1 / 0",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "IsEmpty ( 1 / 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 15
+  },
+  {
+   "formula": "IsValid ( 1 / 0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "IsValid ( \"abc\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"\" & 1 / 0",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 15
+  },
+  {
+   "formula": "GetAsBoolean ( \"\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "GetAsBoolean ( \"0,0\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "GetAsBoolean ( \"x0\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "GetAsBoolean ( \"0x\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "TrimAll ( \"  a   b  \" ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "a b",
+   "error": 0
+  },
+  {
+   "formula": "TrimAll ( \"a  b\" ; 1 ; 3 )",
+   "locale": "fr-FR",
+   "text": "ab",
+   "error": 0
+  },
+  {
+   "formula": "Trim ( \"¶ a ¶\" )",
+   "locale": "fr-FR",
+   "text": "\r a \r",
+   "error": 0
+  },
+  {
+   "formula": "Trim ( \"\ta\t\" )",
+   "locale": "fr-FR",
+   "text": "\ta\t",
+   "error": 0
+  },
+  {
+   "formula": "Proper ( \"ÉCOLE élève\" )",
+   "locale": "fr-FR",
+   "text": "École Élève",
+   "error": 0
+  },
+  {
+   "formula": "Proper ( \"a.b,c;d\" )",
+   "locale": "fr-FR",
+   "text": "A.b,C;D",
+   "error": 0
+  },
+  {
+   "formula": "Upper ( \"ǆ\" )",
+   "locale": "fr-FR",
+   "text": "Ǆ",
+   "error": 0
+  },
+  {
+   "formula": "Lower ( \"ÀÉ\" )",
+   "locale": "fr-FR",
+   "text": "àé",
+   "error": 0
+  },
+  {
+   "formula": "LeftWords ( \"a.b c\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "a.b",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a.b\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a,b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a:b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a_b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a/b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"1,5\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"12:30\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a&b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"l’arbre\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "MiddleWords ( \"one two\" ; 0 ; 1 )",
+   "locale": "fr-FR",
+   "text": "one",
+   "error": 0
+  },
+  {
+   "formula": "RightWords ( \"one\" ; 5 )",
+   "locale": "fr-FR",
+   "text": "one",
+   "error": 0
+  },
+  {
+   "formula": "GetValue ( \"a¶b\" ; 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "GetValue ( \"a¶b\" ; -1 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"a¶\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"¶¶\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "LeftValues ( \"a\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "a\r",
+   "error": 0
+  },
+  {
+   "formula": "LeftValues ( \"a¶b\" ; 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "RightValues ( \"a¶b¶\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "b\r",
+   "error": 0
+  },
+  {
+   "formula": "MiddleValues ( \"a¶b\" ; 0 ; 1 )",
+   "locale": "fr-FR",
+   "text": "a\r",
+   "error": 0
+  },
+  {
+   "formula": "FilterValues ( \"a¶b¶a\" ; \"a\" )",
+   "locale": "fr-FR",
+   "text": "a\ra\r",
+   "error": 0
+  },
+  {
+   "formula": "FilterValues ( \"a ¶b\" ; \"a\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "UniqueValues ( \"b¶a¶b\" )",
+   "locale": "fr-FR",
+   "text": "b\ra\r",
+   "error": 0
+  },
+  {
+   "formula": "SortValues ( \"10¶9¶1\" )",
+   "locale": "fr-FR",
+   "text": "1\r10\r9\r",
+   "error": 0
+  },
+  {
+   "formula": "SortValues ( \"10¶9¶1\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "1\r9\r10\r",
+   "error": 0
+  },
+  {
+   "formula": "SortValues ( \"b¶a\" ; -1 )",
+   "locale": "fr-FR",
+   "text": "b\ra\r",
+   "error": 0
+  },
+  {
+   "formula": "List ( \"\" ; \"a\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "a",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"aaa\" ; \"aa\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "ba",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"abc\" ; [ \"a\" ; \"x\" ] ; [ \"x\" ; \"y\" ] )",
+   "locale": "fr-FR",
+   "text": "ybc",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"a¶b\" ; \"¶\" ; \",\" )",
+   "locale": "fr-FR",
+   "text": "a,b",
+   "error": 0
+  },
+  {
+   "formula": "Replace ( \"abc\" ; 2 ; 0 ; \"X\" )",
+   "locale": "fr-FR",
+   "text": "aXbc",
+   "error": 0
+  },
+  {
+   "formula": "Replace ( \"abc\" ; 2 ; -1 ; \"X\" )",
+   "locale": "fr-FR",
+   "text": "aXbc",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"aaa\" ; \"aa\" ; 1 ; 2 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"abcabc\" ; \"c\" ; 100 ; -1 )",
+   "locale": "fr-FR",
+   "text": "6",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"abc\" ; \"c\" ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"abc\" ; \"c\" ; 1 ; -1 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "PatternCount ( \"abc\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Filter ( \"aAbB\" ; \"AB\" )",
+   "locale": "fr-FR",
+   "text": "AB",
+   "error": 0
+  },
+  {
+   "formula": "Filter ( \"abc\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Char ( 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Char ( 13 )",
+   "locale": "fr-FR",
+   "text": "\r",
+   "error": 0
+  },
+  {
+   "formula": "Char ( 9731 )",
+   "locale": "fr-FR",
+   "text": "☃",
+   "error": 0
+  },
+  {
+   "formula": "Char ( 128077 )",
+   "locale": "fr-FR",
+   "text": "涭\u0001",
+   "error": 0
+  },
+  {
+   "formula": "Char ( 6566067 )",
+   "locale": "fr-FR",
+   "text": "ȓA",
+   "error": 0
+  },
+  {
+   "formula": "Code ( \"👍\" )",
+   "locale": "fr-FR",
+   "text": "5639755357",
+   "error": 0
+  },
+  {
+   "formula": "Code ( \"¶\" )",
+   "locale": "fr-FR",
+   "text": "13",
+   "error": 0
+  },
+  {
+   "formula": "SerialIncrement ( \"a-9\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "a-10",
+   "error": 0
+  },
+  {
+   "formula": "SerialIncrement ( \"9\" ; 5 )",
+   "locale": "fr-FR",
+   "text": "14",
+   "error": 0
+  },
+  {
+   "formula": "SerialIncrement ( \"a1,5\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "a1,6",
+   "error": 0
+  },
+  {
+   "formula": "SerialIncrement ( \"a01\" ; -5 )",
+   "locale": "fr-FR",
+   "text": "a-4",
+   "error": 0
+  },
+  {
+   "formula": "Exact ( 1 ; \"1\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Exact ( 1,0 ; 1 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Exact ( \"\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Length ( 12,50 )",
+   "locale": "fr-FR",
+   "text": "4",
+   "error": 0
+  },
+  {
+   "formula": "Length ( Date ( 1 ; 1 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "10",
+   "error": 0
+  },
+  {
+   "formula": "Left ( 12345 ; 2 )",
+   "locale": "fr-FR",
+   "text": "12",
+   "error": 0
+  },
+  {
+   "formula": "Let ( x = 1 ; Let ( x = x + 1 ; x ) )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Let ( [ $x = 1 ; $x = $x + 1 ] ; $x )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Let ( $x[2] = 5 ; $x[2] & \"|\" & $x[1] & \"|\" & $x )",
+   "locale": "fr-FR",
+   "text": "5|2|2",
+   "error": 0,
+   "note": "Depends on variables left by earlier cases of the FileMaker run; variable repetitions in Let are not supported yet."
+  },
+  {
+   "formula": "Let ( ~a = 1 ; ~a )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Evaluate ( \"1,5 * 2\" )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Evaluate ( 42 )",
+   "locale": "fr-FR",
+   "text": "42",
+   "error": 0
+  },
+  {
+   "formula": "Evaluate ( \"x\" ; [ 1 ] )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 1204
+  },
+  {
+   "formula": "GetField ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "IsValidExpression ( \"Foo ( 1 )\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "IsValidExpression ( \"\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"24/11/2026 25:00\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( -1 ; 0 ; 0 ) )",
+   "locale": "fr-FR",
+   "text": "23/11/2026 23:00",
+   "error": 0
+  },
+  {
+   "formula": "Timestamp ( \"24/11/2026\" ; \"13:45\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 13:45",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( GetAsTimestamp ( \"24/11/2026 13:45:10\" ) )",
+   "locale": "fr-FR",
+   "text": "63931124710",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"24/11/2026 13:45:10\" ) - Date ( 11 ; 24 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "13:45:10",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) - Timestamp ( Date ( 11 ; 24 ; 2026 ) ; 0 )",
+   "locale": "fr-FR",
+   "text": "00:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 1 ; 0 ; 0 ) - Time ( 2 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "-01:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 1 ; 0 ; 0 ) * 2",
+   "locale": "fr-FR",
+   "text": "7200",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 1 ; 0 ; 0 ) / 2",
+   "locale": "fr-FR",
+   "text": "1800",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) / 2",
+   "locale": "fr-FR",
+   "text": "369972",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 1 ; 0 ; 0 ) + Time ( 2 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "03:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) + Date ( 1 ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "739945",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) & Time ( 1 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "24/11/202601:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) = 739944",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 1 ; 0 ; 0 ) = \"01:00:00\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 1 ; 0 ; 0 ) = \"1:00\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) = \"2026-11-24\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "-Date ( 11 ; 24 ; 2026 )",
+   "locale": "fr-FR",
+   "text": "-739944",
+   "error": 0
+  },
+  {
+   "formula": "-Time ( 1 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "-3600",
+   "error": 0
+  },
+  {
+   "formula": "Abs ( Time ( -1 ; 0 ; 0 ) )",
+   "locale": "fr-FR",
+   "text": "01:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Round ( Time ( 1 ; 0 ; 0 ) ; 0 )",
+   "locale": "fr-FR",
+   "text": "3600",
+   "error": 0
+  },
+  {
+   "formula": "Max ( Time ( 1 ; 0 ; 0 ) ; Time ( 2 ; 0 ; 0 ) )",
+   "locale": "fr-FR",
+   "text": "02:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Max ( Date ( 1 ; 1 ; 2026 ) ; 5 )",
+   "locale": "fr-FR",
+   "text": "01/01/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 0 ; 0 ) ) )",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 0 ; 0 ) ) )",
+   "locale": "fr-FR",
+   "text": "13:00",
+   "error": 0,
+   "note": "FileMaker writes this time like a timestamp's, without zero seconds; File4Base writes a time as 13:00:00 everywhere."
+  },
+  {
+   "formula": "GetAsTime ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "17758632:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Hour ( Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 0 ; 0 ) ) )",
+   "locale": "fr-FR",
+   "text": "13",
+   "error": 0
+  },
+  {
+   "formula": "Day ( Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 0 ; 0 ) ) )",
+   "locale": "fr-FR",
+   "text": "24",
+   "error": 0
+  },
+  {
+   "formula": "-0,5 & \"\"",
+   "locale": "fr-FR",
+   "text": "-,5",
+   "error": 0
+  },
+  {
+   "formula": "0,00001 & \"\"",
+   "locale": "fr-FR",
+   "text": ",00001",
+   "error": 0
+  },
+  {
+   "formula": "0,000001 & \"\"",
+   "locale": "fr-FR",
+   "text": ",000001",
+   "error": 0
+  },
+  {
+   "formula": "0,0000001",
+   "locale": "fr-FR",
+   "text": ",0000001",
+   "error": 0
+  },
+  {
+   "formula": "1/1000000",
+   "locale": "fr-FR",
+   "text": ",000001",
+   "error": 0
+  },
+  {
+   "formula": "1/10000000",
+   "locale": "fr-FR",
+   "text": ",0000001",
+   "error": 0
+  },
+  {
+   "formula": "1/100000000",
+   "locale": "fr-FR",
+   "text": ",00000001",
+   "error": 0
+  },
+  {
+   "formula": "1/1000000000",
+   "locale": "fr-FR",
+   "text": ",000000001",
+   "error": 0
+  },
+  {
+   "formula": "1/10000000000",
+   "locale": "fr-FR",
+   "text": "1,0E-10",
+   "error": 0
+  },
+  {
+   "formula": "1/100000000000",
+   "locale": "fr-FR",
+   "text": "1,0E-11",
+   "error": 0
+  },
+  {
+   "formula": "0,0000012345",
+   "locale": "fr-FR",
+   "text": ",0000012345",
+   "error": 0
+  },
+  {
+   "formula": "0,00000000012345",
+   "locale": "fr-FR",
+   "text": "1,2345E-10",
+   "error": 0
+  },
+  {
+   "formula": "1e19",
+   "locale": "fr-FR",
+   "text": "1,0E+19",
+   "error": 0
+  },
+  {
+   "formula": "1e20",
+   "locale": "fr-FR",
+   "text": "1,0E+20",
+   "error": 0
+  },
+  {
+   "formula": "1,5e20",
+   "locale": "fr-FR",
+   "text": "1,5E+20",
+   "error": 0
+  },
+  {
+   "formula": "123e18",
+   "locale": "fr-FR",
+   "text": "1,23E+20",
+   "error": 0
+  },
+  {
+   "formula": "1e20 + 1",
+   "locale": "fr-FR",
+   "text": "100000000000000000001",
+   "error": 0
+  },
+  {
+   "formula": "-1e20",
+   "locale": "fr-FR",
+   "text": "-1,0E+20",
+   "error": 0
+  },
+  {
+   "formula": "1e21",
+   "locale": "fr-FR",
+   "text": "1,0E+21",
+   "error": 0
+  },
+  {
+   "formula": "12e20",
+   "locale": "fr-FR",
+   "text": "1,2E+21",
+   "error": 0
+  },
+  {
+   "formula": "1/3 * 1e-6",
+   "locale": "fr-FR",
+   "text": ",0000003333333333",
+   "error": 0
+  },
+  {
+   "formula": "1/3 / 1000000000000",
+   "locale": "fr-FR",
+   "text": "3,333E-13",
+   "error": 0
+  },
+  {
+   "formula": "2 ^ 70",
+   "locale": "fr-FR",
+   "text": "1180591620717411303424",
+   "error": 0
+  },
+  {
+   "formula": "1e100",
+   "locale": "fr-FR",
+   "text": "1,0E+100",
+   "error": 0
+  },
+  {
+   "formula": "1e-100",
+   "locale": "fr-FR",
+   "text": "1,0E-100",
+   "error": 0
+  },
+  {
+   "formula": "1/3 * 1e20",
+   "locale": "fr-FR",
+   "text": "33333333333333333300",
+   "error": 0
+  },
+  {
+   "formula": "\"\" + \"\"",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "\"\" * 2",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "-\"\" + 0",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Abs ( \"\" ) + 0",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( \"\" ) + 1",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Sum ( \"\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Average ( \"\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"\" ; 1 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Count ( \"\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"Z\" < \"a\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "\"a\" < \"B\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"1\" < \"a\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\" \" < \"a\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"-\" < \"a\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"a-b\" < \"ab\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"Ö\" < \"p\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "\"oe\" < \"Œ\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Proper ( \"a_b c1d x2y\" )",
+   "locale": "fr-FR",
+   "text": "A_B C1d X2y",
+   "error": 0
+  },
+  {
+   "formula": "Proper ( \"élan\" )",
+   "locale": "fr-FR",
+   "text": "Élan",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"1.5\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a1\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"don't\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a—b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a·b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"3,5 kg\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a.1\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"1.a\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a,1\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"1:a\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a'b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"a-1\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"1-2\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "WordCount ( \"#a @b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Trim ( \" a \" & Char ( 160 ) )",
+   "locale": "fr-FR",
+   "text": "a",
+   "error": 0
+  },
+  {
+   "formula": "Length ( Trim ( Char ( 160 ) & \"a\" ) )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Timestamp ( Date ( 1 ; 1 ; 2026 ) ; Time ( 1 ; 2 ; 3,5 ) )",
+   "locale": "fr-FR",
+   "text": "01/01/2026 01:02:03,5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"13:00\" )",
+   "locale": "fr-FR",
+   "text": "13:00:00",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 13 ; 0 ; 0 )",
+   "locale": "fr-FR",
+   "text": "13:00:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 5 ; 7 ) ) )",
+   "locale": "fr-FR",
+   "text": "13:05:07",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 13 ; 0 ; 0 ) < \"9:00:00\"",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 11 ; 24 ; 2026 ) + 0,5",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "Choose ( \"\" ; \"a\" ; \"b\" )",
+   "locale": "fr-FR",
+   "text": "a",
+   "error": 0
+  },
+  {
+   "formula": "If ( \"\" ; 1 ; 2 )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"abc\" ; \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Left ( \"abc\" ; \"x\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Middle ( \"abc\" ; \"\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "ab",
+   "error": 0
+  },
+  {
+   "formula": "Substitute ( \"\" ; \"\" ; \"x\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 1 / 3 ; 2 ) & \"\"",
+   "locale": "fr-FR",
+   "text": ",33",
+   "error": 0
+  },
+  {
+   "formula": "Round ( 0,5 ; 0 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Round ( -0,5 ; 0 )",
+   "locale": "fr-FR",
+   "text": "-1",
+   "error": 0
+  },
+  {
+   "formula": "Int ( -0,5 ) & \"\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "0 * -1",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "-0",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Ceiling ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( \"\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Div ( \"\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Mod ( 5 ; \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 15
+  },
+  {
+   "formula": "Lg ( 1000 )",
+   "locale": "fr-FR",
+   "text": "9,965784284662087",
+   "error": 0
+  },
+  {
+   "formula": "Log ( 2 )",
+   "locale": "fr-FR",
+   "text": ",3010299956639812",
+   "error": 0
+  },
+  {
+   "formula": "Ln ( 2 )",
+   "locale": "fr-FR",
+   "text": ",6931471805599453",
+   "error": 0
+  },
+  {
+   "formula": "Sqrt ( 3 )",
+   "locale": "fr-FR",
+   "text": "1,7320508075688773",
+   "error": 0
+  },
+  {
+   "formula": "Sqrt ( 0,25 )",
+   "locale": "fr-FR",
+   "text": ",5",
+   "error": 0
+  },
+  {
+   "formula": "2 ^ 0,25",
+   "locale": "fr-FR",
+   "text": "1,1892071150027211",
+   "error": 0
+  },
+  {
+   "formula": "( -8 ) ^ ( 1 / 3 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 14
+  },
+  {
+   "formula": "0 ^ 0",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "0 ^ -1",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 15
+  },
+  {
+   "formula": "( -2 ) ^ 0,5",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 14
+  },
+  {
+   "formula": "( -2 ) ^ 3",
+   "locale": "fr-FR",
+   "text": "-8",
+   "error": 0
+  },
+  {
+   "formula": "Truncate ( 1 / 3 ; 20 )",
+   "locale": "fr-FR",
+   "text": ",3333333333333333",
+   "error": 0
+  },
+  {
+   "formula": "Int ( 1 / 3 * 3 )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Floor ( 10 / 3 * 3 )",
+   "locale": "fr-FR",
+   "text": "10",
+   "error": 0
+  },
+  {
+   "formula": "1 / 3 * 3 = 1",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Abs ( -0 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Length ( 1 / 3 )",
+   "locale": "fr-FR",
+   "text": "17",
+   "error": 0
+  },
+  {
+   "formula": "Exact ( 1 / 3 ; \",3333333333333333\" )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Evaluate ( \"1.5\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 102
+  },
+  {
+   "formula": "SetPrecision ( 1 / 3 ; 2 ) * 3",
+   "locale": "fr-FR",
+   "text": ",9999999999999999",
+   "error": 0
+  },
+  {
+   "formula": "1 / 3 = ,3333333333333333",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Let ( [ x = 1 ; $y = 2 ] ; x + $y )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Case ( \"\" ; 1 ; 2 )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "List ( \"a\" ; List ( \"b\" ; \"c\" ) )",
+   "locale": "fr-FR",
+   "text": "a\rb\rc",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"a\" & Char ( 10 ) & \"b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "ValueCount ( \"a\" & Char ( 8232 ) & \"b\" )",
+   "locale": "fr-FR",
+   "text": "2",
+   "error": 0
+  },
+  {
+   "formula": "GetValue ( \"a\" & Char ( 10 ) & \"b\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "b",
+   "error": 0
+  },
+  {
+   "formula": "Code ( LeftValues ( \"a\" & Char ( 10 ) & \"b\" ; 1 ) )",
+   "locale": "fr-FR",
+   "text": "1300097",
+   "error": 0
+  },
+  {
+   "formula": "Code ( FilterValues ( \"a\" & Char ( 10 ) & \"b\" ; \"a\" ) )",
+   "locale": "fr-FR",
+   "text": "1000097",
+   "error": 0,
+   "note": "FileMaker keeps a line feed as the value's separator; File4Base writes a return. Not reproduced."
+  },
+  {
+   "formula": "Substitute ( \"a¶b\" ; Char ( 10 ) ; \"x\" )",
+   "locale": "fr-FR",
+   "text": "a\rb",
+   "error": 0
+  },
+  {
+   "formula": "Length ( \"a\" & Char ( 13 ) & Char ( 10 ) & \"b\" )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0,
+   "note": "FileMaker counts return + line feed as one character but as two value separators; not reproduced."
+  },
+  {
+   "formula": "ValueCount ( \"a\" & Char ( 13 ) & Char ( 10 ) & \"b\" )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0,
+   "note": "See the Length case for return + line feed; not reproduced."
+  },
+  {
+   "formula": "PatternCount ( \"a¶b\" ; Char ( 13 ) )",
+   "locale": "fr-FR",
+   "text": "1",
+   "error": 0
+  },
+  {
+   "formula": "Upper ( 1,5 )",
+   "locale": "fr-FR",
+   "text": "1,5",
+   "error": 0
+  },
+  {
+   "formula": "Length ( -0,5 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "GetAsText ( -0,5 )",
+   "locale": "fr-FR",
+   "text": "-,5",
+   "error": 0
+  },
+  {
+   "formula": "Position ( 12345 ; 3 ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "3",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 2 ; 29 ; 2025 )",
+   "locale": "fr-FR",
+   "text": "01/03/2025",
+   "error": 0
+  },
+  {
+   "formula": "Date ( 1 ; 1 ; 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "Date ( 1 ; 1 ; 10000 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "Date ( 1 ; 1 ; 4001 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "Date ( 12 ; 31 ; 4000 ) + 1",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "GetAsDate ( 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "GetAsDate ( -1 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "Date ( 1 ; 1 ; 26 )",
+   "locale": "fr-FR",
+   "text": "01/01/0026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"1/2/50\" )",
+   "locale": "fr-FR",
+   "text": "01/02/2050",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"1/2/30\" )",
+   "locale": "fr-FR",
+   "text": "01/02/2030",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"01/02/2026 13:00\" )",
+   "locale": "fr-FR",
+   "text": "01/02/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \" 24/11/2026 \" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"24/11/2026x\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "DayOfWeek ( \"\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 0
+  },
+  {
+   "formula": "Month ( 0 )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500
+  },
+  {
+   "formula": "GetAsTime ( \"1:2:3,25\" )",
+   "locale": "fr-FR",
+   "text": "01:02:03,25",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"13:45:10 PM\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 501
+  },
+  {
+   "formula": "GetAsTime ( \"1:30 PM\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 501
+  },
+  {
+   "formula": "GetAsTime ( \"12\" )",
+   "locale": "fr-FR",
+   "text": "12:00:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( 1,5 )",
+   "locale": "fr-FR",
+   "text": "00:00:01,5",
+   "error": 0
+  },
+  {
+   "formula": "Time ( 1 ; 2 ; 3 ) & \"\"",
+   "locale": "fr-FR",
+   "text": "01:02:03",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTime ( \"25:61:61\" )",
+   "locale": "fr-FR",
+   "text": "26:02:01",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"24/11/2026 1:2:3\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 01:02:03",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"2026-11-24 13:00:00\" )",
+   "locale": "fr-FR",
+   "text": "",
+   "error": 500,
+   "note": "FileMaker refuses ISO text outside an ISO locale; File4Base reads it, because its database hands timestamps over as ISO text."
+  },
+  {
+   "formula": "GetAsTimestamp ( Date ( 11 ; 24 ; 2026 ) )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 00:00",
+   "error": 0
+  },
+  {
+   "formula": "GetAsTimestamp ( \"24/11/2026 13:45:10,5\" )",
+   "locale": "fr-FR",
+   "text": "24/11/2026 13:45:10,5",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"24.11.2026\" ) + 1",
+   "locale": "fr-FR",
+   "text": "25/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsDate ( \"24-11-2026\" ) + 1",
+   "locale": "fr-FR",
+   "text": "25/11/2026",
+   "error": 0
+  },
+  {
+   "formula": "GetAsNumber ( GetAsDate ( \"24.11.2026\" ) )",
+   "locale": "fr-FR",
+   "text": "739944",
+   "error": 0
+  },
+  {
+   "formula": "Hour ( \"25:00:00\" )",
+   "locale": "fr-FR",
+   "text": "25",
+   "error": 0
+  },
+  {
+   "formula": "Seconds ( \"1:2:3,5\" )",
+   "locale": "fr-FR",
+   "text": "3,5",
+   "error": 0
+  },
+  {
+   "formula": "Max ( \"a\" ; \"B\" )",
+   "locale": "fr-FR",
+   "text": "B",
+   "error": 0
+  },
+  {
+   "formula": "Min ( \"é\" ; \"e\" )",
+   "locale": "fr-FR",
+   "text": "é",
+   "error": 0
+  },
+  {
+   "formula": "UniqueValues ( \"1¶01¶1,0\" )",
+   "locale": "fr-FR",
+   "text": "1\r01\r1,0\r",
+   "error": 0
+  },
+  {
+   "formula": "UniqueValues ( \"1¶01¶1,0\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "1\r",
+   "error": 0
+  },
+  {
+   "formula": "SortValues ( \"b¶B¶a¶A\" )",
+   "locale": "fr-FR",
+   "text": "a\rA\rb\rB\r",
+   "error": 0
+  },
+  {
+   "formula": "SortValues ( \"2¶10¶x¶\" ; 2 )",
+   "locale": "fr-FR",
+   "text": "2\r10\rx\r",
+   "error": 0
+  },
+  {
+   "formula": "FilterValues ( \"A¶a\" ; \"A\" )",
+   "locale": "fr-FR",
+   "text": "A\ra\r",
+   "error": 0
+  },
+  {
+   "formula": "\"Straße\" = \"STRASSE\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Position ( \"Straße\" ; \"SS\" ; 1 ; 1 )",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Upper ( \"straße\" ) = \"STRASSE\"",
+   "locale": "fr-FR",
+   "text": "0",
+   "error": 0
+  },
+  {
+   "formula": "Lower ( \"ΣΑ\" )",
+   "locale": "fr-FR",
+   "text": "σα",
+   "error": 0
+  },
+  {
+   "formula": "Proper ( \"ÆON ŒUF\" )",
+   "locale": "fr-FR",
+   "text": "Æon Œuf",
+   "error": 0
+  }
+ ]
+}

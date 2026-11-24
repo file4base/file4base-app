@@ -71,7 +71,7 @@ func (s *Service) EvaluateExpression(
 			return nil, err
 		}
 		for name, value := range row {
-			record[name] = value
+			record[name] = calc.Typed(resultTypeOf(fields[name]), value)
 		}
 	}
 
