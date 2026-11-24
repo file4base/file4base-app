@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Externally stored containers no longer migrate as their storage descriptor (#139).** In a file created by FileMaker Pro 26.0.2, a container in open external storage keeps a `REMO` fork (its folder) and a `file` fork (size, MD5, name), and one in secure storage an `ENCR` fork: none of them is the file, but the first one was imported as its content and counted as reconstructed. Open storage is now read from `Table/<field>/<name>` through `external_files` or `migration-preflight -external-containers`, and accepted only when its size and MD5 match what FileMaker recorded; without the file it is reported missing. Secure storage, whose files only FileMaker can decrypt, is refused with the steps to migrate it (change the field to open or embedded storage and transfer its data in FileMaker). A fixture created with FileMaker, `server/internal/migration/testdata/containers`, covers embedded, open and secure storage.
+
 ## [0.21.0] - 2026-11-24
 
 ### Added

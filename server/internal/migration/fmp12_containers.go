@@ -1,6 +1,8 @@
 package migration
 
 import (
+	"bytes"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -132,7 +134,9 @@ func (f *hbam7ContainerForks) payloadTags() []string {
 
 func isMetadataForkTag(tag string) bool {
 	switch tag {
-	case "FNAM", "SIZE", "DPI_", "META", "TEXT", "SIZ2":
+	case "FNAM", "SIZE", "DPI_", "META", "TEXT", "SIZ2",
+		// External storage descriptors: they locate a file, they are not one.
+		"REMO", "ENCR", "file":
 		return true
 	}
 	return false
@@ -416,7 +420,14 @@ func reconstructContainerCell(
 
 	filename := extractContainerFilename(fnamEntries)
 
-	// 3. Reconstruct embedded payload forks when present (choosing original over previews).
+	// 3. A field stored externally by FileMaker keeps only a descriptor here.
+	if sourceForks != nil {
+		if out, missing, handled, err := externalStorageContainer(sourceForks, filename, resolver); handled {
+			return out, missing, err
+		}
+	}
+
+	// 4. Reconstruct embedded payload forks when present (choosing original over previews).
 	if sourceForks != nil {
 		if tag, ok := selectOriginalForkTag(sourceForks.payloadTags(), filename); ok {
 			payload, expectedLen, _ := sourceForks.forkData(tag)
@@ -443,7 +454,7 @@ func reconstructContainerCell(
 		}
 	}
 
-	// 4. External storage reference: look up referenced file or report it missing.
+	// 5. External storage reference: look up referenced file or report it missing.
 	if extRef := extractExternalContainerRef(fnamEntries); extRef != "" {
 		if resolver != nil {
 			if fileBytes, found, err := resolver(extRef); err != nil {
@@ -746,4 +757,89 @@ func addContainerMeta(row map[string]interface{}, colName string, entry containe
 		row[containermeta.Key] = existing
 	}
 	existing[colName] = entry
+}
+
+// externalStorageFile is FileMaker's "file" fork for a container stored
+// outside the database: the original size as a little-endian uint64, the MD5
+// of the file as written to disk, then the stored file name, NUL-terminated.
+// Observed in files created by FileMaker Pro 26.0.2 (see testdata/containers).
+type externalStorageFile struct {
+	size uint64
+	md5  []byte
+	name string
+}
+
+func parseExternalStorageFile(b []byte) (externalStorageFile, bool) {
+	if len(b) < 8+md5.Size+1 {
+		return externalStorageFile{}, false
+	}
+	name := b[8+md5.Size:]
+	if i := bytes.IndexByte(name, 0); i >= 0 {
+		name = name[:i]
+	}
+	if len(name) == 0 {
+		return externalStorageFile{}, false
+	}
+	return externalStorageFile{
+		size: binary.LittleEndian.Uint64(b[:8]),
+		md5:  b[8 : 8+md5.Size],
+		name: string(name),
+	}, true
+}
+
+// externalStorageContainer resolves a container that FileMaker keeps in
+// external storage. Open storage ("REMO": 8 bytes, then the folder relative
+// to the field's base directory, NUL-terminated) is read through the resolver
+// and checked against the size and MD5 FileMaker recorded. Secure storage
+// ("ENCR") holds an encrypted file that only FileMaker can read, so it is
+// refused with the steps that make it migratable. handled is false when the
+// forks do not describe external storage.
+func externalStorageContainer(forks *hbam7ContainerForks, filename string, resolver externalContainerResolver) (out *reconstructedContainer, missingRef string, handled bool, err error) {
+	if _, _, ok := forks.forkData("ENCR"); ok {
+		return nil, "", true, fmt.Errorf("the field uses FileMaker secure external storage, whose files only FileMaker can decrypt; " +
+			"in FileMaker, change the field to open external storage or embedded storage and transfer its data (File > Manage > Containers), then migrate again")
+	}
+	remo, _, ok := forks.forkData("REMO")
+	if !ok {
+		return nil, "", false, nil
+	}
+	raw, _, _ := forks.forkData("file")
+	info, ok := parseExternalStorageFile(raw)
+	if !ok || len(remo) < 8 {
+		return nil, "", true, fmt.Errorf("the open external storage descriptor is incomplete")
+	}
+	dir := remo[8:]
+	if i := bytes.IndexByte(dir, 0); i >= 0 {
+		dir = dir[:i]
+	}
+	ref := path.Join(strings.ReplaceAll(string(dir), `\`, "/"), info.name)
+	if resolver == nil {
+		return nil, ref, true, nil
+	}
+	data, found, rerr := resolver(ref)
+	if rerr != nil {
+		return nil, "", true, rerr
+	}
+	if !found {
+		return nil, ref, true, nil
+	}
+	// MD5 is FileMaker's own record of the stored file; it is compared here
+	// only to prove the right file was found, not to secure anything.
+	sum := md5.Sum(data) // NOSONAR
+	if uint64(len(data)) != info.size || !bytes.Equal(sum[:], info.md5) {
+		return nil, "", true, fmt.Errorf("external container file %q does not match the size and MD5 FileMaker recorded for it", ref)
+	}
+	if filename == "" {
+		filename = info.name
+	}
+	digest := sha256.Sum256(data)
+	return &reconstructedContainer{
+		Bytes: data,
+		Meta: containermeta.Entry{
+			Filename:  filename,
+			MimeType:  detectContainerMIME(filename, "", data),
+			SHA256:    hex.EncodeToString(digest[:]),
+			SizeBytes: int64(len(data)),
+		},
+	}, "", true, nil
 }

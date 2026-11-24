@@ -225,3 +225,13 @@ every file and format observed. Claris publishes no id table; ids that were not
 observed are not listed. Claude Code (Claude Opus 5.5) assisted the extraction,
 implementation and tests.
 
+## Container storage fixture — 2026-11-24
+
+`server/internal/migration/testdata/containers/` holds a database created with
+FileMaker Pro 26.0.2 for this purpose, its Save a Copy as XML and the external
+storage folder FileMaker wrote, with synthetic payloads generated for it. Its
+README records how it was made, the hashes, and the storage descriptors
+observed in it; these are observations from one file, not a published format.
+No vendor sample, customer data, licence or credential is included. Original
+work under GPL-3.0-only. Claude Code (Claude Opus 5.5) built it in a disposable,
+network-isolated virtual machine and wrote the reader change and tests.
