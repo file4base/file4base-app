@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
@@ -180,6 +181,11 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 		if len(missing) > 0 {
 			quarantine(fmt.Sprintf("reads %s, a table or field that was deleted in FileMaker", quotedList(missing)),
 				fmt.Sprintf("Point the calculation of %s at an existing field, or remove that part of it", target))
+			continue
+		}
+		if slices.Contains(expr.Functions(), "GETLAYOUTOBJECTATTRIBUTE") {
+			quarantine("reads a layout object with GetLayoutObjectAttribute, which a field stored with its record cannot do",
+				fmt.Sprintf("Compute %s from fields instead of from a layout object, or fill it with a script", target))
 			continue
 		}
 		if len(related) > 0 {

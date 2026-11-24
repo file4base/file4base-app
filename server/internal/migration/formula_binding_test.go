@@ -125,6 +125,11 @@ func TestCalculationsBindToTheImportedFields(t *testing.T) {
 		reportSays(t, res, col, "deleted in FileMaker")
 	})
 
+	t.Run("a layout object read is quarantined", func(t *testing.T) {
+		res, col := convert(t, `GetLayoutObjectAttribute ( "total" ; "content" )`, "")
+		reportSays(t, res, col, "layout object")
+	})
+
 	t.Run("a formula that does not read is quarantined", func(t *testing.T) {
 		res, col := convert(t, `Amount * (`, "")
 		reportSays(t, res, col, "could not be read")
