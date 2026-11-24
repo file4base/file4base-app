@@ -383,7 +383,7 @@ func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[
 	}
 	defer rows.Close()
 
-	results, err := rowsToMaps(rows, fields)
+	results, err := s.readRows(ctx, tableName, rows, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -570,7 +570,7 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 		opts.Offset = 0
 	}
 	dialect := s.driver.Dialect()
-	orderClause, err := orderByClause(dialect, fields, tableName, opts.SortOrder())
+	orderClause, err := s.orderBy(ctx, fields, tableName, opts.SortOrder())
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +599,7 @@ func (s *Service) ListRows(ctx context.Context, tableName string, opts QueryOpti
 	}
 	defer rows.Close()
 
-	return rowsToMaps(rows, fields)
+	return s.readRows(ctx, tableName, rows, fields)
 }
 
 // ParseFile4BaseFindCriteria translates File4Base operators (*, ..., =, ==, !, !=, <, >, <=, >=, //, @) to SQL AST
@@ -865,12 +865,15 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	if err != nil {
 		return nil, err
 	}
+	if err := s.refuseUnstoredCriteria(ctx, tableName, requests, related); err != nil {
+		return nil, err
+	}
 	whereClause, values, err := buildFindClauses(dialect, fields, tableName, requests, related)
 	if err != nil {
 		return nil, err
 	}
 
-	orderClause, err := orderByClause(dialect, fields, tableName, opts.SortOrder())
+	orderClause, err := s.orderBy(ctx, fields, tableName, opts.SortOrder())
 	if err != nil {
 		return nil, err
 	}
@@ -899,7 +902,25 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 	defer rows.Close()
 
-	return rowsToMaps(rows, fields)
+	return s.readRows(ctx, tableName, rows, fields)
+}
+
+// readRows reads the records a query returned, their unstored calculations
+// computed.
+func (s *Service) readRows(ctx context.Context, tableName string, rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, error) {
+	records, err := rowsToMaps(rows, fields)
+	if err != nil {
+		return nil, err
+	}
+	// The connection is free again before the calculations read related
+	// records with it.
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.fillUnstored(ctx, tableName, records); err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 // rowsToMaps reads rows for the JSON API: CONTAINER values become base64

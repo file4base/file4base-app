@@ -73,26 +73,75 @@ func (m *fieldNameMap) resolve(name string) (string, bool) {
 }
 
 // formulaBinding is what a calculation is read against: the names the source
-// gave the fields of every table, its table occurrences and the locale it
-// writes numbers in.
+// gave the fields of every table, its table occurrences and the relationships
+// between them, and the locale it writes numbers in.
 type formulaBinding struct {
 	fields      map[string]*fieldNameMap // imported table name -> its field names
 	occurrences map[string][]string      // occurrence name -> source names of its table's fields
-	locale      *calc.Locale             // nil when source_locale was not named
+	occByName   map[string]boundOccurrence
+	occByTable  map[string][]boundOccurrence // in the order the graph declares them
+	links       map[string][]string          // occurrence id -> the occurrences related to it
+	locale      *calc.Locale                 // nil when source_locale was not named
 }
+
+// boundOccurrence is an imported table occurrence: its name and its table.
+type boundOccurrence struct{ id, name, table string }
 
 func newFormulaBinding(bundle *schema.SolutionBundle, fields map[string]*fieldNameMap, loc *sourceLocale) formulaBinding {
 	tableByID := make(map[string]string, len(bundle.Tables))
 	for _, t := range bundle.Tables {
 		tableByID[t.ID] = t.Name
 	}
-	b := formulaBinding{fields: fields, occurrences: map[string][]string{}, locale: formulaLocale(loc)}
+	b := formulaBinding{
+		fields: fields, occurrences: map[string][]string{}, locale: formulaLocale(loc),
+		occByName: map[string]boundOccurrence{}, occByTable: map[string][]boundOccurrence{}, links: map[string][]string{},
+	}
 	for _, occ := range bundle.TableOccurrences {
-		if names := fields[tableByID[occ.BaseTableID]]; names != nil {
+		table := tableByID[occ.BaseTableID]
+		if names := fields[table]; names != nil {
 			b.occurrences[occ.Name] = names.sources
 		}
+		o := boundOccurrence{id: occ.ID, name: occ.Name, table: table}
+		b.occByName[strings.ToLower(occ.Name)] = o
+		b.occByTable[table] = append(b.occByTable[table], o)
+	}
+	for _, rel := range bundle.Relationships {
+		b.links[rel.LeftOccurrenceID] = append(b.links[rel.LeftOccurrenceID], rel.RightOccurrenceID)
+		b.links[rel.RightOccurrenceID] = append(b.links[rel.RightOccurrenceID], rel.LeftOccurrenceID)
 	}
 	return b
+}
+
+// contextOf is the occurrence a calculation of table is evaluated from: the
+// one FileMaker names, else the one named like the table, else its first.
+// File4Base resolves it the same way when the calculation is computed.
+func (b formulaBinding) contextOf(table, name string) (boundOccurrence, bool) {
+	for _, n := range []string{name, table} {
+		if o, ok := b.occByName[strings.ToLower(n)]; ok && n != "" && o.table == table {
+			return o, true
+		}
+	}
+	if list := b.occByTable[table]; len(list) > 0 {
+		return list[0], true
+	}
+	return boundOccurrence{}, false
+}
+
+// reachable reports whether relationships lead from one occurrence to another.
+func (b formulaBinding) reachable(from, to string) bool {
+	seen := map[string]bool{from: true}
+	for queue := []string{from}; len(queue) > 0; queue = queue[1:] {
+		if queue[0] == to {
+			return true
+		}
+		for _, next := range b.links[queue[0]] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return false
 }
 
 // formulaLocale is the locale a formula of the source file is written in,
@@ -114,11 +163,14 @@ func formulaLocale(loc *sourceLocale) *calc.Locale {
 // rewrites its field references to the names the import gave them (#111).
 //
 // The formula is read with the source's own names, so a field called
-// "Prix HT" or a French 1,5 is understood. A formula that cannot be applied —
-// it does not read, it names a field this table does not have, a field that
-// was deleted in FileMaker, or a related field — is **quarantined**: the
-// column keeps the type the calculation would have produced and stores a
-// plain value, and the report says why.
+// "Prix HT" or a French 1,5 is understood. A related field Occurrence::Field
+// is bound to the imported occurrence and column; a calculation reading one is
+// unstored, computed each time a record is read, as FileMaker requires — and
+// so is a calculation reading an unstored one. A formula that cannot be
+// applied — it does not read, it names a field or occurrence that is not
+// there or was deleted in FileMaker, or one no relationship leads to — is
+// **quarantined**: the column keeps the type the calculation would have
+// produced and stores a plain value, and the report says why.
 func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeByTableCol map[string]string) []ReportItem {
 	names := b.fields[table.Name]
 	if names == nil {
@@ -135,6 +187,7 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 	opts := calc.Options{Fields: local, Tables: b.occurrences, Locale: b.locale}
 
 	var items []ReportItem
+	var bound []boundCalculation
 	for i := range table.Columns {
 		col := &table.Columns[i]
 		if col.FieldType != "CALCULATION" || col.CalculationFormula == nil {
@@ -188,15 +241,39 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 				fmt.Sprintf("Compute %s from fields instead of from a layout object, or fill it with a script", target))
 			continue
 		}
-		if len(related) > 0 {
-			quarantine(fmt.Sprintf("reads the related field %s, and calculations cannot read related fields in File4Base yet", quotedList(related)),
-				fmt.Sprintf("Recreate the calculation of %s once related fields can be read, or fill it with a script", target))
+
+		// The occurrence it is evaluated from, kept only when it is one of
+		// this table's: anything else would read the wrong records.
+		contextName, _ := payload["context"].(string)
+		from, hasContext := b.contextOf(table.Name, contextName)
+		if hasContext && strings.EqualFold(from.name, contextName) {
+			payload["context"] = from.name
+		} else {
+			delete(payload, "context")
+		}
+		var unreachable []string
+		for _, ref := range expr.RelatedFields() {
+			if to, ok := b.occByName[strings.ToLower(ref.Table)]; ok && (!hasContext || !b.reachable(from.id, to.id)) {
+				unreachable = append(unreachable, ref.Table+"::"+ref.Field)
+			}
+		}
+		if len(unreachable) > 0 {
+			quarantine(fmt.Sprintf("reads %s, but no relationship leads there from %s", quotedList(unreachable), table.Name),
+				fmt.Sprintf("Relate %s to the table it reads, or rewrite its calculation", target))
 			continue
 		}
 
-		rewritten, unresolved, err := calc.Rewrite(formula, opts, func(_, field string) (string, bool) {
-			column, ok := names.resolve(field)
-			return calc.QuoteName(column), ok
+		rewritten, unresolved, err := calc.Rewrite(formula, opts, func(occurrence, field string) (string, bool) {
+			if occurrence == "" {
+				column, ok := names.resolve(field)
+				return calc.QuoteName(column), ok
+			}
+			occ, ok := b.occByName[strings.ToLower(occurrence)]
+			if !ok || b.fields[occ.table] == nil {
+				return "", false
+			}
+			column, ok := b.fields[occ.table].resolve(field)
+			return calc.QuoteName(occ.name) + "::" + calc.QuoteName(column), ok
 		})
 		if err != nil {
 			quarantine(fmt.Sprintf("could not be read (%v)", err),
@@ -207,30 +284,86 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 			var refs []string
 			seen := map[string]bool{}
 			for _, ref := range unresolved {
-				if !seen[ref.Field] {
-					seen[ref.Field] = true
-					refs = append(refs, ref.Field)
+				name := ref.Field
+				if ref.Table != "" {
+					name = ref.Table + "::" + ref.Field
+				}
+				if !seen[name] {
+					seen[name] = true
+					refs = append(refs, name)
 				}
 			}
-			quarantine(fmt.Sprintf("reads %s, which this table does not have", quotedList(refs)),
+			quarantine(fmt.Sprintf("reads %s, which the imported tables do not have", quotedList(refs)),
 				fmt.Sprintf("Repoint the calculation of %s at the fields it should read, or add the missing %s", target, quotedList(refs)))
 			continue
 		}
 
 		payload["formula"] = rewritten
-		encoded, err := json.Marshal(payload)
+		if len(related) > 0 {
+			payload["stored"] = false
+		}
+		bound = append(bound, boundCalculation{col: col, payload: payload, source: source, target: target})
+		item := ReportItem{Category: CategoryPreserved, Domain: "field", SourceName: source, TargetName: target,
+			Detail: fmt.Sprintf("Calculation field (%s): %s", resultType, formula)}
+		if rewritten != formula {
+			item.Category = CategoryTranslated
+			item.Detail = fmt.Sprintf("Calculation bound to the imported fields: %q now reads %q", formula, rewritten)
+		}
+		if len(related) > 0 {
+			item.Detail += fmt.Sprintf("; it reads the related %s, so it is computed each time a record is shown (unstored), as in FileMaker",
+				quotedList(related))
+		}
+		items = append(items, item)
+	}
+	return append(items, finishCalculations(bound)...)
+}
+
+// boundCalculation is a calculation whose formula now reads the imported
+// names, still to be written back into its column.
+type boundCalculation struct {
+	col            *schema.BundleColumn
+	payload        map[string]interface{}
+	source, target string
+}
+
+// finishCalculations makes unstored every calculation that reads an unstored
+// one, as FileMaker does: a stored result would go stale when the value it
+// was computed from changes. Then it writes each formula into its column.
+func finishCalculations(bound []boundCalculation) []ReportItem {
+	unstored := map[string]bool{}
+	reads := map[string][]string{}
+	for _, c := range bound {
+		unstored[c.col.Name] = c.payload["stored"] == false
+		formula, _ := c.payload["formula"].(string)
+		if expr, err := calc.Parse(formula); err == nil {
+			reads[c.col.Name] = expr.Fields()
+		}
+	}
+	var items []ReportItem
+	for changed := true; changed; {
+		changed = false
+		for _, c := range bound {
+			if unstored[c.col.Name] {
+				continue
+			}
+			for _, read := range reads[c.col.Name] {
+				if unstored[read] {
+					unstored[c.col.Name], changed = true, true
+					c.payload["stored"] = false
+					items = append(items, ReportItem{Category: CategoryTranslated, Domain: "field", SourceName: c.source, TargetName: c.target,
+						Detail: fmt.Sprintf("Computed each time a record is shown (unstored), because it reads %q, which is", read)})
+					break
+				}
+			}
+		}
+	}
+	for _, c := range bound {
+		encoded, err := json.Marshal(c.payload)
 		if err != nil {
 			continue
 		}
 		stored := string(encoded)
-		col.CalculationFormula = &stored
-		if rewritten == formula {
-			items = append(items, ReportItem{Category: CategoryPreserved, Domain: "field", SourceName: source, TargetName: target,
-				Detail: fmt.Sprintf("Calculation field (%s): %s", resultType, formula)})
-			continue
-		}
-		items = append(items, ReportItem{Category: CategoryTranslated, Domain: "field", SourceName: source, TargetName: target,
-			Detail: fmt.Sprintf("Calculation bound to the imported fields: %q now reads %q", formula, rewritten)})
+		c.col.CalculationFormula = &stored
 	}
 	return items
 }

@@ -65,9 +65,9 @@ func (s *Service) EvaluateExpression(
 	}
 
 	record := calc.Record{}
+	row := map[string]interface{}{}
 	if recordID != "" {
-		row, err := s.GetRow(ctx, tableName, recordID)
-		if err != nil {
+		if row, err = s.GetRow(ctx, tableName, recordID); err != nil {
 			return nil, err
 		}
 		for name, value := range row {
@@ -85,7 +85,11 @@ func (s *Service) EvaluateExpression(
 	sort.Strings(unknown)
 
 	result := calc.ParseResultType(resultType)
-	value, err := calc.Evaluate(expr, record, result)
+	// Related fields are read from the table's own occurrence, as a formula
+	// typed in the Data Viewer is in FileMaker.
+	env := &unstoredContext{RecordContext: calc.RecordContext{Record: record},
+		reader: s.newRelatedReader(), ctx: ctx, table: tableName, row: row}
+	value, err := calc.EvaluateWith(expr, env, result)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
 	}

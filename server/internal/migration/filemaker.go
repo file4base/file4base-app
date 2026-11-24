@@ -692,16 +692,6 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	report.Counts.Occurrences = len(bundle.TableOccurrences)
 
-	// Only now are every table's fields and every occurrence known, so only
-	// now can a calculation be read with the names it was written against
-	// and bound to the names the import gave them (#111).
-	binding := newFormulaBinding(bundle, fieldNamesByTable, locale)
-	for i := range bundle.Tables {
-		for _, it := range bindTableCalculations(&bundle.Tables[i], binding, colTypeByTableCol) {
-			addReportItem(report, it)
-		}
-	}
-
 	// 3. Extract Relationships
 	relNodes := catalogDefinitions(root, []string{"RelationshipCatalog", "relationships"}, "Relationship", "relationship")
 	for _, graph := range designChildren(root, "RelationshipGraph", "relationshipGraph") {
@@ -725,6 +715,17 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 	}
 	report.Counts.Relationships = len(bundle.Relationships)
+
+	// Only now are every table's fields, occurrence and relationship known,
+	// so only now can a calculation be read with the names it was written
+	// against, bound to the names the import gave them (#111), and its
+	// related fields checked to be reachable.
+	binding := newFormulaBinding(bundle, fieldNamesByTable, locale)
+	for i := range bundle.Tables {
+		for _, it := range bindTableCalculations(&bundle.Tables[i], binding, colTypeByTableCol) {
+			addReportItem(report, it)
+		}
+	}
 
 	// 4. Extract Value Lists
 	vlNodes := catalogDefinitions(root, []string{"ValueListCatalog", "value_lists"}, "ValueList", "value_list")
@@ -899,9 +900,15 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 	items = append(items, convertFieldAutoEnter(tableSQL, rawFieldName, colName, autoEnterNode, &col)...)
 
 	// Determine calculation or summary formula if present
-	calcText := ""
+	calcText, calcContext := "", ""
 	if calcNode := findFirstChild(fn, "Calculation", "calculation"); calcNode != nil {
 		calcText = calculationText(calcNode)
+		// The occurrence the formula is evaluated from, which decides the
+		// records its related fields reach.
+		calcContext = firstAttr(calcNode, "table")
+		if occ := findFirstChild(calcNode, "TableOccurrenceReference"); occ != nil {
+			calcContext = firstAttr(occ, "name")
+		}
 	}
 	if fieldKind == "CALCULATED" {
 		fieldKind = "CALCULATION"
@@ -919,10 +926,14 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 		if formula != "" && !binary {
 			// Kept as the source wrote it: it is read and bound to the
 			// imported fields once every table and occurrence is known.
-			payload, _ := json.Marshal(map[string]interface{}{
-				"formula":     formula,
-				"result_type": resultType,
-			})
+			spec := map[string]interface{}{"formula": formula, "result_type": resultType}
+			if storageNode != nil && strings.EqualFold(firstAttr(storageNode, "storeCalculationResults"), "false") {
+				spec["stored"] = false
+			}
+			if calcContext != "" {
+				spec["context"] = calcContext
+			}
+			payload, _ := json.Marshal(spec)
 			s := string(payload)
 			col.FieldType = "CALCULATION"
 			col.CalculationFormula = &s

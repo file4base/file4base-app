@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -287,10 +288,21 @@ func (s *Service) Summarize(ctx context.Context, tableName string, req SummaryRe
 		}
 	}
 
+	summarized := slices.Clone(req.GroupBy)
+	for _, spec := range wanted {
+		summarized = append(summarized, spec.Field)
+	}
+	if err := s.refuseUnstored(ctx, tableName, "summarize", summarized...); err != nil {
+		return nil, err
+	}
+
 	dialect := s.driver.Dialect()
 	// A report totals the found set, criteria on related fields included.
 	related, err := s.resolveFindRelations(ctx, tableName, req.Requests)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.refuseUnstoredCriteria(ctx, tableName, req.Requests, related); err != nil {
 		return nil, err
 	}
 	where, values, err := buildFindClauses(dialect, fields, tableName, req.Requests, related)

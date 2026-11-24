@@ -2,29 +2,18 @@ package schema
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 )
-
-// storedCalculation is how the Field Options dialog saves a formula in
-// sys_columns.calculation_formula.
-type storedCalculation struct {
-	Formula    string `json:"formula"`
-	ResultType string `json:"result_type"`
-}
 
 // readCalculation takes the formula and its result type out of what was saved.
 // Older columns hold the formula as plain text, which reads as a text result.
 func readCalculation(raw string) (formula string, result calc.ResultType) {
-	var stored storedCalculation
-	if err := json.Unmarshal([]byte(raw), &stored); err == nil && stored.Formula != "" {
-		return stored.Formula, calc.ParseResultType(stored.ResultType)
-	}
-	return raw, calc.ResultText
+	return data.ParseStoredCalculation(raw)
 }
 
 // StorageType is the column type a field is physically stored in. It is the
@@ -53,9 +42,17 @@ func StorageType(fieldType dbal.AgnosticFieldType, calculationFormula *string) d
 // saved: it must parse, it may only read fields the table has, and the
 // calculation fields of the table must not depend on each other in a ring.
 //
+// A related field (Occurrence::Field) may only be read by an unstored
+// calculation, which is computed each time a record is read; it must name an
+// occurrence and a field that exist, reachable through relationships. A
+// stored calculation can then neither read related fields nor an unstored
+// calculation, since what it stores would go stale.
+//
 // `columnID` is the column being saved; it is excluded from the existing ones
 // so that saving a field again does not see its own previous formula.
-func (s *Service) checkCalculation(ctx context.Context, tableID, columnID, fieldName string, fieldType dbal.AgnosticFieldType, formulaJSON *string) error {
+func (s *Service) checkCalculation(
+	ctx context.Context, tableID, columnID, fieldName string, fieldType dbal.AgnosticFieldType, formulaJSON *string, checkRelated bool,
+) error {
 	if fieldType != dbal.FieldTypeCalculation {
 		return nil
 	}
@@ -65,17 +62,23 @@ func (s *Service) checkCalculation(ctx context.Context, tableID, columnID, field
 		return nil
 	}
 
-	formula, _ := readCalculation(*formulaJSON)
-	expr, err := calc.Parse(formula)
+	spec := data.ReadStoredCalculation(*formulaJSON)
+	expr, err := calc.Parse(spec.Formula)
 	if err != nil {
 		return fmt.Errorf("%w: the formula of %q is not valid: %s", ErrInvalidFieldOptions, fieldName, err.Error())
 	}
 
-	for _, ref := range expr.RelatedFields() {
+	related := expr.RelatedFields()
+	for _, ref := range related {
 		if ref.Missing {
 			return fmt.Errorf("%w: the formula of %q reads %s::%s, a table or field that was deleted in FileMaker",
 				ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field)
 		}
+	}
+	if len(related) > 0 && spec.IsStored() {
+		return fmt.Errorf("%w: the formula of %q reads the related field %s::%s; a calculation that reads related records "+
+			"must be computed when it is shown: make it unstored (clear \"Store the result\" in Field Options)",
+			ErrInvalidFieldOptions, fieldName, related[0].Table, related[0].Field)
 	}
 
 	columns, err := s.listColumns(ctx, tableID)
@@ -94,10 +97,16 @@ func (s *Service) checkCalculation(ctx context.Context, tableID, columnID, field
 				ErrInvalidFieldOptions, fieldName, read)
 		}
 	}
+	if checkRelated && (len(related) > 0 || spec.Context != "") {
+		if err := s.checkRelatedReads(ctx, tableID, fieldName, spec.Context, related); err != nil {
+			return err
+		}
+	}
 
 	// The order the table's calculations must be computed in, with this one
-	// as it is about to be saved.
+	// as it is about to be saved, and which of them are stored.
 	reads := map[string][]string{fieldName: expr.Fields()}
+	stored := map[string]bool{fieldName: spec.IsStored()}
 	for _, col := range columns {
 		if col.ID == columnID || col.Name == fieldName {
 			continue
@@ -105,18 +114,174 @@ func (s *Service) checkCalculation(ctx context.Context, tableID, columnID, field
 		if col.FieldType != dbal.FieldTypeCalculation || col.CalculationFormula == nil {
 			continue
 		}
-		otherFormula, _ := readCalculation(*col.CalculationFormula)
-		other, err := calc.Parse(otherFormula)
+		other := data.ReadStoredCalculation(*col.CalculationFormula)
+		otherExpr, err := calc.Parse(other.Formula)
 		if err != nil {
 			continue // already-broken formulas are reported when they are saved
 		}
-		reads[col.Name] = other.Fields()
+		reads[col.Name] = otherExpr.Fields()
+		stored[col.Name] = other.IsStored()
 	}
 
 	if _, err := calc.Order(reads); err != nil {
 		return fmt.Errorf("%w: %s", ErrInvalidFieldOptions, err.Error())
 	}
+	for field, fields := range reads {
+		if !stored[field] {
+			continue
+		}
+		for _, read := range fields {
+			readStored, isCalc := stored[read]
+			if isCalc && !readStored && (field == fieldName || read == fieldName) {
+				return fmt.Errorf("%w: %q is stored and reads %q, which is computed only when it is shown: make %q unstored too",
+					ErrInvalidFieldOptions, field, read, field)
+			}
+		}
+	}
 	return nil
+}
+
+// checkRelatedReads checks that every related field an unstored calculation
+// of a table reads exists, and that a relationship leads to it from the
+// occurrence the calculation is evaluated in.
+func (s *Service) checkRelatedReads(ctx context.Context, tableID, fieldName, contextName string, related []calc.Reference) error {
+	graph, err := s.occurrenceGraph(ctx)
+	if err != nil {
+		return err
+	}
+	tableName, err := s.tableNameOf(ctx, tableID)
+	if err != nil {
+		return err
+	}
+	from, ok := graph.contextOf(tableID, tableName, contextName)
+	if !ok {
+		if contextName != "" {
+			return fmt.Errorf("%w: the formula of %q is evaluated from %q, which is not a table occurrence of this table",
+				ErrInvalidFieldOptions, fieldName, contextName)
+		}
+		return fmt.Errorf("%w: the formula of %q reads related fields, but its table has no table occurrence",
+			ErrInvalidFieldOptions, fieldName)
+	}
+	reachable := graph.reachableFrom(from.id)
+	columnsOf := map[string]map[string]bool{}
+	for _, ref := range related {
+		to, ok := graph.byName[strings.ToLower(ref.Table)]
+		if !ok {
+			return fmt.Errorf("%w: the formula of %q reads %s::%s, but there is no table occurrence %q",
+				ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field, ref.Table)
+		}
+		if columnsOf[to.tableID] == nil {
+			columns, err := s.listColumns(ctx, to.tableID)
+			if err != nil {
+				return err
+			}
+			columnsOf[to.tableID] = map[string]bool{}
+			for _, col := range columns {
+				columnsOf[to.tableID][col.Name] = true
+			}
+		}
+		if !columnsOf[to.tableID][ref.Field] {
+			return fmt.Errorf("%w: the formula of %q reads %s::%s, which that table does not have",
+				ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field)
+		}
+		if !reachable[to.id] {
+			return fmt.Errorf("%w: the formula of %q reads %s::%s, but no relationship leads from %s to %s",
+				ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field, from.name, to.name)
+		}
+	}
+	return nil
+}
+
+// checkCalculationGraph is the related-field half of checkCalculation, for a
+// calculation added before the relationships it reads through.
+func (s *Service) checkCalculationGraph(ctx context.Context, tableID, fieldName string, formulaJSON *string) error {
+	if formulaJSON == nil {
+		return nil
+	}
+	spec := data.ReadStoredCalculation(*formulaJSON)
+	expr, err := calc.Parse(spec.Formula)
+	if err != nil {
+		return nil // reported when the field was added
+	}
+	related := expr.RelatedFields()
+	if len(related) == 0 && spec.Context == "" {
+		return nil
+	}
+	return s.checkRelatedReads(ctx, tableID, fieldName, spec.Context, related)
+}
+
+type occurrenceRef struct{ id, name, tableID string }
+
+// occurrenceGraph is the table occurrences and the relationships between them.
+type occurrenceGraph struct {
+	byName  map[string]occurrenceRef // lower-case name
+	byTable map[string][]occurrenceRef
+	links   map[string][]string // occurrence id -> the occurrences it is related to
+}
+
+func (s *Service) occurrenceGraph(ctx context.Context) (*occurrenceGraph, error) {
+	g := &occurrenceGraph{byName: map[string]occurrenceRef{}, byTable: map[string][]occurrenceRef{}, links: map[string][]string{}}
+	rows, err := s.driver.DB().QueryContext(ctx, `SELECT id, name, base_table_id FROM sys_table_occurrences ORDER BY created_at, name`)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading the table occurrences: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var o occurrenceRef
+		if err := rows.Scan(&o.id, &o.name, &o.tableID); err != nil {
+			return nil, err
+		}
+		g.byName[strings.ToLower(o.name)] = o
+		g.byTable[o.tableID] = append(g.byTable[o.tableID], o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	links, err := s.driver.DB().QueryContext(ctx, `SELECT left_occurrence_id, right_occurrence_id FROM sys_relationships`)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading the relationships: %w", err)
+	}
+	defer links.Close()
+	for links.Next() {
+		var left, right string
+		if err := links.Scan(&left, &right); err != nil {
+			return nil, err
+		}
+		g.links[left] = append(g.links[left], right)
+		g.links[right] = append(g.links[right], left)
+	}
+	return g, links.Err()
+}
+
+// contextOf is the occurrence a calculation of a table is evaluated from: the
+// one it names, else the one named like the table, else the table's first.
+// The data service resolves it the same way.
+func (g *occurrenceGraph) contextOf(tableID, tableName, name string) (occurrenceRef, bool) {
+	if name != "" {
+		o, ok := g.byName[strings.ToLower(name)]
+		return o, ok && o.tableID == tableID
+	}
+	if o, ok := g.byName[strings.ToLower(tableName)]; ok && o.tableID == tableID {
+		return o, true
+	}
+	list := g.byTable[tableID]
+	if len(list) == 0 {
+		return occurrenceRef{}, false
+	}
+	return list[0], true
+}
+
+func (g *occurrenceGraph) reachableFrom(id string) map[string]bool {
+	seen := map[string]bool{id: true}
+	for queue := []string{id}; len(queue) > 0; queue = queue[1:] {
+		for _, next := range g.links[queue[0]] {
+			if !seen[next] {
+				seen[next] = true
+				queue = append(queue, next)
+			}
+		}
+	}
+	return seen
 }
 
 // listColumns reads a table's registered columns.
@@ -165,7 +330,7 @@ func (s *Service) prepareCalculationChange(ctx context.Context, tableID, columnI
 		return nil, fmt.Errorf("column not found: %s", columnID)
 	}
 
-	if err := s.checkCalculation(ctx, tableID, columnID, current.Name, current.FieldType, formulaJSON); err != nil {
+	if err := s.checkCalculation(ctx, tableID, columnID, current.Name, current.FieldType, formulaJSON, true); err != nil {
 		return nil, err
 	}
 	if current.FieldType != dbal.FieldTypeCalculation {

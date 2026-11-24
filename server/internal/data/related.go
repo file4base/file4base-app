@@ -109,9 +109,9 @@ func (r *Relationship) Sides(fromTable, targetOccurrence string) (source, target
 	return source, target, nil
 }
 
-// relationshipQuery resolves both sides in one statement: the occurrence gives
-// the base table, and the match column gives its name.
-const relationshipQuery = `SELECT r.id, r.name, r.operator, r.allow_creation, r.cascade_delete, r.sort_related,
+// relationshipSelect resolves both sides in one statement: the occurrence
+// gives the base table, and the match column gives its name.
+const relationshipSelect = `SELECT r.id, r.name, r.operator, r.allow_creation, r.cascade_delete, r.sort_related,
 		lo.id, lo.name, lt.name, lc.name,
 		ro.id, ro.name, rt.name, rc.name
 	FROM sys_relationships r
@@ -120,29 +120,55 @@ const relationshipQuery = `SELECT r.id, r.name, r.operator, r.allow_creation, r.
 	JOIN sys_columns lc ON lc.id = r.left_column_id
 	JOIN sys_table_occurrences ro ON ro.id = r.right_occurrence_id
 	JOIN sys_tables rt ON rt.id = ro.base_table_id
-	JOIN sys_columns rc ON rc.id = r.right_column_id
+	JOIN sys_columns rc ON rc.id = r.right_column_id`
+
+const relationshipQuery = relationshipSelect + `
 	WHERE r.id = `
 
 // Relationship resolves one relationship of the catalog to the tables and
 // columns a query can use.
 func (s *Service) Relationship(ctx context.Context, id string) (*Relationship, error) {
 	dialect := s.driver.Dialect()
-	var rel Relationship
-	var sortRelated sql.NullString
-	err := s.driver.DB().QueryRowContext(ctx, relationshipQuery+dialect.Placeholder(1), id).Scan(
-		&rel.ID, &rel.Name, &rel.Operator, &rel.AllowCreation, &rel.CascadeDelete, &sortRelated,
-		&rel.Left.OccurrenceID, &rel.Left.OccurrenceName, &rel.Left.TableName, &rel.Left.Column,
-		&rel.Right.OccurrenceID, &rel.Right.OccurrenceName, &rel.Right.TableName, &rel.Right.Column,
-	)
+	rel, err := scanRelationship(s.driver.DB().QueryRowContext(ctx, relationshipQuery+dialect.Placeholder(1), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrRelationshipNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed resolving relationship %s: %w", id, err)
 	}
-	if sortRelated.Valid {
-		rel.SortRelated = sortRelated.String
+	return rel, nil
+}
+
+// Relationships resolves every relationship of the catalog.
+func (s *Service) Relationships(ctx context.Context) ([]*Relationship, error) {
+	rows, err := s.driver.DB().QueryContext(ctx, relationshipSelect)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading the relationships: %w", err)
 	}
+	defer rows.Close()
+	var out []*Relationship
+	for rows.Next() {
+		rel, err := scanRelationship(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rel)
+	}
+	return out, rows.Err()
+}
+
+func scanRelationship(row interface{ Scan(...any) error }) (*Relationship, error) {
+	var rel Relationship
+	var sortRelated sql.NullString
+	err := row.Scan(
+		&rel.ID, &rel.Name, &rel.Operator, &rel.AllowCreation, &rel.CascadeDelete, &sortRelated,
+		&rel.Left.OccurrenceID, &rel.Left.OccurrenceName, &rel.Left.TableName, &rel.Left.Column,
+		&rel.Right.OccurrenceID, &rel.Right.OccurrenceName, &rel.Right.TableName, &rel.Right.Column,
+	)
+	if err != nil {
+		return nil, err
+	}
+	rel.SortRelated = sortRelated.String
 	return &rel, nil
 }
 
@@ -303,7 +329,7 @@ func (s *Service) RelatedRows(
 	}
 
 	dialect := s.driver.Dialect()
-	orderClause, err := orderByClause(dialect, targetFields, target.TableName,
+	orderClause, err := s.orderBy(ctx, targetFields, target.TableName,
 		relatedSortOrder(rel, target, targetFields, opts))
 	if err != nil {
 		return nil, err
@@ -337,15 +363,12 @@ func (s *Service) RelatedRows(
 	}
 	defer rows.Close()
 
-	related, err := rowsToMaps(rows, targetFields)
+	related, err := s.readRows(ctx, target.TableName, rows, targetFields)
 	if err != nil {
 		return nil, err
 	}
 	// Related records are read for the data API (portals), which shows the
 	// original text of a value the way the record itself does (#124).
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
 	if err := s.AttachSourceText(ctx, target.TableName, related); err != nil {
 		return nil, err
 	}

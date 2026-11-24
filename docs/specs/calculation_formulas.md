@@ -26,6 +26,52 @@ is found on and sorted by exactly like any other field.
 
 A value sent for a calculation field is ignored: the formula owns it.
 
+## Unstored calculations and related fields
+
+A calculation saved with `"stored": false` (Field Options: *Store the result*
+unchecked; FileMaker's *Do not store calculation results*) is **computed each
+time a record is read** instead of when it is written. Its column stays empty.
+Every read of the data service computes it: one record, a list or page, a
+find, the related records of a portal, an export, and the Data Viewer.
+
+```json
+{"formula": "Sum ( ${Invoice Items}::line_amount )", "result_type": "Number",
+ "stored": false, "context": "Invoices"}
+```
+
+Only an unstored calculation may read **related fields**, `Occurrence::Field`,
+as in FileMaker. Adding, changing or deleting a related record changes it
+without its own record being written.
+
+- The records are reached from the calculation's **context** occurrence
+  (`context`; empty means the occurrence named like the table, else the
+  table's first) along the shortest chain of relationships to the occurrence
+  named, across as many relationships as it takes. The last relationship's
+  sort order is the order `Occurrence::Field` takes its first value from and
+  `List` lists them in.
+- An empty match field relates nothing. A formula that fails, or a related
+  occurrence no relationship reaches any more, leaves the field empty for that
+  record — FileMaker's `?` — rather than refusing to show the record.
+- Unstored calculations of a related table read each other up to 8 levels
+  deep.
+- Each request loads the relationship graph once and queries each
+  relationship once per match value.
+
+Saving checks that a **stored** calculation reads no related field ("make it
+unstored") and no unstored calculation, since what it stores would go stale;
+and that each related field of an unstored one names an occurrence and a field
+that exist, reached by relationships from its context.
+
+An unstored calculation **cannot be found on, sorted by or summarized**: its
+value does not exist in the database. Such a request is refused with
+`422 Unstored Calculation`, rather than searched or sorted in memory.
+
+A migration keeps FileMaker's choice (`storeCalculationResults`) and the
+formula's context occurrence, binds `Occurrence::Field` to the imported
+occurrence and column, and makes unstored any calculation that reads a related
+field or an unstored calculation, as FileMaker requires. A related field no
+relationship reaches is quarantined and reported.
+
 ## Result types
 
 The result type decides what the answer is stored as, and therefore how the
@@ -177,8 +223,8 @@ Roughly how many years a customer has been with you. Result type: Number.
 
 - **Aggregates across a found set.** That is a summary field:
   [#32](https://github.com/file4base/file4base-app/issues/32).
-- **Unstored calculations.** Every calculation is still computed when its
-  record is written and stored; one that reads related records is not yet
-  recomputed when those change.
+- **Finding, sorting or summarizing by an unstored calculation** (FileMaker
+  does it by computing every record); store the result, or use the fields it
+  reads.
 - `ExecuteSQL`, JSON, cryptographic, container and plug-in functions are
   reported as unsupported.

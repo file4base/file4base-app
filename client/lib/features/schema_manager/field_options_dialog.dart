@@ -89,6 +89,11 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   final TextEditingController _calculationFormulaController = TextEditingController();
   String _calculationResultType = 'Text';
 
+  /// Unchecked computes the field each time a record is shown, which is how
+  /// it reads related records; the occurrence it reads them from is kept.
+  bool _storeCalculationResult = true;
+  String? _calculationContext;
+
   /// One of [SummaryType] (#32).
   String _summaryOperation = SummaryType.total;
   String? _summaryTargetColumn;
@@ -181,6 +186,8 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         } else {
           _calculationFormulaController.text = (calc['formula'] ?? '').toString();
           _calculationResultType = calc['result_type'] as String? ?? 'Text';
+          _storeCalculationResult = calc['stored'] != false;
+          _calculationContext = calc['context'] as String?;
         }
       } catch (_) {
         _calculationFormulaController.text = widget.column.calculationFormula!;
@@ -277,6 +284,8 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         calculationFormulaStr = jsonEncode({
           'formula': _calculationFormulaController.text.trim(),
           'result_type': _calculationResultType,
+          if (!_storeCalculationResult) 'stored': false,
+          if (_calculationContext != null && _calculationContext!.isNotEmpty) 'context': _calculationContext,
         });
       } else if (_calculatedValueFormulaController.text.isNotEmpty) {
         calculationFormulaStr = _calculatedValueFormulaController.text.trim();
@@ -1206,6 +1215,18 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 ),
               ),
             ],
+          ),
+          Tooltip(
+            message: 'Unchecked, the result is computed each time a record is shown. '
+                'A calculation that reads related fields must be unstored; it cannot then be found or sorted by.',
+            child: CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('Store the result', style: TextStyle(fontSize: 12)),
+              value: _storeCalculationResult,
+              onChanged: (v) => setState(() => _storeCalculationResult = v ?? true),
+            ),
           ),
 
           const Divider(height: 28),

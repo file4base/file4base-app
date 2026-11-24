@@ -115,9 +115,9 @@ func TestCalculationsBindToTheImportedFields(t *testing.T) {
 		}
 	})
 
-	t.Run("a related field is quarantined", func(t *testing.T) {
+	t.Run("a related field no relationship reaches is quarantined", func(t *testing.T) {
 		res, col := convert(t, `Sum ( Order Lines::Line Total )`, "")
-		reportSays(t, res, col, `"Order Lines::Line Total"`, "related")
+		reportSays(t, res, col, `"Order Lines::Line Total"`, "no relationship leads there")
 	})
 
 	t.Run("a deleted field is quarantined", func(t *testing.T) {
@@ -134,4 +134,102 @@ func TestCalculationsBindToTheImportedFields(t *testing.T) {
 		res, col := convert(t, `Amount * (`, "")
 		reportSays(t, res, col, "could not be read")
 	})
+}
+
+// A calculation that reads related records is computed each time a record is
+// read, as FileMaker requires, and its related fields are bound to the
+// imported occurrences and columns. A calculation reading it becomes unstored
+// too; one reading only its own record stays stored.
+func TestRelatedCalculationsAreUnstored(t *testing.T) {
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: relatedCalculationsDesign("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs := map[string]map[string]interface{}{}
+	for _, table := range res.Bundle.Tables {
+		for _, col := range table.Columns {
+			if col.CalculationFormula == nil {
+				continue
+			}
+			var spec map[string]interface{}
+			if err := json.Unmarshal([]byte(*col.CalculationFormula), &spec); err != nil {
+				t.Fatal(err)
+			}
+			specs[col.DisplayName] = spec
+		}
+	}
+	for _, name := range []string{"Items Total", "First Label", "Net"} {
+		if specs[name]["stored"] != false {
+			t.Fatalf("%s must be unstored: %v", name, specs[name])
+		}
+	}
+	if _, set := specs["Discount Twice"]["stored"]; set {
+		t.Fatalf("a calculation of its own record stays stored: %v", specs["Discount Twice"])
+	}
+	if specs["Items Total"]["context"] != "Invoices" {
+		t.Fatalf("the context occurrence must be kept: %v", specs["Items Total"])
+	}
+
+	reads := map[string][]calc.Reference{}
+	for _, name := range []string{"Items Total", "First Label"} {
+		expr, err := calc.Parse(specs[name]["formula"].(string))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		reads[name] = expr.RelatedFields()
+	}
+	if want := (calc.Reference{Table: "Invoice Items", Field: "line_amount"}); len(reads["Items Total"]) != 1 || reads["Items Total"][0] != want {
+		t.Fatalf("Items Total reads %v, want %v", reads["Items Total"], want)
+	}
+	if want := (calc.Reference{Table: "Products", Field: "label"}); len(reads["First Label"]) != 1 || reads["First Label"][0] != want {
+		t.Fatalf("First Label reads %v, want %v (two relationships away)", reads["First Label"], want)
+	}
+
+	var report []string
+	for _, item := range append(res.Report.Translated, res.Report.Preserved...) {
+		report = append(report, item.Detail)
+	}
+	if all := strings.Join(report, "\n"); !strings.Contains(all, "computed each time a record is shown (unstored)") {
+		t.Fatalf("the report must say the calculation is unstored; it says:\n%s", all)
+	}
+	if len(res.Report.Unsupported) != 0 {
+		t.Fatalf("nothing is unsupported: %+v", res.Report.Unsupported)
+	}
+}
+
+// relatedCalculationsDesign is a synthetic invoicing design: invoices, their
+// items, and the product each item names. suffix keeps the tables of one
+// test run apart from another's.
+func relatedCalculationsDesign(suffix string) string {
+	r := strings.NewReplacer("Invoices", "Invoices"+suffix, "Invoice Items", "Invoice Items"+suffix, "Products", "Products"+suffix)
+	calcField := func(name, formula, storage string) string {
+		dataType := "Number"
+		if name == "First Label" {
+			dataType = "Text"
+		}
+		return `<Field name="` + name + `" fieldType="Calculation" dataType="` + dataType + `">` + storage +
+			`<Calculation table="Invoices"><![CDATA[` + formula + `]]></Calculation></Field>`
+	}
+	return r.Replace(`<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
+		`<BaseTable name="Invoices"><FieldCatalog>` +
+		`<Field name="Invoice ID" dataType="Text"/><Field name="Discount" dataType="Number"/>` +
+		calcField("Items Total", `Sum ( Invoice Items::Line Amount )`, `<Storage storeCalculationResults="False"/>`) +
+		calcField("First Label", `Products::Label`, ``) +
+		calcField("Net", `Items Total - Discount`, `<Storage storeCalculationResults="True"/>`) +
+		calcField("Discount Twice", `Discount * 2`, ``) +
+		`</FieldCatalog></BaseTable>` +
+		`<BaseTable name="Invoice Items"><FieldCatalog>` +
+		`<Field name="Invoice ID" dataType="Text"/><Field name="Product ID" dataType="Text"/><Field name="Line Amount" dataType="Number"/>` +
+		`</FieldCatalog></BaseTable>` +
+		`<BaseTable name="Products"><FieldCatalog>` +
+		`<Field name="Product ID" dataType="Text"/><Field name="Label" dataType="Text"/>` +
+		`</FieldCatalog></BaseTable></BaseTableCatalog>` +
+		`<TableOccurrenceCatalog>` +
+		`<TableOccurrence name="Invoices" baseTable="Invoices"/>` +
+		`<TableOccurrence name="Invoice Items" baseTable="Invoice Items"/>` +
+		`<TableOccurrence name="Products" baseTable="Products"/>` +
+		`</TableOccurrenceCatalog><RelationshipCatalog>` +
+		`<Relationship name="Items" left="Invoices" left_field="Invoice ID" right="Invoice Items" right_field="Invoice ID" operator="="/>` +
+		`<Relationship name="Product" left="Invoice Items" left_field="Product ID" right="Products" right_field="Product ID" operator="="/>` +
+		`</RelationshipCatalog></File></FMPReport>`)
 }

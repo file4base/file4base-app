@@ -583,6 +583,13 @@ func (s *Service) CreateTable(ctx context.Context, displayName, customName strin
 
 // AddColumn adds a new column to metadata and alters the physical table
 func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetadata) (*ColumnMetadata, error) {
+	return s.addColumn(ctx, tableID, col, true)
+}
+
+// addColumn is AddColumn. A solution import adds its fields before the
+// relationships their calculations read through, so it passes
+// checkRelated=false and checks those reads once the graph is in place.
+func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetadata, checkRelated bool) (*ColumnMetadata, error) {
 	name := dbal.NormalizeIdentifier(col.Name)
 	if err := dbal.CheckIdentifier("column", name); err != nil {
 		return nil, err
@@ -616,7 +623,7 @@ func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetad
 
 	// A calculation field's formula must parse, read only fields this table
 	// has, and not take part in a ring of calculations (#30).
-	if err := s.checkCalculation(ctx, tableID, col.ID, col.Name, col.FieldType, col.CalculationFormula); err != nil {
+	if err := s.checkCalculation(ctx, tableID, col.ID, col.Name, col.FieldType, col.CalculationFormula, checkRelated); err != nil {
 		return nil, err
 	}
 	// A summary field's definition must name a kind of summary and a field it
