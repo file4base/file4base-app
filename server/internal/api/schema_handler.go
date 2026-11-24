@@ -535,8 +535,15 @@ func (h *SchemaHandler) CreateRelationship(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if input.LeftOccurrenceID == "" || input.RightOccurrenceID == "" || input.LeftColumnID == "" || input.RightColumnID == "" {
+	// The match criteria are either a predicates list or, from clients that
+	// predate it, one pair of columns.
+	if input.LeftOccurrenceID == "" || input.RightOccurrenceID == "" ||
+		(input.Predicates == nil && (input.LeftColumnID == "" || input.RightColumnID == "")) {
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "left and right occurrences and columns are required")
+		return
+	}
+	if input.Predicates != nil && len(input.Predicates) == 0 {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "a relationship needs at least one match criterion")
 		return
 	}
 

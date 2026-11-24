@@ -1,7 +1,8 @@
 # Related fields and portals
 
-A **relationship** joins two table occurrences on a match field. A layout uses
-it in two ways:
+A **relationship** joins two table occurrences on one or more match criteria
+(see [Several match criteria](#several-match-criteria)). A layout uses it in two
+ways:
 
 - a **related field** shows a field of a related record —
   `Companies::company_address` on a Customers layout;
@@ -38,6 +39,80 @@ saying "this table", because a dialog showing two tables makes that ambiguous.
 
 Reading, unlike those options, works **both ways**: a Customers layout can show
 its company, and a Companies layout can show its customers.
+
+## Several match criteria
+
+A relationship holds an ordered list of **criteria**, each a left field, an
+operator and a right field, as FileMaker's Edit Relationship dialog does. A
+record is related when it meets **every** criterion:
+
+```
+Accounts::code   =  Visits::account_code
+Accounts::region ≠  Visits::region
+Accounts::since  <  Visits::day
+```
+
+relates an account to its visits outside its own region after the date it
+opened.
+
+| Operator | A right record matches when |
+| --- | --- |
+| `=` | its field equals the left record's. |
+| `≠`, `<`, `≤`, `>`, `≥` | the comparison holds with the left field on the left: `since < day`. |
+| `×` | always. Every record matches, empty fields included. |
+
+- **Both directions.** Read from the right side, each comparison is turned
+  round, so the accounts a visit belongs to are the same pairs of records.
+- **Multi-keys.** A field holding several lines (separated by returns) matches
+  through any of them, criterion by criterion.
+- **Empty fields.** A record with an empty field in any criterion other than
+  `×` relates to nothing, on either side: an account with no region has no
+  visits, and a visit with no region is no account's, even through `≠`, where
+  SQL alone would find an empty text different from `north`. Portals, finds,
+  sorts and cascading deletes all leave it out.
+- **Everything that follows a relationship** uses all its criteria: portals,
+  related fields, unstored calculations reading `Occurrence::Field`, finds on
+  related fields, cascading deletes and the relationship's sort. "Sort related
+  records" set to ascending or descending sorts by the right field of the
+  first criterion.
+- **Creation** through the relationship is possible only when every criterion
+  is `=`: each right-hand field of the new record is set from the left record,
+  and the client cannot override any of them. With any other operator there
+  is no single value to give the new record, so the server answers `403` even
+  when the relationship allows creation; the Specify Relationship dialog warns
+  about it. A left field that is empty answers `422`, as below.
+- **Validation.** Each criterion's left field must belong to the left
+  occurrence's table and its right field to the right one's; the error names
+  the criterion (`criterion 2: the field "day" is not in the table of
+  "Accounts"`). A relationship needs at least one criterion. An unstored
+  calculation cannot be a match field, except in a `×` criterion, which reads
+  no value.
+- **Deleting a field** used by any criterion deletes the relationship, as for
+  the first one: a relationship that lost a criterion would relate more
+  records than it was defined to, and cascade its deletes to them.
+
+The first criterion is the relationship's own `left_column_id`, `operator` and
+`right_column_id`, so a client that knows only those keeps working: it creates
+and reads single-criterion relationships as before. Every response also carries
+the whole list as `predicates`; on `PUT`, `predicates` replaces every criterion
+and leaving it out leaves them unchanged. The criteria after the first are kept
+in `sys_relationship_predicates`. Each side of a criterion records the field's
+name beside its id; the id is what it is resolved by.
+
+In the Specify Relationship dialog, the field lists and the operator edit the
+selected criterion: **Add** appends what they show, **Change** replaces the
+selected criterion with it, **Delete** removes it, and the arrows reorder the
+list. OK applies a pending change to the selected criterion. The graph draws a
+line per criterion and shows every operator in the relationship's badge
+(`= ≠ <`), with the criteria in its tooltip.
+
+Migration maps every join predicate of a FileMaker relationship, from both the
+XML DDR and Save a Copy as XML, `×` (cartesian product) included, with the
+operator spelled as a sign or a name (`NotEqual`, `LessThanOrEqualTo`, …). A
+predicate written from the relationship's other side is turned round. A
+predicate whose field cannot be found, or whose operator is not known, refuses
+the whole relationship and is named in the report, rather than migrating a
+relationship that relates other records than the source did.
 
 ## How a side is named
 
@@ -105,9 +180,9 @@ Portal Setup holds:
 | Allow deletion of records in this portal | Adds a button on each row that deletes its related record. |
 
 **Writing.** Typing in a row writes to that related record. The empty row at
-the end creates one, with its match field filled from the record in hand — the
-client never sends the match field, and a value sent for it would be
-overwritten anyway, so a portal row cannot be aimed at a different parent.
+the end creates one, with its match fields filled from the record in hand — the
+client never sends them, and a value sent for one would be overwritten anyway,
+so a portal row cannot be aimed at a different parent.
 
 Allowing creation in Portal Setup is not enough on its own: the relationship
 must also allow it, or the server refuses with `403`. Portal Setup says so when

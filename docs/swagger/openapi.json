@@ -1981,7 +1981,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Relationship"
               }
             }
           }
@@ -5823,7 +5823,8 @@
           },
           "operator": {
             "type": "string",
-            "default": "="
+            "default": "=",
+            "description": "Operator of the first match criterion: =, ≠, <, ≤, >, ≥ or × (always matches). <>, !=, <=, >= and x are read as their sign."
           },
           "allow_creation": {
             "type": "boolean",
@@ -5832,6 +5833,42 @@
           "cascade_delete": {
             "type": "boolean",
             "default": false
+          },
+          "predicates": {
+            "type": "array",
+            "description": "Every match criterion in order; a record is related when it meets all of them. The first is the relationship's own left_column_id, operator and right_column_id. Always returned. On create, replaces the single pair; on update, replaces every criterion, and leaving it out leaves them unchanged. An empty list is refused.",
+            "items": {
+              "$ref": "#/components/schemas/RelationshipPredicate"
+            }
+          }
+        }
+      },
+      "RelationshipPredicate": {
+        "type": "object",
+        "required": [
+          "left_column_id",
+          "right_column_id"
+        ],
+        "properties": {
+          "left_column_id": {
+            "type": "string",
+            "description": "A field of the left occurrence's table."
+          },
+          "left_column_name": {
+            "type": "string",
+            "readOnly": true
+          },
+          "operator": {
+            "type": "string",
+            "default": "="
+          },
+          "right_column_id": {
+            "type": "string",
+            "description": "A field of the right occurrence's table."
+          },
+          "right_column_name": {
+            "type": "string",
+            "readOnly": true
           }
         }
       },

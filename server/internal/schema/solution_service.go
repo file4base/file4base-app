@@ -72,17 +72,67 @@ type BundleOccurrence struct {
 	YPos        float64 `msgpack:"y_pos"`
 }
 
+// BundleRelationship is a relationship of a solution file. Its first match
+// criterion is LeftColumnID, Operator and RightColumnID. A relationship with
+// more than one also lists all of them, the first included, in Predicates; a
+// file written before relationships could have several has none there.
 type BundleRelationship struct {
-	ID                string `msgpack:"id"`
-	Name              string `msgpack:"name"`
-	LeftOccurrenceID  string `msgpack:"left_occurrence_id"`
-	LeftColumnID      string `msgpack:"left_column_id"`
-	RightOccurrenceID string `msgpack:"right_occurrence_id"`
-	RightColumnID     string `msgpack:"right_column_id"`
-	Operator          string `msgpack:"operator"`
-	AllowCreation     bool   `msgpack:"allow_creation"`
-	CascadeDelete     bool   `msgpack:"cascade_delete"`
-	SortRelated       string `msgpack:"sort_related"`
+	ID                string            `msgpack:"id"`
+	Name              string            `msgpack:"name"`
+	LeftOccurrenceID  string            `msgpack:"left_occurrence_id"`
+	LeftColumnID      string            `msgpack:"left_column_id"`
+	RightOccurrenceID string            `msgpack:"right_occurrence_id"`
+	RightColumnID     string            `msgpack:"right_column_id"`
+	Operator          string            `msgpack:"operator"`
+	Predicates        []BundlePredicate `msgpack:"predicates,omitempty"`
+	AllowCreation     bool              `msgpack:"allow_creation"`
+	CascadeDelete     bool              `msgpack:"cascade_delete"`
+	SortRelated       string            `msgpack:"sort_related"`
+}
+
+// BundlePredicate is one match criterion of a relationship of a solution
+// file. The field names are informative: a criterion is resolved by its ids.
+type BundlePredicate struct {
+	LeftColumnID    string `msgpack:"left_column_id"`
+	LeftColumnName  string `msgpack:"left_column_name,omitempty"`
+	Operator        string `msgpack:"operator"`
+	RightColumnID   string `msgpack:"right_column_id"`
+	RightColumnName string `msgpack:"right_column_name,omitempty"`
+}
+
+// PredicateList is the relationship's criteria, in order: Predicates, or the
+// one pair of a relationship that has no list.
+func (r BundleRelationship) PredicateList() []BundlePredicate {
+	if len(r.Predicates) > 0 {
+		return r.Predicates
+	}
+	return []BundlePredicate{{LeftColumnID: r.LeftColumnID, Operator: r.Operator, RightColumnID: r.RightColumnID}}
+}
+
+// WithPredicates sets the relationship's criteria: the first is also its
+// pair, and the list is kept only when there is more than one, so a
+// single-criterion relationship is written as it always was.
+func (r *BundleRelationship) WithPredicates(predicates []BundlePredicate) {
+	if len(predicates) == 0 {
+		return
+	}
+	r.LeftColumnID, r.Operator, r.RightColumnID = predicates[0].LeftColumnID, predicates[0].Operator, predicates[0].RightColumnID
+	r.Predicates = nil
+	if len(predicates) > 1 {
+		r.Predicates = predicates
+	}
+}
+
+// bundlePredicates converts catalog criteria to a solution file's.
+func bundlePredicates(predicates []RelationshipPredicate) []BundlePredicate {
+	out := make([]BundlePredicate, len(predicates))
+	for i, p := range predicates {
+		out[i] = BundlePredicate{
+			LeftColumnID: p.LeftColumnID, LeftColumnName: p.LeftColumnName, Operator: p.Operator,
+			RightColumnID: p.RightColumnID, RightColumnName: p.RightColumnName,
+		}
+	}
+	return out
 }
 
 type BundleLayout struct {
@@ -363,12 +413,14 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 		b.TableOccurrences = append(b.TableOccurrences, BundleOccurrence{ID: o.ID, BaseTableID: o.BaseTableID, Name: o.Name, XPos: o.XPos, YPos: o.YPos})
 	}
 	for _, r := range relationships {
-		b.Relationships = append(b.Relationships, BundleRelationship{
+		br := BundleRelationship{
 			ID: r.ID, Name: r.Name,
 			LeftOccurrenceID: r.LeftOccurrenceID, LeftColumnID: r.LeftColumnID,
 			RightOccurrenceID: r.RightOccurrenceID, RightColumnID: r.RightColumnID,
 			Operator: r.Operator, AllowCreation: r.AllowCreation, CascadeDelete: r.CascadeDelete, SortRelated: r.SortRelated,
-		})
+		}
+		br.WithPredicates(bundlePredicates(r.Predicates))
+		b.Relationships = append(b.Relationships, br)
 	}
 	for _, l := range layouts {
 		def, err := jsonObject(l.Definition)
@@ -766,26 +818,45 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	if err != nil {
 		return nil, rollback(err)
 	}
-	relKey := func(lo, lc, ro, rc, op string) string { return strings.Join([]string{lo, lc, ro, rc, op}, "|") }
+	// A relationship is the same one when it joins the same two occurrences on
+	// the same criteria, in the same order.
+	relKey := func(lo, ro string, predicates []RelationshipPredicate) string {
+		parts := []string{lo, ro}
+		for _, p := range predicates {
+			op, err := NormalizeRelationshipOperator(p.Operator)
+			if err != nil {
+				op = p.Operator
+			}
+			parts = append(parts, p.LeftColumnID, op, p.RightColumnID)
+		}
+		return strings.Join(parts, "|")
+	}
 	// The id each relationship of the file ends up with, so the portals and
 	// related fields of a layout can be pointed at it (#36).
 	relIDs := map[string]string{}
 	haveRel := map[string]string{}
 	for _, r := range currentRels {
-		haveRel[relKey(r.LeftOccurrenceID, r.LeftColumnID, r.RightOccurrenceID, r.RightColumnID, r.Operator)] = r.ID
+		haveRel[relKey(r.LeftOccurrenceID, r.RightOccurrenceID, r.Predicates)] = r.ID
 	}
 	for _, r := range b.Relationships {
+		filePredicates := r.PredicateList()
+		predicates := make([]RelationshipPredicate, len(filePredicates))
+		for i, p := range filePredicates {
+			predicates[i] = RelationshipPredicate{
+				LeftColumnID: columnIDs[p.LeftColumnID], Operator: p.Operator, RightColumnID: columnIDs[p.RightColumnID],
+			}
+		}
 		in := CreateRelationshipInput{
 			Name:             r.Name,
-			LeftOccurrenceID: occIDs[r.LeftOccurrenceID], LeftColumnID: columnIDs[r.LeftColumnID],
-			RightOccurrenceID: occIDs[r.RightOccurrenceID], RightColumnID: columnIDs[r.RightColumnID],
-			Operator: r.Operator, AllowCreation: r.AllowCreation, CascadeDelete: r.CascadeDelete,
+			LeftOccurrenceID: occIDs[r.LeftOccurrenceID], RightOccurrenceID: occIDs[r.RightOccurrenceID],
+			Predicates:    predicates,
+			AllowCreation: r.AllowCreation, CascadeDelete: r.CascadeDelete,
 		}
 		if r.SortRelated != "" {
 			sort := r.SortRelated
 			in.SortRelated = &sort
 		}
-		key := relKey(in.LeftOccurrenceID, in.LeftColumnID, in.RightOccurrenceID, in.RightColumnID, in.Operator)
+		key := relKey(in.LeftOccurrenceID, in.RightOccurrenceID, in.Predicates)
 		if existing := haveRel[key]; existing != "" {
 			// The same join is already there: a layout that points at the
 			// file's relationship is pointed at the one in the database.
@@ -1270,13 +1341,24 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 		occTable[o.ID], occNames[o.Name] = o.BaseTableID, true
 	}
 	for _, r := range b.Relationships {
-		for _, side := range []struct{ occ, col string }{{r.LeftOccurrenceID, r.LeftColumnID}, {r.RightOccurrenceID, r.RightColumnID}} {
-			tbl, ok := occTable[side.occ]
-			if !ok {
-				return nil, invalid("relationship %q refers to a table occurrence that is not in the file", r.Name)
+		if len(r.Predicates) > 0 {
+			first := r.Predicates[0]
+			if first.LeftColumnID != r.LeftColumnID || first.RightColumnID != r.RightColumnID {
+				return nil, invalid("relationship %q lists criteria whose first is not its own pair of fields", r.Name)
 			}
-			if columnTable[side.col] != tbl {
-				return nil, invalid("relationship %q refers to a field that is not in its table occurrence's table", r.Name)
+		}
+		for _, p := range r.PredicateList() {
+			if _, err := NormalizeRelationshipOperator(p.Operator); err != nil {
+				return nil, invalid("relationship %q: %v", r.Name, err)
+			}
+			for _, side := range []struct{ occ, col string }{{r.LeftOccurrenceID, p.LeftColumnID}, {r.RightOccurrenceID, p.RightColumnID}} {
+				tbl, ok := occTable[side.occ]
+				if !ok {
+					return nil, invalid("relationship %q refers to a table occurrence that is not in the file", r.Name)
+				}
+				if columnTable[side.col] != tbl {
+					return nil, invalid("relationship %q refers to a field that is not in its table occurrence's table", r.Name)
+				}
 			}
 		}
 	}

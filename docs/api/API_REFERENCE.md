@@ -351,7 +351,7 @@ Deletes a Table Occurrence. Cascades to any relationships connecting to it.
 ---
 
 ### `GET /api/v1/schemas/relationships`
-Lists all relationships between Table Occurrences in the relational graph.
+Lists all relationships between Table Occurrences in the relational graph. Each carries `predicates`, every match criterion in order (at least one); the first is also the relationship's own `left_column_id`, `operator` and `right_column_id`. Each side gives the field's name beside its id (`left_column_name`, `right_column_name`).
 
 ### `POST /api/v1/schemas/relationships`
 Creates a new relationship between two Table Occurrence fields.
@@ -369,8 +369,22 @@ Creates a new relationship between two Table Occurrence fields.
 }
 ```
 
+A relationship with several match criteria sends them as `predicates` instead of the single pair; a record is related when it meets every criterion. Operators are `=`, `≠`, `<`, `≤`, `>`, `≥` and `×` (always matches); `<>`, `!=`, `<=`, `>=` and `x` are read as their sign.
+```json
+{
+  "name": "Accounts_to_Later_Visits",
+  "left_occurrence_id": "occ-1-uuid",
+  "right_occurrence_id": "occ-2-uuid",
+  "predicates": [
+    {"left_column_id": "col-code-uuid", "operator": "=", "right_column_id": "col-account-code-uuid"},
+    {"left_column_id": "col-since-uuid", "operator": "<", "right_column_id": "col-day-uuid"}
+  ]
+}
+```
+Each criterion's left field must be in the left occurrence's table and its right field in the right one's. An empty `predicates` list is `422`. See [docs/specs/relationships_and_portals.md](../specs/relationships_and_portals.md#several-match-criteria).
+
 ### `PUT /api/v1/schemas/relationships/{id}`
-Updates a relationship definition.
+Updates a relationship definition. `predicates`, when present, replaces every match criterion; when absent, the criteria are left as they are and `operator` changes the first one's.
 ```json
 {
   "name": "Cust_to_Invoices",
@@ -390,9 +404,9 @@ A relationship is drawn from a **left** side to a **right** side, and File4Base 
 
 | Option | Acts |
 | --- | --- |
-| `allow_creation` | `POST /api/v1/data/{table}/{id}/related` creates a record on the right side. Without it that request answers `403 Creation Not Allowed`. |
+| `allow_creation` | `POST /api/v1/data/{table}/{id}/related` creates a record on the right side, with every right-hand match field set from the left record. Without it, or when a criterion is not `=`, that request answers `403 Creation Not Allowed`. |
 | `cascade_delete` | `DELETE /api/v1/data/{table}/{id}` on a left-side record also deletes the right-side records that match it, down the whole chain. |
-| `sort_related` | The order the right side's records come back in when the caller asks for none. `asc` / `desc` mean the match field in that direction; anything else is read as a sort order (`last_name,-fee_paid`). Reading the relationship the other way round ignores it, since the fields it names are the right side's, and a field the side being read does not have is dropped rather than refused. |
+| `sort_related` | The order the right side's records come back in when the caller asks for none. `asc` / `desc` mean the right field of the first criterion in that direction; anything else is read as a sort order (`last_name,-fee_paid`). Reading the relationship the other way round ignores it, since the fields it names are the right side's, and a field the side being read does not have is dropped rather than refused. |
 
 The Specify Relationship dialog names both tables in these labels, so which side an option acts on is visible rather than implied.
 

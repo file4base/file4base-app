@@ -321,6 +321,16 @@ func normalizeSaveAsXMLReferences(root *xmlNode) {
 				}
 				if ref := findFirstChild(side, "FieldReference"); ref != nil {
 					ref.Name = "Field"
+					// The field's occurrence is nested in the reference; the
+					// DDR reader takes it from the field's table attribute,
+					// which is what tells a criterion written from the
+					// relationship's other side.
+					if occ := findFirstChild(ref, "TableOccurrenceReference"); occ != nil && firstAttr(ref, "table") == "" {
+						if ref.Attrs == nil {
+							ref.Attrs = map[string]string{}
+						}
+						ref.Attrs["table"] = firstAttr(occ, "name", "Name")
+					}
 				}
 			}
 		}

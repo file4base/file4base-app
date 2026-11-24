@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -21,12 +22,13 @@ var ErrRelationshipNotFound = errors.New("relationship not found")
 var ErrCreationNotAllowed = errors.New("records cannot be created through this relationship")
 
 // ErrNoMatchValue is returned when the record a portal starts from has nothing
-// in its match field: an empty key matches no related record, and a record
-// created through the relationship would have nothing to be matched by.
+// in one of its match fields: an empty key matches no related record, and a
+// record created through the relationship would have nothing to be matched by.
 var ErrNoMatchValue = errors.New("the record has no value in the match field")
 
 // relationalOperators maps the operators the relationship graph stores — it
-// writes the mathematical signs — to SQL comparisons.
+// writes the mathematical signs — to SQL comparisons. The Cartesian product
+// (×) is no comparison at all: it relates every record (see cartesian).
 var relationalOperators = map[string]string{
 	"=": "=", "==": "=",
 	"≠": "<>", "<>": "<>", "!=": "<>",
@@ -34,7 +36,12 @@ var relationalOperators = map[string]string{
 	"≤": "<=", "<=": "<=",
 	">": ">",
 	"≥": ">=", ">=": ">=",
+	"×": cartesian, "x": cartesian, "X": cartesian,
 }
+
+// cartesian stands for the × operator: a criterion every pair of records
+// meets, whatever their fields hold, empty ones included.
+const cartesian = "×"
 
 // RelationSide is one end of a relationship, resolved from the occurrence and
 // column ids the catalog stores to the physical table and column a query needs.
@@ -50,44 +57,82 @@ type RelationSide struct {
 // A relationship is drawn from a left side to a right side, and File4Base reads
 // that direction as parent to child: AllowCreation and CascadeDelete act on the
 // right side when a record of the left side is the one in hand.
+//
+// It relates the records that meet every one of its Predicates. The first
+// predicate is also Operator, Left.Column and Right.Column; a relationship
+// built without Predicates has that one only.
 type Relationship struct {
-	ID            string       `json:"id"`
-	Name          string       `json:"name"`
-	Operator      string       `json:"operator"`
-	Left          RelationSide `json:"left"`
-	Right         RelationSide `json:"right"`
-	AllowCreation bool         `json:"allow_creation"`
-	CascadeDelete bool         `json:"cascade_delete"`
-	SortRelated   string       `json:"sort_related,omitempty"`
+	ID            string              `json:"id"`
+	Name          string              `json:"name"`
+	Operator      string              `json:"operator"`
+	Left          RelationSide        `json:"left"`
+	Right         RelationSide        `json:"right"`
+	Predicates    []RelationPredicate `json:"predicates,omitempty"`
+	AllowCreation bool                `json:"allow_creation"`
+	CascadeDelete bool                `json:"cascade_delete"`
+	SortRelated   string              `json:"sort_related,omitempty"`
 }
 
-// sqlOperator is the comparison to put between the two match fields.
-func (r *Relationship) sqlOperator() (string, error) {
-	op, ok := relationalOperators[strings.TrimSpace(r.Operator)]
-	if !ok {
-		return "", fmt.Errorf("relationship %s: unsupported operator %q", r.Name, r.Operator)
+// RelationPredicate is one match criterion of a relationship, with its two
+// fields resolved to their column names: LeftColumn Operator RightColumn.
+type RelationPredicate struct {
+	Operator    string `json:"operator"`
+	LeftColumn  string `json:"left_column"`
+	RightColumn string `json:"right_column"`
+}
+
+// predicates are the relationship's criteria, in order.
+func (r *Relationship) predicates() []RelationPredicate {
+	if len(r.Predicates) > 0 {
+		return r.Predicates
 	}
-	return op, nil
+	return []RelationPredicate{{Operator: r.Operator, LeftColumn: r.Left.Column, RightColumn: r.Right.Column}}
 }
 
 // reversed is the comparison seen from the other side: left < right is
 // right > left.
-var reversed = map[string]string{"=": "=", "<>": "<>", "<": ">", "<=": ">=", ">": "<", ">=": "<="}
+var reversed = map[string]string{"=": "=", "<>": "<>", "<": ">", "<=": ">=", ">": "<", ">=": "<=", cartesian: cartesian}
 
-// targetOperator is the comparison a target record's match field must meet
-// against the source record's key: target op key. The relationship is drawn
-// left op right, so it is reversed when the source is the left side —
-// otherwise Lines::Date > Orders::Date read from an order would return the
-// lines dated before it.
-func (r *Relationship) targetOperator(source RelationSide) (string, error) {
-	op, err := r.sqlOperator()
-	if err != nil {
-		return "", err
+// matchTerm is one criterion seen from the record in hand: a related record's
+// TargetColumn must meet Op against the record's SourceColumn — target op key.
+type matchTerm struct {
+	SourceColumn string
+	TargetColumn string
+	Op           string // a SQL comparison, or cartesian
+}
+
+// matchTerms are the criteria a record of source relates through. Each is
+// drawn left op right, so its comparison is reversed when the source is the
+// left side — otherwise Lines::Date > Orders::Date read from an order would
+// return the lines dated before it.
+func (r *Relationship) matchTerms(source RelationSide) ([]matchTerm, error) {
+	fromLeft := source.OccurrenceID == r.Left.OccurrenceID
+	preds := r.predicates()
+	terms := make([]matchTerm, len(preds))
+	for i, p := range preds {
+		op, ok := relationalOperators[strings.TrimSpace(p.Operator)]
+		if !ok {
+			return nil, fmt.Errorf("relationship %s: unsupported operator %q", r.Name, p.Operator)
+		}
+		if fromLeft {
+			terms[i] = matchTerm{SourceColumn: p.LeftColumn, TargetColumn: p.RightColumn, Op: reversed[op]}
+		} else {
+			terms[i] = matchTerm{SourceColumn: p.RightColumn, TargetColumn: p.LeftColumn, Op: op}
+		}
 	}
-	if source == r.Left {
-		return reversed[op], nil
+	return terms, nil
+}
+
+// sourceColumns are the fields of the record in hand the terms read, each
+// once.
+func sourceColumns(terms []matchTerm) []string {
+	var out []string
+	for _, t := range terms {
+		if t.Op != cartesian && !slices.Contains(out, t.SourceColumn) {
+			out = append(out, t.SourceColumn)
+		}
 	}
-	return op, nil
+	return out
 }
 
 // matchKeys are the values a match field holds. A text key holding several
@@ -113,31 +158,56 @@ func matchKeys(key interface{}) []interface{} {
 	return keys
 }
 
-// matchCondition is the condition on target's match field for the records
-// related to a source record holding key, with its arguments; placeholders
-// are numbered from first. It is empty when the key matches nothing.
-func matchCondition(dialect dbal.Dialect, rel *Relationship, source, target RelationSide, key interface{}, first int) (string, []interface{}, error) {
-	op, err := rel.targetOperator(source)
-	if err != nil {
-		return "", nil, err
+// matchCondition is the condition on the target's match fields for the
+// records related to a source record, with its arguments; placeholders are
+// numbered from first. keyOf gives what the source record holds in one of its
+// match fields.
+//
+// Every criterion must be met. Each compares one target field with what the
+// source record holds, which may be several keys (a multi-key) and is met by
+// any of them. The condition is empty when the record matches nothing: a
+// criterion other than × whose source field is empty relates no record. An
+// empty field relates nothing on the target side either, whatever the
+// operator: an empty text is ≠ 'north' in SQL, but FileMaker never relates a record
+// through an empty match field, so neither does a portal, a related read, a
+// sort or a cascading delete.
+func matchCondition(dialect dbal.Dialect, terms []matchTerm, keyOf func(column string) interface{}, first int) (string, []interface{}) {
+	var conditions []string
+	var args []interface{}
+	for _, t := range terms {
+		if t.Op == cartesian {
+			continue
+		}
+		keys := matchKeys(keyOf(t.SourceColumn))
+		if len(keys) == 0 {
+			return "", nil
+		}
+		column := dialect.QuoteIdentifier(t.TargetColumn)
+		conditions = append(conditions, notEmpty(dialect, column))
+		marks := make([]string, len(keys))
+		for i := range keys {
+			marks[i] = dialect.Placeholder(first + len(args) + i)
+		}
+		args = append(args, keys...)
+		if t.Op == "=" {
+			conditions = append(conditions, fmt.Sprintf("%s IN (%s)", column, strings.Join(marks, ", ")))
+			continue
+		}
+		parts := make([]string, len(marks))
+		for i, mark := range marks {
+			parts[i] = fmt.Sprintf("%s %s %s", column, t.Op, mark)
+		}
+		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
-	keys := matchKeys(key)
-	if len(keys) == 0 {
-		return "", nil, nil
+	if len(conditions) == 0 {
+		return "1 = 1", nil // only × criteria: every record is related
 	}
-	column := dialect.QuoteIdentifier(target.Column)
-	marks := make([]string, len(keys))
-	for i := range keys {
-		marks[i] = dialect.Placeholder(first + i)
-	}
-	if op == "=" {
-		return fmt.Sprintf("%s IN (%s)", column, strings.Join(marks, ", ")), keys, nil
-	}
-	parts := make([]string, len(marks))
-	for i, mark := range marks {
-		parts[i] = fmt.Sprintf("%s %s %s", column, op, mark)
-	}
-	return "(" + strings.Join(parts, " OR ") + ")", keys, nil
+	return strings.Join(conditions, " AND "), args
+}
+
+// notEmpty is the condition that a match field holds something.
+func notEmpty(dialect dbal.Dialect, column string) string {
+	return fmt.Sprintf("%s IS NOT NULL AND %s <> ''", column, dialect.CastToText(column))
 }
 
 // Sides decides which end of the relationship a request reads.
@@ -206,6 +276,9 @@ func (s *Service) Relationship(ctx context.Context, id string) (*Relationship, e
 	if err != nil {
 		return nil, fmt.Errorf("failed resolving relationship %s: %w", id, err)
 	}
+	if err := s.attachPredicates(ctx, []*Relationship{rel}, id); err != nil {
+		return nil, err
+	}
 	return rel, nil
 }
 
@@ -224,7 +297,66 @@ func (s *Service) Relationships(ctx context.Context) ([]*Relationship, error) {
 		}
 		out = append(out, rel)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachPredicates(ctx, out, ""); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// predicatesSelect reads the criteria after the first, which
+// sys_relationship_predicates keeps, with their fields resolved to column
+// names: through the field's id, and by the name kept with it otherwise.
+const predicatesSelect = `SELECT p.relationship_id, p.operator,
+		COALESCE(lc.name, p.left_column_name, ''), COALESCE(rc.name, p.right_column_name, '')
+	FROM sys_relationship_predicates p
+	LEFT JOIN sys_columns lc ON lc.id = p.left_column_id
+	LEFT JOIN sys_columns rc ON rc.id = p.right_column_id`
+
+// attachPredicates gives each relationship its full list of criteria: its
+// first, then those kept in sys_relationship_predicates, in order. A database
+// created before that table existed has single-criterion relationships only.
+func (s *Service) attachPredicates(ctx context.Context, rels []*Relationship, onlyID string) error {
+	if len(rels) == 0 {
+		return nil
+	}
+	q := predicatesSelect
+	var args []interface{}
+	if onlyID != "" {
+		q += ` WHERE p.relationship_id = ` + s.driver.Dialect().Placeholder(1)
+		args = append(args, onlyID)
+	}
+	q += ` ORDER BY p.relationship_id, p.sequence_idx`
+	rows, err := s.driver.DB().QueryContext(ctx, q, args...)
+	if dbal.IsUndefinedTable(err) {
+		err = nil
+		rows = nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed reading the relationship criteria: %w", err)
+	}
+	extra := map[string][]RelationPredicate{}
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			var p RelationPredicate
+			if err := rows.Scan(&id, &p.Operator, &p.LeftColumn, &p.RightColumn); err != nil {
+				return err
+			}
+			extra[id] = append(extra[id], p)
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	for _, rel := range rels {
+		rel.Predicates = append([]RelationPredicate{{Operator: rel.Operator, LeftColumn: rel.Left.Column, RightColumn: rel.Right.Column}},
+			extra[rel.ID]...)
+	}
+	return nil
 }
 
 func scanRelationship(row interface{ Scan(...any) error }) (*Relationship, error) {
@@ -291,6 +423,8 @@ func relatedSortOrder(rel *Relationship, target RelationSide, fields fieldSet, o
 		return nil
 	}
 
+	// "asc" and "desc" sort by the right side's field of the first criterion.
+
 	var order []SortField
 	switch spec := strings.TrimSpace(rel.SortRelated); strings.ToLower(spec) {
 	case "":
@@ -312,36 +446,53 @@ func relatedSortOrder(rel *Relationship, target RelationSide, fields fieldSet, o
 	return kept
 }
 
-// matchValue reads what a record holds in a match field, as the driver's own
-// type, so it goes back into the next query as a parameter of the right type
-// rather than as text.
-func (s *Service) matchValue(ctx context.Context, tableName, column, id string) (interface{}, error) {
+// matchValues reads what a record holds in its match fields, as the driver's
+// own types, so they go back into the next query as parameters of the right
+// type rather than as text. The record must exist even when there are no
+// fields to read, as with a relationship of × criteria only.
+func (s *Service) matchValues(ctx context.Context, tableName string, columns []string, id string) (map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkField(fields, tableName, column); err != nil {
-		return nil, err
-	}
 	dialect := s.driver.Dialect()
+	list := make([]string, 0, len(columns)+1)
+	for _, column := range columns {
+		if err := checkField(fields, tableName, column); err != nil {
+			return nil, err
+		}
+		list = append(list, dialect.QuoteIdentifier(column))
+	}
+	if len(list) == 0 {
+		list = append(list, dialect.QuoteIdentifier("id"))
+	}
 	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s LIMIT 1",
-		dialect.QuoteIdentifier(column),
+		strings.Join(list, ", "),
 		dialect.QuoteIdentifier(tableName),
 		dialect.QuoteIdentifier("id"),
 		dialect.Placeholder(1),
 	)
-	var raw interface{}
-	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&raw); err != nil {
+	raw := make([]interface{}, len(list))
+	ptrs := make([]interface{}, len(list))
+	for i := range raw {
+		ptrs[i] = &raw[i]
+	}
+	if err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(ptrs...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("record not found with id: %s", id)
 		}
-		return nil, fmt.Errorf("failed reading match field %s.%s: %w", tableName, column, err)
+		return nil, fmt.Errorf("failed reading the match fields of %s: %w", tableName, err)
 	}
-	// MySQL hands text back as bytes; a parameter is clearer as a string.
-	if b, ok := raw.([]byte); ok {
-		return string(b), nil
+	values := make(map[string]interface{}, len(columns))
+	for i, column := range columns {
+		// MySQL hands text back as bytes; a parameter is clearer as a string.
+		if b, ok := raw[i].([]byte); ok {
+			values[column] = string(b)
+		} else {
+			values[column] = raw[i]
+		}
 	}
-	return raw, nil
+	return values, nil
 }
 
 // emptyMatchValue reports whether a match value matches nothing. An empty key
@@ -377,23 +528,26 @@ func (s *Service) RelatedRows(
 	if err != nil {
 		return nil, err
 	}
+	terms, err := rel.matchTerms(source)
+	if err != nil {
+		return nil, err
+	}
 	targetFields, err := s.tableFields(ctx, target.TableName)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkField(targetFields, target.TableName, target.Column); err != nil {
-		return nil, err
+	for _, t := range terms {
+		if err := checkField(targetFields, target.TableName, t.TargetColumn); err != nil {
+			return nil, err
+		}
 	}
 
-	key, err := s.matchValue(ctx, source.TableName, source.Column, recordID)
+	values, err := s.matchValues(ctx, source.TableName, sourceColumns(terms), recordID)
 	if err != nil {
 		return nil, err
 	}
 	dialect := s.driver.Dialect()
-	match, keys, err := matchCondition(dialect, rel, source, target, key, 1)
-	if err != nil {
-		return nil, err
-	}
+	match, keys := matchCondition(dialect, terms, func(c string) interface{} { return values[c] }, 1)
 	if match == "" {
 		return []map[string]interface{}{}, nil
 	}
@@ -445,11 +599,11 @@ func (s *Service) RelatedRows(
 }
 
 // CreateRelatedRow creates a record on the other side of a relationship and
-// fills its match field, so the new record belongs to the record in hand.
+// fills its match fields, so the new record belongs to the record in hand.
 //
-// It is refused unless the relationship allows creation, and unless the match
-// is an equality: with any other comparison there is no single value to write
-// into the new record's match field.
+// It is refused unless the relationship allows creation, and unless every
+// criterion is an equality: with any other comparison there is no single value
+// to write into the new record's match field, as in FileMaker.
 func (s *Service) CreateRelatedRow(
 	ctx context.Context,
 	fromTable, recordID, relationshipID, targetOccurrence string,
@@ -466,30 +620,34 @@ func (s *Service) CreateRelatedRow(
 	if !rel.AllowCreation {
 		return nil, fmt.Errorf("%w: %s", ErrCreationNotAllowed, rel.Name)
 	}
-	op, err := rel.sqlOperator()
+	terms, err := rel.matchTerms(source)
 	if err != nil {
 		return nil, err
 	}
-	if op != "=" {
-		return nil, fmt.Errorf("%w: relationship %s matches with %q, so a new record has no match value to be given",
-			ErrCreationNotAllowed, rel.Name, rel.Operator)
+	for i, t := range terms {
+		if t.Op != "=" {
+			return nil, fmt.Errorf("%w: relationship %s matches with %q, so a new record has no match value to be given",
+				ErrCreationNotAllowed, rel.Name, rel.predicates()[i].Operator)
+		}
 	}
 
-	key, err := s.matchValue(ctx, source.TableName, source.Column, recordID)
+	keys, err := s.matchValues(ctx, source.TableName, sourceColumns(terms), recordID)
 	if err != nil {
 		return nil, err
 	}
-	if emptyMatchValue(key) {
-		return nil, fmt.Errorf("%w: %s.%s is empty", ErrNoMatchValue, source.TableName, source.Column)
-	}
-
-	values := make(map[string]interface{}, len(record)+1)
+	values := make(map[string]interface{}, len(record)+len(terms))
 	for k, v := range record {
 		values[k] = v
 	}
-	// The match field belongs to the relationship, not to the caller: a portal
+	// The match fields belong to the relationship, not to the caller: a portal
 	// row created here is matched by this record and nothing else.
-	values[target.Column] = key
+	for _, t := range terms {
+		key := keys[t.SourceColumn]
+		if emptyMatchValue(key) {
+			return nil, fmt.Errorf("%w: %s.%s is empty", ErrNoMatchValue, source.TableName, t.SourceColumn)
+		}
+		values[t.TargetColumn] = key
+	}
 
 	return s.InsertRow(ctx, target.TableName, values)
 }
@@ -585,13 +743,11 @@ func (s *Service) cascadeDelete(ctx context.Context, tableName, id string, seen 
 // ─── Find on a related field (#46) ───────────────────────────────────────────
 
 // relatedFindTarget is everything a criterion on a related field needs: the
-// table the related records live in, the two match columns, the comparison
-// between them, and the fields that table has.
+// table the related records live in, the relationship's criteria seen from
+// the table being searched, and the fields the related table has.
 type relatedFindTarget struct {
 	TableName    string
-	SourceColumn string // the match field of the table being searched
-	TargetColumn string // the match field of the related table
-	Operator     string // SQL comparison between the two match fields
+	Terms        []matchTerm // the related table's field op the searched table's
 	Fields       fieldSet
 	Relationship string // name, for error messages
 }
@@ -620,7 +776,7 @@ func (s *Service) resolveFindRelations(
 			if err != nil {
 				return nil, err
 			}
-			op, err := rel.targetOperator(source) // the clause is child op parent
+			terms, err := rel.matchTerms(source) // each clause is child op parent
 			if err != nil {
 				return nil, err
 			}
@@ -630,9 +786,7 @@ func (s *Service) resolveFindRelations(
 			}
 			targets[key] = relatedFindTarget{
 				TableName:    target.TableName,
-				SourceColumn: source.Column,
-				TargetColumn: target.Column,
-				Operator:     op,
+				Terms:        terms,
 				Fields:       fields,
 				Relationship: rel.Name,
 			}
@@ -654,7 +808,10 @@ func relatedFindKey(crit FindCriterion) string {
 // A record whose match field is empty relates to nothing, which is the rule
 // the related reads already follow, so it never matches a related criterion —
 // not even through an operator like "is empty", which is about the related
-// record's field and not about the absence of related records.
+// record's field and not about the absence of related records. A related
+// record whose match field is empty is not related either, whatever the
+// operator. Every criterion of the relationship must be met, as in the related
+// reads.
 func relatedCriterionClause(
 	dialect dbal.Dialect, tableName string, crit FindCriterion,
 	targets map[string]relatedFindTarget, idx *int, values *[]interface{},
@@ -670,15 +827,20 @@ func relatedCriterionClause(
 	// The subquery's own name for the related table, so a relationship from a
 	// table to itself still has two distinguishable sides.
 	const alias = "f4b_rel"
-	parent := dialect.QuoteIdentifier(tableName) + "." + dialect.QuoteIdentifier(target.SourceColumn)
-	child := alias + "." + dialect.QuoteIdentifier(target.TargetColumn)
+	var present, joins []string
+	for _, t := range target.Terms {
+		if t.Op == cartesian {
+			continue
+		}
+		parent := dialect.QuoteIdentifier(tableName) + "." + dialect.QuoteIdentifier(t.SourceColumn)
+		child := alias + "." + dialect.QuoteIdentifier(t.TargetColumn)
+		present = append(present, notEmpty(dialect, parent))
+		// The related record's match field must hold something too.
+		joins = append(joins, notEmpty(dialect, child), fmt.Sprintf("%s %s %s", child, t.Op, parent))
+	}
 	inner := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName), crit, idx, values)
+	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s)",
+		dialect.QuoteIdentifier(target.TableName), alias, strings.Join(append(joins, inner), " AND "))
 
-	return fmt.Sprintf(
-		"(%s IS NOT NULL AND %s <> '' AND EXISTS (SELECT 1 FROM %s %s WHERE %s %s %s AND %s))",
-		parent, dialect.CastToText(parent),
-		dialect.QuoteIdentifier(target.TableName), alias,
-		child, target.Operator, parent,
-		inner,
-	), nil
+	return "(" + strings.Join(append(present, exists), " AND ") + ")", nil
 }

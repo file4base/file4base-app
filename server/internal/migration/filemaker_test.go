@@ -144,8 +144,13 @@ func TestAnalyzeAndConvert_DDRAndFMPXMLResult(t *testing.T) {
 	if res.Report.Counts.Tables != 2 {
 		t.Fatalf("expected 2 tables, got %d", res.Report.Counts.Tables)
 	}
-	if res.Report.Counts.Relationships != 1 {
-		t.Fatalf("expected 1 supported relationship (Cartesian rejected), got %d", res.Report.Counts.Relationships)
+	if res.Report.Counts.Relationships != 2 {
+		t.Fatalf("expected 2 relationships (the Cartesian one included), got %d", res.Report.Counts.Relationships)
+	}
+	for _, rel := range res.Bundle.Relationships {
+		if rel.Name == "Cartesian_Check" && rel.Operator != "×" {
+			t.Fatalf("expected the Cartesian relationship to match with ×, got %q", rel.Operator)
+		}
 	}
 	if res.Report.Counts.ValueLists != 1 {
 		t.Fatalf("expected 1 value list, got %d", res.Report.Counts.ValueLists)
@@ -163,7 +168,7 @@ func TestAnalyzeAndConvert_DDRAndFMPXMLResult(t *testing.T) {
 		t.Fatalf("expected 2 records parsed from FMPXMLRESULT, got %d", res.Report.Counts.RecordsReady)
 	}
 	if len(res.Report.Unsupported) == 0 {
-		t.Fatal("expected unsupported items (repetitions, ExecuteSQL, Cartesian, Perform AppleScript) to be recorded")
+		t.Fatal("expected unsupported items (repetitions, ExecuteSQL, Perform AppleScript) to be recorded")
 	}
 	if len(res.Report.ManualActionRequired) == 0 {
 		t.Fatal("expected manual_action_required items (triggers, passwords, unsupported steps/calcs) to be recorded")

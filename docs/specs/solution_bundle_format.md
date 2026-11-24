@@ -43,7 +43,9 @@ Golden fixtures produced by each side are read by the other side's tests:
 
 **occurrence**: `id`, `base_table_id`, `name`, `x_pos`, `y_pos`.
 
-**relationship**: `id`, `name`, `left_occurrence_id`, `left_column_id`, `right_occurrence_id`, `right_column_id`, `operator`, `allow_creation`, `cascade_delete`, `sort_related`.
+**relationship**: `id`, `name`, `left_occurrence_id`, `left_column_id`, `right_occurrence_id`, `right_column_id`, `operator`, `allow_creation`, `cascade_delete`, `sort_related`, and `predicates` (optional array of predicate).
+
+**predicate**: `left_column_id`, `left_column_name` (optional), `operator`, `right_column_id`, `right_column_name` (optional). A relationship with several match criteria lists all of them in order, the first being the relationship's own `left_column_id`, `operator` and `right_column_id`; a single-criterion relationship omits `predicates`, so its encoding is unchanged. Each predicate's columns must belong to its side's occurrence table. See [relationships_and_portals.md](relationships_and_portals.md#several-match-criteria).
 
 **layout**: `id`, `name`, `table_occurrence_id`, `definition` (map; see `layout_schema.json`).
 
@@ -68,7 +70,7 @@ IDs only link objects inside the bundle. They are never assumed to exist in the 
 `POST /api/v1/solutions/import` (owner only) merges the bundle into the signed-in database:
 
 1. **Validation first.** The whole bundle is checked before anything is written: structure (see `msgpackguard`), names, field options, and every reference (column to table, occurrence to table, relationship to occurrences and columns, layout to occurrence, step to parent step, permission to layout). A bundle with a dangling reference is rejected with nothing changed.
-2. **Matching.** Objects that already exist are matched by name: tables by `name`, columns by table and `name`, occurrences by `name`, layouts and scripts by `id` and then by `name`, accounts by `username` (case-insensitive). Relationships are matched by their two endpoints and operator.
+2. **Matching.** Objects that already exist are matched by name: tables by `name`, columns by table and `name`, occurrences by `name`, layouts and scripts by `id` and then by `name`, accounts by `username` (case-insensitive). Relationships are matched by their two occurrences and their criteria (fields and operators, in order).
 3. **Remapping.** Every reference is rewritten to the destination's IDs: occurrence base tables, relationship occurrences and columns, layout occurrences, step parents, permission layouts, and the `script_id` of button actions and script triggers inside layout definitions.
 4. **Writing.** Missing tables, columns, occurrences, relationships, scripts and accounts are created; matched layouts and scripts are updated with the bundle's version; existing tables, columns and accounts are left as they are.
 5. **Accounts.** A missing account is created **disabled**, with a random password nobody knows, with its role and its layout permissions. An owner enables it and sets its password in Manage Security. Existing accounts are never changed. Restoring never widens access: a disabled account stays disabled, and an `owner` account can only be restored by an owner.

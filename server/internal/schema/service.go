@@ -87,19 +87,25 @@ type ColumnMetadata struct {
 	CreatedAt          time.Time              `json:"created_at"`
 }
 
-// RelationshipMetadata represents an occurrence join in sys_relationships
+// RelationshipMetadata represents an occurrence join in sys_relationships.
+//
+// Predicates is every match criterion, in order, and a record is related when
+// it meets all of them. The first one is also given as LeftColumnID, Operator
+// and RightColumnID, which is all a relationship had before it could have
+// several.
 type RelationshipMetadata struct {
-	ID                string    `json:"id"`
-	Name              string    `json:"name"`
-	LeftOccurrenceID  string    `json:"left_occurrence_id"`
-	LeftColumnID      string    `json:"left_column_id"`
-	RightOccurrenceID string    `json:"right_occurrence_id"`
-	RightColumnID     string    `json:"right_column_id"`
-	Operator          string    `json:"operator"`
-	AllowCreation     bool      `json:"allow_creation"`
-	CascadeDelete     bool      `json:"cascade_delete"`
-	SortRelated       string    `json:"sort_related,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	ID                string                  `json:"id"`
+	Name              string                  `json:"name"`
+	LeftOccurrenceID  string                  `json:"left_occurrence_id"`
+	LeftColumnID      string                  `json:"left_column_id"`
+	RightOccurrenceID string                  `json:"right_occurrence_id"`
+	RightColumnID     string                  `json:"right_column_id"`
+	Operator          string                  `json:"operator"`
+	Predicates        []RelationshipPredicate `json:"predicates"`
+	AllowCreation     bool                    `json:"allow_creation"`
+	CascadeDelete     bool                    `json:"cascade_delete"`
+	SortRelated       string                  `json:"sort_related,omitempty"`
+	CreatedAt         time.Time               `json:"created_at"`
 }
 
 // Service manages schema metadata and executes dynamic DDL
@@ -170,8 +176,14 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			allow_creation BOOLEAN DEFAULT FALSE,
 			cascade_delete BOOLEAN DEFAULT FALSE,
 			sort_related TEXT,
+			left_column_name VARCHAR(64),
+			right_column_name VARCHAR(64),
 			created_at ` + ts + `
 		);`,
+		// The match criteria of a relationship after its first.
+		relationshipPredicatesSQL(ts),
+		relationshipColumnNamesSQL[0],
+		relationshipColumnNamesSQL[1],
 		`CREATE TABLE IF NOT EXISTS sys_layouts (
 			id VARCHAR(36) PRIMARY KEY,
 			name VARCHAR(128) NOT NULL,
@@ -800,12 +812,29 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	if err := containermeta.Ensure(ctx, db); err != nil {
 		return err
 	}
+	if err := s.ensureRelationshipPredicates(ctx); err != nil {
+		return err
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	// A relationship matching on the field goes with it, whichever of its
+	// criteria names the field: dropping only that criterion would leave a
+	// relationship that relates, and cascades deletes to, more records than
+	// it was defined to.
+	relIDs, err := s.relationshipsUsingColumn(ctx, tx, columnID)
+	if err != nil {
+		return fmt.Errorf("failed reading the relationships matching on the field: %w", err)
+	}
+	for _, relID := range relIDs {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sys_relationships WHERE id = `+dialect.Placeholder(1), relID); err != nil {
+			return fmt.Errorf("failed removing a relationship matching on the field: %w", err)
+		}
+	}
 
 	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
 		return fmt.Errorf("failed dropping column from physical table: %w", err)

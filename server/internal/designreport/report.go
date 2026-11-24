@@ -183,17 +183,27 @@ type Occurrence struct {
 }
 
 // Relationship is one join of the graph, read left to right as parent to
-// child, which is the direction its options act in.
+// child, which is the direction its options act in. LeftField, Operator and
+// RightField are its first match criterion; a relationship with several lists
+// them all, in order, in Predicates.
 type Relationship struct {
-	Name          string `json:"name" xml:"name,attr"`
-	Left          string `json:"left" xml:"left,attr"`
-	LeftField     string `json:"left_field" xml:"left_field,attr"`
-	Operator      string `json:"operator" xml:"operator,attr"`
-	Right         string `json:"right" xml:"right,attr"`
-	RightField    string `json:"right_field" xml:"right_field,attr"`
-	AllowCreation bool   `json:"allow_creation" xml:"allow_creation,attr"`
-	CascadeDelete bool   `json:"cascade_delete" xml:"cascade_delete,attr"`
-	SortRelated   string `json:"sort_related,omitempty" xml:"sort_related,attr,omitempty"`
+	Name          string      `json:"name" xml:"name,attr"`
+	Left          string      `json:"left" xml:"left,attr"`
+	LeftField     string      `json:"left_field" xml:"left_field,attr"`
+	Operator      string      `json:"operator" xml:"operator,attr"`
+	Right         string      `json:"right" xml:"right,attr"`
+	RightField    string      `json:"right_field" xml:"right_field,attr"`
+	Predicates    []Predicate `json:"predicates,omitempty" xml:"predicate,omitempty"`
+	AllowCreation bool        `json:"allow_creation" xml:"allow_creation,attr"`
+	CascadeDelete bool        `json:"cascade_delete" xml:"cascade_delete,attr"`
+	SortRelated   string      `json:"sort_related,omitempty" xml:"sort_related,attr,omitempty"`
+}
+
+// Predicate is one match criterion of a relationship.
+type Predicate struct {
+	LeftField  string `json:"left_field" xml:"left_field,attr"`
+	Operator   string `json:"operator" xml:"operator,attr"`
+	RightField string `json:"right_field" xml:"right_field,attr"`
 }
 
 // Layout is a layout, described rather than drawn: the parts it is made of,

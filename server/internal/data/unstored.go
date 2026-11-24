@@ -281,15 +281,23 @@ func (r *relatedReader) related(
 }
 
 // follow reads, across one relationship, the records related to any of rows,
-// each once, in the relationship's sort order when it is the last step.
+// each once, in the relationship's sort order when it is the last step. A
+// record is related when it meets every criterion of the relationship.
 func (r *relatedReader) follow(ctx context.Context, h hop, rows []map[string]interface{}, last bool) ([]map[string]interface{}, error) {
+	terms, err := h.rel.matchTerms(h.from)
+	if err != nil {
+		return nil, err
+	}
 	fields, err := r.tableFields(ctx, h.to.TableName)
 	if err != nil {
 		return nil, err
 	}
-	if err := checkField(fields, h.to.TableName, h.to.Column); err != nil {
-		return nil, err
+	for _, t := range terms {
+		if err := checkField(fields, h.to.TableName, t.TargetColumn); err != nil {
+			return nil, err
+		}
 	}
+	sources := sourceColumns(terms)
 	var order []SortField
 	if last {
 		order = relatedSortOrder(h.rel, h.to, fields, QueryOptions{})
@@ -310,14 +318,13 @@ func (r *relatedReader) follow(ctx context.Context, h hop, rows []map[string]int
 	var out []map[string]interface{}
 	seen := map[string]bool{}
 	for _, row := range rows {
-		key := row[h.from.Column]
-		memo := fmt.Sprintf("%s\x00%s\x00%t\x00%v", h.rel.ID, h.to.OccurrenceID, last, key)
+		memo := fmt.Sprintf("%s\x00%s\x00%t", h.rel.ID, h.to.OccurrenceID, last)
+		for _, column := range sources {
+			memo += fmt.Sprintf("\x00%v", row[column])
+		}
 		related, done := r.hops[memo]
 		if !done {
-			match, keys, err := matchCondition(dialect, h.rel, h.from, h.to, key, 1)
-			if err != nil {
-				return nil, err
-			}
+			match, keys := matchCondition(dialect, terms, func(c string) interface{} { return row[c] }, 1)
 			if match == "" {
 				continue
 			}

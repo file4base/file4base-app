@@ -181,8 +181,16 @@ func WriteHTML(report *Report) ([]byte, error) {
 			if len(options) == 0 {
 				options = append(options, "—")
 			}
-			join := fmt.Sprintf("%s::%s %s %s::%s", esc(rel.Left), esc(rel.LeftField),
-				esc(rel.Operator), esc(rel.Right), esc(rel.RightField))
+			criteria := rel.Predicates
+			if len(criteria) == 0 {
+				criteria = []Predicate{{LeftField: rel.LeftField, Operator: rel.Operator, RightField: rel.RightField}}
+			}
+			joins := make([]string, len(criteria))
+			for i, p := range criteria {
+				joins[i] = fmt.Sprintf("%s::%s %s %s::%s", esc(rel.Left), esc(p.LeftField),
+					esc(p.Operator), esc(rel.Right), esc(p.RightField))
+			}
+			join := strings.Join(joins, "</code><br>and <code>")
 			b.WriteString(`<tr><td>` + esc(rel.Name) + `</td><td><code>` + join + `</code></td><td>` +
 				strings.Join(options, "<br>") + `</td></tr>` + "\n")
 		}

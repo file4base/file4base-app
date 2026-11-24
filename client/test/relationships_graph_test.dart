@@ -54,6 +54,7 @@ class MockApiClient extends ApiClient {
     bool allowCreation = false,
     bool cascadeDelete = false,
     String? sortRelated,
+    List<RelationshipPredicateModel>? predicates,
   }) async {
     return RelationshipModel(
       id: 'rel-new',
@@ -66,6 +67,7 @@ class MockApiClient extends ApiClient {
       allowCreation: allowCreation,
       cascadeDelete: cascadeDelete,
       sortRelated: sortRelated,
+      predicates: predicates,
     );
   }
 
@@ -77,6 +79,7 @@ class MockApiClient extends ApiClient {
     bool? allowCreation,
     bool? cascadeDelete,
     String? sortRelated,
+    List<RelationshipPredicateModel>? predicates,
   }) async {
     return RelationshipModel(
       id: id,
@@ -89,6 +92,7 @@ class MockApiClient extends ApiClient {
       allowCreation: allowCreation ?? false,
       cascadeDelete: cascadeDelete ?? false,
       sortRelated: sortRelated,
+      predicates: predicates,
     );
   }
 

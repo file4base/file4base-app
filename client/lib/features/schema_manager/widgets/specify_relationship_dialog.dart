@@ -54,6 +54,15 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   ColumnModel? _rightColumn;
 
   String _operator = '=';
+
+  /// The match criteria, in order. A record is related when it meets all of
+  /// them. The field lists and the operator above edit the selected one; Add
+  /// appends what they show, Change replaces the selected criterion with it.
+  final List<RelationshipPredicateModel> _predicates = [];
+  int? _selectedPredicate;
+
+  /// A message about the last Add or Change that could not be applied.
+  String? _notice;
   /// How the two sides are named in the option labels, so they say which
   /// table they act on instead of "this table" (#36).
   String get _leftSideName => _occurrenceName(_leftOccurrence, 'the other table');
@@ -69,7 +78,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   bool _sortRelated = false;
   late final TextEditingController _nameController;
 
-  final List<String> _operators = ['=', '≠', '<', '≤', '>', '≥'];
+  final List<String> _operators = ['=', '≠', '<', '≤', '>', '≥', '×'];
 
   @override
   void initState() {
@@ -88,6 +97,8 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
       _rightColumn = rightTable?.columns.where((c) => c.id == rel.rightColumnId).firstOrNull;
 
       _operator = rel.operator;
+      _predicates.addAll(rel.predicates);
+      _selectedPredicate = 0;
       _allowCreation = rel.allowCreation;
       _cascadeDelete = rel.cascadeDelete;
       _sortRelated = rel.sortRelated != null && rel.sortRelated!.isNotEmpty;
@@ -115,6 +126,12 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
       }
       _rightColumn ??= rightTable?.columns.isNotEmpty == true ? rightTable!.columns.first : null;
 
+      final first = _editingCriterion;
+      if (first != null && _selfMatchMessage(first) == null) {
+        _predicates.add(first);
+        _selectedPredicate = 0;
+      }
+
       final defaultName = _generateName();
       _nameController = TextEditingController(text: defaultName);
     }
@@ -135,6 +152,299 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
     final lName = _leftOccurrence?.name ?? 'left';
     final rName = _rightOccurrence?.name ?? 'right';
     return '${lName}_to_$rName';
+  }
+
+  bool get _isEditing => widget.initialRelationship != null;
+
+  /// The criterion the field lists and the operator currently show.
+  RelationshipPredicateModel? get _editingCriterion {
+    if (_leftColumn == null || _rightColumn == null) return null;
+    return RelationshipPredicateModel(
+      leftColumnId: _leftColumn!.id,
+      rightColumnId: _rightColumn!.id,
+      operator: _operator,
+    );
+  }
+
+  String? _selfMatchMessage(RelationshipPredicateModel criterion) {
+    if (_leftOccurrence != null &&
+        _leftOccurrence!.id == _rightOccurrence?.id &&
+        criterion.leftColumnId == criterion.rightColumnId) {
+      return 'A field cannot be matched with itself.';
+    }
+    return null;
+  }
+
+  /// Whether the field lists show something other than the selected
+  /// criterion, which Change (or OK) would apply.
+  bool get _hasPendingChange {
+    final editing = _editingCriterion;
+    final selected = _selectedPredicate;
+    return editing != null && selected != null && _predicates[selected] != editing;
+  }
+
+  void _selectPredicate(int index) {
+    final criterion = _predicates[index];
+    setState(() {
+      _selectedPredicate = index;
+      _notice = null;
+      _leftColumn = _getTableForOccurrence(_leftOccurrence)
+              ?.columns
+              .where((c) => c.id == criterion.leftColumnId)
+              .firstOrNull ??
+          _leftColumn;
+      _rightColumn = _getTableForOccurrence(_rightOccurrence)
+              ?.columns
+              .where((c) => c.id == criterion.rightColumnId)
+              .firstOrNull ??
+          _rightColumn;
+      _operator = _operators.contains(criterion.operator) ? criterion.operator : '=';
+    });
+  }
+
+  /// Why the criterion in the field lists cannot be added or applied, if
+  /// it cannot. [replacing] is the index it would replace.
+  String? _criterionProblem(RelationshipPredicateModel? criterion, {int? replacing}) {
+    if (criterion == null) return 'Select a field on each side.';
+    final self = _selfMatchMessage(criterion);
+    if (self != null) return self;
+    for (var i = 0; i < _predicates.length; i++) {
+      if (i != replacing && _predicates[i] == criterion) {
+        return 'This criterion is already in the list.';
+      }
+    }
+    return null;
+  }
+
+  void _addPredicate() {
+    final criterion = _editingCriterion;
+    final problem = _criterionProblem(criterion);
+    setState(() {
+      _notice = problem;
+      if (problem == null) {
+        _predicates.add(criterion!);
+        _selectedPredicate = _predicates.length - 1;
+      }
+    });
+  }
+
+  void _changePredicate() {
+    final index = _selectedPredicate;
+    if (index == null) return;
+    final criterion = _editingCriterion;
+    final problem = _criterionProblem(criterion, replacing: index);
+    setState(() {
+      _notice = problem;
+      if (problem == null) _predicates[index] = criterion!;
+    });
+  }
+
+  void _deletePredicate() {
+    final index = _selectedPredicate;
+    if (index == null) return;
+    setState(() {
+      _notice = null;
+      _predicates.removeAt(index);
+      _selectedPredicate = _predicates.isEmpty ? null : (index < _predicates.length ? index : _predicates.length - 1);
+    });
+    if (_selectedPredicate != null) _selectPredicate(_selectedPredicate!);
+  }
+
+  void _movePredicate(int delta) {
+    final index = _selectedPredicate;
+    if (index == null) return;
+    final target = index + delta;
+    if (target < 0 || target >= _predicates.length) return;
+    setState(() {
+      _notice = null;
+      final moved = _predicates.removeAt(index);
+      _predicates.insert(target, moved);
+      _selectedPredicate = target;
+    });
+  }
+
+  /// An occurrence over another table makes the criteria's fields on that
+  /// side meaningless, so the list starts again from the field lists.
+  void _occurrenceChanged({required bool tableChanged}) {
+    _nameController.text = _generateName();
+    _notice = null;
+    if (!tableChanged) return;
+    _predicates.clear();
+    _selectedPredicate = null;
+    final first = _editingCriterion;
+    if (first != null && _selfMatchMessage(first) == null) {
+      _predicates.add(first);
+      _selectedPredicate = 0;
+    }
+  }
+
+  /// The criteria OK saves: the list, with a pending edit of the selected
+  /// criterion applied as Change would apply it.
+  List<RelationshipPredicateModel> get _resultPredicates {
+    final result = List<RelationshipPredicateModel>.of(_predicates);
+    final index = _selectedPredicate;
+    if (_hasPendingChange && _criterionProblem(_editingCriterion, replacing: index) == null) {
+      result[index!] = _editingCriterion!;
+    }
+    return result;
+  }
+
+  /// Why OK is unavailable, if it is.
+  String? get _blockingProblem {
+    if (_leftOccurrence == null || _rightOccurrence == null) return 'Select a table occurrence on each side.';
+    for (final (occurrence, column) in [(_leftOccurrence, _leftColumn), (_rightOccurrence, _rightColumn)]) {
+      if ((_getTableForOccurrence(occurrence)?.columns ?? []).isEmpty) {
+        return 'The table of "${occurrence!.name}" has no fields to match.';
+      }
+      if (column == null) return 'Select a field on each side.';
+    }
+    if (_hasPendingChange) {
+      final pending = _criterionProblem(_editingCriterion, replacing: _selectedPredicate);
+      if (pending != null) return pending;
+    }
+    final predicates = _resultPredicates;
+    if (predicates.isEmpty) return 'Add at least one match criterion.';
+    for (final criterion in predicates) {
+      final self = _selfMatchMessage(criterion);
+      if (self != null) return self;
+    }
+    return null;
+  }
+
+  String _fieldLabel(TableOccurrenceModel? occurrence, String columnId, String? storedName) {
+    final column = _getTableForOccurrence(occurrence)?.columns.where((c) => c.id == columnId).firstOrNull;
+    final field = column == null
+        ? (storedName ?? columnId)
+        : (column.displayName.isNotEmpty ? column.displayName : column.name);
+    return '${occurrence?.name ?? '?'}::$field';
+  }
+
+  Widget _buildCriteria(BuildContext context) {
+    final theme = Theme.of(context);
+    final selected = _selectedPredicate;
+    final allEqual = _resultPredicates.every((p) => p.operator == '=');
+    final problem = _blockingProblem;
+
+    Widget actionButton(String label, IconData icon, VoidCallback? onPressed) => TextButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 16),
+          label: Text(label, style: const TextStyle(fontSize: 12.5)),
+          style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Match criteria: a record is related when it meets every criterion.',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey),
+              ),
+            ),
+            actionButton('Add', Icons.add, _addPredicate),
+            actionButton('Change', Icons.edit_outlined, selected == null ? null : _changePredicate),
+            actionButton('Delete', Icons.delete_outline, selected == null ? null : _deletePredicate),
+            IconButton(
+              tooltip: 'Move up',
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              icon: const Icon(Icons.arrow_upward),
+              onPressed: selected == null || selected == 0 ? null : () => _movePredicate(-1),
+            ),
+            IconButton(
+              tooltip: 'Move down',
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              icon: const Icon(Icons.arrow_downward),
+              onPressed: selected == null || selected >= _predicates.length - 1 ? null : () => _movePredicate(1),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Container(
+          constraints: const BoxConstraints(minHeight: 36, maxHeight: 132),
+          decoration: BoxDecoration(
+            border: Border.all(color: theme.dividerColor),
+            borderRadius: BorderRadius.circular(6),
+            color: theme.cardColor,
+          ),
+          child: _predicates.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(10),
+                  child: Text('No criteria', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _predicates.length,
+                  itemBuilder: (ctx, idx) {
+                    final criterion = _predicates[idx];
+                    final isSelected = idx == selected;
+                    return InkWell(
+                      key: ValueKey('relationship-criterion-$idx'),
+                      onTap: () => _selectPredicate(idx),
+                      child: Container(
+                        color: isSelected ? theme.colorScheme.primary.withValues(alpha: 0.15) : Colors.transparent,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _fieldLabel(_leftOccurrence, criterion.leftColumnId, criterion.leftColumnName),
+                                textAlign: TextAlign.right,
+                                style: TextStyle(fontSize: 12.5, fontWeight: isSelected ? FontWeight.bold : null),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 40,
+                              child: Text(
+                                criterion.operator,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                _fieldLabel(_rightOccurrence, criterion.rightColumnId, criterion.rightColumnName),
+                                style: TextStyle(fontSize: 12.5, fontWeight: isSelected ? FontWeight.bold : null),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        if (_hasPendingChange)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'The fields above differ from criterion ${selected! + 1}: click Change to apply them, '
+              'or Add to add them as a new criterion. OK applies them to criterion ${selected + 1}.',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            ),
+          ),
+        if ((_notice ?? problem) != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              (_notice ?? problem)!,
+              style: TextStyle(fontSize: 11.5, color: theme.colorScheme.error),
+            ),
+          ),
+        if (_allowCreation && !allEqual)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              'Records can be created through a relationship only when every criterion uses =; '
+              'File4Base will refuse to create them through this one.',
+              style: TextStyle(fontSize: 11.5, color: Colors.orange.shade800),
+            ),
+          ),
+      ],
+    );
   }
 
   Widget _buildFieldList(
@@ -253,16 +563,22 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                                 child: Text(o.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                               );
                             }).toList(),
-                            onChanged: (occ) {
-                              if (occ != null) {
-                                setState(() {
-                                  _leftOccurrence = occ;
-                                  final tbl = _getTableForOccurrence(occ);
-                                  _leftColumn = tbl?.columns.isNotEmpty == true ? tbl!.columns.first : null;
-                                  _nameController.text = _generateName();
-                                });
-                              }
-                            },
+                            // An existing relationship keeps its occurrences.
+                            onChanged: _isEditing
+                                ? null
+                                : (occ) {
+                                    if (occ != null) {
+                                      setState(() {
+                                        final tableChanged = occ.baseTableId != _leftOccurrence?.baseTableId;
+                                        _leftOccurrence = occ;
+                                        final tbl = _getTableForOccurrence(occ);
+                                        if (tableChanged) {
+                                          _leftColumn = tbl?.columns.isNotEmpty == true ? tbl!.columns.first : null;
+                                        }
+                                        _occurrenceChanged(tableChanged: tableChanged);
+                                      });
+                                    }
+                                  },
                           ),
                         ),
                       ),
@@ -271,7 +587,10 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                         context,
                         occurrence: _leftOccurrence,
                         selectedColumn: _leftColumn,
-                        onSelected: (col) => setState(() => _leftColumn = col),
+                        onSelected: (col) => setState(() {
+                          _leftColumn = col;
+                          _notice = null;
+                        }),
                       ),
                     ],
                   ),
@@ -301,7 +620,12 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                               );
                             }).toList(),
                             onChanged: (op) {
-                              if (op != null) setState(() => _operator = op);
+                              if (op != null) {
+                                setState(() {
+                                  _operator = op;
+                                  _notice = null;
+                                });
+                              }
                             },
                           ),
                         ),
@@ -332,16 +656,21 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                                 child: Text(o.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                               );
                             }).toList(),
-                            onChanged: (occ) {
-                              if (occ != null) {
-                                setState(() {
-                                  _rightOccurrence = occ;
-                                  final tbl = _getTableForOccurrence(occ);
-                                  _rightColumn = tbl?.columns.isNotEmpty == true ? tbl!.columns.first : null;
-                                  _nameController.text = _generateName();
-                                });
-                              }
-                            },
+                            onChanged: _isEditing
+                                ? null
+                                : (occ) {
+                                    if (occ != null) {
+                                      setState(() {
+                                        final tableChanged = occ.baseTableId != _rightOccurrence?.baseTableId;
+                                        _rightOccurrence = occ;
+                                        final tbl = _getTableForOccurrence(occ);
+                                        if (tableChanged) {
+                                          _rightColumn = tbl?.columns.isNotEmpty == true ? tbl!.columns.first : null;
+                                        }
+                                        _occurrenceChanged(tableChanged: tableChanged);
+                                      });
+                                    }
+                                  },
                           ),
                         ),
                       ),
@@ -350,14 +679,19 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                         context,
                         occurrence: _rightOccurrence,
                         selectedColumn: _rightColumn,
-                        onSelected: (col) => setState(() => _rightColumn = col),
+                        onSelected: (col) => setState(() {
+                          _rightColumn = col;
+                          _notice = null;
+                        }),
                       ),
                     ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            _buildCriteria(context),
+            const SizedBox(height: 12),
             const Divider(),
             const SizedBox(height: 8),
             // These options act on the right-hand occurrence: the
@@ -424,20 +758,18 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _leftOccurrence == null ||
-                  _rightOccurrence == null ||
-                  _leftColumn == null ||
-                  _rightColumn == null ||
-                  (_leftOccurrence!.id == _rightOccurrence!.id && _leftColumn!.id == _rightColumn!.id)
+          onPressed: _blockingProblem != null
               ? null
               : () {
+                  final predicates = _resultPredicates;
                   Navigator.of(context).pop({
                     'name': _nameController.text.trim().isNotEmpty ? _nameController.text.trim() : _generateName(),
                     'left_occurrence_id': _leftOccurrence!.id,
-                    'left_column_id': _leftColumn!.id,
+                    'left_column_id': predicates.first.leftColumnId,
                     'right_occurrence_id': _rightOccurrence!.id,
-                    'right_column_id': _rightColumn!.id,
-                    'operator': _operator,
+                    'right_column_id': predicates.first.rightColumnId,
+                    'operator': predicates.first.operator,
+                    'predicates': predicates,
                     'allow_creation': _allowCreation,
                     'cascade_delete': _cascadeDelete,
                     'sort_related': _sortRelated ? 'asc' : null,
