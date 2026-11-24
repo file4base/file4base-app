@@ -355,6 +355,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		return analyzeAndConvertHTMLDDR(req)
 	}
 
+	rawXML, stripped := stripXMLControlChars(rawXML)
 	root, err := parseXMLTree([]byte(rawXML))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidMigrationXML, err)
@@ -370,6 +371,15 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		Unsupported:          make([]ReportItem, 0),
 		Rejected:             make([]ReportItem, 0),
 		ManualActionRequired: make([]ReportItem, 0),
+	}
+	if stripped > 0 {
+		addReportItem(report, ReportItem{
+			Category:   CategoryTranslated,
+			Domain:     "design",
+			SourceName: "design document",
+			Detail: fmt.Sprintf("Removed %d control character(s) that XML 1.0 does not allow; "+
+				"FileMaker writes them unescaped from text such as layout labels", stripped),
+		})
 	}
 	// FMDeveloperTool 20+ / Claris 26 write <FMSaveAsXML>, which keeps a
 	// table's fields in FieldsForTables and a script's steps in
@@ -2442,6 +2452,30 @@ func convertAccountNode(an *xmlNode) (*schema.BundleAccount, []ReportItem) {
 }
 
 // ─── Minimal XML Tree Helpers ──────────────────────────────────────────────
+
+// stripXMLControlChars removes the characters XML 1.0 forbids (C0 controls
+// other than tab, line feed and carriage return, and U+FFFE/U+FFFF).
+// FileMaker copies them unescaped from stored text, for example an ETX
+// pasted into a layout label, so its own export would otherwise be refused.
+// It returns the input unchanged, without copying, when nothing is removed.
+func stripXMLControlChars(s string) (string, int) {
+	if strings.IndexFunc(s, notXMLChar) < 0 {
+		return s, 0
+	}
+	removed := 0
+	clean := strings.Map(func(r rune) rune {
+		if notXMLChar(r) {
+			removed++
+			return -1
+		}
+		return r
+	}, s)
+	return clean, removed
+}
+
+func notXMLChar(r rune) bool {
+	return (r < 0x20 && r != '\t' && r != '\n' && r != '\r') || r == 0xFFFE || r == 0xFFFF
+}
 
 type xmlNode struct {
 	Name     string
