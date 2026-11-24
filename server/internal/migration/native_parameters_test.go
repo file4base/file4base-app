@@ -73,3 +73,45 @@ func TestNativeNestedCalculatedFieldRemainsCalculation(t *testing.T) {
 		t.Fatal("native calculated field was silently converted to a stored snapshot")
 	}
 }
+
+// FileMaker writes layout and script menu separators as items named "-" with
+// isSeparatorItem="True", on the deleted-occurrence placeholder. They are
+// skipped; a real layout whose occurrence was deleted is reported, not refused.
+func TestNativeSeparatorsAndDeletedOccurrenceLayouts(t *testing.T) {
+	const design = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Visits"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Visits"/><ObjectList><Field id="1" name="Status" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <TableOccurrenceCatalog><TableOccurrence id="1" name="Visits"><BaseTableSourceReference><BaseTableReference id="129" name="Visits"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
+ <LayoutCatalog>
+  <Layout id="1" name="Visit"><TableOccurrenceReference id="1" name="Visits"/></Layout>
+  <Layout id="2" name="-" isSeparatorItem="True"><TableOccurrenceReference id="-1" name="&lt;Table Missing&gt;"/></Layout>
+  <Layout id="3" name="Old report"><TableOccurrenceReference id="-1" name="&lt;Table Missing&gt;"/></Layout>
+ </LayoutCatalog>
+ <ScriptCatalog><Script id="80" name="Start"/><Script id="81" name="-" isSeparatorItem="True"/></ScriptCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	result, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Bundle.Layouts) != 1 || result.Bundle.Layouts[0].Name != "Visit" {
+		t.Fatalf("layouts = %+v, want only Visit", result.Bundle.Layouts)
+	}
+	if len(result.Bundle.Scripts) != 1 || result.Bundle.Scripts[0].Name != "Start" {
+		t.Fatalf("scripts = %+v, want only Start", result.Bundle.Scripts)
+	}
+	if n := result.Report.Counts.RejectedCount; n != 0 {
+		t.Fatalf("rejected = %d (%+v), want 0", n, result.Report.Rejected)
+	}
+	reported := 0
+	for _, item := range result.Report.Unsupported {
+		if item.Domain == "layout" {
+			if item.SourceName != "Old report" {
+				t.Fatalf("separator reported: %+v", item)
+			}
+			reported++
+		}
+	}
+	if reported != 1 {
+		t.Fatalf("deleted-occurrence layout reported %d times, want 1", reported)
+	}
+}

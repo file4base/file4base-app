@@ -327,6 +327,18 @@ func normalizeSaveAsXMLReferences(root *xmlNode) {
 	}
 }
 
+// nativeSeparatorMarker reports a layout or script menu separator, which
+// FileMaker writes as an item named "-" with isSeparatorItem="True". It
+// carries no design and has no File4Base counterpart.
+func nativeSeparatorMarker(node *xmlNode) bool {
+	value := firstAttr(node, "isSeparatorItem")
+	return value != "" && !strings.EqualFold(value, "false") && value != "0"
+}
+
+// deletedTableOccurrence is the name FileMaker gives the table occurrence
+// of a layout whose occurrence was deleted.
+const deletedTableOccurrence = "<Table Missing>"
+
 func nativeFolderMarker(node *xmlNode) bool {
 	value := firstAttr(node, "isFolder")
 	return value != "" && !strings.EqualFold(value, "false") && value != "0"
