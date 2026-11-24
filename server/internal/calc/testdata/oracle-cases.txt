@@ -1,0 +1,298 @@
+1 + 1
+0.1 + 0.2
+1 / 3
+2 / 3
+200 / 3
+10 / 4
+1 / 7 * 7
+-7 / 2
+1 / 0
+0 / 5
+2 ^ 10
+-2 ^ 2
+2 ^ -1
+2 ^ 0.5
+1e3
+1.50
+0.5
+-0.5
+.5
+100
+1000000
+12345678901234567890
+123456789.123456789
+"Mary" * 2
+"abc" + 1
+"12 €" + 1
+"a1b2" + 0
+"-5x" + 0
+"(5)" + 0
+"1.5" + 0
+"1,5" + 0
+"1e3" + 0
+"" + 1
+"" & ""
+1 & 2
+0.5 & ""
+-0.5 & ""
+1/3 & ""
+"x" & 1.25
+"abc" = "ABC"
+"abc" = "abc "
+"10" < "9"
+10 < 9
+"10" < 9
+"abc" = 0
+"" = 0
+0 = ""
+"0" = 0
+"a" < "b"
+"é" = "e"
+1 = 1.0
+If ( "abc" ; 1 ; 0 )
+If ( "a1" ; 1 ; 0 )
+If ( "0" ; 1 ; 0 )
+If ( "" ; 1 ; 0 )
+If ( 0.0001 ; 1 ; 0 )
+If ( -1 ; 1 ; 0 )
+If ( 1 = 2 ; "a" ; 1 = 1 ; "b" ; "c" )
+If ( 0 ; "a" )
+Case ( 0 ; "a" ; 0 ; "b" ; "c" )
+Case ( 0 ; "a" )
+Choose ( 1 ; "a" ; "b" ; "c" )
+Choose ( 5 ; "a" ; "b" )
+Choose ( -1 ; "a" ; "b" )
+Choose ( 1.7 ; "a" ; "b" )
+not 0
+not "abc"
+1 and "x"
+1 xor 1
+1 xor 0
+3 > 2 > 1
+1 < 2 = 1
+IsEmpty ( "" )
+IsEmpty ( " " )
+IsEmpty ( 0 )
+Abs ( -3.5 )
+Int ( -3.7 )
+Int ( 3.7 )
+Floor ( -3.2 )
+Ceiling ( -3.2 )
+Round ( 2.5 ; 0 )
+Round ( -2.5 ; 0 )
+Round ( 1.005 ; 2 )
+Round ( 1234.5678 ; -2 )
+Round ( 1.25 ; 1 )
+Round ( 1.35 ; 1 )
+Truncate ( -1.99 ; 1 )
+Mod ( 7 ; 3 )
+Mod ( -7 ; 3 )
+Mod ( 7 ; -3 )
+Mod ( 7.5 ; 2 )
+Div ( 7 ; 2 )
+Div ( -7 ; 2 )
+Sign ( -0 )
+Sqrt ( 2 )
+Sqrt ( -1 )
+Exp ( 1 )
+Ln ( 0 )
+Log ( 1000 )
+Pi
+Sum ( 1 ; 2 ; "3" ; "" )
+Count ( 1 ; "" ; "a" ; 0 )
+Average ( 1 ; 2 ; "" )
+Min ( 3 ; "2" ; 10 )
+Max ( "a" ; "b" )
+Max ( 2 ; "10" )
+List ( "a" ; "" ; "b" )
+List ( "" ; "" )
+Length ( "héllo" )
+Length ( 1.50 )
+Length ( "" )
+Upper ( "éa" )
+Proper ( "jean-pierre o'neil mcDONALD 3rd" )
+Trim ( "  a  b  " )
+TrimAll ( "  a   b  " ; 1 ; 0 )
+Left ( "abcdef" ; 2 )
+Left ( "abc" ; -1 )
+Left ( "abc" ; 2.9 )
+Right ( "abcdef" ; 2 )
+Middle ( "abcdef" ; 2 ; 3 )
+Middle ( "abcdef" ; 0 ; 3 )
+Middle ( "abcdef" ; 5 ; 10 )
+Position ( "Banana" ; "an" ; 1 ; 2 )
+Position ( "Banana" ; "AN" ; 1 ; 1 )
+Position ( "Banana" ; "an" ; 6 ; -1 )
+Position ( "Banana" ; "an" ; 0 ; 1 )
+Position ( "Banana" ; "" ; 1 ; 1 )
+PatternCount ( "aaaa" ; "aa" )
+PatternCount ( "Banana" ; "AN" )
+Substitute ( "aXbXc" ; "x" ; "-" )
+Substitute ( "aXbXc" ; "X" ; "-" )
+Substitute ( "abc" ; [ "a" ; "b" ] ; [ "b" ; "c" ] )
+Substitute ( "abc" ; "" ; "z" )
+Replace ( "abcdef" ; 2 ; 3 ; "XY" )
+Replace ( "abc" ; 10 ; 1 ; "Z" )
+Replace ( "abc" ; 0 ; 1 ; "Z" )
+Filter ( "a1-b2.c3" ; "0123456789" )
+Filter ( "ABC" ; "abc" )
+Exact ( "a" ; "A" )
+WordCount ( "Hello, world! It's a test.  ok" )
+LeftWords ( "  one two-three four" ; 2 )
+RightWords ( "one two three." ; 2 )
+MiddleWords ( "one two three four" ; 2 ; 2 )
+WordCount ( "1.5 kg l'arbre e-mail" )
+Char ( 65 )
+Char ( 6566 )
+Code ( "AB" )
+Code ( "" )
+Quote ( "a\"b¶c\\d" )
+SerialIncrement ( "INV0099" ; 1 )
+SerialIncrement ( "abc" ; 1 )
+SerialIncrement ( "a9b9" ; 1 )
+ValueCount ( "a¶¶b¶" )
+ValueCount ( "a¶b" )
+ValueCount ( "" )
+ValueCount ( "¶" )
+GetValue ( "a¶¶b" ; 2 )
+GetValue ( "a¶b" ; 3 )
+LeftValues ( "a¶b¶c" ; 2 )
+RightValues ( "a¶b¶c" ; 1 )
+MiddleValues ( "a¶b¶c" ; 2 ; 5 )
+FilterValues ( "a¶b¶A¶c" ; "a¶c" )
+FilterValues ( "a¶b" ; "x" )
+UniqueValues ( "a¶A¶b" )
+SortValues ( "b¶a¶C" )
+List ( "a¶" ; "b" )
+GetAsNumber ( "abc" )
+GetAsNumber ( "12abc3.4.5" )
+GetAsNumber ( "-" )
+GetAsNumber ( "1.234,5" )
+GetAsNumber ( "" )
+GetAsNumber ( "  42  " )
+GetAsNumber ( "1-2" )
+GetAsText ( 0.5 )
+GetAsText ( 1/3 )
+GetAsText ( 1000000.10 )
+GetAsDate ( "24/11/2026" )
+GetAsDate ( "11/24/2026" )
+GetAsDate ( "2026-11-24" )
+GetAsDate ( "31/02/2026" )
+GetAsDate ( 739579 )
+GetAsTime ( "13:45" )
+GetAsTime ( "49:30:00" )
+GetAsTime ( "1:2:3" )
+GetAsTime ( 3600 )
+GetAsTimestamp ( "24/11/2026 13:45:10" )
+GetAsTimestamp ( 0 )
+GetAsTimestamp ( 1 )
+GetAsBoolean ( "abc" )
+GetAsBoolean ( 2 )
+Date ( 11 ; 24 ; 2026 )
+Date ( 13 ; 1 ; 2026 )
+Date ( 2 ; 30 ; 2024 )
+Date ( 0 ; 1 ; 2026 )
+Date ( 1 ; 0 ; 2026 )
+Date ( 1 ; 1 ; 1 )
+GetAsNumber ( Date ( 1 ; 1 ; 1 ) )
+GetAsNumber ( Date ( 11 ; 24 ; 2026 ) )
+Date ( 11 ; 24 ; 2026 ) + 7
+Date ( 1 ; 1 ; 2027 ) - Date ( 11 ; 24 ; 2026 )
+Date ( 11 ; 24 ; 2026 ) - 0.5
+Date ( 11 ; 24 ; 2026 ) & ""
+Date ( 11 ; 24 ; 2026 ) * 1
+Year ( Date ( 11 ; 24 ; 2026 ) )
+Month ( "24/11/2026" )
+Day ( "24/11/2026" )
+DayOfWeek ( Date ( 11 ; 24 ; 2026 ) )
+DayOfYear ( Date ( 12 ; 31 ; 2024 ) )
+DayName ( Date ( 11 ; 24 ; 2026 ) )
+MonthName ( Date ( 11 ; 24 ; 2026 ) )
+WeekOfYear ( Date ( 1 ; 1 ; 2026 ) )
+WeekOfYear ( Date ( 11 ; 24 ; 2026 ) )
+WeekOfYearFiscal ( Date ( 1 ; 1 ; 2026 ) ; 2 )
+WeekOfYearFiscal ( Date ( 12 ; 29 ; 2025 ) ; 2 )
+Time ( 13 ; 45 ; 10 )
+Time ( 25 ; 0 ; 0 )
+Time ( 0 ; 0 ; 1.5 )
+Time ( -1 ; 0 ; 0 )
+Time ( 13 ; 45 ; 10 ) + 60
+Time ( 13 ; 45 ; 10 ) & ""
+GetAsNumber ( Time ( 13 ; 45 ; 10 ) )
+Hour ( Time ( 49 ; 30 ; 0 ) )
+Minute ( "13:45:10" )
+Seconds ( Time ( 0 ; 0 ; 1.5 ) )
+Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 45 ; 10 ) )
+Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 25 ; 0 ; 0 ) )
+Timestamp ( Date ( 11 ; 24 ; 2026 ) ; Time ( 13 ; 45 ; 10 ) ) + 60
+Timestamp ( Date ( 11 ; 24 ; 2026 ) ; 0 ) - Timestamp ( Date ( 11 ; 23 ; 2026 ) ; 0 )
+GetAsNumber ( Timestamp ( Date ( 1 ; 2 ; 1 ) ; 0 ) )
+Date ( 11 ; 24 ; 2026 ) + Time ( 1 ; 0 ; 0 )
+Date ( 11 ; 24 ; 2026 ) = "24/11/2026"
+Date ( 11 ; 24 ; 2026 ) < Date ( 11 ; 25 ; 2026 )
+Let ( x = 2 ; x * 3 )
+Let ( [ a = 1 ; b = a + 1 ] ; a & b )
+Let ( [ a = 1 ; a = a + 1 ] ; a )
+Let ( [ a = 1 ; b = Let ( a = 5 ; a ) ] ; a & b )
+Let ( [ $x = 5 ] ; $x * 2 )
+Let ( [ $$g = "z" ] ; $$g )
+While ( [ i = 0 ; out = "" ] ; i < 3 ; [ i = i + 1 ; out = out & i ] ; out )
+While ( [ i = 0 ] ; i < 0 ; [ i = i + 1 ] ; i )
+Evaluate ( "1 + 2" )
+Evaluate ( "\"a\" & \"b\"" )
+Evaluate ( "" )
+IsValidExpression ( "1 +" )
+IsValidExpression ( "Upper ( \"a\" )" )
+"a¶b"
+"tab	here"
+"back\\slash"
+"quote\"inside"
+"pilcrow\¶literal"
+Upper ( "ß" )
+Lower ( "İ" )
+Length ( "👍" )
+Left ( "👍a" ; 1 )
+Exact ( "é" ; "é" )
+Substitute ( "Français" ; "ç" ; "c" )
+Position ( "ÉCOLE" ; "é" ; 1 ; 1 )
+PatternCount ( "Ééé" ; "é" )
+"É" = "é"
+"Ecole" < "École"
+"école" < "ecolf"
+SetPrecision ( 1 / 3 ; 20 )
+SetPrecision ( 2 / 3 ; 5 )
+Round ( 1 / 3 ; 20 )
+1 / 3 * 3
+0.1 * 3
+1 - 0.9
+99999999999999999999 + 1
+1e20 & ""
+1e-5 & ""
+0.00001 & ""
+123456789012345678 & ""
+Ceiling ( 1e-20 )
+Random < 1
+Length ( Get ( UUID ) )
+Middle ( Get ( UUID ) ; 15 ; 1 )
+Exp ( 0 ) & ""
+Sqrt ( 16 ) & ""
+Abs ( "" )
+Round ( "" ; 2 )
+Int ( "abc" )
+Upper ( "" )
+Left ( "" ; 3 )
+-""
+-"abc"
+- "5"
++"5"
+"5" * "4"
+"5" & "4"
+"5" + "4"
+2 * ""
+Sum ( "" )
+Count ( "" )
+List ( 1.50 ; 2 )
+List ( Date ( 1 ; 2 ; 2026 ) )
+Min ( Date ( 1 ; 2 ; 2026 ) ; Date ( 1 ; 1 ; 2026 ) )
+Max ( "10" ; "9" )
+Max ( "b" ; 9 )

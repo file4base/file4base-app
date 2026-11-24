@@ -273,7 +273,8 @@ func TestEvaluationErrorsAreReported(t *testing.T) {
 		wants   string
 	}{
 		{`fee / 0`, calc.Record{"fee": 10.0}, "division by zero"},
-		{`name * 2`, calc.Record{"name": "Mary"}, "is not a number"},
+		// Text that holds no number is 0, as in FileMaker: "Mary" * 2 is 0.
+		{`Sqrt ( fee * -1 )`, calc.Record{"fee": 10.0}, "no answer"},
 		{`YEAR(name)`, calc.Record{"name": "Mary"}, "is not a date"},
 	}
 	for _, c := range cases {
