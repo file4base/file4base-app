@@ -35,6 +35,9 @@ func (e *Expr) Fields() []string {
 type Reference struct {
 	Table string
 	Field string
+	// Missing is set for FileMaker's placeholder for a deleted table or
+	// field, such as <Table Missing>::<Field Missing>. Reading it is an error.
+	Missing bool
 }
 
 // RelatedFields lists the Table::Field references of the formula.
@@ -42,7 +45,7 @@ func (e *Expr) RelatedFields() []Reference {
 	seen := map[Reference]struct{}{}
 	e.walk(func(n node) {
 		if f, ok := n.(fieldNode); ok && f.table != "" {
-			seen[Reference{Table: f.table, Field: f.name}] = struct{}{}
+			seen[Reference{Table: f.table, Field: f.name, Missing: f.missing}] = struct{}{}
 		}
 	})
 	out := make([]Reference, 0, len(seen))
@@ -175,6 +178,7 @@ type fieldNode struct {
 	table, name string
 	repetition  node // nil reads the first (or current) repetition
 	at          int
+	missing     bool // the table or field was deleted in FileMaker
 }
 
 // variableNode reads a $local or $$global script variable.
@@ -287,6 +291,11 @@ func parseFormula(src string, known *names, lib *Library, params []string) (node
 	tokens, err := lex(src, known)
 	if err != nil {
 		return nil, err
+	}
+	if len(tokens) == 1 {
+		// Only comments, as FileMaker allows for a condition switched off by
+		// commenting it out: the answer is empty.
+		return textNode{at: 0}, nil
 	}
 	p := &parser{tokens: tokens, lib: lib}
 	if len(params) > 0 {
@@ -535,7 +544,7 @@ func (p *parser) parsePrimary() (node, error) {
 		if err != nil {
 			return nil, err
 		}
-		return fieldNode{table: t.table, name: t.text, repetition: rep, at: t.pos}, nil
+		return fieldNode{table: t.table, name: t.text, repetition: rep, at: t.pos, missing: t.missing}, nil
 
 	case tokIdent:
 		if t.table == "" {
@@ -550,6 +559,12 @@ func (p *parser) parsePrimary() (node, error) {
 				return numberNode{value: decimal.Zero, at: t.pos}, nil
 			case strings.EqualFold(t.text, "pi"):
 				return callNode{name: "PI", at: t.pos}, nil
+			case strings.EqualFold(t.text, "random"):
+				return callNode{name: "RANDOM", at: t.pos}, nil
+			case strings.EqualFold(t.text, "self"):
+				// The object the formula belongs to (a layout object's
+				// condition, a field's validation): the context answers it.
+				return getNode{selector: "SELF", at: t.pos}, nil
 			}
 		}
 		rep, err := p.parseRepetition()

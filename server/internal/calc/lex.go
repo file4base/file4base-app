@@ -49,6 +49,8 @@ type token struct {
 	table string // the table occurrence written before "::", if any
 	pos   int
 	end   int // where the token's source text ends
+	// missing marks FileMaker's placeholder for a deleted table or field.
+	missing bool
 }
 
 func (t token) isOperator(op string) bool {
@@ -138,7 +140,7 @@ func lex(src string, known *names) ([]token, error) {
 			start := i
 			i = scanNumber(runes, i, known.decimalSeparator())
 			text := string(runes[start:i])
-			if d := known.decimalSeparator(); d != '.' {
+			if d := known.decimalSeparator(); d != '.' && !strings.Contains(text, ".") {
 				text = strings.Replace(text, string(d), ".", 1)
 			}
 			if strings.HasSuffix(text, ".") {
@@ -181,7 +183,7 @@ func lex(src string, known *names) ([]token, error) {
 				i++
 			}
 			nameStart := i
-			for i < len(runes) && isNameRune(runes[i]) {
+			for i < len(runes) && (isNameRune(runes[i]) || runes[i] == '#' || runes[i] == '.') {
 				i++
 			}
 			if i == nameStart {
@@ -202,6 +204,11 @@ func lex(src string, known *names) ([]token, error) {
 			}
 			if isNameStart(ch) {
 				t, next := lexWord(runes, i)
+				tokens = append(tokens, t)
+				i = next
+				continue
+			}
+			if t, next, ok := lexMissingReference(runes, i); ok {
 				tokens = append(tokens, t)
 				i = next
 				continue
@@ -271,6 +278,35 @@ func quotedNamePart(runes []rune, i int) (string, int, error) {
 	return name, end + 1, nil
 }
 
+// lexMissingReference reads what FileMaker writes for a reference to a table
+// or field that was deleted: "<Table Missing>::<Field Missing>" (in French
+// "<Table manquante>::<Rubrique manquante>"), or "Articles::<Field Missing>".
+func lexMissingReference(runes []rune, i int) (token, int, bool) {
+	part := func(j int) (string, int, bool) {
+		if j >= len(runes) || runes[j] != '<' {
+			return "", 0, false
+		}
+		end := indexRunes(runes, j+1, []rune(">"))
+		if end < 0 {
+			return "", 0, false
+		}
+		inner := string(runes[j+1 : end])
+		if inner == "" || strings.ContainsAny(inner, "<=\r\n\"") {
+			return "", 0, false
+		}
+		return string(runes[j : end+1]), end + 1, true
+	}
+	table, next, ok := part(i)
+	if !ok || next+1 >= len(runes) || runes[next] != ':' || runes[next+1] != ':' {
+		return token{}, 0, false
+	}
+	field, end, ok := part(next + 2)
+	if !ok {
+		return token{}, 0, false
+	}
+	return token{kind: tokField, table: table, text: field, missing: true, pos: i}, end, true
+}
+
 // lexWord reads a plain name, and "Table::Field" when "::" follows. A plain
 // name may hold dots, as FileMaker field names often do ("Prix.HT").
 func lexWord(runes []rune, i int) (token, int) {
@@ -280,6 +316,11 @@ func lexWord(runes []rune, i int) (token, int) {
 		i++
 	}
 	word := string(runes[start:i])
+	if i+2 < len(runes) && runes[i] == ':' && runes[i+1] == ':' && runes[i+2] == '<' {
+		if end := indexRunes(runes, i+3, []rune(">")); end > 0 {
+			return token{kind: tokField, table: word, text: string(runes[i+2 : end+1]), missing: true, pos: start}, end + 1
+		}
+	}
 	if i+2 < len(runes) && runes[i] == ':' && runes[i+1] == ':' && isNameStart(runes[i+2]) {
 		j := i + 2
 		for j < len(runes) && isNameRune(runes[j]) {
@@ -317,6 +358,9 @@ func lexKnownField(runes []rune, i int, known *names) (token, int, bool) {
 		if end+1 < len(runes) && runes[end] == ':' && runes[end+1] == ':' {
 			continue // an occurrence that happens to be named like a field
 		}
+		if _, builtin := functions[strings.ToUpper(field)]; builtin && callFollows(runes, end) {
+			continue // Date ( 1 ; 1 ; 1901 ) calls Date, even beside a field "Date"
+		}
 		return token{kind: tokField, text: field, pos: i}, end, true
 	}
 	return token{}, 0, false
@@ -334,15 +378,19 @@ func lexCustomFunctionName(runes []rune, i int, known *names) (token, int, bool)
 		if !ok || !endsName(runes, end) {
 			continue
 		}
-		j := end
-		for j < len(runes) && unicode.IsSpace(runes[j]) {
-			j++
-		}
-		if j < len(runes) && runes[j] == '(' {
+		if callFollows(runes, end) {
 			return token{kind: tokIdent, text: fn, pos: i}, end, true
 		}
 	}
 	return token{}, 0, false
+}
+
+// callFollows reports whether "(" is the next thing after i, past spaces.
+func callFollows(runes []rune, i int) bool {
+	for i < len(runes) && unicode.IsSpace(runes[i]) {
+		i++
+	}
+	return i < len(runes) && runes[i] == '('
 }
 
 // matchName reports whether name is written at i, ignoring case as FileMaker
@@ -368,18 +416,21 @@ func endsName(runes []rune, i int) bool {
 
 // isNumberStart reports whether a number begins at i: a digit, or the
 // decimal separator followed by a digit (",5" in a French file).
+// A "." is read as a decimal point whatever the locale: it means nothing else
+// outside a name, and a formula written on an English system and opened in a
+// French one keeps it (".2").
 func isNumberStart(runes []rune, i int, dec rune) bool {
 	ch := runes[i]
 	if ch >= '0' && ch <= '9' {
 		return true
 	}
-	return ch == dec && i+1 < len(runes) && runes[i+1] >= '0' && runes[i+1] <= '9'
+	return (ch == dec || ch == '.') && i+1 < len(runes) && runes[i+1] >= '0' && runes[i+1] <= '9'
 }
 
 func scanNumber(runes []rune, i int, dec rune) int {
 	seenDot := false
-	for i < len(runes) && (runes[i] >= '0' && runes[i] <= '9' || (runes[i] == dec && !seenDot)) {
-		if runes[i] == dec {
+	for i < len(runes) && (runes[i] >= '0' && runes[i] <= '9' || ((runes[i] == dec || runes[i] == '.') && !seenDot)) {
+		if runes[i] == dec || runes[i] == '.' {
 			seenDot = true
 		}
 		i++

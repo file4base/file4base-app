@@ -1,6 +1,7 @@
 package calc
 
 import (
+	"strings"
 	"sync"
 	"testing"
 )
@@ -59,4 +60,77 @@ func TestExpIsSafeConcurrently(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestFormulasFromRealSolutionsParse(t *testing.T) {
+	frLocale, _ := LocaleFor("fr")
+	iso := Options{}
+	fr := Options{Locale: &frLocale}
+	for _, c := range []struct {
+		formula string
+		opts    Options
+		want    string
+	}{
+		{"// only a comment", iso, ""},
+		{"/* a block */", iso, ""},
+		{"Let ( $#list.step = 2 ; $#list.step * 3 )", iso, "6"},
+		{"Random < 1", iso, "1"},
+		{"amount * .2", fr, "2"},
+		{"amount * 0.5", fr, "5"},
+	} {
+		expr, err := ParseWith(c.formula, c.opts)
+		if err != nil {
+			t.Fatalf("%q: %v", c.formula, err)
+		}
+		v, err := EvaluateValue(expr, &RecordContext{Record: Record{"amount": 10}})
+		if err != nil {
+			t.Fatalf("%q: %v", c.formula, err)
+		}
+		if got := v.Text(nil); got != c.want {
+			t.Errorf("%q = %q, want %q", c.formula, got, c.want)
+		}
+	}
+}
+
+func TestDeletedReferencesParseButCannotBeRead(t *testing.T) {
+	for _, formula := range []string{
+		"<Table Missing>::<Field Missing> & \"x\"",
+		"Articles::<Field Missing> + 1",
+		"<Table manquante>::<Rubrique manquante>",
+	} {
+		expr, err := Parse(formula)
+		if err != nil {
+			t.Fatalf("%q: %v", formula, err)
+		}
+		refs := expr.RelatedFields()
+		if len(refs) != 1 || !refs[0].Missing {
+			t.Errorf("%q: references %+v, want one missing", formula, refs)
+		}
+		if _, err := EvaluateValue(expr, &RecordContext{}); err == nil || !strings.Contains(err.Error(), "deleted") {
+			t.Errorf("%q: error %v, want a deleted reference", formula, err)
+		}
+	}
+	// A field named like a function does not hide the function.
+	if expr, err := ParseWith("Date ( 1 ; 2 ; 2026 ) > Date", Options{Fields: []string{"Date"}}); err != nil {
+		t.Errorf("a field named Date: %v", err)
+	} else if fields := expr.Fields(); len(fields) != 1 || fields[0] != "Date" {
+		t.Errorf("a field named Date: fields %v", fields)
+	}
+	// Comparisons are not references.
+	expr, err := Parse("a <b and b> c")
+	if err != nil || len(expr.RelatedFields()) != 0 {
+		t.Errorf("a <b and b> c: %v %v", err, expr)
+	}
+}
+
+func TestSelfAndLayoutObjectsNeedALayout(t *testing.T) {
+	for _, formula := range []string{"Self + 1", "GetLayoutObjectAttribute ( \"total\" ; \"content\" )"} {
+		expr, err := Parse(formula)
+		if err != nil {
+			t.Fatalf("%q: %v", formula, err)
+		}
+		if _, err := EvaluateValue(expr, &RecordContext{}); err == nil {
+			t.Errorf("%q: want an error", formula)
+		}
+	}
 }

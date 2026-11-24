@@ -45,6 +45,10 @@ func Rewrite(src string, opts Options, rename func(table, field string) (string,
 			return
 		}
 		seen[f.at] = true
+		if f.missing {
+			unresolved = append(unresolved, Reference{Table: f.table, Field: f.name, Missing: true})
+			return
+		}
 		if text, ok := rename(f.table, f.name); ok {
 			edits = append(edits, edit{f.at, ends[f.at], text})
 			return

@@ -176,6 +176,8 @@ func (ev *evaluator) get(t getNode) (value, error) {
 		return numberValue(decimal.NewFromBigInt(new(bigInt).SetBytes(b[:]), 0)), nil
 	case "CALCULATIONREPETITIONNUMBER":
 		return intValue(1), nil
+	case "SELF":
+		return empty, errorAt(t.at, "Self is only known where the formula belongs to a layout object or a field")
 	case "SYSTEMPLATFORM":
 		return intValue(4), nil // FileMaker's answer for a web client
 	}

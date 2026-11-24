@@ -168,6 +168,12 @@ func logicalFunctions() map[string]function {
 			_, perr := parseFormula(src, ev.known, ev.lib, nil)
 			return boolValue(perr == nil), nil
 		}},
+		// GetLayoutObjectAttribute reads a named object of the layout the user
+		// is on. A calculation stored with a record has no layout, so it is an
+		// error here, as it is in FileMaker when the object is not on screen.
+		"GETLAYOUTOBJECTATTRIBUTE": {minArgs: 2, maxArgs: 5, lazy: func(ev *evaluator, c callNode) (value, error) {
+			return empty, errorAt(c.at, "GetLayoutObjectAttribute needs a layout, and this calculation is not shown on one")
+		}},
 		"GETFIELD": fixed(1, func(ev *evaluator, c callNode, a []value) (value, error) {
 			name := a[0].asText(ev.loc)
 			if name == "" {

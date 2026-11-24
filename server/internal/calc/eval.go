@@ -263,6 +263,9 @@ func (ev *evaluator) eval(n node) (value, error) {
 		return textValue(t.value), nil
 
 	case fieldNode:
+		if t.missing {
+			return empty, errorAt(t.at, "%s::%s refers to a table or field that was deleted in FileMaker", t.table, t.name)
+		}
 		return ev.readField(t)
 
 	case variableNode:
