@@ -1662,6 +1662,16 @@ class ApiClient {
     }
   }
 
+  /// One row of [table], read again from the server.
+  Future<Map<String, dynamic>> getRow(String table, String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/data/$table/$id'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
   Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table'),

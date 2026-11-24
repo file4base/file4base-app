@@ -163,3 +163,49 @@ func TestAddedStepsDecodeFromSaveAsXML(t *testing.T) {
 		}
 	}
 }
+
+// Audit of the first version: the DDR writes Set Error Logging's state as
+// <Option state="…"/> and a variable target as <Field>$name</Field>; a target
+// that cannot be read must not leave the step free to write the active field.
+func TestAddedStepsDDROptionAndTargetForms(t *testing.T) {
+	const ddr = `<FMPReport><File name="Synthetic.fmp12">
+<BaseTableCatalog><BaseTable id="129" name="Visits"><FieldCatalog><Field id="1" name="Status" dataType="Text"/></FieldCatalog></BaseTable></BaseTableCatalog>
+<ScriptCatalog><Script name="Workflow"><StepList>
+  <Step id="200" name="Set Error Logging" enable="True"><Option state="True"/><Calculation><Text>$i</Text></Calculation></Step>
+  <Step id="200" name="Set Error Logging" enable="True"><Option state="False"/></Step>
+  <Step id="13" name="Insert Current Date" enable="True"><SelectAll state="True"/><Field>$today</Field></Step>
+  <Step id="13" name="Insert Current Date" enable="True"><SelectAll state="True"/><Field/></Step>
+</StepList></Script></ScriptCatalog></File></FMPReport>`
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: ddr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := res.Bundle.Scripts[0].Steps
+	if len(steps) != 4 {
+		t.Fatalf("expected 4 steps, got %d", len(steps))
+	}
+	if p := steps[0].Params; p["state"] != true || p["custom_debug_info"] != "$i" {
+		t.Fatalf("Set Error Logging [On]: %+v", p)
+	}
+	if p := steps[1].Params; p["state"] != false {
+		t.Fatalf("Set Error Logging [Off] must stay Off: %+v", p)
+	}
+	if _, ok := steps[1].Params["option"]; ok {
+		t.Fatalf("the logging state was kept as a generic option: %+v", steps[1].Params)
+	}
+	if p := steps[2].Params; p["name"] != "$today" || p["target_unresolved"] == true {
+		t.Fatalf("variable target in element text: %+v", p)
+	}
+	if p := steps[3].Params; p["target_unresolved"] != true {
+		t.Fatalf("an unreadable target must be marked: %+v", p)
+	}
+	reported := false
+	for _, m := range res.Report.ManualActionRequired {
+		if m.Domain == "script" && strings.Contains(m.Detail, "Field") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("the unreadable target was not reported: %+v", res.Report.ManualActionRequired)
+	}
+}

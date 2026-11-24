@@ -94,6 +94,46 @@ class ScriptErrorLogEntry {
       ].join('\t');
 }
 
+/// `Set Error Logging` state of one solution session.
+///
+/// FileMaker keeps logging for the open file until a script turns it off or
+/// the file closes, across every script run in between. File4Base keeps it
+/// for the signed-in session of the solution, which is what an open file is
+/// here: a button script after the startup script that turned logging on is
+/// still logged.
+class ScriptErrorLogging {
+  /// Whether `Set Error Logging [On]` is active.
+  bool enabled = false;
+
+  /// The custom debug calculation, evaluated when an error is logged. Empty
+  /// when the step has none.
+  String customInfo = '';
+
+  /// The errors logged, oldest first. Bounded by [maxEntries]; the oldest
+  /// entries go first.
+  final List<ScriptErrorLogEntry> entries = <ScriptErrorLogEntry>[];
+
+  static const maxEntries = 1000;
+
+  void add(ScriptErrorLogEntry entry) {
+    entries.add(entry);
+    if (entries.length > maxEntries) entries.removeAt(0);
+  }
+}
+
+/// Where a script's insertion into a field landed.
+enum FieldInsertOutcome {
+  /// Written: into the find request in Find mode, the record otherwise.
+  written,
+
+  /// The table has no such field.
+  noSuchField,
+
+  /// The step names a field of another table occurrence than the layout's,
+  /// which the window cannot write.
+  relatedField,
+}
+
 /// Shared execution state for a script call tree (propagated from caller to
 /// nested `Perform Script` invocations, matching FileMaker semantics).
 class ScriptSessionState {
@@ -113,24 +153,6 @@ class ScriptSessionState {
   /// clears it before each step and reads it after, so `Set Error Logging`
   /// logs each error once, by the step that raised it.
   bool errorRaised = false;
-
-  /// Whether `Set Error Logging [On]` is active.
-  bool errorLogging = false;
-
-  /// The `Set Error Logging` custom debug calculation, evaluated when an
-  /// error is logged. Empty when the step has none.
-  String errorLoggingInfo = '';
-
-  /// The errors logged while `Set Error Logging [On]` was active, oldest
-  /// first. Bounded by [maxErrorLogEntries]; the oldest entries go first.
-  final List<ScriptErrorLogEntry> errorLog = <ScriptErrorLogEntry>[];
-
-  static const maxErrorLogEntries = 1000;
-
-  void logError(ScriptErrorLogEntry entry) {
-    errorLog.add(entry);
-    if (errorLog.length > maxErrorLogEntries) errorLog.removeAt(0);
-  }
 
   /// Most recent `Show Custom Dialog` button index (`Get(LastMessageChoice)`).
   int lastMessageChoice = 1;
@@ -226,8 +248,23 @@ abstract class ExtendedLayoutActionHost {
   Future<bool> actionRefreshPortal(String objectName);
 
   /// The File4Base type (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, ...) of
-  /// [field] in the current table, or null when the table has no such field.
-  String? actionFieldType(String field);
+  /// [field] in the current table, or null when the table has no such field
+  /// or [table] names another table occurrence than the layout's.
+  String? actionFieldType(String field, {String? table});
+
+  /// Puts [text] into [field] as typing would: into the current find request
+  /// in Find mode — never into the record then — and into the record
+  /// otherwise. With [replaceAll] the text replaces the content; without it,
+  /// it replaces the selection of [field] when it is the active field, or
+  /// goes in at its caret, or at the end. [table] is the table occurrence the
+  /// step names, if any; a field of another occurrence than the layout's is
+  /// not written.
+  Future<FieldInsertOutcome> actionInsertIntoField({
+    required String field,
+    required String text,
+    required bool replaceAll,
+    String? table,
+  });
   Future<void> actionSendMail({
     String to = '',
     String cc = '',

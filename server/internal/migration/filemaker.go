@@ -2078,11 +2078,17 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			}
 			params["options"] = decodeNodeValue(child)
 		case "Option":
-			if canonicalStep == "Open File" {
-				// Open File writes its one option, Open hidden, as
-				// <Option state="True|False"/>.
+			if canonicalStep == "Open File" || canonicalStep == "Set Error Logging" {
+				// Both steps write their one option as <Option state="…"/>:
+				// Open hidden for Open File, On/Off for Set Error Logging.
+				key := "hidden"
+				if canonicalStep == "Set Error Logging" {
+					key = "state"
+				}
 				if v, ok := xmlAttrBool(child, "state", "value"); ok {
-					params["hidden"] = v
+					params[key] = v
+				} else {
+					flagUnmapped(child.Name)
 				}
 				continue
 			}
@@ -2323,7 +2329,21 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 				calcText = text
 			}
 		case "Field", "field":
-			if fieldName := firstAttr(child, "name", "Name"); fieldName != "" {
+			fieldName := firstAttr(child, "name", "Name")
+			if fieldName == "" && canonicalStep == "Insert Current Date" {
+				// The DDR writes a variable target as element text,
+				// <Field>$today</Field>. A target that cannot be read is
+				// marked, so the step fails instead of writing into
+				// whatever field happens to be active.
+				if text := strings.TrimSpace(child.Text); strings.HasPrefix(text, "$") {
+					params["name"] = text
+				} else {
+					params["target_unresolved"] = true
+					flagUnmapped(child.Name)
+				}
+				break
+			}
+			if fieldName != "" {
 				if strings.HasPrefix(fieldName, "$") {
 					params["name"] = fieldName
 					break

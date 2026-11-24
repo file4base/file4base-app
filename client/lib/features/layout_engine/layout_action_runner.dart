@@ -297,6 +297,13 @@ class LayoutActionRunner {
   /// called through a peer client. They never fall back to a caller's globals.
   Map<String, String> get globalVariables => apiClient.scriptGlobalVariables;
 
+  /// `Set Error Logging` state of this solution's session. It is attached to
+  /// the session's global variables, which live exactly as long as the
+  /// session, so it outlasts the script run that turned it on and is
+  /// dropped on sign-out.
+  ScriptErrorLogging get errorLogging => _errorLogging[globalVariables] ??= ScriptErrorLogging();
+  static final Expando<ScriptErrorLogging> _errorLogging = Expando<ScriptErrorLogging>('errorLogging');
+
   /// Normalizes both snake_case (`go_to_layout`) and FileMaker Title Case
   /// (`Go to Layout`, `Delete Portal Row`) step names into canonical keys.
   static String normalizeStepType(String raw) {
@@ -492,8 +499,10 @@ class LayoutActionRunner {
       case 'set_error_logging':
         // Each nonzero error a later step reports is logged, with the custom
         // debug calculation evaluated at that moment, until Off.
-        session.errorLogging = boolParam('state', defaultValue: true);
-        session.errorLoggingInfo = session.errorLogging ? (params['custom_debug_info']?.toString() ?? '') : '';
+        // A step whose state could not be read stays Off: logging is never
+        // switched on that the script did not ask for.
+        final logging = errorLogging..enabled = boolParam('state');
+        logging.customInfo = logging.enabled ? (params['custom_debug_info']?.toString() ?? '') : '';
         session.lastError = 0;
         return const LayoutActionResult.ok();
       case 'allow_user_abort':
@@ -1025,8 +1034,8 @@ class LayoutActionRunner {
             '${now.month.toString().padLeft(2, '0')}-'
             '${now.day.toString().padLeft(2, '0')}';
         final selectAll = boolParam('select');
-        final variable = <Object?>[params['target'], params['name']]
-            .map((v) => v?.toString().trim() ?? '')
+        String textParam(String key) => params[key]?.toString().trim() ?? '';
+        final variable = [textParam('target'), textParam('name')]
             .firstWhere((v) => v.startsWith(r'$'), orElse: () => '');
         if (variable.isNotEmpty) {
           // A variable target: Select entire contents replaces it, otherwise
@@ -1037,36 +1046,59 @@ class LayoutActionRunner {
           break;
         }
         if (!hasWindow) return windowless();
-        var field = params['field']?.toString().trim() ?? '';
+        var field = textParam('field');
         if (field.isEmpty) {
+          // Only a step that names no target at all writes the active field;
+          // one whose target could not be read fails rather than writing
+          // whatever field happens to be active.
+          final named = params['target_unresolved'] == true ||
+              ['target', 'name', 'target_field'].any((k) => textParam(k).isNotEmpty);
+          if (named) {
+            return failOrCapture(102, 'Insert Current Date names a target File4Base cannot read; '
+                'choose its target field again.');
+          }
           field = ext?.actionActiveFieldName ?? session.activeField;
         }
         if (field.isEmpty) {
           return failOrCapture(102, 'Insert Current Date has no target or active field.');
         }
-        final fieldType = ext?.actionFieldType(field)?.toUpperCase();
+        final table = textParam('field_table');
+        final fieldType = ext?.actionFieldType(field, table: table.isEmpty ? null : table)?.toUpperCase();
         if (fieldType != null && const {'CALCULATION', 'SUMMARY', 'CONTAINER'}.contains(fieldType)) {
           return failOrCapture(201, 'Insert Current Date cannot write the date into "$field", a '
               '${fieldType.toLowerCase()} field.');
         }
-        String value;
-        switch (fieldType) {
-          case 'DATE':
-            // A date field holds one date: the date replaces it.
-            value = today;
-          case 'TIMESTAMP':
-            value = '$today 00:00:00';
-          default:
-            value = today;
-            if (!selectAll) {
-              // Without Select entire contents the date goes in at the
-              // insertion point, which is the end of what the field holds.
-              final token = '{{$field}}';
-              final existing = host.actionResolveText(token);
-              if (existing != token) value = '$existing$today';
-            }
+        // A date field holds one date, so the date replaces it; a timestamp
+        // gets it at midnight. Elsewhere Select entire contents decides.
+        final value = fieldType == 'TIMESTAMP' ? '$today 00:00:00' : today;
+        final replaceAll = selectAll || fieldType == 'DATE' || fieldType == 'TIMESTAMP';
+        if (ext != null) {
+          final outcome = await ext.actionInsertIntoField(
+              field: field, text: value, replaceAll: replaceAll, table: table.isEmpty ? null : table);
+          switch (outcome) {
+            case FieldInsertOutcome.written:
+              break;
+            case FieldInsertOutcome.noSuchField:
+              return failOrCapture(102, 'Field "$field" is not in this table.');
+            case FieldInsertOutcome.relatedField:
+              return failOrCapture(102, 'Insert Current Date writes "$table::$field", a field of '
+                  'another table occurrence than this layout\'s, which a script cannot write yet. '
+                  'Nothing was written.');
+          }
+          session.lastError = 0;
+          break;
         }
-        if (!await host.actionSetField(field, value)) {
+        if (table.isNotEmpty) {
+          return failOrCapture(102, 'Insert Current Date writes "$table::$field", which this window '
+              'cannot write. Nothing was written.');
+        }
+        var plain = value;
+        if (!replaceAll) {
+          final token = '{{$field}}';
+          final existing = host.actionResolveText(token);
+          if (existing != token) plain = '$existing$value';
+        }
+        if (!await host.actionSetField(field, plain)) {
           return failOrCapture(102, 'Field "$field" is not in this table.');
         }
         session.lastError = 0;
@@ -2256,7 +2288,7 @@ class ScriptExecution {
     final line = _pc;
     final session = callContext.session..errorRaised = false;
     final result = await runner.runStep(step.stepType, step.params, depth: depth, localVars: localVars, callContext: callContext);
-    if (session.errorRaised && session.errorLogging) _logError(step, line);
+    if (session.errorRaised && runner.errorLogging.enabled) _logError(step, line);
     // A Perform Script step's own errors are logged by the script it ran;
     // clearing the flag keeps its caller from logging them a second time.
     session.errorRaised = false;
@@ -2270,18 +2302,18 @@ class ScriptExecution {
 
   /// Records the error the step at [line] just reported (`Set Error Logging`).
   void _logError(ScriptStepModel step, int line) {
-    final session = callContext.session;
-    final expression = session.errorLoggingInfo.trim();
+    final logging = runner.errorLogging;
+    final expression = logging.customInfo.trim();
     // FileMaker writes "?" for a debug calculation it cannot evaluate.
     final info = expression.isEmpty
         ? ''
         : (runner.resolveValue(expression, localVars, callContext: callContext) ?? '?');
-    session.logError(ScriptErrorLogEntry(
+    logging.add(ScriptErrorLogEntry(
       time: DateTime.now(),
       scriptName: script.name,
       stepName: step.stepType,
       line: line,
-      errorCode: session.lastError,
+      errorCode: callContext.session.lastError,
       customInfo: info,
     ));
   }
