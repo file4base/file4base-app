@@ -15,6 +15,7 @@ var observedScriptStepIDs = map[string]string{
 	"6":   "Go to Layout",
 	"7":   "New Record/Request",
 	"10":  "Delete All Records",
+	"13":  "Insert Current Date",
 	"16":  "Go to Record/Request/Page",
 	"17":  "Go to Field",
 	"22":  "Enter Find Mode",
@@ -23,6 +24,7 @@ var observedScriptStepIDs = map[string]string{
 	"28":  "Perform Find",
 	"29":  "Show/Hide Toolbars",
 	"31":  "Adjust Window",
+	"33":  "Open File",
 	"34":  "Close File",
 	"35":  "Import Records",
 	"36":  "Export Records",
@@ -32,6 +34,7 @@ var observedScriptStepIDs = map[string]string{
 	"44":  "Exit Application",
 	"47":  "Copy",
 	"48":  "Paste",
+	"50":  "Select All",
 	"55":  "Enter Browse Mode",
 	"56":  "Insert Picture",
 	"62":  "Pause/Resume Script",
@@ -72,6 +75,8 @@ var observedScriptStepIDs = map[string]string{
 	"147": "Set Field By Name",
 	"160": "Insert from URL",
 	"166": "Show/Hide Menubar",
+	"180": "Refresh Portal",
+	"200": "Set Error Logging",
 }
 
 // observedFrenchScriptSteps are the French step labels FileMaker Pro 26.0.2

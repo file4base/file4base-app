@@ -410,6 +410,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   // null = idle/saved, true = saving, false = error
   final Map<String, bool?> _fieldSaving = {};
 
+  /// How many times each portal, by object id, was asked to reload its
+  /// related records (Refresh Portal, Refresh Window). A portal reloads when
+  /// its count changes.
+  final Map<String, int> _portalRefreshes = {};
+
   // ─── Reports (#32) ─────────────────────────────────────────────────────────
 
   /// True when the layout in hand groups or totals rather than just listing
@@ -3216,6 +3221,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           contents: portalContents,
           related: related,
           isDark: isDark,
+          refreshGeneration: _portalRefreshes[obj.id] ?? 0,
           onChanged: () => unawaited(_fetchRecords()),
         );
 
@@ -4086,7 +4092,42 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   @override
   Future<void> actionRefreshWindow({bool flushJoinCache = false, bool flushExternalCache = false}) async {
     await _fetchRecords();
+    await actionRefreshPortal('');
   }
+
+  @override
+  Future<bool> actionRefreshPortal(String objectName) async {
+    final objects = widget.layout?.objects ?? const <LayoutObjectModel>[];
+    final wanted = objectName.trim().toLowerCase();
+    final List<LayoutObjectModel> portals;
+    if (wanted.isEmpty) {
+      portals = objects.where((o) => o.type == 'portal').toList();
+    } else {
+      final found = objects
+          .where((o) => (o.name ?? '').toLowerCase() == wanted || o.id.toLowerCase() == wanted)
+          .firstOrNull;
+      if (found == null) return false;
+      if (found.type != 'portal') {
+        // FileMaker refreshes any other named object as Refresh Object does;
+        // here that is redrawing the record it shows.
+        await _fetchRecords();
+        return true;
+      }
+      portals = [found];
+    }
+    if (mounted && portals.isNotEmpty) {
+      setState(() {
+        for (final portal in portals) {
+          _portalRefreshes[portal.id] = (_portalRefreshes[portal.id] ?? 0) + 1;
+        }
+      });
+    }
+    return true;
+  }
+
+  @override
+  String? actionFieldType(String field) =>
+      widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull?.fieldType;
 
   @override
   Future<void> actionSendMail({

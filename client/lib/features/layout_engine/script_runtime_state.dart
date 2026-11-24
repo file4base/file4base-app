@@ -60,6 +60,40 @@ class ScriptWindowEntry {
   double? height;
 }
 
+/// One script error recorded while `Set Error Logging [On]` is active.
+///
+/// It carries the columns FileMaker writes to `ScriptErrors.log` that the
+/// client knows: when, which script and step, the error code, and the result
+/// of the step's custom debug calculation.
+class ScriptErrorLogEntry {
+  const ScriptErrorLogEntry({
+    required this.time,
+    required this.scriptName,
+    required this.stepName,
+    required this.line,
+    required this.errorCode,
+    this.customInfo = '',
+  });
+
+  final DateTime time;
+  final String scriptName;
+  final String stepName;
+
+  /// 1-based position of the step in its script.
+  final int line;
+  final int errorCode;
+  final String customInfo;
+
+  /// The entry as one tab-separated line, in FileMaker's column order.
+  String toLogLine() => [
+        time.toIso8601String(),
+        scriptName,
+        '$stepName ($line)',
+        '$errorCode',
+        customInfo,
+      ].join('\t');
+}
+
 /// Shared execution state for a script call tree (propagated from caller to
 /// nested `Perform Script` invocations, matching FileMaker semantics).
 class ScriptSessionState {
@@ -67,7 +101,36 @@ class ScriptSessionState {
   bool errorCapture = false;
 
   /// Most recent FileMaker error code (`Get(LastError)`).
-  int lastError = 0;
+  int get lastError => _lastError;
+  set lastError(int code) {
+    _lastError = code;
+    if (code != 0) errorRaised = true;
+  }
+
+  int _lastError = 0;
+
+  /// Set whenever a step reports a nonzero error. The script execution
+  /// clears it before each step and reads it after, so `Set Error Logging`
+  /// logs each error once, by the step that raised it.
+  bool errorRaised = false;
+
+  /// Whether `Set Error Logging [On]` is active.
+  bool errorLogging = false;
+
+  /// The `Set Error Logging` custom debug calculation, evaluated when an
+  /// error is logged. Empty when the step has none.
+  String errorLoggingInfo = '';
+
+  /// The errors logged while `Set Error Logging [On]` was active, oldest
+  /// first. Bounded by [maxErrorLogEntries]; the oldest entries go first.
+  final List<ScriptErrorLogEntry> errorLog = <ScriptErrorLogEntry>[];
+
+  static const maxErrorLogEntries = 1000;
+
+  void logError(ScriptErrorLogEntry entry) {
+    errorLog.add(entry);
+    if (errorLog.length > maxErrorLogEntries) errorLog.removeAt(0);
+  }
 
   /// Most recent `Show Custom Dialog` button index (`Get(LastMessageChoice)`).
   int lastMessageChoice = 1;
@@ -156,6 +219,15 @@ abstract class ExtendedLayoutActionHost {
   Future<String?> actionReadFromClipboard();
   Future<void> actionBeep();
   Future<void> actionRefreshWindow({bool flushJoinCache = false, bool flushExternalCache = false});
+
+  /// Reloads the related records of the portal named [objectName] on the
+  /// current layout, or of every portal when [objectName] is empty. Returns
+  /// false when the layout has no portal of that name.
+  Future<bool> actionRefreshPortal(String objectName);
+
+  /// The File4Base type (`TEXT`, `NUMBER`, `DATE`, `TIMESTAMP`, ...) of
+  /// [field] in the current table, or null when the table has no such field.
+  String? actionFieldType(String field);
   Future<void> actionSendMail({
     String to = '',
     String cc = '',

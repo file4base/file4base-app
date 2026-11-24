@@ -243,6 +243,8 @@ var supportedScriptSteps = map[string]string{
 	"set field":                "Set Field",
 	"set field by name":        "Set Field By Name",
 	"insert calculated result": "Insert Calculated Result",
+	"insert current date":      "Insert Current Date",
+	"select all":               "Select All",
 	"replace field contents":   "Replace Field Contents",
 	"copy":                     "Copy",
 	"paste":                    "Paste",
@@ -263,6 +265,7 @@ var supportedScriptSteps = map[string]string{
 	"end loop":            "End Loop",
 	"set variable":        "Set Variable",
 	"set error capture":   "Set Error Capture",
+	"set error logging":   "Set Error Logging",
 	"allow user abort":    "Allow User Abort",
 	"perform script":      "Perform Script",
 	"exit script":         "Exit Script",
@@ -273,30 +276,32 @@ var supportedScriptSteps = map[string]string{
 	"# (comment)":         "Comment",
 
 	// Windows & UI chrome
-	"new window":            "New Window",
-	"select window":         "Select Window",
-	"close window":          "Close Window",
-	"adjust window":         "Adjust Window",
-	"move/resize window":    "Move/Resize Window",
-	"freeze window":         "Freeze Window",
-	"refresh window":        "Refresh Window",
-	"show/hide toolbars":    "Show/Hide Toolbars",
-	"show/hide menubar":     "Show/Hide Menubar",
-	"show/hide text ruler":  "Show/Hide Text Ruler",
-	"install menu set":      "Install Menu Set",
-	"show custom dialog":    "Show Custom Dialog",
-	"beep":                  "Beep",
+	"new window":           "New Window",
+	"select window":        "Select Window",
+	"close window":         "Close Window",
+	"adjust window":        "Adjust Window",
+	"move/resize window":   "Move/Resize Window",
+	"freeze window":        "Freeze Window",
+	"refresh window":       "Refresh Window",
+	"refresh portal":       "Refresh Portal",
+	"show/hide toolbars":   "Show/Hide Toolbars",
+	"show/hide menubar":    "Show/Hide Menubar",
+	"show/hide text ruler": "Show/Hide Text Ruler",
+	"install menu set":     "Install Menu Set",
+	"show custom dialog":   "Show Custom Dialog",
+	"beep":                 "Beep",
 
 	// Files, printing, mail & web
-	"print setup":          "Print Setup",
-	"print":                "Print",
-	"save records as pdf":  "Save Records as PDF",
+	"print setup":           "Print Setup",
+	"print":                 "Print",
+	"save records as pdf":   "Save Records as PDF",
 	"save records as excel": "Save Records as Excel",
-	"open url":             "Open URL",
-	"send mail":            "Send Mail",
-	"close file":           "Close File",
-	"exit application":     "Exit Application",
-	"re-login":             "Re-Login",
+	"open url":              "Open URL",
+	"send mail":             "Send Mail",
+	"open file":             "Open File",
+	"close file":            "Close File",
+	"exit application":      "Exit Application",
+	"re-login":              "Re-Login",
 
 	// Record transfers (#96). An Import Records or Export Records step runs a
 	// named transfer definition; until one is named it stops the script.
@@ -2073,6 +2078,14 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			}
 			params["options"] = decodeNodeValue(child)
 		case "Option":
+			if canonicalStep == "Open File" {
+				// Open File writes its one option, Open hidden, as
+				// <Option state="True|False"/>.
+				if v, ok := xmlAttrBool(child, "state", "value"); ok {
+					params["hidden"] = v
+				}
+				continue
+			}
 			// Commit Records/Requests option (e.g. SkipDataEntryValidation).
 			raw := strings.TrimSpace(firstAttr(child, "value", "Value", "state", "name"))
 			if raw == "" {
@@ -2427,11 +2440,13 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			if _, ok := params["record_calculation"]; !ok {
 				params["record_calculation"] = calcText
 			}
-		case "Go to Object":
+		case "Go to Object", "Refresh Portal":
 			if _, ok := params["object_name"]; !ok {
 				params["object_name"] = calcText
 				params["object_name_is_calculation"] = true
 			}
+		case "Set Error Logging":
+			params["custom_debug_info"] = calcText
 		case "Pause/Resume Script":
 			if _, ok := params["duration_seconds"]; !ok {
 				params["duration_seconds"] = calcText

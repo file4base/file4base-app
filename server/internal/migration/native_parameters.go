@@ -51,9 +51,11 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 				out["layout_calculation"] = expression
 			case "Go to Record/Request/Page", "Go to Portal Row":
 				out["record_calculation"] = expression
-			case "Go to Object":
+			case "Go to Object", "Refresh Portal":
 				out["object_name"] = expression
 				out["object_name_is_calculation"] = true
+			case "Set Error Logging":
+				out["custom_debug_info"] = expression
 			case "Pause/Resume Script":
 				out["duration_seconds"] = expression
 			case "New Window", "Select Window", "Close Window":
@@ -203,8 +205,12 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 			bType := strings.ToLower(strings.TrimSpace(firstAttr(child, "type", "name")))
 			bVal, _ := xmlAttrBool(child, "value", "state")
 			switch {
-			case bType == "capture" || canonical == "Set Error Capture" || canonical == "Allow User Abort":
+			case bType == "capture" || canonical == "Set Error Capture" || canonical == "Allow User Abort" ||
+				canonical == "Set Error Logging":
 				out["state"] = bVal
+			case strings.Contains(bType, "hidden"):
+				// Open File [Open hidden]; tested before "open" below.
+				out["hidden"] = bVal
 			case strings.Contains(bType, "dialog"):
 				out["dialog"] = bVal
 			case strings.Contains(bType, "exit after last"):

@@ -329,6 +329,26 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
     log.add('refresh_window:join=$flushJoinCache,ext=$flushExternalCache');
   }
 
+  /// Portals on the layout; [knownObjects] that are not portals are other
+  /// objects.
+  Set<String> knownPortals = <String>{'Lines'};
+
+  /// The type of each field, by name; a field not listed is text.
+  Map<String, String> fieldTypes = <String, String>{};
+
+  @override
+  Future<bool> actionRefreshPortal(String objectName) async {
+    if (objectName.isNotEmpty && !knownPortals.contains(objectName) && !knownObjects.contains(objectName)) {
+      return false;
+    }
+    log.add('refresh_portal:$objectName');
+    return true;
+  }
+
+  @override
+  String? actionFieldType(String field) =>
+      currentRecord.containsKey(field) ? (fieldTypes[field] ?? 'TEXT') : null;
+
   @override
   Future<void> actionSendMail({String to = '', String cc = '', String bcc = '', String subject = '', String message = ''}) async {
     log.add('send_mail:$to|$subject|$message');
@@ -597,5 +617,124 @@ void main() {
       'unsort_records',
       'delete_all_records:false',
     ]));
+  });
+
+
+  test('Insert Current Date, Select All, Refresh Portal and Set Error Logging', () async {
+    final now = DateTime.now();
+    final today = '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+    final host = _FullExtendedHost(records: [
+      {'name': 'Alpha', 'status': 'note ', 'visit_date': '2000-01-01', 'stamp': ''},
+    ])
+      ..fieldTypes = {'visit_date': 'DATE', 'stamp': 'TIMESTAMP'};
+    final runner = _runner(host, const {});
+    final script = ScriptModel.fromJson({
+      'id': 'dates',
+      'name': 'Dates',
+      'is_active': true,
+      'steps': [
+        _step(1, 'Set Error Logging', {'state': true, 'custom_debug_info': r'$i'}),
+        _step(2, 'Set Variable', {'name': r'$i', 'value': '7'}),
+        _step(3, 'Insert Current Date', {'field': 'visit_date', 'select': false}),
+        _step(4, 'Insert Current Date', {'field': 'status', 'select': false}),
+        _step(5, 'Insert Current Date', {'field': 'stamp', 'select': true}),
+        _step(6, 'Insert Current Date', {'target': r'$d', 'select': true}),
+        _step(7, 'Go to Field', {'field': 'name'}),
+        _step(8, 'Select All'),
+        _step(9, 'Set Error Capture', {'state': true}),
+        _step(10, 'Refresh Portal', {'object_name': 'Lines'}),
+        _step(11, 'Refresh Portal', {'object_name': 'Missing'}),
+        _step(12, 'Insert Current Date', {'field': 'nope'}),
+        _step(13, 'Set Variable', {'name': r'$e', 'value': 'Get(LastError)'}),
+        _step(14, 'Set Error Logging', {'state': false}),
+        _step(15, 'Go to Layout', {'layout_name': 'NoSuchLayout'}),
+      ],
+    });
+    final session = ScriptSessionState();
+    final execution = ScriptExecution(script: script, runner: runner, session: session);
+    while (!execution.atEnd) {
+      final outcome = await execution.advance();
+      expect(outcome.kind, isNot(StepOutcomeKind.stopped), reason: outcome.message);
+    }
+
+    final record = host.records[0];
+    expect(record['visit_date'], today, reason: 'a date field holds one date: the date replaces it');
+    expect(record['status'], 'note $today', reason: 'text without Select entire contents: appended');
+    expect(record['stamp'], '$today 00:00:00');
+    expect(execution.localVars[r'$d'], today);
+    expect(execution.localVars[r'$e'], '102');
+    expect(host.log, containsAll(<String>['go_to_field:name:select=true', 'refresh_portal:Lines']));
+    expect(host.log, isNot(contains('refresh_portal:Missing')));
+
+    // Logged: the two errors raised while logging was on, each once, with the
+    // step's line and the debug calculation's value. Not logged: the error
+    // raised after Off.
+    expect(session.errorLog.map((e) => '${e.line}:${e.errorCode}:${e.customInfo}').toList(),
+        ['11:116:7', '12:102:7']);
+    expect(session.errorLog.first.toLogLine(), contains('Refresh Portal (11)\t116\t7'));
+    expect(session.errorLogging, isFalse);
+  });
+
+  test('Open File resolves the file reference and checks the solution can be reached', () async {
+    final signedIn = <String>{'remote_db'};
+    final mock = MockClient((req) async {
+      final segments = req.url.pathSegments;
+      if (req.url.path == '/api/v1/databases') {
+        return http.Response(jsonEncode({'databases': ['this_db', 'remote_db']}), 200,
+            headers: {'content-type': 'application/json'});
+      }
+      if (segments.length == 5 && segments[2] == 'file-references' && segments[4] == 'resolve') {
+        final target = switch (segments[3]) {
+          'Self' => 'this_db',
+          'Archive' => 'remote_db',
+          'Retired' => 'gone_db',
+          _ => null,
+        };
+        if (segments[3] == 'Unmapped') {
+          return http.Response(jsonEncode({'title': 'File Reference Not Mapped', 'detail': 'unmapped'}), 409);
+        }
+        if (target == null) {
+          return http.Response(jsonEncode({'title': 'File Reference Not Found', 'detail': 'none'}), 404);
+        }
+        return http.Response(
+            jsonEncode({
+              'name': segments[3],
+              'database': target,
+              'calling_database': 'this_db',
+              'local': target == 'this_db',
+            }),
+            200,
+            headers: {'content-type': 'application/json'});
+      }
+      return http.Response('Not found', 404);
+    });
+    final runner = LayoutActionRunner(
+      apiClient: ApiClient(baseUrl: 'http://test:8080', httpClient: mock),
+      host: _FullExtendedHost(),
+      peerTokenProvider: (db) async => signedIn.contains(db) ? 'token-$db' : null,
+    );
+
+    Future<int> errorOf(String reference) async {
+      final context = ScriptCallContext(session: ScriptSessionState()..errorCapture = true);
+      final result = await runner.runStep('Open File', {'file_reference': reference, 'hidden': true},
+          depth: 0, callContext: context);
+      expect(result.completed, isTrue, reason: result.message);
+      return context.session.lastError;
+    }
+
+    expect(await errorOf('Self'), 0, reason: 'this solution is open');
+    expect(await errorOf('Archive'), 0, reason: 'installed, and the session is signed in to it');
+    expect(await errorOf('Retired'), 100, reason: 'mapped to a solution not installed here');
+    expect(await errorOf('Unmapped'), 100);
+    expect(await errorOf('Unknown'), 114);
+    expect(await errorOf(''), 100);
+
+    signedIn.clear();
+    expect(await errorOf('Archive'), 9, reason: 'the user has no session, so no privileges, there');
+    final stopped = await runner.runStep('Open File', {'file_reference': 'Archive'}, depth: 0);
+    expect(stopped.completed, isFalse);
+    expect(stopped.message, contains('not signed in'));
   });
 }

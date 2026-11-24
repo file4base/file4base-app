@@ -217,3 +217,21 @@ A committed run leaves its counts in global variables, so the steps after it can
 With a `file_reference`, the script is looked up **only** in the solution the reference is mapped to — never in this one, whatever shares its name. The step stops the script when the reference is unknown, unmapped, or mapped to a solution this session is not signed in to, and names which.
 
 The called script runs on the session the user opened in that solution, and **without a window**: the window on screen belongs to the caller. Its first step that acts on a window (`New Record`, `Set Field`, `Go to Layout`, `Perform Find`, `Commit Records`, …) stops the script and names itself; a field reference is not answered from the record on screen. Everything else runs — transfers, variables, `If` / `Loop`, `Perform Script` within that solution, `Exit Script`, `Halt Script`, dialogs. `Halt Script` there stops every caller here. The Script Debugger runs the same state machine, so it does the same.
+
+---
+
+## 7. `Insert Current Date`, `Select All`, `Refresh Portal`, `Set Error Logging`, `Open File`
+
+A FileMaker migration converts these five steps by instruction id (`13`, `50`, `180`, `200`, `33`) or by English name, from both the XML DDR and Save a Copy as XML, as runnable steps.
+
+| Step | Parameters | What runs |
+|---|---|---|
+| `Insert Current Date` | `field` (or `target` / `name` for a `$variable`), `select` | Today's date, as `YYYY-MM-DD`, into the target, or the active field when there is none. A date field holds one date, so the date replaces it; a timestamp field gets it at `00:00:00`; a text field or a variable gets it appended at the end unless `select` (*Select entire contents*) is on. A calculation, summary or container field fails with `201`; no target and no active field, or a field the table does not have, with `102`. |
+| `Select All` | — | Selects the content of the active field. With no window on screen, or no active field, it does nothing. |
+| `Refresh Portal` | `object_name`, `object_name_is_calculation` | Reloads the related records of the portal of that name, or of the active object, or of every portal when neither names one. A named object that is not a portal redraws the record, as FileMaker's Refresh Object does; an object the layout does not have fails with `116`. With no window on screen it does nothing. |
+| `Set Error Logging` | `state`, `custom_debug_info` | `On` logs every nonzero error a later step of the run reports, once, by the step that raised it: time, script, step and line, code, and the result of `custom_debug_info` evaluated at that moment (`?` when it cannot be evaluated). `Off` stops it. |
+| `Open File` | `file_reference`, `hidden` | See below. |
+
+**Set Error Logging — where the log goes.** FileMaker appends to a `ScriptErrors.log` file in the user's Documents folder, or to the server's log when the administrator enabled script logging. The File4Base client keeps the entries in the script session instead (`ScriptSessionState.errorLog`, the last 1,000, each with `toLogLine()` in FileMaker's tab-separated column order, without the session number, file name and account columns), and logging lasts for that script run, not until the file closes. Writing them to a file or to the server log is not implemented yet, and the step does not require full access as FileMaker's does.
+
+**Open File.** The step takes a file reference, like `Perform Script` (§ 6), and fails with the same distinctions: an unknown reference (`114`), an unmapped one or a solution not installed on this server (`100`), a solution this session is not signed in to (`9`). A reference to this solution succeeds at once. Otherwise the step succeeds when the solution is installed and the user holds a session there, with their own account, whose privileges then govern every later step that reaches it. It opens nothing on screen: FileMaker, too, runs the steps after `Open File` in the file that holds the script. *Open hidden* (`hidden`) therefore changes nothing, and the step does not sign in for the user.
