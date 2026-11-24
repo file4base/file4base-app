@@ -460,15 +460,17 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 						continue
 					}
 					if missingRef != "" {
+						byRef := isReferenceOnlyContainer(missingRef)
 						stats.FilesMissing++
 						stats.Missing = append(stats.Missing, missingContainerFile{
-							Table:   tables[table],
-							Column:  meta.ColName,
-							RowNum:  rowIdx + 1,
-							RefPath: missingRef,
-							Reason:  "external container file not found",
+							Table:       tables[table],
+							Column:      meta.ColName,
+							RowNum:      rowIdx + 1,
+							RefPath:     missingRef,
+							Reason:      "external container file not found",
+							ByReference: byRef,
 						})
-						if !rawValues {
+						if !rawValues && !byRef {
 							issues["CONTAINER_MISSING"]++
 						}
 						continue

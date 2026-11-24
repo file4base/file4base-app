@@ -225,11 +225,17 @@ func populateDataRows(
 		report.Counts.ContainerFilesMissing += cStats.FilesMissing
 		for _, miss := range cStats.Missing {
 			detail := fmt.Sprintf("Container cell %s.%s (row %d) could not be migrated: %s", miss.Table, miss.Column, miss.RowNum, miss.Reason)
+			category := CategoryRejected
 			if miss.RefPath != "" {
 				detail = fmt.Sprintf("External container file %q referenced by %s.%s (row %d) is missing", miss.RefPath, miss.Table, miss.Column, miss.RowNum)
 			}
+			if miss.ByReference {
+				category = CategoryUnsupported
+				detail = fmt.Sprintf("Container cell %s.%s (row %d) stored only a reference to %q, which was not supplied; "+
+					"the cell was migrated empty. Insert the file again if it is still needed", miss.Table, miss.Column, miss.RowNum, miss.RefPath)
+			}
 			addReportItem(report, ReportItem{
-				Category:   CategoryRejected,
+				Category:   category,
 				Domain:     "data",
 				SourceName: fmt.Sprintf("%s.%s (row %d)", miss.Table, miss.Column, miss.RowNum),
 				TargetName: miss.Table + "." + miss.Column,
