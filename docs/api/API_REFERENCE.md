@@ -1969,6 +1969,14 @@ localized decimals are not guessed into another value or replaced with blanks;
 canonical decimal text retains every digit. Full source Number representation
 and explicit number-locale handling remain compatibility work.
 
+Before reading records, the native file's own table and field catalog is
+compared with the design's: records are addressed by numeric ids that every
+FileMaker file reuses, so a copy of a different file would otherwise map its
+records onto unrelated fields. A table id the file does not have, a table whose
+name differs, or a field id whose name differs refuses the dataset, naming the
+first differences. Fields the design has and the copy lacks (added after the
+copy was made) are not a mismatch.
+
 
 A failure anywhere after the first write leaves nothing behind: a newly created `target_database` is dropped, and a merge into the active database is undone from the design recorded before the merge — every design object the migration added is deleted and the recorded design re-imported (#97). `400` with `Migration Schema Import Error` or `Migration Data Import Error` therefore means the solution is as it was; should the restore itself be incomplete, the problem detail says so. An `fmp12_base64` attachment is validated with the request, so invalid base64 is `400` before any database is created (#91), and a design document whose field catalog was not understood — a Save a Copy as XML export taken without *Include details for analysis tools*, or a Database Design Report in a language File4Base does not read — is `422 Invalid FileMaker XML` naming the formats and report languages that are supported, and, for a `<FMSaveAsXML>` document, the export option to re-export with (#87, #100).
 

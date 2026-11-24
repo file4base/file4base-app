@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A native copy of another file is no longer read against the wrong design (#130).** Records in a `.fmp12` are addressed by table and field ids that every FileMaker file reuses, so a design paired with another solution's copy mapped its records onto unrelated fields and could report them ready. The file's own table and field catalog is now compared with the design before any record is read, and a mismatch refuses the dataset, naming the first differences.
 - **Script steps are identified by their FileMaker instruction id.** A localized design report names each step in the client's language, and File4Base's French labels were written by hand: FileMaker Pro 26.0.2 actually writes `Ouvrir boîte dial. person.`, `Afficher enreg/requête/page`, `Afficher tous les enreg.`, `Importer enregistrements`… so Show Custom Dialog, Go to Record, Show All Records, Import/Export Records and others were quarantined as unsupported although the runner executes them. Each step is now resolved by its id through a table of 62 id/English-name pairs observed in FileMaker's own output (`step_ids.go`), and the French labels FileMaker actually writes are recognized when no id is present. An id that contradicts an English name is reported and the name wins; an id outside the table falls back to the name. Steps the runner cannot execute are reported with their English name.
 
 ### Added

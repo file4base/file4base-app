@@ -225,3 +225,14 @@ every file and format observed. Claris publishes no id table; ids that were not
 observed are not listed. Claude Code (Claude Opus 5.5) assisted the extraction,
 implementation and tests.
 
+## Native catalog check — 2026-11-24
+
+`server/internal/migration/fmp12_catalog.go` reads a native file's table and
+field names at the catalog paths and name-segment layout used by Evan Miller's
+MIT-licensed fmptools (`list_tables.c`, `list_columns.c`, `name_chunk` in
+`fmp.c`, revision `fd32a6c4f425a377f27efd558cf9bc7cc09985a6`, notice already in
+`server/tools/notices/fmptools/`). The Go code is an independent adaptation.
+Tests use original synthetic files. It was checked privately against authorized
+native copies and design exports: every pair of a design with another file was
+refused and every genuine pair accepted. Claude Code (Claude Opus 5.5) assisted.
+

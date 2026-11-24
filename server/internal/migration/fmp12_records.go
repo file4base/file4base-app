@@ -185,6 +185,23 @@ func populateDataRows(
 			})
 			return nil
 		}
+		if cat, catErr := readHBAM7Catalog(rawBytes); catErr == nil && len(cat.tables) > 0 {
+			if mismatches := nativeDesignMismatches(cat, fmpTableMeta, fmpFieldMeta); len(mismatches) > 0 {
+				shown := mismatches
+				if len(shown) > 5 {
+					shown = shown[:5]
+				}
+				addReportItem(report, ReportItem{
+					Category:   CategoryRejected,
+					Domain:     "data",
+					SourceName: "fmp12_binary",
+					Detail: fmt.Sprintf("The attached .fmp12 does not belong to this design: %d table or field "+
+						"identities differ (%s); no record was read from it. Attach a copy of the same file the "+
+						"design was exported from", len(mismatches), strings.Join(shown, "; ")),
+				})
+				return nil
+			}
+		}
 		locale, err := parseSourceLocale(req.SourceLocale)
 		if err != nil {
 			return err
