@@ -822,7 +822,7 @@ func precomputeExtractedCalculations(
 				continue
 			}
 			formula := extractHTMLFormula(fm.RawOptions, sqlTable, sqlTable, knownCols)
-			exprStr, _, ok := translateAndValidateFormula(formula)
+			exprStr, ok := ownTableFormula(formula)
 			if !ok {
 				continue
 			}

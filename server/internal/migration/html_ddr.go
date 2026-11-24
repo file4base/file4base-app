@@ -835,7 +835,7 @@ func convertHTMLField(
 			resType = "Timestamp"
 		}
 		formula := extractHTMLFormula(rawOptions, tableSQL, rawTableName, knownSameTableCols)
-		expr, translatedNote, ok := translateAndValidateFormula(formula)
+		expr, ok := ownTableFormula(formula)
 		if ok {
 			payload, _ := json.Marshal(map[string]interface{}{
 				"formula":     expr,
@@ -845,13 +845,8 @@ func convertHTMLField(
 			col.FieldType = "CALCULATION"
 			col.CalculationFormula = &s
 			detail := fmt.Sprintf("Calculation field (%s): %s", resType, expr)
-			cat := CategoryPreserved
-			if translatedNote != "" {
-				detail = translatedNote
-				cat = CategoryTranslated
-			}
 			items = append(items, ReportItem{
-				Category:   cat,
+				Category:   CategoryPreserved,
 				Domain:     "field",
 				SourceName: tableSQL + "." + rawFieldName,
 				TargetName: tableSQL + "." + colName,
