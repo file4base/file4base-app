@@ -1147,3 +1147,43 @@ func TestAnalyzeAndConvert_ScriptVariableOperandKeepsItsSigil(t *testing.T) {
 		t.Fatalf("the Set Field operand must keep the source spelling as its label, got %q", got)
 	}
 }
+
+// FileMaker writes control characters from stored text unescaped, which XML 1.0
+// forbids; its own export is still accepted and the removal is reported.
+func TestAnalyzeAndConvert_StripsXMLControlCharacters(t *testing.T) {
+	doc := "<FMPReport><File name=\"Synthetic.fmp12\"><BaseTableCatalog>" +
+		"<BaseTable name=\"Visits\"><FieldCatalog>" +
+		"<Field name=\"Note\" dataType=\"Text\" fieldType=\"Normal\"><Comment>a\x03b\x01</Comment></Field>" +
+		"</FieldCatalog></BaseTable></BaseTableCatalog></File></FMPReport>"
+
+	converted, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("convert: %v", err)
+	}
+	found := false
+	for _, item := range converted.Report.Translated {
+		if item.Domain == "design" && strings.Contains(item.Detail, "Removed 2 control character") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("control-character removal not reported: %+v", converted.Report.Translated)
+	}
+}
+
+func TestStripXMLControlChars(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+		removed  int
+	}{
+		{"plain\ttext\r\n", "plain\ttext\r\n", 0},
+		{"a\x00b\x1fc", "abc", 2},
+		{"x\uFFFEy\uFFFF", "xy", 2},
+		{"é\x03", "é", 1},
+	} {
+		got, n := stripXMLControlChars(tc.in)
+		if got != tc.want || n != tc.removed {
+			t.Errorf("stripXMLControlChars(%q) = %q, %d; want %q, %d", tc.in, got, n, tc.want, tc.removed)
+		}
+	}
+}
