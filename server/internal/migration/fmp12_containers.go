@@ -100,11 +100,20 @@ func (f *hbam7ContainerForks) forkData(tag string) ([]byte, uint32, bool) {
 			total += len(b)
 		}
 		sort.Ints(keys)
+		expected := f.expectedLen[tag]
 		out := make([]byte, 0, total)
 		for _, k := range keys {
 			out = append(out, segs[k]...)
+			// Segments past the declared length are left over from an earlier,
+			// longer version of the object: observed in a production file, where
+			// the declared length ended exactly on a segment boundary and the
+			// extra segments followed the image's own end marker. Only an exact
+			// boundary is trusted; anything else stays a length mismatch.
+			if expected > 0 && uint32(len(out)) == expected {
+				break
+			}
 		}
-		return out, f.expectedLen[tag], true
+		return out, expected, true
 	}
 	if b, ok := f.inlineForks[tag]; ok {
 		return b, f.expectedLen[tag], true
@@ -494,7 +503,8 @@ func selectOriginalForkTag(tags []string, filename string) (string, bool) {
 		has[t] = true
 	}
 	// 1. Original file / document forks always beat generated previews.
-	for _, primary := range []string{"FILE", "PDF ", "FORK"} {
+	// FileMaker stores an EPS picture with JPEG/PICT previews beside it.
+	for _, primary := range []string{"FILE", "PDF ", "FORK", "EPS "} {
 		if has[primary] {
 			return primary, true
 		}
@@ -516,6 +526,8 @@ func forkTagForFilename(filename string) string {
 	switch strings.ToLower(path.Ext(filename)) {
 	case ".pdf":
 		return "PDF "
+	case ".eps":
+		return "EPS "
 	case ".png":
 		return "PNGf"
 	case ".jpg", ".jpeg":
@@ -606,6 +618,8 @@ func detectContainerMIME(filename, forkTag string, payload []byte) string {
 		return "image/bmp"
 	case "PICT":
 		return "image/x-pict"
+	case "EPS ":
+		return "application/postscript"
 	case "SVG ":
 		return "image/svg+xml"
 	case "MOOV":
@@ -645,6 +659,8 @@ func defaultContainerFilename(forkTag, mimeType string) string {
 		return "container.bmp"
 	case "PICT":
 		return "container.pict"
+	case "EPS ":
+		return "container.eps"
 	}
 	if exts, err := mime.ExtensionsByType(mimeType); err == nil && len(exts) > 0 {
 		return "container" + exts[0]
