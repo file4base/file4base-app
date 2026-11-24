@@ -60,6 +60,10 @@ type Options struct {
 	// (FILE4BASE_TRUSTED_PROXIES). Empty means no proxy is trusted, so those
 	// headers are ignored and the direct TCP peer address is used.
 	TrustedProxies []*net.IPNet
+	// MaxMigrationUploadBytes and MigrationUploadDir configure multipart
+	// FileMaker migration uploads. See SolutionHandlerOptions.
+	MaxMigrationUploadBytes int64
+	MigrationUploadDir      string
 }
 
 // Mount registers every domain route of the API on r.
@@ -94,6 +98,8 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	solutionHandler := NewSolutionHandler(dbMgr, sessions, SolutionHandlerOptions{
 		AllowPublicDatabaseCreation: opts.AllowPublicDatabaseCreation,
 		ControlStore:                controlStore,
+		MaxMigrationUploadBytes:     opts.MaxMigrationUploadBytes,
+		MigrationUploadDir:          opts.MigrationUploadDir,
 	})
 	solutionHandler.throttle = throttle
 	solutionHandler.clientIP = ipResolver

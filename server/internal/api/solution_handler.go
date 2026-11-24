@@ -36,6 +36,15 @@ type SolutionHandlerOptions struct {
 	// ControlStore persists project ↔ database mappings, options, and user
 	// table/layout permissions in SQLite.
 	ControlStore *control.Store
+	// MaxMigrationUploadBytes bounds a multipart FileMaker migration request
+	// from a signed-in session (MIGRATION_MAX_UPLOAD_BYTES). Zero means
+	// DefaultMaxMigrationUploadBytes. Callers without a session are always
+	// held to the 64 MiB JSON ceiling.
+	MaxMigrationUploadBytes int64
+	// MigrationUploadDir is where an uploaded native database copy is
+	// spooled while it is received (MIGRATION_UPLOAD_DIR). Empty means the
+	// system temporary directory. The file is removed as soon as it is read.
+	MigrationUploadDir string
 }
 
 // SolutionHandler serves server-level database management and the
@@ -1083,22 +1092,14 @@ func (h *SolutionHandler) MigratePreflight(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var req migration.MigrationRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&req); err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+	in, ok := h.readMigrationInput(w, r, hasSession)
+	if !ok {
 		return
 	}
 
-	converted, err := migration.AnalyzeAndConvert(req)
+	converted, err := in.convert()
 	if err != nil {
-		switch {
-		case errors.Is(err, migration.ErrBinaryFMP12):
-			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsupported Binary .fmp12 Format", err.Error())
-		case errors.Is(err, migration.ErrInvalidMigrationXML):
-			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid FileMaker XML", err.Error())
-		default:
-			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Preflight Error", err.Error())
-		}
+		writeMigrationConversionError(w, r, err, "Migration Preflight Error")
 		return
 	}
 
@@ -1127,11 +1128,11 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req migration.MigrationRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<20)).Decode(&req); err != nil {
-		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+	in, ok := h.readMigrationInput(w, r, hasSession)
+	if !ok {
 		return
 	}
+	req := in.req
 
 	targetDB := strings.ToLower(strings.TrimSpace(req.TargetDatabase))
 	if !hasSession && targetDB == "" {
@@ -1141,22 +1142,19 @@ func (h *SolutionHandler) MigrateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	converted, err := migration.AnalyzeAndConvert(req)
+	attachedData := in.hasAttachedData()
+	converted, err := in.convert()
 	if err != nil {
-		switch {
-		case errors.Is(err, migration.ErrBinaryFMP12):
-			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unsupported Binary .fmp12 Format", err.Error())
-		case errors.Is(err, migration.ErrInvalidMigrationXML):
-			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid FileMaker XML", err.Error())
-		default:
-			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Migration Conversion Error", err.Error())
-		}
+		writeMigrationConversionError(w, r, err, "Migration Conversion Error")
 		return
 	}
+	// The records have been read out of the native copy; its bytes are not
+	// needed for the rest of a request that may run for minutes.
+	in.native = nil
 
 	// Attached data must not become a successful schema-only or partial import
 	// after extraction/conversion fails. Refuse before any target write.
-	if strings.TrimSpace(req.FMP12Base64) != "" || len(req.DataFiles) > 0 {
+	if attachedData {
 		for _, item := range converted.Report.Rejected {
 			if item.Domain == "data" {
 				title := "Data Import Blocked"

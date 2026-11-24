@@ -126,6 +126,21 @@ func envDuration(name string, def time.Duration) time.Duration {
 	return val
 }
 
+// envBytes reads a size environment variable: a byte count, optionally with
+// a KiB, MiB or GiB suffix (e.g. "2GiB", "512MiB").
+func envBytes(name string, def int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	val, err := api.ParseByteSize(raw)
+	if err != nil {
+		log.Printf("Warning: ignoring invalid size %s=%q: %v", name, raw, err)
+		return def
+	}
+	return val
+}
+
 func main() {
 	engineStr := os.Getenv("DB_ENGINE")
 	if engineStr == "" {
@@ -192,6 +207,12 @@ func main() {
 		log.Println("Notice: anyone who can reach this server may create new databases (ALLOW_PUBLIC_DATABASE_CREATION=true). Set it to false on shared or internet-facing servers.")
 	}
 
+	// FileMaker migrations upload a native database copy of up to several
+	// hundred megabytes and may run for minutes (#126).
+	maxMigrationUpload := envBytes("MIGRATION_MAX_UPLOAD_BYTES", api.DefaultMaxMigrationUploadBytes)
+	migrationTimeout := envDuration("MIGRATION_REQUEST_TIMEOUT", api.DefaultMigrationRequestTimeout)
+	migrationUploadDir := strings.TrimSpace(os.Getenv("MIGRATION_UPLOAD_DIR"))
+
 	// Reverse proxies whose X-Forwarded-For / X-Real-IP may be trusted when
 	// recording a caller's address (audit log, session metadata, login
 	// throttle). Empty means no proxy is trusted and the direct TCP peer is
@@ -236,7 +257,9 @@ func main() {
 	// unconditionally; the client address is instead resolved per request
 	// through the trusted-proxy aware resolver (ipResolver / FILE4BASE_TRUSTED_PROXIES).
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
+	// Every request is bounded to 60 seconds, except the FileMaker migration
+	// routes, which upload and import a whole database (#126).
+	r.Use(api.RequestTimeout(60*time.Second, api.MigrationTimeouts(migrationTimeout)))
 
 	// Cloud-Native Probes & Diagnostic Health (/healthz, /healthz/liveness, /healthz/readiness, etc.)
 	healthHandler := api.NewHealthHandler(dbMgr, AppVersion, &isReady, &isStarted)
@@ -275,6 +298,8 @@ func main() {
 		SuperOwnerSeed:              splitList(os.Getenv("FILE4BASE_SUPER_OWNER")),
 		TrustedProxies:              trustedProxies,
 		TLSDir:                      tlsStore.Dir(),
+		MaxMigrationUploadBytes:     maxMigrationUpload,
+		MigrationUploadDir:          migrationUploadDir,
 	})
 
 	srv := &http.Server{
