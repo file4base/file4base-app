@@ -66,6 +66,8 @@ class ScriptDebugSession {
   final String parameter;
   String? get scriptResult => _execution.returnValue;
   String get lastScriptResult => _execution.callContext.lastScriptResult;
+  int get lastError => _execution.callContext.session.lastError;
+  bool get errorCapture => _execution.callContext.session.errorCapture;
   final List<DebugStep> steps;
 
   /// The execution a normal run would drive. The debugger holds the only
@@ -192,10 +194,22 @@ class ScriptDebugSession {
   }
 
   void _advance() {
-    _index++;
+    final prev = _index;
+    _index = _execution.pc;
     if (_index >= steps.length) {
       _finish('The script ran to the end.');
       return;
+    }
+    if (_index <= prev) {
+      // Loop jumped back: reset the loop body steps to pending for the next turn (#133).
+      for (var i = _index; i <= prev && i < steps.length; i++) {
+        steps[i].state = DebugStepState.pending;
+      }
+    } else if (_index > prev + 1) {
+      // Loop exit jumped forward: mark jumped-over steps as skipped.
+      for (var i = prev + 1; i < _index && i < steps.length; i++) {
+        steps[i].state = DebugStepState.skipped;
+      }
     }
     _message = null;
     _markCurrent();

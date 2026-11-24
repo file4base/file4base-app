@@ -794,7 +794,7 @@ func TestAnalyzeAndConvert_HTMLDDRKeepsUnsupportedScriptSteps(t *testing.T) {
 		`<table><tr><td>Script Name</td><td>Guard</td></tr>` +
 		`<tr><td>Script Steps</td><td><ul>` +
 		`<li>New Record/Request</li>` +
-		`<li>Send Mail [ With dialog: Off ]</li>` +
+		`<li>Install Plug-In File [ With dialog: Off ]</li>` +
 		`<li>Commit Records/Requests</li>` +
 		`</ul></td></tr></table>` +
 		`<span class="section"><a name="valAccountsSectionAnchor_"/>Accounts</span>` +
@@ -820,16 +820,16 @@ func TestAnalyzeAndConvert_HTMLDDRKeepsUnsupportedScriptSteps(t *testing.T) {
 	if steps[1].StepType != "Comment" || steps[1].IsEnabled {
 		t.Fatalf("the unsupported step is kept as a disabled comment, got %+v", steps[1])
 	}
-	if got := fmt.Sprint(steps[1].Params["original_filemaker_step"]); got != "Send Mail" {
+	if got := fmt.Sprint(steps[1].Params["original_filemaker_step"]); got != "Install Plug-In File" {
 		t.Fatalf("the original step name is kept: got %q", got)
 	}
-	if got := fmt.Sprint(steps[1].Params["text"]); !strings.Contains(got, "Send Mail [ With dialog: Off ]") {
+	if got := fmt.Sprint(steps[1].Params["text"]); !strings.Contains(got, "Install Plug-In File [ With dialog: Off ]") {
 		t.Fatalf("the original line is kept for review: got %q", got)
 	}
 
 	reported := false
 	for _, item := range res.Report.Unsupported {
-		if item.Domain == "script" && strings.Contains(item.Detail, "Send Mail") {
+		if item.Domain == "script" && strings.Contains(item.Detail, "Install Plug-In File") {
 			reported = true
 		}
 	}

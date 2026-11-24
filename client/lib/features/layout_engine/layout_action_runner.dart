@@ -1,5 +1,9 @@
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/script_runtime_state.dart';
+import 'package:http/http.dart' as http;
+
+export 'package:file4base_client/features/layout_engine/script_runtime_state.dart';
 
 /// Steps a button can run directly (single step action), with their labels.
 /// Parameters use the same names as the Script Workspace steps.
@@ -97,7 +101,17 @@ class LayoutActionResult {
   const LayoutActionResult.ok({this.scriptResult})
       : completed = true,
         halted = false,
+        exitLoop = false,
         message = null;
+
+  /// Signals `ScriptExecution` to leave the innermost `Loop` (used by
+  /// `Go to Record/Request/Page` and `Go to Portal Row` with `Exit after last: On`).
+  const LayoutActionResult.exitLoop()
+      : completed = true,
+        halted = false,
+        exitLoop = true,
+        message = null,
+        scriptResult = null;
 
   /// Halt Script: this script and every script that called it stop, which is
   /// what Claris defines the step as doing. It is not a failure, so
@@ -105,17 +119,22 @@ class LayoutActionResult {
   const LayoutActionResult.haltedAll()
       : completed = true,
         halted = true,
+        exitLoop = false,
         message = null,
         scriptResult = null;
 
   const LayoutActionResult.stopped(this.message)
       : completed = false,
         halted = false,
+        exitLoop = false,
         scriptResult = null;
   final bool completed;
 
   /// True when a Halt Script step ended the whole execution session.
   final bool halted;
+
+  /// True when a navigation step hit a boundary with `Exit after last: On`.
+  final bool exitLoop;
   final String? message;
 
   /// Null means the script returned no explicit result. An explicit empty
@@ -123,11 +142,21 @@ class LayoutActionResult {
   final String? scriptResult;
 }
 
-/// Parameter and most recent sub-script result belonging to one invocation.
-/// Each nested call gets its own context and its own local variables.
+/// Parameter, call-scoped result, and shared session state belonging to one
+/// invocation. Each nested call gets its own parameter and local variables
+/// while sharing [session] (error capture, last error, windows, clipboard)
+/// across the call tree, matching FileMaker semantics (#133).
 class ScriptCallContext {
-  ScriptCallContext({this.parameter = ''});
+  ScriptCallContext({
+    this.parameter = '',
+    this.scriptName = '',
+    this.originalLayout = '',
+    ScriptSessionState? session,
+  }) : session = session ?? ScriptSessionState();
   final String parameter;
+  final String scriptName;
+  final String originalLayout;
+  final ScriptSessionState session;
   String lastScriptResult = '';
 }
 
@@ -202,18 +231,51 @@ class LayoutActionRunner {
     'new_record',
     'duplicate_record',
     'delete_record',
+    'delete_all_records',
     'delete_portal_row',
     'commit_records',
     'revert_record',
     'go_to_record',
+    'go_to_field',
+    'go_to_next_field',
+    'go_to_object',
+    'go_to_related_record',
+    'go_to_portal_row',
     'enter_browse_mode',
     'enter_find_mode',
     'perform_find',
+    'constrain_found_set',
+    'extend_found_set',
+    'modify_last_find',
     'show_all_records',
+    'show_omitted_only',
+    'omit_record',
+    'omit_multiple_records',
+    'sort_records',
+    'unsort_records',
     'enter_preview_mode',
     'go_to_layout',
     'set_field',
+    'set_field_by_name',
+    'insert_calculated_result',
+    'replace_field_contents',
+    'copy',
+    'paste',
+    'cut',
+    'clear',
+    'insert_picture',
+    'insert_file',
+    'export_field_contents',
+    'new_window',
+    'select_window',
+    'close_window',
     'adjust_window',
+    'move_resize_window',
+    'freeze_window',
+    'refresh_window',
+    'print',
+    'save_records_as_pdf',
+    'save_records_as_excel',
     're_login',
     'close_file',
     'exit_application',
@@ -245,6 +307,7 @@ class LayoutActionRunner {
     }
     s = s.toLowerCase().replaceAll(RegExp(r'[\s/-]+'), '_');
     return switch (s) {
+      '#' || '#_(comment)' => 'comment',
       'new_record_request' => 'new_record',
       'duplicate_record_request' => 'duplicate_record',
       'delete_record_request' => 'delete_record',
@@ -253,11 +316,17 @@ class LayoutActionRunner {
       'go_to_record_request_page' => 'go_to_record',
       'show_custom_dialog' => 'show_dialog',
       'pause_resume_script' => 'pause_script',
-      'move_resize_window' => 'adjust_window',
+      'move_resize_window' => 'move_resize_window',
       'relogin' => 're_login',
       _ => s,
     };
   }
+
+  /// Session state used when [runStep] is invoked directly (e.g. single-step
+  /// button actions or unit tests without a [ScriptExecution]).
+  final ScriptSessionState _defaultSession = ScriptSessionState();
+
+  ExtendedLayoutActionHost? get _extHost => host is ExtendedLayoutActionHost ? host as ExtendedLayoutActionHost : null;
 
   Future<LayoutActionResult> run(ButtonActionModel action) async {
     if (action.isPerformScript) {
@@ -275,7 +344,13 @@ class LayoutActionRunner {
     return runStep(step, action.params, depth: 0);
   }
 
-  Future<LayoutActionResult> _performScript({required int depth, String? id, String? name, String parameter = ''}) async {
+  Future<LayoutActionResult> _performScript({
+    required int depth,
+    String? id,
+    String? name,
+    String parameter = '',
+    ScriptSessionState? session,
+  }) async {
     if (depth >= maxScriptDepth) {
       return const LayoutActionResult.stopped('Perform Script is nested too deeply (possible recursion).');
     }
@@ -296,7 +371,13 @@ class LayoutActionRunner {
     final where = solutionName == null ? '' : ' in the solution $solutionName';
     if (script == null) return LayoutActionResult.stopped('Script "${name ?? id}" not found$where.');
 
-    final execution = ScriptExecution(script: script, runner: this, depth: depth, parameter: parameter);
+    final execution = ScriptExecution(
+      script: script,
+      runner: this,
+      depth: depth,
+      parameter: parameter,
+      session: session ?? ScriptSessionState(),
+    );
     while (!execution.atEnd) {
       final sequence = execution.currentSequence;
       final outcome = await execution.advance();
@@ -327,7 +408,9 @@ class LayoutActionRunner {
     ScriptCallContext? callContext,
   }) async {
     final vars = localVars ?? <String, String>{};
-    final context = callContext ?? ScriptCallContext();
+    final context = callContext ?? ScriptCallContext(session: _defaultSession);
+    final session = context.session;
+    final ext = _extHost;
     String p(String key, [String fallback = '']) =>
         _resolveParamsText(params[key]?.toString() ?? fallback, vars);
 
@@ -341,8 +424,51 @@ class LayoutActionRunner {
           'solution $windowSolution, whose window is the one on screen. A script '
           'performed in another solution runs only the steps that need no window.');
     }
+
+    // Helper: set FileMaker error code; if Set Error Capture [On] is active,
+    // allow the script to continue and inspect Get(LastError).
+    LayoutActionResult failOrCapture(int code, String message) {
+      session.lastError = code;
+      if (session.errorCapture) {
+        return const LayoutActionResult.ok();
+      }
+      return LayoutActionResult.stopped(message);
+    }
+
+    String currentLayoutName() {
+      final ln = host.actionResolveText('{{LayoutName}}');
+      return ln == '{{LayoutName}}' ? '' : ln;
+    }
+
+    bool boolParam(String key, {bool defaultValue = false}) {
+      final raw = params[key];
+      if (raw is bool) return raw;
+      if (raw is num) return raw != 0;
+      if (raw is String) {
+        final l = raw.trim().toLowerCase();
+        if (l == 'true' || l == 'on' || l == '1' || l == 'yes') return true;
+        if (l == 'false' || l == 'off' || l == '0' || l == 'no') return false;
+      }
+      return defaultValue;
+    }
+
+    List<Map<String, dynamic>>? mapListParam(String key) {
+      final raw = params[key];
+      if (raw is List) {
+        return raw.whereType<Map<dynamic, dynamic>>().map(Map<String, dynamic>.from).toList();
+      }
+      return null;
+    }
+
+    String normalizeFieldTarget(String rawField) {
+      final trimmed = rawField.trim();
+      final fieldPart = trimmed.contains('::') ? trimmed.split('::').last.trim() : trimmed;
+      return fieldPart.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), '');
+    }
+
     switch (norm) {
       case 'comment':
+        // Comments never alter Get(LastError).
         return const LayoutActionResult.ok();
       case 'if':
       case 'else_if':
@@ -354,65 +480,469 @@ class LayoutActionRunner {
         // Control flow belongs to a script, which has the steps around it to
         // branch over or repeat. On its own, on a button, it means nothing.
         return LayoutActionResult.stopped('Step "$stepType" is not supported on a button.');
+      case 'set_error_capture':
+        final rawState = params['state'] ?? params['expression'];
+        if (rawState is bool) {
+          session.errorCapture = rawState;
+        } else {
+          final s = rawState?.toString().trim().toLowerCase() ?? 'on';
+          session.errorCapture = s != 'off' && s != 'false' && s != '0' && !s.contains('off') && !s.contains('désactiv');
+        }
+        session.lastError = 0;
+        return const LayoutActionResult.ok();
+      case 'allow_user_abort':
+        session.allowUserAbort = boolParam('state', defaultValue: true);
+        session.lastError = 0;
+        return const LayoutActionResult.ok();
       case 'import_records':
       case 'export_records':
+        session.lastError = 0;
         return _execTransfer(norm, params, vars);
       case 'set_variable':
-        if (!params.containsKey('value') && !params.containsKey('formula') && !params.containsKey('text') && !params.containsKey('calc')) {
+        if (!params.containsKey('value') &&
+            !params.containsKey('formula') &&
+            !params.containsKey('text') &&
+            !params.containsKey('calc') &&
+            !params.containsKey('expression')) {
           return LayoutActionResult.stopped('Step "$stepType" is not supported without a value.');
         }
-        return _execSetVariable(params, vars, callContext: context);
+        final res = _execSetVariable(params, vars, callContext: context);
+        if (res.completed) session.lastError = 0;
+        return res;
       case 'new_record':
+        session.lastError = 0;
         await host.actionNewRecord();
       case 'duplicate_record':
+        session.lastError = 0;
         await host.actionDuplicateRecord();
       case 'delete_record':
+        session.lastError = 0;
+        await host.actionDeleteRecord(confirm: boolParam('dialog', defaultValue: true));
+      case 'delete_all_records':
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionDeleteAllRecords(confirm: boolParam('dialog', defaultValue: true));
+        } else {
+          await host.actionDeleteRecord(confirm: boolParam('dialog', defaultValue: true));
+        }
       case 'delete_portal_row':
-        await host.actionDeleteRecord(confirm: params['dialog'] != false);
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionDeletePortalRow(confirm: boolParam('dialog', defaultValue: true));
+        } else {
+          await host.actionDeleteRecord(confirm: boolParam('dialog', defaultValue: true));
+        }
       case 'commit_records':
-        await host.actionCommitRecord();
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionCommitRecordEx(
+            dialog: boolParam('dialog', defaultValue: true),
+            skipValidation: boolParam('skip_validation'),
+            forceCommit: boolParam('force_commit'),
+          );
+        } else {
+          await host.actionCommitRecord();
+        }
       case 'revert_record':
+        session.lastError = 0;
         await host.actionRevertRecord();
       case 'go_to_record':
-        await host.actionGoToRecord(p('target', 'next'));
+        var target = p('target', 'next').trim();
+        if (target.toLowerCase() == 'by_calculation' || params.containsKey('record_calculation')) {
+          final calcExpr = params['record_calculation']?.toString() ?? '';
+          if (calcExpr.isNotEmpty) {
+            final evaluated = resolveValue(calcExpr, vars, callContext: context);
+            if (evaluated == null) {
+              return const LayoutActionResult.stopped('Go to Record calculation cannot be evaluated.');
+            }
+            target = evaluated;
+          }
+        }
+        final exitAfterLast = boolParam('exit_after_last');
+        if (ext != null) {
+          final outcome = await ext.actionGoToRecordEx(target);
+          session.lastError = outcome.errorCode;
+          if (outcome.atBoundary && exitAfterLast) {
+            return const LayoutActionResult.exitLoop();
+          }
+        } else {
+          session.lastError = 0;
+          await host.actionGoToRecord(target);
+        }
+      case 'go_to_portal_row':
+        var target = p('target', 'next').trim();
+        if (target.toLowerCase() == 'by_calculation' || params.containsKey('record_calculation')) {
+          final calcExpr = params['record_calculation']?.toString() ?? '';
+          if (calcExpr.isNotEmpty) {
+            final evaluated = resolveValue(calcExpr, vars, callContext: context);
+            if (evaluated == null) {
+              return const LayoutActionResult.stopped('Go to Portal Row calculation cannot be evaluated.');
+            }
+            target = evaluated;
+          }
+        }
+        final exitAfterLast = boolParam('exit_after_last');
+        if (ext != null) {
+          final outcome = await ext.actionGoToPortalRow(target);
+          session.lastError = outcome.errorCode;
+          if (outcome.atBoundary && exitAfterLast) {
+            return const LayoutActionResult.exitLoop();
+          }
+        } else {
+          session.lastError = 0;
+        }
+      case 'go_to_field':
+        final field = params['field']?.toString().trim() ?? '';
+        session.activeField = field;
+        if (field.isNotEmpty && ext != null) {
+          final ok = await ext.actionGoToField(field, select: boolParam('select'));
+          if (!ok) return failOrCapture(102, 'Field "$field" is not on this layout.');
+        }
+        session.lastError = 0;
+      case 'go_to_next_field':
+        if (ext != null) {
+          await ext.actionGoToNextField();
+          session.activeField = ext.actionActiveFieldName ?? session.activeField;
+        }
+        session.lastError = 0;
+      case 'go_to_object':
+        final rawObj = params['object_name']?.toString() ?? '';
+        final objName = params['object_name_is_calculation'] == true
+            ? resolveValue(rawObj, vars, callContext: context)
+            : _resolveParamsText(rawObj, vars);
+        if (objName == null) {
+          return const LayoutActionResult.stopped('Go to Object calculation cannot be evaluated.');
+        }
+        session.activeObject = objName;
+        if (objName.isNotEmpty && ext != null) {
+          final ok = await ext.actionGoToObject(objName);
+          if (!ok) return failOrCapture(116, 'Layout object "$objName" not found.');
+        }
+        session.lastError = 0;
+      case 'go_to_related_record':
+        final relatedTable = p('related_table').trim();
+        final layoutName = p('layout_name').trim();
+        final showOnly = boolParam('show_only_related', defaultValue: true);
+        final newWin = boolParam('new_window');
+        if (newWin) {
+          final winName = p('window_name').trim().isNotEmpty ? p('window_name').trim() : (layoutName.isNotEmpty ? layoutName : relatedTable);
+          session.windows.add(ScriptWindowEntry(name: winName, layoutName: layoutName.isNotEmpty ? layoutName : currentLayoutName()));
+        }
+        if (ext != null) {
+          final ok = await ext.actionGoToRelatedRecord(
+            relatedTable: relatedTable,
+            layoutName: layoutName.isEmpty ? null : layoutName,
+            showOnlyRelated: showOnly,
+            newWindow: newWin,
+          );
+          if (!ok) return failOrCapture(101, 'No related records found for "$relatedTable".');
+        } else if (layoutName.isNotEmpty) {
+          if (!await host.actionGoToLayout(layoutName)) {
+            return failOrCapture(105, 'Layout "$layoutName" not found.');
+          }
+        }
+        session.lastError = 0;
       case 'enter_browse_mode':
+        session.lastError = 0;
         await host.actionEnterBrowseMode();
       case 'enter_find_mode':
-        await host.actionEnterFindMode();
+        session.lastError = 0;
+        final restore = boolParam('restore');
+        final findReqs = mapListParam('find_requests');
+        if (ext != null) {
+          await ext.actionEnterFindModeEx(requests: findReqs, restore: restore);
+        } else {
+          await host.actionEnterFindMode();
+        }
       case 'perform_find':
-        await host.actionPerformFind();
+      case 'constrain_found_set':
+      case 'extend_found_set':
+      case 'modify_last_find':
+        final restore = boolParam('restore');
+        final findReqs = mapListParam('find_requests');
+        if (ext != null) {
+          final found = await ext.actionPerformFindEx(requests: findReqs, restore: restore);
+          session.lastError = found == 0 ? 401 : 0;
+        } else {
+          session.lastError = 0;
+          await host.actionPerformFind();
+        }
       case 'show_all_records':
+        session.lastError = 0;
         await host.actionShowAllRecords();
+      case 'show_omitted_only':
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionShowOmittedOnly();
+        }
+      case 'omit_record':
+        if (ext != null) {
+          final ok = await ext.actionOmitRecord();
+          session.lastError = ok ? 0 : 101;
+        } else {
+          session.lastError = 0;
+        }
+      case 'omit_multiple_records':
+        final count = int.tryParse(p('count', '1')) ?? 1;
+        if (ext != null) {
+          await ext.actionOmitMultipleRecords(count);
+        }
+        session.lastError = 0;
+      case 'sort_records':
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionSortRecords(
+            sortOrder: mapListParam('sort_order'),
+            restore: boolParam('restore'),
+            dialog: boolParam('dialog', defaultValue: true),
+          );
+        }
+      case 'unsort_records':
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionUnsortRecords();
+        }
       case 'enter_preview_mode':
+        session.lastError = 0;
         await host.actionEnterPreviewMode();
+      case 'new_window':
+        session.ensureCurrentWindow(currentLayoutName());
+        var winName = params['window_name']?.toString() ?? '';
+        if (params['window_name_is_calculation'] == true && winName.isNotEmpty) {
+          final evaluated = resolveValue(winName, vars, callContext: context);
+          if (evaluated == null) {
+            return const LayoutActionResult.stopped('New Window name calculation cannot be evaluated.');
+          }
+          winName = evaluated;
+        } else {
+          winName = _resolveParamsText(winName, vars).trim();
+        }
+        if (winName.isEmpty) {
+          winName = 'Window ${session.windows.length + 1}';
+        }
+        var targetLayout = params['layout_name']?.toString().trim() ?? '';
+        if (params['layout_destination']?.toString() == 'by_name' && params['layout_calculation'] != null) {
+          targetLayout = resolveValue(params['layout_calculation'].toString(), vars, callContext: context) ?? '';
+        }
+        final effectiveLayout = targetLayout.isNotEmpty ? targetLayout : currentLayoutName();
+        session.windows.add(ScriptWindowEntry(
+          name: winName,
+          layoutName: effectiveLayout,
+          style: params['window_style']?.toString() ?? 'Document',
+          top: double.tryParse(params['top']?.toString() ?? ''),
+          left: double.tryParse(params['left']?.toString() ?? ''),
+          width: double.tryParse(params['width']?.toString() ?? ''),
+          height: double.tryParse(params['height']?.toString() ?? ''),
+        ));
+        if (targetLayout.isNotEmpty) {
+          if (!await host.actionGoToLayout(targetLayout)) {
+            return failOrCapture(105, 'Layout "$targetLayout" not found.');
+          }
+        }
+        session.lastError = 0;
+      case 'select_window':
+        session.ensureCurrentWindow(currentLayoutName());
+        final targetKind = params['window_target']?.toString().toLowerCase() ?? '';
+        var winName = params['window_name']?.toString() ?? '';
+        if (params['window_name_is_calculation'] == true && winName.isNotEmpty) {
+          final evaluated = resolveValue(winName, vars, callContext: context);
+          if (evaluated == null) {
+            return const LayoutActionResult.stopped('Select Window name calculation cannot be evaluated.');
+          }
+          winName = evaluated;
+        } else {
+          winName = _resolveParamsText(winName, vars).trim();
+        }
+        if (targetKind == 'current' || winName.isEmpty) {
+          session.lastError = 0;
+          break;
+        }
+        final idx = session.windows.indexWhere((w) => w.name.toLowerCase() == winName.toLowerCase());
+        if (idx < 0) {
+          return failOrCapture(112, 'Window "$winName" is missing.');
+        }
+        final selected = session.windows.removeAt(idx);
+        session.windows.add(selected);
+        if (selected.layoutName.isNotEmpty && selected.layoutName != currentLayoutName()) {
+          await host.actionGoToLayout(selected.layoutName);
+        }
+        session.lastError = 0;
+      case 'close_window':
+        session.ensureCurrentWindow(currentLayoutName());
+        var winName = params['window_name']?.toString() ?? '';
+        if (params['window_name_is_calculation'] == true && winName.isNotEmpty) {
+          final evaluated = resolveValue(winName, vars, callContext: context);
+          if (evaluated == null) {
+            return const LayoutActionResult.stopped('Close Window name calculation cannot be evaluated.');
+          }
+          winName = evaluated;
+        } else {
+          winName = _resolveParamsText(winName, vars).trim();
+        }
+        if (winName.isEmpty || params['window_target']?.toString().toLowerCase() == 'current') {
+          if (session.windows.length > 1) {
+            session.windows.removeLast();
+          }
+        } else {
+          final idx = session.windows.indexWhere((w) => w.name.toLowerCase() == winName.toLowerCase());
+          if (idx < 0) {
+            return failOrCapture(112, 'Window "$winName" is missing.');
+          }
+          session.windows.removeAt(idx);
+        }
+        if (session.windows.isNotEmpty) {
+          final front = session.windows.last;
+          if (front.layoutName.isNotEmpty && front.layoutName != currentLayoutName()) {
+            await host.actionGoToLayout(front.layoutName);
+          }
+        }
+        session.lastError = 0;
       case 'adjust_window':
+        session.lastError = 0;
         await host.actionAdjustWindow(p('window_action', 'Restore'));
+      case 'move_resize_window':
+        final win = session.ensureCurrentWindow(currentLayoutName());
+        win
+          ..top = double.tryParse(params['top']?.toString() ?? '') ?? win.top
+          ..left = double.tryParse(params['left']?.toString() ?? '') ?? win.left
+          ..width = double.tryParse(params['width']?.toString() ?? '') ?? win.width
+          ..height = double.tryParse(params['height']?.toString() ?? '') ?? win.height;
+        session.lastError = 0;
+      case 'freeze_window':
+        session.windowFrozen = true;
+        session.lastError = 0;
+      case 'refresh_window':
+        session.windowFrozen = false;
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionRefreshWindow(
+            flushJoinCache: boolParam('flush_join_cache'),
+            flushExternalCache: boolParam('flush_external_cache'),
+          );
+        }
+      case 'beep':
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionBeep();
+        }
+      case 'print_setup':
+        // Documented deterministic no-op on web/headless where OS print setup
+        // dialogs are unavailable; retains settings on the session (#133).
+        if (params['print_settings'] is Map) {
+          session.printSettings = Map<String, dynamic>.from(params['print_settings'] as Map);
+        }
+        session.lastError = 0;
+      case 'print':
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionPrint(
+            dialog: boolParam('dialog', defaultValue: true),
+            printSettings: params['print_settings'] is Map
+                ? Map<String, dynamic>.from(params['print_settings'] as Map)
+                : session.printSettings,
+          );
+        }
+      case 'save_records_as_pdf':
+      case 'save_records_as_excel':
+        session.lastError = 0;
+        if (ext != null) {
+          await ext.actionSaveRecordsAsPdf(
+            path: params['path']?.toString(),
+            dialog: boolParam('dialog', defaultValue: true),
+            append: boolParam('append'),
+          );
+        }
+      case 'install_menu_set':
+        session.activeMenuSet = p('menu_set');
+        session.lastError = 0;
+      case 'show_hide_toolbars':
+        final state = p('state', 'toggle').toLowerCase();
+        session.uiVisibility['toolbars'] = state;
+        if (ext != null) await ext.actionSetUiVisibility('toolbars', state);
+        session.lastError = 0;
+      case 'show_hide_menubar':
+        final state = p('state', 'toggle').toLowerCase();
+        session.uiVisibility['menubar'] = state;
+        if (ext != null) await ext.actionSetUiVisibility('menubar', state);
+        session.lastError = 0;
+      case 'show_hide_text_ruler':
+        final state = p('state', 'toggle').toLowerCase();
+        session.uiVisibility['text_ruler'] = state;
+        if (ext != null) await ext.actionSetUiVisibility('text_ruler', state);
+        session.lastError = 0;
       case 're_login':
+        session.lastError = 0;
         await host.actionReLogin();
       case 'close_file':
+        session.lastError = 0;
         await host.actionCloseFile();
       case 'exit_application':
+        session.lastError = 0;
         await host.actionExitApplication();
       case 'go_to_layout':
-        var rawTarget = params['layout_name']?.toString().trim() ?? '';
-        if (rawTarget.isEmpty) {
-          rawTarget = _extractLayoutFromExpression(params['expression']?.toString() ?? '');
+        final dest = params['layout_destination']?.toString().trim().toLowerCase() ?? '';
+        final curBefore = currentLayoutName();
+        if (curBefore.isNotEmpty) {
+          _setVariable(r'$$lastLayout', curBefore, vars);
         }
-        var layout = _resolveParamsText(rawTarget, vars).trim();
-        if (layout.isEmpty && rawTarget.startsWith(r'$')) {
-          layout = _lookupVariable(rawTarget, vars) ?? 'View Recipe';
+        if (dest == 'original') {
+          final original = context.originalLayout.isNotEmpty
+              ? context.originalLayout
+              : (_lookupVariable(r'$$lastLayout', vars) ?? curBefore);
+          if (original.isEmpty) {
+            return failOrCapture(105, 'Go to Layout [Original Layout] has no original layout.');
+          }
+          if (!await host.actionGoToLayout(original)) {
+            return failOrCapture(105, 'Layout "$original" not found.');
+          }
+          session.ensureCurrentWindow(original).layoutName = original;
+          session.lastError = 0;
+          break;
         }
-        if (layout.isEmpty) return const LayoutActionResult.stopped('Go to Layout has no layout selected.');
-        final currentLayout = host.actionResolveText('{{LayoutName}}');
-        if (currentLayout.isNotEmpty && currentLayout != '{{LayoutName}}') {
-          _setVariable(r'$$lastLayout', currentLayout, vars);
+        if (dest == 'by_number') {
+          final calcExpr = params['layout_calculation']?.toString() ?? params['expression']?.toString() ?? '';
+          final evaluated = resolveValue(calcExpr, vars, callContext: context);
+          final layoutNum = int.tryParse(evaluated?.trim() ?? '');
+          if (layoutNum == null || layoutNum < 1) {
+            return failOrCapture(105, 'Go to Layout by number could not evaluate "$calcExpr".');
+          }
+          final ok = ext != null
+              ? await ext.actionGoToLayoutByNumber(layoutNum)
+              : await host.actionGoToLayout(layoutNum.toString());
+          if (!ok) {
+            return failOrCapture(105, 'Layout #$layoutNum not found.');
+          }
+          session.ensureCurrentWindow(currentLayoutName()).layoutName = currentLayoutName();
+          session.lastError = 0;
+          break;
         }
+        String layout;
+        if (dest == 'by_name' || (params['layout_calculation']?.toString().trim().isNotEmpty ?? false)) {
+          final calcExpr = params['layout_calculation']?.toString() ?? params['expression']?.toString() ?? '';
+          final evaluated = resolveValue(calcExpr, vars, callContext: context);
+          if (evaluated == null) {
+            return failOrCapture(105, 'Go to Layout calculation "$calcExpr" cannot be evaluated.');
+          }
+          layout = evaluated.trim();
+        } else {
+          var rawTarget = params['layout_name']?.toString().trim() ?? '';
+          if (rawTarget.isEmpty) {
+            rawTarget = _extractLayoutFromExpression(params['expression']?.toString() ?? '');
+          }
+          layout = _resolveParamsText(rawTarget, vars).trim();
+          if (layout.isEmpty && rawTarget.startsWith(r'$')) {
+            layout = _lookupVariable(rawTarget, vars) ?? '';
+          }
+        }
+        if (layout.isEmpty) return failOrCapture(105, 'Go to Layout has no layout selected.');
         if (!await host.actionGoToLayout(layout)) {
-          return LayoutActionResult.stopped('Layout "$layout" not found.');
+          return failOrCapture(105, 'Layout "$layout" not found.');
         }
+        session.ensureCurrentWindow(layout).layoutName = layout;
+        session.lastError = 0;
       case 'set_field':
         final field = params['field']?.toString() ?? '';
-        if (field.isEmpty) return const LayoutActionResult.stopped('Set Field has no field selected.');
+        if (field.isEmpty) return failOrCapture(102, 'Set Field has no field selected.');
         final value = params['value_is_calculation'] == true
             ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
             : p('value');
@@ -420,8 +950,230 @@ class LayoutActionRunner {
           return const LayoutActionResult.stopped('Set Field calculation is not supported in this context.');
         }
         if (!await host.actionSetField(field, value)) {
-          return LayoutActionResult.stopped('Field "$field" is not in this table.');
+          return failOrCapture(102, 'Field "$field" is not in this table.');
         }
+        session.lastError = 0;
+      case 'set_field_by_name':
+        final rawTargetField = params['target_field']?.toString() ?? params['field']?.toString() ?? '';
+        final resolvedTarget = params['target_field_is_calculation'] == true
+            ? resolveValue(rawTargetField, vars, callContext: context)
+            : (resolveValue(rawTargetField, vars, callContext: context) ?? _resolveParamsText(rawTargetField, vars));
+        if (resolvedTarget == null || resolvedTarget.trim().isEmpty) {
+          return failOrCapture(102, 'Set Field By Name could not resolve target field "$rawTargetField".');
+        }
+        final colName = normalizeFieldTarget(resolvedTarget);
+        final value = params['value_is_calculation'] == true
+            ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
+            : (resolveValue(params['value']?.toString() ?? '', vars, callContext: context) ?? p('value'));
+        if (value == null) {
+          return const LayoutActionResult.stopped('Set Field By Name calculation is not supported in this context.');
+        }
+        if (!await host.actionSetField(colName, value)) {
+          return failOrCapture(102, 'Field "$resolvedTarget" ($colName) is not in this table.');
+        }
+        session.lastError = 0;
+      case 'insert_calculated_result':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isEmpty) {
+          return failOrCapture(102, 'Insert Calculated Result has no target or active field.');
+        }
+        final calcVal = resolveValue((params['value'] ?? params['expression'])?.toString() ?? '', vars, callContext: context);
+        if (calcVal == null) {
+          return const LayoutActionResult.stopped('Insert Calculated Result calculation is not supported in this context.');
+        }
+        final selectAll = boolParam('select', defaultValue: true);
+        var finalVal = calcVal;
+        if (!selectAll) {
+          final existing = host.actionResolveText('{{$field}}');
+          if (existing != '{{$field}}') {
+            finalVal = '$existing$calcVal';
+          }
+        }
+        if (!await host.actionSetField(field, finalVal)) {
+          return failOrCapture(102, 'Field "$field" is not in this table.');
+        }
+        session.lastError = 0;
+      case 'replace_field_contents':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isEmpty) {
+          return failOrCapture(102, 'Replace Field Contents has no target field.');
+        }
+        final replaceType = params['replace_type']?.toString().toLowerCase() ?? 'current_contents';
+        String? replacement;
+        if (params.containsKey('value') || params.containsKey('expression')) {
+          final expr = (params['value'] ?? params['expression'])?.toString() ?? '';
+          replacement = resolveValue(expr, vars, callContext: context);
+          if (replacement == null) {
+            return const LayoutActionResult.stopped('Replace Field Contents calculation cannot be evaluated.');
+          }
+        }
+        if (ext != null) {
+          final ok = await ext.actionReplaceFieldContents(field: field, replaceType: replaceType, value: replacement);
+          if (!ok) return failOrCapture(102, 'Field "$field" could not be replaced.');
+        } else if (replacement != null) {
+          if (!await host.actionSetField(field, replacement)) {
+            return failOrCapture(102, 'Field "$field" is not in this table.');
+          }
+        }
+        session.lastError = 0;
+      case 'copy':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        var copied = '';
+        if (field.isNotEmpty) {
+          final token = '{{$field}}';
+          final val = host.actionResolveText(token);
+          copied = val == token ? '' : val;
+        }
+        session.clipboard = copied;
+        if (ext != null) {
+          await ext.actionCopyToClipboard(copied);
+        }
+        session.lastError = 0;
+      case 'cut':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isNotEmpty) {
+          final token = '{{$field}}';
+          final val = host.actionResolveText(token);
+          session.clipboard = val == token ? '' : val;
+          if (ext != null) await ext.actionCopyToClipboard(session.clipboard);
+          await host.actionSetField(field, '');
+        }
+        session.lastError = 0;
+      case 'paste':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isEmpty) {
+          return failOrCapture(102, 'Paste has no target or active field.');
+        }
+        final clip = (ext != null ? await ext.actionReadFromClipboard() : null) ?? session.clipboard;
+        if (!await host.actionSetField(field, clip)) {
+          return failOrCapture(102, 'Field "$field" is not in this table.');
+        }
+        session.lastError = 0;
+      case 'clear':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isNotEmpty) {
+          if (!await host.actionSetField(field, '')) {
+            return failOrCapture(102, 'Field "$field" is not in this table.');
+          }
+        }
+        session.lastError = 0;
+      case 'export_field_contents':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isEmpty) {
+          return failOrCapture(102, 'Export Field Contents has no target field.');
+        }
+        if (ext != null) {
+          await ext.actionExportFieldContents(field: field, path: params['path']?.toString());
+        }
+        session.lastError = 0;
+      case 'insert_picture':
+      case 'insert_file':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (ext != null && field.isNotEmpty) {
+          final ok = await ext.actionInsertFile(
+            field: field,
+            path: params['path']?.toString(),
+            isPicture: norm == 'insert_picture',
+          );
+          if (!ok) return failOrCapture(100, 'Could not insert file into "$field".');
+        }
+        session.lastError = 0;
+      case 'insert_from_url':
+        final rawUrl = (params['url'] ?? params['expression'])?.toString() ?? '';
+        final url = resolveValue(rawUrl, vars, callContext: context) ?? _resolveParamsText(rawUrl, vars);
+        if (url.trim().isEmpty) {
+          return failOrCapture(1631, 'Insert from URL has no URL.');
+        }
+        final targetVar = params['target']?.toString().trim() ?? '';
+        final targetField = params['field']?.toString().trim() ?? '';
+        if (!hasWindow && targetVar.isEmpty) {
+          return LayoutActionResult.stopped(
+              'Step "$stepType" targeting a field acts on a window, and this script has no window here.');
+        }
+        String? fetched;
+        try {
+          if (ext != null) {
+            fetched = await ext.actionInsertFromUrl(
+              url: url,
+              verifySsl: boolParam('verify_ssl', defaultValue: true),
+              curlOptions: params['curl_options']?.toString(),
+            );
+          } else {
+            final uri = Uri.tryParse(url);
+            if (uri == null || !(uri.isScheme('http') || uri.isScheme('https'))) {
+              return failOrCapture(1631, 'Insert from URL received invalid URL "$url".');
+            }
+            final resp = await http.get(uri);
+            if (resp.statusCode >= 400) {
+              return failOrCapture(1631, 'Insert from URL failed with HTTP ${resp.statusCode}.');
+            }
+            fetched = resp.body;
+          }
+        } catch (e) {
+          return failOrCapture(1631, 'Insert from URL failed: $e');
+        }
+        if (fetched == null) {
+          return failOrCapture(1631, 'Insert from URL could not fetch "$url".');
+        }
+        if (targetVar.startsWith(r'$')) {
+          _setVariable(targetVar, fetched, vars);
+        } else if (targetField.isNotEmpty) {
+          if (!await host.actionSetField(targetField, fetched)) {
+            return failOrCapture(102, 'Field "$targetField" is not in this table.');
+          }
+        }
+        session.lastError = 0;
+      case 'send_mail':
+        String evalMailParam(String key) {
+          final raw = params[key]?.toString() ?? '';
+          if (raw.isEmpty) return '';
+          return resolveValue(raw, vars, callContext: context) ?? _resolveParamsText(raw, vars);
+        }
+        final to = evalMailParam('to');
+        final cc = evalMailParam('cc');
+        final bcc = evalMailParam('bcc');
+        final subject = evalMailParam('subject');
+        final message = evalMailParam('message');
+        if (ext != null) {
+          await ext.actionSendMail(to: to, cc: cc, bcc: bcc, subject: subject, message: message);
+        } else if (to.isNotEmpty) {
+          final uri = Uri(
+            scheme: 'mailto',
+            path: to,
+            queryParameters: <String, String>{
+              if (cc.isNotEmpty) 'cc': cc,
+              if (bcc.isNotEmpty) 'bcc': bcc,
+              if (subject.isNotEmpty) 'subject': subject,
+              if (message.isNotEmpty) 'body': message,
+            },
+          );
+          await host.actionOpenUrl(uri.toString());
+        }
+        session.lastError = 0;
       case 'show_dialog':
         final title = params['title_is_calculation'] == true
             ? resolveValue(params['title']?.toString() ?? '', vars, callContext: context)
@@ -432,18 +1184,71 @@ class LayoutActionRunner {
         if (title == null || message == null) {
           return const LayoutActionResult.stopped('Dialog calculation is not supported in this context.');
         }
-        await host.actionShowDialog(title, message);
+        final rawButtons = mapListParam('buttons');
+        final rawInputs = mapListParam('input_fields');
+        if (ext != null && (rawButtons != null || rawInputs != null)) {
+          final resolvedButtons = rawButtons?.map((b) {
+            final lbl = b['is_calculation'] == true
+                ? (resolveValue(b['label']?.toString() ?? '', vars, callContext: context) ?? b['label']?.toString() ?? 'OK')
+                : _resolveParamsText(b['label']?.toString() ?? 'OK', vars);
+            return <String, dynamic>{'label': lbl, 'commit': b['commit'] != false};
+          }).toList();
+          final resolvedInputs = rawInputs?.map((inp) {
+            final lbl = inp['label_is_calculation'] == true
+                ? (resolveValue(inp['label']?.toString() ?? '', vars, callContext: context) ?? '')
+                : _resolveParamsText(inp['label']?.toString() ?? '', vars);
+            final fieldKey = inp['field']?.toString() ?? '';
+            final current = fieldKey.startsWith(r'$')
+                ? (_lookupVariable(fieldKey, vars) ?? '')
+                : (host.actionResolveText('{{$fieldKey}}') == '{{$fieldKey}}' ? '' : host.actionResolveText('{{$fieldKey}}'));
+            return <String, dynamic>{
+              'field': fieldKey,
+              'label': lbl,
+              'value': current,
+              'password': inp['password'] == true,
+            };
+          }).toList();
+          final dialogResult = await ext.actionShowDialogEx(
+            title: title,
+            message: message,
+            buttons: resolvedButtons,
+            inputFields: resolvedInputs,
+          );
+          session.lastMessageChoice = dialogResult.buttonIndex;
+          final chosenIdx = dialogResult.buttonIndex - 1;
+          final shouldCommit = resolvedButtons == null ||
+              chosenIdx < 0 ||
+              chosenIdx >= resolvedButtons.length ||
+              resolvedButtons[chosenIdx]['commit'] != false;
+          if (shouldCommit) {
+            for (final entry in dialogResult.inputValues.entries) {
+              if (entry.key.startsWith(r'$')) {
+                _setVariable(entry.key, entry.value, vars);
+              } else if (entry.key.isNotEmpty) {
+                await host.actionSetField(entry.key, entry.value);
+              }
+            }
+          }
+        } else {
+          await host.actionShowDialog(title, message);
+          session.lastMessageChoice = 1;
+        }
+        session.lastError = 0;
       case 'open_url':
         var rawUrl = params['url']?.toString() ?? '';
         if (rawUrl.isEmpty) {
           rawUrl = params['expression']?.toString() ?? '';
         }
         final url = _resolveExpressionValue(rawUrl, vars, callContext: context);
-        if (url.isEmpty) return const LayoutActionResult.stopped('Open URL has no URL.');
+        if (url.isEmpty) return failOrCapture(5, 'Open URL has no URL.');
         await host.actionOpenUrl(url);
+        session.lastError = 0;
       case 'pause_script':
-        final seconds = num.tryParse(params['duration_seconds']?.toString() ?? '') ?? 0;
+        final rawSec = params['duration_seconds']?.toString() ?? '';
+        final resolvedSec = resolveValue(rawSec, vars, callContext: context) ?? rawSec;
+        final seconds = num.tryParse(resolvedSec) ?? 0;
         if (seconds > 0) await Future<void>.delayed(Duration(milliseconds: (seconds * 1000).round()));
+        session.lastError = 0;
       case 'perform_script':
         var name = params['script_name']?.toString() ?? '';
         if (name.isEmpty) {
@@ -460,9 +1265,20 @@ class LayoutActionRunner {
           // A script in another file is resolved in the solution that file
           // became, and only there. Looking it up here would run whatever
           // local script shares the name (#107).
-          result = await _performExternalScript(reference: reference, name: name, depth: depth + 1, parameter: parameter);
+          result = await _performExternalScript(
+            reference: reference,
+            name: name,
+            depth: depth + 1,
+            parameter: parameter,
+            session: session,
+          );
         } else {
-          result = await _performScript(name: name, depth: depth + 1, parameter: parameter);
+          result = await _performScript(
+            name: name,
+            depth: depth + 1,
+            parameter: parameter,
+            session: session,
+          );
         }
         if (result.completed && !result.halted && result.scriptResult != null) {
           context.lastScriptResult = result.scriptResult!;
@@ -498,6 +1314,7 @@ class LayoutActionRunner {
     required String name,
     required int depth,
     required String parameter,
+    ScriptSessionState? session,
   }) async {
     if (depth >= maxScriptDepth) {
       return const LayoutActionResult.stopped('Perform Script is nested too deeply (possible recursion).');
@@ -528,7 +1345,7 @@ class LayoutActionRunner {
     if (target.local) {
       // The reference names this very solution: an ordinary Perform Script,
       // with this solution's window.
-      return _performScript(name: name, depth: depth, parameter: parameter);
+      return _performScript(name: name, depth: depth, parameter: parameter, session: session);
     }
 
     final token = await peerTokenProvider?.call(target.database);
@@ -555,7 +1372,7 @@ class LayoutActionRunner {
       windowSolution: windowSolution ?? target.callingDatabase,
       solutionName: target.database,
     );
-    return external._performScript(name: name, depth: depth, parameter: parameter);
+    return external._performScript(name: name, depth: depth, parameter: parameter, session: session);
   }
 
   /// Names of the step parameters that can hold the transfer an
@@ -678,8 +1495,8 @@ class LayoutActionRunner {
   }
 
   LayoutActionResult _execSetVariable(Map<String, dynamic> params, Map<String, String> localVars, {ScriptCallContext? callContext}) {
-    var name = params['name']?.toString().trim() ?? '';
-    var valExpr = params['value']?.toString().trim() ?? '';
+    var name = (params['name'] ?? params['variable'])?.toString().trim() ?? '';
+    var valExpr = (params['value'] ?? params['calc'] ?? params['formula'] ?? params['text'])?.toString().trim() ?? '';
     if (name.isEmpty) {
       final expr = params['expression']?.toString() ?? '';
       final parts = expr.split(';');
@@ -697,6 +1514,16 @@ class LayoutActionRunner {
     if (name.isEmpty) {
       return const LayoutActionResult.stopped('Set Variable has no variable name.');
     }
+    var repetition = 1;
+    final rawRep = params['repetition']?.toString().trim() ?? '';
+    if (rawRep.isNotEmpty) {
+      final evalRep = resolveValue(rawRep, localVars, callContext: callContext);
+      final parsedRep = int.tryParse(evalRep?.trim() ?? '');
+      if (parsedRep == null || parsedRep < 1) {
+        return LayoutActionResult.stopped('Set Variable cannot evaluate repetition "$rawRep".');
+      }
+      repetition = parsedRep;
+    }
     final resolved = resolveValue(valExpr, localVars, callContext: callContext);
     if (resolved == null) {
       // Guessing an unreadable value as empty wrote an empty variable and let
@@ -705,12 +1532,17 @@ class LayoutActionRunner {
           'Set Variable cannot evaluate "$valExpr": File4Base reads a number, '
           r'a quoted string, a $variable, a merge token or a field name.');
     }
-    _setVariable(name, resolved, localVars);
+    _setVariable(name, resolved, localVars, repetition: repetition);
     return const LayoutActionResult.ok();
   }
 
-  void _setVariable(String name, String value, Map<String, String> localVars) {
-    final key = name.trim().toLowerCase();
+  String _variableStorageKey(String name, int repetition) {
+    final base = name.trim().toLowerCase();
+    return repetition <= 1 ? base : '$base[$repetition]';
+  }
+
+  void _setVariable(String name, String value, Map<String, String> localVars, {int repetition = 1}) {
+    final key = _variableStorageKey(name, repetition);
     if (key.startsWith(r'$$')) {
       globalVariables[key] = value;
     } else {
@@ -718,8 +1550,18 @@ class LayoutActionRunner {
     }
   }
 
-  String? _lookupVariable(String name, Map<String, String> localVars) {
-    final key = name.trim().toLowerCase();
+  String? _lookupVariable(String name, Map<String, String> localVars, {ScriptCallContext? callContext}) {
+    final trimmed = name.trim();
+    final repMatch = RegExp(r'^(\$+[A-Za-z_][A-Za-z0-9_]*)\s*\[\s*(.+)\s*\]$').firstMatch(trimmed);
+    if (repMatch != null) {
+      final base = repMatch.group(1)!.toLowerCase();
+      final repExpr = repMatch.group(2)!.trim();
+      final evalRep = resolveValue(repExpr, localVars, callContext: callContext) ?? repExpr;
+      final rep = int.tryParse(evalRep.trim()) ?? 1;
+      final key = _variableStorageKey(base, rep);
+      return key.startsWith(r'$$') ? globalVariables[key] : localVars[key];
+    }
+    final key = trimmed.toLowerCase();
     if (key.startsWith(r'$$')) {
       return globalVariables[key];
     }
@@ -749,24 +1591,74 @@ class LayoutActionRunner {
   String? resolveValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     final expr = raw.trim();
     if (expr.isEmpty) return '';
-    if ((expr.startsWith('"') && expr.endsWith('"') && expr.length >= 2) ||
-        (expr.startsWith("'") && expr.endsWith("'") && expr.length >= 2)) {
-      return host.actionResolveText(expr.substring(1, expr.length - 1));
+    if (expr.startsWith('(') && expr.endsWith(')') && _hasMatchingOuterParens(expr)) {
+      return resolveValue(expr.substring(1, expr.length - 1), localVars, callContext: callContext);
     }
-    final scriptGet = RegExp(r'^get\s*\(\s*(scriptparameter|scriptresult)\s*\)$', caseSensitive: false).firstMatch(expr);
-    if (scriptGet != null) {
-      return scriptGet.group(1)!.toLowerCase() == 'scriptparameter'
-          ? callContext?.parameter ?? ''
-          : callContext?.lastScriptResult ?? '';
+    if ((expr.startsWith('"') && expr.endsWith('"') && expr.length >= 2 && _isSingleQuotedLiteral(expr, '"')) ||
+        (expr.startsWith("'") && expr.endsWith("'") && expr.length >= 2 && _isSingleQuotedLiteral(expr, "'"))) {
+      final inner = expr.substring(1, expr.length - 1).replaceAll(r'\"', '"').replaceAll(r'\\', r'\');
+      return host.actionResolveText(inner);
     }
+
+    // String concatenation (`&`) at top level (outside quotes and parens).
+    final concatParts = _splitTopLevel(expr, '&');
+    if (concatParts.length > 1) {
+      final buf = StringBuffer();
+      for (final part in concatParts) {
+        final v = resolveValue(part, localVars, callContext: callContext);
+        if (v == null) return null;
+        buf.write(v);
+      }
+      return buf.toString();
+    }
+
+    // Basic binary arithmetic (`+`, `-`, `*`, `/`) at top level.
+    final arith = _evaluateTopLevelArithmetic(expr, localVars, callContext: callContext);
+    if (arith.matched) return arith.value;
+
+    // Built-in FileMaker Get(...) status functions (#133).
+    final getMatch = RegExp(r'^get\s*\(\s*([a-z0-9_]+)\s*\)$', caseSensitive: false).firstMatch(expr);
+    if (getMatch != null) {
+      final fn = getMatch.group(1)!.toLowerCase();
+      final session = callContext?.session ?? _defaultSession;
+      final ext = _extHost;
+      switch (fn) {
+        case 'scriptparameter':
+          return callContext?.parameter ?? '';
+        case 'scriptresult':
+          return callContext?.lastScriptResult ?? '';
+        case 'lasterror':
+          return session.lastError.toString();
+        case 'lastmessagechoice':
+          return session.lastMessageChoice.toString();
+        case 'layoutname':
+          final ln = host.actionResolveText('{{LayoutName}}');
+          return ln == '{{LayoutName}}' ? '' : ln;
+        case 'windowname':
+          return session.currentWindowName;
+        case 'scriptname':
+          return callContext?.scriptName ?? '';
+        case 'activefieldname':
+          return ext?.actionActiveFieldName ?? session.activeField;
+        case 'activelayoutobjectname':
+          return session.activeObject;
+        case 'foundcount':
+          return (ext?.actionFoundCount ?? 0).toString();
+        case 'recordnumber':
+          return (ext?.actionCurrentRecordNumber ?? 0).toString();
+        case 'totalrecordcount':
+          return (ext?.actionTotalRecordCount ?? 0).toString();
+        case 'accountname':
+          final acc = host.actionResolveText('{{AccountName}}');
+          return acc == '{{AccountName}}' ? '' : acc;
+      }
+    }
+
     // A numeric literal is its own value, not the name of a field.
     if (num.tryParse(expr) != null) return expr;
-    if (RegExp(r'^get\s*\(\s*layoutname\s*\)$', caseSensitive: false).hasMatch(expr)) {
-      final ln = host.actionResolveText('{{LayoutName}}');
-      return ln == '{{LayoutName}}' ? '' : ln;
-    }
+
     if (expr.startsWith(r'$')) {
-      return _lookupVariable(expr, localVars) ?? '';
+      return _lookupVariable(expr, localVars, callContext: callContext) ?? '';
     }
     if (expr.contains('{{')) {
       return host.actionResolveText(expr);
@@ -783,6 +1675,126 @@ class LayoutActionRunner {
       return null; // no such field in this context
     }
     return resolved;
+  }
+
+  bool _hasMatchingOuterParens(String expr) {
+    var depth = 0;
+    var inQuote = '';
+    for (var i = 0; i < expr.length; i++) {
+      final ch = expr[i];
+      if (inQuote.isNotEmpty) {
+        if (ch == r'\' && i + 1 < expr.length) {
+          i++;
+          continue;
+        }
+        if (ch == inQuote) inQuote = '';
+        continue;
+      }
+      if (ch == '"' || ch == "'") {
+        inQuote = ch;
+      } else if (ch == '(') {
+        depth++;
+      } else if (ch == ')') {
+        depth--;
+        if (depth == 0 && i < expr.length - 1) return false;
+      }
+    }
+    return depth == 0;
+  }
+
+  bool _isSingleQuotedLiteral(String expr, String quote) {
+    for (var i = 1; i < expr.length - 1; i++) {
+      final ch = expr[i];
+      if (ch == r'\' && i + 1 < expr.length - 1) {
+        i++;
+        continue;
+      }
+      if (ch == quote) return false;
+    }
+    return true;
+  }
+
+  List<String> _splitTopLevel(String expr, String sep) {
+    final parts = <String>[];
+    var depth = 0;
+    var inQuote = '';
+    var start = 0;
+    for (var i = 0; i < expr.length; i++) {
+      final ch = expr[i];
+      if (inQuote.isNotEmpty) {
+        if (ch == r'\' && i + 1 < expr.length) {
+          i++;
+          continue;
+        }
+        if (ch == inQuote) inQuote = '';
+        continue;
+      }
+      if (ch == '"' || ch == "'") {
+        inQuote = ch;
+      } else if (ch == '(' || ch == '[') {
+        depth++;
+      } else if (ch == ')' || ch == ']') {
+        depth--;
+      } else if (depth == 0 && ch == sep) {
+        parts.add(expr.substring(start, i));
+        start = i + 1;
+      }
+    }
+    parts.add(expr.substring(start));
+    return parts;
+  }
+
+  ({bool matched, String? value}) _evaluateTopLevelArithmetic(
+    String expr,
+    Map<String, String> localVars, {
+    ScriptCallContext? callContext,
+  }) {
+    // Scan right-to-left for lowest precedence (+, -) then (*, /).
+    for (final ops in const [<String>['+', '-'], <String>['*', '/']]) {
+      var depth = 0;
+      var inQuote = '';
+      for (var i = expr.length - 1; i >= 1; i--) {
+        final ch = expr[i];
+        if (inQuote.isNotEmpty) {
+          if (ch == inQuote && (i == 0 || expr[i - 1] != r'\')) inQuote = '';
+          continue;
+        }
+        if (ch == '"' || ch == "'") {
+          inQuote = ch;
+        } else if (ch == ')' || ch == ']') {
+          depth++;
+        } else if (ch == '(' || ch == '[') {
+          depth--;
+        } else if (depth == 0 && ops.contains(ch)) {
+          final leftStr = expr.substring(0, i).trim();
+          final rightStr = expr.substring(i + 1).trim();
+          if (leftStr.isEmpty || rightStr.isEmpty) continue;
+          // Ignore unary sign right after another operator.
+          final lastLeft = leftStr[leftStr.length - 1];
+          if ('+-*/(&,='.contains(lastLeft)) continue;
+          final leftVal = resolveValue(leftStr, localVars, callContext: callContext);
+          final rightVal = resolveValue(rightStr, localVars, callContext: callContext);
+          if (leftVal == null || rightVal == null) return (matched: true, value: null);
+          final l = num.tryParse(leftVal.trim());
+          final r = num.tryParse(rightVal.trim());
+          if (l == null || r == null) return (matched: true, value: null);
+          if (ch == '/' && r == 0) return (matched: true, value: null);
+          final res = switch (ch) {
+            '+' => l + r,
+            '-' => l - r,
+            '*' => l * r,
+            '/' => l / r,
+            _ => null,
+          };
+          if (res == null) return (matched: true, value: null);
+          final formatted = (res is double && res == res.truncateToDouble())
+              ? res.toInt().toString()
+              : res.toString();
+          return (matched: true, value: formatted);
+        }
+      }
+    }
+    return (matched: false, value: null);
   }
 
   /// Whether a condition holds, or null when the condition is not one this
@@ -908,13 +1920,30 @@ class LayoutActionRunner {
 /// really interprets (#94).
 class ScriptExecution {
 
-  ScriptExecution({required this.script, required this.runner, this.depth = 0, Map<String, String>? localVars, String parameter = ''})
-      : steps = List<ScriptStepModel>.from(script.steps)
+  ScriptExecution({
+    required this.script,
+    required this.runner,
+    this.depth = 0,
+    Map<String, String>? localVars,
+    String parameter = '',
+    ScriptSessionState? session,
+  })  : steps = List<ScriptStepModel>.from(script.steps)
           ..sort((a, b) => a.sequenceIdx.compareTo(b.sequenceIdx)),
-        callContext = ScriptCallContext(parameter: parameter),
+        callContext = ScriptCallContext(
+          parameter: parameter,
+          scriptName: script.name,
+          originalLayout: _initialLayoutOf(runner),
+          session: session ?? ScriptSessionState(),
+        ),
         localVars = localVars ?? <String, String>{} {
     _hasEndIf = steps.any((s) => s.isEnabled && LayoutActionRunner.normalizeStepType(s.stepType) == 'end_if');
     _hasEndLoop = steps.any((s) => s.isEnabled && LayoutActionRunner.normalizeStepType(s.stepType) == 'end_loop');
+    callContext.session.ensureCurrentWindow(callContext.originalLayout);
+  }
+
+  static String _initialLayoutOf(LayoutActionRunner runner) {
+    final ln = runner.host.actionResolveText('{{LayoutName}}');
+    return ln == '{{LayoutName}}' ? '' : ln;
   }
   final ScriptModel script;
   final LayoutActionRunner runner;
@@ -1082,6 +2111,9 @@ class ScriptExecution {
     final result = await runner.runStep(step.stepType, step.params, depth: depth, localVars: localVars, callContext: callContext);
     if (result.halted) return const StepOutcome(StepOutcomeKind.halted);
     if (!result.completed) return StepOutcome(StepOutcomeKind.stopped, result.message);
+    if (result.exitLoop && _loopStack.isNotEmpty) {
+      return _leaveLoop();
+    }
     return const StepOutcome(StepOutcomeKind.ran);
   }
 

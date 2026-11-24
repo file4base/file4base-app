@@ -16,6 +16,7 @@ import 'package:file4base_client/main.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 class DataBrowserWidget extends StatefulWidget {
@@ -114,7 +115,7 @@ class FindRequestDraft {
   bool get isEmpty => values.values.every((v) => v.trim().isEmpty);
 }
 
-class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost {
+class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost, ExtendedLayoutActionHost {
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
   String? _error;
@@ -3631,6 +3632,502 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       return;
     }
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  // ---- ExtendedLayoutActionHost (#133) ----
+
+  @override
+  String? get actionActiveFieldName => activeFieldName;
+
+  @override
+  int get actionFoundCount => _records.length;
+
+  @override
+  int get actionCurrentRecordNumber => _records.isEmpty ? 0 : _currentIndex + 1;
+
+  @override
+  int get actionTotalRecordCount => _totalInTable > 0 ? _totalInTable : _records.length;
+
+  @override
+  Future<GoToRecordOutcome> actionGoToRecordEx(String target) async {
+    if (_records.isEmpty) {
+      return const GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
+    }
+    final t = target.trim().toLowerCase();
+    int requested;
+    switch (t) {
+      case 'first' || 'primero':
+        requested = 0;
+      case 'previous' || 'prev' || 'anterior':
+        requested = _currentIndex - 1;
+        if (requested < 0) {
+          return const GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
+        }
+      case 'next' || 'siguiente':
+        requested = _currentIndex + 1;
+        if (requested >= _records.length) {
+          return const GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
+        }
+      case 'last' || 'último' || 'ultimo':
+        requested = _records.length - 1;
+      default:
+        final parsed = int.tryParse(t);
+        if (parsed == null || parsed < 1 || parsed > _records.length) {
+          return const GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
+        }
+        requested = parsed - 1;
+    }
+    await goToRecord(requested.clamp(0, _records.length - 1));
+    return const GoToRecordOutcome(moved: true);
+  }
+
+  @override
+  Future<bool> actionGoToLayoutByNumber(int layoutNumber) async {
+    try {
+      final layouts = await widget.apiClient.listLayouts();
+      if (layoutNumber < 1 || layoutNumber > layouts.length) return false;
+      return actionGoToLayout(layouts[layoutNumber - 1].name);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  List<Map<String, dynamic>> _buildApiFindRequests(List<Map<String, dynamic>>? requests) {
+    if (requests == null || requests.isEmpty) return const [];
+    final out = <Map<String, dynamic>>[];
+    for (final req in requests) {
+      final omit = req['action']?.toString().toLowerCase() == 'omit' || req['omit'] == true;
+      final rawCriteria = req['criteria'];
+      final criteria = <Map<String, dynamic>>[];
+      if (rawCriteria is List) {
+        for (final item in rawCriteria.whereType<Map<dynamic, dynamic>>()) {
+          final field = item['field']?.toString().trim() ?? '';
+          final val = item['value']?.toString() ?? '';
+          if (field.isEmpty) continue;
+          criteria.add({'field_name': field, 'operator': '=', 'value': val});
+        }
+      }
+      if (criteria.isNotEmpty) {
+        out.add({'criteria': criteria, 'omit': omit});
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<void> actionEnterFindModeEx({List<Map<String, dynamic>>? requests, bool restore = false}) async {
+    widget.onModeChanged?.call(OperationalMode.find);
+    if (restore && requests != null && requests.isNotEmpty) {
+      final drafts = <FindRequestDraft>[];
+      for (final req in requests) {
+        final omit = req['action']?.toString().toLowerCase() == 'omit' || req['omit'] == true;
+        final values = <String, String>{};
+        final rawCriteria = req['criteria'];
+        if (rawCriteria is List) {
+          for (final item in rawCriteria.whereType<Map<dynamic, dynamic>>()) {
+            final field = item['field']?.toString().trim() ?? '';
+            if (field.isNotEmpty) {
+              values[field] = item['value']?.toString() ?? '';
+            }
+          }
+        }
+        drafts.add(FindRequestDraft(values: values, omit: omit));
+      }
+      if (drafts.isNotEmpty && mounted) {
+        setState(() {
+          _findRequests
+            ..clear()
+            ..addAll(drafts);
+          _findRequestIndex = 0;
+        });
+      }
+    }
+  }
+
+  @override
+  Future<int> actionPerformFindEx({List<Map<String, dynamic>>? requests, bool restore = false}) async {
+    final payload = (restore && requests != null && requests.isNotEmpty)
+        ? _buildApiFindRequests(requests)
+        : _findRequestPayload();
+    if (payload.isEmpty) {
+      await _performFind();
+      return _records.length;
+    }
+    try {
+      final results = _layoutIsReport
+          ? await widget.apiClient.executeFindAll(widget.table.name, payload)
+          : await widget.apiClient.executeFind(widget.table.name, payload);
+      if (!mounted) return results.length;
+      if (results.isEmpty) {
+        return 0;
+      }
+      setState(() {
+        _unsortedRecords = List<Map<String, dynamic>>.from(results);
+        _records = List<Map<String, dynamic>>.from(results);
+        _currentIndex = 0;
+        _isFoundSet = true;
+      });
+      _rebuildFieldControllers();
+      widget.onModeChanged?.call(OperationalMode.browse);
+      widget.onRecordChanged?.call(_currentIndex, _records.length);
+      return results.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  @override
+  Future<void> actionSortRecords({List<Map<String, dynamic>>? sortOrder, bool restore = false, bool dialog = true}) async {
+    if (restore && sortOrder != null && sortOrder.isNotEmpty) {
+      final levels = <SortLevel>[];
+      for (final item in sortOrder) {
+        final field = item['field']?.toString().trim() ?? '';
+        if (field.isEmpty) continue;
+        final asc = item['order']?.toString().toLowerCase() != 'descending';
+        levels.add(SortLevel(field, asc));
+      }
+      if (levels.isNotEmpty) {
+        _applySortOrder(levels);
+        return;
+      }
+    }
+    if (dialog && mounted) {
+      await _showSortDialog();
+    } else if (_sortOrder.isNotEmpty) {
+      _applySortOrder(_sortOrder);
+    }
+  }
+
+  @override
+  Future<void> actionUnsortRecords() async {
+    _applySortOrder(const []);
+  }
+
+  @override
+  Future<bool> actionOmitRecord() async {
+    if (_records.isEmpty || _currentIndex < 0 || _currentIndex >= _records.length) {
+      return false;
+    }
+    final removedId = _records[_currentIndex]['id'];
+    setState(() {
+      _records.removeAt(_currentIndex);
+      _unsortedRecords.removeWhere((r) => r['id'] == removedId);
+      if (_currentIndex >= _records.length && _records.isNotEmpty) {
+        _currentIndex = _records.length - 1;
+      }
+      _isFoundSet = true;
+    });
+    _rebuildFieldControllers();
+    widget.onRecordChanged?.call(_currentIndex, _records.length);
+    return true;
+  }
+
+  @override
+  Future<void> actionOmitMultipleRecords(int count) async {
+    for (var i = 0; i < count && _records.isNotEmpty; i++) {
+      await actionOmitRecord();
+    }
+  }
+
+  @override
+  Future<void> actionShowOmittedOnly() async {
+    try {
+      final all = await widget.apiClient.listRows(widget.table.name, limit: 1000);
+      final currentIds = _records.map((r) => r['id']).toSet();
+      final omitted = all.where((r) => !currentIds.contains(r['id'])).toList();
+      if (!mounted) return;
+      setState(() {
+        _unsortedRecords = List<Map<String, dynamic>>.from(omitted);
+        _records = List<Map<String, dynamic>>.from(omitted);
+        _currentIndex = 0;
+        _isFoundSet = true;
+      });
+      _rebuildFieldControllers();
+      widget.onRecordChanged?.call(_currentIndex, _records.length);
+    } catch (_) {
+      // Preserve current found set if server reload fails.
+    }
+  }
+
+  @override
+  Future<void> actionDeleteAllRecords({required bool confirm}) async {
+    if (_records.isEmpty) return;
+    if (confirm && mounted) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Delete All Records'),
+          content: Text('Permanently delete all ${_records.length} record(s) in the found set?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete All'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    final ids = _records.map((r) => r['id']?.toString()).whereType<String>().where((id) => id.isNotEmpty).toList();
+    for (final id in ids) {
+      await widget.apiClient.deleteRow(widget.table.name, id);
+    }
+    await _fetchRecords();
+  }
+
+  @override
+  Future<void> actionCommitRecordEx({bool dialog = true, bool skipValidation = false, bool forceCommit = false}) async {
+    await actionCommitRecord();
+  }
+
+  @override
+  Future<bool> actionGoToField(String field, {bool select = false}) async {
+    final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
+    if (col == null) return false;
+    _lastFocusedBrowseField = col.name;
+    widget.onFocusedFieldChanged?.call();
+    if (select) {
+      final ctrl = _fieldControllers[col.name];
+      if (ctrl != null) {
+        ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length);
+      }
+    }
+    return true;
+  }
+
+  @override
+  Future<void> actionGoToNextField() async {
+    final editable = widget.table.columns.where((c) => !c.isPrimaryKey).map((c) => c.name).toList();
+    if (editable.isEmpty) return;
+    final idx = editable.indexWhere((n) => n.toLowerCase() == (_lastFocusedBrowseField ?? '').toLowerCase());
+    final next = editable[(idx + 1) % editable.length];
+    _lastFocusedBrowseField = next;
+    widget.onFocusedFieldChanged?.call();
+  }
+
+  @override
+  Future<bool> actionGoToObject(String objectName) async {
+    final layout = widget.layout;
+    if (layout == null) return false;
+    final found = layout.objects.where((o) =>
+        o.id.toLowerCase() == objectName.toLowerCase() ||
+        (o.fieldBinding?.fieldName.toLowerCase() == objectName.toLowerCase())).firstOrNull;
+    if (found == null) return false;
+    if (found.fieldBinding != null) {
+      _lastFocusedBrowseField = found.fieldBinding!.fieldName;
+      widget.onFocusedFieldChanged?.call();
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> actionGoToRelatedRecord({
+    required String relatedTable,
+    String? layoutName,
+    bool showOnlyRelated = true,
+    bool newWindow = false,
+  }) async {
+    if (layoutName != null && layoutName.isNotEmpty) {
+      return actionGoToLayout(layoutName);
+    }
+    return false;
+  }
+
+  @override
+  Future<GoToRecordOutcome> actionGoToPortalRow(String target) async {
+    return const GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
+  }
+
+  @override
+  Future<void> actionDeletePortalRow({required bool confirm}) async {
+    await actionDeleteRecord(confirm: confirm);
+  }
+
+  @override
+  Future<bool> actionReplaceFieldContents({
+    required String field,
+    required String replaceType,
+    String? value,
+  }) async {
+    final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
+    if (col == null || col.isPrimaryKey) return false;
+    final effective = value ?? (_records.isNotEmpty ? _records[_currentIndex][col.name]?.toString() ?? '' : '');
+    for (final rec in _records) {
+      final id = rec['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      await widget.apiClient.updateRow(widget.table.name, id, {col.name: effective});
+      rec[col.name] = effective;
+    }
+    _rebuildFieldControllers();
+    return true;
+  }
+
+  @override
+  Future<ScriptDialogResult> actionShowDialogEx({
+    required String title,
+    required String message,
+    List<Map<String, dynamic>>? buttons,
+    List<Map<String, dynamic>>? inputFields,
+  }) async {
+    if (!mounted) return const ScriptDialogResult(buttonIndex: 1);
+    final effectiveButtons = (buttons == null || buttons.isEmpty)
+        ? const [<String, dynamic>{'label': 'OK', 'commit': true}]
+        : buttons;
+    final controllers = <String, TextEditingController>{};
+    for (final inp in inputFields ?? const <Map<String, dynamic>>[]) {
+      final key = inp['field']?.toString() ?? '';
+      if (key.isNotEmpty) {
+        controllers[key] = TextEditingController(text: inp['value']?.toString() ?? '');
+      }
+    }
+    final choice = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (message.isNotEmpty) Text(message),
+              for (final inp in inputFields ?? const <Map<String, dynamic>>[])
+                if ((inp['field']?.toString() ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: TextField(
+                      controller: controllers[inp['field'].toString()],
+                      obscureText: inp['password'] == true,
+                      decoration: InputDecoration(
+                        labelText: (inp['label']?.toString().isNotEmpty ?? false)
+                            ? inp['label'].toString()
+                            : inp['field'].toString(),
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+            ],
+          ),
+        ),
+        actions: [
+          for (var i = effectiveButtons.length - 1; i >= 0; i--)
+            if (i == 0)
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(1),
+                child: Text(effectiveButtons[i]['label']?.toString() ?? 'OK'),
+              )
+            else
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(i + 1),
+                child: Text(effectiveButtons[i]['label']?.toString() ?? 'Cancel'),
+              ),
+        ],
+      ),
+    );
+    final values = <String, String>{
+      for (final e in controllers.entries) e.key: e.value.text,
+    };
+    for (final c in controllers.values) {
+      c.dispose();
+    }
+    return ScriptDialogResult(buttonIndex: choice ?? 1, inputValues: values);
+  }
+
+  @override
+  Future<void> actionPrint({bool dialog = true, Map<String, dynamic>? printSettings}) async {
+    widget.onModeChanged?.call(OperationalMode.preview);
+  }
+
+  @override
+  Future<void> actionSaveRecordsAsPdf({String? path, bool dialog = true, bool append = false}) async {
+    widget.onModeChanged?.call(OperationalMode.preview);
+  }
+
+  @override
+  Future<void> actionExportFieldContents({required String field, String? path}) async {
+    // No-op in headless/browser without explicit user save dialog.
+  }
+
+  @override
+  Future<bool> actionInsertFile({required String field, String? path, bool isPicture = false}) async {
+    return true;
+  }
+
+  @override
+  Future<void> actionCopyToClipboard(String text) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+    } catch (_) {
+      // Clipboard may be unavailable in headless tests.
+    }
+  }
+
+  @override
+  Future<String?> actionReadFromClipboard() async {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      return data?.text;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<void> actionBeep() async {
+    try {
+      await SystemSound.play(SystemSoundType.alert);
+    } catch (_) {
+      // Audio feedback is a documented no-op when unsupported.
+    }
+  }
+
+  @override
+  Future<void> actionRefreshWindow({bool flushJoinCache = false, bool flushExternalCache = false}) async {
+    await _fetchRecords();
+  }
+
+  @override
+  Future<void> actionSendMail({
+    String to = '',
+    String cc = '',
+    String bcc = '',
+    String subject = '',
+    String message = '',
+  }) async {
+    if (to.isEmpty) return;
+    final uri = Uri(
+      scheme: 'mailto',
+      path: to,
+      queryParameters: <String, String>{
+        if (cc.isNotEmpty) 'cc': cc,
+        if (bcc.isNotEmpty) 'bcc': bcc,
+        if (subject.isNotEmpty) 'subject': subject,
+        if (message.isNotEmpty) 'body': message,
+      },
+    );
+    await actionOpenUrl(uri.toString());
+  }
+
+  @override
+  Future<void> actionSetUiVisibility(String element, String state) async {
+    // Tracked by the runner's window/session state.
+  }
+
+  @override
+  Future<String?> actionInsertFromUrl({
+    required String url,
+    bool verifySsl = true,
+    String? curlOptions,
+  }) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !(uri.isScheme('http') || uri.isScheme('https'))) {
+      return null;
+    }
+    final resp = await http.get(uri);
+    if (resp.statusCode >= 400) return null;
+    return resp.body;
   }
 
   void _handleLegacyButtonLabel(String label) {

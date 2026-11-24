@@ -209,39 +209,99 @@ func minInt(a, b int) int {
 // supportedScriptSteps maps canonical File4Base script step names (lowercased)
 // to their exact display spelling in File4Base.
 var supportedScriptSteps = map[string]string{
+	// Navigation & modes
 	"go to layout":              "Go to Layout",
 	"go to record/request/page": "Go to Record/Request/Page",
 	"go to record":              "Go to Record/Request/Page",
+	"go to field":               "Go to Field",
+	"go to next field":          "Go to Next Field",
+	"go to object":              "Go to Object",
+	"go to related record":      "Go to Related Record",
+	"go to portal row":          "Go to Portal Row",
 	"enter browse mode":         "Enter Browse Mode",
 	"enter find mode":           "Enter Find Mode",
 	"enter preview mode":        "Enter Preview Mode",
-	"new record/request":        "New Record/Request",
-	"duplicate record/request":  "Duplicate Record/Request",
-	"delete record/request":     "Delete Record/Request",
-	"commit records/requests":   "Commit Records/Requests",
-	"revert record/request":     "Revert Record/Request",
-	"set field":                 "Set Field",
-	"perform find":              "Perform Find",
-	"show all records":          "Show All Records",
-	"if":                        "If",
-	"else if":                   "Else If",
-	"else":                      "Else",
-	"end if":                    "End If",
-	"set variable":              "Set Variable",
-	"perform script":            "Perform Script",
-	"exit script":               "Exit Script",
-	"halt script":               "Halt Script",
-	"show custom dialog":        "Show Custom Dialog",
-	"open url":                  "Open URL",
-	"comment":                   "Comment",
-	"#":                         "Comment",
-	// Loops and the two record-transfer steps execute in the client runner
-	// (#96). An Import Records or Export Records step runs a named transfer
-	// definition; until one is named it stops the script, which is what the
-	// issue asks of an unresolved target.
-	"loop":           "Loop",
-	"exit loop if":   "Exit Loop If",
-	"end loop":       "End Loop",
+
+	// Records & found set
+	"new record/request":       "New Record/Request",
+	"duplicate record/request": "Duplicate Record/Request",
+	"delete record/request":    "Delete Record/Request",
+	"delete all records":       "Delete All Records",
+	"delete portal row":        "Delete Portal Row",
+	"commit records/requests":  "Commit Records/Requests",
+	"revert record/request":    "Revert Record/Request",
+	"perform find":             "Perform Find",
+	"show all records":         "Show All Records",
+	"show omitted only":        "Show Omitted Only",
+	"omit record":              "Omit Record",
+	"omit multiple records":    "Omit Multiple Records",
+	"constrain found set":      "Constrain Found Set",
+	"extend found set":         "Extend Found Set",
+	"modify last find":         "Modify Last Find",
+	"sort records":             "Sort Records",
+	"unsort records":           "Unsort Records",
+
+	// Fields, editing & containers
+	"set field":                "Set Field",
+	"set field by name":        "Set Field By Name",
+	"insert calculated result": "Insert Calculated Result",
+	"replace field contents":   "Replace Field Contents",
+	"copy":                     "Copy",
+	"paste":                    "Paste",
+	"cut":                      "Cut",
+	"clear":                    "Clear",
+	"insert picture":           "Insert Picture",
+	"insert file":              "Insert File",
+	"insert from url":          "Insert from URL",
+	"export field contents":    "Export Field Contents",
+
+	// Control flow & scripts
+	"if":                  "If",
+	"else if":             "Else If",
+	"else":                "Else",
+	"end if":              "End If",
+	"loop":                "Loop",
+	"exit loop if":        "Exit Loop If",
+	"end loop":            "End Loop",
+	"set variable":        "Set Variable",
+	"set error capture":   "Set Error Capture",
+	"allow user abort":    "Allow User Abort",
+	"perform script":      "Perform Script",
+	"exit script":         "Exit Script",
+	"halt script":         "Halt Script",
+	"pause/resume script": "Pause/Resume Script",
+	"comment":             "Comment",
+	"#":                   "Comment",
+	"# (comment)":         "Comment",
+
+	// Windows & UI chrome
+	"new window":            "New Window",
+	"select window":         "Select Window",
+	"close window":          "Close Window",
+	"adjust window":         "Adjust Window",
+	"move/resize window":    "Move/Resize Window",
+	"freeze window":         "Freeze Window",
+	"refresh window":        "Refresh Window",
+	"show/hide toolbars":    "Show/Hide Toolbars",
+	"show/hide menubar":     "Show/Hide Menubar",
+	"show/hide text ruler":  "Show/Hide Text Ruler",
+	"install menu set":      "Install Menu Set",
+	"show custom dialog":    "Show Custom Dialog",
+	"beep":                  "Beep",
+
+	// Files, printing, mail & web
+	"print setup":          "Print Setup",
+	"print":                "Print",
+	"save records as pdf":  "Save Records as PDF",
+	"save records as excel": "Save Records as Excel",
+	"open url":             "Open URL",
+	"send mail":            "Send Mail",
+	"close file":           "Close File",
+	"exit application":     "Exit Application",
+	"re-login":             "Re-Login",
+
+	// Record transfers (#96). An Import Records or Export Records step runs a
+	// named transfer definition; until one is named it stops the script.
 	"import records": "Import Records",
 	"export records": "Export Records",
 }
@@ -262,14 +322,10 @@ func needsTransferDefinition(canonical string) bool {
 	return ok
 }
 
-// catalogOnlyScriptSteps remain inspectable but cannot execute in the client.
-var catalogOnlyScriptSteps = map[string]string{
-	"show omitted only": "Show Omitted Only",
-	"omit record":       "Omit Record",
-	"sort records":      "Sort Records",
-	"print":             "Print",
-	"insert from url":   "Insert from URL",
-}
+// catalogOnlyScriptSteps remain inspectable when the client cannot run them.
+// All previously catalog-only steps (Sort Records, Omit Record, Show Omitted
+// Only, Print, Insert from URL) now execute in the client runner (#133).
+var catalogOnlyScriptSteps = map[string]string{}
 
 // AnalyzeAndConvert parses a FileMaker DDR / Save-as-XML document (XML or HTML)
 // and optional FMPXMLRESULT / .fmp12 table exports, returning a ConvertedSolution
@@ -1931,32 +1987,267 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 	}
 
 	calcText := ""
+	displayCalcFallback := ""
 	for _, child := range stNode.Children {
 		switch child.Name {
-		case "UUID", "OwnerID", "DDRREF":
-			// Native object identity metadata is not an executable operand.
+		case "UUID", "OwnerID", "DDRREF", "StepText", "DisableStepCollapsed", "Animation":
+			// Object identity and display-only presentation metadata are not
+			// executable operands (#133).
+			continue
+		case "DisplayCalculation":
+			// Presentational tokenized rendering of <Calculation>; keep text
+			// only as a fallback when <Calculation> is absent (#133).
+			if displayCalcFallback == "" {
+				displayCalcFallback = displayCalculationText(child)
+			}
 			continue
 		case "Options":
 			if len(child.Attrs) == 0 && len(child.Children) == 0 && strings.TrimSpace(child.Text) == "" {
 				continue
 			}
-			flagUnmapped(child.Name)
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["options_state"] = v
+			}
+			params["options"] = decodeNodeValue(child)
+		case "Option":
+			// Commit Records/Requests option (e.g. SkipDataEntryValidation).
+			raw := strings.TrimSpace(firstAttr(child, "value", "Value", "state", "name"))
+			if raw == "" {
+				raw = strings.TrimSpace(child.Text)
+			}
+			lower := strings.ToLower(raw)
+			if strings.Contains(lower, "skip") || strings.Contains(lower, "validation") || lower == "true" {
+				params["skip_validation"] = true
+			} else if raw != "" {
+				params["option"] = raw
+			}
+		case "SkipDataEntryValidation":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["skip_validation"] = v
+			} else {
+				params["skip_validation"] = true
+			}
+		case "ESSForceCommit", "ForceCommit":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["force_commit"] = v
+			} else {
+				params["force_commit"] = true
+			}
+		case "NoInteract":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["dialog"] = !v
+			} else {
+				params["dialog"] = false
+			}
+		case "SetState", "State", "Capture", "Boolean":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["state"] = v
+			} else if raw := strings.TrimSpace(firstAttr(child, "value", "state")); raw != "" {
+				params["state"] = strings.ToLower(raw)
+			}
+		case "Exit":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["exit_after_last"] = v
+			} else {
+				params["exit_after_last"] = true
+			}
+		case "Restore":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["restore"] = v
+			} else {
+				params["restore"] = true
+			}
+		case "Pause":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["pause"] = v
+			} else {
+				params["pause"] = true
+			}
+		case "LayoutDestination":
+			decodeLayoutDestination(child, params)
+		case "RowPageLocation":
+			decodeRowPageLocation(child, params)
+		case "Repetition":
+			if expr := calculationText(child); expr != "" {
+				params["repetition"] = expr
+			} else if v := firstAttr(child, "value", "Value"); v != "" {
+				params["repetition"] = v
+			}
+		case "Query", "FindRequest", "FindRequestList":
+			if reqs := decodeFindRequests(child); len(reqs) > 0 {
+				params["find_requests"] = reqs
+			}
+		case "SortList", "SortSpecification":
+			if sortOrder := decodeSortOrder(child); len(sortOrder) > 0 {
+				params["sort_order"] = sortOrder
+			}
+		case "PrintSettings", "PrintSetup", "PageSetup", "Print":
+			params["print_settings"] = decodeNodeValue(child)
+		case "ImportOptions", "FieldMap":
+			params["import_options"] = decodeNodeValue(child)
+		case "ExportOptions":
+			params["export_options"] = decodeNodeValue(child)
+		case "PDFOptions", "SaveOptions":
+			params["pdf_options"] = decodeNodeValue(child)
+		case "UniversalPathList", "File":
+			if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["path"] = txt
+			} else if v := firstAttr(child, "value", "path", "name"); v != "" {
+				params["path"] = v
+			} else {
+				params["path"] = decodeNodeValue(child)
+			}
+		case "Title":
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params["title"] = calculationText(calc)
+				params["title_is_calculation"] = true
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["title"] = txt
+			}
+		case "Message":
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params["message"] = calculationText(calc)
+				params["message_is_calculation"] = true
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["message"] = txt
+			}
+		case "Buttons":
+			if btns := decodeDialogButtons(child); len(btns) > 0 {
+				params["buttons"] = btns
+			}
+		case "InputFields":
+			if inputs := decodeDialogInputFields(child); len(inputs) > 0 {
+				params["input_fields"] = inputs
+			}
+		case "Window", "WindowName", "CurrentWindow":
+			decodeWindowNode(child, params)
+		case "NewWndStyles", "WindowStyle":
+			if v := firstAttr(child, "Style", "style", "value", "name"); v != "" {
+				params["window_style"] = v
+			} else {
+				params["window_style"] = decodeNodeValue(child)
+			}
+		case "Top", "Left", "Width", "Height":
+			key := strings.ToLower(child.Name)
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params[key] = calculationText(calc)
+			} else if v := firstAttr(child, "value"); v != "" {
+				params[key] = v
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params[key] = txt
+			}
+		case "Adjust", "WindowAction", "Action":
+			if v := firstAttr(child, "value", "Value", "name"); v != "" {
+				params["window_action"] = v
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["window_action"] = txt
+			}
+		case "SelectAll", "Select":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["select"] = v
+			} else {
+				params["select"] = true
+			}
+		case "Target", "TargetField", "FieldByName", "TargetName":
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params["target_field"] = calculationText(calc)
+				params["target_field_is_calculation"] = true
+			} else if fn := findFirstChild(child, "Field", "FieldReference"); fn != nil {
+				if fname := firstAttr(fn, "name", "Name"); fname != "" {
+					if strings.HasPrefix(fname, "$") {
+						params["target"] = fname
+					} else {
+						params["field"] = sanitizeIdentifier(fname)
+						params["field_label"] = fname
+					}
+				}
+			} else if v := firstAttr(child, "value", "name"); v != "" {
+				params["target"] = v
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["target_field"] = txt
+			}
+		case "Object", "ObjectName":
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params["object_name"] = calculationText(calc)
+				params["object_name_is_calculation"] = true
+			} else if v := firstAttr(child, "value", "name"); v != "" {
+				params["object_name"] = v
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["object_name"] = txt
+			}
+		case "RelatedTable", "Table":
+			if name := firstAttr(child, "name", "Name"); name != "" {
+				params["related_table"] = name
+			}
+		case "ShowRelated", "ShowOnlyRelated", "MatchCurrentRecordOnly":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params["show_only_related"] = v
+			}
+		case "Replace", "ReplaceType", "CurrentContents", "SerialNumbers":
+			if v := firstAttr(child, "type", "value", "name"); v != "" {
+				params["replace_type"] = strings.ToLower(v)
+			} else {
+				params["replace_type"] = strings.ToLower(child.Name)
+			}
+		case "URL":
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params["url"] = calculationText(calc)
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["url"] = txt
+			}
+		case "cURLOptions", "CURLOptions":
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params["curl_options"] = calculationText(calc)
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params["curl_options"] = txt
+			}
+		case "VerifySSLCertificates", "AutoEncode", "Encode":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params[strings.ToLower(child.Name)] = v
+			}
+		case "To", "CC", "BCC", "Subject", "Attachment", "Attachments", "Mail", "SendMail":
+			key := strings.ToLower(child.Name)
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params[key] = calculationText(calc)
+			} else if txt := strings.TrimSpace(child.Text); txt != "" {
+				params[key] = txt
+			} else {
+				params[key] = decodeNodeValue(child)
+			}
+		case "MenuSet", "CustomMenuSet":
+			if name := firstAttr(child, "name", "Name", "value"); name != "" {
+				params["menu_set"] = name
+			}
+		case "ToolbarState", "ShowHide", "Lock", "IncludeEditRecordToolbar":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params[strings.ToLower(child.Name)] = v
+			} else if raw := firstAttr(child, "value", "state"); raw != "" {
+				params["state"] = strings.ToLower(raw)
+			}
+		case "FlushCache", "FlushCachedJoinResults", "FlushCachedExternalData":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params[strings.ToLower(child.Name)] = v
+			} else {
+				params[strings.ToLower(child.Name)] = true
+			}
+		case "Duration", "Indefinitely":
+			if calc := findFirstChild(child, "Calculation", "calculation"); calc != nil {
+				params["duration_seconds"] = calculationText(calc)
+			} else if v := firstAttr(child, "value", "state"); v != "" {
+				params[strings.ToLower(child.Name)] = v
+			}
+		case "StoreOnlyAsReference", "ReferenceOnly", "Compression", "Display", "AutomaticallyOpenFile", "AutomaticallyOpen", "CreateFolders", "CreateEmail", "Append":
+			if v, ok := xmlAttrBool(child, "state", "value"); ok {
+				params[strings.ToLower(child.Name)] = v
+			} else if raw := firstAttr(child, "value", "state"); raw != "" {
+				params[strings.ToLower(child.Name)] = raw
+			}
 		case "Calculation", "calculation":
 			if text := calculationText(child); text != "" && calcText == "" {
 				calcText = text
 			}
 		case "Field", "field":
 			if fieldName := firstAttr(child, "name", "Name"); fieldName != "" {
-				// FileMaker writes the target of a Set Variable in the same
-				// <Field> element it writes the target of a Set Field in, but
-				// a name beginning with `$` is a script variable, not a
-				// field: `$$Batch` is a global, `$row` a local, and the sigil
-				// is the whole of that distinction. Sanitizing it as a field
-				// turned `$$Batch` into `batch`, so the step wrote a local
-				// variable named `batch` while every later `$$Batch` in the
-				// same script read an empty global; and the runner looks for
-				// the variable under `name`, which nothing filled, so the
-				// step stopped the script instead (#112).
 				if strings.HasPrefix(fieldName, "$") {
 					params["name"] = fieldName
 					break
@@ -1965,6 +2256,9 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 				params["field_label"] = fieldName
 				if tbl := firstAttr(child, "table", "Table"); tbl != "" {
 					params["field_table"] = sanitizeIdentifier(tbl)
+				}
+				if rep := firstAttr(child, "repetition", "Repetition"); rep != "" && rep != "1" {
+					params["repetition"] = rep
 				}
 			}
 		case "Layout", "layout":
@@ -1978,6 +2272,8 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 		case "Name", "VariableName":
 			if text := strings.TrimSpace(child.Text); text != "" {
 				params["name"] = text
+			} else if v := firstAttr(child, "value"); v != "" {
+				params["name"] = v
 			}
 		case "Value", "value":
 			if text := calculationText(child); text != "" {
@@ -2016,9 +2312,6 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 				}
 			}
 		case "FileReference", "ExternalDataSource":
-			// The client runner reads file_reference (#107): it resolves the
-			// script in the solution the reference is mapped to, and never in
-			// this one. collectFileReferences reports the reference itself.
 			if refName := firstAttr(child, "name", "Name"); refName != "" {
 				params["file_reference"] = refName
 			} else {
@@ -2029,25 +2322,57 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 		}
 	}
 
+	if calcText == "" && displayCalcFallback != "" {
+		calcText = displayCalcFallback
+	}
 	if calcText != "" {
 		switch canonicalStep {
-		case "Set Field":
+		case "Set Field", "Insert Calculated Result", "Replace Field Contents":
 			params["value"] = calcText
 			params["value_is_calculation"] = true
+		case "Set Field By Name":
+			if _, ok := params["target_field"]; !ok {
+				params["target_field"] = calcText
+				params["target_field_is_calculation"] = true
+			} else {
+				params["value"] = calcText
+				params["value_is_calculation"] = true
+			}
 		case "If", "Else If", "Exit Loop If":
 			params["condition"] = calcText
 		case "Set Variable":
 			if _, ok := params["value"]; !ok {
 				params["value"] = calcText
 			}
-		case "Open URL":
-			params["url"] = calcText
+		case "Open URL", "Insert from URL":
+			if _, ok := params["url"]; !ok {
+				params["url"] = calcText
+			}
 		case "Perform Script":
 			params["script_parameter"] = calcText
 		case "Exit Script":
 			params["result"] = calcText
 		case "Show Custom Dialog":
-			params["message"] = calcText
+			if _, ok := params["message"]; !ok {
+				params["message"] = calcText
+			}
+		case "Go to Layout":
+			if _, ok := params["layout_calculation"]; !ok {
+				params["layout_calculation"] = calcText
+			}
+		case "Go to Record/Request/Page", "Go to Portal Row":
+			if _, ok := params["record_calculation"]; !ok {
+				params["record_calculation"] = calcText
+			}
+		case "Go to Object":
+			if _, ok := params["object_name"]; !ok {
+				params["object_name"] = calcText
+				params["object_name_is_calculation"] = true
+			}
+		case "Pause/Resume Script":
+			if _, ok := params["duration_seconds"]; !ok {
+				params["duration_seconds"] = calcText
+			}
 		}
 		if _, ok := params["expression"]; !ok {
 			params["expression"] = calcText

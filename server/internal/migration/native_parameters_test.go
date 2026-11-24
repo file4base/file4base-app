@@ -15,7 +15,7 @@ func TestNativeStructureCatalogsAndOperands(t *testing.T) {
  <Step id="141" name="Set Variable" enable="True"><ParameterValues><Parameter type="Variable"><value><Calculation><Calculation><Text>3</Text></Calculation></Calculation></value><Name value="$batch"/><repetition><Calculation><Text>1</Text></Calculation></repetition></Parameter></ParameterValues></Step>
  <Step id="76" name="Set Field" enable="False"><ParameterValues><Parameter type="FieldReference"><FieldReference id="1" name="Status"><TableOccurrenceReference id="1" name="Active Visits"/></FieldReference></Parameter><Parameter type="Calculation"><Calculation><Calculation><Text>"ready"</Text></Calculation></Calculation></Parameter></ParameterValues></Step>
  <Step id="1" name="Perform Script" enable="True"><ParameterValues><Parameter type="List"><List><ScriptReference id="82" name="Finish"/></List></Parameter><Parameter type="Parameter"><Parameter><Calculation><Text>$batch</Text></Calculation></Parameter></Parameter></ParameterValues></Step>
- <Step id="6" name="Go to Layout" enable="True"><ParameterValues><Parameter type="LayoutReferenceContainer"><LayoutReferenceContainer><LayoutReference id="91" name="Visit"/></LayoutReferenceContainer></Parameter><Parameter type="Animation"><Animation value="0"/></Parameter></ParameterValues></Step>
+ <Step id="6" name="Go to Layout" enable="True"><ParameterValues><Parameter type="LayoutReferenceContainer"><LayoutReferenceContainer><LayoutReference id="91" name="Visit"/></LayoutReferenceContainer></Parameter><Parameter type="Animation"><Animation value="0"/></Parameter><Parameter type="CustomPluginOption"><CustomPluginOption value="1"/></Parameter></ParameterValues></Step>
  </ObjectList></Script><Script><ScriptReference id="82" name="Finish"/><ObjectList><Step id="103" name="Exit Script" enable="True"><ParameterValues><Parameter type="Calculation"><Calculation><Text>"finished"</Text></Calculation></Parameter></ParameterValues></Step></ObjectList></Script></StepsForScripts>
  </AddAction></Structure></FMSaveAsXML>`
 	result, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
@@ -48,7 +48,7 @@ func TestNativeStructureCatalogsAndOperands(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("unimplemented native animation option was hidden")
+		t.Fatal("unknown native parameter option was hidden")
 	}
 }
 
