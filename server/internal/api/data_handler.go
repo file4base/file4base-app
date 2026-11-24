@@ -272,6 +272,10 @@ func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
 		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
 		return
 	}
+	if err := svc.AttachSourceText(r.Context(), table, rows); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(rows)
@@ -314,6 +318,10 @@ func (h *DataHandler) GetRow(w http.ResponseWriter, r *http.Request) {
 		writeDataError(w, r, http.StatusNotFound, "Record Not Found", err)
 		return
 	}
+	if err := svc.AttachSourceText(r.Context(), table, []map[string]interface{}{row}); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(row)
@@ -336,6 +344,10 @@ func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 	updated, err := svc.UpdateRow(r.Context(), table, id, updates)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Data Update Error", err)
+		return
+	}
+	if err := svc.AttachSourceText(r.Context(), table, []map[string]interface{}{updated}); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
 		return
 	}
 
@@ -384,6 +396,10 @@ func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
 	results, err := svc.ExecuteFind(r.Context(), table, body.Requests, body.Options)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Find Query Error", err)
+		return
+	}
+	if err := svc.AttachSourceText(r.Context(), table, results); err != nil {
+		writeDataError(w, r, http.StatusInternalServerError, "Internal Server Error", err)
 		return
 	}
 

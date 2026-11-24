@@ -3505,12 +3505,18 @@ class ApiClient {
   ///
   /// A native copy ([fmp12Bytes]) is uploaded as `multipart/form-data` rather
   /// than as base64 inside JSON, which the server limits to 64 MiB (#126).
+  ///
+  /// [sourceLocale] names the locale the source file writes numbers and dates
+  /// in (one of [migrationSourceLocales]). With it, permissive values such as
+  /// "12-A" in a Number field migrate with their original text instead of
+  /// being refused (#124).
   Future<MigrationReportModel> migratePreflight({
     required String designXml,
     String? solutionName,
     Map<String, String> dataFiles = const {},
     Uint8List? fmp12Bytes,
     String? fmp12FileName,
+    String? sourceLocale,
   }) async {
     final response = await _postMigration(
       '/api/v1/solutions/migrate/preflight',
@@ -3519,6 +3525,8 @@ class ApiClient {
         if (solutionName != null && solutionName.trim().isNotEmpty)
           'solution_name': solutionName.trim(),
         if (dataFiles.isNotEmpty) 'data_files': dataFiles,
+        if (sourceLocale != null && sourceLocale.trim().isNotEmpty)
+          'source_locale': sourceLocale.trim(),
       },
       fmp12Bytes: fmp12Bytes,
       fmp12FileName: fmp12FileName,
@@ -3540,6 +3548,7 @@ class ApiClient {
     Map<String, String> dataFiles = const {},
     Uint8List? fmp12Bytes,
     String? fmp12FileName,
+    String? sourceLocale,
     String? targetDatabase,
     String? ownerUser,
     String? ownerPassword,
@@ -3551,6 +3560,8 @@ class ApiClient {
         if (solutionName != null && solutionName.trim().isNotEmpty)
           'solution_name': solutionName.trim(),
         if (dataFiles.isNotEmpty) 'data_files': dataFiles,
+        if (sourceLocale != null && sourceLocale.trim().isNotEmpty)
+          'source_locale': sourceLocale.trim(),
         if (targetDatabase != null && targetDatabase.trim().isNotEmpty)
           'target_database': targetDatabase.trim(),
         if (ownerUser != null && ownerUser.trim().isNotEmpty)
@@ -3566,6 +3577,13 @@ class ApiClient {
       Map<String, dynamic>.from(jsonDecode(response.body) as Map),
     );
   }
+
+  /// The source locales a FileMaker migration accepts (`source_locale`), as
+  /// the server lists them (migration.SupportedSourceLocales).
+  static const migrationSourceLocales = [
+    'ca-ES', 'de-AT', 'de-DE', 'en-AU', 'en-GB', 'en-IE', 'en-NZ', 'en-US',
+    'es-ES', 'fr-BE', 'fr-FR', 'it-IT', 'nl-BE', 'nl-NL', 'pt-BR', 'pt-PT',
+  ];
 
   /// Sends a migration request. Without a native copy it is the JSON form.
   /// With one, it is a multipart upload: the JSON fields as the `request`

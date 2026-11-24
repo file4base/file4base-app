@@ -337,7 +337,19 @@ func (s *Service) RelatedRows(
 	}
 	defer rows.Close()
 
-	return rowsToMaps(rows, targetFields)
+	related, err := rowsToMaps(rows, targetFields)
+	if err != nil {
+		return nil, err
+	}
+	// Related records are read for the data API (portals), which shows the
+	// original text of a value the way the record itself does (#124).
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := s.AttachSourceText(ctx, target.TableName, related); err != nil {
+		return nil, err
+	}
+	return related, nil
 }
 
 // CreateRelatedRow creates a record on the other side of a relationship and

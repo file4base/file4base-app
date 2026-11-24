@@ -14,6 +14,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/msgpackguard"
+	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 	"github.com/vmihailenco/msgpack/v5"
@@ -1618,6 +1619,13 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 		if err != nil {
 			return nil, fmt.Errorf("failed reading table %s: %w", tbl.Name, err)
 		}
+		// Values kept with their original text travel with their records,
+		// so a restore shows what the source showed (#124).
+		texts, err := sourcetext.LoadTable(ctx, db, dialect, tbl.Name)
+		if err != nil {
+			return nil, err
+		}
+		sourcetext.Attach(tableRows, texts)
 		tablesData[tbl.Name] = tableRows
 	}
 
@@ -1673,6 +1681,8 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	}
 	report := &DataImportReport{DatabaseName: bundle.DatabaseName, SkippedTables: []string{}}
 	tableNames := make([]string, 0, len(bundle.TablesData))
+	// The original texts a record carries (#124), by table and record index.
+	originals := map[string]map[int]map[string]string{}
 	for tableName, rows := range bundle.TablesData {
 		cols, ok := userTables[tableName]
 		if !ok {
@@ -1681,11 +1691,28 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		}
 		tableNames = append(tableNames, tableName)
 		for i, row := range rows {
+			texts, err := sourcetext.FromRecord(row, cols)
+			if err != nil {
+				return nil, fmt.Errorf("record %d of table %s: %w", i+1, tableName, err)
+			}
+			if len(texts) > 0 {
+				if originals[tableName] == nil {
+					originals[tableName] = map[int]map[string]string{}
+				}
+				originals[tableName][i] = texts
+			}
 			for k := range row {
 				if _, exists := cols[k]; !exists {
 					return nil, fmt.Errorf("record %d of table %s has field '%s', which is not a field of that table", i+1, tableName, k)
 				}
 			}
+		}
+	}
+	if len(originals) > 0 {
+		// Created before the transaction: a database older than the table
+		// gets it here, and a failed statement would abort the transaction.
+		if err := sourcetext.Ensure(ctx, db); err != nil {
+			return nil, err
 		}
 	}
 
@@ -1749,6 +1776,11 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			}
 			if n, _ := res.RowsAffected(); n > 0 {
 				report.RecordsInserted++
+				if texts := originals[tableName][i]; len(texts) > 0 {
+					if err := sourcetext.Put(ctx, tx, dialect, tableName, fmt.Sprint(row["id"]), texts); err != nil {
+						return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
+					}
+				}
 			} else {
 				report.RecordsSkipped++
 			}

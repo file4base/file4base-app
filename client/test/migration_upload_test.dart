@@ -35,6 +35,7 @@ void main() {
       solutionName: ' Synthetic ',
       fmp12Bytes: native,
       fmp12FileName: 'Visits.fmp12',
+      sourceLocale: 'fr-FR',
     );
 
     expect(report.solutionName, 'Synthetic');
@@ -43,7 +44,7 @@ void main() {
     expect(sent.headers.containsKey('X-File4Base-Encrypted'), isFalse);
     final body = latin1.decode(sent.bodyBytes);
     expect(body, contains('name="request"'));
-    expect(body, contains('{"solution_name":"Synthetic"}'));
+    expect(body, contains('{"solution_name":"Synthetic","source_locale":"fr-FR"}'));
     expect(body, contains('name="design"; filename="design.xml"'));
     expect(body, contains('<FMPReport/>'));
     expect(body, contains('name="native"; filename="Visits.fmp12"'));
@@ -83,5 +84,6 @@ void main() {
     expect(decoded['data_files'], {'Visits': '<FMPXMLRESULT/>'});
     expect(decoded['target_database'], 'target');
     expect(decoded.containsKey('fmp12_base64'), isFalse);
+    expect(decoded.containsKey('source_locale'), isFalse);
   });
 }

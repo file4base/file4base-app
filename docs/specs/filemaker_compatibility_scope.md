@@ -114,8 +114,14 @@ applied over HTTP as a `multipart/form-data` upload, up to
 Native design wrappers, referenced script-body lists and typed operands now have
 original synthetic regression coverage. Unread options remain in the report.
 Permissive source values (text in Number fields, localized decimals, invalid
-dates), time/duration and timezone behavior, database global fields/repetitions,
-original container streams and external contexts remain application-level gates.
+dates, durations) migrate when the request names the source file's locale
+(`source_locale`, #124): the field holds FileMaker's reading of the text, checked
+against literal FileMaker Pro 26.0.2 fr-FR observations, and the record keeps the
+text as written ([permissive_source_values.md](permissive_source_values.md)).
+Entering permissive values in File4Base, exact decimal arithmetic in
+calculations, duration arithmetic, timezone behavior, database global
+fields/repetitions, original container streams and external contexts remain
+application-level gates.
 
 ### Script call context
 

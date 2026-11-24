@@ -14,6 +14,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 )
@@ -322,6 +323,13 @@ func (s *Service) ImportRecords(
 	dialect := s.driver.Dialect()
 	db := s.driver.DB()
 	report := &ImportReport{Rows: len(source.Rows), Fields: written}
+	// An updated record loses the original texts of the fields it is given
+	// (#124); the table they are kept in has to exist before the transaction.
+	if opts.Action == ImportUpdateMatching {
+		if err := sourcetext.Ensure(ctx, db); err != nil {
+			return nil, err
+		}
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -371,6 +379,13 @@ func (s *Service) ImportRecords(
 					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 				}
 				if err := updateInTx(ctx, tx, dialect, tableName, id, record); err != nil {
+					return nil, fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
+				}
+				updatedFields := make([]string, 0, len(record))
+				for field := range record {
+					updatedFields = append(updatedFields, field)
+				}
+				if err := sourcetext.ClearFields(ctx, tx, dialect, tableName, id, updatedFields); err != nil {
 					return nil, fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
 				}
 				report.Updated++
@@ -603,9 +618,19 @@ func (s *Service) ExportRecords(
 		Columns: append([]string(nil), headings...),
 		Rows:    make([][]string, 0, len(rows)),
 	}
+	// A value kept with its original text is exported as that text, the way
+	// the record shows it (#124).
+	if err := s.AttachSourceText(ctx, tableName, rows); err != nil {
+		return nil, err
+	}
 	for _, row := range rows {
+		originals, _ := row[sourcetext.Key].(map[string]string)
 		cells := make([]string, len(chosen))
 		for i, field := range chosen {
+			if text, ok := originals[field]; ok {
+				cells[i] = text
+				continue
+			}
 			cells[i] = exportText(fields[field], row[field])
 		}
 		table.Rows = append(table.Rows, cells)

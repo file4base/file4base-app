@@ -72,6 +72,10 @@ type SummaryCounts struct {
 	UnsupportedCount  int `json:"unsupported_count"`
 	RejectedCount     int `json:"rejected_count"`
 	ManualActionCount int `json:"manual_action_count"`
+
+	// SourceTextValues counts the values migrated with their original text
+	// beside FileMaker's reading of it (#124).
+	SourceTextValues int `json:"source_text_values,omitempty"`
 }
 
 // ConversionReport is the deterministic preflight and post-import audit report
@@ -100,6 +104,13 @@ type MigrationRequest struct {
 	TargetDatabase  string            `json:"target_database,omitempty"`
 	OwnerUser       string            `json:"owner_user,omitempty"`
 	OwnerPassword   string            `json:"owner_password,omitempty"`
+
+	// SourceLocale is the locale the source file writes numbers and dates
+	// in, such as "fr-FR" (#124). Naming it migrates permissive values, such
+	// as "12-A" in a Number field, with their original text instead of
+	// refusing them; it also sets the date order when native_date_order is
+	// empty.
+	SourceLocale string `json:"source_locale,omitempty"`
 }
 
 // AnalyzeAndConvertNative audits an explicitly selected local native input
@@ -245,6 +256,16 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		return nil, fmt.Errorf("%w: native_date_order must be iso, dmy or mdy", ErrInvalidMigrationXML)
 	}
 	req.NativeDateOrder = nativeOrder
+	locale, err := parseSourceLocale(req.SourceLocale)
+	if err != nil {
+		return nil, err
+	}
+	if locale != nil {
+		req.SourceLocale = locale.Tag
+		if req.NativeDateOrder == "" {
+			req.NativeDateOrder = string(locale.DateOrder)
+		}
+	}
 	if IsFMP12Binary("", []byte(rawXML)) {
 		return nil, ErrBinaryFMP12
 	}

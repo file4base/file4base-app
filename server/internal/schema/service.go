@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -364,6 +365,9 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			parent_step_id VARCHAR(36),
 			created_at ` + ts + `
 		);`,
+		// The original text of values a typed field cannot hold as they were
+		// written, such as "12-A" in a migrated FileMaker Number field (#124).
+		sourcetext.CreateTableSQL,
 	}
 
 	db := s.driver.DB()
@@ -768,6 +772,11 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	if err != nil {
 		return fmt.Errorf("failed generating drop column SQL: %w", err)
 	}
+	// The field's original texts go with it (#124). The table they live in
+	// must exist before the transaction: a failed statement would abort it.
+	if err := sourcetext.Ensure(ctx, db); err != nil {
+		return err
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -777,6 +786,9 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 
 	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
 		return fmt.Errorf("failed dropping column from physical table: %w", err)
+	}
+	if err := sourcetext.DeleteField(ctx, tx, dialect, tableName, colName); err != nil {
+		return err
 	}
 
 	deleteSQL := `DELETE FROM sys_columns WHERE id = $1`
@@ -968,6 +980,9 @@ func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
 		return err
 	}
 
+	if err := sourcetext.Ensure(ctx, db); err != nil {
+		return err
+	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -977,6 +992,9 @@ func (s *Service) DeleteTable(ctx context.Context, tableID string) error {
 	// 2. Drop physical table
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", dialect.QuoteIdentifier(tableName))); err != nil {
 		return fmt.Errorf("failed dropping physical table %s: %w", tableName, err)
+	}
+	if err := sourcetext.DeleteTable(ctx, tx, dialect, tableName); err != nil {
+		return err
 	}
 
 	// 3. Delete from sys_tables (cascades to sys_columns and sys_table_occurrences via FK)
@@ -1136,5 +1154,5 @@ func (s *Service) TruncateTable(ctx context.Context, tableID string) error {
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s", dialect.QuoteIdentifier(tableName))); err != nil {
 		return fmt.Errorf("failed truncating table %s: %w", tableName, err)
 	}
-	return nil
+	return sourcetext.DeleteTable(ctx, db, dialect, tableName)
 }

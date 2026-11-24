@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
 )
@@ -272,6 +273,9 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 	if record == nil {
 		record = make(map[string]interface{})
 	}
+	// A record handed back from a read carries its original texts; they are
+	// not a field, and a client does not set them (#124).
+	sourcetext.Strip(record)
 
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
@@ -394,6 +398,7 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 		return nil, err
 	}
 	delete(updates, "id") // Protect primary key from alteration
+	sourcetext.Strip(updates)
 	for col := range updates {
 		if err := checkField(fields, tableName, col); err != nil {
 			return nil, err
@@ -468,6 +473,16 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 		return nil, fmt.Errorf("record not found to update with id: %s", id)
 	}
 
+	// A field given a value now holds exactly what it says: whatever text a
+	// migration kept for it no longer describes it (#124).
+	written := make([]string, 0, len(updates))
+	for col := range updates {
+		written = append(written, col)
+	}
+	if err := sourcetext.ClearFields(ctx, db, dialect, tableName, id, written); err != nil {
+		return nil, err
+	}
+
 	return s.GetRow(ctx, tableName, id)
 }
 
@@ -519,7 +534,15 @@ func (s *Service) deleteRow(ctx context.Context, tableName string, id string, se
 	if affected == 0 {
 		return fmt.Errorf("record not found with id: %s", id)
 	}
-	return nil
+	return sourcetext.DeleteRecord(ctx, db, dialect, tableName, id)
+}
+
+// AttachSourceText puts the original texts of the given records of a table
+// under sourcetext.Key, for the records that have any (#124). The data API
+// calls it on what it returns; reads inside the server, such as calculations,
+// work on the typed values alone.
+func (s *Service) AttachSourceText(ctx context.Context, tableName string, rows []map[string]interface{}) error {
+	return sourcetext.AttachFromDB(ctx, s.driver.DB(), s.driver.Dialect(), tableName, rows)
 }
 
 // ListRows retrieves rows with optional sorting and pagination
