@@ -414,7 +414,9 @@ func reconstructContainerCell(
 	if len(fnamEntries) == 0 && len(cell.refPayload) > 0 {
 		// Check whether key=1 itself holds an external path reference.
 		if txt, err := decodeHBAM7Text(cell.refPayload); err == nil {
-			if parsed := parseTextContainerRefs(txt); len(parsed) > 0 && (isExternalContainerScheme(parsed[0].scheme) || strings.ContainsAny(parsed[0].path, `/\`)) {
+			// A reference-only container starts with its "size:" line
+			// ("size:640,480", "imagewin:/C:/…", "image:…").
+			if parsed := parseTextContainerRefs(txt); extractExternalContainerRef(parsed) != "" {
 				fnamEntries = parsed
 			}
 		}

@@ -379,3 +379,25 @@ func TestResolveSection31ObjectIDReadsHexPathKeys(t *testing.T) {
 		}
 	}
 }
+
+// A container that stores only a reference to an image keeps its text in the
+// cell, starting with the picture size: the reference is still followed.
+func TestNativeContainerReferenceAfterSizeLine(t *testing.T) {
+	cell := &hbam7ContainerCell{hasData: true,
+		refPayload: nativeEncoded([]byte("size:4,4\rimagewin:/C:/pics/plan.jpg\rimage:plan.jpg"))}
+	var asked string
+	resolver := func(ref string) ([]byte, bool, error) {
+		asked = ref
+		return []byte("jpeg"), true, nil
+	}
+	got, missing, err := reconstructContainerCell(129, cell, newHBAM7ContainerStore(), resolver)
+	if err != nil || missing != "" || got == nil {
+		t.Fatalf("got %v, missing %q, err %v", got, missing, err)
+	}
+	if asked != "imagewin:/C:/pics/plan.jpg" || got.Meta.Filename != "plan.jpg" || string(got.Bytes) != "jpeg" {
+		t.Fatalf("resolved %q as %+v", asked, got.Meta)
+	}
+	if _, missing, err = reconstructContainerCell(129, cell, newHBAM7ContainerStore(), nil); err != nil || missing != "imagewin:/C:/pics/plan.jpg" {
+		t.Fatalf("without the file: missing %q, err %v", missing, err)
+	}
+}
