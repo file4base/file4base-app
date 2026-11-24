@@ -48,6 +48,7 @@ type token struct {
 	text  string
 	table string // the table occurrence written before "::", if any
 	pos   int
+	end   int // where the token's source text ends
 }
 
 func (t token) isOperator(op string) bool {
@@ -97,6 +98,9 @@ func lex(src string, known *names) ([]token, error) {
 
 	for i < len(runes) {
 		ch := runes[i]
+		if n := len(tokens); n > 0 && tokens[n-1].end == 0 {
+			tokens[n-1].end = i
+		}
 
 		switch {
 		case unicode.IsSpace(ch):
@@ -211,7 +215,10 @@ func lex(src string, known *names) ([]token, error) {
 		}
 	}
 
-	tokens = append(tokens, token{kind: tokEOF, pos: len(runes)})
+	if n := len(tokens); n > 0 && tokens[n-1].end == 0 {
+		tokens[n-1].end = len(runes)
+	}
+	tokens = append(tokens, token{kind: tokEOF, pos: len(runes), end: len(runes)})
 	return tokens, nil
 }
 

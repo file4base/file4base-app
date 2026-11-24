@@ -1,6 +1,7 @@
 package calc
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -213,8 +214,10 @@ func (v value) store(at int, result ResultType, loc *Locale) (any, error) {
 		if !ok {
 			return nil, nil
 		}
-		f, _ := n.Float64()
-		return f, nil
+		// Exact: a float64 would turn 9007199254740993 into ...992. The
+		// drivers write the text into the NUMERIC column as it is, and JSON
+		// writes it as a number.
+		return json.Number(n.String()), nil
 	case ResultBoolean:
 		return v.asBool(loc), nil
 	case ResultDate:
@@ -501,6 +504,9 @@ func concat(a, b value, loc *Locale) value {
 // precision is how many decimal places FileMaker shows of a computed number,
 // unless SetPrecision asks for more. A division keeps two more, so 1/3*3 is 1.
 const precision = 16
+
+// maxPrecision is the most decimal places SetPrecision gives, as in FileMaker.
+const maxPrecision = 400
 
 // dateSeconds is a day number as seconds since 1 January 0001.
 func dateSeconds(day decimal.Decimal) decimal.Decimal {

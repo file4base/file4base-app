@@ -1,6 +1,7 @@
 package calc_test
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -38,7 +39,49 @@ func evalNumber(t *testing.T, formula string, record calc.Record) float64 {
 	if got == nil {
 		return math.NaN()
 	}
-	return got.(float64)
+	f, err := got.(json.Number).Float64()
+	if err != nil {
+		t.Fatalf("Evaluate(%q) = %v, not a number: %v", formula, got, err)
+	}
+	return f
+}
+
+// A number is stored exactly, not through a float64.
+func TestNumbersAreStoredExactly(t *testing.T) {
+	expr, err := calc.Parse("9007199254740992 + 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := calc.Evaluate(expr, nil, calc.ResultNumber)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != json.Number("9007199254740993") {
+		t.Fatalf("got %v", got)
+	}
+}
+
+// A NUMERIC read back from SQL as text, and a timestamp at midnight, keep
+// their type when read through Typed.
+func TestTypedValuesKeepTheirType(t *testing.T) {
+	record := calc.Record{
+		"amount":  calc.Typed(calc.ResultNumber, "10"),
+		"started": calc.Typed(calc.ResultTimestamp, time.Date(2026, 11, 24, 0, 0, 0, 0, time.UTC)),
+	}
+	if got := evalNumber(t, "If ( amount > 9 ; 1 ; 0 )", record); got != 1 {
+		t.Errorf("amount > 9 = %v, want 1", got)
+	}
+	expr, err := calc.Parse("started + 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := calc.Evaluate(expr, record, calc.ResultTimestamp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "2026-11-24T00:00:01Z" {
+		t.Errorf("started + 1 = %v", got)
+	}
 }
 
 // The calculation from the tutorial this project is modelled on: new customers
@@ -195,7 +238,7 @@ func TestDateFunctions(t *testing.T) {
 func TestResultTypeShapesTheStoredValue(t *testing.T) {
 	expr, _ := calc.Parse(`1 + 1`)
 
-	if got, _ := calc.Evaluate(expr, nil, calc.ResultNumber); got != 2.0 {
+	if got, _ := calc.Evaluate(expr, nil, calc.ResultNumber); got != json.Number("2") {
 		t.Errorf("as number = %v, want 2", got)
 	}
 	if got, _ := calc.Evaluate(expr, nil, calc.ResultText); got != "2" {

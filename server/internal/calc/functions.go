@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/shopspring/decimal"
@@ -132,7 +132,7 @@ func logicalFunctions() map[string]function {
 				return empty, err
 			}
 			i := test.asNumber(ev.loc).IntPart()
-			if i < 0 || int(i)+1 >= len(c.args) {
+			if i < 0 || i >= int64(len(c.args)-1) {
 				return empty, nil
 			}
 			return ev.eval(c.args[i+1])
@@ -214,9 +214,13 @@ func (ev *evaluator) evaluateText(c callNode) (value, error) {
 	if err != nil {
 		return empty, errorAt(c.at, "Evaluate cannot read its formula: %v", err)
 	}
+	if ev.depth >= maxDepth {
+		return empty, errorAt(c.at, "Evaluate calls itself too deeply")
+	}
 	saved := ev.locals
 	ev.locals = nil
-	defer func() { ev.locals = saved }()
+	ev.depth++
+	defer func() { ev.locals = saved; ev.depth-- }()
 	return ev.eval(root)
 }
 
@@ -461,14 +465,15 @@ func wordRange(s string, loc *Locale, first, n int) string {
 func serialIncrement(s string, by int64) string {
 	r := []rune(s)
 	end := len(r)
-	for end > 0 && !unicode.IsDigit(r[end-1]) {
+	isDigit := func(c rune) bool { return c >= '0' && c <= '9' }
+	for end > 0 && !isDigit(r[end-1]) {
 		end--
 	}
 	if end == 0 {
 		return s + decimal.NewFromInt(by).String()
 	}
 	start := end
-	for start > 0 && unicode.IsDigit(r[start-1]) {
+	for start > 0 && isDigit(r[start-1]) {
 		start--
 	}
 	n, _ := new(big.Int).SetString(string(r[start:end]), 10)
@@ -688,11 +693,14 @@ func numberFunctions() map[string]function {
 			return numberValue(floatDecimal(r)), nil
 		})
 	}
+	// places is a number of decimal places, kept within what SetPrecision
+	// allows so that Round ( 1 ; 100000 ) does no needless work.
 	places := func(ev *evaluator, a []value, i int) int32 {
 		if i >= len(a) {
 			return 0
 		}
-		return int32(a[i].asNumber(ev.loc).IntPart())
+		p := a[i].asNumber(ev.loc).IntPart()
+		return int32(min(max(p, -maxPrecision), maxPrecision))
 	}
 	return map[string]function{
 		"ABS": fixed(1, func(ev *evaluator, _ callNode, a []value) (value, error) {
@@ -754,7 +762,7 @@ func numberFunctions() map[string]function {
 			return numberValue(x.DivRound(y, ev.precision+2).Floor()), nil
 		}),
 		"SQRT":    exact("Sqrt", decimalSqrt),
-		"EXP":     exact("Exp", func(x decimal.Decimal, d int32) (decimal.Decimal, error) { return x.ExpTaylor(d) }),
+		"EXP":     exact("Exp", decimalExp),
 		"LN":      exact("Ln", decimalLn),
 		"LG":      exact("Lg", func(x decimal.Decimal, d int32) (decimal.Decimal, error) { return decimalLog(x, 2, d) }),
 		"LOG":     exact("Log", func(x decimal.Decimal, d int32) (decimal.Decimal, error) { return decimalLog(x, 10, d) }),
@@ -783,7 +791,7 @@ func numberFunctions() map[string]function {
 			if err != nil {
 				return empty, err
 			}
-			p := int32(min(max(pv.asNumber(ev.loc).IntPart(), precision), 400))
+			p := int32(min(max(pv.asNumber(ev.loc).IntPart(), precision), maxPrecision))
 			saved := ev.precision
 			ev.precision = p
 			defer func() { ev.precision = saved }()
@@ -823,19 +831,39 @@ func decimalSqrt(x decimal.Decimal, digits int32) (decimal.Decimal, error) {
 	if x.IsZero() {
 		return decimal.Zero, nil
 	}
-	f, _ := x.Float64()
-	r := floatDecimal(math.Sqrt(f))
+	// Start from the square root of the leading digits, scaled by half the
+	// exponent, so that numbers beyond float64's range work too.
+	exp := int32(len(x.Coefficient().String())) + x.Exponent()
+	exp -= exp % 2
+	f, _ := x.Shift(-exp).Float64()
+	r := floatDecimal(math.Sqrt(f)).Shift(exp / 2)
 	two := decimal.NewFromInt(2)
-	for i := 0; i < 8; i++ { // Newton's method doubles the correct digits each time
+	for i := 0; i < 10; i++ { // Newton's method doubles the correct digits each time
 		r = r.Add(x.DivRound(r, digits+4)).DivRound(two, digits+4)
 	}
 	return r.Round(digits), nil
+}
+
+// decimalMu serialises Exp and Ln: shopspring/decimal keeps a package-wide
+// cache of factorials and constants that its ExpTaylor and Ln grow without
+// locking, which concurrent evaluations would race on.
+var decimalMu sync.Mutex
+
+func decimalExp(x decimal.Decimal, digits int32) (decimal.Decimal, error) {
+	if x.GreaterThan(decimal.NewFromInt(100000)) {
+		return decimal.Zero, fmt.Errorf("too large")
+	}
+	decimalMu.Lock()
+	defer decimalMu.Unlock()
+	return x.ExpTaylor(digits)
 }
 
 func decimalLn(x decimal.Decimal, digits int32) (decimal.Decimal, error) {
 	if !x.IsPositive() {
 		return decimal.Zero, fmt.Errorf("not positive")
 	}
+	decimalMu.Lock()
+	defer decimalMu.Unlock()
 	return x.Ln(digits)
 }
 
@@ -852,11 +880,11 @@ func decimalLog(x decimal.Decimal, base int64, digits int32) (decimal.Decimal, e
 	if p.Equal(x) {
 		return decimal.NewFromInt(k), nil
 	}
-	lx, err := x.Ln(digits + 4)
+	lx, err := decimalLn(x, digits+4)
 	if err != nil {
 		return decimal.Zero, err
 	}
-	lb, err := b.Ln(digits + 4)
+	lb, err := decimalLn(b, digits+4)
 	if err != nil {
 		return decimal.Zero, err
 	}
@@ -884,11 +912,11 @@ func power(a, b decimal.Decimal, digits int32) (decimal.Decimal, error) {
 	if a.IsNegative() {
 		return decimal.Zero, fmt.Errorf("%s ^ %s has no answer", a.String(), b.String())
 	}
-	ln, err := a.Ln(digits + 6)
+	ln, err := decimalLn(a, digits+6)
 	if err != nil {
 		return decimal.Zero, err
 	}
-	r, err := ln.Mul(b).ExpTaylor(digits + 4)
+	r, err := decimalExp(ln.Mul(b), digits+4)
 	if err != nil {
 		return decimal.Zero, err
 	}
@@ -980,9 +1008,23 @@ func aggregateFunctions() map[string]function {
 			}
 			return joinValues(out, false), nil
 		}),
-		"LAST": fixed(1, func(ev *evaluator, _ callNode, a []value) (value, error) {
-			return a[0], nil
-		}),
+		"LAST": {minArgs: 1, maxArgs: 1, lazy: func(ev *evaluator, c callNode) (value, error) {
+			// The last value that is not empty: of the related records, or
+			// of a field's repetitions.
+			if f, ok := c.args[0].(fieldNode); ok && f.table != "" && f.repetition == nil {
+				vals, err := ev.relatedValues(f)
+				if err != nil {
+					return empty, err
+				}
+				for i := len(vals) - 1; i >= 0; i-- {
+					if !vals[i].isEmpty() {
+						return vals[i], nil
+					}
+				}
+				return empty, nil
+			}
+			return ev.eval(c.args[0])
+		}},
 		"GETNTHRECORD": {minArgs: 2, maxArgs: 2, lazy: func(ev *evaluator, c callNode) (value, error) {
 			f, ok := c.args[0].(fieldNode)
 			if !ok || f.table == "" {

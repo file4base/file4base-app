@@ -1278,7 +1278,14 @@ func translateAndValidateFormula(raw string) (string, string, bool) {
 		notes = append(notes, "≥ -> >=")
 	}
 
-	if _, err := calc.Parse(translated); err != nil {
+	expr, err := calc.Parse(translated)
+	if err != nil {
+		return translated, "", false
+	}
+	// A related field (Lines::Amount) cannot be read when a record is
+	// written yet: such a calculation would make every write fail, so it is
+	// kept as a stored value and reported until related reads are supported.
+	if len(expr.RelatedFields()) > 0 {
 		return translated, "", false
 	}
 	if len(notes) > 0 {

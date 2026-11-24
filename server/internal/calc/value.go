@@ -1,6 +1,7 @@
 package calc
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -66,6 +67,11 @@ func fromStored(raw any) value {
 		return boolValue(v)
 	case decimal.Decimal:
 		return numberValue(v)
+	case json.Number:
+		if n, err := decimal.NewFromString(string(v)); err == nil {
+			return numberValue(n)
+		}
+		return textValue(string(v))
 	case float64:
 		return numberValue(decimal.NewFromFloat(v))
 	case float32:
@@ -85,6 +91,50 @@ func fromStored(raw any) value {
 	default:
 		return textValue(fmt.Sprintf("%v", v))
 	}
+}
+
+// Typed is a value read from a column of the given type, made into what a
+// formula should see. A database driver may return a NUMERIC as text ("10")
+// or a TIMESTAMP at midnight that looks like a date; read through Typed they
+// stay a number and a timestamp, so "amount > 9" holds after a round trip.
+// A value that does not read as its type is kept as it came.
+func Typed(t ResultType, raw any) any {
+	switch r := raw.(type) {
+	case nil, value:
+		return raw
+	case string:
+		switch t {
+		case ResultNumber:
+			if n, err := decimal.NewFromString(strings.TrimSpace(r)); err == nil {
+				return numberValue(n)
+			}
+		case ResultDate:
+			if d, ok := parseISO(strings.TrimSpace(r)); ok {
+				return dateValue(d)
+			}
+		case ResultTimestamp:
+			if ts, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(r)); err == nil {
+				return timestampValue(timestampSeconds(ts))
+			}
+			if s, ok := ISOLocale.parseTimestamp(r); ok {
+				return timestampValue(s)
+			}
+		}
+	case []byte:
+		return Typed(t, string(r))
+	case json.Number:
+		if n, err := decimal.NewFromString(string(r)); err == nil {
+			return numberValue(n)
+		}
+	case time.Time:
+		switch t {
+		case ResultTimestamp:
+			return timestampValue(timestampSeconds(r))
+		case ResultDate:
+			return dateValue(dayNumber(r.Year(), int(r.Month()), r.Day()))
+		}
+	}
+	return raw
 }
 
 // fromTime reads a moment from the database: midnight in UTC is a date, as a

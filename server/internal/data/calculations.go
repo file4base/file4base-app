@@ -14,6 +14,33 @@ type calculation struct {
 	field  string
 	expr   *calc.Expr
 	result calc.ResultType
+	// types is how the table's fields are stored, so that a value read back
+	// from SQL is seen by the formula as what it is (see calc.Typed).
+	types fieldSet
+}
+
+// evaluate computes the calculation over a record.
+func (c calculation) evaluate(record map[string]interface{}) (interface{}, error) {
+	typed := make(calc.Record, len(record))
+	for name, v := range record {
+		typed[name] = calc.Typed(resultTypeOf(c.types[name]), v)
+	}
+	return calc.Evaluate(c.expr, typed, c.result)
+}
+
+// resultTypeOf is the formula's view of a storage type.
+func resultTypeOf(t dbal.AgnosticFieldType) calc.ResultType {
+	switch t {
+	case dbal.FieldTypeNumber:
+		return calc.ResultNumber
+	case dbal.FieldTypeDate:
+		return calc.ResultDate
+	case dbal.FieldTypeTimestamp:
+		return calc.ResultTimestamp
+	case dbal.FieldTypeBoolean:
+		return calc.ResultBoolean
+	}
+	return calc.ResultText
 }
 
 // StoredCalculation is how a formula is kept in sys_columns.calculation_formula.
@@ -44,6 +71,10 @@ func ParseStoredCalculation(raw string) (formula string, result calc.ResultType)
 // error. A write must not become impossible because an unrelated formula is
 // broken.
 func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]calculation, error) {
+	types, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
 	q := `SELECT c.name, c.calculation_formula FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id
 	      WHERE t.name = $1 AND c.field_type = $2 AND c.calculation_formula IS NOT NULL`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
@@ -68,7 +99,7 @@ func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]ca
 		if err != nil {
 			continue
 		}
-		parsed[name] = calculation{field: name, expr: expr, result: result}
+		parsed[name] = calculation{field: name, expr: expr, result: result, types: types}
 		reads[name] = expr.Fields()
 	}
 	if err := rows.Err(); err != nil {
@@ -112,7 +143,7 @@ func (s *Service) applyCalculations(ctx context.Context, tableName string, recor
 // rather than fetched again for each (#38).
 func applyCalculationsTo(calculations []calculation, record map[string]interface{}) error {
 	for _, c := range calculations {
-		answer, err := calc.Evaluate(c.expr, calc.Record(record), c.result)
+		answer, err := c.evaluate(record)
 		if err != nil {
 			return fmt.Errorf("%w: the formula of %q could not be computed: %s", ErrInvalidValue, c.field, err.Error())
 		}
@@ -146,7 +177,7 @@ func (s *Service) recalculateForUpdate(ctx context.Context, tableName, id string
 	}
 
 	for _, c := range calculations {
-		answer, err := calc.Evaluate(c.expr, calc.Record(merged), c.result)
+		answer, err := c.evaluate(merged)
 		if err != nil {
 			return fmt.Errorf("%w: the formula of %q could not be computed: %s", ErrInvalidValue, c.field, err.Error())
 		}
@@ -190,7 +221,7 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 			}
 			updates := make(map[string]interface{}, len(calculations))
 			for _, c := range calculations {
-				answer, err := calc.Evaluate(c.expr, calc.Record(row), c.result)
+				answer, err := c.evaluate(row)
 				if err != nil {
 					return written, fmt.Errorf("%w: the formula of %q could not be computed for record %s: %s",
 						ErrInvalidValue, c.field, id, err.Error())
