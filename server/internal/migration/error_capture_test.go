@@ -70,7 +70,57 @@ func TestErrorCaptureStepType(t *testing.T) {
 // An Options bit nobody has matched to a parameter is still reported.
 func TestUnknownStepOptionBitIsReported(t *testing.T) {
 	if !optionsRepeatParameters("Set Error Capture", "65536") || optionsRepeatParameters("Set Error Capture", "65537") ||
-		optionsRepeatParameters("Go to Record/Request/Page", "8195") || optionsRepeatParameters("Beep", "0") {
+		optionsRepeatParameters("Go to Record/Request/Page", "8195") || optionsRepeatParameters("Copy", "0") || optionsRepeatParameters("Beep", "1") {
 		t.Fatal("only the observed redundant bits may be accepted")
+	}
+}
+
+func TestGoToFieldAndDisplayStepsDecode(t *testing.T) {
+	const ddr = `<FMPReport><File name="S"><BaseTableCatalog><BaseTable name="Visits"><FieldCatalog><Field name="Notes" dataType="Text"/></FieldCatalog></BaseTable></BaseTableCatalog><ScriptCatalog><Script name="A"><StepList>
+<Step id="17" name="Atteindre rubrique" enable="True"><SelectAll state="True"/><Field table="Visits" id="1" name="Notes"/></Step>
+<Step id="93" name="Signal sonore" enable="True"/>
+<Step id="79" name="Figer fenêtre" enable="True"/>
+<Step id="80" name="Rafraîchir fenêtre" enable="True"><Option state="False"/><FlushSQLData state="False"/></Step>
+</StepList></Script></ScriptCatalog></File></FMPReport>`
+	const native = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Visits"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Visits"/><ObjectList><Field id="1" name="Notes" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <ScriptCatalog><Script id="81" name="A"/></ScriptCatalog>
+ <StepsForScripts><Script><ScriptReference id="81" name="A"/><ObjectList>
+ <Step id="17" name="Go to Field" enable="True"><Options>4097</Options><ParameterValues><Parameter type="Boolean"><Boolean type="Select/perform" id="4096" value="True"/></Parameter><Parameter type="FieldReference"><FieldReference id="1" name="Notes"><repetition><Calculation><Text>1</Text></Calculation></repetition></FieldReference></Parameter></ParameterValues></Step>
+ <Step id="93" name="Beep" enable="True"><Options>0</Options></Step>
+ <Step id="79" name="Freeze Window" enable="True"><Options>0</Options></Step>
+ <Step id="80" name="Refresh Window" enable="True"><Options>0</Options><ParameterValues><Parameter type="Boolean"><Boolean type="Flush cached join results" id="1" value="False"/></Parameter><Parameter type="Boolean"><Boolean type="Flush cached external data" id="2" value="False"/></Parameter></ParameterValues></Step>
+ </ObjectList></Script></StepsForScripts>
+ </AddAction></Structure></FMSaveAsXML>`
+	for name, design := range map[string]string{"ddr": ddr, "native": native} {
+		result, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		steps := result.Bundle.Scripts[0].Steps
+		want := []string{"Go to Field", "Beep", "Freeze Window", "Refresh Window"}
+		for i, step := range steps {
+			if step.StepType != want[i] {
+				t.Fatalf("%s: step %d is %q", name, i, step.StepType)
+			}
+		}
+		if steps[0].Params["field"] != "notes" || steps[0].Params["select_all"] != true {
+			t.Fatalf("%s: go to field %v", name, steps[0].Params)
+		}
+		for _, item := range result.Report.ManualActionRequired {
+			if item.Domain == "script" {
+				t.Fatalf("%s: decoded options reported as manual: %+v", name, item)
+			}
+		}
+	}
+	// A flush that is on stays reported.
+	result, _ := AnalyzeAndConvert(MigrationRequest{DesignXML: `<FMPReport><File name="S"><ScriptCatalog><Script name="A"><StepList><Step id="80" name="Refresh Window" enable="True"><Option state="True"/></Step></StepList></Script></ScriptCatalog></File></FMPReport>`})
+	reported := false
+	for _, item := range result.Report.ManualActionRequired {
+		reported = reported || item.Domain == "script"
+	}
+	if !reported {
+		t.Fatal("a flush that is on must be reported")
 	}
 }

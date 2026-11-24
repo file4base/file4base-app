@@ -53,6 +53,16 @@ class _FoundSetHost implements LayoutActionHost {
   }
 
   @override
+  Future<int> actionGoToField(String field, {bool selectAll = false}) async {
+    if (field.isNotEmpty && field != 'notes') return 102;
+    did.add('field:$field${selectAll ? ':all' : ''}');
+    return 0;
+  }
+
+  @override
+  Future<void> actionBeep() async => did.add('beep');
+
+  @override
   String actionResolveText(String text) => text;
 
   @override
@@ -167,7 +177,7 @@ void main() {
     final host = _FoundSetHost(1);
     final result = await _perform(
         _runner(host, [
-          _script('s', 'S', [_step(1, 'Set Error Capture', {'state': true}), _step(2, 'Beep')]),
+          _script('s', 'S', [_step(1, 'Set Error Capture', {'state': true}), _step(2, 'Copy')]),
         ]),
         's');
     expect(result.completed, isFalse);
@@ -190,5 +200,39 @@ void main() {
     final result = await _perform(runner, 'main');
     expect(result.completed, isTrue, reason: result.message);
     expect(host.fields, {'error': '101', 'layout': '105'});
+  });
+
+  test('Go to Field, Beep, Freeze Window and Refresh Window run', () async {
+    final host = _FoundSetHost(1);
+    final result = await _perform(
+        _runner(host, [
+          _script('s', 'S', [
+            _step(1, 'Freeze Window'),
+            _step(2, 'Go to Field', {'field': 'notes', 'select_all': true}),
+            _step(3, 'Beep'),
+            _step(4, 'Refresh Window'),
+            _step(5, 'Go to Field'),
+          ]),
+        ]),
+        's');
+    expect(result.completed, isTrue, reason: result.message);
+    expect(host.did, ['field:notes:all', 'beep', 'field:']);
+  });
+
+  test('Go to Field on a field the table does not have reports 102', () async {
+    final host = _FoundSetHost(1);
+    final strict = await _perform(_runner(host, [_script('s', 'S', [_step(1, 'Go to Field', {'field': 'gone'})])]), 's');
+    expect(strict.message, contains('FileMaker error 102'));
+    final captured = await _perform(
+        _runner(host, [
+          _script('s', 'S', [
+            _step(1, 'Set Error Capture', {'state': true}),
+            _step(2, 'Go to Field', {'field': 'gone'}),
+            _step(3, 'Set Field', {'field': 'error', 'value': 'Get(LastError)', 'value_is_calculation': true}),
+          ]),
+        ]),
+        's');
+    expect(captured.completed, isTrue, reason: captured.message);
+    expect(host.fields['error'], '102');
   });
 }

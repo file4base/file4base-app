@@ -82,6 +82,14 @@ abstract class LayoutActionHost {
 
   /// Returns false when the current table has no such field.
   Future<bool> actionSetField(String field, String value);
+
+  /// Go to Field: puts the cursor in [field] on the layout, selecting its
+  /// contents with [selectAll]. An empty [field] leaves the current field.
+  /// Answers 0, or 102 when the current table has no such field.
+  Future<int> actionGoToField(String field, {bool selectAll = false});
+
+  /// Beep: the system alert sound.
+  Future<void> actionBeep();
   Future<void> actionShowDialog(String title, String message);
   Future<void> actionOpenUrl(String url);
 
@@ -232,6 +240,7 @@ class LayoutActionRunner {
     'enter_preview_mode',
     'go_to_layout',
     'set_field',
+    'go_to_field',
     'adjust_window',
     're_login',
     'close_file',
@@ -474,6 +483,17 @@ class LayoutActionRunner {
         if (!await host.actionSetField(field, value)) {
           return LayoutActionResult.stopped('Field "$field" is not in this table.', errorCode: 102);
         }
+      case 'go_to_field':
+        final field = params['field']?.toString() ?? '';
+        final code = await host.actionGoToField(field, selectAll: params['select_all'] == true);
+        if (code != 0) return LayoutActionResult.stopped('Field "$field" is not in this table.', errorCode: code);
+      case 'beep':
+        await host.actionBeep();
+      case 'freeze_window':
+      case 'refresh_window':
+        // Display only: the client redraws as records change, and has no
+        // drawing to hold back or cached join to flush.
+        break;
       case 'show_dialog':
         final title = params['title_is_calculation'] == true
             ? resolveValue(params['title']?.toString() ?? '', vars, callContext: context)
@@ -1245,6 +1265,10 @@ class _WindowlessHost implements LayoutActionHost {
   Future<bool> actionGoToLayout(String layoutName) async => _noWindow('Go to Layout');
   @override
   Future<bool> actionSetField(String field, String value) async => _noWindow('Set Field');
+  @override
+  Future<int> actionGoToField(String field, {bool selectAll = false}) async => _noWindow('Go to Field');
+  @override
+  Future<void> actionBeep() => _screen.actionBeep();
   @override
   Future<void> actionAdjustWindow(String windowAction) async => _noWindow('Adjust Window');
   @override

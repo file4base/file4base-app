@@ -3626,6 +3626,30 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<bool> actionGoToLayout(String layoutName) async => widget.onGoToLayout?.call(layoutName) ?? false;
 
   @override
+  Future<int> actionGoToField(String field, {bool selectAll = false}) async {
+    if (field.isEmpty) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      return 0;
+    }
+    final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
+    if (col == null) return 102;
+    // A field that is not on this layout has no place to put the cursor.
+    final node = _fieldFocusNodes[col.name];
+    if (node == null) return 0;
+    node.requestFocus();
+    final controller = _fieldControllers[col.name];
+    if (controller != null) {
+      controller.selection = selectAll
+          ? TextSelection(baseOffset: 0, extentOffset: controller.text.length)
+          : TextSelection.collapsed(offset: controller.text.length);
+    }
+    return 0;
+  }
+
+  @override
+  Future<void> actionBeep() => SystemSound.play(SystemSoundType.alert);
+
+  @override
   Future<bool> actionSetField(String field, String value) async {
     final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
     if (col == null || col.isPrimaryKey || _records.isEmpty) return col != null && !col.isPrimaryKey;

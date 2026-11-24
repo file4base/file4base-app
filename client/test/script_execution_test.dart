@@ -30,6 +30,13 @@ class _RecordingHost implements LayoutActionHost {
   @override
   Future<void> actionRevertRecord() async => did.add('revert_record');
   @override
+  Future<int> actionGoToField(String field, {bool selectAll = false}) async {
+    did.add('go_to_field:$field');
+    return 0;
+  }
+  @override
+  Future<void> actionBeep() async => did.add('beep');
+  @override
   Future<int> actionGoToRecord(String target) async {
     did.add('go_to_record:$target');
     return 0;

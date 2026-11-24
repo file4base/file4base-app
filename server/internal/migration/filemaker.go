@@ -185,6 +185,10 @@ var supportedScriptSteps = map[string]string{
 	"go to record/request/page": "Go to Record/Request/Page",
 	"go to record":              "Go to Record/Request/Page",
 	"set error capture":         "Set Error Capture",
+	"go to field":               "Go to Field",
+	"beep":                      "Beep",
+	"freeze window":             "Freeze Window",
+	"refresh window":            "Refresh Window",
 	"enter browse mode":         "Enter Browse Mode",
 	"enter find mode":           "Enter Find Mode",
 	"enter preview mode":        "Enter Preview Mode",
@@ -1887,6 +1891,12 @@ var stepParamAttrs = map[string]bool{
 var redundantStepOptionBits = map[string]uint64{
 	"Set Error Capture":         0x10000 | 0x20000,
 	"Go to Record/Request/Page": 0x2 | 0x2000,
+	// Go to Field writes 0x1, with "Select/perform" in 0x1000 (4097 ⇔ True).
+	"Go to Field": 0x1 | 0x1000,
+	// These write 0 and carry no option in the mask.
+	"Beep":           0,
+	"Freeze Window":  0,
+	"Refresh Window": 0,
 }
 
 func optionsRepeatParameters(canonicalStep, text string) bool {
@@ -2029,6 +2039,19 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 				break
 			}
 			params["exit_after_last"] = strings.EqualFold(firstAttr(child, "state"), "True")
+		case "SelectAll":
+			if canonicalStep != "Go to Field" {
+				flagUnmapped(child.Name)
+				break
+			}
+			params["select_all"] = strings.EqualFold(firstAttr(child, "state"), "True")
+		case "Option", "FlushSQLData":
+			// Refresh Window's flush options. Off is a plain refresh; a flush
+			// that is on is reported, since File4Base has no such cache to
+			// flush and the claim would be unchecked.
+			if canonicalStep != "Refresh Window" || strings.EqualFold(firstAttr(child, "state"), "True") {
+				flagUnmapped(child.Name)
+			}
 		case "NoInteract":
 			// "With dialog: Off" only matters where the step would ask the
 			// user something; Go to Record by calculation never does.

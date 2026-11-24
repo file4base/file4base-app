@@ -429,6 +429,13 @@ class _FakeHost implements LayoutActionHost {
   @override
   Future<void> actionRevertRecord() async => calls.add('revert');
   @override
+  Future<int> actionGoToField(String field, {bool selectAll = false}) async {
+    calls.add('go_to_field:$field');
+    return 0;
+  }
+  @override
+  Future<void> actionBeep() async => calls.add('beep');
+  @override
   Future<int> actionGoToRecord(String target) async {
     calls.add('goto:$target');
     return 0;

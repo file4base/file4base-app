@@ -103,12 +103,23 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 				out["file_reference"] = firstAttr(external, "name", "Name")
 			}
 		case "Boolean":
-			// Set Error Capture writes its On/Off state as the one Boolean.
-			if child == nil || canonical != "Set Error Capture" {
+			if child == nil {
 				unknown = append(unknown, "Parameter.Boolean")
 				continue
 			}
-			out["state"] = strings.EqualFold(firstAttr(child, "value"), "True")
+			on := strings.EqualFold(firstAttr(child, "value"), "True")
+			switch kind := firstAttr(child, "type"); {
+			case canonical == "Set Error Capture":
+				// Its On/Off state is the step's one Boolean.
+				out["state"] = on
+			case canonical == "Go to Field" && strings.EqualFold(kind, "Select/perform"):
+				out["select_all"] = on
+			case canonical == "Refresh Window" && !on &&
+				(strings.EqualFold(kind, "Flush cached join results") || strings.EqualFold(kind, "Flush cached external data")):
+				// Off is a plain refresh. A flush that is on stays reported.
+			default:
+				unknown = append(unknown, "Parameter.Boolean")
+			}
 		case "Records":
 			// Go to Record/Request/Page: the List names the target (First,
 			// Last, Previous, Next, By Calculation) and may carry the
