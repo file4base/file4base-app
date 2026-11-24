@@ -252,14 +252,14 @@ func TestAnalyzeAndConvert_HTMLDDRAndFractions(t *testing.T) {
 	if res.Report.Counts.Layouts != 1 {
 		t.Fatalf("expected 1 layout, got %d", res.Report.Counts.Layouts)
 	}
-	if got := coerceDataValue("1/3", "NUMBER"); got != 0.3333 {
-		t.Fatalf("expected 1/3 -> 0.3333, got %v", got)
+	if got := coerceDataValue("1/3", "NUMBER"); got != nil {
+		t.Fatalf("permissive source Number text must not become a rounded fraction, got %v", got)
 	}
-	if got := coerceDataValue("1 1/4", "NUMBER"); got != 1.25 {
-		t.Fatalf("expected 1 1/4 -> 1.25, got %v", got)
+	if got := coerceDataValue("1 1/4", "NUMBER"); got != nil {
+		t.Fatalf("source Number text must not be interpreted as a mixed fraction, got %v", got)
 	}
-	if got := coerceDataValue("DE31E6D2-A0B8-4DC3-AD6D-AFD2B10DB7FA", "TEXT"); got != "de31e6d2-a0b8-4dc3-ad6d-afd2b10db7fa" {
-		t.Fatalf("expected lowercase UUID, got %v", got)
+	if got := coerceDataValue("DE31E6D2-A0B8-4DC3-AD6D-AFD2B10DB7FA", "TEXT"); got != "DE31E6D2-A0B8-4DC3-AD6D-AFD2B10DB7FA" {
+		t.Fatalf("expected original UUID text, got %v", got)
 	}
 }
 
@@ -747,8 +747,15 @@ func TestAnalyzeAndConvert_ReadsNestedFieldOptions(t *testing.T) {
 	if code.IsNullable {
 		t.Fatal("a not-empty field is not nullable")
 	}
-	if code.DefaultValue == nil || *code.DefaultValue != "SV-000" {
-		t.Fatalf("expected the auto-enter constant as the default value, got %v", code.DefaultValue)
+	if code.DefaultValue == nil {
+		t.Fatal("auto-enter constant was not retained")
+	}
+	var options map[string]interface{}
+	if json.Unmarshal([]byte(*code.DefaultValue), &options) != nil || options["data_enabled"] != true || options["data_value"] != "SV-000" {
+		t.Fatal("auto-enter constant is not a valid field-options payload")
+	}
+	if err := schema.ValidateFieldOptions(code.DefaultValue); err != nil {
+		t.Fatal("auto-enter options cannot be applied")
 	}
 
 	// Storage-level global and repeating fields are reported, as the

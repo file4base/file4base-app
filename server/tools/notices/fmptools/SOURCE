@@ -1,0 +1,4 @@
+Reference and adapted chunk-grammar algorithm: https://github.com/evanmiller/fmptools
+Revision: fd32a6c4f425a377f27efd558cf9bc7cc09985a6
+Files consulted: HACKING, src/block.c, src/read_values.c, src/scsu.c
+Go implementation: server/internal/migration/fmp12_stream.go and fmp12_scsu.go

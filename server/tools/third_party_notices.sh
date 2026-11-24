@@ -27,6 +27,10 @@ section() {
     printf 'Third-party software included in the File4Base server (%s)\n' "$(basename "$bin")"
     printf 'File4Base itself is licensed under GPL-3.0-only.\n'
 
+    section "fmptools (native chunk grammar adaptation, fd32a6c4f425a377f27efd558cf9bc7cc09985a6)"
+    cat "$(dirname "$0")/notices/fmptools/SOURCE"
+    cat "$(dirname "$0")/notices/fmptools/LICENSE"
+
     section "Go programming language $(go env GOVERSION) (runtime and standard library)"
     # Packaged toolchains (e.g. Homebrew) keep the license next to GOROOT.
     golicense=""

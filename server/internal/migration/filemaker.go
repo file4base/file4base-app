@@ -57,20 +57,21 @@ type ReportItem struct {
 
 // SummaryCounts summarizes the conversion outcome at a glance.
 type SummaryCounts struct {
-	Tables               int `json:"tables"`
-	Fields               int `json:"fields"`
-	Occurrences          int `json:"table_occurrences"`
-	Relationships        int `json:"relationships"`
-	ValueLists           int `json:"value_lists"`
-	Layouts              int `json:"layouts"`
-	Scripts              int `json:"scripts"`
-	Accounts             int `json:"accounts"`
-	RecordsReady         int `json:"records_ready"`
-	PreservedCount       int `json:"preserved_count"`
-	TranslatedCount      int `json:"translated_count"`
-	UnsupportedCount     int `json:"unsupported_count"`
-	RejectedCount        int `json:"rejected_count"`
-	ManualActionCount    int `json:"manual_action_count"`
+	Tables            int `json:"tables"`
+	Fields            int `json:"fields"`
+	Occurrences       int `json:"table_occurrences"`
+	Relationships     int `json:"relationships"`
+	ValueLists        int `json:"value_lists"`
+	Layouts           int `json:"layouts"`
+	Scripts           int `json:"scripts"`
+	Accounts          int `json:"accounts"`
+	RecordsReady      int `json:"records_ready"`
+	RecordsDetected   int `json:"records_detected,omitempty"`
+	PreservedCount    int `json:"preserved_count"`
+	TranslatedCount   int `json:"translated_count"`
+	UnsupportedCount  int `json:"unsupported_count"`
+	RejectedCount     int `json:"rejected_count"`
+	ManualActionCount int `json:"manual_action_count"`
 }
 
 // ConversionReport is the deterministic preflight and post-import audit report
@@ -90,21 +91,36 @@ type ConversionReport struct {
 
 // MigrationRequest is the payload accepted by the preflight and apply endpoints.
 type MigrationRequest struct {
-	SolutionName   string            `json:"solution_name,omitempty"`
-	DesignXML      string            `json:"design_xml"`
-	DataFiles      map[string]string `json:"data_files,omitempty"` // TableName -> FMPXMLRESULT XML content
-	FMP12Base64    string            `json:"fmp12_base64,omitempty"`
-	TargetDatabase string            `json:"target_database,omitempty"`
-	OwnerUser      string            `json:"owner_user,omitempty"`
-	OwnerPassword  string            `json:"owner_password,omitempty"`
+	nativeData      []byte
+	NativeDateOrder string            `json:"native_date_order,omitempty"`
+	SolutionName    string            `json:"solution_name,omitempty"`
+	DesignXML       string            `json:"design_xml"`
+	DataFiles       map[string]string `json:"data_files,omitempty"` // TableName -> FMPXMLRESULT XML content
+	FMP12Base64     string            `json:"fmp12_base64,omitempty"`
+	TargetDatabase  string            `json:"target_database,omitempty"`
+	OwnerUser       string            `json:"owner_user,omitempty"`
+	OwnerPassword   string            `json:"owner_password,omitempty"`
+}
+
+// AnalyzeAndConvertNative audits an explicitly selected local native input
+// without a base64 copy or an HTTP request. It never opens a filesystem path.
+func AnalyzeAndConvertNative(req MigrationRequest, native []byte) (*ConvertedSolution, error) {
+	if len(native) == 0 {
+		return nil, fmt.Errorf("native input is empty")
+	}
+	if strings.TrimSpace(req.FMP12Base64) != "" {
+		return nil, fmt.Errorf("choose one native input")
+	}
+	req.nativeData = native
+	return AnalyzeAndConvert(req)
 }
 
 // ConvertedSolution holds the ready-to-import File4Base SolutionBundle and
 // any parsed table rows extracted from FMPXMLRESULT files.
 type ConvertedSolution struct {
-	Bundle     *schema.SolutionBundle
-	TableRows  map[string][]map[string]interface{}
-	Report     *ConversionReport
+	Bundle    *schema.SolutionBundle
+	TableRows map[string][]map[string]interface{}
+	Report    *ConversionReport
 }
 
 // IsFMP12Binary returns true when filename has a .fmp12/.fp7 extension or data
@@ -168,9 +184,11 @@ var supportedScriptSteps = map[string]string{
 	"set field":                 "Set Field",
 	"perform find":              "Perform Find",
 	"show all records":          "Show All Records",
-	"show omitted only":         "Show Omitted Only",
-	"omit record":               "Omit Record",
-	"sort records":              "Sort Records",
+	"if":                        "If",
+	"else if":                   "Else If",
+	"else":                      "Else",
+	"end if":                    "End If",
+	"set variable":              "Set Variable",
 	"perform script":            "Perform Script",
 	"exit script":               "Exit Script",
 	"halt script":               "Halt Script",
@@ -182,11 +200,11 @@ var supportedScriptSteps = map[string]string{
 	// (#96). An Import Records or Export Records step runs a named transfer
 	// definition; until one is named it stops the script, which is what the
 	// issue asks of an unresolved target.
-	"loop":            "Loop",
-	"exit loop if":    "Exit Loop If",
-	"end loop":        "End Loop",
-	"import records":  "Import Records",
-	"export records":  "Export Records",
+	"loop":           "Loop",
+	"exit loop if":   "Exit Loop If",
+	"end loop":       "End Loop",
+	"import records": "Import Records",
+	"export records": "Export Records",
 }
 
 // transferScriptSteps are the steps that run a transfer definition (#96).
@@ -205,16 +223,13 @@ func needsTransferDefinition(canonical string) bool {
 	return ok
 }
 
-// catalogOnlyScriptSteps are control-flow or variable steps that File4Base
-// stores in the script workspace catalog but halts on in the client-side runner.
+// catalogOnlyScriptSteps remain inspectable but cannot execute in the client.
 var catalogOnlyScriptSteps = map[string]string{
-	"if":              "If",
-	"else if":         "Else If",
-	"else":            "Else",
-	"end if":          "End If",
-	"set variable":    "Set Variable",
-	"print":           "Print",
-	"insert from url": "Insert from URL",
+	"show omitted only": "Show Omitted Only",
+	"omit record":       "Omit Record",
+	"sort records":      "Sort Records",
+	"print":             "Print",
+	"insert from url":   "Insert from URL",
 }
 
 // AnalyzeAndConvert parses a FileMaker DDR / Save-as-XML document (XML or HTML)
@@ -225,6 +240,11 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	if rawXML == "" {
 		return nil, fmt.Errorf("%w: design_xml is required", ErrInvalidMigrationXML)
 	}
+	nativeOrder := strings.ToLower(strings.TrimSpace(req.NativeDateOrder))
+	if nativeOrder != "" && nativeOrder != "iso" && nativeOrder != "dmy" && nativeOrder != "mdy" {
+		return nil, fmt.Errorf("%w: native_date_order must be iso, dmy or mdy", ErrInvalidMigrationXML)
+	}
+	req.NativeDateOrder = nativeOrder
 	if IsFMP12Binary("", []byte(rawXML)) {
 		return nil, ErrBinaryFMP12
 	}
@@ -280,17 +300,20 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 
 	// 1. Extract Base Tables & Fields
-	tableIDByName := make(map[string]string)       // lower(tableName) -> tableID
-	canonicalTableName := make(map[string]string)  // lower(tableName) -> sql table name
-	colIDByTableCol := make(map[string]string)     // lower(tableName) + "." + lower(colName) -> colID
-	colTypeByTableCol := make(map[string]string)   // lower(tableName) + "." + lower(colName) -> FieldType
+	tableIDByName := make(map[string]string)      // lower(tableName) -> tableID
+	canonicalTableName := make(map[string]string) // lower(tableName) -> sql table name
+	colIDByTableCol := make(map[string]string)    // lower(tableName) + "." + lower(colName) -> colID
+	colTypeByTableCol := make(map[string]string)  // lower(tableName) + "." + lower(colName) -> FieldType
+	tableIDBySourceID := make(map[string]string)
+	tableSQLBySourceID := make(map[string]string)
+	fieldNamesByTable := make(map[string]*fieldNameMap)
 
 	// The .fmp12 record reader addresses rows by the numeric table and field
 	// ids FileMaker assigns, which the DDR carries as id attributes (#91).
 	fmpTableMeta := make(map[int]string)                // fmpTableID -> sqlTableName
 	fmpFieldMeta := make(map[int]map[int]htmlFieldMeta) // fmpTableID -> fmpFieldID -> meta
 
-	baseTables := findNodes(root, "BaseTable", "Table", "table")
+	baseTables := catalogDefinitions(root, []string{"BaseTableCatalog", "tables"}, "BaseTable", "Table", "table")
 	seenTables := make(map[string]bool)
 	for _, bt := range baseTables {
 		// Avoid treating <Table> inside <TableOccurrence> or <Layout> as a base table
@@ -317,6 +340,10 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		tableIDByName[sqlName] = tID
 		canonicalTableName[strings.ToLower(rawName)] = sqlName
 		canonicalTableName[sqlName] = sqlName
+		if sourceID := firstAttr(bt, "id", "ID"); sourceID != "" {
+			tableIDBySourceID[sourceID] = tID
+			tableSQLBySourceID[sourceID] = sqlName
+		}
 
 		bTable := schema.BundleTable{
 			ID:          tID,
@@ -352,6 +379,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		// calculation's references are resolved once the whole table is known
 		// (#111). File4Base's own primary key is referable as itself.
 		fieldRenames := newFieldNameMap()
+		fieldNamesByTable[sqlName] = fieldRenames
 		fieldRenames.claim("id", "id", false)
 		for _, fn := range fieldNodes {
 			fRawName := firstAttr(fn, "name", "display_name", "Name")
@@ -402,7 +430,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 			fieldRenames.claim(fRawName, colName, true)
 			fieldRenames.claim(colName, colName, false)
 			colIDByTableCol[sqlName+"."+colName] = col.ID
-			colIDByTableCol[strings.ToLower(rawName)+"."+strings.ToLower(fRawName)] = col.ID
+			if sourceID := firstAttr(fn, "id", "ID"); sourceID != "" {
+				colIDByTableCol[sqlName+".#"+sourceID] = col.ID
+			}
 			colTypeByTableCol[sqlName+"."+colName] = col.FieldType
 			if fmpTableID > 0 {
 				if raw := firstAttr(fn, "id", "ID"); raw != "" {
@@ -460,11 +490,11 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	occIDByName := make(map[string]string) // lower(occName) -> occID
 	occTableByName := make(map[string]string)
 	tablesWithOccurrence := make(map[string]bool) // sqlTableName -> the graph names an occurrence of it
-	occNodes := findNodes(root, "TableOccurrence", "occurrence")
+	occNodes := catalogDefinitions(root, []string{"TableOccurrenceCatalog", "occurrences"}, "TableOccurrence", "occurrence")
 	// A native DDR writes the relationships graph as
 	// RelationshipGraph/TableList/Table: those <Table> elements are the
 	// solution's table occurrences, aliases and all (#101).
-	for _, graph := range findNodes(root, "RelationshipGraph", "relationshipGraph") {
+	for _, graph := range designChildren(root, "RelationshipGraph", "relationshipGraph") {
 		for _, list := range graph.Children {
 			if list.Name != "TableList" && list.Name != "tableList" {
 				continue
@@ -481,6 +511,13 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		if occName == "" {
 			continue
 		}
+		if ref := findFirstChild(on, "FileReference"); ref != nil {
+			addReportItem(report, ReportItem{
+				Category: CategoryRejected, Domain: "occurrence", SourceName: occName,
+				Detail: fmt.Sprintf("External table occurrence refers to file %q; import and bind that dependency before this occurrence can be migrated", firstAttr(ref, "name", "Name")),
+			})
+			continue
+		}
 		baseName := firstAttr(on, "baseTable", "base_table", "BaseTable")
 		if baseName == "" {
 			if btRef := findFirstChild(on, "BaseTableReference"); btRef != nil {
@@ -489,7 +526,14 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 		tID := tableIDByName[strings.ToLower(baseName)]
 		tSQL := canonicalTableName[strings.ToLower(baseName)]
-		if tID == "" && len(bundle.Tables) > 0 {
+		baseID := firstAttr(on, "baseTableId", "baseTableID", "base_table_id")
+		if ref := findFirstChild(on, "BaseTableReference"); ref != nil && baseID == "" {
+			baseID = firstAttr(ref, "id", "ID")
+		}
+		if baseID != "" {
+			tID, tSQL = tableIDBySourceID[baseID], tableSQLBySourceID[baseID]
+		}
+		if baseID == "" && baseName == "" && tID == "" && len(bundle.Tables) > 0 {
 			// Try matching occurrence name to base table name
 			tID = tableIDByName[strings.ToLower(occName)]
 			tSQL = canonicalTableName[strings.ToLower(occName)]
@@ -548,9 +592,20 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	report.Counts.Occurrences = len(bundle.TableOccurrences)
 
 	// 3. Extract Relationships
-	relNodes := findNodes(root, "Relationship", "relationship")
+	relNodes := catalogDefinitions(root, []string{"RelationshipCatalog", "relationships"}, "Relationship", "relationship")
+	for _, graph := range designChildren(root, "RelationshipGraph", "relationshipGraph") {
+		for _, list := range graph.Children {
+			if nodeNamed(list, "RelationshipList", "relationshipList") {
+				for _, rel := range list.Children {
+					if nodeNamed(rel, "Relationship", "relationship") {
+						relNodes = append(relNodes, rel)
+					}
+				}
+			}
+		}
+	}
 	for _, rn := range relNodes {
-		rel, items := convertRelationshipNode(rn, occIDByName, occTableByName, colIDByTableCol)
+		rel, items := convertRelationshipNode(rn, occIDByName, occTableByName, colIDByTableCol, fieldNamesByTable)
 		for _, item := range items {
 			addReportItem(report, item)
 		}
@@ -561,9 +616,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	report.Counts.Relationships = len(bundle.Relationships)
 
 	// 4. Extract Value Lists
-	vlNodes := findNodes(root, "ValueList", "value_list")
+	vlNodes := catalogDefinitions(root, []string{"ValueListCatalog", "value_lists"}, "ValueList", "value_list")
 	for _, vn := range vlNodes {
-		vl, item := convertValueListNode(vn, tableIDByName, canonicalTableName, colIDByTableCol)
+		vl, item := convertValueListNode(vn, tableIDByName, canonicalTableName, colIDByTableCol, fieldNamesByTable)
 		addReportItem(report, item)
 		if vl != nil {
 			bundle.ValueLists = append(bundle.ValueLists, *vl)
@@ -572,7 +627,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	report.Counts.ValueLists = len(bundle.ValueLists)
 
 	// 5. Extract Layouts (and quarantine any layout triggers)
-	layoutNodes := findCatalogNodes(root, "Layout", "layout")
+	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName)
 		for _, it := range items {
@@ -585,7 +640,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	report.Counts.Layouts = len(bundle.Layouts)
 
 	// 6. Extract Scripts & Steps
-	scriptNodes := findCatalogNodes(root, "Script", "script")
+	scriptNodes := catalogDefinitions(root, []string{"ScriptCatalog", "scripts"}, "Script", "script")
 	defaultContextTable := ""
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
@@ -607,7 +662,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	collectFileReferences(bundle, report)
 
 	// 7. Extract Accounts & Privilege Sets (always disabled until password reset)
-	accNodes := findNodes(root, "Account", "account")
+	accNodes := catalogDefinitions(root, []string{"AccountCatalog", "accounts"}, "Account", "account")
 	for _, an := range accNodes {
 		acc, items := convertAccountNode(an)
 		for _, it := range items {
@@ -624,7 +679,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// with an XML design is read rather than ignored (#91).
 	tableRows := make(map[string][]map[string]interface{})
 	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol,
-		fmpTableMeta, fmpFieldMeta, tableRows, report); err != nil {
+		fmpTableMeta, fmpFieldMeta, tableRows, report, fieldNamesByTable); err != nil {
 		return nil, err
 	}
 
@@ -682,7 +737,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 	// Check repetitions & global storage
 	reps := firstAttr(fn, "maxRepetition", "repetitions")
 	if reps == "" && storageNode != nil {
-		reps = firstAttr(storageNode, "maxRepetition", "repetitions", "maximumRepetitions")
+		reps = firstAttr(storageNode, "maxRepetition", "maxRepetitions", "repetitions", "maximumRepetitions")
 	}
 	if reps != "" && reps != "1" {
 		items = append(items,
@@ -734,16 +789,21 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 	// Determine calculation or summary formula if present
 	calcText := ""
 	if calcNode := findFirstChild(fn, "Calculation", "calculation"); calcNode != nil {
-		if textNode := findFirstChild(calcNode, "Text"); textNode != nil && strings.TrimSpace(textNode.Text) != "" {
-			calcText = strings.TrimSpace(textNode.Text)
-		} else {
-			calcText = strings.TrimSpace(calcNode.Text)
-		}
+		calcText = calculationText(calcNode)
+	}
+	if fieldKind == "CALCULATED" {
+		fieldKind = "CALCULATION"
 	}
 
 	if fieldKind == "CALCULATION" || rawType == "CALCULATION" || (calcText != "" && rawType != "SUMMARY" && fieldKind != "SUMMARY") {
 		resultType := normalizeCalcResultType(rawType)
 		expr, translatedNote, ok := translateAndValidateFormula(calcText)
+		// Binary calculation results cannot be evaluated or stored as text.
+		// Keep a container column and report missing calculation behavior.
+		if rawType == "BINARY" || rawType == "CONTAINER" || rawType == "BLOB" {
+			resultType = "Container"
+			ok = false
+		}
 		if ok {
 			payload, _ := json.Marshal(map[string]interface{}{
 				"formula":     expr,
@@ -1015,7 +1075,8 @@ func convertFieldAutoEnter(tableSQL, rawFieldName, colName string, an *xmlNode, 
 
 	if value, ok := nestedOption(an, "ConstantData", "constantData", "constant"); ok &&
 		value != "True" && value != "False" {
-		stored := value
+		encoded, _ := json.Marshal(map[string]interface{}{"data_enabled": true, "data_value": value})
+		stored := string(encoded)
 		col.DefaultValue = &stored
 		items = append(items, ReportItem{
 			Category:   CategoryPreserved,
@@ -1140,6 +1201,8 @@ func mapBasicFieldType(resultType string) string {
 		return "TIMESTAMP"
 	case "BOOLEAN":
 		return "BOOLEAN"
+	case "BINARY", "CONTAINER", "BLOB":
+		return "CONTAINER"
 	default:
 		return "TEXT"
 	}
@@ -1150,6 +1213,7 @@ func convertRelationshipNode(
 	occIDByName map[string]string,
 	occTableByName map[string]string,
 	colIDByTableCol map[string]string,
+	fieldNamesByTable map[string]*fieldNameMap,
 ) (*schema.BundleRelationship, []ReportItem) {
 	relName := firstAttr(rn, "name", "Name", "id")
 	leftOcc := firstAttr(rn, "left", "leftTable", "LeftTable")
@@ -1208,13 +1272,42 @@ func convertRelationshipNode(
 	leftTbl := occTableByName[strings.ToLower(leftOcc)]
 	rightTbl := occTableByName[strings.ToLower(rightOcc)]
 
-	leftColID := colIDByTableCol[leftTbl+"."+sanitizeIdentifier(leftField)]
+	leftName, rightName := sanitizeIdentifier(leftField), sanitizeIdentifier(rightField)
+	if names := fieldNamesByTable[leftTbl]; names != nil {
+		if resolved, ok := names.resolve(leftField); ok {
+			leftName = resolved
+		}
+	}
+	if names := fieldNamesByTable[rightTbl]; names != nil {
+		if resolved, ok := names.resolve(rightField); ok {
+			rightName = resolved
+		}
+	}
+	leftColID := colIDByTableCol[leftTbl+"."+leftName]
 	if leftColID == "" {
 		leftColID = colIDByTableCol[strings.ToLower(leftTbl)+"."+strings.ToLower(leftField)]
 	}
-	rightColID := colIDByTableCol[rightTbl+"."+sanitizeIdentifier(rightField)]
+	rightColID := colIDByTableCol[rightTbl+"."+rightName]
 	if rightColID == "" {
 		rightColID = colIDByTableCol[strings.ToLower(rightTbl)+"."+strings.ToLower(rightField)]
+	}
+	if len(predicates) > 0 {
+		for _, side := range []struct {
+			names  []string
+			table  string
+			column *string
+		}{
+			{[]string{"LeftField", "leftField"}, leftTbl, &leftColID},
+			{[]string{"RightField", "rightField"}, rightTbl, &rightColID},
+		} {
+			if endpoint := findFirstChild(predicates[0], side.names...); endpoint != nil {
+				if field := findFirstChild(endpoint, "Field", "field"); field != nil {
+					if sourceID := firstAttr(field, "id", "ID"); sourceID != "" {
+						*side.column = colIDByTableCol[side.table+".#"+sourceID]
+					}
+				}
+			}
+		}
 	}
 
 	if leftOccID == "" || rightOccID == "" || leftColID == "" || rightColID == "" {
@@ -1280,17 +1373,17 @@ func convertRelationshipNode(
 	}
 
 	return &schema.BundleRelationship{
-			ID:                uuid.NewString(),
-			Name:              relName,
-			LeftOccurrenceID:  leftOccID,
-			LeftColumnID:      leftColID,
-			RightOccurrenceID: rightOccID,
-			RightColumnID:     rightColID,
-			Operator:          normOp,
-			AllowCreation:     allowCreate,
-			CascadeDelete:     cascadeDelete,
-			SortRelated:       sortRelated,
-		}, items
+		ID:                uuid.NewString(),
+		Name:              relName,
+		LeftOccurrenceID:  leftOccID,
+		LeftColumnID:      leftColID,
+		RightOccurrenceID: rightOccID,
+		RightColumnID:     rightColID,
+		Operator:          normOp,
+		AllowCreation:     allowCreate,
+		CascadeDelete:     cascadeDelete,
+		SortRelated:       sortRelated,
+	}, items
 }
 
 // joinPredicateEndpoint reads one side of a native DDR join predicate, whose
@@ -1334,6 +1427,7 @@ func convertValueListNode(
 	tableIDByName map[string]string,
 	canonicalTableName map[string]string,
 	colIDByTableCol map[string]string,
+	fieldNamesByTable map[string]*fieldNameMap,
 ) (*schema.BundleValueList, ReportItem) {
 	name := firstAttr(vn, "name", "Name")
 	if name == "" {
@@ -1359,21 +1453,27 @@ func convertValueListNode(
 		}
 		tID := tableIDByName[strings.ToLower(tblName)]
 		tSQL := canonicalTableName[strings.ToLower(tblName)]
-		cID := colIDByTableCol[tSQL+"."+sanitizeIdentifier(fldName)]
+		column := sanitizeIdentifier(fldName)
+		if names := fieldNamesByTable[tSQL]; names != nil {
+			if resolved, ok := names.resolve(fldName); ok {
+				column = resolved
+			}
+		}
+		cID := colIDByTableCol[tSQL+"."+column]
 		if tID != "" && cID != "" {
 			return &schema.BundleValueList{
-					ID:             uuid.NewString(),
-					Name:           name,
-					Kind:           "field",
-					SourceTableID:  &tID,
-					SourceColumnID: &cID,
-				}, ReportItem{
-					Category:   CategoryPreserved,
-					Domain:     "value_list",
-					SourceName: name,
-					TargetName: name,
-					Detail:     fmt.Sprintf("Dynamic field value list from %s.%s", tblName, fldName),
-				}
+				ID:             uuid.NewString(),
+				Name:           name,
+				Kind:           "field",
+				SourceTableID:  &tID,
+				SourceColumnID: &cID,
+			}, ReportItem{
+				Category:   CategoryPreserved,
+				Domain:     "value_list",
+				SourceName: name,
+				TargetName: name,
+				Detail:     fmt.Sprintf("Dynamic field value list from %s.%s", tblName, fldName),
+			}
 		}
 	}
 
@@ -1416,17 +1516,17 @@ func convertValueListNode(
 	}
 
 	return &schema.BundleValueList{
-			ID:           uuid.NewString(),
-			Name:         name,
-			Kind:         "custom",
-			CustomValues: strings.Join(vals, "\n"),
-		}, ReportItem{
-			Category:   CategoryPreserved,
-			Domain:     "value_list",
-			SourceName: name,
-			TargetName: name,
-			Detail:     fmt.Sprintf("Custom value list with %d entries", len(vals)),
-		}
+		ID:           uuid.NewString(),
+		Name:         name,
+		Kind:         "custom",
+		CustomValues: strings.Join(vals, "\n"),
+	}, ReportItem{
+		Category:   CategoryPreserved,
+		Domain:     "value_list",
+		SourceName: name,
+		TargetName: name,
+		Detail:     fmt.Sprintf("Custom value list with %d entries", len(vals)),
+	}
 }
 
 func convertLayoutNode(
@@ -1437,7 +1537,7 @@ func convertLayoutNode(
 ) (*schema.BundleLayout, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(ln, "name", "Name")
-	if name == "" {
+	if name == "" || nativeFolderMarker(ln) {
 		return nil, nil
 	}
 	occName := firstAttr(ln, "table_occurrence", "table", "tableOccurrence")
@@ -1447,7 +1547,12 @@ func convertLayoutNode(
 		}
 	}
 	occID := occIDByName[strings.ToLower(occName)]
-	if occID == "" && len(occurrences) > 0 {
+	hasExplicitOccurrence := occName != "" || findFirstChild(ln, "Table", "TableOccurrenceReference") != nil
+	if occID == "" && hasExplicitOccurrence {
+		return nil, []ReportItem{{Category: CategoryRejected, Domain: "layout", SourceName: name,
+			Detail: fmt.Sprintf("Layout references unresolved table occurrence %q; its records must not be shown from an unrelated table", occName)}}
+	}
+	if occID == "" && occName == "" && len(occurrences) > 0 {
 		occID = occurrences[0].ID
 		occName = occurrences[0].Name
 	}
@@ -1569,7 +1674,7 @@ func convertLayoutNode(
 func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleScript, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(sn, "name", "Name")
-	if name == "" {
+	if name == "" || nativeFolderMarker(sn) {
 		return nil, nil
 	}
 	ctxTable := firstAttr(sn, "context_table", "contextTable")
@@ -1653,11 +1758,11 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 				IsEnabled:   enabled,
 			})
 			items = append(items, ReportItem{
-				Category:   CategoryTranslated,
+				Category:   CategoryManualActionRequired,
 				Domain:     "script",
 				SourceName: fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1),
 				TargetName: name,
-				Detail:     fmt.Sprintf("Step %q imported into Script Workspace catalog (halts client runner until server script runner is enabled)", canonical),
+				Detail:     fmt.Sprintf("Step %q is retained in Script Workspace for inspection; the client runner cannot execute it and stops at this step", canonical),
 			})
 			continue
 		}
@@ -1668,6 +1773,11 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 		commentParams := map[string]interface{}{
 			"text":                    fmt.Sprintf("[UNSUPPORTED FM STEP: %s]", rawStepName),
 			"original_filemaker_step": rawStepName,
+			"filemaker_step_name":     rawStepName,
+			"filemaker_step_enabled":  enabled,
+		}
+		if stepID := firstAttr(stNode, "id", "ID"); stepID != "" {
+			commentParams["filemaker_step_id"] = stepID
 		}
 		if len(structured) > 0 {
 			commentParams["filemaker_parameters"] = structured
@@ -1757,6 +1867,14 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 	calcText := ""
 	for _, child := range stNode.Children {
 		switch child.Name {
+		case "UUID", "OwnerID", "DDRREF":
+			// Native object identity metadata is not an executable operand.
+			continue
+		case "Options":
+			if len(child.Attrs) == 0 && len(child.Children) == 0 && strings.TrimSpace(child.Text) == "" {
+				continue
+			}
+			flagUnmapped(child.Name)
 		case "Calculation", "calculation":
 			if text := calculationText(child); text != "" && calcText == "" {
 				calcText = text
@@ -1799,7 +1917,23 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			if text := calculationText(child); text != "" {
 				params["value"] = text
 			}
+		case "Text", "text":
+			if canonicalStep == "Comment" {
+				params["text"] = child.Text
+			} else {
+				flagUnmapped(child.Name)
+			}
 		case "params", "ParameterValues":
+			if child.Name == "ParameterValues" && findFirstChild(child, "Parameter") != nil {
+				native, unknown := decodeNativeParameters(child, canonicalStep)
+				for k, v := range native {
+					params[k] = v
+				}
+				for _, name := range unknown {
+					flagUnmapped(name)
+				}
+				continue
+			}
 			decoded := false
 			if raw := strings.TrimSpace(child.Text); strings.HasPrefix(raw, "{") {
 				nested := make(map[string]interface{})
@@ -1833,6 +1967,7 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 		switch canonicalStep {
 		case "Set Field":
 			params["value"] = calcText
+			params["value_is_calculation"] = true
 		case "If", "Else If", "Exit Loop If":
 			params["condition"] = calcText
 		case "Set Variable":
@@ -1843,6 +1978,8 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			params["url"] = calcText
 		case "Perform Script":
 			params["script_parameter"] = calcText
+		case "Exit Script":
+			params["result"] = calcText
 		case "Show Custom Dialog":
 			params["message"] = calcText
 		}
@@ -2127,35 +2264,6 @@ func findNodes(root *xmlNode, names ...string) []*xmlNode {
 	return out
 }
 
-// findCatalogNodes collects the nodes named names that define an object, which
-// is every one of them except those a script step points at: FileMaker writes
-// the called script of a Perform Script step as a nested <Script> element and
-// the destination of a Go to Layout step as a nested <Layout> element. Reading
-// those as definitions invented an empty script and a layout the source never
-// declared (#88).
-func findCatalogNodes(root *xmlNode, names ...string) []*xmlNode {
-	nameSet := make(map[string]bool, len(names))
-	for _, nm := range names {
-		nameSet[nm] = true
-	}
-	referenceParents := map[string]bool{
-		"Step": true, "step": true, "ScriptTrigger": true, "Trigger": true,
-		"ButtonAction": true, "ButtonBar": true,
-	}
-	var out []*xmlNode
-	var walk func(n *xmlNode, insideStep bool)
-	walk = func(n *xmlNode, insideStep bool) {
-		for _, c := range n.Children {
-			if nameSet[c.Name] && !insideStep {
-				out = append(out, c)
-			}
-			walk(c, insideStep || referenceParents[c.Name])
-		}
-	}
-	walk(root, false)
-	return out
-}
-
 // uniqueSQLName reserves base in taken, or the first free base_2, base_3 … when
 // base is already reserved. The second return value is the name that was
 // already taken, so the caller can report the collision rather than drop the
@@ -2219,17 +2327,18 @@ func sanitizeIdentifier(raw string) string {
 // was written as rather than passing through a float64, which rounded
 // 9007199254740993 to an even neighbour (#90).
 //
-// A fraction, which the .fmp12 binary reader meets but a FMPXMLRESULT export
-// does not write, is still read as a number.
+// Permissive source Number text cannot be replaced by a guessed numeric value.
+// In particular, a slash in text is not a division operator.
 func coerceSourceValue(valStr, fieldType string) (interface{}, error) {
 	if fieldType == "NUMBER" {
-		if value, err := data.CoerceImportValue(dbal.FieldTypeNumber, valStr, data.DateISO); err == nil {
-			return value, nil
+		literal := strings.TrimSpace(valStr)
+		if literal == "" {
+			return nil, nil
 		}
-		if f, ok := parseFractionOrFloat(valStr); ok {
-			return f, nil
+		if !reSourceNumericLiteral.MatchString(literal) {
+			return nil, errors.New("is not a canonical decimal; localized or permissive source Number text requires compatible representation")
 		}
-		return nil, errors.New("is not a number")
+		return literal, nil
 	}
 	if fieldType == "DATE" {
 		// FMPXMLRESULT writes a date as MM/DD/YYYY; the import's MDY order
@@ -2259,13 +2368,6 @@ func coerceSourceValue(valStr, fieldType string) (interface{}, error) {
 		}
 		return nil, errors.New("is not a date and time")
 	}
-	if fieldType == "TEXT" || fieldType == "" {
-		// A UUID is lower-cased so that a migrated key matches the ids
-		// File4Base generates, and nothing else about the text is touched.
-		if reUUIDHex.MatchString(strings.TrimSpace(valStr)) {
-			return strings.ToLower(strings.TrimSpace(valStr)), nil
-		}
-	}
 	return data.CoerceImportValue(agnosticFieldType(fieldType), valStr, data.DateISO)
 }
 
@@ -2290,17 +2392,14 @@ func agnosticFieldType(fieldType string) dbal.AgnosticFieldType {
 func coerceDataValue(valStr, fieldType string) interface{} {
 	switch fieldType {
 	case "NUMBER":
-		if f, ok := parseFractionOrFloat(valStr); ok {
-			return f
+		if value, err := coerceSourceValue(valStr, fieldType); err == nil {
+			return value
 		}
 		return nil
 	case "BOOLEAN":
 		low := strings.ToLower(valStr)
 		return low == "true" || low == "1" || low == "yes"
 	default:
-		if reUUIDHex.MatchString(valStr) {
-			return strings.ToLower(valStr)
-		}
 		return valStr
 	}
 }
