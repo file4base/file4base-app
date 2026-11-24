@@ -162,7 +162,10 @@ func canonicalScriptStep(rawName, stepID string) stepResolution {
 	if !known {
 		return fromName
 	}
-	if byName != "" && !nameLocalized && !strings.EqualFold(byName, english) {
+	// FileMaker writes the English name in different spellings ("# (comment)"
+	// in Save a Copy as XML, "Comment" in a DDR); both resolve to one step.
+	englishCanonical, _, _ := canonicalScriptStepName(english)
+	if byName != "" && !nameLocalized && !strings.EqualFold(byName, english) && !strings.EqualFold(byName, englishCanonical) {
 		fromName.Conflict = true
 		return fromName
 	}

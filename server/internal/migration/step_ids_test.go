@@ -11,6 +11,8 @@ func TestScriptStepResolvedByInstructionID(t *testing.T) {
 		{"Afficher enreg/requête/page", "16", "Go to Record/Request/Page", true},
 		{"Afficher tous les enreg.", "23", "Show All Records", true},
 		{"# (commentaire)", "89", "Comment", true},
+		{"# (comment)", "89", "Comment", true},
+		{"Comment", "89", "Comment", true},
 		{"Trier enregistrements", "39", "Sort Records", true},
 		{"Gestion erreurs", "86", "Set Error Capture", true},
 		{"Show Custom Dialog", "87", "Show Custom Dialog", true},
