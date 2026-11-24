@@ -1716,7 +1716,18 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 			enabled = false
 		}
 
-		canonical, isSupported, isLocalized := canonicalScriptStepName(rawStepName)
+		resolved := canonicalScriptStep(rawStepName, firstAttr(stNode, "id", "ID"))
+		canonical, isSupported, isLocalized := resolved.Canonical, resolved.Supported, resolved.Localized
+		if resolved.Conflict {
+			items = append(items, ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "script",
+				SourceName: fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1),
+				TargetName: name,
+				Detail: fmt.Sprintf("Step name %q disagrees with its instruction id %q; it was read by its name",
+					rawStepName, firstAttr(stNode, "id", "ID")),
+			})
+		}
 
 		params, structured, unmapped := decodeStepParams(stNode, canonical)
 		// The instruction id and the name as the report wrote it are kept as
@@ -1816,8 +1827,8 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 				Domain:     "script",
 				SourceName: fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1),
 				TargetName: name,
-				Detail: fmt.Sprintf("Unsupported FileMaker script step %q (instruction id %q) converted to disabled comment step; supported report languages: %s",
-					rawStepName, firstAttr(stNode, "id", "ID"), strings.Join(SupportedDDRLocales, ", ")),
+				Detail: fmt.Sprintf("Unsupported FileMaker script step %q (instruction id %q%s) converted to disabled comment step; supported report languages: %s",
+					rawStepName, firstAttr(stNode, "id", "ID"), englishStepSuffix(resolved), strings.Join(SupportedDDRLocales, ", ")),
 			},
 			ReportItem{
 				Category:   CategoryManualActionRequired,
