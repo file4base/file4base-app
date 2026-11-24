@@ -34,6 +34,26 @@ type missingContainerFile struct {
 	RowNum  int
 	RefPath string
 	Reason  string
+	// ByReference marks a container that stored only a path to a file of
+	// the user's computer, never the file itself (Insert Picture with
+	// "Store only a reference"). FileMaker cannot show it either where that
+	// path does not exist, so it does not block the table's records.
+	ByReference bool
+}
+
+// isReferenceOnlyContainer reports a reference to a file outside FileMaker's
+// storage (filewin:, imagemac:, file:, image:, movie:), as opposed to
+// FileMaker's own external storage (remote:, or a path inside its folder).
+func isReferenceOnlyContainer(ref string) bool {
+	if i := strings.IndexByte(ref, ':'); i > 0 && i < 16 {
+		switch strings.ToLower(ref[:i]) {
+		case "remote":
+			return false
+		case "file", "image", "movie", "filemac", "filewin", "imagemac", "imagewin", "moviemac", "moviewin":
+			return true
+		}
+	}
+	return false
 }
 
 type hbam7ContainerForks struct {

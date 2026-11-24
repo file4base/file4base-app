@@ -418,3 +418,34 @@ func TestNativeContainerReferenceTriesEveryPath(t *testing.T) {
 		}
 	}
 }
+
+// A container that stored only a reference to a file on the user's computer
+// does not hold the file; when the file is not supplied the record still
+// migrates, with the cell empty and the reference reported.
+func TestNativeContainerMissingReferenceOnlyFileKeepsRecords(t *testing.T) {
+	payload := appendHBAM7TableCatalog(nil, 129, "Documents", []testHBAM7FieldSpec{
+		{id: 1, name: "Title", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 2, name: "Attachment", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeContainer},
+	})
+	payload = appendHBAM7SingleRow(payload, 129, 1, map[byte]string{1: "Plan"})
+	payload = append(payload, 0x28, 0x80, 1, 0x20, 5, 0x20, 1, 0x20, 2)
+	payload = appendLongKeyChunk(payload, "FNAM", encodeHBAM7FNAM("imagewin", "/C:/Users/someone/plan.jpg"))
+	payload = append(payload, 0x40, 0x40, 0x40, 0x40)
+
+	conv, err := AnalyzeAndConvertNative(MigrationRequest{DesignXML: containerDesign}, buildSyntheticHBAM7(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conv.Report.Counts.RejectedCount != 0 || conv.Report.Counts.RecordsReady != 1 {
+		t.Fatalf("reference-only file blocked the record: %+v", conv.Report)
+	}
+	found := false
+	for _, it := range conv.Report.Unsupported {
+		if strings.Contains(it.Detail, "imagewin:/C:/Users/someone/plan.jpg") && strings.Contains(it.Detail, "migrated empty") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing reference not reported: %+v", conv.Report.Unsupported)
+	}
+}
