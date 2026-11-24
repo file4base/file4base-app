@@ -65,9 +65,14 @@ abstract class LayoutActionHost {
 
   /// [target] is `first`, `previous`, `next`, `last` (English or Spanish
   /// names, as written by the Script Workspace) or a 1-based record number.
-  Future<void> actionGoToRecord(String target);
+  /// Answers FileMaker's error code: 0, or 101 when there is no record to go
+  /// to (an empty found set, Previous on the first, Next on the last).
+  Future<int> actionGoToRecord(String target);
   Future<void> actionEnterFindMode();
-  Future<void> actionPerformFind();
+
+  /// Answers 0, or 401 when no record matches. With [reportNoMatch] false
+  /// (Set Error Capture on) no dialog is shown and the found set is empty.
+  Future<int> actionPerformFind({bool reportNoMatch = true});
   Future<void> actionShowAllRecords();
   Future<void> actionEnterPreviewMode();
   Future<void> actionEnterBrowseMode() async {}
@@ -94,7 +99,7 @@ abstract class LayoutActionHost {
 /// stopped early (unsupported step, missing script, ...).
 class LayoutActionResult {
 
-  const LayoutActionResult.ok({this.scriptResult})
+  const LayoutActionResult.ok({this.scriptResult, this.errorCode = 0, this.exitLoop = false})
       : completed = true,
         halted = false,
         message = null;
@@ -106,13 +111,27 @@ class LayoutActionResult {
       : completed = true,
         halted = true,
         message = null,
-        scriptResult = null;
+        scriptResult = null,
+        errorCode = 0,
+        exitLoop = false;
 
-  const LayoutActionResult.stopped(this.message)
+  /// The step could not run. A non-zero [errorCode] is the FileMaker error
+  /// the step failed with: with Set Error Capture on the script records it
+  /// for `Get(LastError)` and carries on, as FileMaker does. Without one the
+  /// failure is File4Base's own (an unsupported step, …) and always stops.
+  const LayoutActionResult.stopped(this.message, {this.errorCode = 0})
       : completed = false,
         halted = false,
-        scriptResult = null;
+        scriptResult = null,
+        exitLoop = false;
   final bool completed;
+
+  /// FileMaker's error code for the step: 0 when it succeeded (#133).
+  final int errorCode;
+
+  /// Go to Record with `Exit after last` ran past the end of the found set:
+  /// the enclosing loop ends.
+  final bool exitLoop;
 
   /// True when a Halt Script step ended the whole execution session.
   final bool halted;
@@ -231,6 +250,17 @@ class LayoutActionRunner {
 
   static const maxScriptDepth = 8;
 
+  /// Set Error Capture (#133). It belongs to the whole execution session, so a
+  /// sub-script that turns it on leaves it on for its caller, and it is
+  /// switched off again when the outermost script ends. Claris documents
+  /// that sub-scripts inherit the state; that a change made in one persists
+  /// in its caller is how the community describes it and is not verified
+  /// against FileMaker Pro here.
+  bool errorCapture = false;
+
+  /// FileMaker's error code of the step that ran last, for `Get(LastError)`.
+  int lastError = 0;
+
   /// Globals belong to this solution's authenticated session, including when
   /// called through a peer client. They never fall back to a caller's globals.
   Map<String, String> get globalVariables => apiClient.scriptGlobalVariables;
@@ -294,16 +324,24 @@ class LayoutActionRunner {
     // A script performed in another solution is named with its solution, so a
     // message never leaves anyone guessing which "Receive" it was.
     final where = solutionName == null ? '' : ' in the solution $solutionName';
-    if (script == null) return LayoutActionResult.stopped('Script "${name ?? id}" not found$where.');
+    if (script == null) return LayoutActionResult.stopped('Script "${name ?? id}" not found$where.', errorCode: 104);
 
     final execution = ScriptExecution(script: script, runner: this, depth: depth, parameter: parameter);
+    try {
+      return await _runExecution(execution, script.name, where);
+    } finally {
+      if (depth == 0) errorCapture = false;
+    }
+  }
+
+  Future<LayoutActionResult> _runExecution(ScriptExecution execution, String scriptName, String where) async {
     while (!execution.atEnd) {
       final sequence = execution.currentSequence;
       final outcome = await execution.advance();
       switch (outcome.kind) {
         case StepOutcomeKind.stopped:
           return LayoutActionResult.stopped(
-              'Script "${script.name}"$where stopped at step $sequence: ${outcome.message}');
+              'Script "$scriptName"$where stopped at step $sequence: ${outcome.message}');
         case StepOutcomeKind.halted:
           // Every caller stops too, so the halt travels up instead of
           // looking like an ordinary return (#95).
@@ -374,13 +412,27 @@ class LayoutActionRunner {
       case 'revert_record':
         await host.actionRevertRecord();
       case 'go_to_record':
-        await host.actionGoToRecord(p('target', 'next'));
+        final target = params['target_is_calculation'] == true
+            ? resolveValue(params['target']?.toString() ?? '', vars, callContext: context)
+            : p('target', 'next');
+        if (target == null) {
+          return const LayoutActionResult.stopped('Go to Record cannot evaluate its record number.');
+        }
+        final code = await host.actionGoToRecord(target);
+        if (code != 0) {
+          final t = target.trim().toLowerCase();
+          final pastEnd = params['exit_after_last'] == true && (t == 'next' || t == 'previous');
+          return LayoutActionResult.ok(errorCode: code, exitLoop: pastEnd);
+        }
+      case 'set_error_capture':
+        errorCapture = params['state'] == true || params['state']?.toString().toLowerCase() == 'true';
       case 'enter_browse_mode':
         await host.actionEnterBrowseMode();
       case 'enter_find_mode':
         await host.actionEnterFindMode();
       case 'perform_find':
-        await host.actionPerformFind();
+        final code = await host.actionPerformFind(reportNoMatch: !errorCapture);
+        if (code != 0) return LayoutActionResult.ok(errorCode: code);
       case 'show_all_records':
         await host.actionShowAllRecords();
       case 'enter_preview_mode':
@@ -408,7 +460,7 @@ class LayoutActionRunner {
           _setVariable(r'$$lastLayout', currentLayout, vars);
         }
         if (!await host.actionGoToLayout(layout)) {
-          return LayoutActionResult.stopped('Layout "$layout" not found.');
+          return LayoutActionResult.stopped('Layout "$layout" not found.', errorCode: 105);
         }
       case 'set_field':
         final field = params['field']?.toString() ?? '';
@@ -420,7 +472,7 @@ class LayoutActionRunner {
           return const LayoutActionResult.stopped('Set Field calculation is not supported in this context.');
         }
         if (!await host.actionSetField(field, value)) {
-          return LayoutActionResult.stopped('Field "$field" is not in this table.');
+          return LayoutActionResult.stopped('Field "$field" is not in this table.', errorCode: 102);
         }
       case 'show_dialog':
         final title = params['title_is_calculation'] == true
@@ -759,6 +811,10 @@ class LayoutActionRunner {
           ? callContext?.parameter ?? ''
           : callContext?.lastScriptResult ?? '';
     }
+    final errorGet = RegExp(r'^get\s*\(\s*(lasterror|errorcapturestate)\s*\)$', caseSensitive: false).firstMatch(expr);
+    if (errorGet != null) {
+      return errorGet.group(1)!.toLowerCase() == 'lasterror' ? '$lastError' : (errorCapture ? '1' : '0');
+    }
     // A numeric literal is its own value, not the name of a field.
     if (num.tryParse(expr) != null) return expr;
     if (RegExp(r'^get\s*\(\s*layoutname\s*\)$', caseSensitive: false).hasMatch(expr)) {
@@ -1081,7 +1137,16 @@ class ScriptExecution {
 
     final result = await runner.runStep(step.stepType, step.params, depth: depth, localVars: localVars, callContext: callContext);
     if (result.halted) return const StepOutcome(StepOutcomeKind.halted);
-    if (!result.completed) return StepOutcome(StepOutcomeKind.stopped, result.message);
+    // Perform Script leaves Get(LastError) as its sub-script's last step set
+    // it, unless the script could not be performed at all.
+    if (norm != 'comment' && (norm != 'perform_script' || result.errorCode != 0)) runner.lastError = result.errorCode;
+    if (!result.completed) {
+      if (result.errorCode != 0 && runner.errorCapture) return const StepOutcome(StepOutcomeKind.ran);
+      final code = result.errorCode != 0 ? ' (FileMaker error ${result.errorCode})' : '';
+      return StepOutcome(StepOutcomeKind.stopped, '${result.message}$code');
+    }
+    // Exit after last ends the loop it is in; outside a loop there is none.
+    if (result.exitLoop && _loopStack.isNotEmpty) return _leaveLoop();
     return const StepOutcome(StepOutcomeKind.ran);
   }
 
@@ -1165,11 +1230,11 @@ class _WindowlessHost implements LayoutActionHost {
   @override
   Future<void> actionRevertRecord() async => _noWindow('Revert Record');
   @override
-  Future<void> actionGoToRecord(String target) async => _noWindow('Go to Record');
+  Future<int> actionGoToRecord(String target) async => _noWindow('Go to Record');
   @override
   Future<void> actionEnterFindMode() async => _noWindow('Enter Find Mode');
   @override
-  Future<void> actionPerformFind() async => _noWindow('Perform Find');
+  Future<int> actionPerformFind({bool reportNoMatch = true}) async => _noWindow('Perform Find');
   @override
   Future<void> actionShowAllRecords() async => _noWindow('Show All Records');
   @override

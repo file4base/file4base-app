@@ -39,8 +39,8 @@ func TestInstructionIDNeverOverridesEnglishName(t *testing.T) {
 }
 
 func TestUnimplementedStepIsNamedButNotExecuted(t *testing.T) {
-	got := canonicalScriptStep("Gestion erreurs", "86")
-	if got.Canonical != "" || got.English != "Set Error Capture" || !got.Localized {
+	got := canonicalScriptStep("Signal sonore", "93")
+	if got.Canonical != "" || got.English != "Beep" || !got.Localized {
 		t.Fatalf("got %+v", got)
 	}
 }

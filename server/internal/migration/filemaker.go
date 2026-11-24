@@ -184,6 +184,7 @@ var supportedScriptSteps = map[string]string{
 	"go to layout":              "Go to Layout",
 	"go to record/request/page": "Go to Record/Request/Page",
 	"go to record":              "Go to Record/Request/Page",
+	"set error capture":         "Set Error Capture",
 	"enter browse mode":         "Enter Browse Mode",
 	"enter find mode":           "Enter Find Mode",
 	"enter preview mode":        "Enter Preview Mode",
@@ -1877,6 +1878,26 @@ var stepParamAttrs = map[string]bool{
 // trail, and the names of the child elements it could not map, so a step that
 // carries semantics File4Base does not run is flagged rather than quietly
 // reduced.
+// redundantStepOptionBits are the bits of a native step's <Options> mask that
+// only repeat what its ParameterValues already say, as observed in FileMaker
+// Pro 26.0.2 output: Set Error Capture writes 0x10000 with the state in
+// 0x20000 (Boolean True ⇔ 196608, False ⇔ 65536); Go to Record/Request/Page
+// writes 0x2 with "Exit after last" in 0x2000 (8194 ⇔ True, 2 otherwise). A
+// mask with any other bit is still reported.
+var redundantStepOptionBits = map[string]uint64{
+	"Set Error Capture":         0x10000 | 0x20000,
+	"Go to Record/Request/Page": 0x2 | 0x2000,
+}
+
+func optionsRepeatParameters(canonicalStep, text string) bool {
+	known, ok := redundantStepOptionBits[canonicalStep]
+	if !ok {
+		return false
+	}
+	mask, err := strconv.ParseUint(strings.TrimSpace(text), 10, 64)
+	return err == nil && mask&^known == 0
+}
+
 func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interface{}, map[string]interface{}, []string) {
 	params := make(map[string]interface{})
 	for k, v := range stNode.Attrs {
@@ -1904,6 +1925,9 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			continue
 		case "Options":
 			if len(child.Attrs) == 0 && len(child.Children) == 0 && strings.TrimSpace(child.Text) == "" {
+				continue
+			}
+			if optionsRepeatParameters(canonicalStep, child.Text) {
 				continue
 			}
 			flagUnmapped(child.Name)
@@ -1981,6 +2005,36 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 					params[k] = v
 				}
 			}
+		case "Set":
+			if canonicalStep != "Set Error Capture" {
+				flagUnmapped(child.Name)
+				break
+			}
+			params["state"] = strings.EqualFold(firstAttr(child, "state"), "True")
+		case "RowPageLocation":
+			if canonicalStep != "Go to Record/Request/Page" {
+				flagUnmapped(child.Name)
+				break
+			}
+			switch target := strings.ToLower(strings.TrimSpace(firstAttr(child, "value"))); target {
+			case "first", "last", "previous", "next":
+				params["target"] = target
+			default:
+				// By calculation: the formula is the step's <Calculation>.
+				params["target_is_calculation"] = true
+			}
+		case "Exit":
+			if canonicalStep != "Go to Record/Request/Page" {
+				flagUnmapped(child.Name)
+				break
+			}
+			params["exit_after_last"] = strings.EqualFold(firstAttr(child, "state"), "True")
+		case "NoInteract":
+			// "With dialog: Off" only matters where the step would ask the
+			// user something; Go to Record by calculation never does.
+			if canonicalStep != "Go to Record/Request/Page" {
+				flagUnmapped(child.Name)
+			}
 		case "FileReference", "ExternalDataSource":
 			// The client runner reads file_reference (#107): it resolves the
 			// script in the solution the reference is mapped to, and never in
@@ -2012,6 +2066,10 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 			params["script_parameter"] = calcText
 		case "Exit Script":
 			params["result"] = calcText
+		case "Go to Record/Request/Page":
+			if params["target_is_calculation"] == true {
+				params["target"] = calcText
+			}
 		case "Show Custom Dialog":
 			params["message"] = calcText
 		}

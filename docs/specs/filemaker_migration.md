@@ -92,6 +92,8 @@ A converted step whose transfer reaches another solution also stops the script w
 
 `Loop`, `Exit Loop If` and `End Loop` convert to steps the client runner really executes (`#96`), so a migrated loop runs rather than halting the script.
 
+`Set Error Capture` converts and runs (`#133`). The runner keeps FileMaker's error code of the last step for `Get(LastError)`, and `Get(ErrorCaptureState)` reads the capture state. Go to Record reports `101` when there is no record to go to (Previous on the first, Next on the last, an empty found set) and stays where it is; with `Exit after last` it ends the enclosing loop. Perform Find reports `401` when nothing matches, and with capture on shows no dialog and leaves an empty found set. A missing layout (`105`), a missing field (`102`) or a script that is not found (`104`) stops the script unless capture is on, in which case the script carries on with the error recorded, as in FileMaker. Capture never lets a script continue past a step File4Base cannot run. Capture belongs to the whole execution: a sub-script that turns it on leaves it on for its caller, and it ends with the outermost script; `Get(LastError)` after Perform Script is the sub-script's last error. A script performed in another solution keeps its own capture state.
+
 ### What is still not migrated
 
 - **FileMaker Server schedules.** A FileMaker Server schedule that ran a script is not converted: it lives on the server, not in the design document. Its File4Base counterpart for moving records is a **transfer schedule** (`#108`, [`API_REFERENCE.md`](../api/API_REFERENCE.md) § 19), created by an administrator of each solution and run by the File4Base server. A schedule runs one transfer definition; it does not run a script.

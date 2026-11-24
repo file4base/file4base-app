@@ -39,11 +39,17 @@ class _ScreenHost implements LayoutActionHost {
   @override
   Future<void> actionRevertRecord() async => did.add('revert_record');
   @override
-  Future<void> actionGoToRecord(String target) async => did.add('go_to_record');
+  Future<int> actionGoToRecord(String target) async {
+    did.add('go_to_record');
+    return 0;
+  }
   @override
   Future<void> actionEnterFindMode() async => did.add('enter_find_mode');
   @override
-  Future<void> actionPerformFind() async => did.add('perform_find');
+  Future<int> actionPerformFind({bool reportNoMatch = true}) async {
+    did.add('perform_find');
+    return 0;
+  }
   @override
   Future<void> actionShowAllRecords() async => did.add('show_all_records');
   @override

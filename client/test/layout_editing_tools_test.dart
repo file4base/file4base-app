@@ -429,11 +429,17 @@ class _FakeHost implements LayoutActionHost {
   @override
   Future<void> actionRevertRecord() async => calls.add('revert');
   @override
-  Future<void> actionGoToRecord(String target) async => calls.add('goto:$target');
+  Future<int> actionGoToRecord(String target) async {
+    calls.add('goto:$target');
+    return 0;
+  }
   @override
   Future<void> actionEnterFindMode() async => calls.add('find');
   @override
-  Future<void> actionPerformFind() async => calls.add('perform_find');
+  Future<int> actionPerformFind({bool reportNoMatch = true}) async {
+    calls.add('perform_find');
+    return 0;
+  }
   @override
   Future<void> actionShowAllRecords() async => calls.add('show_all');
   @override

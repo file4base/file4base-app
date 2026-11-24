@@ -102,6 +102,39 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 			if external := findFirstChild(ref, "DataSourceReference"); external != nil {
 				out["file_reference"] = firstAttr(external, "name", "Name")
 			}
+		case "Boolean":
+			// Set Error Capture writes its On/Off state as the one Boolean.
+			if child == nil || canonical != "Set Error Capture" {
+				unknown = append(unknown, "Parameter.Boolean")
+				continue
+			}
+			out["state"] = strings.EqualFold(firstAttr(child, "value"), "True")
+		case "Records":
+			// Go to Record/Request/Page: the List names the target (First,
+			// Last, Previous, Next, By Calculation) and may carry the
+			// "Exit after last" Boolean that ends the enclosing loop.
+			list := findFirstChild(parameter, "List")
+			if list == nil || canonical != "Go to Record/Request/Page" {
+				unknown = append(unknown, "Parameter.Records")
+				continue
+			}
+			target := strings.ToLower(strings.TrimSpace(firstAttr(list, "name", "Name")))
+			switch target {
+			case "first", "last", "previous", "next":
+				out["target"] = target
+			default:
+				if calc := findFirstChild(list, "Calculation"); calc != nil {
+					out["target"] = calculationText(calc)
+					out["target_is_calculation"] = true
+				} else {
+					unknown = append(unknown, "Parameter.Records")
+				}
+			}
+			for _, flag := range list.Children {
+				if flag.Name == "Boolean" && strings.EqualFold(firstAttr(flag, "type"), "Exit after last") {
+					out["exit_after_last"] = strings.EqualFold(firstAttr(flag, "value"), "True")
+				}
+			}
 		case "DataSourceReference":
 			if child == nil {
 				unknown = append(unknown, "Parameter.DataSourceReference")

@@ -225,3 +225,16 @@ every file and format observed. Claris publishes no id table; ids that were not
 observed are not listed. Claude Code (Claude Opus 5.5) assisted the extraction,
 implementation and tests.
 
+## Error capture semantics — 2026-11-24
+
+The error codes (`101`, `102`, `104`, `105`, `401`) and the behaviour of Set
+Error Capture, `Get(LastError)`, `Get(ErrorCaptureState)` and Go to
+Record/Request/Page's `Exit after last` follow Claris's FileMaker Pro help pages
+for those steps and functions and its error code reference. That a capture state
+switched on in a sub-script persists in its caller follows community
+descriptions and was not verified against FileMaker Pro. The XML option shapes
+(`<Set state>`, `<RowPageLocation>`, `<Exit>`, the native `Boolean` and
+`Records` parameters) were observed in FileMaker Pro 26.0.2 output from locally
+retained authorized design exports; only element and attribute names were
+used, and the test fixtures are original. Claude Code (Claude Opus 5.5)
+assisted the implementation and tests.

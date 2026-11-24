@@ -1363,7 +1363,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     return payload;
   }
 
-  Future<void> _performFind() async {
+  /// Runs the find requests and answers FileMaker's error code: 0, or 401
+  /// when no record matches. [reportNoMatch] false is a script running with
+  /// Set Error Capture on: FileMaker then shows no dialog and leaves an empty
+  /// found set in Browse mode for the script to test.
+  Future<int> _performFind({bool reportNoMatch = true}) async {
     final requests = _findRequestPayload();
 
     setState(() { _isLoading = true; _error = null; });
@@ -1371,8 +1375,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       final results = _layoutIsReport
           ? await widget.apiClient.executeFindAll(widget.table.name, requests)
           : await widget.apiClient.executeFind(widget.table.name, requests);
-      if (!mounted) return;
+      if (!mounted) return 0;
 
+      if (results.isEmpty && !reportNoMatch) {
+        setState(() {
+          _records = [];
+          _unsortedRecords = [];
+          _sortOrder = const [];
+          _currentIndex = 0;
+          _isFoundSet = true;
+          _isLoading = false;
+        });
+        _rebuildFieldControllers();
+        widget.onRecordChanged?.call(0, 0);
+        widget.onModeChanged?.call(OperationalMode.browse);
+        return 401;
+      }
       if (results.isEmpty) {
         setState(() { _isLoading = false; });
         await showDialog(
@@ -1440,9 +1458,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           ),
         );
       }
+      return results.isEmpty ? 401 : 0;
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
     }
+    return 0;
   }
 
   @override
@@ -3552,8 +3572,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   @override
-  Future<void> actionGoToRecord(String target) async {
-    if (_records.isEmpty) return;
+  Future<int> actionGoToRecord(String target) async {
+    if (_records.isEmpty) return 101;
     final t = target.trim().toLowerCase();
     final index = switch (t) {
       'first' || 'primero' => 0,
@@ -3562,7 +3582,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       'last' || 'último' || 'ultimo' => _records.length - 1,
       _ => (int.tryParse(t) ?? (_currentIndex + 2)) - 1,
     };
+    // Previous on the first record or Next on the last: FileMaker stays where
+    // it is and reports 101. A record number out of range is still clamped,
+    // as before; Claris does not document that case.
+    final byNumber = int.tryParse(t) != null;
+    if (!byNumber && (index < 0 || index >= _records.length)) return 101;
     unawaited(goToRecord(index.clamp(0, _records.length - 1)));
+    return 0;
   }
 
   @override
@@ -3572,7 +3598,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<void> actionEnterBrowseMode() async => widget.onModeChanged?.call(OperationalMode.browse);
 
   @override
-  Future<void> actionPerformFind() => _performFind();
+  Future<int> actionPerformFind({bool reportNoMatch = true}) => _performFind(reportNoMatch: reportNoMatch);
 
   @override
   Future<void> actionShowAllRecords() async {
