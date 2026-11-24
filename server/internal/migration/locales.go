@@ -27,10 +27,9 @@ import "strings"
 //     not be.
 //
 // FileMaker also writes a numeric instruction id beside each step name
-// (`<Step id="9" name="…">`). That id would be a language-free key, but
-// Claris publishes no id table, so File4Base records the id as diagnostic
-// metadata (`filemaker_step_id` on the imported step) rather than deciding an
-// operation from a number it cannot verify.
+// (`<Step id="9" name="…">`). Claris publishes no id table; the ids in
+// step_ids.go were each observed in FileMaker's own output with a consistent
+// English name and are resolved first. Ids outside it fall back to the name.
 
 // SupportedDDRLocales are the report languages the readers understand beyond
 // their structure. It is stated in the conversion report's source format and
@@ -104,7 +103,10 @@ func canonicalScriptStepName(rawName string) (canonical string, supported bool, 
 	if name, ok := catalogOnlyScriptSteps[lower]; ok {
 		return name, false, false
 	}
-	english, ok := localizedScriptSteps[lower]
+	english, ok := observedFrenchScriptSteps[lower]
+	if !ok {
+		english, ok = localizedScriptSteps[lower]
+	}
 	if !ok {
 		return "", false, false
 	}
