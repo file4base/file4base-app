@@ -233,9 +233,13 @@ func (f *fixture) answerTransfer(t *testing.T, ctx context.Context, name, onReje
 	return def
 }
 
+// owner is the account the acceptance runs read their source as: it reads
+// every table.
+var owner = transfer.Account{ID: "dispatch-owner", Role: "owner"}
+
 func (f *fixture) run(ctx context.Context, def *schema.TransferDefinition) (*transfer.Report, error) {
 	return transfer.Run(ctx, def,
-		f.dispatch.driver, f.results.driver, f.dispatch.name, f.results.name)
+		f.dispatch.driver, f.results.driver, f.dispatch.name, f.results.name, owner)
 }
 
 func rows(t *testing.T, ctx context.Context, svc *data.Service, table string) []map[string]interface{} {
@@ -358,7 +362,7 @@ func TestRun_TheAcceptanceFixtureOfIssue96(t *testing.T) {
 	require.NoError(t, err)
 
 	report, err = transfer.Run(ctx, returnDef,
-		f.results.driver, f.dispatch.driver, f.results.name, f.dispatch.name)
+		f.results.driver, f.dispatch.driver, f.results.name, f.dispatch.name, owner)
 	require.NoError(t, err)
 	assert.True(t, report.Committed)
 	assert.Equal(t, 2, report.Updated, "both returned answers match a central record")
@@ -570,4 +574,100 @@ func TestRun_RefusesATableNeitherSolutionHas(t *testing.T) {
 	require.ErrorIs(t, err, transfer.ErrTransfer)
 	assert.False(t, report.Committed)
 	assert.Contains(t, err.Error(), "nowhere")
+}
+
+// A transfer reads its source as the account that runs it: a container
+// calculation that refers to a related table the account may not read hands
+// over no file, while the owner's run carries it.
+func TestRun_ReadsTheSourceAsItsAccount(t *testing.T) {
+	mgr, ctx := transferTestManager(t)
+	if mgr == nil {
+		return
+	}
+	f := newFixture(t, ctx, mgr)
+	svc := f.dispatch.schemaSvc
+
+	tables, err := svc.ListTables(ctx)
+	require.NoError(t, err)
+	ids, keys := map[string]string{}, map[string]string{}
+	for _, tbl := range tables {
+		ids[tbl.Name] = tbl.ID
+		for _, c := range tbl.Columns {
+			if c.Name == "survey_code" {
+				keys[tbl.Name] = c.ID
+			}
+		}
+	}
+	_, err = svc.AddColumn(ctx, ids["surveys"], schema.ColumnMetadata{
+		Name: "scan", DisplayName: "Scan", FieldType: dbal.FieldTypeContainer, IsNullable: true})
+	require.NoError(t, err)
+	occurrences, err := svc.ListTableOccurrences(ctx)
+	require.NoError(t, err)
+	occ, occName := map[string]string{}, map[string]string{}
+	for _, o := range occurrences {
+		for name, id := range ids {
+			if o.BaseTableID == id {
+				occ[name], occName[name] = o.ID, o.Name
+			}
+		}
+	}
+	_, err = svc.CreateRelationship(ctx, schema.CreateRelationshipInput{
+		Name:             "answer_survey",
+		LeftOccurrenceID: occ["answers"], LeftColumnID: keys["answers"],
+		RightOccurrenceID: occ["surveys"], RightColumnID: keys["surveys"],
+		Operator: "=",
+	})
+	require.NoError(t, err)
+	formula := `{"formula":"` + occName["surveys"] + `::scan","result_type":"Container","stored":false}`
+	_, err = svc.AddColumn(ctx, ids["answers"], schema.ColumnMetadata{
+		Name: "survey_scan", DisplayName: "Survey Scan", FieldType: dbal.FieldTypeCalculation,
+		IsNullable: true, CalculationFormula: &formula})
+	require.NoError(t, err)
+	surveys, err := f.dispatch.dataSvc.ListRows(ctx, "surveys", data.QueryOptions{Limit: 10})
+	require.NoError(t, err)
+	for _, s := range surveys {
+		if s["survey_code"] == "SV-001" {
+			_, err = f.dispatch.dataSvc.UpdateRow(ctx, "surveys", fmt.Sprint(s["id"]), map[string]interface{}{"scan": containerValue})
+			require.NoError(t, err)
+		}
+	}
+
+	clerk, err := svc.CreateUser(ctx, "clerk", "synthetic-password-1", "user")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetUserTablePermissions(ctx, clerk.ID, []schema.UserTablePermission{
+		{TableName: "answers", AccessLevel: schema.AccessReadOnly},
+		{TableName: "surveys", AccessLevel: schema.AccessNone},
+	}))
+
+	def, err := svc.CreateTransfer(ctx, schema.TransferInput{
+		Name:        "Send survey scans",
+		Source:      schema.TransferEnd{Table: "answers"},
+		Destination: schema.TransferEnd{Database: f.results.name, Table: "project_answers"},
+		Mappings: []schema.TransferMapping{
+			{SourceField: "answer_code", DestinationField: "code"},
+			{SourceField: "survey_scan", DestinationField: "attachment"},
+		},
+		MatchFields: []string{"code"},
+		Mode:        schema.TransferModeUpdateMatching,
+		Sort:        []data.SortField{{Field: "answer_code"}},
+	}, "dispatch-owner")
+	require.NoError(t, err)
+	scans := func() map[string]interface{} {
+		t.Helper()
+		out := map[string]interface{}{}
+		for code, r := range byKey(rows(t, ctx, f.results.dataSvc, "project_answers"), "code") {
+			out[code] = r["attachment"]
+		}
+		return out
+	}
+
+	_, err = transfer.Run(ctx, def, f.dispatch.driver, f.results.driver, f.dispatch.name, f.results.name,
+		transfer.Account{ID: clerk.ID, Role: clerk.Role})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]interface{}{"AN-001": nil, "AN-002": nil, "AN-003": nil}, scans(),
+		"the clerk may not read surveys, so no scan crosses")
+
+	_, err = f.run(ctx, def)
+	require.NoError(t, err)
+	assert.Equal(t, containerValue, scans()["AN-001"], "the owner's run carries it")
 }

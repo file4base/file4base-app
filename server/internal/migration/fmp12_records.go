@@ -841,8 +841,8 @@ func precomputeExtractedCalculations(
 			knownCols[fm.ColName] = fm.ColName
 		}
 		for _, fm := range fields {
-			if colTypeByTableCol[sqlTable+"."+fm.ColName] != "CALCULATION" {
-				continue
+			if colTypeByTableCol[sqlTable+"."+fm.ColName] != "CALCULATION" || fm.SourceDataType == "CONTAINER" {
+				continue // a container result is computed on import, as a reference
 			}
 			formula := extractHTMLFormula(fm.RawOptions, sqlTable, sqlTable, knownCols)
 			exprStr, ok := ownTableFormula(formula)

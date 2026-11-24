@@ -102,8 +102,34 @@ field sorts and compares.
 | Date | date | The formula must produce a date. |
 | Time, Timestamp | timestamp | Both spellings mean a timestamp. |
 | Boolean | true / false | |
+| Container | a reference to a container field | See [Containers](#containers). |
 
 An empty answer is stored as nothing (SQL `NULL`), not as an empty string.
+
+## Containers
+
+A formula sees a container field as the file it holds, never its bytes:
+
+| Formula | Answer |
+| --- | --- |
+| `GetAsText ( Photo )`, `Photo & ""` | The file's name, as stored with it; empty for a file stored without one. |
+| `IsEmpty ( Photo )` | 1 when the field holds no file. |
+| `GetContainerAttribute ( Photo ; "filename" )` | The file's name. |
+| `GetContainerAttribute ( Photo ; "fileSize" )` | Its size in bytes. Other attributes are empty. |
+| `If ( … ; Front ; Back )`, `Case`, `Choose`, `Let`, `GetRepetition ( Photo ; 2 )`, `Photo[2]`, `Related::Photo` | The container itself, so a Container result returns that file. |
+
+A calculation whose result type is **Container** answers a container. Its
+column stores where the file is (`{"table", "record", "field"}`, the field
+being `field[n]` for a repetition), not a copy of it, stored or unstored; a
+read returns the file the reference names, as base64 with its metadata under
+`__container_meta`, exactly as a container field reads, and an export writes
+it the same way. The reference follows the field: a record whose file changes
+shows the new one. Within one write, a calculation reading a Container result
+of the same record sees the file that write stores, and a record added by an
+import refers to itself. A reference whose record or field is gone is empty:
+`IsEmpty` is 1 and a read gives nothing. A Container calculation whose answer is not a container
+(text, a number) is empty, as FileMaker shows no file. A file in a table the
+reader may not read is empty for that reader.
 
 ## Repeating fields
 
@@ -213,6 +239,7 @@ and the families around them:
 | Aggregates | `Sum`, `Average`, `Count`, `Min`, `Max`, `List`, `Last` — over several values, or over one field's related records or repetitions |
 | Dates and times | `Date`, `Time`, `Timestamp`, `Year`, `Month`, `Day`, `Hour`, `Minute`, `Seconds`, `DayName`, `DayOfWeek`, `DayOfYear`, `MonthName`, `WeekOfYear`, `WeekOfYearFiscal` |
 | Conversion | `GetAsText`, `GetAsNumber`, `GetAsDate`, `GetAsTime`, `GetAsTimestamp`, `GetAsBoolean` |
+| Containers | `GetContainerAttribute` (`filename`, `fileSize`) |
 | Formatting | `TextFormatRemove`, `TextColor`, `TextFont`, `TextSize`, `TextStyleAdd` and their `…Remove` forms return the plain text; `RGB` |
 
 Custom functions are evaluated, recursion included, up to a depth limit.
@@ -270,5 +297,8 @@ Roughly how many years a customer has been with you. Result type: Number.
 - **Finding, sorting or summarizing by an unstored calculation** (FileMaker
   does it by computing every record); store the result, or use the fields it
   reads.
-- `ExecuteSQL`, JSON, cryptographic, container and plug-in functions are
-  reported as unsupported.
+- `ExecuteSQL`, JSON, cryptographic and plug-in functions, and container
+  functions other than `GetContainerAttribute` ( `filename`, `fileSize` ),
+  are reported as unsupported.
+- **Finding or sorting by a Container calculation** works on the stored
+  reference, not on the file's name.

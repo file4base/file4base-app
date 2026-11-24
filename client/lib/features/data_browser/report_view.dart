@@ -477,7 +477,7 @@ class ReportView extends StatelessWidget {
     final column = _column(name);
     final spec = specs[name];
 
-    if (column != null && column.fieldType.toUpperCase() == 'CONTAINER' && band.record != null) {
+    if (column != null && column.storageType == 'CONTAINER' && band.record != null) {
       final raw = band.record![column.name]?.toString() ?? '';
       final bytes = _decodeImageBytes(raw);
       if (bytes != null && bytes.isNotEmpty) {

@@ -141,7 +141,7 @@ func RunSchedule(
 		return refuse(err)
 	}
 
-	report, runErr := Run(ctx, def, sourceDriver, destinationDriver, sourceDB, destinationDB)
+	report, runErr := Run(ctx, def, sourceDriver, destinationDriver, sourceDB, destinationDB, sourceAccount)
 	if runErr != nil {
 		return finish(schema.ScheduleRunFailed, report, runErr)
 	}

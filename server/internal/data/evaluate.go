@@ -70,8 +70,8 @@ func (s *Service) EvaluateExpression(
 		if row, err = s.GetRow(ctx, tableName, recordID); err != nil {
 			return nil, err
 		}
-		for name, value := range row {
-			record[name] = calc.Typed(resultTypeOf(fields.typeOf(name)), value)
+		for name := range row {
+			record[name] = typedValue(tableName, fields, row, name, s.describeContainer(ctx))
 		}
 	}
 
@@ -112,6 +112,9 @@ func (s *Service) EvaluateExpression(
 func evaluationText(value interface{}, result calc.ResultType) string {
 	if value == nil {
 		return ""
+	}
+	if box, ok := value.(calc.Container); ok {
+		return box.Filename // a container reads as its name, as GetAsText does
 	}
 	return exportText(storageTypeOf(result), value)
 }

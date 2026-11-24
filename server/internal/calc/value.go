@@ -18,6 +18,11 @@ type value struct {
 	kind valueKind
 	num  decimal.Decimal // number, day number, or seconds
 	text string
+	// box is set on a container value: text then holds the file's name, so a
+	// container reads as its name wherever text is expected, as FileMaker's
+	// GetAsText does, while If, Case, Let and GetRepetition hand the
+	// container itself on.
+	box *Container
 	// places is how many decimal places a number shows when it is written as
 	// text: 0 means FileMaker's default of 16, SetPrecision asks for more.
 	places int32
@@ -52,7 +57,45 @@ func boolValue(b bool) value {
 	return intValue(0)
 }
 
-func (v value) isEmpty() bool { return v.kind == kindEmpty || (v.kind == kindText && v.text == "") }
+func (v value) isEmpty() bool {
+	return v.kind == kindEmpty || (v.kind == kindText && v.text == "" && v.box == nil)
+}
+
+// Container is a file held by a container field, as a formula sees it: what
+// the file is and where it is kept, never its bytes. A calculation whose
+// result type is Container answers one, and File4Base stores where it is,
+// not a copy of the file.
+type Container struct {
+	// Table, Record and Field locate the file: the container field of a
+	// record, "field[n]" for a repetition.
+	Table  string `json:"table"`
+	Record string `json:"record"`
+	Field  string `json:"field"`
+
+	Filename string `json:"filename,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+	SHA256   string `json:"sha256,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+
+	// Describe, when set, fills in what is known of the file the first time
+	// a formula reads the container, so a formula that never looks at a
+	// container costs nothing.
+	Describe func(*Container) `json:"-"`
+}
+
+// containerValue is the value of a container. One that holds no file, such
+// as a reference whose record or field is gone, is empty, as reading it
+// directly gives nothing.
+func containerValue(c Container) value {
+	if c.Describe != nil {
+		c.Describe(&c)
+		c.Describe = nil
+	}
+	if c.Size <= 0 {
+		return empty
+	}
+	return value{kind: kindText, text: c.Filename, box: &c}
+}
 
 // fromStored turns a value read from a record into something a formula works
 // with. A stored string stays text: "007" is what somebody typed, and a NUMBER
@@ -63,6 +106,13 @@ func fromStored(raw any) value {
 		return empty
 	case value:
 		return v
+	case Container:
+		return containerValue(v)
+	case *Container:
+		if v == nil {
+			return empty
+		}
+		return containerValue(*v)
 	case bool:
 		return boolValue(v)
 	case decimal.Decimal:
@@ -100,7 +150,7 @@ func fromStored(raw any) value {
 // A value that does not read as its type is kept as it came.
 func Typed(t ResultType, raw any) any {
 	switch r := raw.(type) {
-	case nil, value:
+	case nil, value, Container, *Container:
 		return raw
 	case string:
 		switch t {

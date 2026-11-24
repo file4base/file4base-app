@@ -197,7 +197,8 @@ class ColumnModel {
 
   /// What the column physically stores, which is its own type except for a
   /// calculation, held as whatever its formula produces. A numeric
-  /// calculation sorts, compares and totals like a number (#30, #32).
+  /// calculation sorts, compares and totals like a number (#30, #32), and a
+  /// container result reads, and is shown, like a container field.
   String get storageType {
     if (fieldType != 'CALCULATION' || calculationFormula == null) return fieldType;
     try {
@@ -209,6 +210,7 @@ class ColumnModel {
         'date' => 'DATE',
         'time' || 'timestamp' => 'TIMESTAMP',
         'boolean' => 'BOOLEAN',
+        'container' => 'CONTAINER',
         _ => 'TEXT',
       };
     } catch (_) {

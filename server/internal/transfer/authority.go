@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 )
@@ -86,4 +88,20 @@ func describeEnd(database string) string {
 		return "this solution"
 	}
 	return "the solution " + database
+}
+
+// readingAs is the data service of a solution that reads as account: a
+// calculation computed on the way out, and the file a container result refers
+// to, reach only the tables the account may read, as through the data API.
+// An administrator reads every table.
+func readingAs(driver dbal.DatabaseDriver, account Account) *data.Service {
+	svc := data.NewService(driver)
+	if (auth.Session{Role: account.Role}).IsAdmin() {
+		return svc
+	}
+	tables := schema.NewService(driver)
+	return svc.WithReadAccess(func(ctx context.Context, table string) (bool, error) {
+		level, err := tables.TableAccess(ctx, account.ID, table)
+		return level != schema.AccessNone, err
+	})
 }

@@ -414,13 +414,13 @@ func (s *Service) ImportRecords(
 		}
 
 		// A row that is added carries only its own mapped values, so its
-		// formulas are computed over the new record alone.
+		// formulas are computed over the new record alone. Its id is known
+		// first: a container result refers to the record it is in.
+		id := uuid.NewString()
+		record["id"] = id
 		if err := applyCalculationsTo(calculations, record); err != nil {
 			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
-
-		id := uuid.NewString()
-		record["id"] = id
 		if err := checker.Check(ctx, id, record, nil, false); err != nil {
 			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
@@ -656,6 +656,10 @@ func (s *Service) ExportRecords(
 	// A value kept with its original text is exported as that text, the way
 	// the record shows it (#124).
 	if err := s.AttachSourceText(ctx, tableName, rows); err != nil {
+		return nil, err
+	}
+	// A container result exports as the container it refers to.
+	if err := s.resolveContainerResults(ctx, tableName, rows); err != nil {
 		return nil, err
 	}
 	for _, row := range rows {

@@ -192,6 +192,8 @@ func (r *relatedReader) fill(ctx context.Context, tableName string, rows []map[s
 // a stored column, so a client cannot tell the two apart.
 func rowValue(answer interface{}, fieldType dbal.AgnosticFieldType) interface{} {
 	switch v := answer.(type) {
+	case calc.Container:
+		return encodeContainerRef(v)
 	case json.Number:
 		return dbal.TrimNumericText(v.String())
 	case string:
@@ -277,7 +279,7 @@ func (r *relatedReader) related(
 	}
 	out := make([]any, len(rows))
 	for i, rel := range rows {
-		out[i] = calc.Typed(resultTypeOf(fields.typeOf(field)), rel[field])
+		out[i] = typedValue(to.table, fields, rel, field, r.s.describeContainer(ctx))
 	}
 	return out, nil
 }

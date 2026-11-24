@@ -20,6 +20,9 @@ const (
 	ResultTime      ResultType = "TIME"
 	ResultTimestamp ResultType = "TIMESTAMP"
 	ResultBoolean   ResultType = "BOOLEAN"
+	// ResultContainer answers a container: the file a container field holds,
+	// referenced rather than copied (see Container).
+	ResultContainer ResultType = "CONTAINER"
 )
 
 // ParseResultType reads the result type a field was saved with. The client
@@ -37,6 +40,8 @@ func ParseResultType(s string) ResultType {
 		return ResultTimestamp
 	case "BOOLEAN", "BOOL":
 		return ResultBoolean
+	case "CONTAINER", "BINARY", "BLOB":
+		return ResultContainer
 	default:
 		return ResultText
 	}
@@ -230,10 +235,21 @@ func (v Value) IsEmpty() bool { return v.isEmpty() }
 // Bool is the value as the test of an If.
 func (v Value) Bool(loc *Locale) bool { return v.asBool(loc) }
 
-// Kind names the value's type: "empty", "text", "number", "date", "time" or
-// "timestamp".
+// Kind names the value's type: "empty", "text", "number", "date", "time",
+// "timestamp" or "container".
 func (v Value) Kind() string {
+	if v.box != nil {
+		return "container"
+	}
 	return [...]string{"empty", "text", "number", "date", "time", "timestamp"}[kindIndex(v.kind)]
+}
+
+// Container is the container the value is, if it is one.
+func (v Value) Container() (Container, bool) {
+	if v.box == nil {
+		return Container{}, false
+	}
+	return *v.box, true
 }
 
 func kindIndex(k valueKind) int {
@@ -259,6 +275,13 @@ func (v value) store(at int, result ResultType, loc *Locale) (any, error) {
 	}
 	loc = loc.orISO()
 	switch result {
+	case ResultContainer:
+		// Only a container is a container: anything else answers nothing,
+		// as FileMaker shows no file for text in a container calculation.
+		if v.box == nil {
+			return nil, nil
+		}
+		return *v.box, nil
 	case ResultNumber:
 		n, ok := v.numberOrEmpty(loc)
 		if !ok {

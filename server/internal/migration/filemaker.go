@@ -568,6 +568,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 							SourceKind:     srcKind,
 							SourceDataType: srcDataType,
 							Repetitions:    max(col.MaxRepetitions, 1),
+							Unstored:       srcKind == "CALCULATION" && unstoredCalculation(fn),
 						}
 					}
 				}
@@ -955,13 +956,12 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 	if fieldKind == "CALCULATION" || rawType == "CALCULATION" || (calcText != "" && rawType != "SUMMARY" && fieldKind != "SUMMARY") {
 		resultType := normalizeCalcResultType(rawType)
 		formula := formulaText(calcText)
-		// Binary calculation results cannot be evaluated or stored as text.
-		// Keep a container column and report missing calculation behavior.
-		binary := rawType == "BINARY" || rawType == "CONTAINER" || rawType == "BLOB"
-		if binary {
+		// A container result is a calculation like any other: its answer
+		// refers to the container it comes from rather than copying it.
+		if rawType == "BINARY" || rawType == "CONTAINER" || rawType == "BLOB" {
 			resultType = "Container"
 		}
-		if formula != "" && !binary {
+		if formula != "" {
 			// Kept as the source wrote it: it is read and bound to the
 			// imported fields once every table and occurrence is known.
 			spec := map[string]interface{}{"formula": formula, "result_type": resultType}
@@ -977,7 +977,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 			col.CalculationFormula = &s
 			return col, items
 		}
-		// Nothing to compute, or a container result: a stored column, reported.
+		// Nothing to compute: a stored column, reported.
 		col.FieldType = mapBasicFieldType(resultType)
 		items = append(items,
 			ReportItem{
@@ -2830,6 +2830,13 @@ func extractDeclaredFileName(root *xmlNode) string {
 		}
 	}
 	return ""
+}
+
+// unstoredCalculation reports whether a calculation field's options say
+// "Do not store calculation results".
+func unstoredCalculation(fn *xmlNode) bool {
+	storage := findFirstChild(fn, "Storage", "storage")
+	return storage != nil && strings.EqualFold(firstAttr(storage, "storeCalculationResults"), "false")
 }
 
 func classifyXMLFieldSourceType(fn *xmlNode, fallbackFieldType string) (string, string) {

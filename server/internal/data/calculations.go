@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
+	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
 )
@@ -28,13 +29,18 @@ type calculation struct {
 	// reps is the number of repetitions of a repeating calculation: the
 	// formula is computed once for each.
 	reps int
+	// table is the table the calculation belongs to, where the containers
+	// its record holds are; describe loads what is known of a container the
+	// formula reads the name or type of.
+	table    string
+	describe func(*calc.Container)
 }
 
 // typedRecord is the record as the formula sees it.
 func (c calculation) typedRecord(record map[string]interface{}) calc.Record {
 	typed := make(calc.Record, len(record))
-	for name, v := range record {
-		typed[name] = calc.Typed(resultTypeOf(c.types.typeOf(name)), v)
+	for name := range record {
+		typed[name] = typedValue(c.table, c.types, record, name, c.describe)
 	}
 	return typed
 }
@@ -61,6 +67,9 @@ func (c calculation) evaluateIn(env calc.Context) (map[string]interface{}, error
 		answer, err := calc.EvaluateRepetition(c.expr, env, c.result, rep)
 		if err != nil {
 			return nil, err
+		}
+		if box, ok := answer.(calc.Container); ok {
+			answer = encodeContainerRef(box) // a reference, not a copy of the file
 		}
 		answers[repetition.Key(c.field, rep)] = answer
 	}
@@ -166,7 +175,8 @@ func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]ca
 			continue
 		}
 		parsed[name] = calculation{field: name, expr: expr, result: calc.ParseResultType(stored.ResultType),
-			types: types, unstored: !stored.IsStored(), occurrence: stored.Context, reps: types.maxRepetitions(name)}
+			types: types, unstored: !stored.IsStored(), occurrence: stored.Context, reps: types.maxRepetitions(name),
+			table: tableName, describe: s.describeContainer(ctx)}
 		reads[name] = expr.Fields()
 	}
 	if err := rows.Err(); err != nil {
@@ -294,6 +304,11 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 		if len(page) == 0 {
 			return written, nil
 		}
+		// What is known of the page's containers, read once rather than
+		// once for each formula that names one.
+		if err := containermeta.AttachFromDB(ctx, s.driver.DB(), s.driver.Dialect(), tableName, page); err != nil {
+			return written, err
+		}
 		for _, row := range page {
 			id, _ := row["id"].(string)
 			if id == "" {
@@ -343,6 +358,8 @@ func StorageType(fieldType dbal.AgnosticFieldType, calculationFormula *string) d
 		return dbal.FieldTypeTimestamp
 	case calc.ResultBoolean:
 		return dbal.FieldTypeBoolean
+	case calc.ResultContainer:
+		return FieldTypeContainerResult
 	default:
 		return dbal.FieldTypeText
 	}

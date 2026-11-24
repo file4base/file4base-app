@@ -577,8 +577,14 @@ func (s *Service) AttachSourceText(ctx context.Context, tableName string, rows [
 
 // AttachContainerMeta attaches container file metadata (filename, MIME type,
 // SHA-256 digest and byte length) under containermeta.Key (#125).
+//
+// A calculation whose result is a container reads as the container it
+// refers to: its bytes in base64 and its metadata, like a container field.
 func (s *Service) AttachContainerMeta(ctx context.Context, tableName string, rows []map[string]interface{}) error {
-	return containermeta.AttachFromDB(ctx, s.driver.DB(), s.driver.Dialect(), tableName, rows)
+	if err := containermeta.AttachFromDB(ctx, s.driver.DB(), s.driver.Dialect(), tableName, rows); err != nil {
+		return err
+	}
+	return s.resolveContainerResults(ctx, tableName, rows)
 }
 
 // ListRows retrieves rows with optional sorting and pagination

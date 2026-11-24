@@ -68,6 +68,19 @@ type htmlFieldMeta struct {
 	// Repetitions is the field's maximum number of repetitions, 1 when it
 	// does not repeat.
 	Repetitions int
+	// Unstored is an unstored calculation: FileMaker computes it whenever
+	// it is shown, so a cell a native file still holds for it is stale and
+	// is not read.
+	Unstored bool
+}
+
+// cachedOnly is a field whose cells in a native file are FileMaker's own
+// answers rather than data: an unstored calculation, and a container
+// calculation, which File4Base computes as a reference to the container it
+// answers, or leaves empty and reports when it cannot. Their cells, files
+// included, are not imported.
+func (m htmlFieldMeta) cachedOnly() bool {
+	return m.Unstored || (m.SourceKind == "CALCULATION" && m.SourceDataType == "CONTAINER")
 }
 
 type htmlPortalDef struct {
@@ -230,6 +243,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			rawType    string
 			rawOptions string
 			reps       int
+			unstored   bool
 		}
 		var rawFields []rawFieldRow
 		knownSameTableCols := map[string]string{"id": "id"}
@@ -277,6 +291,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				rawType:    fRawType,
 				rawOptions: fRawOpts,
 				reps:       htmlRepetitions(cleanHTMLText(cells[2][1])),
+				unstored:   htmlUnstored(fRawType, cleanHTMLText(cells[2][1])),
 			})
 		}
 
@@ -298,6 +313,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 					SourceDataType: srcDataType,
 					RawOptions:     rf.rawOptions,
 					Repetitions:    rf.reps,
+					Unstored:       srcKind == "CALCULATION" && rf.unstored,
 				}
 			}
 			if seenCols[rf.colName] {
@@ -846,6 +862,8 @@ func convertHTMLField(
 			resType = "Date"
 		} else if strings.Contains(upperType, "TIMESTAMP") || strings.Contains(upperType, "TIME") {
 			resType = "Timestamp"
+		} else if strings.Contains(upperType, "CONTAINER") {
+			resType = "Container"
 		}
 		formula := extractHTMLFormula(rawOptions, tableSQL, rawTableName, knownSameTableCols)
 		expr, ok := ownTableFormula(formula)
@@ -864,6 +882,21 @@ func convertHTMLField(
 				SourceName: tableSQL + "." + rawFieldName,
 				TargetName: tableSQL + "." + colName,
 				Detail:     detail,
+			})
+			return col, items
+		}
+		if resType == "Container" {
+			// Pre-computing it would copy a file into each record, and the
+			// files FileMaker kept for it are not imported either (see
+			// htmlFieldMeta.cachedOnly): the column is left empty, and said.
+			col.FieldType = "CONTAINER"
+			items = append(items, ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "field",
+				SourceName: tableSQL + "." + rawFieldName,
+				TargetName: tableSQL + "." + colName,
+				Detail: fmt.Sprintf("Container calculation %q could not be converted: it is an empty container field, "+
+					"and the files FileMaker kept for it were not imported. Rewrite it as a calculation in Manage Database", formula),
 			})
 			return col, items
 		}
@@ -2198,6 +2231,16 @@ func convertMergeString(raw string) string {
 // Options column of an HTML Database Design Report, "Repetitions: 3" in
 // English and "Répétitions : 3" in French.
 var reHTMLRepetitions = regexp.MustCompile(`(?i)(?:repetitions|r\x{00E9}p\x{00E9}titions)\s*:\s*(\d+)`)
+
+// reHTMLUnstored is the storage option of an unstored calculation in an HTML
+// design report.
+var reHTMLUnstored = regexp.MustCompile(`(?i)\bdo not store\b`)
+
+// htmlUnstored reports whether an HTML design report says a calculation is
+// not stored: in its storage options, or by the word "Unstored" in its type.
+func htmlUnstored(rawType, options string) bool {
+	return reHTMLUnstored.MatchString(options) || strings.Contains(strings.ToUpper(rawType), "UNSTORED")
+}
 
 func htmlRepetitions(options string) int {
 	m := reHTMLRepetitions.FindStringSubmatch(options)
