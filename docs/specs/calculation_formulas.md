@@ -41,76 +41,93 @@ field sorts and compares.
 
 An empty answer is stored as nothing (SQL `NULL`), not as an empty string.
 
+## FileMaker compatibility
+
+The engine reads FileMaker's calculation language and gives FileMaker's
+answers. Its behaviour is pinned by
+[`testdata/conformance.json`](../../server/internal/calc/testdata/conformance.json):
+552 synthetic formulas evaluated in FileMaker Pro 26.0.2 (French), with the
+exact text FileMaker returned or the error it raised. `TestConformance`
+checks every one; the few deliberate differences carry a `note`. See
+[`testdata/README.md`](../../server/internal/calc/testdata/README.md) for how
+the answers were collected.
+
 ## Grammar
 
 ```
 expression     := orExpr
-orExpr         := andExpr ( "OR" andExpr )*
-andExpr        := notExpr ( "AND" notExpr )*
-notExpr        := "NOT" notExpr | comparison
-comparison     := concat ( ( "=" | "==" | "<>" | "!=" | "<" | "<=" | ">" | ">=" ) concat )?
+orExpr         := andExpr ( ( "or" | "xor" ) andExpr )*
+andExpr        := notExpr ( "and" notExpr )*
+notExpr        := "not" notExpr | comparison
+comparison     := concat ( ( "=" | "≠" | "<>" | "<" | "≤" | "<=" | ">" | "≥" | ">=" ) concat )*
 concat         := additive ( "&" additive )*
 additive       := multiplicative ( ( "+" | "-" ) multiplicative )*
-multiplicative := unary ( ( "*" | "/" ) unary )*
+multiplicative := power ( ( "*" | "/" ) power )*
+power          := unary ( "^" unary )*
 unary          := ( "-" | "+" ) unary | primary
-primary        := NUMBER | TEXT | "true" | "false"
-                | FIELD
-                | FUNCTION "(" [ expression ( ( "," | ";" ) expression )* ] ")"
+primary        := NUMBER | TEXT | FIELD | VARIABLE | "¶"
+                | FUNCTION "(" [ expression ( ";" expression )* ] ")"
+                | "Let" "(" ( binding | "[" binding ( ";" binding )* "]" ) ";" expression ")"
                 | "(" expression ")"
 ```
 
-- **Fields** are written as their column name: `fee_paid`, `home_address_1`.
-  Names are case-sensitive, because column names are.
-- **Text** is in double or single quotes. The quote that opened the text closes
-  it, and doubling it means the quote itself: `"say ""hi"""`.
-- **Arguments** are separated by `;` (as in FileMaker) or by `,`. Both work.
-- Keywords and function names are case-insensitive: `IF`, `if` and `If` are the
-  same.
+- **Fields** are written as FileMaker writes them: `Amount`, `Inscrit Zapping`
+  (names with spaces, accents or operators are matched against the fields the
+  table really has, longest first), `Invoices::Total` for a related field,
+  `${A + B}` to force a name, `field[2]` for a repetition.
+- **Variables**: `$local`, `$$global`, and the names `Let` binds.
+- **Text** is in double quotes; `\"`, `\\` and `\¶` escape, and `¶` is a
+  return. Comments are `//` and `/* */`.
+- **Numbers follow the file's locale.** A French file writes `1,5` and
+  separates arguments with `;` only; an ISO file writes `1.5`.
+- Function names are case-insensitive, in English as FileMaker stores them.
 
-## Operators
+## Values
 
-| Operator | Meaning |
-| --- | --- |
-| `+` `-` `*` `/` | Arithmetic. Division by zero is an error. |
-| `&` | Joins text: `first_name & " " & last_name`. |
-| `=` `==` | Equal. |
-| `<>` `!=` | Not equal. |
-| `<` `<=` `>` `>=` | Comparison. |
-| `AND` `OR` `NOT` | Logic. `AND` and `OR` stop as soon as the answer is known, so the other side is not evaluated. |
+| Type | Held as | Written as text (French locale) |
+| --- | --- | --- |
+| Number | exact decimal | `,5`, `1234,5`, `1,0E+20`; computed values rounded to 16 places, or to `SetPrecision`'s |
+| Text | Unicode text | itself |
+| Date | day number, 1 = 01/01/0001 | `24/11/2026` |
+| Time | seconds, may pass 24 h or be negative | `01:02:03`, `49:30:00`, `-00:30:00` |
+| Timestamp | seconds since 01/01/0001 | `24/11/2026 13:45`, seconds shown only when not zero |
 
-**How values compare.** Two moments compare as moments. Two values that are
-both numbers (or text that reads as a number) compare as numbers. Otherwise
-they compare as text, **ignoring case** — which is how Find mode matches text,
-so a formula agrees with a find.
+FileMaker's rules apply throughout:
+
+- **Text as a number** keeps the digits and the decimal separator and ignores
+  the rest: `"12-A" * 1` is 12, `"Mary" * 2` is 0, `"(4x2)"` is -42. An empty
+  value is empty, not 0, for `Abs`, `Round`, `-` and the like.
+- **Comparison** is as text when either side is text, ignoring case and
+  accents (`"é" = "E"`), so `"10" < 9`. Two numbers, dates or times compare as
+  numbers. `Max` and `Min` compare as text only when both values are text.
+- **Arithmetic** is exact: `0,1 + 0,2 = 0,3`. Division keeps 18 places,
+  `SetPrecision ( x ; n )` up to 400. `Sqrt`, `Exp`, `Ln`, `Log` and fractional
+  powers are exact to the current precision; trigonometry uses binary floating
+  point, as FileMaker does.
+- **Dates and times combine** as in FileMaker: date + number is a date, date +
+  time a timestamp, timestamp - timestamp a time.
+- **Errors** (`1/0`, `Sqrt ( -1 )`, `Date` from text that is no date) stop the
+  formula; `IsValid` and `If`/`Case` branches not taken are never evaluated.
 
 ## Functions
 
-| Function | Result |
+The engine implements the FileMaker functions measured in real solutions
+and the families around them:
+
+| Family | Functions |
 | --- | --- |
-| `IF(test; whenTrue [; whenFalse])` | One branch or the other. Only the branch taken is evaluated. Without a false branch the answer is empty. |
-| `UPPER(text)`, `LOWER(text)`, `TRIM(text)` | The text, changed. Empty stays empty. |
-| `LENGTH(text)` | How many characters. |
-| `CONCAT(a; b; …)` | The arguments joined, like `&`. |
-| `LEFT(text; n)`, `RIGHT(text; n)` | The first or last `n` characters. |
-| `MIDDLE(text; start; count)` | `count` characters from `start`, counting from 1. |
-| `ROUND(n [; places])` | Rounded; `places` defaults to 0. |
-| `ABS(n)` | Without its sign. |
-| `SUM(a; b; …)`, `MIN(…)`, `MAX(…)`, `AVERAGE(…)` | Over the **arguments given**, not over the records. An aggregate across a found set is a summary field, which is [#32](https://github.com/file4base/file4base-app/issues/32). |
-| `ISEMPTY(value)` | True when the value is empty. |
-| `COALESCE(a; b; …)` | The first argument that is not empty. |
-| `TODAY()`, `NOW()` | Today's date, and the current moment, in UTC. |
-| `YEAR(date)`, `MONTH(date)`, `DAY(date)` | A part of a date, as a number. |
+| Logical | `If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `IsValidExpression`, `Evaluate`, `GetField`, `Get ( … )`, `GetNthRecord` (related fields) |
+| Text | `Left`, `Right`, `Middle`, `Length`, `Position`, `PatternCount`, `Substitute`, `Replace`, `Filter`, `Trim`, `TrimAll`, `Upper`, `Lower`, `Proper`, `Exact`, `Quote`, `Char`, `Code`, `SerialIncrement`, `LeftWords`, `MiddleWords`, `RightWords`, `WordCount` |
+| Lists | `List`, `ValueCount`, `GetValue`, `LeftValues`, `MiddleValues`, `RightValues`, `FilterValues`, `UniqueValues`, `SortValues` |
+| Numbers | `Abs`, `Int`, `Floor`, `Ceiling`, `Round`, `Truncate`, `Mod`, `Div`, `Sign`, `Sqrt`, `Exp`, `Ln`, `Log`, `Lg`, `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Degrees`, `Radians`, `Pi`, `Random`, `SetPrecision` |
+| Aggregates | `Sum`, `Average`, `Count`, `Min`, `Max`, `List`, `Last` — over several values, or over one field's related records or repetitions |
+| Dates and times | `Date`, `Time`, `Timestamp`, `Year`, `Month`, `Day`, `Hour`, `Minute`, `Seconds`, `DayName`, `DayOfWeek`, `DayOfYear`, `MonthName`, `WeekOfYear`, `WeekOfYearFiscal` |
+| Conversion | `GetAsText`, `GetAsNumber`, `GetAsDate`, `GetAsTime`, `GetAsTimestamp`, `GetAsBoolean` |
+| Formatting | `TextFormatRemove`, `TextColor`, `TextFont`, `TextSize`, `TextStyleAdd` and their `…Remove` forms return the plain text; `RGB` |
 
-## How values are coerced
-
-| Used as | Empty | Number | Text | Boolean | Date |
-| --- | --- | --- | --- | --- | --- |
-| Number | `0` | itself | parsed, **error** if it is not a number | `1` / `0` | error |
-| Text | `""` | without a trailing `.0`, so 100 reads as `100` | itself | `true` / `false` | `YYYY-MM-DD`, or RFC 3339 with a time |
-| Boolean | false | non-zero | not blank | itself | not the zero time |
-
-Text that is not a number is an **error** rather than zero, so a typo in a
-field is reported instead of quietly producing a wrong total.
+Custom functions are evaluated, recursion included, up to a depth limit.
+`TODAY()`, `NOW()`, `COALESCE` and `CONCAT` remain for formulas written in
+File4Base before.
 
 ## Validation
 
@@ -158,10 +175,10 @@ Roughly how many years a customer has been with you. Result type: Number.
 
 ## What is not here
 
-- **Aggregates across records** (totals, counts, averages over a found set).
-  That is a summary field: [#32](https://github.com/file4base/file4base-app/issues/32).
-- **Related fields.** A formula reads the record's own fields. Reading a field
-  through a relationship needs [#36](https://github.com/file4base/file4base-app/issues/36).
-- **Custom functions.** Writing your own reusable functions is a roadmap item.
-- **Repetitions, globals and unstored calculations.** Every calculation is
-  stored.
+- **Aggregates across a found set.** That is a summary field:
+  [#32](https://github.com/file4base/file4base-app/issues/32).
+- **Unstored calculations.** Every calculation is still computed when its
+  record is written and stored; one that reads related records is not yet
+  recomputed when those change.
+- `ExecuteSQL`, JSON, cryptographic, container and plug-in functions are
+  reported as unsupported.
