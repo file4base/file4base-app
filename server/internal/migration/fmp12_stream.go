@@ -8,6 +8,7 @@ package migration
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -265,12 +266,28 @@ func boolInt(value bool) int {
 // Keyed chunks and long-value segments may span pages; byte patterns inside a
 // value have no structural meaning. Source text is not trimmed or rounded.
 func readHBAM7Records(source []byte, tables map[int]string, fields map[int]map[int]htmlFieldMeta, types map[string]string, dateOrder string) (map[string][]map[string]interface{}, map[string]int, error) {
-	return readHBAM7RecordsMode(source, tables, fields, types, dateOrder, false)
+	return readHBAM7RecordsWith(source, tables, fields, types, nativeReadOptions{dateOrder: dateOrder})
 }
 
 // Raw mode is used only by local source qualification. It keeps source text,
 // including values the target cannot store, and does not claim a typed import.
 func readHBAM7RecordsMode(source []byte, tables map[int]string, fields map[int]map[int]htmlFieldMeta, types map[string]string, dateOrder string, rawValues bool) (map[string][]map[string]interface{}, map[string]int, error) {
+	return readHBAM7RecordsWith(source, tables, fields, types, nativeReadOptions{dateOrder: dateOrder, rawValues: rawValues})
+}
+
+// nativeReadOptions says how native record values are read.
+type nativeReadOptions struct {
+	// dateOrder is the order of the file's dates: iso, dmy or mdy.
+	dateOrder string
+	// rawValues keeps every value as its source text (local qualification).
+	rawValues bool
+	// locale, when named, migrates permissive values with their original
+	// text instead of refusing them (#124).
+	locale *sourceLocale
+}
+
+func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]map[int]htmlFieldMeta, types map[string]string, opts nativeReadOptions) (map[string][]map[string]interface{}, map[string]int, error) {
+	dateOrder, rawValues := opts.dateOrder, opts.rawValues
 	type cellKey struct {
 		table, field int
 		row          string
@@ -404,9 +421,24 @@ func readHBAM7RecordsMode(source []byte, tables map[int]string, fields map[int]m
 					continue
 				}
 				var value interface{}
-				if kind == "TEXT" || kind == "" {
+				switch {
+				case kind == "TEXT" || kind == "":
 					value = text
-				} else {
+				case opts.locale != nil && !rawValues:
+					var original string
+					order := data.DateOrder(strings.ToLower(dateOrder))
+					if order == "" {
+						order = opts.locale.DateOrder
+					}
+					value, original, err = interpretSourceValue(text, kind, opts.locale, order)
+					if errors.Is(err, errSourceRepetitions) {
+						issues["REPETITIONS"]++
+						continue
+					}
+					if err == nil && original != "" {
+						addSourceText(row, meta.ColName, original)
+					}
+				default:
 					value, err = coerceNativeValue(text, kind, dateOrder)
 				}
 				if err != nil {

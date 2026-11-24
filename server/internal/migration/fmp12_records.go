@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dataio"
 )
 
@@ -65,6 +67,10 @@ func populateDataRows(
 				})
 				continue
 			}
+			locale, err := parseSourceLocale(req.SourceLocale)
+			if err != nil {
+				return err
+			}
 			rows := make([]map[string]interface{}, 0, len(parsed.Rows))
 			rejectedCells := 0
 			for rowIdx, rawRow := range parsed.Rows {
@@ -97,17 +103,32 @@ func populateDataRows(
 					if fType == "CALCULATION" || fType == "SUMMARY" {
 						continue // Server calculation engine computes these
 					}
-					value, err := coerceSourceValue(valStr, fType)
+					var value interface{}
+					var original string
+					if locale != nil && (fType == "NUMBER" || fType == "DATE" || fType == "TIMESTAMP") {
+						// FMPXMLRESULT writes its dates month first whatever
+						// the file's locale; its numbers as the field holds them.
+						value, original, err = interpretSourceValue(valStr, fType, locale, data.DateMDY)
+					} else {
+						value, err = coerceSourceValue(valStr, fType)
+					}
 					if err != nil {
 						rejectedCells++
+						detail := fmt.Sprintf("Value %q was not imported: %v", valStr, err)
+						if locale == nil && !errors.Is(err, errSourceRepetitions) {
+							detail += "; name the source file's locale (source_locale) to migrate it with its original text"
+						}
 						addReportItem(report, ReportItem{
 							Category:   CategoryRejected,
 							Domain:     "data",
 							SourceName: fmt.Sprintf("%s row %d, %s", rawTableKey, rowIdx+1, colHeader),
 							TargetName: sqlTable + "." + colName,
-							Detail:     fmt.Sprintf("Value %q was not imported: %v", valStr, err),
+							Detail:     detail,
 						})
 						continue
+					}
+					if original != "" {
+						addSourceText(rec, colName, original)
 					}
 					rec[colName] = value
 				}
@@ -131,6 +152,7 @@ func populateDataRows(
 				TargetName: sqlTable,
 				Detail:     detail,
 			})
+			reportSourceTexts(report, rawTableKey, sqlTable, rows, locale)
 		}
 	}
 
@@ -163,16 +185,26 @@ func populateDataRows(
 			})
 			return nil
 		}
-		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol, req.NativeDateOrder)
+		locale, err := parseSourceLocale(req.SourceLocale)
 		if err != nil {
+			return err
+		}
+		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol,
+			nativeReadOptions{dateOrder: req.NativeDateOrder, locale: locale})
+		if err != nil {
+			detail := fmt.Sprintf("Failed extracting records from .fmp12 binary: %v", err)
 			if issue, ok := err.(*nativeValueError); ok {
 				report.Counts.RecordsDetected += issue.Records
+				if locale == nil && (issue.Counts["NUMBER"] > 0 || issue.Counts["DATE"] > 0 || issue.Counts["TIMESTAMP"] > 0) {
+					detail += "; name the source file's locale (source_locale) to migrate permissive Number, Date and " +
+						"Time values with their original text instead of refusing them"
+				}
 			}
 			addReportItem(report, ReportItem{
 				Category:   CategoryRejected,
 				Domain:     "data",
 				SourceName: "fmp12_binary",
-				Detail:     fmt.Sprintf("Failed extracting records from .fmp12 binary: %v", err),
+				Detail:     detail,
 			})
 		} else {
 			tableNames := make([]string, 0, len(extracted))
@@ -211,6 +243,7 @@ func populateDataRows(
 					TargetName: tbl,
 					Detail:     detail,
 				})
+				reportSourceTexts(report, tbl+" (.fmp12)", tbl, rows, locale)
 			}
 		}
 	}
@@ -229,14 +262,10 @@ func extractFMP12Records(
 	fmpTableMeta map[int]string,
 	fmpFieldMeta map[int]map[int]htmlFieldMeta,
 	colTypeByTableCol map[string]string,
-	dateOrder ...string,
+	opts nativeReadOptions,
 ) (map[string][]map[string]interface{}, map[string]int, error) {
 	if len(data) >= 20 && string(data[15:20]) == "HBAM7" {
-		order := ""
-		if len(dateOrder) > 0 {
-			order = dateOrder[0]
-		}
-		return readHBAM7Records(data, fmpTableMeta, fmpFieldMeta, colTypeByTableCol, order)
+		return readHBAM7RecordsWith(data, fmpTableMeta, fmpFieldMeta, colTypeByTableCol, opts)
 	}
 	const pageSize = 4096
 	if len(data) < pageSize*3 || !bytes.Contains(data[:minInt(len(data), pageSize)], []byte("HBAM2")) {

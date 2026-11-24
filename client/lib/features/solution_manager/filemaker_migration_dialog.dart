@@ -70,6 +70,11 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
   String? _fmp12FileName;
   Uint8List? _fmp12Bytes;
 
+  /// The locale the source file writes numbers and dates in. Null keeps the
+  /// migration strict: permissive values are refused instead of migrated with
+  /// their original text (#124).
+  String? _sourceLocale;
+
   bool _isRunningPreflight = false;
   bool _isApplying = false;
   String? _error;
@@ -180,6 +185,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         dataFiles: _dataFiles,
         fmp12Bytes: _fmp12Bytes,
         fmp12FileName: _fmp12FileName,
+        sourceLocale: _sourceLocale,
       );
       if (!mounted) return;
       setState(() {
@@ -213,6 +219,7 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
         dataFiles: _dataFiles,
         fmp12Bytes: _fmp12Bytes,
         fmp12FileName: _fmp12FileName,
+        sourceLocale: _sourceLocale,
       );
       if (!mounted) return;
       setState(() {
@@ -308,6 +315,33 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                                 labelStyle: TextStyle(color: Colors.white60),
                                 isDense: true,
                               ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Tooltip(
+                            message: 'The locale the FileMaker file writes numbers and dates in. '
+                                'With it, values such as "12-A" in a Number field are migrated with '
+                                'their original text instead of being refused.',
+                            child: DropdownButton<String?>(
+                              key: const Key('migration-source-locale'),
+                              value: _sourceLocale,
+                              dropdownColor: const Color(0xFF1E293B),
+                              style: const TextStyle(color: Colors.white, fontSize: 12.5),
+                              hint: const Text('Source locale: strict',
+                                  style: TextStyle(color: Colors.white60, fontSize: 12.5)),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  child: Text('Source locale: strict'),
+                                ),
+                                for (final tag in ApiClient.migrationSourceLocales)
+                                  DropdownMenuItem<String?>(value: tag, child: Text('Source locale: $tag')),
+                              ],
+                              onChanged: (_isRunningPreflight || _isApplying)
+                                  ? null
+                                  : (value) => setState(() {
+                                        _sourceLocale = value;
+                                        _report = null;
+                                      }),
                             ),
                           ),
                           const SizedBox(width: 10),

@@ -78,6 +78,23 @@ func ParseEngineType(val string) (EngineType, error) {
 	}
 }
 
+// IsUndefinedTable reports whether err is the engine saying a table does not
+// exist (PostgreSQL 42P01, MariaDB 1146).
+func IsUndefinedTable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var my *mysql.MySQLError
+	if errors.As(err, &my) {
+		return my.Number == 1146
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "42P01"
+	}
+	return false
+}
+
 // IsDuplicateKey reports whether err is the engine's unique/primary key
 // violation.
 func IsDuplicateKey(err error) bool {

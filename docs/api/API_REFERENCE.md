@@ -449,6 +449,14 @@ Queries rows with optional pagination and sorting.
 
 CONTAINER fields are returned as base64 strings (standard alphabet, with padding); `POST` and `PUT` accept base64 strings for them and store the decoded bytes, and a value that is not valid base64 answers `400 Invalid Value`.
 
+**Original texts (#124).** A record migrated from FileMaker can hold values whose source text a typed field cannot keep as written, such as `12-A` in a Number field. The field holds FileMaker's reading of it (`12`), which sorting, finds, summaries and calculations use, and the record carries the text as written under the reserved key `__source_text` (field name → text), present only when it has any:
+
+```json
+{ "id": "6d0c…", "amount": "12", "visited": null, "__source_text": { "amount": "12-A", "visited": "soon" } }
+```
+
+`GET` (list and record), `POST …/find`, the `PUT` response and related records all carry it, and `POST …/export` writes the original text instead of the value. `__source_text` sent with `POST` or `PUT` is ignored: a client cannot set an original text. Writing a field drops that field's original text; deleting the record, the field or the table deletes theirs. See [`docs/specs/permissive_source_values.md`](../specs/permissive_source_values.md).
+
 To read every row, page with `limit=1000` and `sort_by=id` (a stable order), advancing `offset` by the number of rows received, until a page returns fewer than `limit` rows.
 
 ---
@@ -1204,6 +1212,8 @@ Only catalog tables receive rows (internal `sys_*` tables never do, even if a ca
 
 CONTAINER fields are MessagePack binary values in `.f4data` files, so they are restored byte for byte.
 
+A record of an `.f4data` file may carry the original texts of its values under `__source_text` (field name → text, #124); `export-data` writes them and `import-data` restores them with the record, in the same transaction. Each must name a field of the record's table and be text of at most 64 KiB, or the import answers `400 Bad Request`.
+
 #### Request Body
 Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 
@@ -1847,7 +1857,20 @@ records: `iso` (the default), `dmy`, or `mdy`. An omitted order does not guess
 ambiguous slash dates. `FMPXMLRESULT` retains its MDY export convention.
 `records_detected`, when present, counts source records identified by the reader;
 it is distinct from `records_ready`. Native values that cannot be stored in the
-target are reported together without returning partial native rows. Container
+target are reported together without returning partial native rows.
+
+`source_locale` names the locale the FileMaker file writes numbers and dates
+in: one of `ca-ES`, `de-AT`, `de-DE`, `en-AU`, `en-GB`, `en-IE`, `en-NZ`,
+`en-US`, `es-ES`, `fr-BE`, `fr-FR`, `it-IT`, `nl-BE`, `nl-NL`, `pt-BR`,
+`pt-PT` (any other value answers `400`). It sets the decimal separator and,
+when `native_date_order` is empty, the date order. With it, permissive Number,
+Date, Time and Timestamp values (`12-A`, `(4x2)`, `N/A`, text that is no date,
+a duration past 24 hours) are migrated instead of refused: the field gets
+FileMaker's reading of the text (`12`, `-42`, or empty when there is none) and
+the record keeps the text as written (see `__source_text` in § 4).
+`counts.source_text_values` counts them and a `translated` item names their
+fields per dataset. Without `source_locale` the migration stays strict and the
+refusal says so. Values of several repetitions stay refused either way. Container
 bytes, binary calculations, timezone/time-duration behavior and required script
 operations still require qualification; an extracted record count is not an
 application-equivalence result.
@@ -1867,7 +1890,7 @@ production size is sent instead as `multipart/form-data` to the same endpoint
 
 ```sh
 curl -H "Authorization: Bearer $TOKEN" \
-  -F 'request={"native_date_order":"dmy"};type=application/json' \
+  -F 'request={"source_locale":"fr-FR"};type=application/json' \
   -F 'design=@/private/design.xml' \
   -F 'native=@/private/source.fmp12' \
   https://file4base.example/api/v1/solutions/migrate/preflight

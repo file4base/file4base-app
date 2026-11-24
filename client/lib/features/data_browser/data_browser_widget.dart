@@ -802,9 +802,30 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     return text;
   }
 
-  String _columnText(String colName, Object? raw) {
+  /// The record key under which the server sends the original texts of a
+  /// record's values (#124): what a migrated FileMaker field said, such as
+  /// "12-A" in a Number field, beside the typed value (12) that sorting,
+  /// finds, calculations and scripts use.
+  static const sourceTextKey = '__source_text';
+
+  /// The original text of [field] in [record], when it has one.
+  static String? sourceText(Map<String, dynamic> record, String field) {
+    final texts = record[sourceTextKey];
+    if (texts is Map) {
+      final text = texts[field];
+      if (text is String) return text;
+    }
+    return null;
+  }
+
+  /// What a field of a record shows: its original text when it has one,
+  /// otherwise its stored value as [fieldText] writes it.
+  static String recordFieldText(ColumnModel col, Map<String, dynamic> record) =>
+      sourceText(record, col.name) ?? fieldText(col, record[col.name]);
+
+  String _recordColumnText(String colName, Map<String, dynamic> record) {
     final col = widget.table.columns.where((c) => c.name == colName).firstOrNull;
-    return col == null ? (raw?.toString() ?? '') : fieldText(col, raw);
+    return col == null ? (record[colName]?.toString() ?? '') : recordFieldText(col, record);
   }
 
   void _rebuildFieldControllers() {
@@ -827,7 +848,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
     for (final col in widget.table.columns) {
       if (col.isPrimaryKey) continue;
-      final val = fieldText(col, record[col.name]);
+      final val = recordFieldText(col, record);
       final ctrl = TextEditingController(text: val);
       final fn = FocusNode();
 
@@ -877,6 +898,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<void> _saveField(String colName, String newVal) async {
     if (_records.isEmpty) return;
     final column = widget.table.columns.where((c) => c.name == colName).firstOrNull;
+    final current = _records[_currentIndex];
+    if (column != null && current[_draftKey] != true && newVal == recordFieldText(column, current)) {
+      // Leaving a field unchanged writes nothing. In particular it must not
+      // replace a migrated value's original text with its reading (#124).
+      return;
+    }
     Object? valueToSave = newVal;
     if (column?.fieldType == 'DATE') {
       if (newVal.trim().isEmpty) {
@@ -901,6 +928,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     if (mounted) setState(() => _fieldSaving[colName] = true);
     try {
       await widget.apiClient.updateRow(widget.table.name, id, {colName: valueToSave});
+      // The field now holds what was typed; the server dropped its original
+      // text, and so does the record in hand.
+      final texts = record[sourceTextKey];
+      if (texts is Map) texts.remove(colName);
       if (mounted) setState(() => _fieldSaving[colName] = null);
     } catch (e) {
       if (mounted) {
@@ -969,7 +1000,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       if (ctrl == null) continue;
       _fieldDebounceTimers[col.name]?.cancel();
       final cached = _records.isNotEmpty
-          ? fieldText(col, _records[_currentIndex][col.name])
+          ? recordFieldText(col, _records[_currentIndex])
           : '';
       if (ctrl.text != cached) {
         if (col.fieldType == 'DATE' &&
@@ -1977,7 +2008,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (ctx, i) {
         final r = _records[i];
-        final values = cols.map((c) => fieldText(c, r[c.name])).where((v) => v.isNotEmpty).toList();
+        final values = cols.map((c) => recordFieldText(c, r)).where((v) => v.isNotEmpty).toList();
         final title = values.isNotEmpty ? values.first : '(empty record)';
         final subtitle = values.skip(1).take(4).join(' · ');
         return ListTile(
@@ -2187,9 +2218,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           },
         );
       }
-      final rawText = col != null ? fieldText(col, rawVal) : (rawVal?.toString() ?? '');
+      final rawText = col != null ? recordFieldText(col, rec) : (rawVal?.toString() ?? '');
       final hasCustomFormat = layoutStyleHasDisplayFormat(effStyle);
-      final valText = hasCustomFormat
+      // An original text is shown as it was written, not reformatted.
+      final hasOriginal = col != null && sourceText(rec, col.name) != null;
+      final valText = hasCustomFormat && !hasOriginal
           ? formatLayoutDisplayValue(rawVal ?? rawText, effStyle)
           : rawText;
       final fillColor = effStyle.fillColor != null
@@ -2393,7 +2426,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                                 width: colWidth,
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 alignment: Alignment.centerLeft,
-                                child: Text(_columnText(c.name, r[c.name]),
+                                child: Text(_recordColumnText(c.name, r),
                                     style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis),
                               ),
                             );
