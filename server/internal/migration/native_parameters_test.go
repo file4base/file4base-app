@@ -115,3 +115,36 @@ func TestNativeSeparatorsAndDeletedOccurrenceLayouts(t *testing.T) {
 		t.Fatalf("deleted-occurrence layout reported %d times, want 1", reported)
 	}
 }
+
+// An occurrence whose base table was deleted keeps an empty source reference;
+// it and what uses it are reported as not migrated rather than refused.
+func TestNativeOccurrenceOnDeletedTable(t *testing.T) {
+	const design = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Visits"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Visits"/><ObjectList><Field id="1" name="Code" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <TableOccurrenceCatalog>
+  <TableOccurrence id="1" name="Visits" type="Local"><BaseTableSourceReference type="BaseTableReference"><BaseTableReference id="129" name="Visits"/></BaseTableSourceReference></TableOccurrence>
+  <TableOccurrence id="2" name="Archive" type="Local"><BaseTableSourceReference type="BaseTableReference"></BaseTableSourceReference></TableOccurrence>
+ </TableOccurrenceCatalog>
+ <RelationshipCatalog><Relationship id="1"><LeftTable><TableOccurrenceReference id="1" name="Visits"/></LeftTable><RightTable><TableOccurrenceReference id="2" name="Archive"/></RightTable>
+  <JoinPredicateList><JoinPredicate type="Equal"><LeftField><FieldReference id="1" name="Code"><TableOccurrenceReference id="1" name="Visits"/></FieldReference></LeftField><RightField><FieldReference id="9" name="Code"><TableOccurrenceReference id="2" name="Archive"/></FieldReference></RightField></JoinPredicate></JoinPredicateList></Relationship></RelationshipCatalog>
+ <LayoutCatalog><Layout id="1" name="Visit"><TableOccurrenceReference id="1" name="Visits"/></Layout><Layout id="2" name="Old archive"><TableOccurrenceReference id="2" name="Archive"/></Layout></LayoutCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	result, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := result.Report.Counts.RejectedCount; n != 0 {
+		t.Fatalf("rejected = %d: %+v", n, result.Report.Rejected)
+	}
+	domains := map[string]int{}
+	for _, item := range result.Report.Unsupported {
+		domains[item.Domain]++
+	}
+	if domains["occurrence"] != 1 || domains["relationship"] != 1 || domains["layout"] != 1 {
+		t.Fatalf("unsupported by domain = %v, want one occurrence, relationship and layout", domains)
+	}
+	if len(result.Bundle.Layouts) != 1 || len(result.Bundle.Relationships) != 0 {
+		t.Fatalf("layouts %d, relationships %d", len(result.Bundle.Layouts), len(result.Bundle.Relationships))
+	}
+}

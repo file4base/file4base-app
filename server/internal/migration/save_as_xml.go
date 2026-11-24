@@ -339,6 +339,10 @@ func nativeSeparatorMarker(node *xmlNode) bool {
 // of a layout whose occurrence was deleted.
 const deletedTableOccurrence = "<Table Missing>"
 
+// deletedBaseTable is the name FileMaker gives the base table of an
+// occurrence whose table was deleted.
+const deletedBaseTable = "<Table Missing>"
+
 func nativeFolderMarker(node *xmlNode) bool {
 	value := firstAttr(node, "isFolder")
 	return value != "" && !strings.EqualFold(value, "false") && value != "0"
