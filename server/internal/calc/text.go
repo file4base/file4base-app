@@ -102,7 +102,7 @@ func words(s string, loc *Locale) [][2]int {
 			return ch == '.'
 		}
 		if unicode.IsDigit(prev) && unicode.IsDigit(next) {
-			return ch == dec || ch == ':' || len(thousands) == 1 && ch == thousands[0] && ch != ' '
+			return ch == dec || ch == ':' || ch == '-' || len(thousands) == 1 && ch == thousands[0] && ch != ' '
 		}
 		return false
 	}

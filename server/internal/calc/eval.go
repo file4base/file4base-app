@@ -478,7 +478,7 @@ func (ev *evaluator) evalBinary(t binaryNode) (value, error) {
 	case "+", "-", "*", "/", "^":
 		return ev.arithmetic(t, left, right)
 	}
-	cmp := compare(left, right, ev.loc)
+	cmp := compare(ev.settle(left), ev.settle(right), ev.loc)
 	switch t.op {
 	case "=":
 		return boolValue(cmp == 0), nil
@@ -504,8 +504,9 @@ func concat(a, b value, loc *Locale) value {
 	return textValue(a.asText(loc) + b.asText(loc))
 }
 
-// precision is how many decimal places FileMaker shows of a computed number,
-// unless SetPrecision asks for more. A division keeps two more, so 1/3*3 is 1.
+// precision is how many decimal places FileMaker computes and shows numbers
+// to, unless SetPrecision asks for more. A division keeps two more until its
+// result is used (settle).
 const precision = 16
 
 // maxPrecision is the most decimal places SetPrecision gives, as in FileMaker.
@@ -551,7 +552,24 @@ func (ev *evaluator) arithmetic(t binaryNode, left, right value) (value, error) 
 		}
 		return numberValue(p), nil
 	}
-	return value{kind: arithmeticKind(t.op, left.kind, right.kind), num: n}, nil
+	v := value{kind: arithmeticKind(t.op, left.kind, right.kind), num: n}
+	if v.kind == kindDate {
+		return checkedDate(t.at, n.IntPart())
+	}
+	if t.op == "/" {
+		return v, nil
+	}
+	return ev.settle(v), nil
+}
+
+// settle rounds a number to the places the calculation works to. A division
+// keeps two more, and they go as soon as the result is used: 1/3*3 is 1,
+// Int ( 1/3*3 ) is 1 and 1/3 - 0,3333333333333333 is 0, as in FileMaker.
+func (ev *evaluator) settle(v value) value {
+	if v.kind != kindText && v.kind != kindEmpty && v.num.Exponent() < -ev.precision {
+		v.num = v.num.Round(ev.precision)
+	}
+	return v
 }
 
 // arithmeticKind is the type of a + or - result, as FileMaker gives it: a

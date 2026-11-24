@@ -46,7 +46,7 @@ An empty answer is stored as nothing (SQL `NULL`), not as an empty string.
 The engine reads FileMaker's calculation language and gives FileMaker's
 answers. Its behaviour is pinned by
 [`testdata/conformance.json`](../../server/internal/calc/testdata/conformance.json):
-552 synthetic formulas evaluated in FileMaker Pro 26.0.2 (French), with the
+713 synthetic formulas evaluated in FileMaker Pro 26.0.2 (French), with the
 exact text FileMaker returned or the error it raised. `TestConformance`
 checks every one; the few deliberate differences carry a `note`. See
 [`testdata/README.md`](../../server/internal/calc/testdata/README.md) for how
@@ -86,9 +86,9 @@ primary        := NUMBER | TEXT | FIELD | VARIABLE | "¶"
 
 | Type | Held as | Written as text (French locale) |
 | --- | --- | --- |
-| Number | exact decimal | `,5`, `1234,5`, `1,0E+20`; computed values rounded to 16 places, or to `SetPrecision`'s |
+| Number | exact decimal | `,5`, `1234,5`; with an exponent below 1e-9 (`1,0E-10`) and from 1e19 when it ends in zeros (`1,0E+19`). Results are kept to 16 places, or to `SetPrecision`'s; a division keeps two more until it is used, so `1/3*3` is 1 |
 | Text | Unicode text | itself |
-| Date | day number, 1 = 01/01/0001 | `24/11/2026` |
+| Date | day number, 1 = 01/01/0001, up to 31/12/4000 | `24/11/2026` |
 | Time | seconds, may pass 24 h or be negative | `01:02:03`, `49:30:00`, `-00:30:00` |
 | Timestamp | seconds since 01/01/0001 | `24/11/2026 13:45`, seconds shown only when not zero |
 

@@ -20,6 +20,19 @@ var (
 // 1 January 0001 was a Monday.
 func weekday(day int64) int64 { return floorMod(day, 7) + 1 }
 
+// lastDay is 31 December 4000, the last date FileMaker knows; the first is
+// 1 January 0001, day 1.
+var lastDay = dayNumber(4000, 12, 31)
+
+// checkedDate is the date of a day number, or an error outside the years 1 to
+// 4000, as FileMaker's Date ( 1 ; 1 ; 4001 ) and GetAsDate ( 0 ) are.
+func checkedDate(at int, day int64) (value, error) {
+	if day < 1 || day > lastDay {
+		return empty, errorAt(at, "the date is outside the years 1 to 4000")
+	}
+	return dateValue(day), nil
+}
+
 func dateFunctions() map[string]function {
 	dayOf := func(f func(ev *evaluator, day int64) value) function {
 		return fixed(1, func(ev *evaluator, c callNode, a []value) (value, error) {
@@ -46,12 +59,12 @@ func dateFunctions() map[string]function {
 		})
 	}
 	return map[string]function{
-		"DATE": fixed(3, func(ev *evaluator, _ callNode, a []value) (value, error) {
+		"DATE": fixed(3, func(ev *evaluator, c callNode, a []value) (value, error) {
 			if a[0].isEmpty() && a[1].isEmpty() && a[2].isEmpty() {
 				return empty, nil
 			}
-			return dateValue(dayNumber(int(a[2].asNumber(ev.loc).IntPart()), int(a[0].asNumber(ev.loc).IntPart()),
-				int(a[1].asNumber(ev.loc).IntPart()))), nil
+			return checkedDate(c.at, dayNumber(int(a[2].asNumber(ev.loc).IntPart()), int(a[0].asNumber(ev.loc).IntPart()),
+				int(a[1].asNumber(ev.loc).IntPart())))
 		}),
 		"TIME": fixed(3, func(ev *evaluator, _ callNode, a []value) (value, error) {
 			secs := a[0].asNumber(ev.loc).Mul(decimal.NewFromInt(3600)).

@@ -31,15 +31,20 @@ func conversionFunctions() map[string]function {
 				}
 				day, ok := ev.loc.parseDateIn(a[0].text, ev.now.Year())
 				if !ok {
-					return empty, errorAt(c.at, "%q is not a date", a[0].text)
+					// "01/02/2026 13:00" is the date of that timestamp.
+					secs, isTimestamp := ev.loc.parseTimestamp(a[0].text)
+					if !isTimestamp {
+						return empty, errorAt(c.at, "%q is not a date", a[0].text)
+					}
+					day = floorDiv(secs.Floor().IntPart(), secondsPerDay) + 1
 				}
-				return dateValue(day), nil
+				return checkedDate(c.at, day)
 			}
 			day, ok := a[0].asDay(ev.loc)
 			if !ok {
 				return empty, nil
 			}
-			return dateValue(day), nil
+			return checkedDate(c.at, day)
 		}),
 		"GETASTIME": fixed(1, func(ev *evaluator, c callNode, a []value) (value, error) {
 			if a[0].isEmpty() || a[0].kind == kindText && strings.TrimSpace(a[0].text) == "" {

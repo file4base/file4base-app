@@ -71,7 +71,13 @@ func (l *Locale) orISO() *Locale {
 func (l *Locale) formatNumber(n decimal.Decimal, places int32) string {
 	l = l.orISO()
 	if l.FileMakerNumbers {
-		if s, ok := scientific(n, l.DecimalSeparator); ok {
+		// A value too small to survive the rounding, such as the literal
+		// 0,000000000000000001, is still written, with an exponent.
+		shown := n.Round(max(places, precision))
+		if shown.IsZero() {
+			shown = n
+		}
+		if s, ok := scientific(shown, l.DecimalSeparator); ok {
 			return s
 		}
 	}
@@ -97,39 +103,57 @@ func (l *Locale) formatNumber(n decimal.Decimal, places int32) string {
 	return s
 }
 
-// scientific writes a power of ten whose zeros would be too many to write out,
-// as FileMaker does: 1e20 is "1,0E+20" and 1e-12 "1,0E-12", while
-// 123456789012345678901 and 2^100 are written in full.
+// scientific writes a number with an exponent where FileMaker does: below
+// 1e-9 (1/10000000000 is "1,0E-10", 1/3/1e12 "3,333E-13"), and from 1e19 when
+// it ends in zeros (1e19 is "1,0E+19", 123e18 "1,23E+20"), while
+// 123456789012345678901, 2^100 and 1/3*1e20 are written in full. The number of
+// trailing zeros that tips a large number over is not pinned down beyond
+// lying between 3 and 18; 3 is used.
 func scientific(n decimal.Decimal, sep string) (string, bool) {
+	if n.IsZero() {
+		return "", false
+	}
 	abs := n.Abs()
 	coef := abs.Coefficient()
 	exp := abs.Exponent()
-	// Normalise to coefficient without trailing zeros.
 	ten := big.NewInt(10)
-	for coef.Sign() > 0 {
+	zeros := int32(0)
+	for {
 		q, r := new(big.Int).QuoRem(coef, ten, new(big.Int))
 		if r.Sign() != 0 {
 			break
 		}
-		coef, exp = q, exp+1
+		coef, exp, zeros = q, exp+1, zeros+1
 	}
-	if coef.Cmp(big.NewInt(1)) != 0 || (exp < scientificFrom && exp > -scientificBelow) {
+	digits := coef.String()
+	lead := exp + int32(len(digits)) - 1 // the power of ten of the first digit
+	switch {
+	case lead <= -scientificBelow:
+	case lead >= scientificFrom && exp >= scientificZeros:
+	default:
 		return "", false
+	}
+	mantissa := digits[:1] + sep + digits[1:]
+	if len(digits) == 1 {
+		mantissa += "0"
 	}
 	sign := ""
 	if n.IsNegative() {
 		sign = "-"
 	}
-	return fmt.Sprintf("%s1%s0E%+03d", sign, sep, exp), true
+	return fmt.Sprintf("%s%sE%+03d", sign, mantissa, lead), true
 }
 
 // scientificFrom is the smallest power of ten FileMaker writes with an
-// exponent.
-const scientificFrom = 20
+// exponent; scientificZeros the trailing zeros such a number needs.
+const (
+	scientificFrom  = 19
+	scientificZeros = 3
+)
 
 // scientificBelow is the smallest negative power of ten FileMaker writes
-// with an exponent: 1e-12 is "1,0E-12".
-const scientificBelow = 12
+// with an exponent: 1e-10 is "1,0E-10", 1e-9 ",000000001".
+const scientificBelow = 10
 
 func (l *Locale) formatDate(day int64) string {
 	l = l.orISO()
@@ -274,7 +298,15 @@ func (l *Locale) parseTime(s string) (decimal.Decimal, bool) {
 	negative := strings.HasPrefix(s, "-")
 	s = strings.TrimPrefix(s, "-")
 	parts := strings.Split(s, ":")
-	if len(parts) < 2 || len(parts) > 3 {
+	if len(parts) == 1 {
+		// FileMaker reads a bare whole number as hours: "12" is 12:00:00.
+		h, err := strconv.Atoi(parts[0])
+		if err != nil || h < 0 {
+			return decimal.Zero, false
+		}
+		parts = []string{parts[0], "0"}
+	}
+	if len(parts) > 3 {
 		return decimal.Zero, false
 	}
 	if len(parts) == 2 && strings.Contains(parts[1], l.DecimalSeparator) {
@@ -282,13 +314,15 @@ func (l *Locale) parseTime(s string) (decimal.Decimal, bool) {
 	}
 	h, err1 := strconv.Atoi(parts[0])
 	m, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil || h < 0 || m < 0 || m > 59 {
+	// Minutes and seconds past 59 carry over, as FileMaker's do: "25:61:61"
+	// is 26:02:01.
+	if err1 != nil || err2 != nil || h < 0 || m < 0 {
 		return decimal.Zero, false
 	}
 	secs := decimal.NewFromInt(int64(h*3600 + m*60))
 	if len(parts) == 3 {
 		sec, err := decimal.NewFromString(strings.Replace(parts[2], l.DecimalSeparator, ".", 1))
-		if err != nil || sec.IsNegative() || sec.GreaterThanOrEqual(decimal.NewFromInt(60)) {
+		if err != nil || sec.IsNegative() {
 			return decimal.Zero, false
 		}
 		secs = secs.Add(sec)

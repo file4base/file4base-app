@@ -216,7 +216,13 @@ func (ev *evaluator) evaluateText(c callNode) (value, error) {
 	if strings.TrimSpace(src) == "" {
 		return empty, nil
 	}
-	root, err := parseFormula(src, ev.known, ev.lib, nil)
+	known := ev.known
+	if known != nil {
+		strict := *known
+		strict.strict = true
+		known = &strict
+	}
+	root, err := parseFormula(src, known, ev.lib, nil)
 	if err != nil {
 		return empty, errorAt(c.at, "Evaluate cannot read its formula: %v", err)
 	}
@@ -268,7 +274,8 @@ func textFunctions() map[string]function {
 			return textValue(proper(a[0].asText(ev.loc))), nil
 		}),
 		"TRIM": fixed(1, func(ev *evaluator, _ callNode, a []value) (value, error) {
-			return textValue(strings.Trim(a[0].asText(ev.loc), " ")), nil
+			// FileMaker's Trim removes spaces and no-break spaces.
+			return textValue(strings.Trim(a[0].asText(ev.loc), " \u00a0")), nil
 		}),
 		"TRIMALL": between(1, 3, func(ev *evaluator, _ callNode, a []value) (value, error) {
 			// TrimAll ( text ; trimSpaces ; trimType ): type 3 removes every
@@ -636,7 +643,7 @@ func valueType(ev *evaluator, c callNode, a []value) (int64, bool, error) {
 }
 
 // typedKey is a value read as a number, date, time or timestamp, for sorting.
-// A value that is none sorts first.
+// A value that is none sorts last, as in FileMaker: "2¶10¶x" by number.
 func typedKey(s string, kind int64, loc *Locale) decimal.Decimal {
 	v := textValue(s)
 	var n decimal.Decimal
@@ -654,7 +661,7 @@ func typedKey(s string, kind int64, loc *Locale) decimal.Decimal {
 		n, ok = v.asTimestampSeconds(loc)
 	}
 	if !ok {
-		return decimal.New(-1, 4000)
+		return decimal.New(1, 4000)
 	}
 	return n
 }
@@ -743,8 +750,9 @@ func numberFunctions() map[string]function {
 			return numberValue(x.Div(unit).Truncate(0).Mul(unit)), nil
 		}),
 		"MOD": fixed(2, func(ev *evaluator, c callNode, a []value) (value, error) {
-			if a[0].isEmpty() {
-				return empty, nil
+			// An empty number is 0, an empty divisor has no answer.
+			if a[1].isEmpty() {
+				return empty, errorAt(c.at, "Mod needs a divisor")
 			}
 			x, y := a[0].asNumber(ev.loc), a[1].asNumber(ev.loc)
 			if y.IsZero() {
@@ -758,8 +766,8 @@ func numberFunctions() map[string]function {
 			return numberValue(r), nil
 		}),
 		"DIV": fixed(2, func(ev *evaluator, c callNode, a []value) (value, error) {
-			if a[0].isEmpty() {
-				return empty, nil
+			if a[1].isEmpty() {
+				return empty, errorAt(c.at, "Div needs a divisor")
 			}
 			x, y := a[0].asNumber(ev.loc), a[1].asNumber(ev.loc)
 			if y.IsZero() {
@@ -805,6 +813,7 @@ func numberFunctions() map[string]function {
 			if err != nil || v.kind != kindNumber {
 				return v, err
 			}
+			v.num = v.num.Round(p)
 			v.places = p
 			return v, nil
 		}},
@@ -900,6 +909,9 @@ func decimalLog(x decimal.Decimal, base int64, digits int32) (decimal.Decimal, e
 // power is a ^ b. A whole exponent is exact; any other goes through
 // logarithms to the current precision.
 func power(a, b decimal.Decimal, digits int32) (decimal.Decimal, error) {
+	if b.IsZero() {
+		return decimal.NewFromInt(1), nil // 0 ^ 0 is 1 in FileMaker
+	}
 	if b.IsInteger() && b.Abs().LessThanOrEqual(decimal.NewFromInt(10000)) {
 		if b.IsNegative() {
 			if a.IsZero() {
@@ -981,6 +993,10 @@ func nonEmpty(vals []value) []value {
 func aggregateFunctions() map[string]function {
 	return map[string]function{
 		"SUM": aggregate(func(ev *evaluator, _ callNode, vals []value) (value, error) {
+			// Sum ( "" ; "" ) is empty; Sum over no related record is 0.
+			if len(vals) > 0 && len(nonEmpty(vals)) == 0 {
+				return empty, nil
+			}
 			total := decimal.Zero
 			for _, v := range nonEmpty(vals) {
 				total = total.Add(v.asNumber(ev.loc))

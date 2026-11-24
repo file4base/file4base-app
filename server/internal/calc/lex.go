@@ -84,6 +84,18 @@ type names struct {
 	// decimal is the file's decimal separator: in a French file numbers are
 	// written 1,5 and "," separates nothing else.
 	decimal rune
+	// strict refuses "." as a decimal point where the locale writes ",", as
+	// FileMaker's Evaluate does. A stored formula accepts both, because
+	// FileMaker's own exports write either.
+	strict bool
+}
+
+// point is the other character read as a decimal point besides the locale's.
+func (n *names) point() rune {
+	if n != nil && n.strict {
+		return n.decimalSeparator()
+	}
+	return '.'
 }
 
 func (n *names) decimalSeparator() rune {
@@ -136,9 +148,9 @@ func lex(src string, known *names) ([]token, error) {
 			tokens = append(tokens, token{kind: tokRBracket, text: "]", pos: i})
 			i++
 
-		case isNumberStart(runes, i, known.decimalSeparator()):
+		case isNumberStart(runes, i, known.decimalSeparator(), known.point()):
 			start := i
-			i = scanNumber(runes, i, known.decimalSeparator())
+			i = scanNumber(runes, i, known.decimalSeparator(), known.point())
 			text := string(runes[start:i])
 			if d := known.decimalSeparator(); d != '.' && !strings.Contains(text, ".") {
 				text = strings.Replace(text, string(d), ".", 1)
@@ -419,18 +431,18 @@ func endsName(runes []rune, i int) bool {
 // A "." is read as a decimal point whatever the locale: it means nothing else
 // outside a name, and a formula written on an English system and opened in a
 // French one keeps it (".2").
-func isNumberStart(runes []rune, i int, dec rune) bool {
+func isNumberStart(runes []rune, i int, dec, point rune) bool {
 	ch := runes[i]
 	if ch >= '0' && ch <= '9' {
 		return true
 	}
-	return (ch == dec || ch == '.') && i+1 < len(runes) && runes[i+1] >= '0' && runes[i+1] <= '9'
+	return (ch == dec || ch == point) && i+1 < len(runes) && runes[i+1] >= '0' && runes[i+1] <= '9'
 }
 
-func scanNumber(runes []rune, i int, dec rune) int {
+func scanNumber(runes []rune, i int, dec, point rune) int {
 	seenDot := false
-	for i < len(runes) && (runes[i] >= '0' && runes[i] <= '9' || ((runes[i] == dec || runes[i] == '.') && !seenDot)) {
-		if runes[i] == dec || runes[i] == '.' {
+	for i < len(runes) && (runes[i] >= '0' && runes[i] <= '9' || ((runes[i] == dec || runes[i] == point) && !seenDot)) {
+		if runes[i] == dec || runes[i] == point {
 			seenDot = true
 		}
 		i++
