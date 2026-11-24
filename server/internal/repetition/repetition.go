@@ -329,6 +329,32 @@ func Pack(t dbal.AgnosticFieldType, max int, values map[int]any) (any, error) {
 	return Encode(elements)
 }
 
+// Merge is the companion column content once the given repetitions (from 2,
+// up to max) of a field of type t are written over the stored content raw.
+// The other repetitions keep their stored elements, including those past
+// max, kept from a time the maximum was higher: as in FileMaker, they come
+// back if the maximum is raised again.
+func Merge(t dbal.AgnosticFieldType, max int, raw any, values map[int]any) (any, error) {
+	elements, err := Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	for n, v := range values {
+		if n < 2 || n > max {
+			return nil, fmt.Errorf("%w: repetition %d is outside 2 to %d", ErrInvalid, n, max)
+		}
+		element, err := Normalize(t, v)
+		if err != nil {
+			return nil, fmt.Errorf("repetition %d: %w", n, err)
+		}
+		for len(elements) < n-1 {
+			elements = append(elements, nil)
+		}
+		elements[n-2] = element
+	}
+	return Encode(elements)
+}
+
 // Unpack reads a companion column back: the repetitions from 2 that hold a
 // value, by number, as Read gives them. Repetitions past max are not read.
 func Unpack(t dbal.AgnosticFieldType, max int, raw any) (map[int]any, error) {

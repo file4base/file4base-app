@@ -1708,15 +1708,22 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 		for _, c := range tbl.Columns {
 			types[c.Name] = c.FieldType
 		}
+		companions, err := s.companionColumns(ctx, tbl.Name)
+		if err != nil {
+			return nil, err
+		}
 		names := make([]string, 0, len(tbl.Columns))
 		repeats := map[string]ColumnMetadata{}
 		for _, c := range tbl.Columns {
 			names = append(names, dialect.QuoteIdentifier(c.Name))
-			if c.MaxRepetitions > 1 {
-				// Repetitions 2..N travel as "field[n]" keys, as the data API
-				// returns them, so a restore loses none of them.
-				repeats[c.Name+"[]"] = c
-				names = append(names, dialect.QuoteIdentifier(repetition.Column(c.Name))+" AS "+dialect.QuoteIdentifier(c.Name+"[]"))
+			// Repetitions from 2 travel as "field[n]" keys, as the data API
+			// returns them, so a restore loses none of them, including those
+			// a lowered maximum hides. The companion column is read under its
+			// own name: "$" is in no field name, and an alias "field[]" would
+			// be cut at the identifier limit for a long field name.
+			if companion := repetition.Column(c.Name); companions[companion] {
+				repeats[companion] = c
+				names = append(names, dialect.QuoteIdentifier(companion))
 			}
 		}
 		// Registered fields only, named explicitly (see data.selectList)
@@ -1821,7 +1828,9 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		return nil, fmt.Errorf("failed listing tables: %w", err)
 	}
 	userTables := make(map[string]map[string]dbal.AgnosticFieldType, len(registered))
-	// The repeating fields of each table, by name.
+	// The fields of each table that may carry repetitions, by name: all but
+	// the primary key and summaries, as a field whose maximum was lowered
+	// keeps the repetitions past it.
 	repeating := make(map[string]map[string]ColumnMetadata, len(registered))
 	for _, t := range registered {
 		if dbal.IsReservedTableName(t.Name) {
@@ -1830,7 +1839,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		cols := make(map[string]dbal.AgnosticFieldType, len(t.Columns))
 		for _, c := range t.Columns {
 			cols[c.Name] = c.FieldType
-			if c.MaxRepetitions > 1 {
+			if !c.IsPrimaryKey && c.FieldType != dbal.FieldTypeSummary {
 				if repeating[t.Name] == nil {
 					repeating[t.Name] = map[string]ColumnMetadata{}
 				}
@@ -1839,6 +1848,9 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		}
 		userTables[t.Name] = cols
 	}
+	// Fields that do not repeat now but carry repetitions get their companion
+	// column before the transaction, as a failed statement would abort it.
+	hidden := map[string]map[string]bool{}
 	report := &DataImportReport{DatabaseName: bundle.DatabaseName, SkippedTables: []string{}}
 	tableNames := make([]string, 0, len(bundle.TablesData))
 	// The original texts a record carries (#124), by table and record index.
@@ -1877,8 +1889,16 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 				if _, exists := cols[k]; exists {
 					continue
 				}
-				if base, n, ok := repetition.Split(k); ok && n >= 2 && n <= repeating[tableName][base].MaxRepetitions {
-					continue
+				if base, n, ok := repetition.Split(k); ok && n >= 2 && n <= repetition.Max {
+					if c, known := repeating[tableName][base]; known {
+						if c.MaxRepetitions <= 1 {
+							if hidden[tableName] == nil {
+								hidden[tableName] = map[string]bool{}
+							}
+							hidden[tableName][base] = true
+						}
+						continue
+					}
 				}
 				return nil, fmt.Errorf("record %d of table %s has field '%s', which is not a field of that table", i+1, tableName, k)
 			}
@@ -1894,6 +1914,13 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	if len(containerMetas) > 0 {
 		if err := containermeta.Ensure(ctx, db); err != nil {
 			return nil, err
+		}
+	}
+	for tableName, fields := range hidden {
+		for field := range fields {
+			if _, err := db.ExecContext(ctx, s.addRepetitionsColumnSQL(tableName, field)); err != nil {
+				return nil, fmt.Errorf("failed adding the repetitions of %s.%s: %w", tableName, field, err)
+			}
 		}
 	}
 

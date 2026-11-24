@@ -374,16 +374,23 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 		} else if len(c.path) != 3 {
 			return nil
 		}
+		// A two-byte key is either a field id from 128 up or a (field,
+		// repetition) pair: the first byte is 0x80|field and the second the
+		// repetition. FileMaker writes both the same way, so field 1
+		// repetition 2 and field 386 share the bytes 81 02. A field that
+		// declares that repetition takes the cell; otherwise a field with the
+		// whole id does, and a pair whose field is not known to repeat still
+		// reads as its repetition (joined later), as before.
 		repetition := 1
-		if _, ok := fields[table][fid]; !ok {
-			if keyLen != 2 || fid < 128 {
-				return nil
-			}
+		if keyLen == 2 && fid >= 128 {
 			candidate, rep := (fid-128)>>8, (fid-128)&255
-			if _, ok := fields[table][candidate]; !ok || rep < 1 {
-				return nil
+			_, direct := fields[table][fid]
+			if meta, ok := fields[table][candidate]; ok && rep >= 1 && (!direct || (rep >= 2 && meta.Repetitions >= rep)) {
+				fid, repetition = candidate, rep
 			}
-			fid, repetition = candidate, rep
+		}
+		if _, ok := fields[table][fid]; !ok {
+			return nil
 		}
 		if len(c.path) == 3 && c.kind == 'v' && c.key == 252 {
 			return nil

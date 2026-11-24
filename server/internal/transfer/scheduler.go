@@ -113,6 +113,16 @@ func RunSchedule(
 	if err != nil {
 		return refuse(fmt.Errorf("the destination solution %s is not reachable: %w", destinationDB, err))
 	}
+	// A scheduled run may reach a solution nobody has signed in to since an
+	// upgrade, whose catalog migrations have not run yet.
+	for _, end := range []struct {
+		name   string
+		driver dbal.DatabaseDriver
+	}{{sourceDB, sourceDriver}, {destinationDB, destinationDriver}} {
+		if err := schema.NewService(end.driver).EnsureCatalogCurrent(ctx); err != nil {
+			return refuse(fmt.Errorf("the catalog of the solution %s could not be brought up to date: %w", end.name, err))
+		}
+	}
 
 	sourceAccount, err := ResolveAccount(ctx, sourceDriver, sourceDB, sched.SourceAccount)
 	if err != nil {

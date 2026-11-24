@@ -22,13 +22,12 @@ import (
 //
 // In a fieldSet, a repeating field has a second entry under
 // repetitionsKey(field), whose type carries the maximum: selectList reads the
-// companion column under that name, and rowsToMaps spreads it into the
-// record's "field[n]" keys. Code that only knows plain fields never sees it:
+// companion column, and rowsToMaps spreads it into the record's "field[n]"
+// keys. Code that only knows plain fields never sees it:
 // checkField refuses it, and nothing else names it.
 
-// repetitionsKey is the fieldSet key, and the alias a query reads the
-// companion column under, of a repeating field's repetitions 2 to N. "[]" is
-// in no field name, so it cannot clash with one.
+// repetitionsKey is the fieldSet and record key of a repeating field's
+// repetitions 2 to N. "[]" is in no field name, so it cannot clash with one.
 func repetitionsKey(field string) string { return field + "[]" }
 
 const repeatsPrefix = "REPETITIONS:"
@@ -66,6 +65,19 @@ func (f fieldSet) repeating() map[string]int {
 				out = map[string]int{}
 			}
 			out[strings.TrimSuffix(key, "[]")] = n
+		}
+	}
+	return out
+}
+
+// companionColumns maps the physical companion column of each repeating
+// field, as a query reads it, to its repetitionsKey. "$" is in no field
+// name, so a companion column cannot be taken for a field.
+func (f fieldSet) companionColumns() map[string]string {
+	out := map[string]string{}
+	for key := range f {
+		if f.isInternal(key) {
+			out[repetition.Column(strings.TrimSuffix(key, "[]"))] = key
 		}
 	}
 	return out
@@ -130,7 +142,7 @@ func columnSQL(dialect dbal.Dialect, key string) string {
 	return dialect.QuoteIdentifier(key)
 }
 
-// decodeRepetitions spreads a companion column read under repetitionsKey
+// decodeRepetitions spreads the companion column of repetitionsKey key
 // into the record's "field[n]" keys, the values typed as the field reads.
 // Repetitions past the field's maximum, kept from a time it was higher, are
 // not shown.
@@ -174,24 +186,16 @@ func packRepetitions(
 		return out, nil
 	}
 
-	var current map[string]interface{}
+	var stored map[string]interface{}
 	if id != "" {
 		var err error
-		if current, err = storedRepetitions(ctx, q, dialect, fields, tableName, id, written); err != nil {
+		if stored, err = storedRepetitions(ctx, q, dialect, tableName, id, written); err != nil {
 			return nil, err
 		}
 	}
 	for base, values := range written {
-		max := fields.maxRepetitions(base)
-		all := make(map[int]interface{}, max-1)
-		for n := 2; n <= max; n++ {
-			if value, ok := values[n]; ok {
-				all[n] = value
-			} else if value, ok := current[repetition.Key(base, n)]; ok {
-				all[n] = value
-			}
-		}
-		encoded, err := repetition.Pack(fields[base], max, all)
+		delete(values, 1) // repetition 1 is the field's own column, not the companion's
+		encoded, err := repetition.Merge(fields[base], fields.maxRepetitions(base), stored[base], values)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s.%s: %v", ErrInvalidValue, tableName, base, err)
 		}
@@ -200,10 +204,11 @@ func packRepetitions(
 	return out, nil
 }
 
-// storedRepetitions reads the repetitions the record holds now of the given
-// fields.
+// storedRepetitions reads the companion columns of the given fields as the
+// record holds them now, by field: whole, including repetitions past the
+// current maximum, which an update keeps.
 func storedRepetitions(
-	ctx context.Context, q execer, dialect dbal.Dialect, fields fieldSet, tableName, id string,
+	ctx context.Context, q execer, dialect dbal.Dialect, tableName, id string,
 	of map[string]map[int]interface{},
 ) (map[string]interface{}, error) {
 	bases := make([]string, 0, len(of))
@@ -228,13 +233,11 @@ func storedRepetitions(
 		}
 		return nil, fmt.Errorf("failed reading the repetitions of %s: %w", tableName, err)
 	}
-	current := map[string]interface{}{}
+	stored := make(map[string]interface{}, len(bases))
 	for i, base := range bases {
-		if err := decodeRepetitions(fields, repetitionsKey(base), raw[i], current); err != nil {
-			return nil, err
-		}
+		stored[base] = raw[i]
 	}
-	return current, nil
+	return stored, nil
 }
 
 // splitRepetitionText spreads a value imported into a repeating field over
@@ -251,12 +254,18 @@ func splitRepetitionText(text string, max int) []string {
 
 // joinRepetitionText writes every repetition of a field as one exported
 // cell, the repetitions separated by the group separator as FileMaker
-// exports them; trailing empty repetitions are left out.
-func joinRepetitionText(fieldType dbal.AgnosticFieldType, field string, reps int, row map[string]interface{}) string {
+// exports them; trailing empty repetitions are left out. A repetition kept
+// with its original text (#124) is written as that text.
+func joinRepetitionText(fieldType dbal.AgnosticFieldType, field string, reps int, row map[string]interface{}, originals map[string]string) string {
 	parts := make([]string, reps)
 	last := 0
 	for n := 1; n <= reps; n++ {
-		parts[n-1] = exportText(fieldType, row[repetition.Key(field, n)])
+		key := repetition.Key(field, n)
+		if text, ok := originals[key]; ok {
+			parts[n-1] = text
+		} else {
+			parts[n-1] = exportText(fieldType, row[key])
+		}
 		if parts[n-1] != "" {
 			last = n
 		}

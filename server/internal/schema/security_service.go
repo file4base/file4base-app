@@ -211,6 +211,17 @@ func (s *Service) CountUsers(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// EnsureCatalogCurrent applies the catalog migrations to a database that has
+// a File4Base catalog, and does nothing to one that has none. Login and
+// restore apply them; any other read of a database nobody has signed in to
+// since an upgrade has to apply them first, or the catalog cannot be read.
+func (s *Service) EnsureCatalogCurrent(ctx context.Context) error {
+	if !s.HasSystemCatalog(ctx) {
+		return nil
+	}
+	return s.EnsureSystemTables(ctx)
+}
+
 // HasSystemCatalog reports whether the database already contains the File4Base user catalog.
 func (s *Service) HasSystemCatalog(ctx context.Context) bool {
 	var count int

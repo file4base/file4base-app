@@ -259,7 +259,9 @@ func decodeContainerValues(fields fieldSet, tableName string, record map[string]
 // that with "cached plan must not change result type").
 //
 // A repeating field's other repetitions are read from its companion column,
-// under repetitionsKey (see repetitions.go).
+// under the column's own name, which rowsToMaps maps back to repetitionsKey
+// (see repetitions.go). An alias "field[]" would be cut at the engine's
+// identifier limit for a long field name and clash with the field itself.
 func selectList(dialect dbal.Dialect, fields fieldSet) string {
 	names := make([]string, 0, len(fields))
 	for name := range fields {
@@ -267,11 +269,7 @@ func selectList(dialect dbal.Dialect, fields fieldSet) string {
 	}
 	sort.Strings(names)
 	for i, n := range names {
-		if fields.isInternal(n) {
-			names[i] = columnSQL(dialect, n) + " AS " + dialect.QuoteIdentifier(n)
-			continue
-		}
-		names[i] = dialect.QuoteIdentifier(n)
+		names[i] = columnSQL(dialect, n)
 	}
 	return strings.Join(names, ", ")
 }
@@ -418,12 +416,14 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	if err != nil {
 		return nil, err
 	}
-	delete(updates, "id") // Protect primary key from alteration
 	sourcetext.Strip(updates)
 	containermeta.Strip(updates)
 	if err := normalizeRepetitionKeys(fields, tableName, updates); err != nil {
 		return nil, err
 	}
+	// Protect the primary key from alteration, also when it is sent as its
+	// first repetition, "id[1]", which the line above makes "id".
+	delete(updates, "id")
 	// A summary has no value in a record, so anything sent for one is dropped
 	// before the update is built. It happens here, not further down, so that
 	// an update of summary fields alone is an update of nothing rather than a
@@ -952,6 +952,7 @@ func rowsToMaps(rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, erro
 		return nil, err
 	}
 
+	companions := fields.companionColumns()
 	results := make([]map[string]interface{}, 0)
 	for rows.Next() {
 		colValues := make([]interface{}, len(cols))
@@ -967,8 +968,8 @@ func rowsToMaps(rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, erro
 		rowMap := make(map[string]interface{}, len(cols))
 		for i, colName := range cols {
 			val := colValues[i]
-			if fields.isInternal(colName) {
-				if err := decodeRepetitions(fields, colName, val, rowMap); err != nil {
+			if key, ok := companions[colName]; ok {
+				if err := decodeRepetitions(fields, key, val, rowMap); err != nil {
 					return nil, err
 				}
 				continue

@@ -662,12 +662,12 @@ func (s *Service) ExportRecords(
 		originals, _ := row[sourcetext.Key].(map[string]string)
 		cells := make([]string, len(chosen))
 		for i, field := range chosen {
-			if text, ok := originals[field]; ok {
-				cells[i] = text
+			if reps := fields.maxRepetitions(field); reps > 1 && !opts.FirstRepetitionOnly {
+				cells[i] = joinRepetitionText(fields[field], field, reps, row, originals)
 				continue
 			}
-			if reps := fields.maxRepetitions(field); reps > 1 && !opts.FirstRepetitionOnly {
-				cells[i] = joinRepetitionText(fields[field], field, reps, row)
+			if text, ok := originals[field]; ok {
+				cells[i] = text
 				continue
 			}
 			cells[i] = exportText(fields.typeOf(field), row[field])

@@ -67,11 +67,37 @@ func (s *Service) prepareRepetitionsChange(ctx context.Context, tableID, columnI
 	return nil
 }
 
-// exportRepetitions puts the repetitions 2..N a companion column holds into
-// a data bundle row, under "field[n]", with the type the field's own column
-// has there: a container's bytes, not their base64 text.
+// companionColumns lists the companion columns table physically has. A field
+// whose maximum went down, even to 1, keeps its companion column and the
+// repetitions in it, so a data bundle has to carry them too.
+func (s *Service) companionColumns(ctx context.Context, table string) (map[string]bool, error) {
+	q := `SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name LIKE '%$reps'`
+	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
+		q = `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name LIKE '%$reps'`
+	}
+	rows, err := s.driver.DB().QueryContext(ctx, q, table)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing the repetitions of %s: %w", table, err)
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out[name] = true
+	}
+	return out, rows.Err()
+}
+
+// exportRepetitions puts every repetition from 2 a companion column holds
+// into a data bundle row, under "field[n]", with the type the field's own
+// column has there: a container's bytes, not their base64 text. Repetitions
+// past the field's current maximum, hidden from records, are exported too,
+// so a restore loses none of them.
 func exportRepetitions(row map[string]interface{}, c ColumnMetadata, storage dbal.AgnosticFieldType, raw interface{}) error {
-	values, err := repetition.Unpack(storage, c.MaxRepetitions, raw)
+	values, err := repetition.Unpack(storage, repetition.Max, raw)
 	if err != nil {
 		return fmt.Errorf("the repetitions of %s cannot be read: %w", c.Name, err)
 	}
@@ -89,7 +115,9 @@ func exportRepetitions(row map[string]interface{}, c ColumnMetadata, storage dba
 }
 
 // packBundleRepetitions takes the "field[n]" keys out of a data bundle row
-// and returns each repeating field's companion column content.
+// and returns each field's companion column content. repeating holds every
+// field that may have a companion column: a field whose maximum is lower than
+// the repetitions it carries keeps them, hidden, as it did when exported.
 func packBundleRepetitions(row map[string]interface{}, repeating map[string]ColumnMetadata) (map[string]interface{}, error) {
 	if len(repeating) == 0 {
 		return nil, nil
@@ -118,7 +146,11 @@ func packBundleRepetitions(row map[string]interface{}, repeating map[string]Colu
 	out := make(map[string]interface{}, len(given))
 	for base, values := range given {
 		c := repeating[base]
-		packed, err := repetition.Pack(StorageType(c.FieldType, c.CalculationFormula), c.MaxRepetitions, values)
+		bound := c.MaxRepetitions
+		for n := range values {
+			bound = max(bound, n)
+		}
+		packed, err := repetition.Pack(StorageType(c.FieldType, c.CalculationFormula), bound, values)
 		if err != nil {
 			return nil, fmt.Errorf("field %s: %w", base, err)
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/require"
 )
@@ -137,6 +138,16 @@ func TestRepeatingFields(t *testing.T) {
 		require.ErrorIs(t, err, data.ErrInvalidValue)
 	})
 
+	t.Run("the primary key cannot be changed through a repetition key", func(t *testing.T) {
+		got, err := dataSvc.UpdateRow(ctx, name, id, map[string]interface{}{"id[1]": "another-id", "rate": 7})
+		require.NoError(t, err)
+		require.Equal(t, id, got["id"], `"id[1]" is the primary key, which an update does not change`)
+		_, err = dataSvc.GetRow(ctx, name, "another-id")
+		require.Error(t, err)
+		_, err = dataSvc.UpdateRow(ctx, name, id, map[string]interface{}{"id[2]": "another-id"})
+		require.ErrorIs(t, err, data.ErrUnknownField, "the primary key has no other repetition")
+	})
+
 	t.Run("export writes every repetition separated by the group separator", func(t *testing.T) {
 		table, err := dataSvc.ExportRecords(ctx, name, data.ExportOptions{Fields: []string{"item", "qty", "item[3]"}})
 		require.NoError(t, err)
@@ -145,6 +156,20 @@ func TestRepeatingFields(t *testing.T) {
 		first, err := dataSvc.ExportRecords(ctx, name, data.ExportOptions{Fields: []string{"item"}, FirstRepetitionOnly: true})
 		require.NoError(t, err)
 		require.Equal(t, []string{"screw"}, first.Rows[0])
+
+		// Repetition 1 kept with its original text (#124) is written as that
+		// text, and the other repetitions still follow it.
+		require.NoError(t, sourcetext.Ensure(ctx, driver.DB()))
+		require.NoError(t, sourcetext.Put(ctx, driver.DB(), driver.Dialect(), name, id, map[string]string{"qty": "4,0"}))
+		defer func() {
+			require.NoError(t, sourcetext.ClearFields(ctx, driver.DB(), driver.Dialect(), name, id, []string{"qty"}))
+		}()
+		kept, err := dataSvc.ExportRecords(ctx, name, data.ExportOptions{Fields: []string{"qty"}})
+		require.NoError(t, err)
+		require.Equal(t, []string{"4,0\x1d2.5\x1d1"}, kept.Rows[0])
+		kept, err = dataSvc.ExportRecords(ctx, name, data.ExportOptions{Fields: []string{"qty"}, FirstRepetitionOnly: true})
+		require.NoError(t, err)
+		require.Equal(t, []string{"4,0"}, kept.Rows[0])
 	})
 
 	t.Run("import spreads separated values over the repetitions", func(t *testing.T) {
@@ -170,13 +195,19 @@ func TestRepeatingFields(t *testing.T) {
 		got, err := dataSvc.GetRow(ctx, name, id)
 		require.NoError(t, err)
 		require.NotContains(t, got, "item[3]")
+		// Writing a repetition the field still has keeps the hidden ones.
+		_, err = dataSvc.UpdateRow(ctx, name, id, map[string]interface{}{"item[2]": "nut"})
+		require.NoError(t, err)
 
 		_, err = schemaSvc.UpdateColumn(ctx, tbl.ID, itemCol.ID, schema.UpdateColumnOptions{
 			DisplayName: "item", MaxRepetitions: 3, UpdateRepetitions: true})
 		require.NoError(t, err)
 		got, err = dataSvc.GetRow(ctx, name, id)
 		require.NoError(t, err)
-		require.Equal(t, "washer", got["item[3]"])
+		require.Equal(t, "nut", got["item[2]"])
+		require.Equal(t, "washer", got["item[3]"], "a repetition past a lowered maximum survives an update")
+		_, err = dataSvc.UpdateRow(ctx, name, id, map[string]interface{}{"item[2]": nil})
+		require.NoError(t, err)
 
 		rateCol := findColumn(t, schemaSvc, ctx, tbl.ID, "rate")
 		_, err = schemaSvc.UpdateColumn(ctx, tbl.ID, rateCol.ID, schema.UpdateColumnOptions{
@@ -193,6 +224,17 @@ func TestRepeatingFields(t *testing.T) {
 	})
 
 	t.Run("a data bundle keeps every repetition", func(t *testing.T) {
+		// Repetitions a lowered maximum hides travel too, also when the
+		// maximum is down to 1, and come back when it is raised.
+		itemCol := findColumn(t, schemaSvc, ctx, tbl.ID, "item")
+		rateCol := findColumn(t, schemaSvc, ctx, tbl.ID, "rate")
+		setMax := func(col schema.ColumnMetadata, max int) {
+			_, err := schemaSvc.UpdateColumn(ctx, tbl.ID, col.ID, schema.UpdateColumnOptions{
+				DisplayName: col.Name, MaxRepetitions: max, UpdateRepetitions: true})
+			require.NoError(t, err)
+		}
+		setMax(itemCol, 2)
+		setMax(rateCol, 1)
 		bundle, err := schemaSvc.ExportDatabaseData(ctx, "repetitions")
 		require.NoError(t, err)
 		require.NoError(t, dataSvc.DeleteRow(ctx, name, id))
@@ -200,12 +242,42 @@ func TestRepeatingFields(t *testing.T) {
 		require.NoError(t, err)
 		got, err := dataSvc.GetRow(ctx, name, id)
 		require.NoError(t, err)
+		require.NotContains(t, got, "item[3]")
+		require.NotContains(t, got, "rate[2]")
+		setMax(itemCol, 3)
+		setMax(rateCol, 2)
+		got, err = dataSvc.GetRow(ctx, name, id)
+		require.NoError(t, err)
 		require.Equal(t, "washer", got["item[3]"])
 		require.Equal(t, "1", fmt.Sprint(got["qty[3]"]))
 		require.Equal(t, "9", fmt.Sprint(got["rate[2]"]))
 		due, ok := got["due[2]"].(time.Time)
 		require.True(t, ok)
 		require.Equal(t, "2026-03-01", due.Format("2006-01-02"))
+	})
+
+	t.Run("a field with the longest name keeps its repetitions apart", func(t *testing.T) {
+		long := "f" + strings.Repeat("x", 62) // 63 bytes: "long[]" would be cut back to "long"
+		add(long, dbal.FieldTypeText, 2, nil)
+		_, err := dataSvc.UpdateRow(ctx, name, id, map[string]interface{}{long: "one", long + "[2]": "two"})
+		require.NoError(t, err)
+		got, err := dataSvc.GetRow(ctx, name, id)
+		require.NoError(t, err)
+		require.Equal(t, "one", got[long])
+		require.Equal(t, "two", got[long+"[2]"])
+		for key := range got {
+			require.NotContains(t, key, "$", "the companion column is not a field")
+		}
+
+		bundle, err := schemaSvc.ExportDatabaseData(ctx, "repetitions")
+		require.NoError(t, err)
+		require.NoError(t, dataSvc.DeleteRow(ctx, name, id))
+		_, err = schemaSvc.ImportDatabaseData(ctx, bundle)
+		require.NoError(t, err)
+		got, err = dataSvc.GetRow(ctx, name, id)
+		require.NoError(t, err)
+		require.Equal(t, "one", got[long])
+		require.Equal(t, "two", got[long+"[2]"])
 	})
 
 	t.Run("deleting a repeating field drops its repetitions", func(t *testing.T) {

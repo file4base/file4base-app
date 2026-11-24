@@ -117,3 +117,42 @@ func TestNativeRepetitionsAreMigratedSeparately(t *testing.T) {
 		t.Fatalf("a field not known to repeat keeps its repetitions joined: %q", row["joined"])
 	}
 }
+
+// Field 1 repetition 2 and field 386 are both written 81 02. A field that
+// declares the repetition takes the cell; any other two-byte key keeps its
+// direct field id.
+func TestNativeRepetitionKeyAndWideFieldIDAreTold(t *testing.T) {
+	payload := appendHBAM7TableCatalog(nil, 129, "Samples", []testHBAM7FieldSpec{
+		{id: 1, name: "Reading", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 2, name: "Plain", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 386, name: "Wide", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 390, name: "Wider", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+		{id: 642, name: "Widest", fieldClass: hbamFieldClassNormal, dataType: hbamDataTypeText},
+	})
+	payload = append(payload, 0x28, 0x80, 1, 0x20, 5, 0x20, 1)
+	payload = appendHBAM7Repetition(payload, 1, 1, "first")
+	payload = appendHBAM7Repetition(payload, 1, 2, "second") // 81 02: also field 386
+	payload = appendHBAM7Repetition(payload, 1, 6, "far")    // 81 06: past the maximum, field 390
+	payload = appendHBAM7Repetition(payload, 2, 2, "wide")   // 82 02: Plain does not repeat, field 642
+	payload = append(payload, 0x40, 0x40, 0x40)
+
+	fields := map[int]map[int]htmlFieldMeta{129: {
+		1:   {ColName: "reading", RawName: "Reading", FieldType: "TEXT", Repetitions: 3},
+		2:   {ColName: "plain", RawName: "Plain", FieldType: "TEXT", Repetitions: 1},
+		386: {ColName: "wide", RawName: "Wide", FieldType: "TEXT", Repetitions: 1},
+		390: {ColName: "wider", RawName: "Wider", FieldType: "TEXT", Repetitions: 1},
+		642: {ColName: "widest", RawName: "Widest", FieldType: "TEXT", Repetitions: 1},
+	}}
+	types := map[string]string{"samples.reading": "TEXT", "samples.plain": "TEXT", "samples.wide": "TEXT",
+		"samples.wider": "TEXT", "samples.widest": "TEXT"}
+	rows, _, err := readHBAM7RecordsWith(buildSyntheticHBAM7(payload), map[int]string{129: "samples"}, fields, types,
+		nativeReadOptions{dateOrder: "dmy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := rows["samples"][0]
+	got := fmt.Sprint(row["reading"], "|", row["reading[2]"], "|", row["wide"], "|", row["wider"], "|", row["plain"], "|", row["widest"])
+	if got != "first|second|<nil>|far|<nil>|wide" {
+		t.Fatalf("two-byte keys: %s (row %v)", got, row)
+	}
+}
