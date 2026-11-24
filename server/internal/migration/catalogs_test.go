@@ -2,7 +2,10 @@ package migration
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
 // Original synthetic fixtures: references may carry the same names and IDs as
@@ -176,5 +179,65 @@ func TestNativeFrenchControlFlowNames(t *testing.T) {
 	steps := got.Bundle.Scripts[0].Steps
 	if steps[0].Params["layout_name"] != "Visit Detail" || steps[1].Params["condition"] != "$count = 2" || steps[2].Params["result"] != "42" {
 		t.Fatal("control-flow operands lost")
+	}
+}
+
+// Save a Copy as XML writes a custom list as one <Text>, one value per line
+// with carriage returns, and a field list as <PrimaryField><FieldReference>
+// on a table occurrence; options File4Base cannot reproduce are reported.
+func TestSaveAsXMLValueLists(t *testing.T) {
+	doc := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Colours"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Colours"/><ObjectList><Field id="1" name="Code" datatype="Text" fieldtype="Normal"/><Field id="2" name="Label" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <TableOccurrenceCatalog><TableOccurrence id="7" name="Palette"><BaseTableSourceReference><BaseTableReference id="129" name="Colours"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
+ <ValueListCatalog>
+  <ValueList id="1" name="Sizes"><Source value="Custom"></Source><CustomValues><Text><![CDATA[Small` + "\r" + `Medium` + "\r\r" + `Large]]></Text></CustomValues></ValueList>
+  <ValueList id="2" name="Codes"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><ShowRelated value="False"></ShowRelated></Field></ValueList>
+  <ValueList id="3" name="Labels"><Source value="FromField"></Source><Field><PrimaryField show="False" sort="False"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="True" sort="True"><FieldReference id="2" name="Label"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></SecondaryField><ShowRelated value="True"><TableOccurrenceReference id="7" name="Palette"/></ShowRelated></Field></ValueList>
+  <ValueList id="4" name="Shared"><Source value="External"></Source></ValueList>
+  <ValueList id="5" name="Gone"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="9" name="Deleted"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField></Field></ValueList>
+ </ValueListCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lists := map[string]schema.BundleValueList{}
+	for _, vl := range got.Bundle.ValueLists {
+		lists[vl.Name] = vl
+	}
+	if len(lists) != 3 {
+		t.Fatalf("value lists = %v, want Sizes, Codes and Labels", lists)
+	}
+	if lists["Sizes"].CustomValues != "Small\nMedium\nLarge" {
+		t.Fatalf("custom values = %q", lists["Sizes"].CustomValues)
+	}
+	var code string
+	for _, c := range got.Bundle.Tables[0].Columns {
+		if c.Name == "code" {
+			code = c.ID
+		}
+	}
+	for _, n := range []string{"Codes", "Labels"} {
+		if vl := lists[n]; vl.Kind != "field" || vl.SourceColumnID == nil || *vl.SourceColumnID != code {
+			t.Fatalf("%s not bound to Colours::Code: %+v", n, vl)
+		}
+	}
+	reported := map[string]string{}
+	for _, it := range append(got.Report.Unsupported, got.Report.ManualActionRequired...) {
+		if it.Domain == "value_list" {
+			reported[it.SourceName] = it.Detail
+		}
+	}
+	for _, want := range []struct{ name, text string }{
+		{"Labels", "second field"}, {"Labels", "only related values"},
+		{"Shared", "another FileMaker file"}, {"Gone", "Palette::Deleted"},
+	} {
+		if !strings.Contains(reported[want.name], want.text) {
+			t.Errorf("%s report %q does not mention %q", want.name, reported[want.name], want.text)
+		}
+	}
+	if _, ok := reported["Codes"]; ok {
+		t.Errorf("plain field list reported: %s", reported["Codes"])
 	}
 }

@@ -740,8 +740,10 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// 4. Extract Value Lists
 	vlNodes := catalogDefinitions(root, []string{"ValueListCatalog", "value_lists"}, "ValueList", "value_list")
 	for _, vn := range vlNodes {
-		vl, item := convertValueListNode(vn, tableIDByName, canonicalTableName, colIDByTableCol, fieldNamesByTable)
-		addReportItem(report, item)
+		vl, items := convertValueListNode(vn, tableIDByName, canonicalTableName, occTableByName, colIDByTableCol, fieldNamesByTable)
+		for _, item := range items {
+			addReportItem(report, item)
+		}
 		if vl != nil {
 			bundle.ValueLists = append(bundle.ValueLists, *vl)
 		}
@@ -1490,55 +1492,34 @@ func convertValueListNode(
 	vn *xmlNode,
 	tableIDByName map[string]string,
 	canonicalTableName map[string]string,
+	occTableByName map[string]string,
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
-) (*schema.BundleValueList, ReportItem) {
+) (*schema.BundleValueList, []ReportItem) {
 	name := firstAttr(vn, "name", "Name")
 	if name == "" {
-		return nil, ReportItem{
+		return nil, []ReportItem{{
 			Category:   CategoryRejected,
 			Domain:     "value_list",
 			SourceName: "(unnamed)",
 			Detail:     "Value list without a name was skipped",
-		}
+		}}
 	}
 
 	kind := strings.ToLower(firstAttr(vn, "kind", "source", "type"))
+	if src := findFirstChild(vn, "Source"); src != nil && kind == "" {
+		kind = strings.ToLower(firstAttr(src, "value"))
+	}
+	if kind == "external" {
+		return nil, []ReportItem{{
+			Category:   CategoryManualActionRequired,
+			Domain:     "value_list",
+			SourceName: name,
+			Detail:     fmt.Sprintf("Value list %q uses a value list of another FileMaker file and was skipped; recreate it in Manage Database > Value Lists", name),
+		}}
+	}
 	if kind == "field" || kind == "fromfield" || findFirstChild(vn, "Field") != nil {
-		tblName := firstAttr(vn, "table", "base_table")
-		fldName := firstAttr(vn, "field")
-		if fChild := findFirstChild(vn, "Field"); fChild != nil {
-			if tblName == "" {
-				tblName = firstAttr(fChild, "table")
-			}
-			if fldName == "" {
-				fldName = firstAttr(fChild, "name")
-			}
-		}
-		tID := tableIDByName[strings.ToLower(tblName)]
-		tSQL := canonicalTableName[strings.ToLower(tblName)]
-		column := sanitizeIdentifier(fldName)
-		if names := fieldNamesByTable[tSQL]; names != nil {
-			if resolved, ok := names.resolve(fldName); ok {
-				column = resolved
-			}
-		}
-		cID := colIDByTableCol[tSQL+"."+column]
-		if tID != "" && cID != "" {
-			return &schema.BundleValueList{
-				ID:             uuid.NewString(),
-				Name:           name,
-				Kind:           "field",
-				SourceTableID:  &tID,
-				SourceColumnID: &cID,
-			}, ReportItem{
-				Category:   CategoryPreserved,
-				Domain:     "value_list",
-				SourceName: name,
-				TargetName: name,
-				Detail:     fmt.Sprintf("Dynamic field value list from %s.%s", tblName, fldName),
-			}
-		}
+		return convertFieldValueList(vn, name, tableIDByName, canonicalTableName, occTableByName, colIDByTableCol, fieldNamesByTable)
 	}
 
 	var vals []string
@@ -1552,17 +1533,13 @@ func convertValueListNode(
 			// A FileMaker DDR carries one <Text> child per entry; a design
 			// document written by hand may instead put the whole list in the
 			// element's own character data, one value per line.
+			// FileMaker writes the whole list in one <Text>, one value per
+			// line, with carriage returns.
 			for _, tNode := range findNodes(cv, "Text", "text") {
-				if trimmed := strings.TrimSpace(tNode.Text); trimmed != "" {
-					vals = append(vals, trimmed)
-				}
+				vals = append(vals, splitValueListLines(tNode.Text)...)
 			}
 			if len(vals) == 0 {
-				for _, line := range strings.Split(cv.Text, "\n") {
-					if trimmed := strings.TrimSpace(line); trimmed != "" {
-						vals = append(vals, trimmed)
-					}
-				}
+				vals = splitValueListLines(cv.Text)
 			}
 		}
 	}
@@ -1571,26 +1548,135 @@ func convertValueListNode(
 	// reported here instead of reaching the import and rolling the whole
 	// solution back.
 	if len(vals) == 0 {
-		return nil, ReportItem{
+		return nil, []ReportItem{{
 			Category:   CategoryManualActionRequired,
 			Domain:     "value_list",
 			SourceName: name,
 			Detail:     fmt.Sprintf("Custom value list %q carried no values and was skipped; recreate it in Manage Database > Value Lists", name),
-		}
+		}}
 	}
 
 	return &schema.BundleValueList{
-		ID:           uuid.NewString(),
-		Name:         name,
-		Kind:         "custom",
-		CustomValues: strings.Join(vals, "\n"),
-	}, ReportItem{
+			ID:           uuid.NewString(),
+			Name:         name,
+			Kind:         "custom",
+			CustomValues: strings.Join(vals, "\n"),
+		}, []ReportItem{{
+			Category:   CategoryPreserved,
+			Domain:     "value_list",
+			SourceName: name,
+			TargetName: name,
+			Detail:     fmt.Sprintf("Custom value list with %d entries", len(vals)),
+		}}
+}
+
+// splitValueListLines splits custom values written one per line, with
+// carriage returns (FileMaker) or line feeds, dropping blank lines.
+func splitValueListLines(text string) []string {
+	var vals []string
+	for _, line := range strings.FieldsFunc(text, func(r rune) bool { return r == '\r' || r == '\n' }) {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			vals = append(vals, trimmed)
+		}
+	}
+	return vals
+}
+
+// convertFieldValueList binds a value list that takes its values from a
+// field. A DDR names the field with table and name attributes on <Field>;
+// Save a Copy as XML nests <PrimaryField><FieldReference name> with its
+// table occurrence, and the options File4Base cannot reproduce yet (second
+// field, related values only) are reported rather than silently dropped.
+func convertFieldValueList(
+	vn *xmlNode,
+	name string,
+	tableIDByName map[string]string,
+	canonicalTableName map[string]string,
+	occTableByName map[string]string,
+	colIDByTableCol map[string]string,
+	fieldNamesByTable map[string]*fieldNameMap,
+) (*schema.BundleValueList, []ReportItem) {
+	tblName := firstAttr(vn, "table", "base_table")
+	fldName := firstAttr(vn, "field")
+	fChild := findFirstChild(vn, "Field")
+	var primary, secondary *xmlNode
+	if fChild != nil {
+		if tblName == "" {
+			tblName = firstAttr(fChild, "table")
+		}
+		if fldName == "" {
+			fldName = firstAttr(fChild, "name")
+		}
+		primary = findFirstChild(fChild, "PrimaryField")
+		secondary = findFirstChild(fChild, "SecondaryField")
+	}
+	occName := ""
+	if primary != nil {
+		if ref := findFirstChild(primary, "FieldReference"); ref != nil {
+			fldName = firstAttr(ref, "name")
+			if to := findFirstChild(ref, "TableOccurrenceReference"); to != nil {
+				occName = firstAttr(to, "name")
+			}
+		}
+	}
+	tSQL := canonicalTableName[strings.ToLower(tblName)]
+	if occName != "" || tSQL == "" {
+		if t := occTableByName[strings.ToLower(firstNonEmpty(occName, tblName))]; t != "" {
+			tSQL = t
+		}
+	}
+	tID := tableIDByName[tSQL]
+	column := sanitizeIdentifier(fldName)
+	if names := fieldNamesByTable[tSQL]; names != nil {
+		if resolved, ok := names.resolve(fldName); ok {
+			column = resolved
+		}
+	}
+	cID := colIDByTableCol[tSQL+"."+column]
+	source := firstNonEmpty(occName, tblName) + "::" + fldName
+	if tID == "" || cID == "" {
+		return nil, []ReportItem{{
+			Category:   CategoryManualActionRequired,
+			Domain:     "value_list",
+			SourceName: name,
+			Detail:     fmt.Sprintf("Value list %q takes its values from %s, which was not migrated; recreate it in Manage Database > Value Lists", name, source),
+		}}
+	}
+	items := []ReportItem{{
 		Category:   CategoryPreserved,
 		Domain:     "value_list",
 		SourceName: name,
 		TargetName: name,
-		Detail:     fmt.Sprintf("Custom value list with %d entries", len(vals)),
+		Detail:     fmt.Sprintf("Dynamic field value list from %s", source),
+	}}
+	var lost []string
+	if secondary != nil && isTrue(firstAttr(secondary, "show")) {
+		lost = append(lost, "the values of its second field")
 	}
+	if primary != nil && !isTrue(firstAttr(primary, "show")) && secondary != nil {
+		lost = append(lost, "showing only the second field (it now shows the first)")
+	}
+	if fChild != nil {
+		if rel := findFirstChild(fChild, "ShowRelated"); rel != nil && isTrue(firstAttr(rel, "value")) {
+			lost = append(lost, "including only related values (it now lists every record)")
+		}
+	}
+	if len(lost) > 0 {
+		items = append(items, ReportItem{
+			Category:   CategoryUnsupported,
+			Domain:     "value_list",
+			SourceName: name,
+			TargetName: name,
+			Detail:     fmt.Sprintf("Value list %q lost %s", name, strings.Join(lost, ", ")),
+		})
+	}
+	return &schema.BundleValueList{
+		ID:             uuid.NewString(),
+		Name:           name,
+		Kind:           "field",
+		SourceTableID:  &tID,
+		SourceColumnID: &cID,
+	}, items
 }
 
 func convertLayoutNode(
@@ -2814,4 +2900,18 @@ func coerceDataValue(valStr, fieldType string) interface{} {
 	default:
 		return valStr
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// isTrue reads a FileMaker boolean attribute ("True"/"False").
+func isTrue(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "true")
 }
