@@ -5,6 +5,20 @@ import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+/// Why [text] is not a valid maximum number of repetitions, or null when it
+/// is one: a whole number from 1 to [ColumnModel.repetitionsLimit], as in
+/// FileMaker. A summary field cannot repeat.
+String? repetitionsError(String text, {String fieldType = 'TEXT'}) {
+  final n = int.tryParse(text.trim());
+  if (n == null || n < 1 || n > ColumnModel.repetitionsLimit) {
+    return 'Enter a whole number from 1 to ${ColumnModel.repetitionsLimit}.';
+  }
+  if (n > 1 && fieldType == 'SUMMARY') {
+    return 'A summary field cannot have repetitions.';
+  }
+  return null;
+}
+
 class FieldOptionsDialog extends ConsumerStatefulWidget {
 
   const FieldOptionsDialog({
@@ -84,6 +98,9 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   String _indexingOption = 'all'; // 'none', 'minimal', 'all'
   bool _autoIndex = true;
   String _containerStorage = 'internal'; // 'internal' or 'external'
+  late final TextEditingController _repetitionsController =
+      TextEditingController(text: widget.column.maxRepetitions.toString());
+  String? _repetitionsError;
 
   // --- Calculation & Summary State ---
   final TextEditingController _calculationFormulaController = TextEditingController();
@@ -220,10 +237,18 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     _maxLengthController.dispose();
     _customMessageController.dispose();
     _calculationFormulaController.dispose();
+    _repetitionsController.dispose();
     super.dispose();
   }
 
   Future<void> _handleSave() async {
+    final repetitionsProblem = repetitionsError(_repetitionsController.text, fieldType: widget.column.fieldType);
+    if (repetitionsProblem != null) {
+      setState(() => _repetitionsError = repetitionsProblem);
+      _tabController.animateTo(2);
+      return;
+    }
+    final maxRepetitions = int.parse(_repetitionsController.text.trim());
     setState(() => _isSaving = true);
 
     try {
@@ -302,6 +327,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         updateCalculationFormula: true,
         validationRules: validationRulesJson,
         updateValidationRules: true,
+        maxRepetitions: maxRepetitions != widget.column.maxRepetitions ? maxRepetitions : null,
       );
 
       if (mounted) {
@@ -1017,6 +1043,11 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
             ),
           ),
 
+          if (widget.column.fieldType != 'SUMMARY') ...[
+            const SizedBox(height: 16),
+            _buildRepetitionsSetting(isDark),
+          ],
+
           const SizedBox(height: 16),
 
           // Indexing
@@ -1133,6 +1164,39 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
       .where((c) => c.name != widget.column.name && c.fieldType != 'SUMMARY')
       .where((c) => !SummaryType.needsNumber(_summaryOperation) || c.storageType == 'NUMBER')
       .toList();
+
+  /// FileMaker's "Maximum number of repetitions": a repeating field holds
+  /// that many values, shown one under the other on a layout.
+  Widget _buildRepetitionsSetting(bool isDark) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 10),
+          child: Text('Maximum number of repetitions:', style: TextStyle(fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(width: 12),
+        SizedBox(
+          width: 140,
+          child: TextField(
+            key: const ValueKey('max-repetitions'),
+            controller: _repetitionsController,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              isDense: true,
+              border: const OutlineInputBorder(),
+              errorText: _repetitionsError,
+              errorMaxLines: 3,
+              helperText: '1 to ${ColumnModel.repetitionsLimit}',
+            ),
+            onChanged: (v) => setState(
+              () => _repetitionsError = repetitionsError(v, fieldType: widget.column.fieldType),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildCalculationTab(ThemeData theme, bool isDark) {
     final resultTypes = ['Text', 'Number', 'Date', 'Time', 'Timestamp'];

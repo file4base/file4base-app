@@ -1599,6 +1599,8 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 								UpdateCalculation:  sc.CalculationFormula != nil,
 								ValidationRules:    sc.ValidationRules,
 								UpdateValidation:   sc.ValidationRules != nil,
+								MaxRepetitions:     sc.MaxRepetitions,
+								UpdateRepetitions:  sc.MaxRepetitions > 0,
 							})
 						}
 						continue
@@ -1614,6 +1616,7 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 						DefaultValue:       sc.DefaultValue,
 						CalculationFormula: sc.CalculationFormula,
 						ValidationRules:    sc.ValidationRules,
+						MaxRepetitions:     sc.MaxRepetitions,
 					})
 					if addErr == nil && added != nil {
 						columnsCreated++

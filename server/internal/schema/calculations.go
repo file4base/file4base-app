@@ -313,9 +313,9 @@ func (g *occurrenceGraph) reachableFrom(id string) map[string]bool {
 
 // listColumns reads a table's registered columns.
 func (s *Service) listColumns(ctx context.Context, tableID string) ([]ColumnMetadata, error) {
-	q := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+	q := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
 	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
-		q = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+		q = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
 	}
 	rows, err := s.driver.DB().QueryContext(ctx, q, tableID)
 	if err != nil {
@@ -328,7 +328,7 @@ func (s *Service) listColumns(ctx context.Context, tableID string) ([]ColumnMeta
 		var col ColumnMetadata
 		if err := rows.Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType,
 			&col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula,
-			&col.ValidationRules, &col.CreatedAt); err != nil {
+			&col.ValidationRules, &col.CreatedAt, &col.MaxRepetitions); err != nil {
 			return nil, err
 		}
 		columns = append(columns, col)

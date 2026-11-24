@@ -105,6 +105,32 @@ field sorts and compares.
 
 An empty answer is stored as nothing (SQL `NULL`), not as an empty string.
 
+## Repeating fields
+
+A field can hold up to 32,000 **repetitions** (its *maximum number of
+repetitions*, 1 when it does not repeat), as in FileMaker. Formulas see them
+as FileMaker does:
+
+| Formula | Answer |
+| --- | --- |
+| `Readings[3]`, `GetRepetition ( Readings ; 3 )` | Repetition 3; empty past the field's maximum, and for a field that does not repeat past repetition 1. `Related::Field[2]` reads repetition 2 of the first related record. |
+| `Readings` | Repetition 1, or in a repeating calculation the repetition being computed. |
+| `Sum ( Readings )`, `Count`, `Average`, `Min`, `Max`, `List`, `Last` | Every non-empty repetition of a single repeating field, as if each were an argument. `Sum ( Readings[2] )` is that repetition only. |
+| `Get ( CalculationRepetitionNumber )` | The repetition being computed: 1 in a calculation that does not repeat. |
+| `Extend ( Rate )` | The first repetition of a field that does not repeat, in every repetition of a repeating calculation. |
+
+A **repeating calculation** (a calculation field whose maximum is above 1) is
+evaluated once per repetition. Repetition *n* reads repetition *n* of every
+repeating field it names without an index, and nothing from a field that does
+not repeat unless it is wrapped in `Extend`. Each answer is stored in
+repetition *n* of the field; an unstored one is computed when the record is
+read.
+
+Limits: a related repeating field named without an index inside a repeating
+calculation is empty past repetition 1 (use `Related::Field[n]` or `Extend`);
+an unstored repeating calculation of a related table is computed for
+repetition 1 only when it is read through a relationship.
+
 ## FileMaker compatibility
 
 The engine reads FileMaker's calculation language and gives FileMaker's

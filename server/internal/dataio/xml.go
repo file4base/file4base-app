@@ -285,9 +285,12 @@ func parseFMPXMLResult(root *node, opts Options) (*Table, bool) {
 				if col.Name != "COL" {
 					continue
 				}
-				// A repeating field has several DATA elements; they are joined
-				// one per line, which is how File4Base holds several values in
-				// a field (#31).
+				// A repeating field has one DATA element per repetition; they
+				// are joined with the group separator (0x1D), the character
+				// FileMaker separates repetitions with in tab and CSV files,
+				// so an import can spread them over the field's repetitions
+				// (or, into a field that does not repeat, keep them one per
+				// line as File4Base holds several values in a field, #31).
 				parts := make([]string, 0, 1)
 				for _, dataNode := range col.Children {
 					if dataNode.Name == "DATA" {
@@ -296,7 +299,7 @@ func parseFMPXMLResult(root *node, opts Options) (*Table, bool) {
 						parts = append(parts, dataNode.RawText)
 					}
 				}
-				values = append(values, strings.Join(parts, "\n"))
+				values = append(values, strings.Join(parts, "\x1d"))
 			}
 			rows = append(rows, values)
 		}

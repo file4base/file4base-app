@@ -15,6 +15,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/msgpackguard"
+	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
@@ -54,6 +55,9 @@ type BundleColumn struct {
 	DefaultValue       *string `msgpack:"default_value,omitempty"`
 	CalculationFormula *string `msgpack:"calculation_formula,omitempty"`
 	ValidationRules    *string `msgpack:"validation_rules,omitempty"`
+	// MaxRepetitions is absent for a field that does not repeat, so bundles
+	// written before repeating fields read as they always did.
+	MaxRepetitions int `msgpack:"max_repetitions,omitempty"`
 }
 
 type BundleTable struct {
@@ -416,11 +420,15 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	for _, t := range tables {
 		bt := BundleTable{ID: t.ID, Name: t.Name, DisplayName: t.DisplayName, Description: t.Description}
 		for _, c := range t.Columns {
-			bt.Columns = append(bt.Columns, BundleColumn{
+			col := BundleColumn{
 				ID: c.ID, Name: c.Name, DisplayName: c.DisplayName, FieldType: string(c.FieldType),
 				IsNullable: c.IsNullable, IsPrimaryKey: c.IsPrimaryKey,
 				DefaultValue: c.DefaultValue, CalculationFormula: c.CalculationFormula, ValidationRules: c.ValidationRules,
-			})
+			}
+			if c.MaxRepetitions > 1 {
+				col.MaxRepetitions = c.MaxRepetitions
+			}
+			bt.Columns = append(bt.Columns, col)
 		}
 		b.Tables = append(b.Tables, bt)
 	}
@@ -735,6 +743,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				col, err := s.addColumn(ctx, dstID, ColumnMetadata{
 					Name: cname, DisplayName: c.DisplayName, FieldType: dbal.AgnosticFieldType(c.FieldType), IsNullable: c.IsNullable,
 					DefaultValue: c.DefaultValue, CalculationFormula: c.CalculationFormula, ValidationRules: c.ValidationRules,
+					MaxRepetitions: c.MaxRepetitions,
 				}, true)
 				if err != nil {
 					return nil, rollback(fmt.Errorf("adding field %s to table %s: %w", cname, name, err))
@@ -1700,8 +1709,15 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 			types[c.Name] = c.FieldType
 		}
 		names := make([]string, 0, len(tbl.Columns))
+		repeats := map[string]ColumnMetadata{}
 		for _, c := range tbl.Columns {
 			names = append(names, dialect.QuoteIdentifier(c.Name))
+			if c.MaxRepetitions > 1 {
+				// Repetitions 2..N travel as "field[n]" keys, as the data API
+				// returns them, so a restore loses none of them.
+				repeats[c.Name+"[]"] = c
+				names = append(names, dialect.QuoteIdentifier(repetition.Column(c.Name))+" AS "+dialect.QuoteIdentifier(c.Name+"[]"))
+			}
 		}
 		// Registered fields only, named explicitly (see data.selectList)
 		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s`, strings.Join(names, ", "), dialect.QuoteIdentifier(tbl.Name)))
@@ -1726,6 +1742,13 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 			}
 			row := make(map[string]interface{}, len(cols))
 			for i, name := range cols {
+				if c, ok := repeats[name]; ok {
+					if err := exportRepetitions(row, c, StorageType(c.FieldType, c.CalculationFormula), vals[i]); err != nil {
+						rows.Close()
+						return nil, fmt.Errorf("failed reading a record of %s: %w", tbl.Name, err)
+					}
+					continue
+				}
 				if b, ok := vals[i].([]byte); ok && types[name] == dbal.FieldTypeNumber {
 					row[name] = dbal.TrimNumericText(string(b))
 				} else if b, ok := vals[i].([]byte); ok && types[name] != dbal.FieldTypeContainer {
@@ -1798,6 +1821,8 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		return nil, fmt.Errorf("failed listing tables: %w", err)
 	}
 	userTables := make(map[string]map[string]dbal.AgnosticFieldType, len(registered))
+	// The repeating fields of each table, by name.
+	repeating := make(map[string]map[string]ColumnMetadata, len(registered))
 	for _, t := range registered {
 		if dbal.IsReservedTableName(t.Name) {
 			continue
@@ -1805,6 +1830,12 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		cols := make(map[string]dbal.AgnosticFieldType, len(t.Columns))
 		for _, c := range t.Columns {
 			cols[c.Name] = c.FieldType
+			if c.MaxRepetitions > 1 {
+				if repeating[t.Name] == nil {
+					repeating[t.Name] = map[string]ColumnMetadata{}
+				}
+				repeating[t.Name][c.Name] = c
+			}
 		}
 		userTables[t.Name] = cols
 	}
@@ -1843,9 +1874,13 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 				containerMetas[tableName][i] = cm
 			}
 			for k := range row {
-				if _, exists := cols[k]; !exists {
-					return nil, fmt.Errorf("record %d of table %s has field '%s', which is not a field of that table", i+1, tableName, k)
+				if _, exists := cols[k]; exists {
+					continue
 				}
+				if base, n, ok := repetition.Split(k); ok && n >= 2 && n <= repeating[tableName][base].MaxRepetitions {
+					continue
+				}
+				return nil, fmt.Errorf("record %d of table %s has field '%s', which is not a field of that table", i+1, tableName, k)
 			}
 		}
 	}
@@ -1883,7 +1918,11 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			if err := checker.Check(ctx, fmt.Sprint(row["id"]), row, nil, false); err != nil {
 				return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
 			}
-			colNames := make([]string, 0, len(row))
+			companions, err := packBundleRepetitions(row, repeating[tableName])
+			if err != nil {
+				return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
+			}
+			colNames := make([]string, 0, len(row)+len(companions))
 			placeholders := make([]string, 0, len(row))
 			vals := make([]interface{}, 0, len(row))
 			idx := 1
@@ -1896,6 +1935,12 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 					}
 				}
 				colNames = append(colNames, dialect.QuoteIdentifier(k))
+				placeholders = append(placeholders, dialect.Placeholder(idx))
+				vals = append(vals, v)
+				idx++
+			}
+			for field, v := range companions {
+				colNames = append(colNames, dialect.QuoteIdentifier(repetition.Column(field)))
 				placeholders = append(placeholders, dialect.Placeholder(idx))
 				vals = append(vals, v)
 				idx++

@@ -11,6 +11,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
@@ -84,7 +85,11 @@ type ColumnMetadata struct {
 	DefaultValue       *string                `json:"default_value,omitempty"`
 	CalculationFormula *string                `json:"calculation_formula,omitempty"`
 	ValidationRules    *string                `json:"validation_rules,omitempty"`
-	CreatedAt          time.Time              `json:"created_at"`
+	// MaxRepetitions is how many values the field holds, as a FileMaker
+	// repeating field does: 1 for a field that does not repeat (see the
+	// repetition package for how the others are stored).
+	MaxRepetitions int       `json:"max_repetitions"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // RelationshipMetadata represents an occurrence join in sys_relationships.
@@ -154,9 +159,12 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			default_value TEXT,
 			calculation_formula TEXT,
 			validation_rules TEXT,
+			max_repetitions INT NOT NULL DEFAULT 1,
 			created_at ` + ts + `,
 			CONSTRAINT uq_table_column UNIQUE (table_id, name)
 		);`,
+		// Repeating fields (see migrations/003_repeating_fields.sql).
+		`ALTER TABLE sys_columns ADD COLUMN IF NOT EXISTS max_repetitions INT NOT NULL DEFAULT 1;`,
 		`CREATE TABLE IF NOT EXISTS sys_table_occurrences (
 			id VARCHAR(36) PRIMARY KEY,
 			base_table_id VARCHAR(36) NOT NULL REFERENCES sys_tables(id) ON DELETE CASCADE,
@@ -618,6 +626,15 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
 	}
+	if col.MaxRepetitions == 0 {
+		col.MaxRepetitions = 1
+	}
+	if err := checkRepetitions(col.FieldType, col.MaxRepetitions); err != nil {
+		return nil, err
+	}
+	if col.MaxRepetitions > 1 && col.IsPrimaryKey {
+		return nil, fmt.Errorf("%w: the primary key cannot have repetitions", ErrInvalidFieldOptions)
+	}
 
 	// Retrieve target table name
 	db := s.driver.DB()
@@ -681,12 +698,18 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 		return nil, fmt.Errorf("failed executing DDL alter table: %w", err)
 	}
 
-	// Insert into sys_columns
-	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if col.MaxRepetitions > 1 {
+		if _, err := tx.ExecContext(ctx, s.addRepetitionsColumnSQL(tableName, col.Name)); err != nil {
+			return nil, fmt.Errorf("failed adding the repetitions of %s: %w", col.Name, err)
+		}
 	}
-	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt); err != nil {
+
+	// Insert into sys_columns
+	insertColSQL := `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	if dialect.Engine() == dbal.EngineMariaDB {
+		insertColSQL = `INSERT INTO sys_columns (id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	}
+	if _, err := tx.ExecContext(ctx, insertColSQL, col.ID, col.TableID, col.Name, col.DisplayName, string(col.FieldType), col.IsNullable, col.IsPrimaryKey, col.DefaultValue, col.CalculationFormula, col.ValidationRules, col.CreatedAt, col.MaxRepetitions); err != nil {
 		return nil, fmt.Errorf("failed registering column in sys_columns: %w", err)
 	}
 	if err := s.syncUniqueIndex(ctx, tx, tableName, col.Name, col.FieldType, rules); err != nil {
@@ -843,6 +866,12 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	if _, err := tx.ExecContext(ctx, dropSQL); err != nil {
 		return fmt.Errorf("failed dropping column from physical table: %w", err)
 	}
+	// The repetitions go with the field. The column exists only for a field
+	// that repeats, or did once, hence IF EXISTS.
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN IF EXISTS %s",
+		dialect.QuoteIdentifier(tableName), dialect.QuoteIdentifier(repetition.Column(colName)))); err != nil {
+		return fmt.Errorf("failed dropping the repetitions of %s: %w", colName, err)
+	}
 	if err := sourcetext.DeleteField(ctx, tx, dialect, tableName, colName); err != nil {
 		return err
 	}
@@ -870,6 +899,11 @@ type UpdateColumnOptions struct {
 	UpdateCalculation  bool
 	ValidationRules    *string
 	UpdateValidation   bool
+	// MaxRepetitions changes how many repetitions the field has. Fewer keeps
+	// the values of the repetitions beyond the new maximum, hidden, as
+	// FileMaker does: raising it again shows them.
+	MaxRepetitions    int
+	UpdateRepetitions bool
 }
 
 // UpdateColumn updates a column's metadata (e.g. display name, options)
@@ -902,12 +936,22 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 		}
 	}
 
+	if opts.UpdateRepetitions {
+		if err := s.prepareRepetitionsChange(ctx, tableID, columnID, opts.MaxRepetitions); err != nil {
+			return nil, err
+		}
+	}
+
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
 	if dialect.Engine() == dbal.EngineMariaDB {
 		sets := []string{"display_name = ?"}
 		args := []interface{}{opts.DisplayName}
+		if opts.UpdateRepetitions {
+			sets = append(sets, "max_repetitions = ?")
+			args = append(args, opts.MaxRepetitions)
+		}
 		if opts.UpdateDefaultValue {
 			sets = append(sets, "default_value = ?")
 			args = append(args, opts.DefaultValue)
@@ -927,8 +971,8 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 			return nil, err
 		}
 		var col ColumnMetadata
-		qGet := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at FROM sys_columns WHERE id = ?`
-		if err := db.QueryRowContext(ctx, qGet, columnID).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
+		qGet := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions FROM sys_columns WHERE id = ?`
+		if err := db.QueryRowContext(ctx, qGet, columnID).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt, &col.MaxRepetitions); err != nil {
 			return nil, err
 		}
 		if retype != nil {
@@ -942,6 +986,11 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 	sets := []string{"display_name = $1"}
 	args := []interface{}{opts.DisplayName}
 	argIdx := 2
+	if opts.UpdateRepetitions {
+		sets = append(sets, fmt.Sprintf("max_repetitions = $%d", argIdx))
+		args = append(args, opts.MaxRepetitions)
+		argIdx++
+	}
 	if opts.UpdateDefaultValue {
 		sets = append(sets, fmt.Sprintf("default_value = $%d", argIdx))
 		args = append(args, opts.DefaultValue)
@@ -959,11 +1008,11 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 	}
 	args = append(args, columnID, tableID)
 
-	q := fmt.Sprintf(`UPDATE sys_columns SET %s WHERE id = $%d AND table_id = $%d RETURNING id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at`,
+	q := fmt.Sprintf(`UPDATE sys_columns SET %s WHERE id = $%d AND table_id = $%d RETURNING id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions`,
 		strings.Join(sets, ", "), argIdx, argIdx+1)
 
 	var col ColumnMetadata
-	if err := db.QueryRowContext(ctx, q, args...).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt); err != nil {
+	if err := db.QueryRowContext(ctx, q, args...).Scan(&col.ID, &col.TableID, &col.Name, &col.DisplayName, &col.FieldType, &col.IsNullable, &col.IsPrimaryKey, &col.DefaultValue, &col.CalculationFormula, &col.ValidationRules, &col.CreatedAt, &col.MaxRepetitions); err != nil {
 		return nil, err
 	}
 	if retype != nil {
@@ -994,9 +1043,9 @@ func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
 
 	// Fetch columns for each table
 	for i := range tables {
-		colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+		colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
 		if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
-			colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+			colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
 		}
 		cRows, err := db.QueryContext(ctx, colQuery, tables[i].ID)
 		if err != nil {
@@ -1007,7 +1056,7 @@ func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
 		for cRows.Next() {
 			var c ColumnMetadata
 			var fType string
-			if err := cRows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt); err != nil {
+			if err := cRows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions); err != nil {
 				cRows.Close()
 				return nil, err
 			}
@@ -1129,9 +1178,9 @@ func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMet
 	}
 
 	// 2. Fetch columns of the original table (excluding PK)
-	colQuery := `SELECT name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+	colQuery := `SELECT name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, max_repetitions FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		colQuery = `SELECT name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+		colQuery = `SELECT name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, max_repetitions FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
 	}
 	cRows, err := db.QueryContext(ctx, colQuery, tableID)
 	if err != nil {
@@ -1143,12 +1192,13 @@ func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMet
 		name, displayName, fieldType               string
 		isNullable, isPrimaryKey                   bool
 		defaultValue, calcFormula, validationRules *string
+		maxRepetitions                             int
 	}
 	var cols []srcCol
 	for cRows.Next() {
 		var c srcCol
 		var fType string
-		if err := cRows.Scan(&c.name, &c.displayName, &fType, &c.isNullable, &c.isPrimaryKey, &c.defaultValue, &c.calcFormula, &c.validationRules); err != nil {
+		if err := cRows.Scan(&c.name, &c.displayName, &fType, &c.isNullable, &c.isPrimaryKey, &c.defaultValue, &c.calcFormula, &c.validationRules, &c.maxRepetitions); err != nil {
 			return nil, err
 		}
 		c.fieldType = fType
@@ -1186,6 +1236,7 @@ func (s *Service) DuplicateTable(ctx context.Context, tableID string) (*TableMet
 			DefaultValue:       c.defaultValue,
 			CalculationFormula: c.calcFormula,
 			ValidationRules:    c.validationRules,
+			MaxRepetitions:     c.maxRepetitions,
 		})
 		if err != nil {
 			if delErr := s.DeleteTable(ctx, newTbl.ID); delErr != nil {

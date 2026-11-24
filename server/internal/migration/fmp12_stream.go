@@ -17,6 +17,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/repetition"
 )
 
 var reSourceNumericLiteral = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
@@ -501,48 +502,60 @@ func readHBAM7RecordsWith(source []byte, tables map[int]string, fields map[int]m
 					}
 					values[rep] = value
 				}
-				text := strings.Join(values, "\x1d")
-				var err error
-				if text == "" {
-					continue
+				// A repeating field keeps each repetition under its own key,
+				// typed on its own; a field that does not repeat (or a design
+				// report that does not say) gets them joined, as before.
+				if meta.Repetitions <= 1 {
+					values = []string{strings.Join(values, "\x1d")}
+				} else if len(values) > meta.Repetitions {
+					values = values[:meta.Repetitions]
 				}
-				if !rawValues && strings.ContainsRune(text, 0) {
-					if opts.locale == nil || opts.nulStripped == nil {
-						issues["NUL_TEXT"]++
-						continue
-					}
-					text = strings.ReplaceAll(text, "\x00", "")
-					*opts.nulStripped++
+				for rep, text := range values {
+					key := repetition.Key(meta.ColName, rep+1)
 					if text == "" {
 						continue
 					}
-				}
-				var value interface{}
-				switch {
-				case kind == "TEXT" || kind == "":
-					value = text
-				case opts.locale != nil && !rawValues:
-					var original string
-					order := data.DateOrder(strings.ToLower(dateOrder))
-					if order == "" {
-						order = opts.locale.DateOrder
+					if !rawValues && strings.ContainsRune(text, 0) {
+						if opts.locale == nil || opts.nulStripped == nil {
+							issues["NUL_TEXT"]++
+							continue
+						}
+						text = strings.ReplaceAll(text, "\x00", "")
+						*opts.nulStripped++
+						if text == "" {
+							continue
+						}
 					}
-					value, original, err = interpretSourceValue(text, kind, opts.locale, order)
-					if errors.Is(err, errSourceRepetitions) {
-						issues["REPETITIONS"]++
+					var value interface{}
+					var err error
+					switch {
+					case kind == "TEXT" || kind == "":
+						value = text
+					case opts.locale != nil && !rawValues:
+						var original string
+						order := data.DateOrder(strings.ToLower(dateOrder))
+						if order == "" {
+							order = opts.locale.DateOrder
+						}
+						value, original, err = interpretSourceValue(text, kind, opts.locale, order)
+						if errors.Is(err, errSourceRepetitions) {
+							issues["REPETITIONS"]++
+							continue
+						}
+						// The original text is kept for the first repetition
+						// only: the store of original texts (#124) is by field.
+						if err == nil && original != "" && rep == 0 {
+							addSourceText(row, meta.ColName, original)
+						}
+					default:
+						value, err = coerceNativeValue(text, kind, dateOrder)
+					}
+					if err != nil {
+						issues[kind]++
 						continue
 					}
-					if err == nil && original != "" {
-						addSourceText(row, meta.ColName, original)
-					}
-				default:
-					value, err = coerceNativeValue(text, kind, dateOrder)
+					row[key] = value
 				}
-				if err != nil {
-					issues[kind]++
-					continue
-				}
-				row[meta.ColName] = value
 			}
 			out[tables[table]] = append(out[tables[table]], row)
 		}

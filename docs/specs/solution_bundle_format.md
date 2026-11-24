@@ -39,7 +39,7 @@ Golden fixtures produced by each side are read by the other side's tests:
 
 **table**: `id`, `name`, `display_name`, `description`, `columns` (array of column).
 
-**column**: `id`, `name`, `display_name`, `field_type`, `is_nullable`, `is_primary_key`, and the optional strings `default_value` (field options JSON), `calculation_formula`, `validation_rules`.
+**column**: `id`, `name`, `display_name`, `field_type`, `is_nullable`, `is_primary_key`, and the optional strings `default_value` (field options JSON), `calculation_formula`, `validation_rules`, and `max_repetitions` (integer, written only when above 1).
 
 **occurrence**: `id`, `base_table_id`, `name`, `x_pos`, `y_pos`.
 
@@ -94,6 +94,8 @@ Legacy `1.0` bundles exported by older servers (PascalCase keys and MessagePack 
 | `tables_data` | map | table name → array of records (field name → value) |
 
 Values keep their type: text is a string, CONTAINER fields are MessagePack **binary** (byte-exact), numbers and booleans are native, dates and timestamps are MessagePack timestamps.
+
+A repeating field's repetition *n* (from 2) is a key `"field[n]"` of the record, typed as the field's own values, so a bundle carries every repetition losslessly. A key past the field's maximum in the destination is refused.
 
 `POST /api/v1/solutions/import-data` restores records in **one transaction**: every table and field is validated first, then all rows are inserted, and the first failing row rolls everything back and is reported with its table and position. A record whose `id` already exists is skipped, not overwritten. Tables of the file that are not in the destination are reported in `skipped_tables`. The response counts `records_inserted` and `records_skipped` (records_count equals records_inserted).
 

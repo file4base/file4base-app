@@ -161,6 +161,7 @@ func (r *relatedReader) fill(ctx context.Context, tableName string, rows []map[s
 			key := tableName + "\x00" + fmt.Sprint(row["id"]) + "\x00" + c.field
 			if v, done := r.values[key]; done {
 				row[c.field] = v
+				r.restoreRepetitions(key, c, row)
 				continue
 			}
 			if r.computing[key] || r.depth > maxRelatedDepth {
@@ -169,7 +170,7 @@ func (r *relatedReader) fill(ctx context.Context, tableName string, rows []map[s
 			}
 			r.computing[key] = true
 			env := &unstoredContext{
-				RecordContext: calc.RecordContext{Record: c.typedRecord(row)},
+				RecordContext: c.recordContext(row),
 				reader:        r, ctx: ctx, table: tableName, occurrence: c.occurrence, row: row,
 			}
 			answer, err := calc.EvaluateWith(c.expr, env, c.result)
@@ -181,6 +182,7 @@ func (r *relatedReader) fill(ctx context.Context, tableName string, rows []map[s
 			}
 			row[c.field] = answer
 			r.values[key] = answer
+			r.fillRepetitions(key, c, env, row)
 		}
 	}
 	return nil
@@ -255,7 +257,7 @@ func (r *relatedReader) related(
 	if err != nil {
 		return nil, err
 	}
-	if err := checkField(fields, to.table, field); err != nil {
+	if err := checkValueKey(fields, to.table, field); err != nil {
 		return nil, err
 	}
 
@@ -275,7 +277,7 @@ func (r *relatedReader) related(
 	}
 	out := make([]any, len(rows))
 	for i, rel := range rows {
-		out[i] = calc.Typed(resultTypeOf(fields[field]), rel[field])
+		out[i] = calc.Typed(resultTypeOf(fields.typeOf(field)), rel[field])
 	}
 	return out, nil
 }

@@ -164,6 +164,9 @@ func (ev *evaluator) currentTimestamp() value {
 // get answers Get ( Selector ): the context first, then what the engine knows
 // itself — the clock and a new UUID.
 func (ev *evaluator) get(t getNode) (value, error) {
+	if t.selector == "CALCULATIONREPETITIONNUMBER" {
+		return intValue(int64(max(ev.rep, 1))), nil
+	}
 	raw, err := ev.ctx.Get(t.selector)
 	if err == nil {
 		return fromStored(raw), nil
@@ -187,8 +190,6 @@ func (ev *evaluator) get(t getNode) (value, error) {
 		var b [8]byte
 		_, _ = rand.Read(b[:])
 		return numberValue(decimal.NewFromBigInt(new(bigInt).SetBytes(b[:]), 0)), nil
-	case "CALCULATIONREPETITIONNUMBER":
-		return intValue(1), nil
 	case "SELF":
 		return empty, errorAt(t.at, "Self is only known where the formula belongs to a layout object or a field")
 	case "SYSTEMPLATFORM":

@@ -86,6 +86,11 @@ refused with a reason rather than ignored.
 Calculations **are** worked out for imported records, so an imported row
 arrives with the same computed fields a typed one would have.
 
+A **repeating field** takes its repetitions from one cell, separated by the
+group separator (0x1D) as FileMaker writes them; each is read as the field's
+type, and values past the field's maximum are dropped. In a field that does
+not repeat, the separators become line breaks.
+
 ## One transaction
 
 The first row that cannot be read or stored takes the whole file with it, and
@@ -103,6 +108,11 @@ validation rules apply as they do to any other write.
 **File > Export Records** writes the found set, or the whole table. CSV,
 tab-separated text, JSON, XML and HTML are written by the client; an **Excel
 workbook** is written by the server, which is the one format needing a library.
+
+A repeating field is written as one cell, its repetitions separated by the
+group separator (0x1D) and trailing empty ones left out, as FileMaker exports
+them; *Export only the first repetition* writes repetition 1 alone. A JSON
+export keeps each repetition under its own key (`field[2]`).
 
 A date is written as a date rather than as the timestamp the column holds, and
 a CSV is given a byte order mark so Excel opens it as UTF-8 and accented names

@@ -13,6 +13,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/dataio"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
 	"github.com/file4base/file4base-app/server/internal/validation"
 	"github.com/google/uuid"
@@ -244,7 +245,7 @@ func (s *Service) checkImportOptions(
 			return nil, fmt.Errorf("%w: the file has no column %d", ErrImport, mapping.Column+1)
 		}
 		fieldType, known := fields[field]
-		if !known {
+		if !known || fields.isInternal(field) {
 			return nil, fmt.Errorf("%w: %s has no field named %q", ErrImport, tableName, field)
 		}
 		if seen[field] {
@@ -351,12 +352,24 @@ func (s *Service) ImportRecords(
 			if field == "" {
 				continue
 			}
-			value, err := coerce(fields[field], source.Cell(i, mapping.Column), opts.DateOrder)
-			if err != nil {
-				column := source.Columns[mapping.Column]
-				return nil, importError(rowNumber, column, source.Cell(i, mapping.Column), err.Error())
+			cell := source.Cell(i, mapping.Column)
+			parts := []string{cell}
+			if reps := fields.maxRepetitions(field); reps > 1 {
+				parts = splitRepetitionText(cell, reps)
+			} else {
+				// Several repetitions sent to a field that does not repeat
+				// are kept one per line, as File4Base keeps several values
+				// in a field (#31).
+				parts[0] = strings.ReplaceAll(cell, "\x1d", "\n")
 			}
-			record[field] = value
+			for n, part := range parts {
+				value, err := coerce(fields[field], part, opts.DateOrder)
+				if err != nil {
+					column := source.Columns[mapping.Column]
+					return nil, importError(rowNumber, column, cell, err.Error())
+				}
+				record[repetition.Key(field, n+1)] = value
+			}
 		}
 
 		if opts.Action == ImportUpdateMatching {
@@ -377,7 +390,11 @@ func (s *Service) ImportRecords(
 				if err := checker.Check(ctx, id, record, nil, false); err != nil {
 					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 				}
-				if err := updateInTx(ctx, tx, dialect, tableName, id, record); err != nil {
+				writes, err := packRepetitions(ctx, tx, dialect, fields, tableName, id, record)
+				if err != nil {
+					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+				}
+				if err := updateInTx(ctx, tx, dialect, tableName, id, writes); err != nil {
 					return nil, fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
 				}
 				updatedFields := make([]string, 0, len(record))
@@ -407,7 +424,11 @@ func (s *Service) ImportRecords(
 		if err := checker.Check(ctx, id, record, nil, false); err != nil {
 			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
-		if err := insertInTx(ctx, tx, dialect, tableName, record); err != nil {
+		writes, err := packRepetitions(ctx, tx, dialect, fields, tableName, "", record)
+		if err != nil {
+			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+		}
+		if err := insertInTx(ctx, tx, dialect, tableName, writes); err != nil {
 			return nil, fmt.Errorf("%w: row %d could not be added: %v", ErrImport, rowNumber, err)
 		}
 		report.Added++
@@ -469,16 +490,19 @@ func applyCalculationsForUpdate(
 
 	for _, c := range calculations {
 		if c.unstored {
-			delete(record, c.field) // computed when read, never stored
+			c.clear(record) // computed when read, never stored
+			delete(record, c.field)
 			continue
 		}
-		answer, err := c.evaluate(merged)
+		answers, err := c.evaluate(merged)
 		if err != nil {
 			return fmt.Errorf("%w: the formula of %q could not be computed: %s",
 				ErrInvalidValue, c.field, err.Error())
 		}
-		merged[c.field] = answer
-		record[c.field] = answer
+		for key, answer := range answers {
+			merged[key] = answer
+			record[key] = answer
+		}
 	}
 	return nil
 }
@@ -527,7 +551,7 @@ func insertInTx(
 	values := make([]interface{}, 0, len(record))
 	i := 1
 	for field, value := range record {
-		columns = append(columns, dialect.QuoteIdentifier(field))
+		columns = append(columns, columnSQL(dialect, field))
 		placeholders = append(placeholders, dialect.Placeholder(i))
 		values = append(values, value)
 		i++
@@ -550,7 +574,7 @@ func updateInTx(
 		if field == "id" {
 			continue
 		}
-		sets = append(sets, fmt.Sprintf("%s = %s", dialect.QuoteIdentifier(field), dialect.Placeholder(i)))
+		sets = append(sets, fmt.Sprintf("%s = %s", columnSQL(dialect, field), dialect.Placeholder(i)))
 		values = append(values, value)
 		i++
 	}
@@ -578,6 +602,12 @@ type ExportOptions struct {
 	Headings []string `json:"headings"`
 
 	Sort []SortField `json:"sort"`
+
+	// FirstRepetitionOnly writes only the first repetition of a repeating
+	// field. By default a cell holds every repetition, separated by the
+	// group separator (0x1D) as FileMaker exports them. A single repetition
+	// can also be chosen by naming it as a field, "field[n]".
+	FirstRepetitionOnly bool `json:"first_repetition_only,omitempty"`
 }
 
 // ExportRecords reads a found set out as a table of text, ready to be written
@@ -597,12 +627,14 @@ func (s *Service) ExportRecords(
 	if len(chosen) == 0 {
 		chosen = make([]string, 0, len(fields))
 		for name := range fields {
-			chosen = append(chosen, name)
+			if !fields.isInternal(name) {
+				chosen = append(chosen, name)
+			}
 		}
 		sort.Strings(chosen)
 	}
 	for _, field := range chosen {
-		if err := checkField(fields, tableName, field); err != nil {
+		if err := checkValueKey(fields, tableName, field); err != nil {
 			return nil, err
 		}
 	}
@@ -634,7 +666,11 @@ func (s *Service) ExportRecords(
 				cells[i] = text
 				continue
 			}
-			cells[i] = exportText(fields[field], row[field])
+			if reps := fields.maxRepetitions(field); reps > 1 && !opts.FirstRepetitionOnly {
+				cells[i] = joinRepetitionText(fields[field], field, reps, row)
+				continue
+			}
+			cells[i] = exportText(fields.typeOf(field), row[field])
 		}
 		table.Rows = append(table.Rows, cells)
 	}

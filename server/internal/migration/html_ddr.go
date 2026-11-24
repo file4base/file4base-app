@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/google/uuid"
 )
@@ -64,6 +65,9 @@ type htmlFieldMeta struct {
 	SourceDataType string // TEXT, NUMBER, DATE, TIME, TIMESTAMP, CONTAINER
 	RawOptions     string
 	Formula        string
+	// Repetitions is the field's maximum number of repetitions, 1 when it
+	// does not repeat.
+	Repetitions int
 }
 
 type htmlPortalDef struct {
@@ -225,6 +229,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			colName    string
 			rawType    string
 			rawOptions string
+			reps       int
 		}
 		var rawFields []rawFieldRow
 		knownSameTableCols := map[string]string{"id": "id"}
@@ -271,6 +276,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				colName:    cName,
 				rawType:    fRawType,
 				rawOptions: fRawOpts,
+				reps:       htmlRepetitions(cleanHTMLText(cells[2][1])),
 			})
 		}
 
@@ -291,6 +297,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 					SourceKind:     srcKind,
 					SourceDataType: srcDataType,
 					RawOptions:     rf.rawOptions,
+					Repetitions:    rf.reps,
 				}
 			}
 			if seenCols[rf.colName] {
@@ -301,6 +308,12 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			col, items := convertHTMLField(sqlName, rawTableName, rf.rawName, rf.colName, rf.rawType, rf.rawOptions, knownSameTableCols)
 			for _, it := range items {
 				addReportItem(report, it)
+			}
+			if rf.reps > 1 {
+				col.MaxRepetitions = rf.reps
+				addReportItem(report, ReportItem{Category: CategoryPreserved, Domain: "field",
+					SourceName: sqlName + "." + rf.rawName, TargetName: sqlName + "." + rf.colName,
+					Detail: fmt.Sprintf("Repeating field with %d repetitions", rf.reps)})
 			}
 			if col.FieldType == "CALCULATION" {
 				calcCols = append(calcCols, col)
@@ -705,7 +718,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 
 	// 7. Parse optional FMPXMLRESULT data files and/or binary .fmp12 records
 	tableRows := make(map[string][]map[string]interface{})
-	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, fmpTableMeta, fmpTableRawNames, fmpFieldMeta, designFileName, tableRows, report, nil); err != nil {
+	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, bundleRepetitions(bundle), fmpTableMeta, fmpTableRawNames, fmpFieldMeta, designFileName, tableRows, report, nil); err != nil {
 		return nil, err
 	}
 
@@ -2179,4 +2192,30 @@ func convertMergeString(raw string) string {
 		}
 		return match
 	})
+}
+
+// reHTMLRepetitions finds a field's maximum number of repetitions in the
+// Options column of an HTML Database Design Report, "Repetitions: 3" in
+// English and "Répétitions : 3" in French.
+var reHTMLRepetitions = regexp.MustCompile(`(?i)(?:repetitions|r\x{00E9}p\x{00E9}titions)\s*:\s*(\d+)`)
+
+func htmlRepetitions(options string) int {
+	m := reHTMLRepetitions.FindStringSubmatch(options)
+	if len(m) < 2 {
+		return 1
+	}
+	if n, ok := parseRepetitions(m[1]); ok {
+		return n
+	}
+	return 1
+}
+
+// parseRepetitions reads a maximum number of repetitions from a design
+// document, which FileMaker bounds to 1..32000.
+func parseRepetitions(text string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(text))
+	if err != nil || repetition.Check(n) != nil {
+		return 1, false
+	}
+	return n, true
 }

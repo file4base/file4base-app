@@ -567,6 +567,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 							FieldType:      col.FieldType,
 							SourceKind:     srcKind,
 							SourceDataType: srcDataType,
+							Repetitions:    max(col.MaxRepetitions, 1),
 						}
 					}
 				}
@@ -827,7 +828,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// with an XML design is read rather than ignored (#91).
 	tableRows := make(map[string][]map[string]interface{})
 	designFileName := extractDeclaredFileName(root)
-	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol,
+	if err := populateDataRows(req, canonicalTableName, tableIDByName, colTypeByTableCol, bundleRepetitions(bundle),
 		fmpTableMeta, fmpTableRawNames, fmpFieldMeta, designFileName, tableRows, report, fieldNamesByTable); err != nil {
 		return nil, err
 	}
@@ -883,28 +884,29 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 	validationNode := findFirstChild(fn, "Validation", "validation")
 	autoEnterNode := findFirstChild(fn, "AutoEnter", "autoEnter")
 
-	// Check repetitions & global storage
-	reps := firstAttr(fn, "maxRepetition", "repetitions")
+	// Repetitions: a repeating field keeps every one of its repetitions
+	// (see the repetition package).
+	reps := firstAttr(fn, "maxRepetition", "maxRepetitions", "repetitions")
 	if reps == "" && storageNode != nil {
 		reps = firstAttr(storageNode, "maxRepetition", "maxRepetitions", "repetitions", "maximumRepetitions")
 	}
-	if reps != "" && reps != "1" {
-		items = append(items,
-			ReportItem{
-				Category:   CategoryUnsupported,
-				Domain:     "field",
-				SourceName: tableSQL + "." + rawFieldName,
-				TargetName: tableSQL + "." + colName,
-				Detail:     fmt.Sprintf("Repeating field (repetitions=%s) collapsed to single column; normalize repeating values into a related table", reps),
-			},
-			ReportItem{
-				Category:   CategoryManualActionRequired,
-				Domain:     "field",
-				SourceName: tableSQL + "." + rawFieldName,
-				TargetName: tableSQL + "." + colName,
-				Detail:     "Review repeating field data and move extra repetitions to a child table if needed",
-			},
-		)
+	if n, ok := parseRepetitions(reps); ok && n > 1 {
+		col.MaxRepetitions = n
+		items = append(items, ReportItem{
+			Category:   CategoryPreserved,
+			Domain:     "field",
+			SourceName: tableSQL + "." + rawFieldName,
+			TargetName: tableSQL + "." + colName,
+			Detail:     fmt.Sprintf("Repeating field with %d repetitions", n),
+		})
+	} else if reps != "" && !ok {
+		items = append(items, ReportItem{
+			Category:   CategoryManualActionRequired,
+			Domain:     "field",
+			SourceName: tableSQL + "." + rawFieldName,
+			TargetName: tableSQL + "." + colName,
+			Detail:     fmt.Sprintf("Repetitions %q could not be read; the field was imported with a single repetition", reps),
+		})
 	}
 	isGlobal := parseBoolAttr(fn, "global", "globalStorage")
 	if !isGlobal && storageNode != nil {
@@ -1894,19 +1896,24 @@ func convertLayoutNode(
 				continue
 			}
 			colName := sanitizeIdentifier(fName)
+			binding := map[string]interface{}{
+				"field_name":    colName,
+				"control_style": "edit_box",
+			}
+			// How many repetitions of a repeating field the object shows.
+			if n, ok := parseRepetitions(firstAttr(fn, "numOfReps", "repetitions")); ok {
+				binding["repetitions_shown"] = n
+			}
 			objs = append(objs, map[string]interface{}{
-				"id":         uuid.NewString(),
-				"type":       "field",
-				"field_name": colName,
-				"label":      fName,
-				"x":          24,
-				"y":          64 + idx*44,
-				"width":      240,
-				"height":     32,
-				"field_binding": map[string]interface{}{
-					"field_name":    colName,
-					"control_style": "edit_box",
-				},
+				"id":            uuid.NewString(),
+				"type":          "field",
+				"field_name":    colName,
+				"label":         fName,
+				"x":             24,
+				"y":             64 + idx*44,
+				"width":         240,
+				"height":        32,
+				"field_binding": binding,
 			})
 		}
 		if len(objs) > 0 {

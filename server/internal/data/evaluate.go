@@ -71,7 +71,7 @@ func (s *Service) EvaluateExpression(
 			return nil, err
 		}
 		for name, value := range row {
-			record[name] = calc.Typed(resultTypeOf(fields[name]), value)
+			record[name] = calc.Typed(resultTypeOf(fields.typeOf(name)), value)
 		}
 	}
 
@@ -87,7 +87,7 @@ func (s *Service) EvaluateExpression(
 	result := calc.ParseResultType(resultType)
 	// Related fields are read from the table's own occurrence, as a formula
 	// typed in the Data Viewer is in FileMaker.
-	env := &unstoredContext{RecordContext: calc.RecordContext{Record: record},
+	env := &unstoredContext{RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating()},
 		reader: s.newRelatedReader(), ctx: ctx, table: tableName, row: row}
 	value, err := calc.EvaluateWith(expr, env, result)
 	if err != nil {

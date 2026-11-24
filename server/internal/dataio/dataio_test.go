@@ -256,15 +256,15 @@ func TestParseXML(t *testing.T) {
 		assert.Equal(t, [][]string{{"Durand", "Paris"}, {"Smith", "New York"}}, table.Rows)
 	})
 
-	t.Run("a repeating field becomes one value per line", func(t *testing.T) {
+	t.Run("a repeating field keeps its repetitions apart", func(t *testing.T) {
 		table, err := dataio.Parse([]byte(`
 			<FMPXMLRESULT>
 			  <METADATA><FIELD NAME="Types"/></METADATA>
 			  <RESULTSET><ROW><COL><DATA>New</DATA><DATA>Continuing</DATA></COL></ROW></RESULTSET>
 			</FMPXMLRESULT>`), dataio.Options{Format: dataio.FormatXML})
 		require.NoError(t, err)
-		assert.Equal(t, "New\nContinuing", table.Rows[0][0],
-			"which is how File4Base holds several values in one field")
+		assert.Equal(t, "New\x1dContinuing", table.Rows[0][0],
+			"separated by the group separator, as in FileMaker's tab-separated exports")
 	})
 
 	t.Run("a file holding one record reads as one record", func(t *testing.T) {

@@ -120,8 +120,8 @@ against literal FileMaker Pro 26.0.2 fr-FR observations, and the record keeps th
 text as written ([permissive_source_values.md](permissive_source_values.md)).
 Entering permissive values in File4Base, exact decimal arithmetic in
 calculations, duration arithmetic, timezone behavior, database global
-fields/repetitions, original container streams and external contexts remain
-application-level gates.
+fields, original container streams and external contexts remain
+application-level gates. Repeating fields migrate with every repetition.
 
 ### Script call context
 

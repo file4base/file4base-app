@@ -13,6 +13,8 @@ import (
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dataio"
+	"github.com/file4base/file4base-app/server/internal/repetition"
+	"github.com/file4base/file4base-app/server/internal/schema"
 )
 
 // populateDataRows populates tableRows from optional FMPXMLRESULT data files
@@ -22,6 +24,7 @@ func populateDataRows(
 	canonicalTableName map[string]string,
 	tableIDByName map[string]string,
 	colTypeByTableCol map[string]string,
+	repsByTableCol map[string]int,
 	fmpTableMeta map[int]string,
 	fmpTableRawNames map[int]string,
 	fmpFieldMeta map[int]map[int]htmlFieldMeta,
@@ -105,34 +108,48 @@ func populateDataRows(
 					if fType == "CALCULATION" || fType == "SUMMARY" {
 						continue // Server calculation engine computes these
 					}
-					var value interface{}
-					var original string
-					if locale != nil && (fType == "NUMBER" || fType == "DATE" || fType == "TIMESTAMP") {
-						// FMPXMLRESULT writes its dates month first whatever
-						// the file's locale; its numbers as the field holds them.
-						value, original, err = interpretSourceValue(valStr, fType, locale, data.DateMDY)
-					} else {
-						value, err = coerceSourceValue(valStr, fType)
+					// A repeating field's DATA elements arrive joined by the
+					// group separator (see dataio): each is its own value.
+					parts := []string{valStr}
+					if reps := repsByTableCol[sqlTable+"."+colName]; reps > 1 {
+						parts = splitRepetitions(valStr, reps)
 					}
-					if err != nil {
-						rejectedCells++
-						detail := fmt.Sprintf("Value %q was not imported: %v", valStr, err)
-						if locale == nil && !errors.Is(err, errSourceRepetitions) {
-							detail += "; name the source file's locale (source_locale) to migrate it with its original text"
+					for rep, part := range parts {
+						if part == "" || (fType != "TEXT" && strings.TrimSpace(part) == "") {
+							continue
 						}
-						addReportItem(report, ReportItem{
-							Category:   CategoryRejected,
-							Domain:     "data",
-							SourceName: fmt.Sprintf("%s row %d, %s", rawTableKey, rowIdx+1, colHeader),
-							TargetName: sqlTable + "." + colName,
-							Detail:     detail,
-						})
-						continue
+						key := repetition.Key(colName, rep+1)
+						var value interface{}
+						var original string
+						if locale != nil && (fType == "NUMBER" || fType == "DATE" || fType == "TIMESTAMP") {
+							// FMPXMLRESULT writes its dates month first whatever
+							// the file's locale; its numbers as the field holds them.
+							value, original, err = interpretSourceValue(part, fType, locale, data.DateMDY)
+						} else {
+							value, err = coerceSourceValue(part, fType)
+						}
+						if err != nil {
+							rejectedCells++
+							detail := fmt.Sprintf("Value %q was not imported: %v", part, err)
+							if locale == nil && !errors.Is(err, errSourceRepetitions) {
+								detail += "; name the source file's locale (source_locale) to migrate it with its original text"
+							}
+							addReportItem(report, ReportItem{
+								Category:   CategoryRejected,
+								Domain:     "data",
+								SourceName: fmt.Sprintf("%s row %d, %s", rawTableKey, rowIdx+1, colHeader),
+								TargetName: sqlTable + "." + key,
+								Detail:     detail,
+							})
+							continue
+						}
+						// The original text is kept for the first repetition
+						// only: the store of original texts (#124) is by field.
+						if original != "" && rep == 0 {
+							addSourceText(rec, colName, original)
+						}
+						rec[key] = value
 					}
-					if original != "" {
-						addSourceText(rec, colName, original)
-					}
-					rec[colName] = value
 				}
 				// A record every exported field of which is blank is still a
 				// record, and it is counted as one (#90).
@@ -884,4 +901,30 @@ func precomputeExtractedCalculations(
 			}
 		}
 	}
+}
+
+// splitRepetitions spreads a source value over a repeating field's
+// repetitions, which FileMaker separates with the group separator (0x1D).
+// Values past the field's maximum have nowhere to go and are dropped, as
+// FileMaker drops them on import.
+func splitRepetitions(text string, reps int) []string {
+	parts := strings.Split(text, "\x1d")
+	if len(parts) > reps {
+		parts = parts[:reps]
+	}
+	return parts
+}
+
+// bundleRepetitions is the maximum number of repetitions of every repeating
+// field of a converted design, by "table.field".
+func bundleRepetitions(bundle *schema.SolutionBundle) map[string]int {
+	out := map[string]int{}
+	for _, t := range bundle.Tables {
+		for _, c := range t.Columns {
+			if c.MaxRepetitions > 1 {
+				out[t.Name+"."+c.Name] = c.MaxRepetitions
+			}
+		}
+	}
+	return out
 }

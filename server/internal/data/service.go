@@ -156,9 +156,9 @@ func (s *Service) tableFields(ctx context.Context, tableName string) (fieldSet, 
 	if dbal.IsReservedTableName(tableName) {
 		return nil, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
-	q := `SELECT c.name, c.field_type, c.calculation_formula FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
+	q := `SELECT c.name, c.field_type, c.calculation_formula, c.max_repetitions FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT c.name, c.field_type, c.calculation_formula FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
+		q = `SELECT c.name, c.field_type, c.calculation_formula, c.max_repetitions FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ?`
 	}
 	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
 	if err != nil {
@@ -170,8 +170,12 @@ func (s *Service) tableFields(ctx context.Context, tableName string) (fieldSet, 
 	for rows.Next() {
 		var name, fieldType string
 		var formula *string
-		if err := rows.Scan(&name, &fieldType, &formula); err != nil {
+		var reps int
+		if err := rows.Scan(&name, &fieldType, &formula, &reps); err != nil {
 			return nil, err
+		}
+		if reps > 1 {
+			fields[repetitionsKey(name)] = repeatsType(reps)
 		}
 		// A calculation is held in the column its formula's result needs, and
 		// every read and write path cares about what is actually stored: a
@@ -253,6 +257,9 @@ func decodeContainerValues(fields fieldSet, tableName string, record map[string]
 // catalog fields are returned, and a statement prepared before a field was
 // added is never reused with a different result shape (PostgreSQL rejects
 // that with "cached plan must not change result type").
+//
+// A repeating field's other repetitions are read from its companion column,
+// under repetitionsKey (see repetitions.go).
 func selectList(dialect dbal.Dialect, fields fieldSet) string {
 	names := make([]string, 0, len(fields))
 	for name := range fields {
@@ -260,13 +267,20 @@ func selectList(dialect dbal.Dialect, fields fieldSet) string {
 	}
 	sort.Strings(names)
 	for i, n := range names {
+		if fields.isInternal(n) {
+			names[i] = columnSQL(dialect, n) + " AS " + dialect.QuoteIdentifier(n)
+			continue
+		}
 		names[i] = dialect.QuoteIdentifier(n)
 	}
 	return strings.Join(names, ", ")
 }
 
+// checkField checks that a field is registered for the table. It names a
+// whole field, a column: a key "field[n]" of a record is checked by
+// checkValueKey.
 func checkField(fields fieldSet, tableName, fieldName string) error {
-	if _, ok := fields[fieldName]; !ok {
+	if _, ok := fields[fieldName]; !ok || fields.isInternal(fieldName) {
 		return fmt.Errorf("%w: %s.%s", ErrUnknownField, tableName, fieldName)
 	}
 	return nil
@@ -286,10 +300,8 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 	if err != nil {
 		return nil, err
 	}
-	for col := range record {
-		if err := checkField(fields, tableName, col); err != nil {
-			return nil, err
-		}
+	if err := normalizeRepetitionKeys(fields, tableName, record); err != nil {
+		return nil, err
 	}
 
 	// Auto-enter constant values (Fields dialog: "Data") for fields the
@@ -334,13 +346,17 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 	}
 
 	dialect := s.driver.Dialect()
-	columns := make([]string, 0, len(record))
-	placeholders := make([]string, 0, len(record))
-	values := make([]interface{}, 0, len(record))
+	writes, err := packRepetitions(ctx, s.driver.DB(), dialect, fields, tableName, "", record)
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]string, 0, len(writes))
+	placeholders := make([]string, 0, len(writes))
+	values := make([]interface{}, 0, len(writes))
 
 	idx := 1
-	for col, val := range record {
-		columns = append(columns, dialect.QuoteIdentifier(col))
+	for col, val := range writes {
+		columns = append(columns, columnSQL(dialect, col))
 		placeholders = append(placeholders, dialect.Placeholder(idx))
 		values = append(values, val)
 		idx++
@@ -405,10 +421,8 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	delete(updates, "id") // Protect primary key from alteration
 	sourcetext.Strip(updates)
 	containermeta.Strip(updates)
-	for col := range updates {
-		if err := checkField(fields, tableName, col); err != nil {
-			return nil, err
-		}
+	if err := normalizeRepetitionKeys(fields, tableName, updates); err != nil {
+		return nil, err
 	}
 	// A summary has no value in a record, so anything sent for one is dropped
 	// before the update is built. It happens here, not further down, so that
@@ -446,12 +460,16 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	}
 
 	dialect := s.driver.Dialect()
-	setClauses := make([]string, 0, len(updates))
-	values := make([]interface{}, 0, len(updates)+1)
+	writes, err := packRepetitions(ctx, s.driver.DB(), dialect, fields, tableName, id, updates)
+	if err != nil {
+		return nil, err
+	}
+	setClauses := make([]string, 0, len(writes))
+	values := make([]interface{}, 0, len(writes)+1)
 
 	idx := 1
-	for col, val := range updates {
-		setClauses = append(setClauses, fmt.Sprintf("%s = %s", dialect.QuoteIdentifier(col), dialect.Placeholder(idx)))
+	for col, val := range writes {
+		setClauses = append(setClauses, fmt.Sprintf("%s = %s", columnSQL(dialect, col), dialect.Placeholder(idx)))
 		values = append(values, val)
 		idx++
 	}
@@ -949,6 +967,12 @@ func rowsToMaps(rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, erro
 		rowMap := make(map[string]interface{}, len(cols))
 		for i, colName := range cols {
 			val := colValues[i]
+			if fields.isInternal(colName) {
+				if err := decodeRepetitions(fields, colName, val, rowMap); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			if b, ok := val.([]byte); ok {
 				switch fields[colName] {
 				case dbal.FieldTypeContainer:

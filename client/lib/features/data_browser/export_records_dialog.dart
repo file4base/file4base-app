@@ -57,10 +57,30 @@ class ExportRecordsDialog extends StatefulWidget {
   State<ExportRecordsDialog> createState() => _ExportRecordsDialogState();
 }
 
+/// The cell a repeating field is exported as: its repetitions separated by
+/// the group separator (0x1D), trailing empty ones left out, as FileMaker
+/// exports them. A field that does not repeat is its value.
+Object? repetitionsCell(Map<String, dynamic> row, ColumnModel col) {
+  if (!col.isRepeating) return row[col.name];
+  final parts = <String>[
+    for (var n = 1; n <= col.maxRepetitions; n++) row[ColumnModel.repetitionKey(col.name, n)]?.toString() ?? '',
+  ];
+  var last = parts.length;
+  while (last > 1 && parts[last - 1].isEmpty) {
+    last--;
+  }
+  return parts.sublist(0, last).join('\x1d');
+}
+
 class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
   late TableModel? _selectedTable;
   ExportFormat _selectedFormat = ExportFormat.csv;
   bool _includeHeaders = true;
+
+  /// Write only the first repetition of a repeating field.
+  bool _firstRepetitionOnly = false;
+
+  bool get _hasRepeatingFields => _selectedTable?.columns.any((c) => c.isRepeating) ?? false;
 
   /// Write the found set rather than the whole table. Only offered when
   /// there is one, and only for the table it was found in.
@@ -235,6 +255,7 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
       requests: _requests,
       fields: [for (final c in columns) c.name],
       headings: _includeHeaders ? [for (final c in columns) c.displayName] : const [],
+      firstRepetitionOnly: _firstRepetitionOnly,
     );
 
     final filename = '${table.name}_export.xlsx';
@@ -291,7 +312,19 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
         columns = rows.first.keys.toList();
       }
 
-      final bytes = _generateExportBytes(rows, columns);
+      // A JSON export keeps every repetition under its own key; the other
+      // formats write a repeating field as one cell.
+      final repeating = _selectedTable!.columns.where((c) => c.isRepeating).toList();
+      final cells = _selectedFormat == ExportFormat.json || repeating.isEmpty
+          ? rows
+          : [
+              for (final row in rows)
+                {
+                  ...row,
+                  for (final col in repeating) col.name: _firstRepetitionOnly ? row[col.name] : repetitionsCell(row, col),
+                },
+            ];
+      final bytes = _generateExportBytes(cells, columns);
       final ext = _extensionFor(_selectedFormat);
       final filename = '${_selectedTable!.name}_export.$ext';
 
@@ -459,6 +492,14 @@ class _ExportRecordsDialogState extends State<ExportRecordsDialog> {
                 title: const Text('Include field names as first row (header)', style: TextStyle(fontSize: 13)),
                 value: _includeHeaders,
                 onChanged: _isExporting ? null : (v) => setState(() => _includeHeaders = v ?? true),
+              ),
+            if (_hasRepeatingFields && _selectedFormat != ExportFormat.json)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Export only the first repetition of repeating fields', style: TextStyle(fontSize: 13)),
+                value: _firstRepetitionOnly,
+                onChanged: _isExporting ? null : (v) => setState(() => _firstRepetitionOnly = v ?? false),
               ),
             if (_isExporting && _statusMessage != null) ...[
               const SizedBox(height: 12),

@@ -955,6 +955,10 @@ func (ev *evaluator) aggregateArgs(c callNode) ([]value, error) {
 		if f.table != "" && f.repetition == nil {
 			return ev.relatedValues(f)
 		}
+		// One repeating field: every one of its repetitions.
+		if vals, repeats, err := ev.repetitionValues(f); repeats || err != nil {
+			return vals, err
+		}
 	}
 	out := make([]value, 0, len(c.args))
 	for _, a := range c.args {
@@ -1030,18 +1034,70 @@ func aggregateFunctions() map[string]function {
 		"LAST": {minArgs: 1, maxArgs: 1, lazy: func(ev *evaluator, c callNode) (value, error) {
 			// The last value that is not empty: of the related records, or
 			// of a field's repetitions.
-			if f, ok := c.args[0].(fieldNode); ok && f.table != "" && f.repetition == nil {
-				vals, err := ev.relatedValues(f)
+			if f, ok := c.args[0].(fieldNode); ok && f.repetition == nil {
+				var vals []value
+				var err error
+				many := f.table != ""
+				if many {
+					vals, err = ev.relatedValues(f)
+				} else {
+					vals, many, err = ev.repetitionValues(f)
+				}
 				if err != nil {
 					return empty, err
 				}
-				for i := len(vals) - 1; i >= 0; i-- {
-					if !vals[i].isEmpty() {
-						return vals[i], nil
+				if many {
+					for i := len(vals) - 1; i >= 0; i-- {
+						if !vals[i].isEmpty() {
+							return vals[i], nil
+						}
 					}
+					return empty, nil
 				}
+			}
+			return ev.eval(c.args[0])
+		}},
+		"GETREPETITION": {minArgs: 2, maxArgs: 2, lazy: func(ev *evaluator, c callNode) (value, error) {
+			// GetRepetition ( Field ; n ) is Field[n].
+			nv, err := ev.eval(c.args[1])
+			if err != nil {
+				return empty, err
+			}
+			n := int(nv.asNumber(ev.loc).IntPart())
+			switch a := c.args[0].(type) {
+			case fieldNode:
+				if a.missing {
+					return empty, errorAt(a.at, "%s::%s refers to a table or field that was deleted in FileMaker", a.table, a.name)
+				}
+				if a.repetition == nil {
+					if n < 1 {
+						return empty, nil
+					}
+					return ev.readRepetition(a, n)
+				}
+			case variableNode:
+				if a.repetition == nil {
+					if n < 1 {
+						return empty, nil
+					}
+					raw, err := ev.ctx.Variable(a.name, n)
+					if err != nil {
+						return empty, errorAt(a.at, "%s cannot be read: %v", a.name, err)
+					}
+					return fromStored(raw), nil
+				}
+			}
+			// Any other value has a first repetition only.
+			if n != 1 {
 				return empty, nil
 			}
+			return ev.eval(c.args[0])
+		}},
+		"EXTEND": {minArgs: 1, maxArgs: 1, lazy: func(ev *evaluator, c callNode) (value, error) {
+			// Extend ( Field ) gives a field that does not repeat its value
+			// in every repetition of a repeating calculation.
+			ev.extend++
+			defer func() { ev.extend-- }()
 			return ev.eval(c.args[0])
 		}},
 		"GETNTHRECORD": {minArgs: 2, maxArgs: 2, lazy: func(ev *evaluator, c callNode) (value, error) {

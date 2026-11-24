@@ -3,6 +3,7 @@ package calc
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,19 +76,42 @@ type Context interface {
 	Locale() *Locale
 }
 
+// Repeating is a Context that knows which of the record's fields are
+// repeating fields. Without it every field has a single repetition.
+type Repeating interface {
+	// MaxRepetitions is how many repetitions a field of the current record
+	// has: 1 for a field that does not repeat.
+	MaxRepetitions(field string) int
+}
+
 // RecordContext evaluates against one record, with no related records, no
 // variables and no session. It is what calculation fields have on the server.
+//
+// Repetition n (from 2) of a repeating field is the record key "name[n]";
+// Repeats gives the number of repetitions of each field that has more than
+// one.
 type RecordContext struct {
 	Record    Record
 	Variables map[string]any
 	Loc       *Locale
+	Repeats   map[string]int
 }
 
-func (c *RecordContext) Field(name string, _ int) (any, error) {
+func (c *RecordContext) Field(name string, repetition int) (any, error) {
 	if c.Record == nil {
 		return nil, nil
 	}
+	if repetition > 1 {
+		return c.Record[name+"["+strconv.Itoa(repetition)+"]"], nil
+	}
 	return c.Record[name], nil
+}
+
+func (c *RecordContext) MaxRepetitions(field string) int {
+	if n := c.Repeats[field]; n > 1 {
+		return n
+	}
+	return 1
 }
 
 func (c *RecordContext) Related(string, string) ([]any, error) { return nil, ErrNotAvailable }
@@ -133,6 +157,12 @@ type evaluator struct {
 	depth     int
 	steps     int
 	now       time.Time
+	// rep is the repetition of a repeating calculation being computed, from
+	// 1. A field named without a repetition reads this one of a repeating
+	// field; a field that does not repeat has a value in the first only,
+	// unless it is inside Extend (extend > 0).
+	rep    int
+	extend int
 }
 
 // Evaluate computes the formula against a record and returns the answer in the
@@ -144,10 +174,22 @@ func Evaluate(expr *Expr, record Record, result ResultType) (any, error) {
 // EvaluateWith computes the formula in a context and stores the answer as the
 // result type asks.
 func EvaluateWith(expr *Expr, ctx Context, result ResultType) (any, error) {
+	return EvaluateRepetition(expr, ctx, result, 1)
+}
+
+// EvaluateRepetition computes one repetition of a repeating calculation, from
+// 1, as FileMaker does: a repeating field the formula names without a
+// repetition gives the value of this one, a field that does not repeat is
+// empty past the first unless the formula reads it through Extend, and
+// Get ( CalculationRepetitionNumber ) is rep.
+func EvaluateRepetition(expr *Expr, ctx Context, result ResultType, rep int) (any, error) {
 	if expr == nil {
 		return nil, nil
 	}
-	v, err := EvaluateValue(expr, ctx)
+	if ctx == nil {
+		ctx = &RecordContext{}
+	}
+	v, err := evaluateAt(expr, ctx, rep)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +209,15 @@ func EvaluateValue(expr *Expr, ctx Context) (Value, error) {
 	if ctx == nil {
 		ctx = &RecordContext{}
 	}
-	ev := &evaluator{ctx: ctx, loc: ctx.Locale().orISO(), lib: expr.lib, known: expr.known, precision: precision, now: Now()}
+	return evaluateAt(expr, ctx, 1)
+}
+
+func evaluateAt(expr *Expr, ctx Context, rep int) (value, error) {
+	if rep < 1 {
+		rep = 1
+	}
+	ev := &evaluator{ctx: ctx, loc: ctx.Locale().orISO(), lib: expr.lib, known: expr.known, precision: precision,
+		now: Now(), rep: rep}
 	return ev.eval(expr.root)
 }
 
@@ -398,25 +448,80 @@ func (ev *evaluator) repetition(n node) (int, error) {
 }
 
 func (ev *evaluator) readField(t fieldNode) (value, error) {
+	rep, err := ev.repetition(t.repetition)
+	if err != nil {
+		return empty, err
+	}
+	return ev.readRepetition(t, rep)
+}
+
+// readRepetition reads repetition rep of a field, or with rep 0 the one the
+// calculation is computing (see evaluator.rep).
+func (ev *evaluator) readRepetition(t fieldNode, rep int) (value, error) {
+	if rep == 0 && ev.rep > 1 {
+		switch {
+		case t.table == "" && ev.maxRepetitions(t.name) > 1:
+			rep = ev.rep
+		case ev.extend > 0:
+			rep = 1
+		default:
+			// A field that does not repeat, or a related one, has a value in
+			// the first repetition of a repeating calculation only.
+			return empty, nil
+		}
+	}
 	if t.table != "" {
-		values, err := ev.ctx.Related(t.table, t.name)
+		name := t.name
+		if rep > 1 {
+			// Repetition n of a related field is the key "Field[n]" of the
+			// related records.
+			name += "[" + strconv.Itoa(rep) + "]"
+		}
+		values, err := ev.ctx.Related(t.table, name)
 		if err != nil {
-			return empty, ev.contextError(t.at, t.table+"::"+t.name, err)
+			return empty, ev.contextError(t.at, t.table+"::"+name, err)
 		}
 		if len(values) == 0 {
 			return empty, nil
 		}
 		return fromStored(values[0]), nil
 	}
-	rep, err := ev.repetition(t.repetition)
-	if err != nil {
-		return empty, err
-	}
 	raw, err := ev.ctx.Field(t.name, rep)
 	if err != nil {
 		return empty, ev.contextError(t.at, t.name, err)
 	}
 	return fromStored(raw), nil
+}
+
+// maxRepetitions is the number of repetitions of a field of the record.
+func (ev *evaluator) maxRepetitions(field string) int {
+	if r, ok := ev.ctx.(Repeating); ok {
+		if n := r.MaxRepetitions(field); n > 1 {
+			return n
+		}
+	}
+	return 1
+}
+
+// repetitionValues reads every repetition of a field of the record, for an
+// aggregate, and reports whether the field repeats at all.
+func (ev *evaluator) repetitionValues(t fieldNode) ([]value, bool, error) {
+	if t.table != "" || t.repetition != nil {
+		return nil, false, nil
+	}
+	n := ev.maxRepetitions(t.name)
+	if n <= 1 {
+		return nil, false, nil
+	}
+	out := make([]value, 0, n)
+	for rep := 1; rep <= n; rep++ {
+		v, err := ev.readRepetition(t, rep)
+		if err != nil {
+			return nil, true, err
+		}
+		out = append(out, v)
+	}
+	return out, true, nil
 }
 
 // relatedValues reads every value of a reference, for an aggregate.
