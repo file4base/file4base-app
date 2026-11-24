@@ -5,8 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
-	"math"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,8 +12,6 @@ import (
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/dataio"
 )
-
-var reUUIDHex = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
 
 // populateDataRows populates tableRows from optional FMPXMLRESULT data files
 // and/or an attached binary .fmp12 file (base64-encoded in req.FMP12Base64).
@@ -28,6 +24,7 @@ func populateDataRows(
 	fmpFieldMeta map[int]map[int]htmlFieldMeta,
 	tableRows map[string][]map[string]interface{},
 	report *ConversionReport,
+	fieldNamesByTable map[string]*fieldNameMap,
 ) error {
 	// 1. Parse optional FMPXMLRESULT / XML data files per table
 	if len(req.DataFiles) > 0 {
@@ -79,11 +76,24 @@ func populateDataRows(
 					// The cell keeps the spaces the export wrote: trimming
 					// someone's data is not the migration's business (#90).
 					valStr := rawRow[colIdx]
-					if strings.TrimSpace(valStr) == "" {
+					if valStr == "" {
 						continue // nothing to write; the record is kept all the same
 					}
 					colName := sanitizeIdentifier(colHeader)
+					if names := fieldNamesByTable[sqlTable]; names != nil {
+						resolved, ok := names.resolve(colHeader)
+						if !ok {
+							rejectedCells++
+							addReportItem(report, ReportItem{Category: CategoryRejected, Domain: "data", SourceName: colHeader,
+								TargetName: sqlTable, Detail: "Exported field does not exist in the source design; its value was not imported"})
+							continue
+						}
+						colName = resolved
+					}
 					fType := colTypeByTableCol[sqlTable+"."+colName]
+					if fType != "TEXT" && strings.TrimSpace(valStr) == "" {
+						continue
+					}
 					if fType == "CALCULATION" || fType == "SUMMARY" {
 						continue // Server calculation engine computes these
 					}
@@ -105,12 +115,15 @@ func populateDataRows(
 				// record, and it is counted as one (#90).
 				rows = append(rows, rec)
 			}
-			tableRows[sqlTable] = rows
-			report.Counts.RecordsReady += len(rows)
+			report.Counts.RecordsDetected += len(rows)
 			detail := fmt.Sprintf("Parsed %d records from FMPXMLRESULT dataset", len(rows))
 			if rejectedCells > 0 {
-				detail = fmt.Sprintf("%s; %d value(s) could not be converted and were left empty", detail, rejectedCells)
+				addReportItem(report, ReportItem{Category: CategoryRejected, Domain: "data", SourceName: rawTableKey,
+					TargetName: sqlTable, Detail: fmt.Sprintf("Dataset has %d records and %d unrepresentable value(s); no rows from this dataset are ready", len(rows), rejectedCells)})
+				continue
 			}
+			tableRows[sqlTable] = rows
+			report.Counts.RecordsReady += len(rows)
 			addReportItem(report, ReportItem{
 				Category:   CategoryPreserved,
 				Domain:     "data",
@@ -122,10 +135,14 @@ func populateDataRows(
 	}
 
 	// 2. Extract records & embedded container blobs from optional binary .fmp12 (HBAM2)
-	if strings.TrimSpace(req.FMP12Base64) != "" {
-		rawBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(req.FMP12Base64))
-		if err != nil {
-			return fmt.Errorf("invalid base64 in fmp12_base64: %w", err)
+	if len(req.nativeData) > 0 || strings.TrimSpace(req.FMP12Base64) != "" {
+		rawBytes := req.nativeData
+		if len(rawBytes) == 0 {
+			var err error
+			rawBytes, err = base64.StdEncoding.DecodeString(strings.TrimSpace(req.FMP12Base64))
+			if err != nil {
+				return fmt.Errorf("invalid base64 in fmp12_base64: %w", err)
+			}
 		}
 		if len(fmpTableMeta) == 0 {
 			// Records in a .fmp12 are addressed by the numeric table and field
@@ -146,8 +163,11 @@ func populateDataRows(
 			})
 			return nil
 		}
-		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol)
+		extracted, containersCount, err := extractFMP12Records(rawBytes, fmpTableMeta, fmpFieldMeta, colTypeByTableCol, req.NativeDateOrder)
 		if err != nil {
+			if issue, ok := err.(*nativeValueError); ok {
+				report.Counts.RecordsDetected += issue.Records
+			}
 			addReportItem(report, ReportItem{
 				Category:   CategoryRejected,
 				Domain:     "data",
@@ -164,6 +184,7 @@ func populateDataRows(
 			for _, tbl := range tableNames {
 				extractedTotal += len(extracted[tbl])
 			}
+			report.Counts.RecordsDetected += extractedTotal
 			if extractedTotal == 0 {
 				addReportItem(report, ReportItem{
 					Category:   CategoryRejected,
@@ -179,7 +200,7 @@ func populateDataRows(
 				}
 				tableRows[tbl] = append(tableRows[tbl], rows...)
 				report.Counts.RecordsReady += len(rows)
-				detail := fmt.Sprintf("Extracted %d records from .fmp12 HBAM2 binary page tree", len(rows))
+				detail := fmt.Sprintf("Extracted %d records from the native .fmp12 page tree", len(rows))
 				if containersCount[tbl] > 0 {
 					detail = fmt.Sprintf("Extracted %d records (including %d embedded container images) from .fmp12 HBAM2 binary", len(rows), containersCount[tbl])
 				}
@@ -208,7 +229,15 @@ func extractFMP12Records(
 	fmpTableMeta map[int]string,
 	fmpFieldMeta map[int]map[int]htmlFieldMeta,
 	colTypeByTableCol map[string]string,
+	dateOrder ...string,
 ) (map[string][]map[string]interface{}, map[string]int, error) {
+	if len(data) >= 20 && string(data[15:20]) == "HBAM7" {
+		order := ""
+		if len(dateOrder) > 0 {
+			order = dateOrder[0]
+		}
+		return readHBAM7Records(data, fmpTableMeta, fmpFieldMeta, colTypeByTableCol, order)
+	}
 	const pageSize = 4096
 	if len(data) < pageSize*3 || !bytes.Contains(data[:minInt(len(data), pageSize)], []byte("HBAM2")) {
 		return nil, nil, fmt.Errorf("not a valid FileMaker HBAM2 (.fmp12) file")
@@ -773,45 +802,4 @@ func precomputeExtractedCalculations(
 			}
 		}
 	}
-}
-
-// parseFractionOrFloat parses numbers including vulgar/mixed fractions like
-// "1/3", "3/4", "1 1/4" into float64.
-func parseFractionOrFloat(raw string) (float64, bool) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return 0, false
-	}
-	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f, true
-	}
-	// Mixed fraction: "1 1/4"
-	parts := strings.Fields(s)
-	if len(parts) == 2 {
-		whole, err1 := strconv.ParseFloat(parts[0], 64)
-		frac, ok2 := parseSimpleFraction(parts[1])
-		if err1 == nil && ok2 {
-			val := whole + frac
-			return math.Round(val*10000) / 10000, true
-		}
-	}
-	if len(parts) == 1 {
-		if frac, ok := parseSimpleFraction(parts[0]); ok {
-			return math.Round(frac*10000) / 10000, true
-		}
-	}
-	return 0, false
-}
-
-func parseSimpleFraction(s string) (float64, bool) {
-	slash := strings.IndexByte(s, '/')
-	if slash <= 0 || slash >= len(s)-1 {
-		return 0, false
-	}
-	num, err1 := strconv.ParseFloat(strings.TrimSpace(s[:slash]), 64)
-	den, err2 := strconv.ParseFloat(strings.TrimSpace(s[slash+1:]), 64)
-	if err1 != nil || err2 != nil || den == 0 {
-		return 0, false
-	}
-	return num / den, true
 }

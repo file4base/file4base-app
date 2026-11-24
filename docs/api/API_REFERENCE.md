@@ -1838,6 +1838,32 @@ See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for t
 }
 ```
 
+An optional `fmp12_base64` attachment is decoded using the numeric table and
+field identities in the design. `native_date_order` applies only to native
+records: `iso` (the default), `dmy`, or `mdy`. An omitted order does not guess
+ambiguous slash dates. `FMPXMLRESULT` retains its MDY export convention.
+`records_detected`, when present, counts source records identified by the reader;
+it is distinct from `records_ready`. Native values that cannot be stored in the
+target are reported together without returning partial native rows. Container
+bytes, binary calculations, timezone/time-duration behavior and required script
+operations still require qualification; an extracted record count is not an
+application-equivalence result.
+
+For a local native copy larger than the HTTP JSON request limit (64 MiB), run
+read-only preflight from `server/` without a base64 copy:
+
+```sh
+go run ./cmd/migration-preflight -design /private/design.xml \
+  -native /private/source.fmp12 -native-date-order dmy \
+  -report /private/new-migration-report.json
+```
+
+The report path must be new and is created with mode `0600`; its contents may
+contain confidential design information. The command writes that report only,
+never connects to a target, and never executes imported behavior. Exit code 2
+means the report contains rejections. This is an audit path, not a large-file
+apply endpoint.
+
 #### Response `200 OK`
 ```json
 {
@@ -1869,6 +1895,18 @@ See [`docs/specs/filemaker_migration.md`](../specs/filemaker_migration.md) for t
 
 ### `POST /api/v1/solutions/migrate/apply`
 *Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report`, and the full `ConversionReport`.
+
+An explicitly attached native dataset that cannot be read or represented is
+refused with `422 Native Data Import Blocked` before any target write. Apply does
+not report a schema-only migration as a successful import of that dataset.
+An attached XML record dataset with rejected fields/values or a parse failure
+also refuses apply before any target write (`422 Data Import Blocked`). A dataset
+with unrepresentable cells contributes to `records_detected` but contributes no
+ready rows. Permissive Number text, fractions, nonfinite text and ambiguous
+localized decimals are not guessed into another value or replaced with blanks;
+canonical decimal text retains every digit. Full source Number representation
+and explicit number-locale handling remain compatibility work.
+
 
 A failure anywhere after the first write leaves nothing behind: a newly created `target_database` is dropped, and a merge into the active database is undone from the design recorded before the merge — every design object the migration added is deleted and the recorded design re-imported (#97). `400` with `Migration Schema Import Error` or `Migration Data Import Error` therefore means the solution is as it was; should the restore itself be incomplete, the problem detail says so. An `fmp12_base64` attachment is validated with the request, so invalid base64 is `400` before any database is created (#91), and a design document whose field catalog was not understood — a Save a Copy as XML export taken without *Include details for analysis tools*, or a Database Design Report in a language File4Base does not read — is `422 Invalid FileMaker XML` naming the formats and report languages that are supported, and, for a `<FMSaveAsXML>` document, the export option to re-export with (#87, #100).
 

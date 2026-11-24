@@ -33,6 +33,20 @@ Renaming an XML root is not a conversion path. Where a different authentic expor
 
 ## 2. What the first fixture scope covers
 
+XML definitions are read from their owning catalogs, including nested groups.
+Privilege entries, triggers, script operands and layout references do not define
+new objects. Native graph references use source table and field IDs when present;
+an external file's same-named or same-ID table cannot substitute for a local one.
+An explicit unresolved layout occurrence is reported rather than bound to another
+table. Missing dependencies therefore remain an application acceptance failure,
+even if the remaining schema can be applied.
+
+For `FMPXMLRESULT` records, XML conversion resolves exported field names through
+the same complete source-to-target map used by calculations. Source `id` fields
+and names that normalize to the same SQL identifier retain their distinct values.
+This does not qualify the binary record extractor: authentic inputs and complete
+record/container accounting are still required for the data-fidelity gate.
+
 The fixture #112 asks for is **two linked FileMaker files**, Dispatch and Results, with parent surveys and child answers, a recorded source run, and a source-generated expected-results manifest. The declared scope of that first fixture is the subset below — chosen because each item is already implemented and tested at unit level, so the fixture measures whether it survives a real migration rather than whether it exists:
 
 - Base tables, fields of every mapped type, table occurrences including a self-join, and a multi-predicate join (`#101`).
@@ -81,6 +95,24 @@ The fixture's design documents, record exports and manifest were **written by ha
 2. **The source-generated expected-results manifest.** Gate 1 of the fixture is *running the source workflow* and recording what FileMaker itself produced: final data, calculation results, script results and errors, and container hashes. Those numbers are the comparison; they cannot be written by hand without turning the test into a restatement of File4Base's own behaviour.
 
 Until both exist, this document declares the scope above, the harness measures everything it can against the handwritten fixture, and #112 stays open on the authentic-input and workflow-execution gates. A Claris-authorized trial installation is enough to produce them; so is any suitably licensed public FileMaker solution, provided its workflow can be run and its outcomes recorded.
+
+### Local native-reader qualification
+
+The native HBAM7 reader now traverses length-delimited leaf paths, preserves
+whole record tokens and decodes SCSU text without whitespace normalization.
+Private source copies have exercised native record counts and value comparisons;
+these checks do not supply the redistributable FileMaker-generated workflow
+fixture required above. `records_detected` is not `records_ready`. Target type
+incompatibilities, populated containers that cannot be reconstructed, and unknown
+record encodings refuse native apply rather than becoming empty records or a
+schema-only success. The local `migration-preflight` command supports large-input
+audits; the HTTP JSON request limit is unchanged.
+
+Native design wrappers, referenced script-body lists and typed operands now have
+original synthetic regression coverage. Unread options remain in the report.
+Permissive source values (text in Number fields, localized decimals, invalid
+dates), time/duration and timezone behavior, database global fields/repetitions,
+original container streams and external contexts remain application-level gates.
 
 ### Script call context
 

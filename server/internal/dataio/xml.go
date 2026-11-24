@@ -291,7 +291,9 @@ func parseFMPXMLResult(root *node, opts Options) (*Table, bool) {
 				parts := make([]string, 0, 1)
 				for _, dataNode := range col.Children {
 					if dataNode.Name == "DATA" {
-						parts = append(parts, dataNode.value())
+						// Whitespace inside DATA is the field's value, including
+						// whitespace-only text; indentation outside it is separate.
+						parts = append(parts, dataNode.RawText)
 					}
 				}
 				values = append(values, strings.Join(parts, "\n"))

@@ -132,6 +132,69 @@ between functional requirements and File4Base's own visual design choices implem
   designs, and jurisdiction-specific patent/counsel review) using the records in
   this ledger.
 
+## XML catalog and French operand fixes — 2026-11-13
+
+Codex assisted the implementation and original synthetic regression fixtures in
+`server/internal/migration/catalogs.go`, `catalogs_test.go`, `filemaker.go`,
+`fmp12_records.go`, `html_ddr.go`, `locales.go`,
+`server/internal/dataio/xml.go` and the API record-identity regression. Inputs were the existing
+GPL-3.0-only implementation, public issue requirements (#88, #100 and #112), and
+locally retained authorized design reports used for private validation. Private
+reports, names, records and script bodies are excluded from the public fixtures.
+The new fixtures were written independently; no vendor examples were copied.
+
+French operation labels and functional meanings were checked against current
+Claris FileMaker Pro Help on 2026-11-13: [Go to Layout](https://help.claris.com/fr/pro-help/content/go-to-layout.html),
+[Exit Script](https://help.claris.com/fr/pro-help/content/exit-script.html),
+[Halt Script](https://help.claris.com/fr/pro-help/content/halt-script.html),
+[Exit Loop If](https://help.claris.com/fr/pro-help/content/exit-loop-if.html), and
+[Comment](https://help.claris.com/fr/pro-help/content/comment.html). These references
+inform necessary compatibility labels and behavior; no documentation prose,
+artwork or sample script is imported. The help is a rolling reference, not evidence
+of source application equivalence. Changes retain the repository's GPL-3.0-only
+terms. Maintainer review remains pending.
+
+## Native records and export grammar repair — 2026-11-13
+
+The HBAM7 chunk grammar/path traversal in
+`server/internal/migration/fmp12_stream.go` adapts Evan Miller's MIT-licensed
+[fmptools](https://github.com/evanmiller/fmptools), revision
+`fd32a6c4f425a377f27efd558cf9bc7cc09985a6` (`HACKING`, `src/block.c`,
+`src/fmp.c`, `src/read_values.c`). The notice and pinned source reference are in
+`server/tools/notices/fmptools/` and are included by the server notice generator.
+The adaptation preserves opaque record tokens instead of reducing them to small
+integers, validates leaf links and truncation, and refuses unrepresented source
+values. It adds no runtime dependency on fmptools.
+
+The SCSU decoder is independently written against Unicode
+[UTS #6 revision 4, version 3.6](https://www.unicode.org/reports/tr6/tr6-4.html).
+The reference reader was also used locally as an independent control; its text
+normalizations were explicitly disabled for that comparison. Confidential native
+copies and authentic design exports informed grammar/behavior checks; no source
+export, private script, record value or container is included in redistributable
+tests. Public regressions are original synthetic examples. Codex assisted the
+implementation and local review; maintainer review and a source-generated public
+end-to-end fixture remain outstanding. This is not a clean-room claim or an
+application-equivalence certification.
+
+
+## Literal FileMaker scalar observations — 2026-11-13
+
+`server/internal/migration/testdata/claris26-fr-scalars/` contains an original
+synthetic expression and its actual Data Viewer result from the authorized
+FileMaker Pro 26.0.2 French client. No database was open or customer script run.
+Codex wrote the expression and captured the result through normal UI Automation;
+no screenshot, vendor sample, customer value, license or credential is included.
+The expression and test artifacts retain GPL-3.0-only terms. Their scope is
+explicitly limited to literal scalar function observations, not source Number
+field storage/export formatting or the required working two-file application.
+Functional references consulted were Claris Pro Help
+[GetAsNumber](https://help.claris.com/fr/pro-help/content/getasnumber.html),
+[GetAsTime](https://help.claris.com/fr/pro-help/content/getastime.html) and
+[JSONSetElement](https://help.claris.com/fr/pro-help/content/jsonsetelement.html).
+No documentation expression or examples were copied. Maintainer review is
+pending.
+
 ## Script call context and session isolation — 2026-11-13
 
 Codex assisted original changes to the client runner, debugger and API session
