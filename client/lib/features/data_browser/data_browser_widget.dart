@@ -3686,7 +3686,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     try {
       final layouts = await widget.apiClient.listLayouts();
       if (layoutNumber < 1 || layoutNumber > layouts.length) return false;
-      return actionGoToLayout(layouts[layoutNumber - 1].name);
+      return await actionGoToLayout(layouts[layoutNumber - 1].name);
     } catch (_) {
       return false;
     }
