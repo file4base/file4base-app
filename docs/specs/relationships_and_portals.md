@@ -66,7 +66,10 @@ opened.
 - **Multi-keys.** A field holding several lines (separated by returns) matches
   through any of them, criterion by criterion.
 - **Empty fields.** A record with an empty field in any criterion other than
-  `×` relates to nothing.
+  `×` relates to nothing, on either side: an account with no region has no
+  visits, and a visit with no region is no account's, even through `≠`, where
+  SQL alone would find an empty text different from `north`. Portals, finds,
+  sorts and cascading deletes all leave it out.
 - **Everything that follows a relationship** uses all its criteria: portals,
   related fields, unstored calculations reading `Occurrence::Field`, finds on
   related fields, cascading deletes and the relationship's sort. "Sort related
@@ -104,10 +107,12 @@ line per criterion and shows every operator in the relationship's badge
 (`= ≠ <`), with the criteria in its tooltip.
 
 Migration maps every join predicate of a FileMaker relationship, from both the
-XML DDR and Save a Copy as XML, `×` (cartesian product) included. A predicate
-whose field cannot be found refuses the whole relationship and is named in the
-report, rather than migrating a relationship that relates more records than
-the source did.
+XML DDR and Save a Copy as XML, `×` (cartesian product) included, with the
+operator spelled as a sign or a name (`NotEqual`, `LessThanOrEqualTo`, …). A
+predicate written from the relationship's other side is turned round. A
+predicate whose field cannot be found, or whose operator is not known, refuses
+the whole relationship and is named in the report, rather than migrating a
+relationship that relates other records than the source did.
 
 ## How a side is named
 

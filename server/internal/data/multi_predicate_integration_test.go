@@ -298,6 +298,53 @@ func TestMultiPredicateCreation(t *testing.T) {
 	})
 }
 
+// A related record whose match field is empty is not related, whatever the
+// operator: an empty text is ≠ 'north' in SQL, but FileMaker relates nothing through
+// an empty field, so neither do portals, finds, sorts or cascading deletes.
+func TestEmptyTargetMatchFieldRelatesNothing(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	f := newMultiFixture(t, ctx, driver)
+	rel := f.relate(t, ctx, schema.CreateRelationshipInput{
+		Predicates:    []schema.RelationshipPredicate{f.criterion("code", "=", "code"), f.criterion("region", "≠", "region")},
+		CascadeDelete: true,
+	})
+	account := f.insert(t, ctx, f.accounts, map[string]interface{}{"code": "G7", "region": "north"})
+	f.insert(t, ctx, f.visits, map[string]interface{}{"code": "G7", "region": "south", "day": 2, "label": "south"})
+	f.insert(t, ctx, f.visits, map[string]interface{}{"code": "G7", "region": "", "day": 1, "label": "blank"})
+	f.insert(t, ctx, f.visits, map[string]interface{}{"code": "G7", "day": 3, "label": "null"})
+
+	t.Run("a portal, sorted or not, leaves them out", func(t *testing.T) {
+		rows, err := f.dataSvc.RelatedRows(ctx, f.accounts, account, rel.ID, "", data.QueryOptions{})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"south"}, labels(rows, "label"))
+
+		rows, err = f.dataSvc.RelatedRows(ctx, f.accounts, account, rel.ID, "",
+			data.QueryOptions{Sort: []data.SortField{{Field: "day"}}})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"south"}, labels(rows, "label"))
+	})
+
+	t.Run("a find on a related field does not reach them", func(t *testing.T) {
+		for _, label := range []string{"blank", "null"} {
+			found, err := f.dataSvc.ExecuteFind(ctx, f.accounts, []data.FindRequest{{Criteria: []data.FindCriterion{{
+				FieldName: "label", Operator: "=", Value: label, RelationshipID: rel.ID, Occurrence: f.visitsOcc,
+			}}}}, data.QueryOptions{})
+			require.NoError(t, err)
+			assert.Empty(t, found, "the %s visit is not related to the account", label)
+		}
+	})
+
+	t.Run("a cascading delete keeps them", func(t *testing.T) {
+		require.NoError(t, f.dataSvc.DeleteRow(ctx, f.accounts, account))
+		rows, err := f.dataSvc.ListRows(ctx, f.visits, data.QueryOptions{Limit: 100})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"blank", "null"}, labels(rows, "label"))
+	})
+}
+
 // × relates every record for its criterion, empty fields included: with the
 // other criteria it narrows nothing, and alone it relates every record.
 func TestCartesianCriterion(t *testing.T) {
@@ -394,5 +441,76 @@ func TestMultiPredicateValidation(t *testing.T) {
 		}
 		_, err = f.dataSvc.Relationship(ctx, rel.ID)
 		assert.ErrorIs(t, err, data.ErrRelationshipNotFound)
+	})
+}
+
+// An update writes only what it carries. A rename that wrote back the
+// criteria it had read would undo a replacement of the criteria made in
+// between.
+func TestRelationshipUpdateWritesOnlyWhatItCarries(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	f := newMultiFixture(t, ctx, driver)
+	rel := f.relate(t, ctx, schema.CreateRelationshipInput{
+		Predicates: []schema.RelationshipPredicate{f.criterion("code", "=", "code")},
+	})
+
+	t.Run("a rename leaves the criteria columns alone", func(t *testing.T) {
+		// A marker no read would produce: rewriting the first criterion
+		// would replace it with the field's real name.
+		dialect := driver.Dialect()
+		_, err := driver.DB().ExecContext(ctx,
+			"UPDATE sys_relationships SET left_column_name = "+dialect.Placeholder(1)+" WHERE id = "+dialect.Placeholder(2),
+			"untouched", rel.ID)
+		require.NoError(t, err)
+
+		renamed := "mp_renamed"
+		updated, err := f.schemaSvc.UpdateRelationship(ctx, rel.ID, schema.UpdateRelationshipInput{Name: &renamed})
+		require.NoError(t, err)
+		assert.Equal(t, renamed, updated.Name)
+
+		var stored string
+		require.NoError(t, driver.DB().QueryRowContext(ctx,
+			"SELECT left_column_name FROM sys_relationships WHERE id = "+dialect.Placeholder(1), rel.ID).Scan(&stored))
+		assert.Equal(t, "untouched", stored)
+	})
+
+	t.Run("renames racing replacements of the criteria do not undo them", func(t *testing.T) {
+		sets := [][]schema.RelationshipPredicate{
+			{f.criterion("since", "<", "day"), f.criterion("code", "=", "code")},
+			{f.criterion("region", "≠", "region")},
+		}
+		const rounds = 20
+		done := make(chan error, 1)
+		go func() {
+			for i := 0; i < rounds; i++ {
+				name := fmt.Sprintf("mp_race_%d", i)
+				if _, err := f.schemaSvc.UpdateRelationship(ctx, rel.ID, schema.UpdateRelationshipInput{Name: &name}); err != nil {
+					done <- err
+					return
+				}
+			}
+			done <- nil
+		}()
+		for i := 0; i < rounds; i++ {
+			_, err := f.schemaSvc.UpdateRelationship(ctx, rel.ID, schema.UpdateRelationshipInput{Predicates: sets[i%2]})
+			require.NoError(t, err)
+		}
+		require.NoError(t, <-done)
+
+		last := sets[(rounds-1)%2]
+		got, err := f.dataSvc.Relationship(ctx, rel.ID)
+		require.NoError(t, err)
+		require.Len(t, got.Predicates, len(last))
+		meta, err := f.schemaSvc.ListRelationships(ctx)
+		require.NoError(t, err)
+		for _, m := range meta {
+			if m.ID == rel.ID {
+				assert.Equal(t, last[0].LeftColumnID, m.LeftColumnID, "the last replacement's first criterion stands")
+				assert.Equal(t, last[0].Operator, m.Operator)
+			}
+		}
 	})
 }

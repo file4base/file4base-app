@@ -318,72 +318,76 @@ func (s *Service) UpdateRelationship(ctx context.Context, id string, input Updat
 		return nil, errors.New("relationship id cannot be empty")
 	}
 
-	db := s.driver.DB()
-	dialect := s.driver.Dialect()
-
-	qGet := `SELECT ` + relationshipColumns + ` FROM sys_relationships r
-		LEFT JOIN sys_columns lc ON lc.id = r.left_column_id
-		LEFT JOIN sys_columns rc ON rc.id = r.right_column_id
-		WHERE r.id = ` + dialect.Placeholder(1)
-	cur, leftName, rightName, err := scanRelationshipMetadata(db.QueryRowContext(ctx, qGet, id))
-	if err != nil {
-		return nil, fmt.Errorf("relationship not found: %w", err)
-	}
-	extra, err := s.extraPredicates(ctx, id)
+	cur, err := s.relationshipByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	cur.attachPredicates(leftName, rightName, extra[id])
 
-	if input.Name != nil && strings.TrimSpace(*input.Name) != "" {
-		cur.Name = strings.TrimSpace(*input.Name)
+	// Only what the request carries is written. Writing back what was read
+	// would undo a change made in between: a rename racing a replacement of
+	// the criteria would restore the old first criterion.
+	dialect := s.driver.Dialect()
+	var sets []string
+	var args []interface{}
+	set := func(column string, value interface{}) {
+		args = append(args, value)
+		sets = append(sets, fmt.Sprintf("%s = %s", column, dialect.Placeholder(len(args))))
 	}
-	rewrite := false
+	if input.Name != nil && strings.TrimSpace(*input.Name) != "" {
+		set("name", strings.TrimSpace(*input.Name))
+	}
+	var predicates []RelationshipPredicate
 	switch {
 	case input.Predicates != nil:
-		predicates, err := s.checkPredicates(ctx, cur.LeftOccurrenceID, cur.RightOccurrenceID, input.Predicates)
+		// The occurrences of a relationship never change, so the criteria
+		// can be checked against those read above.
+		predicates, err = s.checkPredicates(ctx, cur.LeftOccurrenceID, cur.RightOccurrenceID, input.Predicates)
 		if err != nil {
 			return nil, err
 		}
-		cur.Predicates, rewrite = predicates, true
+		first := predicates[0]
+		set("left_column_id", first.LeftColumnID)
+		set("left_column_name", first.LeftColumnName)
+		set("operator", first.Operator)
+		set("right_column_id", first.RightColumnID)
+		set("right_column_name", first.RightColumnName)
 	case input.Operator != nil && strings.TrimSpace(*input.Operator) != "":
 		op, err := NormalizeRelationshipOperator(*input.Operator)
 		if err != nil {
 			return nil, err
 		}
-		cur.Predicates[0].Operator = op
+		set("operator", op)
 	}
-	first := cur.Predicates[0]
-	cur.LeftColumnID, cur.Operator, cur.RightColumnID = first.LeftColumnID, first.Operator, first.RightColumnID
 	if input.AllowCreation != nil {
-		cur.AllowCreation = *input.AllowCreation
+		set("allow_creation", *input.AllowCreation)
 	}
 	if input.CascadeDelete != nil {
-		cur.CascadeDelete = *input.CascadeDelete
+		set("cascade_delete", *input.CascadeDelete)
 	}
 	if input.SortRelated != nil {
-		cur.SortRelated = *input.SortRelated
+		set("sort_related", *input.SortRelated)
 	}
-	if err := s.ensureRelationshipPredicates(ctx); err != nil {
-		return nil, err
+	if len(sets) == 0 {
+		return cur, nil
+	}
+	if predicates != nil {
+		if err := s.ensureRelationshipPredicates(ctx); err != nil {
+			return nil, err
+		}
 	}
 
-	qUpd := `UPDATE sys_relationships SET name = $1, left_column_id = $2, left_column_name = $3, operator = $4, right_column_id = $5, right_column_name = $6, allow_creation = $7, cascade_delete = $8, sort_related = $9 WHERE id = $10`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		qUpd = `UPDATE sys_relationships SET name = ?, left_column_id = ?, left_column_name = ?, operator = ?, right_column_id = ?, right_column_name = ?, allow_creation = ?, cascade_delete = ?, sort_related = ? WHERE id = ?`
-	}
-
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.driver.DB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, qUpd, cur.Name, first.LeftColumnID, first.LeftColumnName, first.Operator,
-		first.RightColumnID, first.RightColumnName, cur.AllowCreation, cur.CascadeDelete, cur.SortRelated, id); err != nil {
+	args = append(args, id)
+	qUpd := fmt.Sprintf("UPDATE sys_relationships SET %s WHERE id = %s", strings.Join(sets, ", "), dialect.Placeholder(len(args)))
+	if _, err := tx.ExecContext(ctx, qUpd, args...); err != nil {
 		return nil, fmt.Errorf("failed updating relationship: %w", err)
 	}
-	if rewrite {
-		if err := s.writeExtraPredicates(ctx, tx, id, cur.Predicates); err != nil {
+	if predicates != nil {
+		if err := s.writeExtraPredicates(ctx, tx, id, predicates); err != nil {
 			return nil, err
 		}
 	}
@@ -391,7 +395,25 @@ func (s *Service) UpdateRelationship(ctx context.Context, id string, input Updat
 		return nil, err
 	}
 
-	return &cur, nil
+	return s.relationshipByID(ctx, id)
+}
+
+// relationshipByID reads one relationship with every criterion.
+func (s *Service) relationshipByID(ctx context.Context, id string) (*RelationshipMetadata, error) {
+	qGet := `SELECT ` + relationshipColumns + ` FROM sys_relationships r
+		LEFT JOIN sys_columns lc ON lc.id = r.left_column_id
+		LEFT JOIN sys_columns rc ON rc.id = r.right_column_id
+		WHERE r.id = ` + s.driver.Dialect().Placeholder(1)
+	rel, leftName, rightName, err := scanRelationshipMetadata(s.driver.DB().QueryRowContext(ctx, qGet, id))
+	if err != nil {
+		return nil, fmt.Errorf("relationship not found: %w", err)
+	}
+	extra, err := s.extraPredicates(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	rel.attachPredicates(leftName, rightName, extra[id])
+	return &rel, nil
 }
 
 // DeleteRelationship removes a relationship definition

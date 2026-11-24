@@ -178,3 +178,105 @@ func TestMultiPredicateRelationshipFromSaveAsXML(t *testing.T) {
 	}
 	assertNoFirstPredicateItem(t, res.Report)
 }
+
+// Save a Copy as XML nests each field's occurrence in its reference, so a
+// criterion written from the relationship's other side is told apart by it.
+func TestSaveAsXMLReversedCriterionIsTurnedAround(t *testing.T) {
+	const design = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Accounts"/><BaseTable id="130" name="Visits"/></BaseTableCatalog>
+ <FieldsForTables>
+ <FieldCatalog><BaseTableReference id="129" name="Accounts"/><ObjectList>
+  <Field id="1" name="Code" datatype="Text" fieldtype="Normal"/><Field id="2" name="Opened" datatype="Date" fieldtype="Normal"/>
+ </ObjectList></FieldCatalog>
+ <FieldCatalog><BaseTableReference id="130" name="Visits"/><ObjectList>
+  <Field id="1" name="Code" datatype="Text" fieldtype="Normal"/><Field id="2" name="Visited" datatype="Date" fieldtype="Normal"/>
+ </ObjectList></FieldCatalog>
+ </FieldsForTables>
+ <TableOccurrenceCatalog>
+  <TableOccurrence id="1" name="Accounts"><BaseTableSourceReference><BaseTableReference id="129" name="Accounts"/></BaseTableSourceReference></TableOccurrence>
+  <TableOccurrence id="2" name="Later Visits"><BaseTableSourceReference><BaseTableReference id="130" name="Visits"/></BaseTableSourceReference></TableOccurrence>
+ </TableOccurrenceCatalog>
+ <RelationshipCatalog><Relationship id="1">
+  <LeftTable><TableOccurrenceReference id="1" name="Accounts"/></LeftTable>
+  <RightTable><TableOccurrenceReference id="2" name="Later Visits"/></RightTable>
+  <JoinPredicateList>
+   <JoinPredicate type="Equal">
+    <LeftField><FieldReference id="1" name="Code"><TableOccurrenceReference id="1" name="Accounts"/></FieldReference></LeftField>
+    <RightField><FieldReference id="1" name="Code"><TableOccurrenceReference id="2" name="Later Visits"/></FieldReference></RightField>
+   </JoinPredicate>
+   <JoinPredicate type="GreaterThan">
+    <LeftField><FieldReference id="2" name="Visited"><TableOccurrenceReference id="2" name="Later Visits"/></FieldReference></LeftField>
+    <RightField><FieldReference id="2" name="Opened"><TableOccurrenceReference id="1" name="Accounts"/></FieldReference></RightField>
+   </JoinPredicate>
+  </JoinPredicateList>
+ </Relationship></RelationshipCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if len(res.Bundle.Relationships) != 1 {
+		t.Fatalf("expected the relationship, got %d (rejected: %+v)", len(res.Bundle.Relationships), res.Report.Rejected)
+	}
+	got := describeCriteria(res.Bundle, res.Bundle.Relationships[0])
+	want := []string{"accounts.code = visits.code", "accounts.opened < visits.visited"}
+	if strings.Join(got, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("Later Visits::Visited > Accounts::Opened must read as accounts.opened < visits.visited; got %v", got)
+	}
+}
+
+func TestJoinOperatorSpellings(t *testing.T) {
+	for spelling, want := range map[string]string{
+		"":                         "=",
+		"Equal":                    "=",
+		"EqualTo":                  "=",
+		"NotEqual":                 "≠",
+		"NotEqualTo":               "≠",
+		"not_equal":                "≠",
+		"LessThan":                 "<",
+		"LessThanOrEqual":          "≤",
+		"LessThanOrEqualTo":        "≤",
+		"Less Than Or Equal":       "≤",
+		"GreaterThan":              ">",
+		"GreaterThanOrEqual":       "≥",
+		"GreaterThanOrEqualTo":     "≥",
+		"greater-than-or-equal-to": "≥",
+		"CartesianProduct":         "×",
+		"<>":                       "≠",
+		">=":                       "≥",
+	} {
+		got, ok := normalizeRelOperator(spelling)
+		if !ok || got != want {
+			t.Errorf("normalizeRelOperator(%q) = %q, %v; want %q", spelling, got, ok, want)
+		}
+	}
+	for _, unknown := range []string{"Like", "Contains", "~"} {
+		if got, ok := normalizeRelOperator(unknown); ok {
+			t.Errorf("normalizeRelOperator(%q) = %q; an unknown operator must not be guessed", unknown, got)
+		}
+	}
+}
+
+// An operator that is not known refuses the relationship rather than being
+// read as an equality, which would relate other records than the source did.
+func TestUnknownJoinOperatorRejectsTheRelationship(t *testing.T) {
+	doc := strings.Replace(multiPredicateDDR, `<JoinPredicate type="NotEqual">`, `<JoinPredicate type="Like">`, 1)
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if len(res.Bundle.Relationships) != 0 {
+		t.Fatalf("a relationship with an unknown operator must not be migrated, got %v",
+			describeCriteria(res.Bundle, res.Bundle.Relationships[0]))
+	}
+	found := false
+	for _, item := range res.Report.Rejected {
+		if item.Domain == "relationship" && strings.Contains(item.Detail, `"Like"`) &&
+			strings.Contains(item.Detail, "Unsupported join operator in 1 of its 3 criteria") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the operator to be named in a rejected item, got %+v", res.Report.Rejected)
+	}
+}

@@ -166,7 +166,11 @@ func matchKeys(key interface{}) []interface{} {
 // Every criterion must be met. Each compares one target field with what the
 // source record holds, which may be several keys (a multi-key) and is met by
 // any of them. The condition is empty when the record matches nothing: a
-// criterion other than × whose source field is empty relates no record.
+// criterion other than × whose source field is empty relates no record. An
+// empty field relates nothing on the target side either, whatever the
+// operator: an empty text is ≠ 'north' in SQL, but FileMaker never relates a record
+// through an empty match field, so neither does a portal, a related read, a
+// sort or a cascading delete.
 func matchCondition(dialect dbal.Dialect, terms []matchTerm, keyOf func(column string) interface{}, first int) (string, []interface{}) {
 	var conditions []string
 	var args []interface{}
@@ -179,6 +183,7 @@ func matchCondition(dialect dbal.Dialect, terms []matchTerm, keyOf func(column s
 			return "", nil
 		}
 		column := dialect.QuoteIdentifier(t.TargetColumn)
+		conditions = append(conditions, notEmpty(dialect, column))
 		marks := make([]string, len(keys))
 		for i := range keys {
 			marks[i] = dialect.Placeholder(first + len(args) + i)
@@ -198,6 +203,11 @@ func matchCondition(dialect dbal.Dialect, terms []matchTerm, keyOf func(column s
 		return "1 = 1", nil // only × criteria: every record is related
 	}
 	return strings.Join(conditions, " AND "), args
+}
+
+// notEmpty is the condition that a match field holds something.
+func notEmpty(dialect dbal.Dialect, column string) string {
+	return fmt.Sprintf("%s IS NOT NULL AND %s <> ''", column, dialect.CastToText(column))
 }
 
 // Sides decides which end of the relationship a request reads.
@@ -798,8 +808,10 @@ func relatedFindKey(crit FindCriterion) string {
 // A record whose match field is empty relates to nothing, which is the rule
 // the related reads already follow, so it never matches a related criterion —
 // not even through an operator like "is empty", which is about the related
-// record's field and not about the absence of related records. Every criterion
-// of the relationship must be met, as in the related reads.
+// record's field and not about the absence of related records. A related
+// record whose match field is empty is not related either, whatever the
+// operator. Every criterion of the relationship must be met, as in the related
+// reads.
 func relatedCriterionClause(
 	dialect dbal.Dialect, tableName string, crit FindCriterion,
 	targets map[string]relatedFindTarget, idx *int, values *[]interface{},
@@ -822,8 +834,9 @@ func relatedCriterionClause(
 		}
 		parent := dialect.QuoteIdentifier(tableName) + "." + dialect.QuoteIdentifier(t.SourceColumn)
 		child := alias + "." + dialect.QuoteIdentifier(t.TargetColumn)
-		present = append(present, fmt.Sprintf("%s IS NOT NULL AND %s <> ''", parent, dialect.CastToText(parent)))
-		joins = append(joins, fmt.Sprintf("%s %s %s", child, t.Op, parent))
+		present = append(present, notEmpty(dialect, parent))
+		// The related record's match field must hold something too.
+		joins = append(joins, notEmpty(dialect, child), fmt.Sprintf("%s %s %s", child, t.Op, parent))
 	}
 	inner := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName), crit, idx, values)
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s)",
