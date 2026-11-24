@@ -2,6 +2,8 @@ package schema
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -51,7 +53,7 @@ func StorageType(fieldType dbal.AgnosticFieldType, calculationFormula *string) d
 // `columnID` is the column being saved; it is excluded from the existing ones
 // so that saving a field again does not see its own previous formula.
 func (s *Service) checkCalculation(
-	ctx context.Context, tableID, columnID, fieldName string, fieldType dbal.AgnosticFieldType, formulaJSON *string, checkRelated bool,
+	ctx context.Context, tableID, columnID, fieldName string, fieldType dbal.AgnosticFieldType, formulaJSON *string,
 ) error {
 	if fieldType != dbal.FieldTypeCalculation {
 		return nil
@@ -97,7 +99,7 @@ func (s *Service) checkCalculation(
 				ErrInvalidFieldOptions, fieldName, read)
 		}
 	}
-	if checkRelated && (len(related) > 0 || spec.Context != "") {
+	if len(related) > 0 || spec.Context != "" {
 		if err := s.checkRelatedReads(ctx, tableID, fieldName, spec.Context, related); err != nil {
 			return err
 		}
@@ -192,22 +194,39 @@ func (s *Service) checkRelatedReads(ctx context.Context, tableID, fieldName, con
 	return nil
 }
 
-// checkCalculationGraph is the related-field half of checkCalculation, for a
-// calculation added before the relationships it reads through.
-func (s *Service) checkCalculationGraph(ctx context.Context, tableID, fieldName string, formulaJSON *string) error {
-	if formulaJSON == nil {
+// checkUnstorable refuses to make unstored a calculation that cannot be: one
+// whose column is required, since an unstored calculation's column stays
+// empty, or one a relationship matches on, since the match would read that
+// empty column.
+func (s *Service) checkUnstorable(ctx context.Context, col ColumnMetadata, formulaJSON *string) error {
+	if col.FieldType != dbal.FieldTypeCalculation || formulaJSON == nil || data.ReadStoredCalculation(*formulaJSON).IsStored() {
 		return nil
 	}
-	spec := data.ReadStoredCalculation(*formulaJSON)
-	expr, err := calc.Parse(spec.Formula)
+	if !col.IsNullable {
+		return fmt.Errorf("%w: %q cannot be unstored: an unstored calculation is not kept in the database, so its field cannot be required",
+			ErrInvalidFieldOptions, col.Name)
+	}
+	if col.ID == "" {
+		return nil
+	}
+	q := `SELECT name FROM sys_relationships WHERE left_column_id = $1 OR right_column_id = $1`
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		q = `SELECT name FROM sys_relationships WHERE left_column_id = ? OR right_column_id = ?`
+	}
+	args := []interface{}{col.ID}
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		args = append(args, col.ID)
+	}
+	var relationship string
+	err := s.driver.DB().QueryRowContext(ctx, q, args...).Scan(&relationship)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
-		return nil // reported when the field was added
+		return err
 	}
-	related := expr.RelatedFields()
-	if len(related) == 0 && spec.Context == "" {
-		return nil
-	}
-	return s.checkRelatedReads(ctx, tableID, fieldName, spec.Context, related)
+	return fmt.Errorf("%w: %q cannot be unstored: the relationship %q matches records on it, and an unstored calculation is not kept in the database to match on",
+		ErrInvalidFieldOptions, col.Name, relationship)
 }
 
 type occurrenceRef struct{ id, name, tableID string }
@@ -330,7 +349,10 @@ func (s *Service) prepareCalculationChange(ctx context.Context, tableID, columnI
 		return nil, fmt.Errorf("column not found: %s", columnID)
 	}
 
-	if err := s.checkCalculation(ctx, tableID, columnID, current.Name, current.FieldType, formulaJSON, true); err != nil {
+	if err := s.checkCalculation(ctx, tableID, columnID, current.Name, current.FieldType, formulaJSON); err != nil {
+		return nil, err
+	}
+	if err := s.checkUnstorable(ctx, *current, formulaJSON); err != nil {
 		return nil, err
 	}
 	if current.FieldType != dbal.FieldTypeCalculation {

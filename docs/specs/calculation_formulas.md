@@ -49,18 +49,34 @@ without its own record being written.
   named, across as many relationships as it takes. The last relationship's
   sort order is the order `Occurrence::Field` takes its first value from and
   `List` lists them in.
-- An empty match field relates nothing. A formula that fails, or a related
-  occurrence no relationship reaches any more, leaves the field empty for that
-  record — FileMaker's `?` — rather than refusing to show the record.
-- Unstored calculations of a related table read each other up to 8 levels
-  deep.
+- An empty match field relates nothing. A text match field holding several
+  lines is a multi-key: it matches records holding any of them. `<`, `≤`, `>`,
+  `≥` and `≠` relationships read the right records from either side.
+- Related records are read **as the caller**: a related field of a table they
+  may not read evaluates to `<No Access>` (an error, so the field is empty and
+  the Data Viewer shows it), never to its value. Every table the path crosses
+  must be readable.
+- A formula that fails, or a related occurrence no relationship reaches any
+  more, leaves the field empty for that record — FileMaker's `?` — rather than
+  refusing to show the record. Formulas that read each other through
+  relationships in a ring stop there with an empty value.
+- Only what is read is computed: a related field, and the unstored fields it
+  reads. Each record's unstored field is computed once per request; chains
+  are followed up to 32 levels.
 - Each request loads the relationship graph once and queries each
-  relationship once per match value.
+  relationship once per match value. Related reads of a list are not yet
+  batched into one query per page.
 
 Saving checks that a **stored** calculation reads no related field ("make it
 unstored") and no unstored calculation, since what it stores would go stale;
 and that each related field of an unstored one names an occurrence and a field
 that exist, reached by relationships from its context.
+An unstored calculation's column holds nothing, so it cannot be required
+(not nullable), and a relationship cannot match on it: making a match field
+unstored, or drawing a relationship on an unstored one, is refused. A
+solution import checks its formulas once all its fields and relationships
+exist, whatever order they are declared in. Keyed imports, like inserts and
+updates, never write an unstored calculation.
 
 An unstored calculation **cannot be found on, sorted by or summarized**: its
 value does not exist in the database. Such a request is refused with
@@ -68,9 +84,11 @@ value does not exist in the database. Such a request is refused with
 
 A migration keeps FileMaker's choice (`storeCalculationResults`) and the
 formula's context occurrence, binds `Occurrence::Field` to the imported
-occurrence and column, and makes unstored any calculation that reads a related
-field or an unstored calculation, as FileMaker requires. A related field no
-relationship reaches is quarantined and reported.
+occurrence and column, and makes unstored (and nullable) any calculation that
+reads a related field or an unstored calculation, as FileMaker requires. A
+related field no relationship reaches is quarantined and reported. A
+calculation a relationship matches on stays stored when it reads only its own
+record, and is quarantined when it reads related records.
 
 ## Result types
 

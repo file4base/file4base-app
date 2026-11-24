@@ -583,13 +583,14 @@ func (s *Service) CreateTable(ctx context.Context, displayName, customName strin
 
 // AddColumn adds a new column to metadata and alters the physical table
 func (s *Service) AddColumn(ctx context.Context, tableID string, col ColumnMetadata) (*ColumnMetadata, error) {
-	return s.addColumn(ctx, tableID, col, true)
+	return s.addColumn(ctx, tableID, col, false)
 }
 
-// addColumn is AddColumn. A solution import adds its fields before the
-// relationships their calculations read through, so it passes
-// checkRelated=false and checks those reads once the graph is in place.
-func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetadata, checkRelated bool) (*ColumnMetadata, error) {
+// addColumn is AddColumn. A solution import adds a table's calculations in
+// the order the file declares them, before the fields of later tables and the
+// relationships they read through, so it passes deferCheck and checks each
+// formula once everything is in place (checkCalculation).
+func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetadata, deferCheck bool) (*ColumnMetadata, error) {
 	name := dbal.NormalizeIdentifier(col.Name)
 	if err := dbal.CheckIdentifier("column", name); err != nil {
 		return nil, err
@@ -623,7 +624,15 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 
 	// A calculation field's formula must parse, read only fields this table
 	// has, and not take part in a ring of calculations (#30).
-	if err := s.checkCalculation(ctx, tableID, col.ID, col.Name, col.FieldType, col.CalculationFormula, checkRelated); err != nil {
+	if !deferCheck {
+		if err := s.checkCalculation(ctx, tableID, col.ID, col.Name, col.FieldType, col.CalculationFormula); err != nil {
+			return nil, err
+		}
+	}
+	// A new column is in no relationship yet: only its being required matters.
+	newCol := col
+	newCol.ID = ""
+	if err := s.checkUnstorable(ctx, newCol, col.CalculationFormula); err != nil {
 		return nil, err
 	}
 	// A summary field's definition must name a kind of summary and a field it

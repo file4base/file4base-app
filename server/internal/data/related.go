@@ -70,6 +70,76 @@ func (r *Relationship) sqlOperator() (string, error) {
 	return op, nil
 }
 
+// reversed is the comparison seen from the other side: left < right is
+// right > left.
+var reversed = map[string]string{"=": "=", "<>": "<>", "<": ">", "<=": ">=", ">": "<", ">=": "<="}
+
+// targetOperator is the comparison a target record's match field must meet
+// against the source record's key: target op key. The relationship is drawn
+// left op right, so it is reversed when the source is the left side —
+// otherwise Lines::Date > Orders::Date read from an order would return the
+// lines dated before it.
+func (r *Relationship) targetOperator(source RelationSide) (string, error) {
+	op, err := r.sqlOperator()
+	if err != nil {
+		return "", err
+	}
+	if source == r.Left {
+		return reversed[op], nil
+	}
+	return op, nil
+}
+
+// matchKeys are the values a match field holds. A text key holding several
+// lines is a multi-key, as in FileMaker: it matches a record holding any of
+// them. Empty lines, and an empty key, match nothing.
+func matchKeys(key interface{}) []interface{} {
+	text, isText := key.(string)
+	if b, ok := key.([]byte); ok {
+		text, isText = string(b), true
+	}
+	if !isText {
+		if key == nil {
+			return nil
+		}
+		return []interface{}{key}
+	}
+	var keys []interface{}
+	for _, line := range strings.FieldsFunc(text, func(r rune) bool { return r == '\r' || r == '\n' }) {
+		if strings.TrimSpace(line) != "" {
+			keys = append(keys, line)
+		}
+	}
+	return keys
+}
+
+// matchCondition is the condition on target's match field for the records
+// related to a source record holding key, with its arguments; placeholders
+// are numbered from first. It is empty when the key matches nothing.
+func matchCondition(dialect dbal.Dialect, rel *Relationship, source, target RelationSide, key interface{}, first int) (string, []interface{}, error) {
+	op, err := rel.targetOperator(source)
+	if err != nil {
+		return "", nil, err
+	}
+	keys := matchKeys(key)
+	if len(keys) == 0 {
+		return "", nil, nil
+	}
+	column := dialect.QuoteIdentifier(target.Column)
+	marks := make([]string, len(keys))
+	for i := range keys {
+		marks[i] = dialect.Placeholder(first + i)
+	}
+	if op == "=" {
+		return fmt.Sprintf("%s IN (%s)", column, strings.Join(marks, ", ")), keys, nil
+	}
+	parts := make([]string, len(marks))
+	for i, mark := range marks {
+		parts[i] = fmt.Sprintf("%s %s %s", column, op, mark)
+	}
+	return "(" + strings.Join(parts, " OR ") + ")", keys, nil
+}
+
 // Sides decides which end of the relationship a request reads.
 //
 // fromTable is the table of the record in hand; targetOccurrence names the
@@ -307,11 +377,6 @@ func (s *Service) RelatedRows(
 	if err != nil {
 		return nil, err
 	}
-	op, err := rel.sqlOperator()
-	if err != nil {
-		return nil, err
-	}
-
 	targetFields, err := s.tableFields(ctx, target.TableName)
 	if err != nil {
 		return nil, err
@@ -324,11 +389,14 @@ func (s *Service) RelatedRows(
 	if err != nil {
 		return nil, err
 	}
-	if emptyMatchValue(key) {
+	dialect := s.driver.Dialect()
+	match, keys, err := matchCondition(dialect, rel, source, target, key, 1)
+	if err != nil {
+		return nil, err
+	}
+	if match == "" {
 		return []map[string]interface{}{}, nil
 	}
-
-	dialect := s.driver.Dialect()
 	orderClause, err := s.orderBy(ctx, targetFields, target.TableName,
 		relatedSortOrder(rel, target, targetFields, opts))
 	if err != nil {
@@ -346,18 +414,16 @@ func (s *Service) RelatedRows(
 		offset = 0
 	}
 
-	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s %s %s LIMIT %d OFFSET %d",
+	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s LIMIT %d OFFSET %d",
 		selectList(dialect, targetFields),
 		dialect.QuoteIdentifier(target.TableName),
-		dialect.QuoteIdentifier(target.Column),
-		op,
-		dialect.Placeholder(1),
+		match,
 		orderClause,
 		limit,
 		offset,
 	)
 
-	rows, err := s.driver.DB().QueryContext(ctx, q, key)
+	rows, err := s.driver.DB().QueryContext(ctx, q, keys...)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading records related to %s.%s: %w", fromTable, recordID, err)
 	}
@@ -554,7 +620,7 @@ func (s *Service) resolveFindRelations(
 			if err != nil {
 				return nil, err
 			}
-			op, err := rel.sqlOperator()
+			op, err := rel.targetOperator(source) // the clause is child op parent
 			if err != nil {
 				return nil, err
 			}

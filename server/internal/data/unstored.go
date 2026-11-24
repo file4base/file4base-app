@@ -32,7 +32,11 @@ var ErrUnstoredField = errors.New("unstored calculation")
 
 // maxRelatedDepth bounds how deep unstored calculations may read each other
 // through relationships (Orders reading Lines reading Products…).
-const maxRelatedDepth = 8
+const maxRelatedDepth = 32
+
+// ErrNoAccess is what reading a related field of a table the caller may not
+// read evaluates to: FileMaker's <No Access>, never the data.
+var ErrNoAccess = errors.New("<No Access>")
 
 // relatedReader computes unstored calculations for one request. It loads the
 // relationship graph and each table's calculations once and keeps them for
@@ -45,13 +49,45 @@ type relatedReader struct {
 	// hops keeps the records one key leads to across one relationship, so a
 	// list whose records share a key, or several formulas reading through the
 	// same relationship, query it once.
-	hops  map[string][]map[string]interface{}
-	depth int
+	hops map[string][]map[string]interface{}
+	// values keeps each unstored field of each record once it is computed,
+	// so a record reached again — through another relationship or another
+	// formula — is not computed again; computing marks the ones under way,
+	// so formulas that read each other through relationships stop.
+	values    map[string]interface{}
+	computing map[string]bool
+	readable  map[string]error
+	depth     int
 }
 
 func (s *Service) newRelatedReader() *relatedReader {
 	return &relatedReader{s: s, calcs: map[string][]calculation{}, fields: map[string]fieldSet{},
-		hops: map[string][]map[string]interface{}{}}
+		hops: map[string][]map[string]interface{}{}, values: map[string]interface{}{},
+		computing: map[string]bool{}, readable: map[string]error{}}
+}
+
+// WithReadAccess makes the service ask, before a calculation reads a related
+// table, whether the caller may read it. Without it every table is readable,
+// which is what an administrator and the server's own work get.
+func (s *Service) WithReadAccess(canRead func(ctx context.Context, tableName string) (bool, error)) *Service {
+	s.canRead = canRead
+	return s
+}
+
+// checkRead is nil when the caller may read tableName, ErrNoAccess when not.
+func (r *relatedReader) checkRead(ctx context.Context, tableName string) error {
+	if r.s.canRead == nil {
+		return nil
+	}
+	if err, known := r.readable[tableName]; known {
+		return err
+	}
+	ok, err := r.s.canRead(ctx, tableName)
+	if err == nil && !ok {
+		err = fmt.Errorf("%w: %s", ErrNoAccess, tableName)
+	}
+	r.readable[tableName] = err
+	return err
 }
 
 // fillUnstored computes the unstored calculations of every row.
@@ -59,7 +95,7 @@ func (s *Service) fillUnstored(ctx context.Context, tableName string, rows []map
 	if len(rows) == 0 {
 		return nil
 	}
-	return s.newRelatedReader().fill(ctx, tableName, rows)
+	return s.newRelatedReader().fill(ctx, tableName, rows, nil)
 }
 
 func (r *relatedReader) tableCalculations(ctx context.Context, tableName string) ([]calculation, error) {
@@ -86,47 +122,65 @@ func (r *relatedReader) tableFields(ctx context.Context, tableName string) (fiel
 	return f, nil
 }
 
-// fill computes the unstored calculations of rows of tableName, in the order
-// the table's calculations depend on each other. A formula that fails leaves
-// its field empty for that record, as FileMaker shows "?" rather than
-// refusing to show the record.
-func (r *relatedReader) fill(ctx context.Context, tableName string, rows []map[string]interface{}) error {
+// fill computes unstored calculations of rows of tableName: those named in
+// want and the unstored ones they read, or all of them when want is nil. They
+// are computed in the order the table's calculations depend on each other. A
+// formula that fails leaves its field empty for that record, as FileMaker
+// shows "?" rather than refusing to show the record.
+func (r *relatedReader) fill(ctx context.Context, tableName string, rows []map[string]interface{}, want []string) error {
 	calculations, err := r.tableCalculations(ctx, tableName)
 	if err != nil {
 		return err
 	}
-	var unstored []calculation
+	needed := map[string]bool{}
 	for _, c := range calculations {
-		if c.unstored {
-			unstored = append(unstored, c)
+		if c.unstored && (want == nil || slices.Contains(want, c.field)) {
+			needed[c.field] = true
 		}
 	}
-	if len(unstored) == 0 {
-		return nil
-	}
-	if r.depth >= maxRelatedDepth {
-		for _, row := range rows {
-			for _, c := range unstored {
-				row[c.field] = nil
+	// What the wanted ones read, in reverse order of computation so a whole
+	// chain is collected in one pass.
+	for i := len(calculations) - 1; i >= 0; i-- {
+		if c := calculations[i]; needed[c.field] {
+			for _, read := range c.expr.Fields() {
+				needed[read] = true
 			}
 		}
+	}
+	if len(needed) == 0 {
 		return nil
 	}
 	r.depth++
 	defer func() { r.depth-- }()
 
 	for _, row := range rows {
-		for _, c := range unstored {
+		for _, c := range calculations {
+			if !c.unstored || !needed[c.field] {
+				continue
+			}
+			key := tableName + "\x00" + fmt.Sprint(row["id"]) + "\x00" + c.field
+			if v, done := r.values[key]; done {
+				row[c.field] = v
+				continue
+			}
+			if r.computing[key] || r.depth > maxRelatedDepth {
+				row[c.field] = nil // a formula that reads itself, through relationships
+				continue
+			}
+			r.computing[key] = true
 			env := &unstoredContext{
 				RecordContext: calc.RecordContext{Record: c.typedRecord(row)},
 				reader:        r, ctx: ctx, table: tableName, occurrence: c.occurrence, row: row,
 			}
 			answer, err := calc.EvaluateWith(c.expr, env, c.result)
+			delete(r.computing, key)
 			if err != nil {
-				row[c.field] = nil
-				continue
+				answer = nil
+			} else {
+				answer = rowValue(answer, c.types[c.field])
 			}
-			row[c.field] = rowValue(answer, c.types[c.field])
+			row[c.field] = answer
+			r.values[key] = answer
 		}
 	}
 	return nil
@@ -190,6 +244,21 @@ func (r *relatedReader) related(
 		return nil, err
 	}
 
+	// Every table the path crosses must be readable, not only the last: a
+	// path through a table the caller may not see would tell what it holds.
+	for _, h := range path {
+		if err := r.checkRead(ctx, h.to.TableName); err != nil {
+			return nil, err
+		}
+	}
+	fields, err := r.tableFields(ctx, to.table)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkField(fields, to.table, field); err != nil {
+		return nil, err
+	}
+
 	rows := []map[string]interface{}{row}
 	for i, h := range path {
 		last := i == len(path)-1
@@ -200,18 +269,9 @@ func (r *relatedReader) related(
 			return nil, nil
 		}
 	}
-
-	fields, err := r.tableFields(ctx, to.table)
-	if err != nil {
+	// Only the field read is computed, with what it reads.
+	if err := r.fill(ctx, to.table, rows, []string{field}); err != nil {
 		return nil, err
-	}
-	if err := checkField(fields, to.table, field); err != nil {
-		return nil, err
-	}
-	if len(path) > 0 {
-		if err := r.fill(ctx, to.table, rows); err != nil {
-			return nil, err
-		}
 	}
 	out := make([]any, len(rows))
 	for i, rel := range rows {
@@ -223,10 +283,6 @@ func (r *relatedReader) related(
 // follow reads, across one relationship, the records related to any of rows,
 // each once, in the relationship's sort order when it is the last step.
 func (r *relatedReader) follow(ctx context.Context, h hop, rows []map[string]interface{}, last bool) ([]map[string]interface{}, error) {
-	op, err := h.rel.sqlOperator()
-	if err != nil {
-		return nil, err
-	}
 	fields, err := r.tableFields(ctx, h.to.TableName)
 	if err != nil {
 		return nil, err
@@ -250,26 +306,24 @@ func (r *relatedReader) follow(ctx context.Context, h hop, rows []map[string]int
 	if err != nil {
 		return nil, err
 	}
-	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s %s %s",
-		selectList(dialect, fields),
-		dialect.QuoteIdentifier(h.to.TableName),
-		dialect.QuoteIdentifier(h.to.Column),
-		op,
-		dialect.Placeholder(1),
-		orderClause,
-	)
 
 	var out []map[string]interface{}
 	seen := map[string]bool{}
 	for _, row := range rows {
 		key := row[h.from.Column]
-		if emptyMatchValue(key) {
-			continue
-		}
 		memo := fmt.Sprintf("%s\x00%s\x00%t\x00%v", h.rel.ID, h.to.OccurrenceID, last, key)
 		related, done := r.hops[memo]
 		if !done {
-			res, err := r.s.driver.DB().QueryContext(ctx, q, key)
+			match, keys, err := matchCondition(dialect, h.rel, h.from, h.to, key, 1)
+			if err != nil {
+				return nil, err
+			}
+			if match == "" {
+				continue
+			}
+			q := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s",
+				selectList(dialect, fields), dialect.QuoteIdentifier(h.to.TableName), match, orderClause)
+			res, err := r.s.driver.DB().QueryContext(ctx, q, keys...)
 			if err != nil {
 				return nil, fmt.Errorf("failed reading the records related through %s: %w", h.rel.Name, err)
 			}

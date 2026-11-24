@@ -166,6 +166,19 @@ func TestRelatedCalculationsAreUnstored(t *testing.T) {
 	if _, set := specs["Discount Twice"]["stored"]; set {
 		t.Fatalf("a calculation of its own record stays stored: %v", specs["Discount Twice"])
 	}
+	if _, set := specs["Product Key"]["stored"]; set || specs["Product Key"] == nil {
+		t.Fatalf("a calculation a relationship matches on stays stored: %v", specs["Product Key"])
+	}
+	if _, kept := specs["Featured Key"]; kept {
+		t.Fatal("a match field that reads related records cannot be computed on read: it is quarantined")
+	}
+	for _, table := range res.Bundle.Tables {
+		for _, col := range table.Columns {
+			if spec := specs[col.DisplayName]; spec != nil && spec["stored"] == false && !col.IsNullable {
+				t.Fatalf("%s is unstored, so its column must be nullable", col.DisplayName)
+			}
+		}
+	}
 	if specs["Items Total"]["context"] != "Invoices" {
 		t.Fatalf("the context occurrence must be kept: %v", specs["Items Total"])
 	}
@@ -192,8 +205,8 @@ func TestRelatedCalculationsAreUnstored(t *testing.T) {
 	if all := strings.Join(report, "\n"); !strings.Contains(all, "computed each time a record is shown (unstored)") {
 		t.Fatalf("the report must say the calculation is unstored; it says:\n%s", all)
 	}
-	if len(res.Report.Unsupported) != 0 {
-		t.Fatalf("nothing is unsupported: %+v", res.Report.Unsupported)
+	if len(res.Report.Unsupported) != 1 || !strings.Contains(res.Report.Unsupported[0].Detail, "a relationship matches records on it") {
+		t.Fatalf("only Featured Key is unsupported, as a match field: %+v", res.Report.Unsupported)
 	}
 }
 
@@ -204,7 +217,7 @@ func relatedCalculationsDesign(suffix string) string {
 	r := strings.NewReplacer("Invoices", "Invoices"+suffix, "Invoice Items", "Invoice Items"+suffix, "Products", "Products"+suffix)
 	calcField := func(name, formula, storage string) string {
 		dataType := "Number"
-		if name == "First Label" {
+		if strings.HasSuffix(name, "Label") || strings.HasSuffix(name, "Key") {
 			dataType = "Text"
 		}
 		return `<Field name="` + name + `" fieldType="Calculation" dataType="` + dataType + `">` + storage +
@@ -213,13 +226,17 @@ func relatedCalculationsDesign(suffix string) string {
 	return r.Replace(`<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
 		`<BaseTable name="Invoices"><FieldCatalog>` +
 		`<Field name="Invoice ID" dataType="Text"/><Field name="Discount" dataType="Number"/>` +
+		// Net is declared before the field it reads.
+		calcField("Net", `Items Total - Discount`, `<Storage storeCalculationResults="True"/>`) +
 		calcField("Items Total", `Sum ( Invoice Items::Line Amount )`, `<Storage storeCalculationResults="False"/>`) +
 		calcField("First Label", `Products::Label`, ``) +
-		calcField("Net", `Items Total - Discount`, `<Storage storeCalculationResults="True"/>`) +
 		calcField("Discount Twice", `Discount * 2`, ``) +
+		calcField("Featured Key", `Invoice Items::Product ID`, ``) +
 		`</FieldCatalog></BaseTable>` +
 		`<BaseTable name="Invoice Items"><FieldCatalog>` +
 		`<Field name="Invoice ID" dataType="Text"/><Field name="Product ID" dataType="Text"/><Field name="Line Amount" dataType="Number"/>` +
+		`<Field name="Product Key" fieldType="Calculation" dataType="Text"><Storage storeCalculationResults="False"/>` +
+		`<Calculation table="Invoice Items"><![CDATA[Product ID]]></Calculation></Field>` +
 		`</FieldCatalog></BaseTable>` +
 		`<BaseTable name="Products"><FieldCatalog>` +
 		`<Field name="Product ID" dataType="Text"/><Field name="Label" dataType="Text"/>` +
@@ -228,8 +245,10 @@ func relatedCalculationsDesign(suffix string) string {
 		`<TableOccurrence name="Invoices" baseTable="Invoices"/>` +
 		`<TableOccurrence name="Invoice Items" baseTable="Invoice Items"/>` +
 		`<TableOccurrence name="Products" baseTable="Products"/>` +
+		`<TableOccurrence name="Featured Products" baseTable="Products"/>` +
 		`</TableOccurrenceCatalog><RelationshipCatalog>` +
 		`<Relationship name="Items" left="Invoices" left_field="Invoice ID" right="Invoice Items" right_field="Invoice ID" operator="="/>` +
-		`<Relationship name="Product" left="Invoice Items" left_field="Product ID" right="Products" right_field="Product ID" operator="="/>` +
+		`<Relationship name="Product" left="Invoice Items" left_field="Product Key" right="Products" right_field="Product ID" operator="="/>` +
+		`<Relationship name="Featured" left="Invoices" left_field="Featured Key" right="Featured Products" right_field="Product ID" operator="="/>` +
 		`</RelationshipCatalog></File></FMPReport>`)
 }

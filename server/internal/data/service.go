@@ -120,6 +120,9 @@ func orderByClause(dialect dbal.Dialect, fields fieldSet, tableName string, orde
 // Service handles dynamic generic table CRUD and query translation
 type Service struct {
 	driver dbal.DatabaseDriver
+	// canRead, when set, says whether the caller may read a table a
+	// calculation reaches through relationships (see WithReadAccess).
+	canRead func(ctx context.Context, tableName string) (bool, error)
 }
 
 func NewService(driver dbal.DatabaseDriver) *Service {

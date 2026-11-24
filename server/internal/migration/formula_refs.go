@@ -81,7 +81,9 @@ type formulaBinding struct {
 	occByName   map[string]boundOccurrence
 	occByTable  map[string][]boundOccurrence // in the order the graph declares them
 	links       map[string][]string          // occurrence id -> the occurrences related to it
-	locale      *calc.Locale                 // nil when source_locale was not named
+	// matchColumns are the columns (by id) a relationship matches on.
+	matchColumns map[string]bool
+	locale       *calc.Locale // nil when source_locale was not named
 }
 
 // boundOccurrence is an imported table occurrence: its name and its table.
@@ -95,6 +97,7 @@ func newFormulaBinding(bundle *schema.SolutionBundle, fields map[string]*fieldNa
 	b := formulaBinding{
 		fields: fields, occurrences: map[string][]string{}, locale: formulaLocale(loc),
 		occByName: map[string]boundOccurrence{}, occByTable: map[string][]boundOccurrence{}, links: map[string][]string{},
+		matchColumns: map[string]bool{},
 	}
 	for _, occ := range bundle.TableOccurrences {
 		table := tableByID[occ.BaseTableID]
@@ -108,6 +111,7 @@ func newFormulaBinding(bundle *schema.SolutionBundle, fields map[string]*fieldNa
 	for _, rel := range bundle.Relationships {
 		b.links[rel.LeftOccurrenceID] = append(b.links[rel.LeftOccurrenceID], rel.RightOccurrenceID)
 		b.links[rel.RightOccurrenceID] = append(b.links[rel.RightOccurrenceID], rel.LeftOccurrenceID)
+		b.matchColumns[rel.LeftColumnID], b.matchColumns[rel.RightColumnID] = true, true
 	}
 	return b
 }
@@ -202,15 +206,9 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 		source := table.Name + "." + col.DisplayName
 		target := table.Name + "." + col.Name
 
+		this := boundCalculation{col: col, payload: payload, formula: formula, resultType: resultType, source: source, target: target}
 		quarantine := func(why, action string) {
-			col.FieldType = mapBasicFieldType(resultType)
-			col.CalculationFormula = nil
-			colTypeByTableCol[target] = col.FieldType
-			items = append(items,
-				ReportItem{Category: CategoryUnsupported, Domain: "field", SourceName: source, TargetName: target,
-					Detail: fmt.Sprintf("Calculation %q %s; converted to a stored %s column instead of being applied", formula, why, col.FieldType)},
-				ReportItem{Category: CategoryManualActionRequired, Domain: "field", SourceName: source, TargetName: target,
-					Detail: action})
+			items = append(items, this.quarantine(why, action, colTypeByTableCol)...)
 		}
 
 		expr, err := calc.ParseWith(formula, opts)
@@ -298,38 +296,66 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 			continue
 		}
 
-		payload["formula"] = rewritten
-		if len(related) > 0 {
-			payload["stored"] = false
+		// A relationship matches on what the database holds, and an unstored
+		// calculation holds nothing there.
+		matched := b.matchColumns[col.ID]
+		if matched && len(related) > 0 {
+			quarantine(fmt.Sprintf("reads the related %s, so it must be computed when shown, but a relationship matches records on it", quotedList(related)),
+				fmt.Sprintf("Match the relationship on a stored field, or fill %s with a script", target))
+			continue
 		}
-		bound = append(bound, boundCalculation{col: col, payload: payload, source: source, target: target})
+
+		payload["formula"] = rewritten
 		item := ReportItem{Category: CategoryPreserved, Domain: "field", SourceName: source, TargetName: target,
 			Detail: fmt.Sprintf("Calculation field (%s): %s", resultType, formula)}
 		if rewritten != formula {
 			item.Category = CategoryTranslated
 			item.Detail = fmt.Sprintf("Calculation bound to the imported fields: %q now reads %q", formula, rewritten)
 		}
-		if len(related) > 0 {
+		switch {
+		case len(related) > 0:
+			payload["stored"] = false
 			item.Detail += fmt.Sprintf("; it reads the related %s, so it is computed each time a record is shown (unstored), as in FileMaker",
 				quotedList(related))
+		case matched && payload["stored"] == false:
+			delete(payload, "stored")
+			item.Category = CategoryTranslated
+			item.Detail += "; stored, although FileMaker does not store it, because a relationship matches records on it"
 		}
+		bound = append(bound, this)
 		items = append(items, item)
 	}
-	return append(items, finishCalculations(bound)...)
+	return append(items, finishCalculations(bound, b.matchColumns, colTypeByTableCol)...)
 }
 
 // boundCalculation is a calculation whose formula now reads the imported
 // names, still to be written back into its column.
 type boundCalculation struct {
-	col            *schema.BundleColumn
-	payload        map[string]interface{}
-	source, target string
+	col                 *schema.BundleColumn
+	payload             map[string]interface{}
+	formula, resultType string // as the source wrote them
+	source, target      string
+}
+
+// quarantine keeps the column with the type the calculation would have
+// produced, storing a plain value, and reports why.
+func (c boundCalculation) quarantine(why, action string, colTypes map[string]string) []ReportItem {
+	c.col.FieldType = mapBasicFieldType(c.resultType)
+	c.col.CalculationFormula = nil
+	colTypes[c.target] = c.col.FieldType
+	return []ReportItem{
+		{Category: CategoryUnsupported, Domain: "field", SourceName: c.source, TargetName: c.target,
+			Detail: fmt.Sprintf("Calculation %q %s; converted to a stored %s column instead of being applied", c.formula, why, c.col.FieldType)},
+		{Category: CategoryManualActionRequired, Domain: "field", SourceName: c.source, TargetName: c.target, Detail: action},
+	}
 }
 
 // finishCalculations makes unstored every calculation that reads an unstored
 // one, as FileMaker does: a stored result would go stale when the value it
-// was computed from changes. Then it writes each formula into its column.
-func finishCalculations(bound []boundCalculation) []ReportItem {
+// was computed from changes. One a relationship matches on cannot be, and is
+// quarantined. Then it writes each formula into its column; an unstored
+// calculation's column holds nothing, so it is never required.
+func finishCalculations(bound []boundCalculation, matchColumns map[string]bool, colTypes map[string]string) []ReportItem {
 	unstored := map[string]bool{}
 	reads := map[string][]string{}
 	for _, c := range bound {
@@ -340,24 +366,40 @@ func finishCalculations(bound []boundCalculation) []ReportItem {
 		}
 	}
 	var items []ReportItem
+	quarantined := map[string]bool{}
 	for changed := true; changed; {
 		changed = false
 		for _, c := range bound {
-			if unstored[c.col.Name] {
+			if unstored[c.col.Name] || quarantined[c.col.Name] {
 				continue
 			}
 			for _, read := range reads[c.col.Name] {
-				if unstored[read] {
-					unstored[c.col.Name], changed = true, true
-					c.payload["stored"] = false
-					items = append(items, ReportItem{Category: CategoryTranslated, Domain: "field", SourceName: c.source, TargetName: c.target,
-						Detail: fmt.Sprintf("Computed each time a record is shown (unstored), because it reads %q, which is", read)})
+				if !unstored[read] {
+					continue
+				}
+				changed = true
+				if matchColumns[c.col.ID] {
+					quarantined[c.col.Name] = true
+					items = append(items, c.quarantine(
+						fmt.Sprintf("reads %q, which is computed when shown, but a relationship matches records on it", read),
+						fmt.Sprintf("Match the relationship on a stored field, or fill %s with a script", c.target), colTypes)...)
 					break
 				}
+				unstored[c.col.Name] = true
+				c.payload["stored"] = false
+				items = append(items, ReportItem{Category: CategoryTranslated, Domain: "field", SourceName: c.source, TargetName: c.target,
+					Detail: fmt.Sprintf("Computed each time a record is shown (unstored), because it reads %q, which is", read)})
+				break
 			}
 		}
 	}
 	for _, c := range bound {
+		if quarantined[c.col.Name] {
+			continue
+		}
+		if unstored[c.col.Name] {
+			c.col.IsNullable = true
+		}
 		encoded, err := json.Marshal(c.payload)
 		if err != nil {
 			continue

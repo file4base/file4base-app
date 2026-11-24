@@ -624,7 +624,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	tableIDs := map[string]string{}  // bundle table id -> destination id
 	columnIDs := map[string]string{} // bundle column id -> destination id
 	createdTables := map[string]bool{}
-	var addedCalcs []ColumnMetadata // their related reads are checked after step 3
+	var addedCalcs []ColumnMetadata // their formulas are checked after step 3
 	for _, t := range b.Tables {
 		name := dbal.NormalizeIdentifier(t.Name)
 		existing := plan.tables[name]
@@ -666,7 +666,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				col, err := s.addColumn(ctx, dstID, ColumnMetadata{
 					Name: cname, DisplayName: c.DisplayName, FieldType: dbal.AgnosticFieldType(c.FieldType), IsNullable: c.IsNullable,
 					DefaultValue: c.DefaultValue, CalculationFormula: c.CalculationFormula, ValidationRules: c.ValidationRules,
-				}, false)
+				}, true)
 				if err != nil {
 					return nil, rollback(fmt.Errorf("adding field %s to table %s: %w", cname, name, err))
 				}
@@ -802,7 +802,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		report.RelationshipsCreated++
 	}
 	for _, col := range addedCalcs {
-		if err := s.checkCalculationGraph(ctx, col.TableID, col.Name, col.CalculationFormula); err != nil {
+		if err := s.checkCalculation(ctx, col.TableID, col.ID, col.Name, col.FieldType, col.CalculationFormula); err != nil {
 			return nil, rollback(fmt.Errorf("field %s: %w", col.Name, err))
 		}
 	}
