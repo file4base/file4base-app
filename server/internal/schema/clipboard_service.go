@@ -37,6 +37,7 @@ type ClipboardColumn struct {
 	DefaultValue       *string `json:"default_value,omitempty"`
 	CalculationFormula *string `json:"calculation_formula,omitempty"`
 	ValidationRules    *string `json:"validation_rules,omitempty"`
+	MaxRepetitions     int     `json:"max_repetitions,omitempty"`
 }
 
 // ClipboardTable represents a table and its fields on the clipboard (#54).
@@ -163,6 +164,7 @@ func (s *Service) CopyStructure(ctx context.Context, in CopyStructureInput) (*Cl
 				DefaultValue:       c.DefaultValue,
 				CalculationFormula: c.CalculationFormula,
 				ValidationRules:    c.ValidationRules,
+				MaxRepetitions:     c.MaxRepetitions,
 			})
 		}
 		env.Table = &ClipboardTable{
@@ -199,6 +201,7 @@ func (s *Service) CopyStructure(ctx context.Context, in CopyStructureInput) (*Cl
 				DefaultValue:       c.DefaultValue,
 				CalculationFormula: c.CalculationFormula,
 				ValidationRules:    c.ValidationRules,
+				MaxRepetitions:     c.MaxRepetitions,
 			})
 		}
 		if len(cols) == 0 {
@@ -479,6 +482,7 @@ func (s *Service) pasteTable(
 				DefaultValue:       c.DefaultValue,
 				CalculationFormula: c.CalculationFormula,
 				ValidationRules:    c.ValidationRules,
+				MaxRepetitions:     c.MaxRepetitions,
 			}); err != nil {
 				return nil, err
 			}
@@ -514,6 +518,7 @@ func (s *Service) pasteTable(
 			DefaultValue:       c.DefaultValue,
 			CalculationFormula: c.CalculationFormula,
 			ValidationRules:    c.ValidationRules,
+			MaxRepetitions:     c.MaxRepetitions,
 		}); err != nil {
 			_ = s.DeleteTable(ctx, created.ID)
 			return nil, err
@@ -566,6 +571,8 @@ func (s *Service) pasteColumns(
 					UpdateCalculation:  true,
 					ValidationRules:    c.ValidationRules,
 					UpdateValidation:   true,
+					MaxRepetitions:     max(c.MaxRepetitions, 1),
+					UpdateRepetitions:  true,
 				})
 				if err != nil {
 					return nil, err
@@ -585,6 +592,7 @@ func (s *Service) pasteColumns(
 			DefaultValue:       c.DefaultValue,
 			CalculationFormula: c.CalculationFormula,
 			ValidationRules:    c.ValidationRules,
+			MaxRepetitions:     c.MaxRepetitions,
 		})
 		if err != nil {
 			return nil, err

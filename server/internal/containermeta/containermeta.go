@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/repetition"
 )
 
 const (
@@ -256,6 +257,13 @@ func FromRecord(row map[string]interface{}, cols map[string]dbal.AgnosticFieldTy
 
 func validateField(field string, cols map[string]dbal.AgnosticFieldType) error {
 	ft, ok := cols[field]
+	if !ok {
+		// A repetition of a repeating container field, "field[n]", is
+		// described under that key.
+		if base, _, rep := repetition.Split(field); rep {
+			ft, ok = cols[base]
+		}
+	}
 	if !ok {
 		return fmt.Errorf("%s names unknown field %q", Key, field)
 	}

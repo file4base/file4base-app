@@ -151,6 +151,7 @@ class ColumnModel {
     this.defaultValue,
     this.calculationFormula,
     this.validationRules,
+    this.maxRepetitions = 1,
   });
 
   factory ColumnModel.fromJson(Map<String, dynamic> json) {
@@ -165,8 +166,14 @@ class ColumnModel {
       defaultValue: json['default_value'] as String?,
       calculationFormula: json['calculation_formula'] as String?,
       validationRules: json['validation_rules'] as String?,
+      maxRepetitions: (json['max_repetitions'] as num?)?.toInt() ?? 1,
     );
   }
+
+  /// The largest maximum number of repetitions a field may have, as in
+  /// FileMaker.
+  static const int repetitionsLimit = 32000;
+
   final String id;
   final String tableId;
   final String name;
@@ -177,6 +184,16 @@ class ColumnModel {
   final String? defaultValue;
   final String? calculationFormula;
   final String? validationRules;
+
+  /// How many repetitions the field has: 1 when it does not repeat. A
+  /// record carries repetition n (from 2) under the key [repetitionKey].
+  final int maxRepetitions;
+
+  bool get isRepeating => maxRepetitions > 1;
+
+  /// The record key of repetition [n] of the field [name]: the field itself
+  /// for the first, `name[n]` for the others.
+  static String repetitionKey(String name, int n) => n <= 1 ? name : '$name[$n]';
 
   /// What the column physically stores, which is its own type except for a
   /// calculation, held as whatever its formula produces. A numeric
@@ -210,6 +227,7 @@ class ColumnModel {
     String? defaultValue,
     String? calculationFormula,
     String? validationRules,
+    int? maxRepetitions,
   }) {
     return ColumnModel(
       id: id ?? this.id,
@@ -222,6 +240,7 @@ class ColumnModel {
       defaultValue: defaultValue ?? this.defaultValue,
       calculationFormula: calculationFormula ?? this.calculationFormula,
       validationRules: validationRules ?? this.validationRules,
+      maxRepetitions: maxRepetitions ?? this.maxRepetitions,
     );
   }
 }
@@ -1735,10 +1754,14 @@ class ApiClient {
     bool updateCalculationFormula = false,
     String? validationRules,
     bool updateValidationRules = false,
+    int? maxRepetitions,
   }) async {
     final payload = <String, dynamic>{
       'display_name': displayName,
     };
+    if (maxRepetitions != null) {
+      payload['max_repetitions'] = maxRepetitions;
+    }
     if (updateDefaultValue) {
       payload['default_value'] = defaultValue;
     }
@@ -2026,6 +2049,7 @@ class ApiClient {
     List<String> fields = const [],
     List<String> headings = const [],
     List<String> sort = const [],
+    bool firstRepetitionOnly = false,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/export'),
@@ -2036,6 +2060,7 @@ class ApiClient {
         'requests': requests,
         'fields': fields,
         'headings': headings,
+        if (firstRepetitionOnly) 'first_repetition_only': true,
         'sort': [
           for (final field in sort)
             field.startsWith('-')

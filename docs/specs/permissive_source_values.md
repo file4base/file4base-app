@@ -101,7 +101,8 @@ With it, for native (`.fmp12`) and `FMPXMLRESULT` records:
 | Date | anything else | empty | yes |
 | Time / Timestamp | a valid time of day or timestamp | the value | no |
 | Time / Timestamp | a duration past 24 h, a negative or fractional duration, anything else | empty | yes |
-| any typed field | several repetitions | — | refused (repetitions remain a separate gate) |
+| a typed field that does not repeat | several repetitions | — | refused |
+| a repeating typed field | one value per repetition | each repetition read on its own | repetition 1 only |
 | Text | anything | unchanged | no |
 
 FileMaker's numeric reading, as observed on FileMaker Pro 26.0.2 with French

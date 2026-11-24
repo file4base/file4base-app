@@ -943,52 +943,30 @@ func (h *ServerAdminHandler) ApplyContainerUpdate(w http.ResponseWriter, r *http
 		target = "file4base-stack"
 	}
 
+	// The update goes ahead only once its snapshot is written: an update
+	// with an empty or missing pre-update backup would have nothing to roll
+	// back to.
 	var preBackupFilename string
 	if dbName != "" {
 		if driver, err := h.dbMgr.DriverFor(r.Context(), dbName); err == nil {
-			svc := schema.NewService(driver)
-			tables, _ := svc.ListTables(r.Context())
-			occurrences, _ := svc.ListTableOccurrences(r.Context())
-			relationships, _ := svc.ListRelationships(r.Context())
-			layouts, _ := svc.ListLayouts(r.Context())
-			scripts, _ := svc.ListScripts(r.Context())
-			valueLists, _ := svc.ListValueLists(r.Context())
-			users, _ := svc.ListUsers(r.Context())
-			solBytes, _ := svc.ExportSolution(r.Context(), schema.ExportOptions{SolutionName: dbName})
-			dataBytes, _ := svc.ExportDatabaseData(r.Context(), dbName)
-
-			tableData := make(map[string]interface{}, len(tables))
-			for _, t := range tables {
-				tableData[t.Name] = map[string]interface{}{
-					"metadata": t,
-					"columns":  t.Columns,
-				}
-			}
-
 			now := time.Now().UTC()
 			bkpID := fmt.Sprintf("bkp_%s_%s", dbName, now.Format("20060102_150405"))
 			preBackupFilename = bkpID + ".f4b.json"
-			payload := map[string]interface{}{
-				"id":                  bkpID,
-				"database":            dbName,
-				"engine":              string(h.dbMgr.Engine()),
-				"created_at":          now.Format(time.RFC3339),
-				"created_by":          sess.Username,
-				"notes":               fmt.Sprintf("Automatic pre-update snapshot before updating %s", target),
-				"type":                "pre_update",
-				"tables_count":        len(tables),
-				"tables":              tableData,
-				"table_occurrences":   occurrences,
-				"relationships":       relationships,
-				"layouts":             layouts,
-				"scripts":             scripts,
-				"value_lists":         valueLists,
-				"users":               users,
-				"solution_bundle_b64": base64.StdEncoding.EncodeToString(solBytes),
-				"data_bundle_b64":     base64.StdEncoding.EncodeToString(dataBytes),
+			payload, _, err := h.backupSnapshot(r.Context(), driver, dbName, bkpID, sess.Username,
+				fmt.Sprintf("Automatic pre-update snapshot before updating %s", target), "pre_update", now)
+			var encoded []byte
+			if err == nil {
+				encoded, err = json.MarshalIndent(payload, "", "  ")
 			}
-			if encoded, err := json.MarshalIndent(payload, "", "  "); err == nil {
-				_ = os.WriteFile(filepath.Join(h.backupsDir, preBackupFilename), encoded, 0o600)
+			if err == nil {
+				err = os.WriteFile(filepath.Join(h.backupsDir, preBackupFilename), encoded, 0o600)
+			}
+			if err != nil {
+				h.recordAudit("container", "Update Container Stack", sess.Username, dbName, target, "error",
+					"The pre-update snapshot could not be made: "+err.Error())
+				telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Update Failed",
+					"The pre-update backup could not be made, so nothing was updated: "+err.Error())
+				return
 			}
 		}
 	}
@@ -1199,28 +1177,6 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	svc := schema.NewService(driver)
-	tables, _ := svc.ListTables(r.Context())
-	occurrences, _ := svc.ListTableOccurrences(r.Context())
-	relationships, _ := svc.ListRelationships(r.Context())
-	layouts, _ := svc.ListLayouts(r.Context())
-	scripts, _ := svc.ListScripts(r.Context())
-	valueLists, _ := svc.ListValueLists(r.Context())
-	users, _ := svc.ListUsers(r.Context())
-
-	solutionBytes, _ := svc.ExportSolution(r.Context(), schema.ExportOptions{
-		SolutionName: dbName,
-	})
-	dataBytes, _ := svc.ExportDatabaseData(r.Context(), dbName)
-
-	tableData := make(map[string]interface{}, len(tables))
-	for _, t := range tables {
-		tableData[t.Name] = map[string]interface{}{
-			"metadata": t,
-			"columns":  t.Columns,
-		}
-	}
-
 	now := time.Now().UTC()
 	backupID := fmt.Sprintf("bkp_%s_%s", dbName, now.Format("20060102_150405"))
 	filename := backupID + ".f4b.json"
@@ -1229,24 +1185,12 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 		bkpType = "manual"
 	}
 
-	payload := map[string]interface{}{
-		"id":                  backupID,
-		"database":            dbName,
-		"engine":              string(h.dbMgr.Engine()),
-		"created_at":          now.Format(time.RFC3339),
-		"created_by":          sess.Username,
-		"notes":               req.Notes,
-		"type":                bkpType,
-		"tables_count":        len(tables),
-		"tables":              tableData,
-		"table_occurrences":   occurrences,
-		"relationships":       relationships,
-		"layouts":             layouts,
-		"scripts":             scripts,
-		"value_lists":         valueLists,
-		"users":               users,
-		"solution_bundle_b64": base64.StdEncoding.EncodeToString(solutionBytes),
-		"data_bundle_b64":     base64.StdEncoding.EncodeToString(dataBytes),
+	payload, tablesCount, err := h.backupSnapshot(r.Context(), driver, dbName, backupID, sess.Username, req.Notes, bkpType, now)
+	if err != nil {
+		h.recordAudit("backup", "Create Backup", sess.Username, dbName, filename, "error", err.Error())
+		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Backup Failed",
+			"The backup was not written: "+err.Error())
+		return
 	}
 
 	encoded, err := json.MarshalIndent(payload, "", "  ")
@@ -1261,7 +1205,7 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.recordAudit("backup", "Create Backup", sess.Username, dbName, filename, "success", fmt.Sprintf("Created snapshot %s (%d bytes, %d tables)", filename, len(encoded), len(tables)))
+	h.recordAudit("backup", "Create Backup", sess.Username, dbName, filename, "success", fmt.Sprintf("Created snapshot %s (%d bytes, %d tables)", filename, len(encoded), tablesCount))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -1272,10 +1216,89 @@ func (h *ServerAdminHandler) CreateBackup(w http.ResponseWriter, r *http.Request
 		CreatedAt:   now.Format(time.RFC3339),
 		CreatedBy:   sess.Username,
 		SizeBytes:   int64(len(encoded)),
-		TablesCount: len(tables),
+		TablesCount: tablesCount,
 		Notes:       req.Notes,
 		Type:        bkpType,
 	})
+}
+
+// backupSnapshot is the content of a backup file of dbName. The catalog is
+// brought up to date first (see schema.EnsureCatalogCurrent). Any part that
+// cannot be read fails the snapshot, rather than leaving a backup that
+// restores to nothing.
+func (h *ServerAdminHandler) backupSnapshot(
+	ctx context.Context, driver dbal.DatabaseDriver, dbName, backupID, createdBy, notes, bkpType string, now time.Time,
+) (map[string]interface{}, int, error) {
+	svc := schema.NewService(driver)
+	if !svc.HasSystemCatalog(ctx) {
+		return nil, 0, fmt.Errorf("%s has no File4Base catalog", dbName)
+	}
+	if err := svc.EnsureCatalogCurrent(ctx); err != nil {
+		return nil, 0, fmt.Errorf("the catalog could not be brought up to date: %w", err)
+	}
+	tables, err := svc.ListTables(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the tables could not be read: %w", err)
+	}
+	occurrences, err := svc.ListTableOccurrences(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the table occurrences could not be read: %w", err)
+	}
+	relationships, err := svc.ListRelationships(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the relationships could not be read: %w", err)
+	}
+	layouts, err := svc.ListLayouts(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the layouts could not be read: %w", err)
+	}
+	scripts, err := svc.ListScripts(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the scripts could not be read: %w", err)
+	}
+	valueLists, err := svc.ListValueLists(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the value lists could not be read: %w", err)
+	}
+	users, err := svc.ListUsers(ctx)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the accounts could not be read: %w", err)
+	}
+	solutionBytes, err := svc.ExportSolution(ctx, schema.ExportOptions{SolutionName: dbName})
+	if err != nil {
+		return nil, 0, fmt.Errorf("the solution could not be exported: %w", err)
+	}
+	dataBytes, err := svc.ExportDatabaseData(ctx, dbName)
+	if err != nil {
+		return nil, 0, fmt.Errorf("the records could not be exported: %w", err)
+	}
+
+	tableData := make(map[string]interface{}, len(tables))
+	for _, t := range tables {
+		tableData[t.Name] = map[string]interface{}{
+			"metadata": t,
+			"columns":  t.Columns,
+		}
+	}
+	return map[string]interface{}{
+		"id":                  backupID,
+		"database":            dbName,
+		"engine":              string(h.dbMgr.Engine()),
+		"created_at":          now.Format(time.RFC3339),
+		"created_by":          createdBy,
+		"notes":               notes,
+		"type":                bkpType,
+		"tables_count":        len(tables),
+		"tables":              tableData,
+		"table_occurrences":   occurrences,
+		"relationships":       relationships,
+		"layouts":             layouts,
+		"scripts":             scripts,
+		"value_lists":         valueLists,
+		"users":               users,
+		"solution_bundle_b64": base64.StdEncoding.EncodeToString(solutionBytes),
+		"data_bundle_b64":     base64.StdEncoding.EncodeToString(dataBytes),
+	}, len(tables), nil
 }
 
 // maxBackupUploadBytes caps an uploaded backup, decompressed.
@@ -1486,6 +1509,13 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Corrupt Backup", err.Error())
 		return
 	}
+	// The records are decoded before anything changes, so a damaged backup
+	// is refused rather than half restored.
+	dataBytes, err := base64.StdEncoding.DecodeString(snap.DataBundleB64)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Corrupt Backup", "the records of the backup cannot be read: "+err.Error())
+		return
+	}
 
 	// readOwnBackup already checked the snapshot's database against the session.
 	targetDB := strings.TrimSpace(snap.Database)
@@ -1599,6 +1629,21 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 								UpdateCalculation:  sc.CalculationFormula != nil,
 								ValidationRules:    sc.ValidationRules,
 								UpdateValidation:   sc.ValidationRules != nil,
+								MaxRepetitions:     sc.MaxRepetitions,
+								UpdateRepetitions:  sc.MaxRepetitions > 0,
+							})
+						} else if !sc.IsPrimaryKey && sc.MaxRepetitions > 0 && sc.MaxRepetitions != existingCol.MaxRepetitions {
+							// An existing calculation keeps its formula, but its
+							// maximum is restored like any field's: the records
+							// restored below carry that many repetitions.
+							display := sc.DisplayName
+							if display == "" {
+								display = existingCol.DisplayName
+							}
+							_, _ = svc.UpdateColumn(ctx, curTbl.ID, existingCol.ID, schema.UpdateColumnOptions{
+								DisplayName:       display,
+								MaxRepetitions:    sc.MaxRepetitions,
+								UpdateRepetitions: true,
 							})
 						}
 						continue
@@ -1614,6 +1659,7 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 						DefaultValue:       sc.DefaultValue,
 						CalculationFormula: sc.CalculationFormula,
 						ValidationRules:    sc.ValidationRules,
+						MaxRepetitions:     sc.MaxRepetitions,
 					})
 					if addErr == nil && added != nil {
 						columnsCreated++
@@ -1772,18 +1818,28 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// 5. Reconcile table row data if present in the snapshot
+	// 5. Reconcile table row data if present in the snapshot. A restore whose
+	// records cannot be put back fails: reporting it restored would leave the
+	// tables emptied without saying so.
 	recordsRestored := 0
-	if snap.DataBundleB64 != "" {
-		if dataBytes, decErr := base64.StdEncoding.DecodeString(snap.DataBundleB64); decErr == nil && len(dataBytes) > 0 {
-			currentTables, _ := svc.ListTables(ctx)
-			for _, ct := range currentTables {
-				_ = svc.TruncateTable(ctx, ct.ID)
-			}
-			if dataReport, impErr := svc.ImportDatabaseData(ctx, dataBytes); impErr == nil && dataReport != nil {
-				recordsRestored = dataReport.RecordsInserted
+	if len(dataBytes) > 0 {
+		currentTables, err := svc.ListTables(ctx)
+		if err != nil {
+			h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf("the tables could not be listed: %w", err))
+			return
+		}
+		for _, ct := range currentTables {
+			if err := svc.TruncateTable(ctx, ct.ID); err != nil {
+				h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf("table %s could not be emptied: %w", ct.Name, err))
+				return
 			}
 		}
+		dataReport, err := svc.ImportDatabaseData(ctx, dataBytes)
+		if err != nil {
+			h.failRestore(w, r, sess.Username, targetDB, id, fmt.Errorf("the records could not be restored and the tables are now empty: %w", err))
+			return
+		}
+		recordsRestored = dataReport.RecordsInserted
 	}
 
 	details := fmt.Sprintf(
@@ -1807,6 +1863,12 @@ func (h *ServerAdminHandler) RestoreBackup(w http.ResponseWriter, r *http.Reques
 		"status":           "restored",
 		"restored_at":      time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// failRestore reports a restore that could not be completed.
+func (h *ServerAdminHandler) failRestore(w http.ResponseWriter, r *http.Request, user, database, id string, err error) {
+	h.recordAudit("backup", "Restore Backup", user, database, id, "error", "Restore of "+id+" failed: "+err.Error())
+	telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Restore Failed", err.Error())
 }
 
 // DeleteBackup removes a backup snapshot file from disk.
@@ -2279,6 +2341,12 @@ func (h *ServerAdminHandler) GetDatabaseMaintenance(w http.ResponseWriter, r *ht
 		return
 	}
 	svc := schema.NewService(driver)
+	// Another database may not have had its catalog migrations yet; without
+	// them its tables cannot be listed.
+	if err := svc.EnsureCatalogCurrent(r.Context()); err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
 
 	tables, _ := svc.ListTables(r.Context())
 	layouts, _ := svc.ListLayouts(r.Context())

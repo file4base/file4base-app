@@ -207,7 +207,8 @@ Retrieves all registered user database tables and their column definitions.
         "display_name": "First Name",
         "field_type": "TEXT",
         "is_nullable": false,
-        "is_primary_key": false
+        "is_primary_key": false,
+        "max_repetitions": 1
       }
     ],
     "created_at": "2026-09-23T09:21:47Z",
@@ -285,9 +286,12 @@ Adds a new column to the specified table, executing physical DDL via the active 
   "name": "total_amount",
   "display_name": "Total Amount",
   "field_type": "NUMBER",
-  "is_nullable": true
+  "is_nullable": true,
+  "max_repetitions": 1
 }
 ```
+
+`max_repetitions` (optional, default `1`) is the field's maximum number of repetitions, from `1` to `32000` as in FileMaker; see [Repeating fields](#repeating-fields). A summary field or the primary key cannot repeat; either, or a value out of range, answers `422 Unprocessable Entity`.
 
 #### Response `201 Created`
 Returns created `ColumnMetadata`.
@@ -305,9 +309,12 @@ Updates column metadata and options (display name, auto-enter rules, default val
   "display_name": "Updated Column Name",
   "default_value": "{\"creation_enabled\":true,\"creation_type\":\"Date\"}",
   "calculation_formula": "{\"formula\":\"UPPER(first_name)\",\"result_type\":\"Text\"}",
-  "validation_rules": "{\"not_empty\":true,\"unique\":true}"
+  "validation_rules": "{\"not_empty\":true,\"unique\":true}",
+  "max_repetitions": 3
 }
 ```
+
+`max_repetitions` is optional; when present it changes the field's maximum number of repetitions (`1` to `32000`). Lowering it, even to `1`, deletes nothing: the repetitions past the new maximum are no longer read or written, a write of the others keeps them, `.f4data` exports and backups carry them, and they come back if it is raised again, as in FileMaker. Changing it for a calculation recomputes the table.
 
 #### Response `200 OK`
 Returns updated `ColumnMetadata`.
@@ -471,6 +478,16 @@ CONTAINER fields are returned as base64 strings (standard alphabet, with padding
 
 `GET` (list and record), `POST …/find`, the `PUT` response and related records all carry it, and `POST …/export` writes the original text instead of the value. `__source_text` sent with `POST` or `PUT` is ignored: a client cannot set an original text. Writing a field drops that field's original text; deleting the record, the field or the table deletes theirs. See [`docs/specs/permissive_source_values.md`](../specs/permissive_source_values.md).
 
+### Repeating fields
+
+A field whose `max_repetitions` is above `1` holds that many values. A record carries repetition 1 under the field's own name, exactly as a field that does not repeat, and repetition *n* (from 2) under `"field[n]"`. Only repetitions that hold a value are returned:
+
+```json
+{ "id": "6d0c…", "reading": "4", "reading[3]": "7.5", "marker": "up", "marker[2]": "down" }
+```
+
+`POST` and `PUT` accept the same keys, with each repetition's value typed as the field's own (a Number repetition takes a number, a Container one base64). A `PUT` changes only the repetitions it names; `null` or `""` empties one. `"field[1]"` is the same as `"field"` (sending both answers `400 Invalid Value`), so `"id[1]"` is the primary key, which a `PUT` ignores like `"id"`; a repetition past the field's maximum, `"field[0]"` or a repetition of a field that does not repeat answers `400 Unknown Field`. Repetition 1 is the field's own column, so finding, sorting, summaries, relationships and validation rules use it; FileMaker also finds a value in any repetition, which File4Base does not yet do. Calculations see every repetition (see [calculation_formulas.md](../specs/calculation_formulas.md#repeating-fields)); a repeating calculation answers one value per repetition.
+
 To read every row, page with `limit=1000` and `sort_by=id` (a stable order), advancing `offset` by the number of rows received, until a page returns fewer than `limit` rows.
 
 ---
@@ -624,7 +641,7 @@ Writes a found set out and returns the file itself, with `Content-Disposition` a
 }
 ```
 
-`format` is `csv`, `tsv` or `xlsx`; XML is read but not written. `requests` takes the same find requests a find does, so what is exported is what was found — empty exports the table. Empty `fields` writes every field by name. A date is written as a date rather than as the timestamp the column holds, and a CSV carries a byte order mark so Excel opens it as UTF-8.
+`format` is `csv`, `tsv` or `xlsx`; XML is read but not written. A repeating field is written as one cell holding its repetitions separated by the group separator (0x1D), trailing empty ones left out, as FileMaker exports them; `"first_repetition_only": true` writes repetition 1 alone, and `fields` may name one repetition (`"reading[2]"`). An import splits a cell on 0x1D into the repetitions of a repeating field (values past its maximum are dropped); for a field that does not repeat, the separators become line breaks. `requests` takes the same find requests a find does, so what is exported is what was found — empty exports the table. Empty `fields` writes every field by name. A date is written as a date rather than as the timestamp the column holds, and a CSV carries a byte order mark so Excel opens it as UTF-8.
 
 ---
 
@@ -1922,7 +1939,9 @@ FileMaker's reading of the text (`12`, `-42`, or empty when there is none) and
 the record keeps the text as written (see `__source_text` in § 4).
 `counts.source_text_values` counts them and a `translated` item names their
 fields per dataset. Without `source_locale` the migration stays strict and the
-refusal says so. Values of several repetitions stay refused either way.
+refusal says so. A repeating field migrates each repetition on its own,
+under `field[n]`; several values in a field that does not repeat stay refused
+either way. Only repetition 1 keeps an original text.
 
 Before extracting native `.fmp12` records, the HBAM7 reader compares the
 binary's internal table and field catalog (IDs, names and field classes/types)
@@ -2075,15 +2094,15 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `GET /api/v1/server/telemetry` | server administrator | Rolling 60-minute API telemetry (`minute_series`, `current_rpm`, `avg_latency_ms`, `p95_latency_ms`, `status_2xx`/`4xx`/`5xx`, `top_endpoints`, Go runtime memory/goroutines, and DB ping latency). |
 | `GET /api/v1/server/containers` | server administrator | Health, uptime, `current_version`, `latest_version`, `update_available`, `release_url`, `release_notes`, `update_command`, and resource metrics for `file4base-api`, `file4base-web`, and `file4base-postgres` / `file4base-mariadb`. |
 | `POST /api/v1/server/containers/check-updates` | server administrator | Queries GitHub Releases, GitHub `VERSION`, and Docker Hub tags (`cloudresources/file4base-api`) on demand (or simulates a newer release via `simulate_latest_version`) and returns update availability across all containers. |
-| `POST /api/v1/server/containers/update` | server administrator | Creates an automatic `pre_update` point-in-time backup snapshot in `./data/backups/` and prepares/triggers a container stack update (`target_version`, `container`). |
+| `POST /api/v1/server/containers/update` | server administrator | Creates an automatic `pre_update` point-in-time backup snapshot in `./data/backups/` and prepares/triggers a container stack update (`target_version`, `container`). A snapshot that cannot be made answers `500 Update Failed` and nothing is updated. |
 | `POST /api/v1/server/containers/{name}/restart` | server administrator | Triggers a graceful service reload/connection pool refresh for `{name}` and records an audit event. |
 | `GET /api/v1/server/containers/{name}/logs` | server administrator | Returns recent structured log lines for `{name}`. |
 | `GET /api/v1/server/backups` | admin / owner (own database) | Lists stored server snapshots (`.f4b.json`) with size, table count, and timestamp. |
-| `POST /api/v1/server/backups` | admin / owner (own database) | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, and accounts. |
+| `POST /api/v1/server/backups` | admin / owner (own database) | Creates an on-demand server snapshot of the target database's schema, layouts, scripts, value lists, accounts and records. The database's catalog migrations are applied first, so a database nobody has signed in to since an upgrade can be backed up. A part that cannot be read or exported answers `500 Backup Failed` and writes no snapshot. |
 | `GET /api/v1/server/backups/{id}/download` | admin / owner (own database) | Downloads a stored backup snapshot archive. |
 | `GET /api/v1/server/backups/{id}/download?format=targz` | admin / owner (own database) | The same snapshot as a gzip-compressed tar (`tar xzf` → the `.f4b.json`). |
 | `POST /api/v1/server/backups/upload` | admin / owner (own database) | Stores an uploaded backup file (a `.tar.gz` from download, or a raw `.f4b.json`) as a server-side backup that can then be restored. A non-admin's upload is stamped with their own database. |
-| `POST /api/v1/server/backups/{id}/restore` | admin / owner (own database) | Verifies and restores a stored snapshot into the target database. |
+| `POST /api/v1/server/backups/{id}/restore` | admin / owner (own database) | Verifies and restores a stored snapshot into the target database. A snapshot whose records cannot be decoded answers `400 Corrupt Backup` before anything changes; records that cannot be restored answer `500 Restore Failed` (the tables have been emptied by then, and the problem detail says so) rather than `"status": "restored"`. |
 | `DELETE /api/v1/server/backups/{id}` | admin / owner (own database) | Deletes a stored backup snapshot. |
 | `GET /api/v1/server/tls` | server administrator | Returns the current Web/API domain, HTTPS/HSTS state, TLS mode (`acme`, `custom`, `self_signed`, `http_only`), ACME email/challenge type, and X.509 certificate metadata (`cert_issuer`, `cert_subject`, `cert_sans`, `cert_not_after`, `cert_days_left`, `cert_sha256`). In the default `self_signed` mode the metadata is re-read from disk, so it describes the certificate the stack really serves: `cert_source` is `local_ca`, `ca_available` says whether the authority can be downloaded, and `ca_subject` / `ca_not_after` / `ca_sha256` identify it. No private key is ever part of the response. |
 | `PUT /api/v1/server/tls` | server administrator | Updates the domain, HTTPS/HSTS flags, ACME settings, or custom PEM certificate configuration. In `self_signed` mode it reissues the leaf certificate for `domain` plus `extra_sans` (extra host names and IP addresses), signed by the same local authority, so installed trust survives a domain change. |

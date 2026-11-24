@@ -139,6 +139,8 @@ class FieldBindingModel {
     this.valueListId,
     this.allowBrowseEntry = true,
     this.allowFindEntry = true,
+    this.repetitionsShown,
+    this.repetitionOrientation = RepetitionOrientation.vertical,
   });
 
   factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
@@ -150,6 +152,10 @@ class FieldBindingModel {
       valueListId: json['value_list_id'] as String?,
       allowBrowseEntry: json['allow_browse_entry'] as bool? ?? true,
       allowFindEntry: json['allow_find_entry'] as bool? ?? true,
+      repetitionsShown: (json['repetitions_shown'] as num?)?.toInt(),
+      repetitionOrientation: json['repetition_orientation'] == RepetitionOrientation.horizontal
+          ? RepetitionOrientation.horizontal
+          : RepetitionOrientation.vertical,
     );
   }
   /// The table occurrence the field is read from. Null, or the layout's own
@@ -172,6 +178,15 @@ class FieldBindingModel {
 
   final bool allowBrowseEntry;
   final bool allowFindEntry;
+
+  /// For a repeating field, how many of its repetitions the object shows,
+  /// from the first, as FileMaker's "Show repetitions 1 through N". Null
+  /// shows them all.
+  final int? repetitionsShown;
+
+  /// One of [RepetitionOrientation]: whether the repetitions shown are
+  /// stacked or side by side. They share the object's box equally.
+  final String repetitionOrientation;
 
   /// True when the field is read through a relationship rather than from the
   /// record in hand.
@@ -212,6 +227,8 @@ class FieldBindingModel {
     bool clearValueList = false,
     bool? allowBrowseEntry,
     bool? allowFindEntry,
+    int? repetitionsShown,
+    String? repetitionOrientation,
   }) =>
       FieldBindingModel(
         tableOccurrence: clearRelationship ? null : (tableOccurrence ?? this.tableOccurrence),
@@ -221,6 +238,8 @@ class FieldBindingModel {
         valueListId: clearValueList ? null : (valueListId ?? this.valueListId),
         allowBrowseEntry: allowBrowseEntry ?? this.allowBrowseEntry,
         allowFindEntry: allowFindEntry ?? this.allowFindEntry,
+        repetitionsShown: repetitionsShown ?? this.repetitionsShown,
+        repetitionOrientation: repetitionOrientation ?? this.repetitionOrientation,
       );
 
   Map<String, dynamic> toJson() => {
@@ -231,7 +250,23 @@ class FieldBindingModel {
         if (valueListId != null) 'value_list_id': valueListId,
         'allow_browse_entry': allowBrowseEntry,
         'allow_find_entry': allowFindEntry,
+        if (repetitionsShown != null) 'repetitions_shown': repetitionsShown,
+        if (repetitionOrientation != RepetitionOrientation.vertical) 'repetition_orientation': repetitionOrientation,
       };
+
+  /// How many repetitions an object bound to a field with [maxRepetitions]
+  /// shows: [repetitionsShown] within 1 and the maximum, all by default.
+  int shownRepetitions(int maxRepetitions) {
+    final max = maxRepetitions < 1 ? 1 : maxRepetitions;
+    final shown = repetitionsShown ?? max;
+    return shown < 1 ? 1 : (shown > max ? max : shown);
+  }
+}
+
+/// How a repeating field's repetitions are laid out in its object.
+class RepetitionOrientation {
+  static const String vertical = 'vertical';
+  static const String horizontal = 'horizontal';
 }
 
 /// A conditional formatting rule evaluated on a layout field or text object.

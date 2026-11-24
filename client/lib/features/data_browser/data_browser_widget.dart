@@ -985,43 +985,76 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
     for (final col in widget.table.columns) {
       if (col.isPrimaryKey) continue;
-      final val = recordFieldText(col, record);
-      final ctrl = TextEditingController(text: val);
-      final fn = FocusNode();
-
-      _fieldControllers[col.name] = ctrl;
-      _fieldFocusNodes[col.name] = fn;
-      _fieldDebounceTimers[col.name] = null;
-      _fieldSaving[col.name] = null;
-
-      fn.addListener(() {
-        if (fn.hasFocus) {
-          _lastFocusedBrowseField = col.name;
-          if (mounted) setState(() {});
-          widget.onFocusedFieldChanged?.call();
-        } else {
-          _fieldDebounceTimers[col.name]?.cancel();
-          if (col.fieldType == 'DATE' &&
-              ctrl.text.trim().isNotEmpty &&
-              _normalizeDateInput(ctrl.text) == null) {
-            if (mounted) {
-              setState(() => _fieldSaving[col.name] = false);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
-              );
-            }
-            return;
-          }
-          unawaited(_saveField(col.name, ctrl.text));
-          if (mounted) setState(() {});
-          // A remote change arrived while this field was being edited: now
-          // that it is saved and focus has left, reload.
-          if (_pendingRemoteReload && !_aFieldIsFocused) {
-            WidgetsBinding.instance.addPostFrameCallback((_) => reloadFromRemote());
-          }
-        }
-      });
+      _attachFieldController(col, col.name, recordFieldText(col, record));
+      // The other repetitions a layout object shows of a repeating field
+      // are edited under their own record key, "field[n]".
+      for (var n = 2; n <= _repetitionsOnLayout(col); n++) {
+        final key = ColumnModel.repetitionKey(col.name, n);
+        _attachFieldController(col, key, fieldText(col, record[key]));
+      }
     }
+  }
+
+  /// The most repetitions of [col] an object of the current layout shows.
+  int _repetitionsOnLayout(ColumnModel col) {
+    if (!col.isRepeating) return 1;
+    var most = 1;
+    for (final o in widget.layout?.objects ?? const <LayoutObjectModel>[]) {
+      final binding = o.fieldBinding;
+      if (o.type != 'field' || binding == null || binding.isRelated) continue;
+      if (binding.fieldName.toLowerCase() != col.name.toLowerCase()) continue;
+      most = math.max(most, binding.shownRepetitions(col.maxRepetitions));
+    }
+    return most;
+  }
+
+  /// The field a record key names: "field[n]" is repetition n of field.
+  ColumnModel? _columnForKey(String key) {
+    final open = key.indexOf('[');
+    final name = open > 0 && key.endsWith(']') ? key.substring(0, open) : key;
+    return widget.table.columns.where((c) => c.name == name).firstOrNull;
+  }
+
+  /// What the box of record key [key] of [col] shows for [record].
+  static String keyFieldText(ColumnModel col, String key, Map<String, dynamic> record) =>
+      key == col.name ? recordFieldText(col, record) : fieldText(col, record[key]);
+
+  void _attachFieldController(ColumnModel col, String key, String val) {
+    final ctrl = TextEditingController(text: val);
+    final fn = FocusNode();
+
+    _fieldControllers[key] = ctrl;
+    _fieldFocusNodes[key] = fn;
+    _fieldDebounceTimers[key] = null;
+    _fieldSaving[key] = null;
+
+    fn.addListener(() {
+      if (fn.hasFocus) {
+        _lastFocusedBrowseField = col.name;
+        if (mounted) setState(() {});
+        widget.onFocusedFieldChanged?.call();
+      } else {
+        _fieldDebounceTimers[key]?.cancel();
+        if (col.fieldType == 'DATE' &&
+            ctrl.text.trim().isNotEmpty &&
+            _normalizeDateInput(ctrl.text) == null) {
+          if (mounted) {
+            setState(() => _fieldSaving[key] = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
+            );
+          }
+          return;
+        }
+        unawaited(_saveField(key, ctrl.text));
+        if (mounted) setState(() {});
+        // A remote change arrived while this field was being edited: now
+        // that it is saved and focus has left, reload.
+        if (_pendingRemoteReload && !_aFieldIsFocused) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => reloadFromRemote());
+        }
+      }
+    });
   }
 
   void _onFieldChanged(String colName, String newVal) {
@@ -1034,9 +1067,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   Future<void> _saveField(String colName, String newVal) async {
     if (_records.isEmpty) return;
-    final column = widget.table.columns.where((c) => c.name == colName).firstOrNull;
+    final column = _columnForKey(colName);
     final current = _records[_currentIndex];
-    if (column != null && current[_draftKey] != true && newVal == recordFieldText(column, current)) {
+    if (column != null && current[_draftKey] != true && newVal == keyFieldText(column, colName, current)) {
       // Leaving a field unchanged writes nothing. In particular it must not
       // replace a migrated value's original text with its reading (#124).
       return;
@@ -1117,11 +1150,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   String _displayName(String colName) {
-    try {
-      return widget.table.columns.firstWhere((c) => c.name == colName).displayName;
-    } catch (_) {
-      return colName;
-    }
+    final col = _columnForKey(colName);
+    if (col == null) return colName;
+    return col.name == colName ? col.displayName : '${col.displayName}${colName.substring(col.name.length)}';
   }
 
   /// Marks a new record that exists only here until it is committed.
@@ -1133,27 +1164,29 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// record. Returns false when the server rejected it (for example a field
   /// validation rule); the user stays on the record and sees why.
   Future<bool> _saveCurrentRecord() async {
-    for (final col in widget.table.columns) {
-      if (col.isPrimaryKey) continue;
-      final ctrl = _fieldControllers[col.name];
+    // Every box: the fields, and the repetitions of repeating fields.
+    for (final key in _fieldControllers.keys.toList()) {
+      final col = _columnForKey(key);
+      if (col == null || col.isPrimaryKey) continue;
+      final ctrl = _fieldControllers[key];
       if (ctrl == null) continue;
-      _fieldDebounceTimers[col.name]?.cancel();
+      _fieldDebounceTimers[key]?.cancel();
       final cached = _records.isNotEmpty
-          ? recordFieldText(col, _records[_currentIndex])
+          ? keyFieldText(col, key, _records[_currentIndex])
           : '';
       if (ctrl.text != cached) {
         if (col.fieldType == 'DATE' &&
             ctrl.text.trim().isNotEmpty &&
             _normalizeDateInput(ctrl.text) == null) {
           if (mounted) {
-            setState(() => _fieldSaving[col.name] = false);
+            setState(() => _fieldSaving[key] = false);
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
             );
           }
           return false;
         }
-        await _saveField(col.name, ctrl.text);
+        await _saveField(key, ctrl.text);
       }
     }
     if (_onDraft) return _commitDraft();
@@ -1167,7 +1200,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final draft = _records[_currentIndex];
     final values = <String, dynamic>{
       for (final col in widget.table.columns)
-        if (!col.isPrimaryKey && (draft[col.name]?.toString() ?? '').isNotEmpty) col.name: draft[col.name],
+        for (var n = 1; n <= _repetitionsOnLayout(col); n++)
+          if (!col.isPrimaryKey && (draft[ColumnModel.repetitionKey(col.name, n)]?.toString() ?? '').isNotEmpty)
+            ColumnModel.repetitionKey(col.name, n): draft[ColumnModel.repetitionKey(col.name, n)],
     };
     try {
       final created = await widget.apiClient.insertRow(widget.table.name, values);
@@ -3108,164 +3143,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           );
         }
 
-        if (col.fieldType.toUpperCase() == 'CONTAINER') {
-          return _buildContainerFieldObject(obj, col, record, isDark);
-        }
-
-        final ctrl = _fieldControllers[col.name];
-        final fn = _fieldFocusNodes[col.name];
-        final saving = _fieldSaving[col.name];
-        final computed = _isComputed(col.name);
-
-        // A field bound to a value list is filled from a control rather than
-        // typed into (#31).
-        final offered = computed ? null : _itemsFor(obj.fieldBinding!);
-        if (offered != null) {
-          return _buildValueListControl(
-            style: obj.fieldBinding!.effectiveControlStyle(hasValueList: true),
-            items: offered,
-            showSecondOnly: _valueLists[obj.fieldBinding!.valueListId]?.showSecondOnly ?? false,
-            truncated: _truncatedValueLists.contains(obj.fieldBinding!.valueListId),
-            current: ctrl?.text ?? '',
-            onChanged: (value) {
-              ctrl?.text = value;
-              _onFieldChanged(col.name, value);
-            },
-          );
-        }
-
-        final rawVal = record[col.name] ?? ctrl?.text;
-        final effStyle = obj.style.effectiveForValue(rawVal);
-        final isFocused = fn?.hasFocus ?? false;
-        final hasDisplayFormatting = layoutStyleHasDisplayFormat(effStyle);
-
-        final isMultilineField = obj.height > 44;
-        final verticalPad = obj.height < 32
-            ? math.max(1.0, (obj.height - 16.0) / 2.0)
-            : 8.0;
-
-        final textField = TextField(
-          controller: ctrl,
-          focusNode: fn,
-          readOnly: computed,
-          maxLines: isMultilineField ? null : 1,
-          expands: isMultilineField,
-          textAlign: _parseTextAlign(effStyle.textAlign),
-          textAlignVertical: isMultilineField ? TextAlignVertical.top : TextAlignVertical.center,
-          style: layoutTextStyle(
-            effStyle,
-            fallbackColor: isDark ? Colors.white : Colors.black87,
-          ),
-          decoration: InputDecoration(
-            isDense: true,
-            contentPadding: EdgeInsets.only(
-              left: 8 + effStyle.indentLeft,
-              right: 8 + effStyle.indentRight,
-              top: verticalPad,
-              bottom: verticalPad,
-            ),
-            fillColor: effStyle.fillColor != null
-                ? _parseColor(effStyle.fillColor!)
-                : null,
-            filled: effStyle.fillColor != null,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(effStyle.cornerRadius),
-              borderSide: BorderSide(
-                color: effStyle.borderColor != null
-                    ? _parseColor(effStyle.borderColor!)
-                    : Colors.grey,
-                width: effStyle.borderWidth,
-              ),
-            ),
-            suffixIcon: computed
-                ? const Tooltip(
-                    message: 'Filled in by its formula',
-                    child: Icon(Icons.functions, size: 14, color: Colors.grey),
-                  )
-                : saving == true
-                    ? const Padding(
-                        padding: EdgeInsets.all(8),
-                        child: SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(strokeWidth: 1.5),
-                        ),
-                      )
-                    : saving == false
-                        ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
-                        : null,
-          ),
-          onChanged: computed ? null : (v) => _onFieldChanged(col.name, v),
-          onEditingComplete: computed
-              ? null
-              : () {
-                  _fieldDebounceTimers[col.name]?.cancel();
-                  unawaited(_saveField(col.name, ctrl?.text ?? ''));
-                  fn?.nextFocus();
-                },
-        );
-
-        if (!hasDisplayFormatting) return textField;
-
-        // A formatted field shows its formatted value until it is edited. The
-        // text field stays at the same place in the tree in both states, so
-        // the click that focuses it also opens its text input: one click is
-        // enough to start typing. (Building a new text field on focus left it
-        // focused but without input, so a second click was needed.)
-        final showFormatted = !isFocused;
-        final formatted = formatLayoutDisplayValue(
-          rawVal ?? (ctrl?.text ?? ''),
-          effStyle,
-        );
-        return Stack(
-            fit: StackFit.expand,
+        // A repeating field shows its repetitions in the object's box,
+        // which they share equally: stacked, or side by side.
+        final shown = obj.fieldBinding?.shownRepetitions(col.maxRepetitions) ?? 1;
+        if (shown > 1) {
+          final horizontal = obj.fieldBinding?.repetitionOrientation == RepetitionOrientation.horizontal;
+          final cell = horizontal
+              ? obj.copyWith(width: obj.width / shown)
+              : obj.copyWith(height: obj.height / shown);
+          return Flex(
+            direction: horizontal ? Axis.horizontal : Axis.vertical,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Opacity(
-                opacity: showFormatted ? 0 : 1,
-                child: IgnorePointer(ignoring: showFormatted, child: textField),
-              ),
-              if (showFormatted)
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  if (!computed) fn?.requestFocus();
-                },
-                child: Container(
-                  alignment: isMultilineField
-                      ? Alignment.topLeft
-                      : _parseAlignment(effStyle.textAlign),
-                  padding: EdgeInsets.only(
-                    left: 8 + effStyle.indentLeft,
-                    right: 8 + effStyle.indentRight,
-                    top: verticalPad,
-                    bottom: verticalPad,
-                  ),
-                  decoration: BoxDecoration(
-                    color: effStyle.fillColor != null
-                        ? _parseColor(effStyle.fillColor!)
-                        : (isDark ? const Color(0xFF0D1117) : Colors.white),
-                    borderRadius: BorderRadius.circular(effStyle.cornerRadius),
-                    border: Border.all(
-                      color: effStyle.borderColor != null
-                          ? _parseColor(effStyle.borderColor!)
-                          : Colors.grey.shade400,
-                      width: effStyle.borderWidth > 0 ? effStyle.borderWidth : 1,
+              for (var n = 1; n <= shown; n++)
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(
+                      top: !horizontal && n > 1 ? 1 : 0,
+                      left: horizontal && n > 1 ? 1 : 0,
                     ),
-                  ),
-                  child: Text(
-                    formatted,
-                    maxLines: isMultilineField ? null : 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: _parseTextAlign(effStyle.textAlign),
-                    style: layoutTextStyle(
-                      effStyle,
-                      fallbackColor: isDark ? Colors.white : Colors.black87,
-                    ),
+                    child: _buildFieldCell(cell, col, record, isDark, ColumnModel.repetitionKey(col.name, n)),
                   ),
                 ),
-              ),
             ],
           );
+        }
+        return _buildFieldCell(obj, col, record, isDark, col.name);
 
       case 'button':
       case 'popover_button':
@@ -3404,13 +3307,184 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
   }
 
-  Widget _buildContainerFieldObject(
+  /// One box of a field object: the field itself, or one repetition of a
+  /// repeating field, under its record [key].
+  Widget _buildFieldCell(
     LayoutObjectModel obj,
     ColumnModel col,
     Map<String, dynamic> record,
     bool isDark,
+    String key,
   ) {
-    final rawVal = record[col.name]?.toString() ?? _fieldControllers[col.name]?.text ?? '';
+    if (col.fieldType.toUpperCase() == 'CONTAINER') {
+      return _buildContainerFieldObject(obj, col, record, isDark, key: key);
+    }
+
+    final ctrl = _fieldControllers[key];
+    final fn = _fieldFocusNodes[key];
+    final saving = _fieldSaving[key];
+    final computed = _isComputed(col.name);
+
+    // A field bound to a value list is filled from a control rather than
+    // typed into (#31).
+    final offered = computed ? null : _itemsFor(obj.fieldBinding!);
+    if (offered != null) {
+      return _buildValueListControl(
+        style: obj.fieldBinding!.effectiveControlStyle(hasValueList: true),
+        items: offered,
+        showSecondOnly: _valueLists[obj.fieldBinding!.valueListId]?.showSecondOnly ?? false,
+        truncated: _truncatedValueLists.contains(obj.fieldBinding!.valueListId),
+        current: ctrl?.text ?? '',
+        onChanged: (value) {
+          ctrl?.text = value;
+          _onFieldChanged(key, value);
+        },
+      );
+    }
+
+    final rawVal = record[key] ?? ctrl?.text;
+    final effStyle = obj.style.effectiveForValue(rawVal);
+    final isFocused = fn?.hasFocus ?? false;
+    final hasDisplayFormatting = layoutStyleHasDisplayFormat(effStyle);
+
+    final isMultilineField = obj.height > 44;
+    final verticalPad = obj.height < 32
+        ? math.max(1.0, (obj.height - 16.0) / 2.0)
+        : 8.0;
+
+    final textField = TextField(
+      controller: ctrl,
+      focusNode: fn,
+      readOnly: computed,
+      maxLines: isMultilineField ? null : 1,
+      expands: isMultilineField,
+      textAlign: _parseTextAlign(effStyle.textAlign),
+      textAlignVertical: isMultilineField ? TextAlignVertical.top : TextAlignVertical.center,
+      style: layoutTextStyle(
+        effStyle,
+        fallbackColor: isDark ? Colors.white : Colors.black87,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        contentPadding: EdgeInsets.only(
+          left: 8 + effStyle.indentLeft,
+          right: 8 + effStyle.indentRight,
+          top: verticalPad,
+          bottom: verticalPad,
+        ),
+        fillColor: effStyle.fillColor != null
+            ? _parseColor(effStyle.fillColor!)
+            : null,
+        filled: effStyle.fillColor != null,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(effStyle.cornerRadius),
+          borderSide: BorderSide(
+            color: effStyle.borderColor != null
+                ? _parseColor(effStyle.borderColor!)
+                : Colors.grey,
+            width: effStyle.borderWidth,
+          ),
+        ),
+        suffixIcon: computed
+            ? const Tooltip(
+                message: 'Filled in by its formula',
+                child: Icon(Icons.functions, size: 14, color: Colors.grey),
+              )
+            : saving == true
+                ? const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(strokeWidth: 1.5),
+                    ),
+                  )
+                : saving == false
+                    ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
+                    : null,
+      ),
+      onChanged: computed ? null : (v) => _onFieldChanged(key, v),
+      onEditingComplete: computed
+          ? null
+          : () {
+              _fieldDebounceTimers[key]?.cancel();
+              unawaited(_saveField(key, ctrl?.text ?? ''));
+              fn?.nextFocus();
+            },
+    );
+
+    if (!hasDisplayFormatting) return textField;
+
+    // A formatted field shows its formatted value until it is edited. The
+    // text field stays at the same place in the tree in both states, so
+    // the click that focuses it also opens its text input: one click is
+    // enough to start typing. (Building a new text field on focus left it
+    // focused but without input, so a second click was needed.)
+    final showFormatted = !isFocused;
+    final formatted = formatLayoutDisplayValue(
+      rawVal ?? (ctrl?.text ?? ''),
+      effStyle,
+    );
+    return Stack(
+        fit: StackFit.expand,
+        children: [
+          Opacity(
+            opacity: showFormatted ? 0 : 1,
+            child: IgnorePointer(ignoring: showFormatted, child: textField),
+          ),
+          if (showFormatted)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              if (!computed) fn?.requestFocus();
+            },
+            child: Container(
+              alignment: isMultilineField
+                  ? Alignment.topLeft
+                  : _parseAlignment(effStyle.textAlign),
+              padding: EdgeInsets.only(
+                left: 8 + effStyle.indentLeft,
+                right: 8 + effStyle.indentRight,
+                top: verticalPad,
+                bottom: verticalPad,
+              ),
+              decoration: BoxDecoration(
+                color: effStyle.fillColor != null
+                    ? _parseColor(effStyle.fillColor!)
+                    : (isDark ? const Color(0xFF0D1117) : Colors.white),
+                borderRadius: BorderRadius.circular(effStyle.cornerRadius),
+                border: Border.all(
+                  color: effStyle.borderColor != null
+                      ? _parseColor(effStyle.borderColor!)
+                      : Colors.grey.shade400,
+                  width: effStyle.borderWidth > 0 ? effStyle.borderWidth : 1,
+                ),
+              ),
+              child: Text(
+                formatted,
+                maxLines: isMultilineField ? null : 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: _parseTextAlign(effStyle.textAlign),
+                style: layoutTextStyle(
+                  effStyle,
+                  fallbackColor: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+  }
+
+  Widget _buildContainerFieldObject(
+    LayoutObjectModel obj,
+    ColumnModel col,
+    Map<String, dynamic> record,
+    bool isDark, {
+    String? key,
+  }) {
+    final k = key ?? col.name;
+    final rawVal = record[k]?.toString() ?? _fieldControllers[k]?.text ?? '';
     final bytes = _tryDecodeBase64Image(rawVal);
     final isViewLayout = widget.layout?.name.toLowerCase().contains('view') ?? false;
     final child = Container(

@@ -14,7 +14,7 @@ func nativeEncoded(bytes []byte) []byte {
 }
 
 type testHBAM7FieldSpec struct {
-	id         byte
+	id         int
 	name       string
 	fieldClass byte
 	dataType   byte
@@ -32,7 +32,11 @@ func appendHBAM7TableCatalog(payload []byte, tableID int, tableName string, fiel
 	if len(fields) > 0 {
 		payload = append(payload, 0x28, tHi, tLo, 0x20, 3, 0x20, 5)
 		for _, f := range fields {
-			payload = append(payload, 0x20, f.id)
+			if f.id < 128 {
+				payload = append(payload, 0x20, byte(f.id))
+			} else {
+				payload = append(payload, 0x28, byte(0x80|((f.id-128)>>8)), byte((f.id-128)&0xff))
+			}
 			if f.fieldClass != 0 || f.dataType != 0 {
 				payload = append(payload, 0x02, 2, f.fieldClass, f.dataType)
 			}

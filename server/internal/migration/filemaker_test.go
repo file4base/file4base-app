@@ -168,7 +168,7 @@ func TestAnalyzeAndConvert_DDRAndFMPXMLResult(t *testing.T) {
 		t.Fatalf("expected 2 records parsed from FMPXMLRESULT, got %d", res.Report.Counts.RecordsReady)
 	}
 	if len(res.Report.Unsupported) == 0 {
-		t.Fatal("expected unsupported items (repetitions, ExecuteSQL, Perform AppleScript) to be recorded")
+		t.Fatal("expected unsupported items (ExecuteSQL, Perform AppleScript) to be recorded")
 	}
 	if len(res.Report.ManualActionRequired) == 0 {
 		t.Fatal("expected manual_action_required items (triggers, passwords, unsupported steps/calcs) to be recorded")
@@ -771,16 +771,21 @@ func TestAnalyzeAndConvert_ReadsNestedFieldOptions(t *testing.T) {
 			globalReported = true
 		}
 	}
-	for _, item := range res.Report.Unsupported {
-		if item.SourceName == "visits.Answers" && strings.Contains(item.Detail, "Repeating") {
+	for _, item := range res.Report.Preserved {
+		if item.SourceName == "visits.Answers" && strings.Contains(item.Detail, "Repeating field with 5 repetitions") {
 			repeatingReported = true
+		}
+	}
+	for _, item := range res.Report.Unsupported {
+		if item.SourceName == "visits.Answers" {
+			t.Fatalf("a repeating field is migrated, not unsupported: %+v", item)
 		}
 	}
 	if !globalReported {
 		t.Fatalf("a Storage global=True field must be reported as translated: %+v", res.Report.Translated)
 	}
 	if !repeatingReported {
-		t.Fatalf("a Storage maxRepetition=5 field must be reported as unsupported: %+v", res.Report.Unsupported)
+		t.Fatalf("a Storage maxRepetition=5 field must be reported as a preserved repeating field: %+v", res.Report.Preserved)
 	}
 }
 

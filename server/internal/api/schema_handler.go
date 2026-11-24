@@ -302,6 +302,9 @@ type AddColumnRequest struct {
 	DefaultValue       *string                `json:"default_value,omitempty"`
 	CalculationFormula *string                `json:"calculation_formula,omitempty"`
 	ValidationRules    *string                `json:"validation_rules,omitempty"`
+	// MaxRepetitions makes a repeating field; absent or 1 is a field that
+	// does not repeat.
+	MaxRepetitions int `json:"max_repetitions,omitempty"`
 }
 
 func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
@@ -330,6 +333,7 @@ func (h *SchemaHandler) AddColumn(w http.ResponseWriter, r *http.Request) {
 		DefaultValue:       req.DefaultValue,
 		CalculationFormula: req.CalculationFormula,
 		ValidationRules:    req.ValidationRules,
+		MaxRepetitions:     req.MaxRepetitions,
 	})
 	if err != nil {
 		writeSchemaError(w, r, err)
@@ -363,6 +367,7 @@ type UpdateColumnRequest struct {
 	DefaultValue       *string `json:"default_value"`
 	CalculationFormula *string `json:"calculation_formula"`
 	ValidationRules    *string `json:"validation_rules"`
+	MaxRepetitions     *int    `json:"max_repetitions"`
 }
 
 func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
@@ -406,6 +411,10 @@ func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
 		opts.UpdateValidation = true
 		opts.ValidationRules = req.ValidationRules
 	}
+	if req.MaxRepetitions != nil {
+		opts.UpdateRepetitions = true
+		opts.MaxRepetitions = *req.MaxRepetitions
+	}
 
 	col, err := schemaService(r).UpdateColumn(r.Context(), tableID, columnID, opts)
 	if err != nil {
@@ -416,7 +425,7 @@ func (h *SchemaHandler) UpdateColumn(w http.ResponseWriter, r *http.Request) {
 	// A new formula changes what every existing record should show, so they
 	// are recomputed rather than keeping the old answer until each is edited
 	// (#30). A record the new formula cannot be computed for is reported.
-	if opts.UpdateCalculation && col.FieldType == dbal.FieldTypeCalculation {
+	if (opts.UpdateCalculation || opts.UpdateRepetitions) && col.FieldType == dbal.FieldTypeCalculation {
 		driver, _ := dbal.DriverFromContext(r.Context())
 		tableName, nameErr := schemaService(r).TableNameByID(r.Context(), tableID)
 		if nameErr == nil && driver != nil {
