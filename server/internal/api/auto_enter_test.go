@@ -57,7 +57,8 @@ func TestAPI_AutoEnterOptions(t *testing.T) {
 	rec = send(http.MethodPost, "/api/v1/data/tickets", map[string]string{"subject": "First"}, false)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &row))
-	assert.Equal(t, "7", fmt.Sprint(row["num"]))
+	assert.Equal(t, json.Number("7"), json.Number(fmt.Sprint(row["num"])))
+	assert.IsType(t, float64(0), row["num"], "a number field answers a number")
 	assert.Equal(t, "Open", row["status"])
 	id := row["id"].(string)
 

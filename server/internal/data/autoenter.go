@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -432,7 +433,12 @@ func (a *autoEnter) enterNew(ctx context.Context, mode autoMode, record map[stri
 			if err != nil {
 				return err
 			}
-			c.enter(f.name, next)
+			if f.fieldType == dbal.FieldTypeNumber {
+				// A number, exactly, as a calculation's number answer is.
+				c.enter(f.name, json.Number(next))
+			} else {
+				c.enter(f.name, next)
+			}
 		}
 	}
 	for _, f := range a.fields {
