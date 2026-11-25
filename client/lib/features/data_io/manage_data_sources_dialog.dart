@@ -427,7 +427,8 @@ class _DataSourceEditorState extends State<_DataSourceEditor> {
                 controller: _passwordEnv,
                 decoration: const InputDecoration(
                   labelText: 'Password from environment variable (optional)',
-                  helperText: 'The name of a variable of the server, such as LEGACY_DB_PASSWORD. '
+                  helperText: 'The name of a variable of the server starting with FILE4BASE_DATASOURCE_, '
+                      'such as FILE4BASE_DATASOURCE_LEGACY. '
                       'Leave it empty to type the password at each import.',
                   helperMaxLines: 3,
                   border: OutlineInputBorder(),
