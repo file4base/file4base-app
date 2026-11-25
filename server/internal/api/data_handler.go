@@ -235,6 +235,10 @@ type EvaluateExpressionBody struct {
 	// Get answers the Get functions only the client knows, by selector
 	// ("ScriptParameter", "LayoutName", …).
 	Get map[string]any `json:"get,omitempty"`
+
+	// Values are the fields of the record being edited and not committed
+	// yet, by name: the expressions read them in place of what is stored.
+	Values map[string]any `json:"values,omitempty"`
 }
 
 // EvaluateExpression computes expressions against a record with the engine
@@ -275,7 +279,7 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 	results := make([]map[string]interface{}, 0, len(expressions))
 	for _, expression := range expressions {
 		evaluation, err := svc.EvaluateExpressionIn(r.Context(), table, body.RecordID, expression, body.ResultType,
-			data.EvaluationEnv{Variables: body.Variables, Get: body.Get})
+			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values})
 		if err != nil {
 			// A record that is not there, or a table that is not reachable,
 			// is about the request rather than about one expression.

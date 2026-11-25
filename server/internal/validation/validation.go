@@ -163,6 +163,11 @@ type Checker struct {
 	// Override is a data entry write the person chose to save although it
 	// breaks rules: the rules of the fields that allow it are skipped.
 	Override bool
+	// Restore is a solution restored from its file: the values were saved
+	// already, and those breaking a rule that allows override may have been
+	// kept by the person who entered them, so those rules are not checked
+	// again.
+	Restore bool
 }
 
 // HasRules reports whether any field of the table has rules.
@@ -183,7 +188,7 @@ func (c *Checker) Check(ctx context.Context, recordID string, values map[string]
 		if f.Rules == nil || !f.Rules.AppliesTo(dataEntry) {
 			continue
 		}
-		if dataEntry && c.Override && f.Rules.AllowOverride {
+		if f.Rules.AllowOverride && (c.Restore || dataEntry && c.Override) {
 			continue
 		}
 		var err error

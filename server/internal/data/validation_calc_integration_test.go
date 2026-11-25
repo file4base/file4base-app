@@ -147,3 +147,54 @@ func TestEvaluateWithScriptVariables(t *testing.T) {
 	_, err = svc.EvaluateExpressionIn(ctx, "orders", id, `MaxQuantity ( 1 ; 2 )`, "Text", env)
 	assert.ErrorIs(t, err, data.ErrInvalidExpression)
 }
+
+// A validation formula that reads an unstored calculation reads it as the
+// edit makes it, not as the stored record did.
+func TestValidationReadsUnstoredCalculationsOfTheEdit(t *testing.T) {
+	ctx, schemaSvc, svc, _ := newCalcSolution(t)
+	tables, err := schemaSvc.ListTables(ctx)
+	require.NoError(t, err)
+	tableID := ""
+	for _, tbl := range tables {
+		if tbl.Name == "orders" {
+			tableID = tbl.ID
+		}
+	}
+	require.NotEmpty(t, tableID)
+	twice := `{"formula":"units * 2","result_type":"Number","stored":false}`
+	rules := `{"calculation_enabled":true,"calculation":"twice < 10"}`
+	for _, col := range []schema.ColumnMetadata{
+		{Name: "units", FieldType: dbal.FieldTypeNumber, ValidationRules: &rules},
+		{Name: "twice", FieldType: dbal.FieldTypeCalculation, CalculationFormula: &twice},
+	} {
+		col.DisplayName, col.IsNullable = col.Name, true
+		_, err := schemaSvc.AddColumn(ctx, tableID, col)
+		require.NoError(t, err)
+	}
+	row, err := svc.InsertRow(ctx, "orders", map[string]interface{}{"units": 2})
+	require.NoError(t, err)
+	id := fmt.Sprint(row["id"])
+	_, err = svc.UpdateRow(ctx, "orders", id, map[string]interface{}{"units": 6})
+	assert.Equal(t, "units", validationError(t, err).Field, "twice is 12 once units is 6")
+	_, err = svc.UpdateRow(ctx, "orders", id, map[string]interface{}{"units": 4})
+	require.NoError(t, err)
+}
+
+// A record being edited and not committed yet is evaluated with its own
+// values, and the calculations they change, rather than the stored ones.
+func TestEvaluateReadsTheValuesOfTheEdit(t *testing.T) {
+	ctx, _, svc, _ := newCalcSolution(t)
+	row, err := svc.InsertRow(ctx, "orders", map[string]interface{}{"price": 50})
+	require.NoError(t, err)
+	id := fmt.Sprint(row["id"])
+
+	env := data.EvaluationEnv{Values: map[string]any{"price": "150", "id": "other"}}
+	ev, err := svc.EvaluateExpressionIn(ctx, "orders", id, `MaxQuantity ( price )`, "Text", env)
+	require.NoError(t, err)
+	assert.Equal(t, "5", ev.Text)
+	// A new record has no stored values: only the edit's.
+	ev, err = svc.EvaluateExpressionIn(ctx, "orders", "", `MaxQuantity ( price ) & "/" & code`, "Text",
+		data.EvaluationEnv{Values: map[string]any{"price": "500", "code": "ABC"}})
+	require.NoError(t, err)
+	assert.Equal(t, "5/ABC", ev.Text)
+}

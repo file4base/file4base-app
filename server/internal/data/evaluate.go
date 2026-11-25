@@ -53,6 +53,10 @@ type Evaluation struct {
 type EvaluationEnv struct {
 	Variables map[string]any
 	Get       map[string]any
+	// Values are the fields of the record as it is being edited and not
+	// committed yet (a new record especially), by name, read in place of
+	// what is stored.
+	Values map[string]any
 }
 
 // envContext answers the Get functions the environment gives, and the
@@ -123,15 +127,21 @@ func (s *Service) EvaluateExpressionIn(
 		return nil, err
 	}
 
+	reader := s.newRelatedReader()
 	record := calc.Record{}
 	row := map[string]interface{}{}
 	if recordID != "" {
 		if row, err = s.GetRow(ctx, tableName, recordID); err != nil {
 			return nil, err
 		}
-		for name := range row {
-			record[name] = typedValue(tableName, fields, row, name, s.describeContainer(ctx))
+	}
+	if len(in.Values) > 0 {
+		if err := s.overlayEdit(ctx, reader, tableName, fields, row, in.Values, expr.Fields()); err != nil {
+			return nil, err
 		}
+	}
+	for name := range row {
+		record[name] = typedValue(tableName, fields, row, name, s.describeContainer(ctx))
 	}
 
 	read := expr.Fields()
@@ -160,7 +170,7 @@ func (s *Service) EvaluateExpressionIn(
 	}
 	env := &envContext{unstoredContext: &unstoredContext{
 		RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
-		reader:        s.newRelatedReader(), ctx: ctx, table: tableName, row: row}, get: get}
+		reader:        reader, ctx: ctx, table: tableName, row: row}, get: get}
 	value, err := calc.EvaluateWith(expr, env, result)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
@@ -229,4 +239,37 @@ func storageTypeOf(result calc.ResultType) dbal.AgnosticFieldType {
 	default:
 		return dbal.FieldTypeText
 	}
+}
+
+// overlayEdit lays the values of a record being edited over row, the record
+// as stored (empty for a new one), and recomputes what they change: the
+// stored calculations, and the unstored ones among reads and those they
+// read. The values given for calculation fields, and for fields the table
+// does not have, are ignored: the formula owns the former.
+func (s *Service) overlayEdit(ctx context.Context, reader *relatedReader, tableName string, fields fieldSet,
+	row, values map[string]interface{}, reads []string) error {
+	calculations, err := reader.tableCalculations(ctx, tableName)
+	if err != nil {
+		return err
+	}
+	isCalculation := make(map[string]bool, len(calculations))
+	for _, c := range calculations {
+		isCalculation[c.field] = true
+	}
+	for name, v := range values {
+		if _, known := fields[name]; known && !isCalculation[name] && name != "id" {
+			row[name] = v
+		}
+	}
+	for _, c := range calculations {
+		if c.unstored {
+			continue
+		}
+		if answers, err := c.evaluate(row); err == nil {
+			for key, answer := range answers {
+				row[key] = answer
+			}
+		}
+	}
+	return reader.fill(ctx, tableName, []map[string]interface{}{row}, reads)
 }

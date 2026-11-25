@@ -66,6 +66,12 @@ func (s *Service) validationCalculator(tableName string) validation.Calculator {
 		for k, v := range values {
 			row[k] = v
 		}
+		// The unstored calculations the formula reads were computed from
+		// the record as stored: they are computed again from the edit.
+		reader := s.newRelatedReader()
+		if err := reader.fill(ctx, tableName, []map[string]interface{}{row}, expr.Fields()); err != nil {
+			return false, err
+		}
 		describe := s.describeContainer(ctx)
 		record := make(calc.Record, len(row))
 		for name := range row {
@@ -73,7 +79,7 @@ func (s *Service) validationCalculator(tableName string) validation.Calculator {
 		}
 		env := &selfContext{
 			unstoredContext: unstoredContext{RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating()},
-				reader: s.newRelatedReader(), ctx: ctx, table: tableName, occurrence: f.Rules.CalculationContext, row: row},
+				reader: reader, ctx: ctx, table: tableName, occurrence: f.Rules.CalculationContext, row: row},
 			self: record[f.Name],
 		}
 		answer, err := calc.EvaluateWith(expr, env, calc.ResultBoolean)

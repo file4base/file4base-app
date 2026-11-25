@@ -31,6 +31,11 @@ var ErrCustomFunctionNotFound = errors.New("custom function not found")
 // ErrCustomFunctionInUse is wrapped by a *CustomFunctionConflict.
 var ErrCustomFunctionInUse = errors.New("custom function in use")
 
+// ErrCustomFunctionChanged is returned when a formula a change rewrites was
+// saved by someone else while the change was worked out: nothing is
+// written, and saving again reads it as it is now.
+var ErrCustomFunctionChanged = errors.New("custom function change outdated")
+
 // CustomFunctionInput is a custom function as the editor saves it.
 type CustomFunctionInput struct {
 	Name       string   `json:"name"`
@@ -100,7 +105,13 @@ func (s *Service) CreateCustomFunction(ctx context.Context, in CustomFunctionInp
 	}
 	defs := definitions(existing, "", nil)
 	created := calc.CustomFunction{Name: fn.Name, Parameters: fn.Parameters, Formula: fn.Formula}
-	if _, err := libraryOf(append(defs, created), fn.Name); err != nil {
+	lib, err := libraryOf(append(defs, created), fn.Name)
+	if err != nil {
+		return nil, err
+	}
+	// A calculation field may call the function before it exists (one
+	// deleted with force, now made again).
+	if err := s.checkCalculationRings(ctx, lib, nil); err != nil {
 		return nil, err
 	}
 	before := signatures(defs)
@@ -213,7 +224,11 @@ func (s *Service) UpdateCustomFunction(ctx context.Context, id string, in Custom
 			}
 		}
 	}
-	if _, err := libraryOf(final, fn.Name); err != nil {
+	lib, err := libraryOf(final, fn.Name)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.checkCalculationRings(ctx, lib, plan.writes); err != nil {
 		return nil, err
 	}
 
@@ -440,6 +455,57 @@ func libraryOf(defs []calc.CustomFunction, name string) (*calc.Library, error) {
 	return lib, nil
 }
 
+// checkCalculationRings refuses a library under which calculation fields
+// would read each other in a ring: a function's formula may read a field
+// whose own formula calls the function, and no record of that table could
+// then be computed. writes are the formulas the change rewrites, read in
+// place of the stored ones.
+func (s *Service) checkCalculationRings(ctx context.Context, lib *calc.Library, writes []formulaWrite) error {
+	d := s.driver.Dialect()
+	q := fmt.Sprintf(`SELECT c.id, t.name, c.name, c.calculation_formula FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id
+		WHERE c.field_type = %s AND c.calculation_formula IS NOT NULL`, d.Placeholder(1))
+	rows, err := s.driver.DB().QueryContext(ctx, q, string(dbal.FieldTypeCalculation))
+	if err != nil {
+		return fmt.Errorf("failed reading the calculation fields: %w", err)
+	}
+	defer rows.Close()
+	reads := map[string]map[string][]string{}
+	for rows.Next() {
+		var id, table, name, raw string
+		if err := rows.Scan(&id, &table, &name, &raw); err != nil {
+			return err
+		}
+		for _, w := range writes {
+			if w.table == "sys_columns" && w.column == "calculation_formula" && w.id == id {
+				raw = w.value
+			}
+		}
+		expr, err := calc.ParseWith(data.ReadStoredCalculation(raw).Formula, calc.Options{Library: lib})
+		if err != nil {
+			continue // broken already: reported when it is computed
+		}
+		if reads[table] == nil {
+			reads[table] = map[string][]string{}
+		}
+		reads[table][name] = expr.Fields()
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	tables := make([]string, 0, len(reads))
+	for table := range reads {
+		tables = append(tables, table)
+	}
+	sort.Strings(tables)
+	for _, table := range tables {
+		if _, err := calc.Order(reads[table]); err != nil {
+			return fmt.Errorf("%w: with this formula, the calculation fields of %s could not be computed: %s",
+				ErrInvalidCustomFunction, table, err.Error())
+		}
+	}
+	return nil
+}
+
 // renamePlan is what a change to a custom function does to the stored
 // formulas: those it rewrites, those it would read differently (captured),
 // and those its new parameters break.
@@ -512,10 +578,25 @@ func appendUsage(list []CustomFunctionUsage, u CustomFunctionUsage) []CustomFunc
 	return append(list, u)
 }
 
-// apply writes the rewritten formulas.
+// apply writes the rewritten formulas. Each row is locked and read again
+// first: one changed since the plan read it (a layout or a script saved in
+// the meantime) stops the change rather than being overwritten with a
+// rewrite of what it held before.
 func (p *renamePlan) apply(ctx context.Context, tx *sql.Tx, d dbal.Dialect) error {
+	lock := " FOR UPDATE"
+	if d.Engine() == dbal.EnginePostgres {
+		lock = " FOR NO KEY UPDATE"
+	}
 	for _, w := range p.writes {
-		q := fmt.Sprintf(`UPDATE %s SET %s = %s WHERE id = %s`, w.table, w.column, d.Placeholder(1), d.Placeholder(2))
+		var current sql.NullString
+		q := fmt.Sprintf(`SELECT %s FROM %s WHERE id = %s%s`, w.column, w.table, d.Placeholder(1), lock)
+		if err := tx.QueryRowContext(ctx, q, w.id).Scan(&current); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("failed reading %s %s: %w", w.table, w.id, err)
+		}
+		if current.String != w.old {
+			return fmt.Errorf("%w: a formula calling the function was changed while it was being saved: save it again", ErrCustomFunctionChanged)
+		}
+		q = fmt.Sprintf(`UPDATE %s SET %s = %s WHERE id = %s`, w.table, w.column, d.Placeholder(1), d.Placeholder(2))
 		if _, err := tx.ExecContext(ctx, q, w.value, w.id); err != nil {
 			return fmt.Errorf("failed rewriting %s %s: %w", w.table, w.id, err)
 		}
@@ -546,6 +627,10 @@ type formulaWrite struct {
 	value             string
 	// name is the custom function's, for a function's formula.
 	name string
+	// old is the value the formulas were read from. The rows are read
+	// before the write transaction; one that has changed since is not
+	// overwritten.
+	old string
 }
 
 // visitFormulas calls visit with every stored formula of the solution, and
@@ -584,19 +669,19 @@ func (s *Service) visitFormulas(ctx context.Context, visit func(site formulaSite
 		if c.fieldType == string(dbal.FieldTypeCalculation) && c.calc.Valid {
 			site := formulaSite{CustomFunctionUsage{Kind: "calculation", ID: c.id, Name: name}}
 			if out, ok := rewriteJSONKey(c.calc.String, "formula", true, func(f string) (string, bool) { return visit(site, f, nil) }); ok {
-				writes = append(writes, formulaWrite{"sys_columns", "calculation_formula", c.id, out, ""})
+				writes = append(writes, formulaWrite{"sys_columns", "calculation_formula", c.id, out, "", c.calc.String})
 			}
 		}
 		if c.auto.Valid {
 			site := formulaSite{CustomFunctionUsage{Kind: "auto_enter", ID: c.id, Name: name}}
 			if out, ok := rewriteJSONKey(c.auto.String, "calculated_formula", false, func(f string) (string, bool) { return visit(site, f, nil) }); ok {
-				writes = append(writes, formulaWrite{"sys_columns", "default_value", c.id, out, ""})
+				writes = append(writes, formulaWrite{"sys_columns", "default_value", c.id, out, "", c.auto.String})
 			}
 		}
 		if c.rules.Valid {
 			site := formulaSite{CustomFunctionUsage{Kind: "validation", ID: c.id, Name: name}}
 			if out, ok := rewriteJSONKey(c.rules.String, "calculation", false, func(f string) (string, bool) { return visit(site, f, nil) }); ok {
-				writes = append(writes, formulaWrite{"sys_columns", "validation_rules", c.id, out, ""})
+				writes = append(writes, formulaWrite{"sys_columns", "validation_rules", c.id, out, "", c.rules.String})
 			}
 		}
 	}
@@ -609,7 +694,7 @@ func (s *Service) visitFormulas(ctx context.Context, visit func(site formulaSite
 	for _, fn := range functions {
 		site := formulaSite{CustomFunctionUsage{Kind: "custom_function", ID: fn.ID, Name: fn.Name}}
 		if out, ok := visit(site, fn.Formula, fn.Parameters); ok {
-			writes = append(writes, formulaWrite{data.CustomFunctionsTable, "formula", fn.ID, out, fn.Name})
+			writes = append(writes, formulaWrite{data.CustomFunctionsTable, "formula", fn.ID, out, fn.Name, fn.Formula})
 		}
 	}
 
@@ -636,7 +721,7 @@ func (s *Service) visitFormulas(ctx context.Context, visit func(site formulaSite
 	for _, st := range steps {
 		site := formulaSite{CustomFunctionUsage{Kind: "script_step", ID: st.id, Name: st.script, Detail: st.stepType}}
 		if out, ok := rewriteJSONFormulas(st.params, true, func(f string) (string, bool) { return visit(site, f, nil) }); ok {
-			writes = append(writes, formulaWrite{"sys_script_steps", "params", st.id, out, ""})
+			writes = append(writes, formulaWrite{"sys_script_steps", "params", st.id, out, "", st.params})
 		}
 	}
 
@@ -663,7 +748,7 @@ func (s *Service) visitFormulas(ctx context.Context, visit func(site formulaSite
 	for _, l := range layouts {
 		site := formulaSite{CustomFunctionUsage{Kind: "layout", ID: l.id, Name: l.name}}
 		if out, ok := rewriteJSONFormulas(l.definition, false, func(f string) (string, bool) { return visit(site, f, nil) }); ok {
-			writes = append(writes, formulaWrite{"sys_layouts", "definition", l.id, out, ""})
+			writes = append(writes, formulaWrite{"sys_layouts", "definition", l.id, out, "", l.definition})
 		}
 	}
 	return writes, nil
@@ -701,7 +786,8 @@ func rewriteJSONKey(raw, key string, plain bool, rewrite func(string) (string, b
 }
 
 // scriptFormulaKeys are the parameters of a script step that hold a formula.
-// Any other parameter holds one when its "<name>_is_calculation" is true.
+// Any other parameter holds one when its "<name>_is_calculation" is true,
+// and none of them does when it is false.
 var scriptFormulaKeys = map[string]bool{
 	"expression": true, "condition": true, "calculation": true, "calc": true, "formula": true,
 	"result": true, "value": true, "parameter": true, "script_parameter": true,
@@ -733,8 +819,12 @@ func rewriteJSONFormulas(raw string, step bool, rewrite func(string) (string, bo
 			for _, k := range keys {
 				child := t[k]
 				if text, ok := child.(string); ok {
-					formula := layoutFormulaKeys[k] ||
-						inStep && (scriptFormulaKeys[k] || t[k+"_is_calculation"] == true)
+					// An option that says whether it is a calculation is
+					// believed: Set Field's value may be literal text.
+					formula := layoutFormulaKeys[k] || inStep && scriptFormulaKeys[k]
+					if flag, ok := t[k+"_is_calculation"]; ok && (inStep || formula) {
+						formula = flag == true
+					}
 					if formula && strings.TrimSpace(text) != "" {
 						if out, ok := rewrite(text); ok && out != text {
 							t[k] = out

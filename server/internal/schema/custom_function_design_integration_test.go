@@ -278,3 +278,84 @@ func TestCheckFormula(t *testing.T) {
 	assert.False(t, check.Valid)
 	assert.True(t, strings.Contains(check.Message, "never end"), check.Message)
 }
+
+// A function changed so that it reads a calculation field whose formula
+// calls it would leave the table with calculations no record can compute:
+// it is refused, and so is a calculation field written into such a ring.
+func TestCustomFunctionChangesThatMakeCalculationsReadThemselvesAreRefused(t *testing.T) {
+	s := newDesignSolution(t)
+	fn := s.create(t, "Bonus", nil, "1")
+	s.addColumn(t, schema.ColumnMetadata{Name: "total", FieldType: dbal.FieldTypeCalculation,
+		CalculationFormula: stringPtr(`{"formula":"net + Bonus","result_type":"Number"}`)})
+
+	_, err := s.svc.UpdateCustomFunction(s.ctx, fn.ID, schema.CustomFunctionInput{Name: "Bonus", Formula: "total + 1"}, true)
+	assert.ErrorIs(t, err, schema.ErrInvalidCustomFunction)
+	assert.Contains(t, err.Error(), "total")
+	got, err := s.svc.GetCustomFunction(s.ctx, fn.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "1", got.Formula, "nothing was saved")
+	// Reading an ordinary field is fine.
+	_, err = s.svc.UpdateCustomFunction(s.ctx, fn.ID, schema.CustomFunctionInput{Name: "Bonus", Formula: "discount + 1"}, false)
+	require.NoError(t, err)
+
+	// The other way round: a function reading a field, then the field
+	// written to call it.
+	s.create(t, "Echo", nil, "echoed")
+	_, err = s.svc.AddColumn(s.ctx, s.tableID, schema.ColumnMetadata{Name: "echoed", DisplayName: "echoed", IsNullable: true,
+		FieldType: dbal.FieldTypeCalculation, CalculationFormula: stringPtr(`{"formula":"Echo + 1","result_type":"Number"}`)})
+	assert.ErrorIs(t, err, schema.ErrInvalidFieldOptions)
+
+	// Records are still saved and computed.
+	row, err := s.data.InsertRow(s.ctx, "invoices", map[string]interface{}{"net": 10, "discount": 2})
+	require.NoError(t, err)
+	assert.EqualValues(t, "13", fmt.Sprint(row["total"]))
+}
+
+// Set Field's value is literal text when the step says it is not a
+// calculation: a rename leaves it as written, and it is no usage.
+func TestRenamingACustomFunctionLeavesLiteralValues(t *testing.T) {
+	s := newDesignSolution(t)
+	fn := s.create(t, "Fee", nil, "3")
+	script, err := s.svc.CreateScript(s.ctx, "Fees", "invoices", nil, true, []schema.ScriptStepMetadata{
+		{StepType: "set_field", IsEnabled: true, Params: json.RawMessage(`{"field":"label","value":"Fee","value_is_calculation":false}`)},
+		{StepType: "set_field", IsEnabled: true, Params: json.RawMessage(`{"field":"net","value":"Fee * 2","value_is_calculation":true}`)},
+		{StepType: "set_field", IsEnabled: true, Params: json.RawMessage(`{"field":"discount","value":"Fee"}`)},
+	})
+	require.NoError(t, err)
+	usages, err := s.svc.CustomFunctionUsages(s.ctx, fn.ID)
+	require.NoError(t, err)
+	assert.Len(t, usages, 2)
+
+	_, err = s.svc.UpdateCustomFunction(s.ctx, fn.ID, schema.CustomFunctionInput{Name: "Charge", Formula: "3"}, false)
+	require.NoError(t, err)
+	stored, err := s.svc.GetScript(s.ctx, script.ID)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"field":"label","value":"Fee","value_is_calculation":false}`, string(stored.Steps[0].Params))
+	assert.JSONEq(t, `{"field":"net","value":"Charge * 2","value_is_calculation":true}`, string(stored.Steps[1].Params))
+	assert.JSONEq(t, `{"field":"discount","value":"Charge"}`, string(stored.Steps[2].Params))
+}
+
+// A value saved over a rule that allows override, unique among them, is
+// restored from the data file as it was saved.
+func TestRestoreKeepsValuesSavedOverAnOverridableRule(t *testing.T) {
+	s := newDesignSolution(t)
+	rules := `{"unique":true,"allow_override":true}`
+	s.addColumn(t, schema.ColumnMetadata{Name: "ref", FieldType: dbal.FieldTypeText, ValidationRules: &rules})
+	first, err := s.data.InsertRow(s.ctx, "invoices", map[string]interface{}{"ref": "A1"})
+	require.NoError(t, err)
+	_, err = s.data.InsertRow(s.ctx, "invoices", map[string]interface{}{"ref": "A1"})
+	require.Error(t, err, "a duplicate is refused unless overridden")
+	second, err := s.data.InsertRow(data.WithValidationOverride(s.ctx), "invoices", map[string]interface{}{"ref": "A1"})
+	require.NoError(t, err)
+
+	file, err := s.svc.ExportDatabaseData(s.ctx, "")
+	require.NoError(t, err)
+	for _, row := range []map[string]interface{}{first, second} {
+		require.NoError(t, s.data.DeleteRow(s.ctx, "invoices", fmt.Sprint(row["id"])))
+	}
+	_, err = s.svc.ImportDatabaseData(s.ctx, file)
+	require.NoError(t, err)
+	rows, err := s.data.ListRows(s.ctx, "invoices", data.QueryOptions{})
+	require.NoError(t, err)
+	assert.Len(t, rows, 2)
+}

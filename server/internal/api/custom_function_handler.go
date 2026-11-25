@@ -153,6 +153,9 @@ func writeCustomFunctionError(w http.ResponseWriter, r *http.Request, err error)
 		})
 	case errors.Is(err, schema.ErrCustomFunctionNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Not Found", err.Error())
+	case errors.Is(err, schema.ErrCustomFunctionChanged):
+		// Not a 409: saving with force would not help, saving again does.
+		telemetry.WriteProblem(w, r, http.StatusPreconditionFailed, "Changed Meanwhile", err.Error())
 	case errors.Is(err, schema.ErrInvalidCustomFunction):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Custom Function", err.Error())
 	default:
