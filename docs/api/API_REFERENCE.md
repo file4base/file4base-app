@@ -713,8 +713,8 @@ related criterion on a local table holding the same records finds. Not signed
 in, no access there, or a field that solution does not have answers `424
 external_unavailable`. For a relationship whose one criterion (other than `×`)
 is `<`, `≤`, `>` or `≥` only the bound is carried back; otherwise at most
-10,000 match values are, and a criterion matching related records that hold
-more answers `422 Find Too Broad`.
+10,000 match values are, for the whole find, and a find whose criteria match
+related records that hold more in all answers `422 Find Too Broad`.
 
 ### `POST /api/v1/data/{table}/evaluate`
 

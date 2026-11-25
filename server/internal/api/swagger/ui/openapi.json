@@ -948,7 +948,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "422": {
-            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
+            "description": "Find Too Broad: the criteria on related fields of another solution's table match records holding more than 10,000 match values in all (#107); narrow it."
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
@@ -4177,7 +4177,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "422": {
-            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
+            "description": "Find Too Broad: the criteria on related fields of another solution's table match records holding more than 10,000 match values in all (#107); narrow it."
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
@@ -6044,7 +6044,7 @@
             "description": "Table occurrence not found"
           },
           "422": {
-            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
+            "description": "Find Too Broad: the criteria on related fields of another solution's table match records holding more than 10,000 match values in all (#107); narrow it."
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
@@ -6093,7 +6093,7 @@
             "description": "Table occurrence not found"
           },
           "422": {
-            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
+            "description": "Find Too Broad: the criteria on related fields of another solution's table match records holding more than 10,000 match values in all (#107); narrow it."
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"

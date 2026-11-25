@@ -71,6 +71,9 @@ type Container struct {
 	Table  string `json:"table"`
 	Record string `json:"record"`
 	Field  string `json:"field"`
+	// Database is the solution the record is in when it is another one
+	// than the solution reading it (#107); empty for that solution.
+	Database string `json:"database,omitempty"`
 
 	Filename string `json:"filename,omitempty"`
 	MimeType string `json:"mime_type,omitempty"`

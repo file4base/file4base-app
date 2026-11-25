@@ -246,8 +246,10 @@ relationship operator, several criteria and the empty-match-field rule. What
 is carried back depends on the relationship's criteria other than `×`: for one
 `<`, `≤`, `>` or `≥`, the least or greatest match value found; for one `≠`, up
 to two distinct values; for none, whether anything matched; otherwise the
-distinct match values themselves, at most 10,000 in all (a find matching more
-answers `422 Find Too Broad`: narrow it). Not signed in to that solution, no
+distinct match values themselves, at most 10,000 for the whole find, all its
+criteria together (a find matching more answers `422 Find Too Broad`: narrow
+it). A Boolean match field is bounded as any other. The values are bound once
+in the statement, however many requests read them. Not signed in to that solution, no
 access to the table, or a field it no longer has answers `424
 external_unavailable` as reads do.
 

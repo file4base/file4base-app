@@ -305,7 +305,7 @@ func (s *Service) Summarize(ctx context.Context, tableName string, req SummaryRe
 	if err := s.refuseUnstoredCriteria(ctx, tableName, req.Requests, related); err != nil {
 		return nil, err
 	}
-	where, values, err := buildFindClauses(dialect, fields, tableName, req.Requests, related)
+	find, err := buildFindClauses(dialect, fields, tableName, req.Requests, related)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +324,7 @@ func (s *Service) Summarize(ctx context.Context, tableName string, req SummaryRe
 		Summaries: wanted,
 	}
 
-	grandCount, grand, err := s.summaryRow(ctx, dialect, tableName, where, values, names, wanted, nil)
+	grandCount, grand, err := s.summaryRow(ctx, dialect, tableName, find, names, wanted, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +332,7 @@ func (s *Service) Summarize(ctx context.Context, tableName string, req SummaryRe
 	result.Grand = grand
 
 	if len(req.GroupBy) > 0 {
-		groups, err := s.summaryGroups(ctx, dialect, tableName, where, values, names, wanted, req.GroupBy)
+		groups, err := s.summaryGroups(ctx, dialect, tableName, find, names, wanted, req.GroupBy)
 		if err != nil {
 			return nil, err
 		}
@@ -347,7 +347,7 @@ func (s *Service) Summarize(ctx context.Context, tableName string, req SummaryRe
 
 // summaryRow works out the grand figures: one row, over the whole found set.
 func (s *Service) summaryRow(
-	ctx context.Context, dialect dbal.Dialect, tableName, where string, values []interface{},
+	ctx context.Context, dialect dbal.Dialect, tableName string, find findClauses,
 	names []string, specs map[string]SummarySpec, _ []string,
 ) (int, map[string]interface{}, error) {
 	selects := []string{"COUNT(*)"}
@@ -355,8 +355,8 @@ func (s *Service) summaryRow(
 		selects = append(selects, aggregateSQL(dialect, specs[name]))
 	}
 
-	q := fmt.Sprintf("SELECT %s FROM %s %s",
-		strings.Join(selects, ", "), dialect.QuoteIdentifier(tableName), where)
+	q := fmt.Sprintf("%sSELECT %s FROM %s %s",
+		find.with, strings.Join(selects, ", "), dialect.QuoteIdentifier(tableName), find.where)
 
 	count := 0
 	cells := make([]sql.NullString, len(names))
@@ -366,7 +366,7 @@ func (s *Service) summaryRow(
 		targets = append(targets, &cells[i])
 	}
 
-	if err := s.driver.DB().QueryRowContext(ctx, q, values...).Scan(targets...); err != nil {
+	if err := s.driver.DB().QueryRowContext(ctx, q, find.values...).Scan(targets...); err != nil {
 		return 0, nil, fmt.Errorf("failed summarizing %s: %w", tableName, err)
 	}
 
@@ -380,7 +380,7 @@ func (s *Service) summaryRow(
 // summaryGroups works out one row per group, in the order the break fields
 // sort, so the report reads top to bottom.
 func (s *Service) summaryGroups(
-	ctx context.Context, dialect dbal.Dialect, tableName, where string, values []interface{},
+	ctx context.Context, dialect dbal.Dialect, tableName string, find findClauses,
 	names []string, specs map[string]SummarySpec, groupBy []string,
 ) ([]SummaryGroup, error) {
 	groupCols := make([]string, 0, len(groupBy))
@@ -394,15 +394,16 @@ func (s *Service) summaryGroups(
 		selects = append(selects, aggregateSQL(dialect, specs[name]))
 	}
 
-	q := fmt.Sprintf("SELECT %s FROM %s %s GROUP BY %s ORDER BY %s",
+	q := fmt.Sprintf("%sSELECT %s FROM %s %s GROUP BY %s ORDER BY %s",
+		find.with,
 		strings.Join(selects, ", "),
 		dialect.QuoteIdentifier(tableName),
-		where,
+		find.where,
 		strings.Join(groupCols, ", "),
 		strings.Join(groupCols, ", "),
 	)
 
-	rows, err := s.driver.DB().QueryContext(ctx, q, values...)
+	rows, err := s.driver.DB().QueryContext(ctx, q, find.values...)
 	if err != nil {
 		return nil, fmt.Errorf("failed grouping %s: %w", tableName, err)
 	}

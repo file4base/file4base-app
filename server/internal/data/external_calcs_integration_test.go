@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
@@ -330,11 +331,13 @@ func TestExternalCalculations_ReadTheOtherSolution(t *testing.T) {
 func TestExternalFind_FindsWhatALocalRelatedFindFinds(t *testing.T) {
 	ctx, a, b := twoSolutions(t, "xfind_orders", "xfind_customers")
 
-	customerFields := [][2]string{{"code", "TEXT"}, {"region", "TEXT"}, {"full_name", "TEXT"}, {"credit", "NUMBER"}}
+	customerFields := [][2]string{{"code", "TEXT"}, {"region", "TEXT"}, {"full_name", "TEXT"}, {"credit", "NUMBER"},
+		{"active", "BOOLEAN"}}
 	b.table(t, ctx, "customers", customerFields...)
 	_, localOcc, localFields := a.table(t, ctx, "local_customers", customerFields...)
 	ordersTable, ordersOcc, orderFields := a.table(t, ctx, "orders",
-		[2]string{"customer_code", "TEXT"}, [2]string{"region", "TEXT"}, [2]string{"amount", "NUMBER"})
+		[2]string{"customer_code", "TEXT"}, [2]string{"region", "TEXT"}, [2]string{"amount", "NUMBER"},
+		[2]string{"flag", "BOOLEAN"})
 	ref, externalOcc := a.external(t, ctx, "Customers", "order_customers")
 
 	type predicate struct{ order, op, customer string }
@@ -348,6 +351,9 @@ func TestExternalFind_FindsWhatALocalRelatedFindFinds(t *testing.T) {
 		"cartesian": {{"customer_code", "×", "code"}},
 		"two keys":  {{"customer_code", "=", "code"}, {"region", "=", "region"}},
 		"mixed":     {{"customer_code", "=", "code"}, {"amount", "<", "credit"}},
+		// A bound of Boolean values, which PostgreSQL has no MIN or MAX of.
+		"boolean less":     {{"flag", "<", "active"}},
+		"boolean at least": {{"flag", "≥", "active"}},
 	}
 	type pair struct{ local, external string }
 	rels := map[string]pair{}
@@ -370,12 +376,12 @@ func TestExternalFind_FindsWhatALocalRelatedFindFinds(t *testing.T) {
 	customersData := data.NewService(b.driver)
 	ordersData := data.NewService(a.driver).WithPeers(staticPeers{b.name: customersData})
 	for _, c := range []map[string]interface{}{
-		{"code": "C-1", "region": "north", "full_name": "Ada", "credit": 10},
-		{"code": "C-1", "region": "south", "full_name": "Ada South", "credit": 5},
-		{"code": "C-2", "region": "north", "full_name": "Bob", "credit": 7},
-		{"code": "C-3", "region": "east", "full_name": "", "credit": 3},
+		{"code": "C-1", "region": "north", "full_name": "Ada", "credit": 10, "active": true},
+		{"code": "C-1", "region": "south", "full_name": "Ada South", "credit": 5, "active": false},
+		{"code": "C-2", "region": "north", "full_name": "Bob", "credit": 7, "active": true},
+		{"code": "C-3", "region": "east", "full_name": "", "credit": 3, "active": false},
 		{"code": "", "region": "west", "full_name": "Nobody", "credit": 50},
-		{"code": "C-4", "region": "north", "full_name": "Cleo", "credit": nil},
+		{"code": "C-4", "region": "north", "full_name": "Cleo", "credit": nil, "active": true},
 	} {
 		_, err := customersData.InsertRow(ctx, "customers", c)
 		require.NoError(t, err)
@@ -383,14 +389,14 @@ func TestExternalFind_FindsWhatALocalRelatedFindFinds(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for _, o := range []map[string]interface{}{
-		{"customer_code": "C-1", "region": "north", "amount": 4},
-		{"customer_code": "C-1", "region": "south", "amount": 8},
-		{"customer_code": "C-2", "region": "north", "amount": 7},
+		{"customer_code": "C-1", "region": "north", "amount": 4, "flag": false},
+		{"customer_code": "C-1", "region": "south", "amount": 8, "flag": true},
+		{"customer_code": "C-2", "region": "north", "amount": 7, "flag": false},
 		{"customer_code": "C-2", "region": "south", "amount": 12},
-		{"customer_code": "C-3", "region": "east", "amount": 1},
-		{"customer_code": "C-4", "region": "north", "amount": 2},
-		{"customer_code": "", "region": "north", "amount": 5},
-		{"customer_code": "C-9", "region": "north", "amount": nil},
+		{"customer_code": "C-3", "region": "east", "amount": 1, "flag": true},
+		{"customer_code": "C-4", "region": "north", "amount": 2, "flag": false},
+		{"customer_code": "", "region": "north", "amount": 5, "flag": false},
+		{"customer_code": "C-9", "region": "north", "amount": nil, "flag": true},
 	} {
 		_, err := ordersData.InsertRow(ctx, "orders", o)
 		require.NoError(t, err)
@@ -451,6 +457,13 @@ func TestExternalFind_FindsWhatALocalRelatedFindFinds(t *testing.T) {
 			}
 		}
 		assert.Equal(t, find(requests(rel.local)...), find(requests(rel.external)...), "%s relationship, several requests", name)
+		// An omitting request first: the values still bind in order.
+		omitFirst := func(rel string) []data.FindRequest {
+			r := requests(rel)
+			return []data.FindRequest{r[1], r[0]}
+		}
+		assert.Equal(t, find(requests(rel.local)...), find(omitFirst(rel.local)...), "%s relationship, omitting first", name)
+		assert.Equal(t, find(requests(rel.local)...), find(omitFirst(rel.external)...), "%s relationship, omitting first", name)
 	}
 	assert.Positive(t, found, "the finds find something")
 
@@ -500,29 +513,221 @@ func TestExternalFind_FindsWhatALocalRelatedFindFinds(t *testing.T) {
 	})
 
 	t.Run("a find matching too many match values is refused", func(t *testing.T) {
-		dialect := b.driver.Dialect()
-		const batch = 1000
-		for start := 0; start <= data.MaxExternalFindKeys; start += batch {
-			var marks []string
-			var args []interface{}
-			for i := start; i < start+batch && i <= data.MaxExternalFindKeys; i++ {
-				n := len(args)
-				marks = append(marks, fmt.Sprintf("(%s, %s, %s)", dialect.Placeholder(n+1), dialect.Placeholder(n+2), dialect.Placeholder(n+3)))
-				args = append(args, uuid.NewString(), fmt.Sprintf("BULK-%05d", i), "Bulk customer")
-			}
-			_, err := b.driver.DB().ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (%s, %s, %s) VALUES %s",
-				dialect.QuoteIdentifier("customers"), dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier("code"),
-				dialect.QuoteIdentifier("full_name"), strings.Join(marks, ", ")), args...)
-			require.NoError(t, err)
+		// BULK-00000 to BULK-10000: as many codes as a find carries back,
+		// and one more.
+		b.bulkInsert(t, ctx, "customers", []string{"code", "full_name"}, data.MaxExternalFindKeys+1, func(i int) []interface{} {
+			return []interface{}{fmt.Sprintf("BULK-%05d", i), "Bulk customer"}
+		})
+		bulkOrder, err := ordersData.InsertRow(ctx, "orders", map[string]interface{}{"customer_code": "BULK-00001", "amount": 100})
+		require.NoError(t, err)
+		on := func(field, value string) data.FindCriterion {
+			return data.FindCriterion{FieldName: field, Value: value, RelationshipID: rels["equal"].external}
 		}
-		_, err := ordersData.ExecuteFind(ctx, "orders", []data.FindRequest{
-			{Criteria: []data.FindCriterion{{FieldName: "full_name", Value: "Bulk", RelationshipID: rels["equal"].external}}},
+		_, err = ordersData.ExecuteFind(ctx, "orders", []data.FindRequest{{Criteria: []data.FindCriterion{on("full_name", "Bulk")}}},
+			data.QueryOptions{})
+		require.ErrorIs(t, err, data.ErrFindTooBroad)
+		// The limit is for the whole find, every criterion together.
+		_, err = ordersData.ExecuteFind(ctx, "orders", []data.FindRequest{
+			{Criteria: []data.FindCriterion{on("code", "BULK-0*")}},
+			{Criteria: []data.FindCriterion{on("code", "BULK-1*")}},
 		}, data.QueryOptions{})
 		require.ErrorIs(t, err, data.ErrFindTooBroad)
+		// The values found are bound once, however many requests read them:
+		// eight times 10,000 would be more than a statement can bind.
+		var requests []data.FindRequest
+		for i := 0; i < 8; i++ {
+			requests = append(requests, data.FindRequest{Criteria: []data.FindCriterion{
+				on("code", "BULK-0*"), {FieldName: "amount", Value: fmt.Sprintf(">%d", i)}}})
+		}
+		rows, err := ordersData.ExecuteFind(ctx, "orders", requests, data.QueryOptions{})
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, fmt.Sprint(bulkOrder["id"]), fmt.Sprint(rows[0]["id"]))
 		// A bound needs no list of keys, however many records match.
 		_, err = ordersData.ExecuteFind(ctx, "orders", []data.FindRequest{
 			{Criteria: []data.FindCriterion{{FieldName: "full_name", Value: "Bulk", RelationshipID: rels["less"].external}}},
 		}, data.QueryOptions{})
 		require.NoError(t, err)
 	})
+}
+
+// bulkInsert writes n records of table straight to the database, a thousand
+// per statement: row gives the values of columns for record i.
+func (s *solution) bulkInsert(t *testing.T, ctx context.Context, table string, columns []string, n int, row func(i int) []interface{}) {
+	t.Helper()
+	dialect := s.driver.Dialect()
+	quoted := []string{dialect.QuoteIdentifier("id")}
+	for _, c := range columns {
+		quoted = append(quoted, dialect.QuoteIdentifier(c))
+	}
+	const batch = 1000
+	for start := 0; start < n; start += batch {
+		var marks []string
+		var args []interface{}
+		for i := start; i < start+batch && i < n; i++ {
+			values := append([]interface{}{uuid.NewString()}, row(i)...)
+			places := make([]string, len(values))
+			for j := range values {
+				places[j] = dialect.Placeholder(len(args) + j + 1)
+			}
+			marks = append(marks, "("+strings.Join(places, ", ")+")")
+			args = append(args, values...)
+		}
+		_, err := s.driver.DB().ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
+			dialect.QuoteIdentifier(table), strings.Join(quoted, ", "), strings.Join(marks, ", ")), args...)
+		require.NoError(t, err)
+	}
+}
+
+// A calculation reads no more of the related records than it needs (#107):
+// the first one for Occurrence::Field, the totals of Count, Sum, Average, Min
+// and Max computed where the records are, and at most a bounded number of
+// records for List, beyond which it is refused rather than read whole.
+func TestRelatedReads_NoFurtherThanTheFormulaNeeds(t *testing.T) {
+	ctx, a, b := twoSolutions(t, "xbound_batches", "xbound_items")
+	b.table(t, ctx, "items", [2]string{"code", "TEXT"}, [2]string{"label", "TEXT"}, [2]string{"n", "NUMBER"},
+		[2]string{"day", "DATE"}, [2]string{"rank", "NUMBER"})
+	batchesTable, batchesOcc, batchFields := a.table(t, ctx, "batches", [2]string{"code", "TEXT"})
+	ref, items := a.external(t, ctx, "Items", "batch_items")
+	byRank := "-rank"
+	a.relate(t, ctx, schema.CreateRelationshipInput{Name: "batches_items", LeftOccurrenceID: batchesOcc,
+		RightOccurrenceID: items, SortRelated: &byRank, Predicates: []schema.RelationshipPredicate{
+			{LeftColumnID: batchFields["code"], Operator: "=", RightColumnName: "code"}}})
+	formulas := map[string][2]string{
+		"first":     {"batch_items::label", "Text"},
+		"labels":    {"Count ( batch_items::label )", "Number"},
+		"numbers":   {"Count ( batch_items::n )", "Number"},
+		"total":     {"Sum ( batch_items::n )", "Number"},
+		"mean":      {"Average ( batch_items::n )", "Number"},
+		"least":     {"Min ( batch_items::n )", "Number"},
+		"earliest":  {"DayOfYear ( Min ( batch_items::day ) )", "Number"},
+		"latest":    {"DayOfYear ( Max ( batch_items::day ) )", "Number"},
+		"list":      {"List ( batch_items::label )", "Text"},
+		"last":      {"Last ( batch_items::label )", "Text"},
+		"label_sum": {"Sum ( batch_items::label )", "Number"},
+	}
+	for name, f := range formulas {
+		a.unstored(t, ctx, batchesTable, name, f[0], f[1])
+	}
+	a.bind(t, ctx, ref, b, map[string]string{"batch_items": "items"})
+
+	itemsData := data.NewService(b.driver)
+	batchesData := data.NewService(a.driver).WithPeers(staticPeers{b.name: itemsData})
+	for _, item := range []map[string]interface{}{
+		{"code": "SMALL", "label": "a", "n": 1, "day": "2026-01-03", "rank": 1},
+		{"code": "SMALL", "label": "", "n": 4, "day": nil, "rank": 2},
+		{"code": "SMALL", "label": "c", "n": nil, "day": "2026-01-01", "rank": 3},
+		{"code": "EMPTY", "label": "x", "n": nil, "rank": 1},
+		{"code": "EMPTY", "label": "y", "n": nil, "rank": 2},
+	} {
+		_, err := itemsData.InsertRow(ctx, "items", item)
+		require.NoError(t, err)
+	}
+	b.bulkInsert(t, ctx, "items", []string{"code", "label", "n", "rank"}, 10001, func(i int) []interface{} {
+		return []interface{}{"BIG", fmt.Sprintf("big-%05d", i), 1, i}
+	})
+	batch := map[string]string{}
+	for _, code := range []string{"SMALL", "EMPTY", "BIG", "NONE"} {
+		row, err := batchesData.InsertRow(ctx, "batches", map[string]interface{}{"code": code})
+		require.NoError(t, err)
+		batch[code] = fmt.Sprint(row["id"])
+	}
+	read := func(code string) map[string]string {
+		row, err := batchesData.GetRow(ctx, "batches", batch[code])
+		require.NoError(t, err)
+		out := map[string]string{}
+		for name := range formulas {
+			if row[name] != nil {
+				out[name] = fmt.Sprint(row[name])
+			}
+		}
+		return out
+	}
+
+	assert.Equal(t, map[string]string{
+		"first": "c", "labels": "2", "numbers": "2", "total": "5", "mean": "2.5", "least": "1",
+		"earliest": "1", "latest": "3", "list": "c\ra", "last": "a", "label_sum": "0",
+	}, read("SMALL"), "the first in the relationship's order; totals of the values that are there")
+	assert.Equal(t, map[string]string{
+		"first": "y", "labels": "2", "numbers": "0", "list": "y\rx", "last": "x", "label_sum": "0",
+	}, read("EMPTY"), "the sum, average and least of values none of which is there are empty")
+	assert.Equal(t, map[string]string{"labels": "0", "numbers": "0", "total": "0", "label_sum": "0"}, read("NONE"))
+
+	big := read("BIG")
+	assert.Equal(t, "big-10000", big["first"], "the first of 10001 related records")
+	assert.Equal(t, "10001", big["labels"], "counted where the records are")
+	assert.Equal(t, "10001", big["total"])
+	assert.Equal(t, "1", big["mean"])
+	assert.Empty(t, big["list"], "a list of more records than are read for one record is refused")
+	_, err := batchesData.EvaluateExpression(ctx, "batches", batch["BIG"], "List ( batch_items::label )", "Text")
+	require.ErrorContains(t, err, data.ErrTooManyRelated.Error())
+	_, err = batchesData.EvaluateExpression(ctx, "batches", batch["BIG"], "Sum ( batch_items::label )", "Number")
+	require.ErrorContains(t, err, data.ErrTooManyRelated.Error(), "a sum of text is read value by value")
+
+	t.Run("a page takes as many statements as one record", func(t *testing.T) {
+		page := func(limit int) int64 {
+			a.queries.Store(0)
+			b.queries.Store(0)
+			_, err := batchesData.ListRows(ctx, "batches", data.QueryOptions{Limit: limit, SortBy: "code"})
+			require.NoError(t, err)
+			return a.statements() + b.statements()
+		}
+		assert.Equal(t, page(1), page(4))
+	})
+}
+
+// A container of another solution read by a calculation is that solution's
+// file, never the one a record of this solution with the same table, id and
+// field holds; and it is read there with the account held there (#107).
+func TestExternalCalculations_ContainersStayInTheirSolution(t *testing.T) {
+	ctx, a, b := twoSolutions(t, "xbox_jobs", "xbox_assets")
+	b.table(t, ctx, "assets", [2]string{"code", "TEXT"}, [2]string{"scan", "CONTAINER"})
+	// A table of the same name in this solution, holding a record with the
+	// same id and another file.
+	a.table(t, ctx, "assets", [2]string{"code", "TEXT"}, [2]string{"scan", "CONTAINER"})
+	jobsTable, jobsOcc, jobFields := a.table(t, ctx, "jobs", [2]string{"code", "TEXT"})
+	ref, jobAssets := a.external(t, ctx, "Assets", "job_assets")
+	a.relate(t, ctx, schema.CreateRelationshipInput{Name: "jobs_assets", LeftOccurrenceID: jobsOcc,
+		RightOccurrenceID: jobAssets, Predicates: []schema.RelationshipPredicate{
+			{LeftColumnID: jobFields["code"], Operator: "=", RightColumnName: "code"}}})
+	a.unstored(t, ctx, jobsTable, "scan", "job_assets::scan", "Container")
+	a.unstored(t, ctx, jobsTable, "scan_name", "GetAsText ( scan )", "Text")
+	a.unstored(t, ctx, jobsTable, "related_name", `GetAsText ( job_assets::scan ) & "/" & GetContainerAttribute ( job_assets::scan ; "fileSize" )`, "Text")
+	a.bind(t, ctx, ref, b, map[string]string{"job_assets": "assets"})
+
+	assetsData := data.NewService(b.driver)
+	jobsData := data.NewService(a.driver).WithPeers(staticPeers{b.name: assetsData})
+	asset, err := assetsData.InsertRow(ctx, "assets", map[string]interface{}{"code": "J-1", "scan": "c2Nhbg=="})
+	require.NoError(t, err)
+	id := fmt.Sprint(asset["id"])
+	require.NoError(t, containermeta.Put(ctx, b.driver.DB(), b.driver.Dialect(), "assets", id, map[string]containermeta.Entry{
+		"scan": {Filename: "scan.bin", MimeType: "application/octet-stream", SizeBytes: 4},
+	}))
+	decoy, err := jobsData.InsertRow(ctx, "assets", map[string]interface{}{"id": id, "code": "J-1", "scan": "ZGVjb3k="})
+	require.NoError(t, err)
+	require.Equal(t, id, fmt.Sprint(decoy["id"]), "the decoy has the same id")
+	require.NoError(t, containermeta.Put(ctx, a.driver.DB(), a.driver.Dialect(), "assets", id, map[string]containermeta.Entry{
+		"scan": {Filename: "decoy.bin", MimeType: "application/octet-stream", SizeBytes: 5},
+	}))
+	job, err := jobsData.InsertRow(ctx, "jobs", map[string]interface{}{"code": "J-1"})
+	require.NoError(t, err)
+
+	read := func(svc *data.Service) map[string]interface{} {
+		row, err := svc.GetRow(ctx, "jobs", fmt.Sprint(job["id"]))
+		require.NoError(t, err)
+		require.NoError(t, svc.AttachContainerMeta(ctx, "jobs", []map[string]interface{}{row}))
+		return row
+	}
+	row := read(jobsData)
+	assert.Equal(t, "c2Nhbg==", row["scan"], "the other solution's file")
+	assert.Equal(t, "scan.bin", row[containermeta.Key].(map[string]containermeta.Entry)["scan"].Filename)
+	assert.Equal(t, "scan.bin", row["scan_name"], "a container result names the other solution's file")
+	assert.Equal(t, "scan.bin/4", row["related_name"])
+
+	restricted := data.NewService(a.driver).WithPeers(staticPeers{b.name: data.NewService(b.driver).
+		WithReadAccess(func(_ context.Context, table string) (bool, error) { return table != "assets", nil })})
+	row = read(restricted)
+	assert.Nil(t, row["scan"], "no file of a table the account there may not read")
+	assert.Empty(t, row["scan_name"])
+	assert.Empty(t, row["related_name"])
 }

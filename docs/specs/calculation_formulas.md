@@ -69,6 +69,14 @@ without its own record being written.
   branch per match value, in chunks of 500), then, the same way, what the
   calculations of the records reached read in their turn. A page therefore
   takes a fixed number of statements, however many records it shows.
+- A formula reads no more related records than it needs, and only the
+  fields it uses: `Occurrence::Field` reads the first related record in the
+  relationship's sort; `Count`, `Sum`, `Average`, `Min` and `Max` of a stored
+  field of the records one relationship away are totalled by the database,
+  without carrying the records back; `List`, `Last`, `GetNthRecord` and the
+  other reads of every value take at most 10,000 related records of one
+  record. A formula reading more fails (the field is empty) rather than
+  loading them all.
 - An occurrence of **another solution's table** (#107) is read the same way,
   in that solution, as the account the session holds there; that solution's
   own unstored calculations are computed there. See
@@ -127,7 +135,8 @@ A formula sees a container field as the file it holds, never its bytes:
 
 A calculation whose result type is **Container** answers a container. Its
 column stores where the file is (`{"table", "record", "field"}`, the field
-being `field[n]` for a repetition), not a copy of it, stored or unstored; a
+being `field[n]` for a repetition, and `database` for a record of another
+solution's table, read there as the session's account), not a copy of it, stored or unstored; a
 read returns the file the reference names, as base64 with its metadata under
 `__container_meta`, exactly as a container field reads, and an export writes
 it the same way. The reference follows the field: a record whose file changes

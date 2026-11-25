@@ -972,7 +972,24 @@ func (ev *evaluator) aggregateArgs(c callNode) ([]value, error) {
 }
 
 func aggregate(f func(ev *evaluator, c callNode, vals []value) (value, error)) function {
+	return totalled(nil, f)
+}
+
+// totalled is an aggregate that a Bounded context may answer from the
+// related records' totals, without reading them.
+func totalled(
+	fromTotals func(ev *evaluator, t RelatedTotals) value, f func(ev *evaluator, c callNode, vals []value) (value, error),
+) function {
 	return function{minArgs: 1, maxArgs: -1, lazy: func(ev *evaluator, c callNode) (value, error) {
+		if fromTotals != nil {
+			t, ok, err := ev.relatedTotals(c)
+			if err != nil {
+				return empty, err
+			}
+			if ok {
+				return fromTotals(ev, t), nil
+			}
+		}
 		vals, err := ev.aggregateArgs(c)
 		if err != nil {
 			return empty, err
@@ -993,7 +1010,12 @@ func nonEmpty(vals []value) []value {
 
 func aggregateFunctions() map[string]function {
 	return map[string]function{
-		"SUM": aggregate(func(ev *evaluator, _ callNode, vals []value) (value, error) {
+		"SUM": totalled(func(ev *evaluator, t RelatedTotals) value {
+			if t.Records > 0 && t.Values == 0 {
+				return empty
+			}
+			return numberValue(fromStored(t.Sum).asNumber(ev.loc))
+		}, func(ev *evaluator, _ callNode, vals []value) (value, error) {
 			// Sum ( "" ; "" ) is empty; Sum over no related record is 0.
 			if len(vals) > 0 && len(nonEmpty(vals)) == 0 {
 				return empty, nil
@@ -1004,10 +1026,18 @@ func aggregateFunctions() map[string]function {
 			}
 			return numberValue(total), nil
 		}),
-		"COUNT": aggregate(func(_ *evaluator, _ callNode, vals []value) (value, error) {
+		"COUNT": totalled(func(_ *evaluator, t RelatedTotals) value {
+			return intValue(t.Values)
+		}, func(_ *evaluator, _ callNode, vals []value) (value, error) {
 			return intValue(int64(len(nonEmpty(vals)))), nil
 		}),
-		"AVERAGE": aggregate(func(ev *evaluator, _ callNode, vals []value) (value, error) {
+		"AVERAGE": totalled(func(ev *evaluator, t RelatedTotals) value {
+			if t.Values == 0 {
+				return empty
+			}
+			total := fromStored(t.Sum).asNumber(ev.loc)
+			return numberValue(total.DivRound(decimal.NewFromInt(t.Values), ev.precision+2))
+		}, func(ev *evaluator, _ callNode, vals []value) (value, error) {
 			vals = nonEmpty(vals)
 			if len(vals) == 0 {
 				return empty, nil
@@ -1018,10 +1048,14 @@ func aggregateFunctions() map[string]function {
 			}
 			return numberValue(total.DivRound(decimal.NewFromInt(int64(len(vals))), ev.precision+2)), nil
 		}),
-		"MIN": aggregate(func(ev *evaluator, _ callNode, vals []value) (value, error) {
+		"MIN": totalled(func(_ *evaluator, t RelatedTotals) value {
+			return fromStored(t.Min)
+		}, func(ev *evaluator, _ callNode, vals []value) (value, error) {
 			return extreme(nonEmpty(vals), ev.loc, -1), nil
 		}),
-		"MAX": aggregate(func(ev *evaluator, _ callNode, vals []value) (value, error) {
+		"MAX": totalled(func(_ *evaluator, t RelatedTotals) value {
+			return fromStored(t.Max)
+		}, func(ev *evaluator, _ callNode, vals []value) (value, error) {
 			return extreme(nonEmpty(vals), ev.loc, 1), nil
 		}),
 		"LIST": aggregate(func(ev *evaluator, _ callNode, vals []value) (value, error) {

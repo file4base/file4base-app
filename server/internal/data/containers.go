@@ -29,16 +29,18 @@ import (
 const FieldTypeContainerResult dbal.AgnosticFieldType = "CONTAINER_RESULT"
 
 // containerRef is where a container result's file is: a container field, or
-// one of its repetitions ("field[n]"), of a record.
+// one of its repetitions ("field[n]"), of a record, of this solution or of
+// another one named by Database (#107).
 type containerRef struct {
-	Table  string `json:"table"`
-	Record string `json:"record"`
-	Field  string `json:"field"`
+	Table    string `json:"table"`
+	Record   string `json:"record"`
+	Field    string `json:"field"`
+	Database string `json:"database,omitempty"`
 }
 
 // encodeContainerRef is what a container result stores.
 func encodeContainerRef(c calc.Container) string {
-	b, _ := json.Marshal(containerRef{Table: c.Table, Record: c.Record, Field: c.Field})
+	b, _ := json.Marshal(containerRef{Table: c.Table, Record: c.Record, Field: c.Field, Database: c.Database})
 	return string(b)
 }
 
@@ -105,14 +107,14 @@ func typedValue(table string, fields fieldSet, record map[string]interface{}, ke
 		if !ok {
 			return nil
 		}
-		if _, held := record[ref.Field]; held && ref.Table == table && ref.Record == fmt.Sprint(record["id"]) &&
-			fields.typeOf(ref.Field) == dbal.FieldTypeContainer {
+		if _, held := record[ref.Field]; held && ref.Database == "" && ref.Table == table &&
+			ref.Record == fmt.Sprint(record["id"]) && fields.typeOf(ref.Field) == dbal.FieldTypeContainer {
 			// A container of this very record is read from the record, which
 			// holds what this request writes, not from the database, which
 			// does not have it yet.
 			return typedValue(table, fields, record, ref.Field, describe)
 		}
-		return calc.Container{Table: ref.Table, Record: ref.Record, Field: ref.Field, Describe: describe}
+		return calc.Container{Table: ref.Table, Record: ref.Record, Field: ref.Field, Database: ref.Database, Describe: describe}
 	}
 	return calc.Typed(resultTypeOf(fields.typeOf(key)), record[key])
 }
@@ -190,6 +192,49 @@ func (s *Service) loadContainers(ctx context.Context, refs []containerRef) (map[
 	return out, nil
 }
 
+// loadContainerRefs is loadContainers for references of this solution and of
+// others. A file of another solution is read there, as the account the
+// caller's session group holds in it; one of a table that account may not
+// read, or of a solution that cannot be read, is left out.
+func (s *Service) loadContainerRefs(ctx context.Context, refs []containerRef) (map[containerRef]loadedContainer, error) {
+	byDatabase := map[string][]containerRef{}
+	for _, ref := range refs {
+		byDatabase[ref.Database] = append(byDatabase[ref.Database], ref)
+	}
+	out, err := s.loadContainers(ctx, byDatabase[""])
+	if err != nil {
+		return nil, err
+	}
+	delete(byDatabase, "")
+	for database, refs := range byDatabase {
+		byTable := map[string][]containerRef{}
+		for _, ref := range refs {
+			byTable[ref.Table] = append(byTable[ref.Table], ref)
+		}
+		for table, refs := range byTable {
+			peer, err := s.Open(ctx, ExternalTarget{Database: database, Table: table})
+			if err != nil {
+				continue
+			}
+			there := make([]containerRef, len(refs))
+			for i, ref := range refs {
+				there[i] = ref
+				there[i].Database = ""
+			}
+			loaded, err := peer.loadContainers(ctx, there)
+			if err != nil {
+				return nil, err
+			}
+			for i, ref := range refs {
+				if l, ok := loaded[there[i]]; ok {
+					out[ref] = l
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
 // selectByIDs reads the given fields of the records of a table, by id.
 func (s *Service) selectByIDs(ctx context.Context, table string, fields fieldSet, ids []string) (map[string]map[string]interface{}, error) {
 	dialect := s.driver.Dialect()
@@ -223,17 +268,33 @@ func (s *Service) selectByIDs(ctx context.Context, table string, fields fieldSet
 // describeContainer is the loader a formula describes a container with when
 // it reads its name or type: the file's stored metadata, and its size for a
 // container reached through a reference, whose bytes the formula has not
-// seen.
+// seen. A reference is described only when the caller may read its table,
+// in its own solution, as resolveContainerResults resolves it.
 func (s *Service) describeContainer(ctx context.Context) func(*calc.Container) {
 	return func(c *calc.Container) {
+		if c.Database != "" {
+			peer, err := s.Open(ctx, ExternalTarget{Database: c.Database, Table: c.Table})
+			if err != nil {
+				return
+			}
+			there := *c
+			there.Database, there.Describe = "", nil
+			peer.describeContainer(ctx)(&there)
+			c.Filename, c.MimeType, c.SHA256, c.Size = there.Filename, there.MimeType, there.SHA256, there.Size
+			return
+		}
 		ref := containerRef{Table: c.Table, Record: c.Record, Field: c.Field}
 		if c.Size > 0 {
+			// A container of a record in hand, which was read with access.
 			meta, err := containermeta.Load(ctx, s.driver.DB(), s.driver.Dialect(), c.Table, []string{c.Record})
 			if err == nil {
 				if e, ok := meta[c.Record][c.Field]; ok {
 					c.Filename, c.MimeType, c.SHA256 = e.Filename, e.MimeType, e.SHA256
 				}
 			}
+			return
+		}
+		if s.newRelatedReader().checkRead(ctx, c.Table) != nil {
 			return
 		}
 		loaded, err := s.loadContainers(ctx, []containerRef{ref})
@@ -282,7 +343,7 @@ func (s *Service) resolveContainerResults(ctx context.Context, tableName string,
 				row[key] = nil
 				continue
 			}
-			if ref.Table != tableName && reader.checkRead(ctx, ref.Table) != nil {
+			if ref.Database == "" && ref.Table != tableName && reader.checkRead(ctx, ref.Table) != nil {
 				row[key] = nil
 				continue
 			}
@@ -293,7 +354,7 @@ func (s *Service) resolveContainerResults(ctx context.Context, tableName string,
 	if len(cells) == 0 {
 		return nil
 	}
-	loaded, err := s.loadContainers(ctx, refs)
+	loaded, err := s.loadContainerRefs(ctx, refs)
 	if err != nil {
 		return err
 	}
