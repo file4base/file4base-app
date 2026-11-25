@@ -825,7 +825,7 @@ func buildFindClauses(
 
 				crit = normalizeCriterion(crit)
 				if crit.isRelated() {
-					clause, err := relatedCriterionClause(dialect, tableName, crit, related, &idx, &out.values)
+					clause, err := relatedCriterionClause(dialect, tableName, fields, crit, related, &idx, &out.values)
 					if err != nil {
 						return findClauses{}, err
 					}
@@ -978,6 +978,9 @@ func rowsToMaps(rows *sql.Rows, fields fieldSet) ([]map[string]interface{}, erro
 		rowMap := make(map[string]interface{}, len(cols))
 		for i, colName := range cols {
 			val := colValues[i]
+			if colName == dbal.CreationOrderColumn {
+				continue // read to order by, never a field
+			}
 			if key, ok := companions[colName]; ok {
 				if err := decodeRepetitions(fields, key, val, rowMap); err != nil {
 					return nil, err

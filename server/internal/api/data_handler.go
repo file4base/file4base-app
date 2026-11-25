@@ -329,6 +329,8 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Unknown Field", err.Error())
 	case errors.Is(err, data.ErrUnstoredField):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Unstored Calculation", err.Error())
+	case errors.Is(err, data.ErrTooManyRelated):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Related Records", err.Error())
 	case errors.Is(err, data.ErrFindTooBroad):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Find Too Broad", err.Error())
 	case errors.Is(err, validation.ErrValidation):

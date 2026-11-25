@@ -65,6 +65,9 @@ func (m *MariaDBDialect) BuildCreateTableSQL(def dbal.TableDefinition) (string, 
 		}
 		colDefs = append(colDefs, clause)
 	}
+	if def.CreationOrder {
+		colDefs = append(colDefs, fmt.Sprintf("%s %s", m.QuoteIdentifier(dbal.CreationOrderColumn), dbal.CreationOrderType(dbal.EngineMariaDB)))
+	}
 
 	return fmt.Sprintf("CREATE TABLE %s (\n  %s\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;",
 		m.QuoteIdentifier(def.Name),

@@ -1948,8 +1948,16 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 				names = append(names, dialect.QuoteIdentifier(companion))
 			}
 		}
-		// Registered fields only, named explicitly (see data.selectList)
-		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s`, strings.Join(names, ", "), dialect.QuoteIdentifier(tbl.Name)))
+		// Registered fields only, named explicitly (see data.selectList), in
+		// the order the records were created, which a restore inserts them in
+		// and so keeps.
+		order := ""
+		if has, err := data.HasCreationOrder(ctx, s.driver, tbl.Name); err != nil {
+			return nil, err
+		} else if has {
+			order = " ORDER BY " + dialect.QuoteIdentifier(dbal.CreationOrderColumn)
+		}
+		rows, err := db.QueryContext(ctx, fmt.Sprintf(`SELECT %s FROM %s%s`, strings.Join(names, ", "), dialect.QuoteIdentifier(tbl.Name), order))
 		if err != nil {
 			return nil, fmt.Errorf("failed reading table %s: %w", tbl.Name, err)
 		}

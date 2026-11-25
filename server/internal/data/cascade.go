@@ -325,7 +325,7 @@ func (q *relatedQuery) relatedIDs(ctx context.Context, parents []string, fresh f
 			if !ok || !fresh(matchSignature(q.terms, record)) {
 				continue
 			}
-			match, keys := matchCondition(dialect, q.terms, func(c string) interface{} { return record[c] }, len(args)+1)
+			match, keys := matchCondition(dialect, q.terms, q.fields, func(c string) interface{} { return record[c] }, len(args)+1)
 			if match == "" {
 				continue
 			}

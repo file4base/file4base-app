@@ -422,12 +422,22 @@ func (s *Service) refuseUnstored(ctx context.Context, tableName, what string, fi
 	return refuseUnstored(calculations, tableName, what, fields...)
 }
 
-// orderBy is orderByClause for a table that may have unstored calculations.
+// orderBy is orderByClause for a table that may have unstored calculations,
+// with the records' creation order last: alone when nothing sorts them, as
+// FileMaker lists them, and to keep records that sort alike in that order.
 func (s *Service) orderBy(ctx context.Context, fields fieldSet, tableName string, order []SortField) (string, error) {
 	if err := s.refuseUnstored(ctx, tableName, "sort", sortFields(order)...); err != nil {
 		return "", err
 	}
-	return orderByClause(s.driver.Dialect(), fields, tableName, order)
+	clause, err := orderByClause(s.driver.Dialect(), fields, tableName, order)
+	if err != nil {
+		return "", err
+	}
+	creation, err := s.creationOrder(ctx, tableName)
+	if err != nil {
+		return "", err
+	}
+	return thenBy(s.driver.Dialect(), clause, creation, false), nil
 }
 
 func sortFields(order []SortField) []string {

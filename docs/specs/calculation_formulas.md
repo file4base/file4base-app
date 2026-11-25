@@ -48,10 +48,15 @@ without its own record being written.
   table's first) along the shortest chain of relationships to the occurrence
   named, across as many relationships as it takes. The last relationship's
   sort order is the order `Occurrence::Field` takes its first value from and
-  `List` lists them in.
+  `List` lists them in; a relationship that does not sort gives its records
+  in the order they were created, as FileMaker does, and a sort's ties keep
+  that order (see
+  [relationships_and_portals.md](relationships_and_portals.md#creation-order)).
 - An empty match field relates nothing. A text match field holding several
-  lines is a multi-key: it matches records holding any of them. `<`, `≤`, `>`,
-  `≥` and `≠` relationships read the right records from either side.
+  lines is a multi-key on **either side** of a relationship: each line is a
+  key, so the record matches through any of them, for every operator, and a
+  CR, an LF or a CRLF ends a line. `<`, `≤`, `>`, `≥` and `≠` relationships
+  read the right records from either side.
 - Related records are read **as the caller**: a related field of a table they
   may not read evaluates to `<No Access>` (an error, so the field is empty and
   the Data Viewer shows it), never to its value. Every table the path crosses
@@ -74,14 +79,12 @@ without its own record being written.
   relationship's sort; `Count`, `Sum`, `Average`, `Min` and `Max` of a stored
   field of the records one relationship away are totalled by the database,
   without carrying the records back; `Last` and `GetNthRecord` read the one
-  record they give, the last holding a value or the nth, when the
-  relationship sorts its records (then by id, so that records sorting alike
-  keep one order) and they are one relationship away; `List` and the other
-  reads of every value take at most 10,000 related records of one record. A
-  formula reading more fails (the field is empty) rather than loading them
-  all. A relationship that does not sort has no record order to count from,
-  so its `Last` and `GetNthRecord` read every record, within that limit. A
-  `GetNthRecord` whose number is computed for each record reads every
+  record they give, the last holding a value or the nth, in the
+  relationship's sort, or in creation order when it does not sort, when they
+  are one relationship away, however many records it relates; `List` and the
+  other reads of every value take at most 10,000 related records of one
+  record. A formula reading more fails (the field is empty) rather than
+  loading them all. A `GetNthRecord` whose number is computed for each record reads every
   record ahead for the page, or, for a record with more related records
   than that, its one record in a statement of its own.
 - An occurrence of **another solution's table** (#107) is read the same way,
@@ -102,7 +105,12 @@ updates, never write an unstored calculation.
 
 An unstored calculation **cannot be found on, sorted by or summarized**: its
 value does not exist in the database. Such a request is refused with
-`422 Unstored Calculation`, rather than searched or sorted in memory.
+`422 Unstored Calculation`, rather than searched or sorted in memory. The
+exception is a portal, or any read of one record's related records: sorted
+by an unstored calculation, by the relationship or by the caller, it is
+sorted once its records are read, up to 10,000 of them (see
+[relationships_and_portals.md](relationships_and_portals.md#sorting-by-an-unstored-calculation)).
+A relationship a calculation reads through still cannot sort by one.
 
 A migration keeps FileMaker's choice (`storeCalculationResults`) and the
 formula's context occurrence, binds `Occurrence::Field` to the imported

@@ -45,6 +45,9 @@ type ColumnDefinition struct {
 type TableDefinition struct {
 	Name    string
 	Columns []ColumnDefinition
+	// CreationOrder adds the column the table's records are numbered in as
+	// they are created (CreationOrderColumn), which every user table has.
+	CreationOrder bool
 }
 
 // Dialect generates engine-specific SQL

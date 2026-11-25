@@ -4059,6 +4059,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "422": {
+            "description": "More than 10000 related records of one record to sort by an unstored calculation (Too Many Related Records)"
+          },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
           }
@@ -5946,7 +5949,7 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "422": {
-            "description": "More than 100 records"
+            "description": "More than 100 records, or more than 10000 related records in all to sort by an unstored calculation"
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
@@ -6151,6 +6154,9 @@
           "404": {
             "description": "Table occurrence not found"
           },
+          "422": {
+            "description": "More than 100 records, or more than 10000 related records in all to sort by an unstored calculation"
+          },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
           }
@@ -6340,6 +6346,9 @@
           },
           "404": {
             "description": "Table occurrence not found"
+          },
+          "422": {
+            "description": "More than 10000 related records of one record to sort by an unstored calculation (Too Many Related Records)"
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"

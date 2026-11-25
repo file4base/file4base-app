@@ -711,6 +711,7 @@ func TestRelatedReads_NoFurtherThanTheFormulaNeeds(t *testing.T) {
 			require.NoError(t, err)
 			return a.statements() + b.statements()
 		}
+		page(1) // the first read also learns how each table orders its records
 		assert.Equal(t, page(1), page(4))
 	})
 }

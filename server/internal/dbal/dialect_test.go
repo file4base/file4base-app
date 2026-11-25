@@ -84,3 +84,23 @@ func TestMariaDBDialect_BuildAddDropColumnSQL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ALTER TABLE `customers` DROP COLUMN `email`;", dropSQL)
 }
+
+// Every user table numbers its records in creation order, in a column the
+// engine fills; an existing table is given it, with a bounded lock wait on
+// MariaDB.
+func TestDialects_CreationOrderColumn(t *testing.T) {
+	def := sampleTable()
+	def.CreationOrder = true
+	pg, err := postgres.New().BuildCreateTableSQL(def)
+	require.NoError(t, err)
+	assert.Contains(t, pg, `"f4b$creation_order" BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE`)
+	maria, err := mariadb.New().BuildCreateTableSQL(def)
+	require.NoError(t, err)
+	assert.Contains(t, maria, "`f4b$creation_order` BIGINT NOT NULL AUTO_INCREMENT UNIQUE")
+
+	assert.Equal(t, `ALTER TABLE "customers" ADD COLUMN "f4b$creation_order" BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE`,
+		dbal.AddCreationOrderSQL(postgres.New(), "customers", 5), "PostgreSQL bounds the wait with lock_timeout")
+	assert.Equal(t, "ALTER TABLE `customers` WAIT 5 ADD COLUMN `f4b$creation_order` BIGINT NOT NULL AUTO_INCREMENT UNIQUE",
+		dbal.AddCreationOrderSQL(mariadb.New(), "customers", 5))
+	assert.NotContains(t, dbal.AddCreationOrderSQL(mariadb.New(), "customers", 0), "WAIT")
+}

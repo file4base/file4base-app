@@ -56,6 +56,19 @@ func sortLess(a, b string) bool {
 	return a > b
 }
 
+// CompareText orders two texts as a sort does, as SortValues orders them:
+// ignoring case and accents first, then unaccented before accented, then
+// lower case before upper case. It is 0 for the same text only.
+func CompareText(a, b string) int {
+	switch {
+	case a == b:
+		return 0
+	case sortLess(a, b):
+		return -1
+	}
+	return 1
+}
+
 // upperText and lowerText map each character on its own, as FileMaker does:
 // "ß" stays "ß" and "İ" becomes "i".
 func upperText(s string) string { return strings.Map(unicode.ToUpper, s) }

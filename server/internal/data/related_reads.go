@@ -19,13 +19,14 @@ import (
 // and no further than that way needs:
 //
 //   - Occurrence::Field reads the first related record, in the
-//     relationship's sort order: one record per record in hand;
+//     relationship's sort order, or the records' creation order when it
+//     does not sort: one record per record in hand;
 //   - Count, Sum, Average, Min and Max of a stored field of the records one
 //     relationship away are totalled where the records are, without reading
 //     them;
 //   - Last and GetNthRecord read one related record, the last holding a
-//     value or the nth, in the relationship's sort order, when it has one
-//     and the records are one relationship away;
+//     value or the nth, in that same order, when the records are one
+//     relationship away;
 //   - List, and the reads above that cannot be done that way, read every
 //     related record, at most maxRelatedRecords for one record in hand.
 //
@@ -47,13 +48,13 @@ const maxRelatedRecords = 10000
 
 // ErrTooManyRelated is returned for a read of more than maxRelatedRecords
 // related records of one record: a List of them, a Last or GetNthRecord that
-// cannot read one record (no sort order, or a longer path), or a path
-// through them.
+// cannot read one record (a longer path, or a Last of an unstored field), or
+// a path through them.
 var ErrTooManyRelated = fmt.Errorf("more than %d related records", maxRelatedRecords)
 
 // reach is how far a read goes into the records related across the last
 // relationship of its path: every one (n 0), the nth in the relationship's
-// sort order (n ≥ 1), or the last whose field present holds a value (n < 0).
+// order (n ≥ 1), or the last whose field present holds a value (n < 0).
 type reach struct {
 	n       int
 	present string
@@ -157,11 +158,11 @@ func (r *relatedReader) nth(
 }
 
 // single reports whether a route reads one record for a nth or last reach:
-// the records are one relationship away, in a sort order, and a last's
-// field is a stored field whose having a value the database tells as a
-// formula does.
+// the records are one relationship away, in its sort order or their
+// creation order, and a last's field is a stored field whose having a value
+// the database tells as a formula does.
 func (rt *route) single() bool {
-	if len(rt.path) != 1 || rt.plans[0].order == "" {
+	if len(rt.path) != 1 {
 		return false
 	}
 	if rt.reach.n >= 0 {
@@ -563,11 +564,12 @@ type hopPlan struct {
 	to     *relatedReader
 	table  string
 	fields fieldSet
-	// order is the relationship's sort order, then the records' ids, so
-	// that the nth record is the one reading them all gives; reverse is
-	// its opposite. Both are empty for a relationship that does not sort.
-	order, reverse string
-	sorts          []string
+	// order is the relationship's sort order, then the records' creation
+	// order (alone for a relationship that does not sort), so that the nth
+	// record is the one reading them all gives; reverse is its opposite.
+	// Both are set on the last step of a path only, which creation names.
+	order, reverse, creation string
+	sorts                    []string
 }
 
 // plan resolves a hop, in the relationship's sort order when it is the last
@@ -624,9 +626,6 @@ func (r *relatedReader) plan(ctx context.Context, h hop, last bool) (*hopPlan, e
 		if err := refuseUnstored(calculations, h.to.TableName, "sort", sortFields(order)...); err != nil {
 			return nil, err
 		}
-		if len(order) > 0 {
-			order = append(order, SortField{Field: "id"})
-		}
 		reverse := make([]SortField, len(order))
 		for i, level := range order {
 			reverse[i] = SortField{Field: level.Field, Descending: !level.Descending}
@@ -638,6 +637,13 @@ func (r *relatedReader) plan(ctx context.Context, h hop, last bool) (*hopPlan, e
 		if p.reverse, err = orderByClause(dialect, fields, h.to.TableName, reverse); err != nil {
 			return nil, err
 		}
+		// The records' creation order comes last, or alone for a
+		// relationship that does not sort, as FileMaker lists them.
+		if p.creation, err = to.s.creationOrder(ctx, h.to.TableName); err != nil {
+			return nil, wrapSide(h.to, err)
+		}
+		p.order = thenBy(dialect, p.order, p.creation, false)
+		p.reverse = thenBy(dialect, p.reverse, p.creation, true)
 		p.sorts = sortFields(order)
 	}
 	r.plans[key] = p
@@ -745,7 +751,7 @@ func (r *relatedReader) batch(
 		return nil
 	}
 	for i, row := range rows {
-		match, keys := matchCondition(dialect, p.terms, func(c string) interface{} { return row[c] }, len(args)+1)
+		match, keys := matchCondition(dialect, p.terms, p.fields, func(c string) interface{} { return row[c] }, len(args)+1)
 		if match == "" {
 			empty(memos[i])
 			continue
@@ -779,7 +785,7 @@ func (r *relatedReader) fetch(
 		columns = p.fields
 	}
 	dialect := p.to.s.driver.Dialect()
-	list, table := selectList(dialect, columns), dialect.QuoteIdentifier(p.table)
+	list, table := withCreationOrder(dialect, selectList(dialect, columns), p.creation), dialect.QuoteIdentifier(p.table)
 	// Every record, the nth, or the last holding a value.
 	order, limit, present := p.order, fmt.Sprintf(" LIMIT %d", maxRelatedRecords+1), ""
 	switch {

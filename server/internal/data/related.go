@@ -226,17 +226,20 @@ func matchKeys(key interface{}) []interface{} {
 // matchCondition is the condition on the target's match fields for the
 // records related to a source record, with its arguments; placeholders are
 // numbered from first. keyOf gives what the source record holds in one of its
-// match fields.
+// match fields, and fields are the target's fields.
 //
 // Every criterion must be met. Each compares one target field with what the
 // source record holds, which may be several keys (a multi-key) and is met by
-// any of them. The condition is empty when the record matches nothing: a
-// criterion other than × whose source field is empty relates no record. An
-// empty field relates nothing on the target side either, whatever the
-// operator: an empty text is ≠ 'north' in SQL, but FileMaker never relates a record
-// through an empty match field, so neither does a portal, a related read, a
-// sort or a cascading delete.
-func matchCondition(dialect dbal.Dialect, terms []matchTerm, keyOf func(column string) interface{}, first int) (string, []interface{}) {
+// any of them; a target field that is text may hold several keys too, and is
+// met through any of its lines (see multikey.go). The condition is empty when
+// the record matches nothing: a criterion other than × whose source field is
+// empty relates no record. An empty field relates nothing on the target side
+// either, whatever the operator: an empty text is ≠ 'north' in SQL, but
+// FileMaker never relates a record through an empty match field, so neither
+// does a portal, a related read, a sort or a cascading delete.
+func matchCondition(
+	dialect dbal.Dialect, terms []matchTerm, fields fieldSet, keyOf func(column string) interface{}, first int,
+) (string, []interface{}) {
 	var conditions []string
 	var args []interface{}
 	for _, t := range terms {
@@ -247,22 +250,19 @@ func matchCondition(dialect dbal.Dialect, terms []matchTerm, keyOf func(column s
 		if len(keys) == 0 {
 			return "", nil
 		}
-		column := dialect.QuoteIdentifier(t.TargetColumn)
-		conditions = append(conditions, notEmpty(dialect, column))
-		marks := make([]string, len(keys))
-		for i := range keys {
-			marks[i] = dialect.Placeholder(first + len(args) + i)
-		}
-		args = append(args, keys...)
-		if t.Op == "=" {
-			conditions = append(conditions, fmt.Sprintf("%s IN (%s)", column, strings.Join(marks, ", ")))
-			continue
-		}
-		parts := make([]string, len(marks))
-		for i, mark := range marks {
-			parts[i] = fmt.Sprintf("%s %s %s", column, t.Op, mark)
-		}
-		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
+		column := keyColumnOf(dialect, "", fields, t.TargetColumn)
+		conditions = append(conditions, notEmpty(dialect, column.sql))
+		conditions = append(conditions, meetsKeys(dialect, column, t.Op, func() []string {
+			marks := make([]string, len(keys))
+			for i, key := range keys {
+				if column.lines {
+					key = keyText(key)
+				}
+				marks[i] = dialect.Placeholder(first + len(args))
+				args = append(args, key)
+			}
+			return marks
+		}))
 	}
 	if len(conditions) == 0 {
 		return "1 = 1", nil // only × criteria: every record is related
@@ -714,19 +714,21 @@ func (s *Service) RelatedRowsFrom(
 	if err != nil {
 		return nil, wrapSide(q.source, err)
 	}
-	match, keys := matchCondition(q.dst.driver.Dialect(), q.terms, func(c string) interface{} { return values[c] }, 1)
+	match, keys := matchCondition(q.dst.driver.Dialect(), q.terms, q.fields, func(c string) interface{} { return values[c] }, 1)
 	if match == "" {
 		return []map[string]interface{}{}, nil
 	}
-	sqlText := q.page(match, q.limit, q.offset)
-	rows, err := q.dst.driver.DB().QueryContext(ctx, sqlText, keys...)
+	rows, err := q.dst.driver.DB().QueryContext(ctx, q.page(match), keys...)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading records related to %s.%s: %w", from.Table, recordID, err)
 	}
 	defer rows.Close()
-	related, err := q.dst.readRows(ctx, q.target.TableName, rows, q.fields)
+	related, err := q.read(ctx, rows)
 	if err != nil {
 		return nil, err
+	}
+	if q.sorted != nil {
+		related = q.sortPage(related)
 	}
 	if err := q.attach(ctx, related); err != nil {
 		return nil, err
@@ -744,7 +746,14 @@ type relatedQuery struct {
 	src, dst       *Service
 	fields         fieldSet
 	order          string
-	limit, offset  int
+	// creation is the column the target's records are numbered in as they
+	// are created, which order ends with (see creationOrder).
+	creation string
+	// sorted is the read's order when it sorts by an unstored calculation:
+	// the records are then read in creation order and sorted here
+	// (unstoredSort).
+	sorted        []SortField
+	limit, offset int
 }
 
 func (s *Service) relatedQuery(
@@ -814,11 +823,25 @@ func (s *Service) relatedQueryOf(
 }
 
 // paged gives a read its order, the caller's or the target side's own sort,
-// and its page.
+// then the records' creation order, and its page. A sort by an unstored
+// calculation is done once the records are read (unstoredSort).
 func (q *relatedQuery) paged(ctx context.Context, opts QueryOptions) error {
+	order := relatedSortOrder(q.rel, q.target, q.fields, opts)
 	var err error
-	if q.order, err = q.dst.orderBy(ctx, q.fields, q.target.TableName,
-		relatedSortOrder(q.rel, q.target, q.fields, opts)); err != nil {
+	if q.sorted, err = q.dst.unstoredSort(ctx, q.target.TableName, order); err != nil {
+		return wrapSide(q.target, err)
+	}
+	if q.sorted != nil {
+		// Checked as the engine's sort is, then done once read.
+		if _, err := orderByClause(q.dst.driver.Dialect(), q.fields, q.target.TableName, order); err != nil {
+			return wrapSide(q.target, err)
+		}
+		order = nil
+	}
+	if q.order, err = q.dst.orderBy(ctx, q.fields, q.target.TableName, order); err != nil {
+		return wrapSide(q.target, err)
+	}
+	if q.creation, err = q.dst.creationOrder(ctx, q.target.TableName); err != nil {
 		return wrapSide(q.target, err)
 	}
 	q.limit, q.offset = opts.Limit, opts.Offset
@@ -834,11 +857,18 @@ func (q *relatedQuery) paged(ctx context.Context, opts QueryOptions) error {
 }
 
 // page is the statement reading one page of the related records that meet
-// match.
-func (q *relatedQuery) page(match string, limit, offset int) string {
+// match, or all of them, one more than are sorted at most, when they are
+// sorted once read. It reads the creation order too, which a batched read
+// orders its branches' rows by again (rowsToMaps leaves it out of the
+// records).
+func (q *relatedQuery) page(match string) string {
+	limit, offset := q.limit, q.offset
+	if q.sorted != nil {
+		limit, offset = maxRelatedRecords+1, 0
+	}
 	dialect := q.dst.driver.Dialect()
 	return fmt.Sprintf("SELECT %s FROM %s WHERE %s %s LIMIT %d OFFSET %d",
-		selectList(dialect, q.fields),
+		withCreationOrder(dialect, selectList(dialect, q.fields), q.creation),
 		dialect.QuoteIdentifier(q.target.TableName),
 		match,
 		q.order,
@@ -910,14 +940,14 @@ func (s *Service) RelatedRowsBatch(
 		signature := matchSignature(q.terms, record)
 		branch, seen := byValues[signature]
 		if !seen {
-			match, keys := matchCondition(dialect, q.terms, func(c string) interface{} { return record[c] }, len(args)+1)
+			match, keys := matchCondition(dialect, q.terms, q.fields, func(c string) interface{} { return record[c] }, len(args)+1)
 			if match == "" {
 				continue
 			}
 			branch = len(branches)
 			byValues[signature] = branch
 			args = append(args, keys...)
-			page := q.page(match, q.limit, q.offset)
+			page := q.page(match)
 			branches = append(branches, "("+strings.Replace(page, "SELECT ", fmt.Sprintf("SELECT %d AS %s, ", branch, batchBranch), 1)+")")
 		}
 		recordsOf[branch] = append(recordsOf[branch], id)
@@ -930,23 +960,41 @@ func (s *Service) RelatedRowsBatch(
 		order += ", " + rest
 	}
 	sqlText := fmt.Sprintf("SELECT * FROM (%s) f4b_batch %s", strings.Join(branches, " UNION ALL "), order)
+	if q.sorted != nil {
+		// Sorted once read: no more records across the batch than one
+		// record's read sorts.
+		sqlText += fmt.Sprintf(" LIMIT %d", maxRelatedRecords+1)
+	}
 	rows, err := q.dst.driver.DB().QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading the records related to %d records of %s: %w", len(recordIDs), from.Table, err)
 	}
 	defer rows.Close()
-	related, err := q.dst.readRows(ctx, q.target.TableName, rows, q.fields)
+	related, err := q.read(ctx, rows)
 	if err != nil {
 		return nil, err
+	}
+	byBranch := make([][]map[string]interface{}, len(branches))
+	for _, row := range related {
+		branch := branchOf(row[batchBranch])
+		delete(row, batchBranch)
+		if branch >= 0 && branch < len(byBranch) {
+			byBranch[branch] = append(byBranch[branch], row)
+		}
+	}
+	if q.sorted != nil {
+		related = related[:0]
+		for branch := range byBranch {
+			byBranch[branch] = q.sortPage(byBranch[branch])
+			related = append(related, byBranch[branch]...)
+		}
 	}
 	if err := q.attach(ctx, related); err != nil {
 		return nil, err
 	}
-	for _, row := range related {
-		branch := branchOf(row[batchBranch])
-		delete(row, batchBranch)
+	for branch, rows := range byBranch {
 		for _, id := range recordsOf[branch] {
-			out[id] = append(out[id], row)
+			out[id] = append(out[id], rows...)
 		}
 	}
 	return out, nil
@@ -1229,9 +1277,10 @@ func relatedFindKey(crit FindCriterion) string {
 // record's field and not about the absence of related records. A related
 // record whose match field is empty is not related either, whatever the
 // operator. Every criterion of the relationship must be met, as in the related
-// reads.
+// reads, and a text match field holding several lines matches through any of
+// them, on either side (see multikey.go). fields are the searched table's.
 func relatedCriterionClause(
-	dialect dbal.Dialect, tableName string, crit FindCriterion,
+	dialect dbal.Dialect, tableName string, fields fieldSet, crit FindCriterion,
 	targets map[string]relatedFindTarget, idx *int, values *[]interface{},
 ) (string, error) {
 	target, ok := targets[relatedFindKey(crit)]
@@ -1239,7 +1288,7 @@ func relatedCriterionClause(
 		return "", fmt.Errorf("%w: %s", ErrRelationshipNotFound, crit.RelationshipID)
 	}
 	if target.External != nil {
-		return target.External.clause(dialect, tableName, target, crit, idx, values)
+		return target.External.clause(dialect, tableName, fields, target, crit, idx, values)
 	}
 	if err := checkField(target.Fields, target.TableName, crit.FieldName); err != nil {
 		return "", err
@@ -1253,11 +1302,11 @@ func relatedCriterionClause(
 		if t.Op == cartesian {
 			continue
 		}
-		parent := dialect.QuoteIdentifier(tableName) + "." + dialect.QuoteIdentifier(t.SourceColumn)
-		child := alias + "." + dialect.QuoteIdentifier(t.TargetColumn)
-		present = append(present, notEmpty(dialect, parent))
+		parent := keyColumnOf(dialect, dialect.QuoteIdentifier(tableName), fields, t.SourceColumn)
+		child := keyColumnOf(dialect, alias, target.Fields, t.TargetColumn)
+		present = append(present, notEmpty(dialect, parent.sql))
 		// The related record's match field must hold something too.
-		joins = append(joins, notEmpty(dialect, child), fmt.Sprintf("%s %s %s", child, t.Op, parent))
+		joins = append(joins, notEmpty(dialect, child.sql), keysMeet(dialect, child, t.Op, parent))
 	}
 	inner := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName), crit, idx, values)
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s)",
