@@ -4,7 +4,11 @@
 -- Manage Custom Functions, which every formula of the solution may call.
 --
 --   sys_custom_functions.name        the function's name, unique whatever
---                                    its case (checked by the server).
+--                                    its case (the index below on
+--                                    PostgreSQL, the case-insensitive
+--                                    collation on MariaDB), and never the
+--                                    name of a built-in function (checked
+--                                    by the server).
 --   sys_custom_functions.parameters  its parameter names, a JSON array of
 --                                    text, in order.
 --   sys_custom_functions.formula     its formula, which reads its
@@ -27,3 +31,6 @@ CREATE TABLE IF NOT EXISTS sys_custom_functions (
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+-- PostgreSQL only; MariaDB's UNIQUE name is already case-insensitive.
+CREATE UNIQUE INDEX IF NOT EXISTS sys_custom_functions_name_ci ON sys_custom_functions (LOWER(name));

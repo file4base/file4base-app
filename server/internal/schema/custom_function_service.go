@@ -57,6 +57,16 @@ func customFunctionsSQL(ts string) string {
 		);`
 }
 
+// customFunctionNameIndexSQL makes a name unique whatever its case, so two
+// imports at once cannot add two spellings of one function. MariaDB's
+// case-insensitive collation already makes the UNIQUE name so.
+func customFunctionNameIndexSQL(engine dbal.EngineType) []string {
+	if engine == dbal.EngineMariaDB {
+		return nil
+	}
+	return []string{`CREATE UNIQUE INDEX IF NOT EXISTS sys_custom_functions_name_ci ON ` + data.CustomFunctionsTable + ` (LOWER(name));`}
+}
+
 // ListCustomFunctions reads the solution's custom functions, in name order.
 func (s *Service) ListCustomFunctions(ctx context.Context) ([]CustomFunction, error) {
 	rows, err := s.driver.DB().QueryContext(ctx,
@@ -89,6 +99,9 @@ func normalizeCustomFunction(fn BundleCustomFunction) (BundleCustomFunction, err
 	fn.Name = strings.TrimSpace(fn.Name)
 	if fn.Name == "" {
 		return fn, fmt.Errorf("%w: a custom function needs a name", ErrInvalidCustomFunction)
+	}
+	if calc.IsBuiltinFunction(fn.Name) {
+		return fn, fmt.Errorf("%w: %s is the name of a built-in function, which a custom function cannot take", ErrInvalidCustomFunction, fn.Name)
 	}
 	if len([]rune(fn.Name)) > maxCustomFunctionName {
 		return fn, fmt.Errorf("%w: the name of the custom function %q is longer than %d characters", ErrInvalidCustomFunction, fn.Name, maxCustomFunctionName)
@@ -179,6 +192,11 @@ func (s *Service) importCustomFunctions(ctx context.Context, functions []BundleC
 		}
 		id := uuid.NewString()
 		if _, err := s.driver.DB().ExecContext(ctx, q, id, fn.Name, string(params), fn.Formula, fn.Access, now, now); err != nil {
+			if dbal.IsDuplicateKey(err) {
+				// Added meanwhile, in some spelling, by another import:
+				// it is there, and keeps its definition.
+				continue
+			}
 			return ids, fmt.Errorf("failed saving the custom function %s: %w", fn.Name, err)
 		}
 		ids = append(ids, id)

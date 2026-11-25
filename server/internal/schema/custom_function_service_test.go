@@ -145,3 +145,68 @@ func TestCustomFunctionsRoundTripThroughASolutionFile(t *testing.T) {
 		require.NotEqual(t, tableName+"_b", tbl.Name)
 	}
 }
+
+// A custom function cannot take the name of a built-in function, as
+// FileMaker does not let it: a file defining one is refused, saying so.
+func TestCustomFunctionNamedLikeABuiltinIsRefused(t *testing.T) {
+	mgr, ctx := externalTestManager(t)
+	if mgr == nil {
+		return
+	}
+	sol := newExternalSolution(t, ctx, mgr, "cf_builtin")
+	file, err := msgpack.Marshal(schema.SolutionBundle{Format: schema.SolutionFormat, Version: schema.SolutionVersion, SolutionName: "Builtin",
+		CustomFunctions: []schema.BundleCustomFunction{{Name: "upper", Parameters: []string{"t"}, Formula: "t"}}})
+	require.NoError(t, err)
+	_, err = sol.svc.ImportSolution(ctx, file)
+	require.ErrorIs(t, err, schema.ErrInvalidCustomFunction)
+	require.Contains(t, err.Error(), "upper is the name of a built-in function")
+	functions, err := sol.svc.ListCustomFunctions(ctx)
+	require.NoError(t, err)
+	require.Empty(t, functions)
+}
+
+// A solution holds one function of a name whatever its case, even written
+// directly, so two imports at once cannot add two spellings of it.
+func TestCustomFunctionNameIsUniqueWhateverItsCase(t *testing.T) {
+	mgr, ctx := externalTestManager(t)
+	if mgr == nil {
+		return
+	}
+	sol := newExternalSolution(t, ctx, mgr, "cf_unique")
+	d := sol.driver.Dialect()
+	insert := `INSERT INTO ` + data.CustomFunctionsTable + ` (id, name, parameters, formula, access) VALUES (` +
+		d.Placeholder(1) + `, ` + d.Placeholder(2) + `, '[]', '1', 'all')`
+	_, err := sol.driver.DB().ExecContext(ctx, insert, "cf-1", "Twice")
+	require.NoError(t, err)
+	_, err = sol.driver.DB().ExecContext(ctx, insert, "cf-2", "TWICE")
+	require.True(t, dbal.IsDuplicateKey(err), "a second spelling: %v", err)
+}
+
+// A migration merged into an existing solution that fails is undone from a
+// snapshot of the design, which removes the custom functions it added and
+// keeps those the solution had.
+func TestRestoreDesignRemovesTheCustomFunctionsAdded(t *testing.T) {
+	mgr, ctx := externalTestManager(t)
+	if mgr == nil {
+		return
+	}
+	sol := newExternalSolution(t, ctx, mgr, "cf_restore")
+	importFunctions := func(functions ...schema.BundleCustomFunction) {
+		t.Helper()
+		file, err := msgpack.Marshal(schema.SolutionBundle{Format: schema.SolutionFormat, Version: schema.SolutionVersion,
+			SolutionName: "Restore", CustomFunctions: functions})
+		require.NoError(t, err)
+		_, err = sol.svc.ImportSolution(ctx, file)
+		require.NoError(t, err)
+	}
+	importFunctions(schema.BundleCustomFunction{Name: "Kept", Formula: "1"})
+	snap, err := sol.svc.SnapshotDesign(ctx, "Restore")
+	require.NoError(t, err)
+	importFunctions(schema.BundleCustomFunction{Name: "Added", Parameters: []string{"x"}, Formula: "x + Kept"})
+
+	require.NoError(t, sol.svc.RestoreDesign(ctx, snap))
+	functions, err := sol.svc.ListCustomFunctions(ctx)
+	require.NoError(t, err)
+	require.Len(t, functions, 1)
+	require.Equal(t, "Kept", functions[0].Name)
+}

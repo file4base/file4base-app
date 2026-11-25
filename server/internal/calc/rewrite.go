@@ -111,8 +111,18 @@ func QuoteName(name string) string {
 
 func isReservedWord(name string) bool {
 	switch strings.ToUpper(name) {
-	case "AND", "OR", "XOR", "NOT", "TRUE", "FALSE":
+	case "AND", "OR", "XOR", "NOT", "TRUE", "FALSE", "PI", "RANDOM", "SELF":
 		return true
 	}
 	return false
+}
+
+// QuoteFieldName is QuoteName for a field a formula calling the custom
+// functions of lib reads: a field named like one of them is quoted too, so
+// it is not read as a call to it.
+func QuoteFieldName(name string, lib *Library) string {
+	if lib.Has(name) {
+		return "${" + name + "}"
+	}
+	return QuoteName(name)
 }

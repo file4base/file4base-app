@@ -192,7 +192,7 @@ A catalog created before these columns existed is upgraded by `EnsureSystemTable
 
 ### 6. `sys_custom_functions` (Custom Functions)
 A solution's own functions, as FileMaker's Manage Custom Functions defines them, which every formula of the solution may call (`server/migrations/007_custom_functions.sql`):
-- `name` (VARCHAR(128), unique, and unique whatever its case: the server checks it)
+- `name` (VARCHAR(128), unique whatever its case: a unique index on `LOWER(name)` on PostgreSQL, the case-insensitive collation on MariaDB; never the name of a built-in function, which the server refuses)
 - `parameters` (TEXT, a JSON array of the parameter names, in order)
 - `formula` (TEXT, reading its parameters; it may call itself and the other custom functions)
 - `access` (`all`, or `full_access` for a function only full-access accounts see in the design, FileMaker's *Availability*)

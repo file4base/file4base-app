@@ -423,6 +423,7 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 	// sys_value_lists rather than declared in it, so a new database and an
 	// older one end up with the same columns and foreign keys.
 	queries = append(queries, valueListOptionsSQL(s.driver.Dialect().Engine())...)
+	queries = append(queries, customFunctionNameIndexSQL(s.driver.Dialect().Engine())...)
 
 	db := s.driver.DB()
 	for _, q := range queries {

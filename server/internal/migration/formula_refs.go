@@ -259,6 +259,11 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 				fmt.Sprintf("Point the calculation of %s at an existing field, or remove that part of it", target))
 			continue
 		}
+		if name, ok := b.callsDropped(expr); ok {
+			quarantine(fmt.Sprintf("calls the custom function %s, which could not be migrated", name),
+				fmt.Sprintf("Rewrite the calculation of %s in File4Base, or correct it in FileMaker and migrate again", target))
+			continue
+		}
 		if slices.Contains(expr.Functions(), "GETLAYOUTOBJECTATTRIBUTE") {
 			quarantine("reads a layout object with GetLayoutObjectAttribute, which a field stored with its record cannot do",
 				fmt.Sprintf("Compute %s from fields instead of from a layout object, or fill it with a script", target))
@@ -352,8 +357,10 @@ func (b formulaBinding) renamer(names *fieldNameMap) func(occurrence, field stri
 			if names == nil {
 				return "", false
 			}
+			// A column named like a custom function is quoted, so the
+			// stored formula still reads the field, not the function.
 			column, ok := names.resolve(field)
-			return calc.QuoteName(column), ok
+			return calc.QuoteFieldName(column, b.stored), ok
 		}
 		occ, ok := b.occByName[strings.ToLower(occurrence)]
 		if ok && occ.external {
@@ -473,16 +480,31 @@ func formulaText(raw string) string {
 // ownTableFormula is the formula of a Database Design Report calculation when
 // it reads only plain fields of its own table, the only kind that report's
 // route can apply. lib holds the solution's custom functions.
-func ownTableFormula(raw string, lib *calc.Library) (string, bool) {
+func ownTableFormula(raw string, functions formulaBinding) (string, bool) {
 	formula := formulaText(raw)
 	if formula == "" {
 		return "", false
 	}
-	expr, err := calc.ParseWith(formula, calc.Options{Library: lib})
+	expr, err := calc.ParseWith(formula, calc.Options{Library: functions.stored})
 	if err != nil || len(expr.RelatedFields()) > 0 {
 		return formula, false
 	}
+	if _, ok := functions.callsDropped(expr); ok {
+		return formula, false
+	}
 	return formula, true
+}
+
+// callsDropped names a custom function the formula calls that could not be
+// migrated. A formula that reads at all calls one only when it is named
+// like a built-in function, which it would otherwise silently call instead.
+func (b formulaBinding) callsDropped(expr *calc.Expr) (string, bool) {
+	for _, fn := range expr.Functions() {
+		if name, ok := b.dropped[fn]; ok {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // quotedList renders names as "a", "b" and "c" for a report a person reads.

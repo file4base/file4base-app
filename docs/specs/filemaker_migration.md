@@ -58,7 +58,9 @@ Before any database table, column, layout, script, account, or row is written, `
 A solution's custom functions (*File > Manage > Custom Functions*) are read from the XML DDR (`File/CustomFunctionCatalog/CustomFunction`, with `parameters="a;b"` and `visible`), Save a Copy as XML (`Structure/AddAction/CustomFunctionsCatalog`, with its `Parameter` objects and `access`) and the HTML DDR (its *Custom Functions* section), and imported into `sys_custom_functions` before any field, so a calculation calling one is read against it:
 
 - A function may call itself, call one that calls it back, and call one listed after it: they are all read together, whatever the catalog order.
-- Its formula is rewritten like a field calculation's, against every table occurrence: field references renamed to the imported names, numbers written with `.`. Its parameters are left alone.
+- A function named like a built-in function (whatever its case) is not imported, as FileMaker does not allow it, with every function and calculation that calls it; the report asks to rename it.
+- Its formula is rewritten like a field calculation's, against every table occurrence (the HTML DDR's too, read once its occurrences are), in the `source_locale`: field references renamed to the imported names, numbers written with `.`. Its parameters are left alone.
+- A field whose imported name is a custom function's (`_rate` imported as `rate` beside a function `Rate`) is written `${rate}` in the formulas that read it, so it still reads the field.
 - Its *Availability* is kept: `all` (*All accounts*) or `full_access`.
 - Each function is reported once: `preserved`, or `translated` when its formula had to be rewritten, naming the function, its parameters, its availability and its formula.
 - A function that does not read (a syntax error, a field no occurrence has, a plug-in function, `ExecuteSQL`) is `unsupported`, with a `manual_action_required` item to rewrite it; so is every function that calls it. The other functions still import.

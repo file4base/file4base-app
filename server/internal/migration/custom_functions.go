@@ -271,10 +271,19 @@ func bindCustomFunctions(defs []sourceCustomFunction, b *formulaBinding, bundle 
 				Detail: fmt.Sprintf("Custom function %s %s; it was not migrated, and the calculations that call it are converted to stored values",
 					fn.name, b.unreadable(fn.formula, problem))},
 			ReportItem{Category: CategoryManualActionRequired, Domain: "custom_function", SourceName: fn.name,
-				Detail: fmt.Sprintf("Rewrite the custom function %s and the calculations that call it in File4Base, or correct it in FileMaker and migrate again", fn.name)})
+				Detail: manualCustomFunctionAction(fn.name)})
 	}
 	bundle.CustomFunctions = bound
 	return items
+}
+
+// manualCustomFunctionAction says what to do about a custom function that
+// was not migrated.
+func manualCustomFunctionAction(name string) string {
+	if calc.IsBuiltinFunction(name) {
+		return fmt.Sprintf("Rename the custom function %s, which is named like a built-in function, and the calls to it, in FileMaker and migrate again, or rewrite them in File4Base", name)
+	}
+	return fmt.Sprintf("Rewrite the custom function %s and the calculations that call it in File4Base, or correct it in FileMaker and migrate again", name)
 }
 
 func candidateNamed(candidates []sourceCustomFunction, name string) sourceCustomFunction {

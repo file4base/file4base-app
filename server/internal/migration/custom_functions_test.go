@@ -19,14 +19,16 @@ import (
 // customFunctionsDesign is a synthetic French Database Design Report whose
 // calculations call its custom functions: one calls a function defined after
 // it, one calls itself, two call each other, one is a constant written with a
-// decimal comma, one reads a field, and one cannot be read, which another
-// calls. tableTag is appended to the table's name and tag to every function's,
+// decimal comma, one reads a field, one cannot be read, which another
+// calls, and one is named like a built-in function, which another calls. A
+// field whose imported name is a custom function's is read beside it.
+// tableTag is appended to the table's name and tag to every function's,
 // so the design can be applied to a shared database.
 func customFunctionsDesign(tableTag, tag string) string {
 	r := strings.NewReplacer("Articles", "Articles"+tableTag, "PrixTTC", "PrixTTC"+tag, "TauxTVA", "TauxTVA"+tag,
 		"Factorielle", "Factorielle"+tag, "EstPair", "EstPair"+tag, "EstImpair", "EstImpair"+tag,
 		"PréfixeCatégorie", "PréfixeCatégorie"+tag, "AppelleCassé", "AppelleCassé"+tag, "Cassé", "Cassé"+tag,
-		"PrixCatalogue", "PrixCatalogue"+tag)
+		"PrixCatalogue", "PrixCatalogue"+tag, "Remise", "Remise"+tag, "Nettoie", "Nettoie"+tag)
 	function := func(name, params, visible, formula string) string {
 		return `<CustomFunction id="1" functionArity="1" visible="` + visible + `" parameters="` + params + `" name="` + name + `">` +
 			`<Calculation><![CDATA[` + formula + `]]></Calculation></CustomFunction>`
@@ -38,12 +40,15 @@ func customFunctionsDesign(tableTag, tag string) string {
 	return r.Replace(`<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
 		`<BaseTable name="Articles"><FieldCatalog>` +
 		`<Field name="Prix HT" dataType="Number"/><Field name="Quantité" dataType="Number"/><Field name="Catégorie" dataType="Text"/>` +
+		`<Field name="_Remise" dataType="Number"/>` +
 		calcField("Prix TTC", "Number", `PrixTTC ( Prix HT )`) +
 		calcField("Fact", "Number", `Factorielle ( Quantité )`) +
 		calcField("Parité", "Number", `EstPair ( Quantité )`) +
 		calcField("Code", "Text", `PréfixeCatégorie ( Catégorie )`) +
 		calcField("Double", "Number", `AppelleCassé ( Quantité )`) +
 		calcField("Requête", "Text", `ExecuteSQL ( "SELECT 1" ; "" ; "" )`) +
+		calcField("Net", "Number", `Prix HT * ( 1 - _Remise ) + Remise`) +
+		calcField("Nettoyé", "Text", `Trim ( Catégorie )`) +
 		`</FieldCatalog></BaseTable></BaseTableCatalog>` +
 		`<TableOccurrenceCatalog><TableOccurrence name="Articles" baseTable="Articles"/></TableOccurrenceCatalog>` +
 		`<CustomFunctionCatalog>` +
@@ -56,6 +61,9 @@ func customFunctionsDesign(tableTag, tag string) string {
 		function("AppelleCassé", "x", "True", `Cassé ( x ) * 2`) +
 		function("Cassé", "x", "True", `x + + )`) +
 		function("PrixCatalogue", "", "True", `Articles::Prix HT * 1`) +
+		function("Remise", "", "True", `0,1`) +
+		function("Trim", "texte", "True", `texte`) +
+		function("Nettoie", "texte", "True", `Trim ( texte )`) +
 		`</CustomFunctionCatalog></File></FMPReport>`)
 }
 
@@ -101,8 +109,8 @@ func TestCustomFunctionsMigrate(t *testing.T) {
 	for _, fn := range res.Bundle.CustomFunctions {
 		byName[fn.Name] = fn
 	}
-	require.Len(t, byName, 7, "every function but the broken one and its caller")
-	require.Equal(t, 7, report.Counts.CustomFunctions)
+	require.Len(t, byName, 8, "every function but the broken one, the one named like a built-in, and their callers")
+	require.Equal(t, 8, report.Counts.CustomFunctions)
 	require.Equal(t, []string{"montant"}, byName["PrixTTC"].Parameters)
 	require.Equal(t, "0.2", byName["TauxTVA"].Formula, "a decimal comma is written as File4Base reads it")
 	require.Equal(t, schema.CustomFunctionAccessFullAccess, byName["TauxTVA"].Access)
@@ -115,7 +123,7 @@ func TestCustomFunctionsMigrate(t *testing.T) {
 		require.Len(t, items, 1, name)
 		require.Equal(t, CategoryPreserved, items[0].Category, name)
 	}
-	for _, name := range []string{"TauxTVA", "PrixCatalogue"} {
+	for _, name := range []string{"TauxTVA", "PrixCatalogue", "Remise"} {
 		items := itemsFor(report, "custom_function", name)
 		require.Len(t, items, 1, name)
 		require.Equal(t, CategoryTranslated, items[0].Category, name)
@@ -128,15 +136,27 @@ func TestCustomFunctionsMigrate(t *testing.T) {
 	caller := itemsFor(report, "custom_function", "AppelleCassé")
 	require.Len(t, caller, 2)
 	require.Contains(t, caller[0].Detail, "calls the custom function Cassé, which cannot be read")
+	builtin := itemsFor(report, "custom_function", "Trim")
+	require.Len(t, builtin, 2)
+	require.Equal(t, CategoryUnsupported, builtin[0].Category)
+	require.Contains(t, builtin[0].Detail, "is named like the built-in function TRIM, which a custom function cannot replace")
+	require.Equal(t, CategoryManualActionRequired, builtin[1].Category)
+	require.Contains(t, builtin[1].Detail, "Rename the custom function Trim")
+	require.Contains(t, itemsFor(report, "custom_function", "Nettoie")[0].Detail, "calls the custom function Trim, which cannot be read")
 
 	table := res.Bundle.Tables[0]
 	for _, name := range []string{"Prix TTC", "Fact", "Parité", "Code"} {
 		require.Equal(t, "CALCULATION", columnByDisplayName(t, table, name).FieldType, name)
 	}
 	require.Contains(t, *columnByDisplayName(t, table, "Prix TTC").CalculationFormula, `PrixTTC ( prix_ht )`)
+	// _Remise is imported as remise, which is quoted so as not to read as
+	// the custom function Remise.
+	require.Equal(t, "CALCULATION", columnByDisplayName(t, table, "Net").FieldType)
+	require.Contains(t, *columnByDisplayName(t, table, "Net").CalculationFormula, `prix_ht * ( 1 - ${remise} ) + Remise`)
 	for name, why := range map[string]string{
 		"Double":  "calls the custom function AppelleCassé, which could not be migrated",
 		"Requête": "calls ExecuteSQL: ExecuteSQL is not supported",
+		"Nettoyé": "calls the custom function Trim, which could not be migrated",
 	} {
 		col := columnByDisplayName(t, table, name)
 		require.NotEqual(t, "CALCULATION", col.FieldType, name)
@@ -186,16 +206,24 @@ func TestCustomFunctionsMigrateFromHTMLDDR(t *testing.T) {
 		`<tr class="regularcharttext" vAlign="top"><td><a name="1CustomFunctionAnchor_"/>Halve</td><td>x</td><td>All accounts</td>` +
 		"<td>// half of x\n<strong>Round</strong> ( <a href=\"#2CustomFunctionAnchor_\">Ratio</a> ( x ; 2 ) ; 2 )</td><td><ul></ul></td></tr>" +
 		`<tr class="regularcharttext" vAlign="top"><td><a name="2CustomFunctionAnchor_"/>Ratio</td><td>a;b</td><td>Only accounts assigned full access privileges</td>` +
-		`<td>a / b &amp; &quot;&quot;</td><td><ul></ul></td></tr></tbody></table>`
+		`<td>a / b &amp; &quot;&quot;</td><td><ul></ul></td></tr>` +
+		`<tr class="regularcharttext" vAlign="top"><td><a name="3CustomFunctionAnchor_"/>Taux</td><td></td><td>All accounts</td>` +
+		`<td>0,5</td><td><ul></ul></td></tr>` +
+		`<tr class="regularcharttext" vAlign="top"><td><a name="4CustomFunctionAnchor_"/>NomRecette</td><td></td><td>All accounts</td>` +
+		`<td><strong>Upper</strong> ( recipes::Name )</td><td><ul></ul></td></tr></tbody></table>`
 	doc := strings.Replace(string(raw), `<span class="partheading"><a name="valBaseDirectoriesSectionAnchor_"/>`,
 		section+`<span class="partheading"><a name="valBaseDirectoriesSectionAnchor_"/>`, 1)
 	require.NotEqual(t, string(raw), doc)
 
-	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	// Read with the source's locale, and against the table occurrences,
+	// which the report lists after the functions.
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc, SourceLocale: "fr-FR"})
 	require.NoError(t, err)
 	require.Equal(t, []schema.BundleCustomFunction{
 		{Name: "Halve", Parameters: []string{"x"}, Formula: "// half of x\nRound ( Ratio ( x ; 2 ) ; 2 )", Access: schema.CustomFunctionAccessAll},
 		{Name: "Ratio", Parameters: []string{"a", "b"}, Formula: `a / b & ""`, Access: schema.CustomFunctionAccessFullAccess},
+		{Name: "Taux", Formula: "0.5", Access: schema.CustomFunctionAccessAll},
+		{Name: "NomRecette", Formula: "Upper ( recipes::name )", Access: schema.CustomFunctionAccessAll},
 	}, res.Bundle.CustomFunctions)
 	require.Len(t, itemsFor(res.Report, "custom_function", "Halve"), 1)
 }
@@ -233,7 +261,7 @@ func TestCustomFunctionsApplyAndCompute(t *testing.T) {
 	})
 	imported, err := schemaSvc.ImportSolution(ctx, file)
 	require.NoError(t, err)
-	require.Equal(t, 7, imported.CustomFunctionsCreated)
+	require.Equal(t, 8, imported.CustomFunctionsCreated)
 	table := res.Bundle.Tables[0]
 	tables, err := schemaSvc.ListTables(ctx)
 	require.NoError(t, err)
@@ -246,13 +274,15 @@ func TestCustomFunctionsApplyAndCompute(t *testing.T) {
 
 	col := func(name string) string { return columnByDisplayName(t, table, name).Name }
 	row, err := data.NewService(driver).InsertRow(ctx, table.Name, map[string]interface{}{
-		col("Prix HT"): 100, col("Quantité"): 5, col("Catégorie"): "outils\rmain",
+		col("Prix HT"): 100, col("Quantité"): 5, col("Catégorie"): "outils\rmain", col("_Remise" + tag): 0.5,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "120", fmt.Sprint(row[col("Prix TTC")]), "through a function defined after the one called")
 	require.Equal(t, "120", fmt.Sprint(row[col("Fact")]), "a recursive function")
 	require.Equal(t, "0", fmt.Sprint(row[col("Parité")]), "two functions calling each other")
 	require.Equal(t, "CAT-OUTILS MAIN", fmt.Sprint(row[col("Code")]))
+	require.Contains(t, *columnByDisplayName(t, table, "Net").CalculationFormula, "( 1 - ${", "the field is quoted")
+	require.Equal(t, "50.1", fmt.Sprint(row[col("Net")]), "the field _Remise, imported as remise, beside the function Remise")
 
 	// The solution file carries the functions as they were imported.
 	exported, err := schemaSvc.ExportSolution(ctx, schema.ExportOptions{SolutionName: "custom functions"})
