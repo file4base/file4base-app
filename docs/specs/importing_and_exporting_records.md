@@ -157,7 +157,12 @@ one with, so rather than pretend, a password is either:
   logged; or
 - read from an **environment variable of the server**, whose name the
   connection records (`password_env`). The secret then lives wherever the
-  operator keeps the server's environment.
+  operator keeps the server's environment. The name must start with
+  `FILE4BASE_DATASOURCE_`: the server sends that password to the host the
+  source names, and a database owner registers sources, so any other name
+  would let an owner have the server send one of its own secrets
+  (`DATABASE_URL`, a signing key) to a host of theirs. A variable without the
+  prefix, in a source stored earlier or a solution file, is never read.
 
 An import names a **registered** source, never a host of its own, so a request
 cannot point the server at an arbitrary machine. Registering is owner-only for

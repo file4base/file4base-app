@@ -984,7 +984,7 @@ Lists the registered connections and the engines available. Requires the
       "username": "reader",
       "schema": "public",
       "tls": false,
-      "password_env": "LEGACY_DB_PASSWORD"
+      "password_env": "FILE4BASE_DATASOURCE_LEGACY"
     }
   ]
 }
@@ -993,11 +993,16 @@ Lists the registered connections and the engines available. Requires the
 #### `POST /api/v1/data-sources`
 Registers a connection. Requires the `owner` role: it names a machine the
 server will connect to. The body is the source without `id`; `password_env` is
-optional and is the **name** of an environment variable, never a password.
+optional and is the **name** of an environment variable, never a password; the
+name must start with `FILE4BASE_DATASOURCE_`, so a source cannot read another
+secret of the server (the server sends that password to the host the source
+names). A stored source or a solution file naming another variable reads no
+password from it.
 
 - `201 Created`, `403 Forbidden` for a non-owner, `409 Conflict` for a name
   already taken, `422 Unprocessable Entity` for an unknown engine, a missing
-  host or a `password_env` that is not an environment variable name.
+  host or a `password_env` that is not an environment variable name starting
+  with `FILE4BASE_DATASOURCE_`.
 
 #### `PUT /api/v1/data-sources/{id}` / `DELETE /api/v1/data-sources/{id}`
 Replace or remove a connection. Owner only.
