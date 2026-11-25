@@ -150,8 +150,8 @@ func readFileTriggers(root *xmlNode) []sourceTrigger {
 // layoutTriggerEntries turns a layout's source triggers into the stored
 // form. The script and the parameter are bound once the scripts are
 // converted, by bindLayoutTriggers; until then the entry carries the
-// FileMaker script id under sourceScriptIDKey. objectIDs maps the field
-// node of a migrated object to that object's id.
+// FileMaker script id under sourceScriptIDKey. objectIDs maps the
+// <LayoutObject> or the field node of a migrated object to that object's id.
 func layoutTriggerEntries(triggers []sourceTrigger, objectIDs map[*xmlNode]string) []interface{} {
 	out := make([]interface{}, 0, len(triggers))
 	for _, st := range triggers {
@@ -185,7 +185,9 @@ func layoutTriggerEntries(triggers []sourceTrigger, objectIDs map[*xmlNode]strin
 				}
 			}
 			entry["object"] = object
-			if f := findFirstChild(o.node, "Field", "field", "FieldObj"); f != nil && objectIDs[f] != "" {
+			if id := objectIDs[o.node]; id != "" {
+				entry["object_id"] = id
+			} else if f := findFirstChild(o.node, "Field", "field", "FieldObj"); f != nil && objectIDs[f] != "" {
 				entry["object_id"] = objectIDs[f]
 			}
 		}

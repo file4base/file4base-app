@@ -502,6 +502,57 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// its count changes.
   final Map<String, int> _portalRefreshes = {};
 
+  /// The objects hidden by their "Hide object when" calculation, by layout
+  /// and record as it was read; and the last answer for each layout and
+  /// record, shown while the record's new values are evaluated.
+  final Map<String, Set<String>> _hiddenObjects = {};
+  final Map<String, Set<String>> _lastHiddenObjects = {};
+  final Set<String> _hiddenPending = {};
+
+  /// The objects of [layout] hidden on [record]. The answer comes from the
+  /// server, which evaluates each calculation as a calculation field would;
+  /// until it does, the record's last answer holds, and nothing is hidden
+  /// on a record seen for the first time.
+  Set<String> _hiddenOn(LayoutDefinitionModel layout, Map<String, dynamic> record) {
+    final conditional = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o];
+    final recordId = record['id']?.toString() ?? '';
+    if (conditional.isEmpty || recordId.isEmpty) return const {};
+    final base = '${layout.id}|$recordId';
+    final key = '$base|${Object.hashAllUnordered(record.entries.map((e) => Object.hash(e.key, e.value?.toString())))}';
+    final known = _hiddenObjects[key];
+    if (known != null) return known;
+    if (_hiddenPending.add(key)) unawaited(_evaluateHidden(conditional, recordId, base, key));
+    return _lastHiddenObjects[base] ?? const {};
+  }
+
+  Future<void> _evaluateHidden(List<LayoutObjectModel> objects, String recordId, String base, String key) async {
+    final hidden = <String>{};
+    try {
+      // The endpoint takes a bounded number of expressions at once.
+      for (var i = 0; i < objects.length; i += 50) {
+        final chunk = objects.sublist(i, math.min(i + 50, objects.length));
+        final results = await widget.apiClient.evaluateExpressions(
+          widget.table.name,
+          expressions: [for (final o in chunk) o.hideWhen!],
+          recordId: recordId,
+          resultType: 'Number',
+        );
+        for (final (j, r) in results.indexed) {
+          if (j < chunk.length && r.error.isEmpty && isLayoutConditionTrue(r.text)) hidden.add(chunk[j].id);
+        }
+      }
+    } on Exception catch (_) {
+      // A calculation that cannot be evaluated hides nothing.
+    }
+    if (!mounted) return;
+    if (_hiddenObjects.length > 200) _hiddenObjects.clear();
+    setState(() {
+      _hiddenPending.remove(key);
+      _hiddenObjects[key] = hidden;
+      _lastHiddenObjects[base] = hidden;
+    });
+  }
+
   // ─── Reports (#32) ─────────────────────────────────────────────────────────
 
   /// True when the layout in hand groups or totals rather than just listing
@@ -2432,12 +2483,29 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   Widget _buildCustomLayoutListView(LayoutDefinitionModel layout) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final theme = Theme.of(context);
-    final headerPart = layout.parts.where((p) => p.type == LayoutPartType.header).firstOrNull;
-    final headerHeight = headerPart?.height ?? 0.0;
+    // Every part above the body (a top navigation, a title header, a
+    // header…) is drawn once above the rows, and every part below it once
+    // under them; the body repeats, once per record.
+    final bodyIndex = layout.parts.indexWhere((p) => p.isBody);
+    var headerHeight = 0.0;
+    var bodyHeight = 0.0;
+    for (final (i, p) in layout.parts.indexed) {
+      if (bodyIndex < 0 ? p.type == LayoutPartType.header : i < bodyIndex) headerHeight += p.height;
+      if (i == bodyIndex) bodyHeight = p.height;
+    }
+    final bodyFill = bodyIndex < 0 ? null : parseLayoutColor(layout.parts[bodyIndex].fillColor);
     final (portalContents, insidePortal) = _portalContents(layout);
     final shown = layout.objects.where((o) => !insidePortal.contains(o.id));
     final headerObjects = shown.where((o) => o.y < headerHeight).toList();
-    final bodyObjects = shown.where((o) => o.y >= headerHeight).toList();
+    final bodyEnd = bodyHeight > 0 ? headerHeight + bodyHeight : double.infinity;
+    final bodyObjects = shown.where((o) => o.y >= headerHeight && o.y < bodyEnd).toList();
+    final footerObjects = shown.where((o) => o.y >= bodyEnd).toList();
+    var footerHeight = 0.0;
+    if (bodyIndex >= 0) {
+      for (final p in layout.parts.skip(bodyIndex + 1)) {
+        footerHeight += p.height;
+      }
+    }
 
     var maxBodyBottom = headerHeight + 48.0;
     for (final o in bodyObjects) {
@@ -2445,7 +2513,33 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         maxBodyBottom = o.y + o.height;
       }
     }
-    final rowHeight = math.max<double>(46.0, maxBodyBottom - headerHeight + 8.0);
+    final rowHeight = bodyHeight > 0 ? bodyHeight : math.max<double>(46.0, maxBodyBottom - headerHeight + 8.0);
+
+    // A band drawn once: its parts' fills and its objects, from [top].
+    Widget band(double top, double height, List<LayoutObjectModel> objects) => SizedBox(
+          width: layout.width,
+          height: height,
+          child: Stack(
+            children: [
+              Positioned(
+                top: -top,
+                left: 0,
+                right: 0,
+                height: layout.height,
+                child: Stack(children: layoutPartFills(layout)),
+              ),
+              for (final obj in objects)
+                Positioned(
+                  left: obj.x,
+                  top: obj.y - top,
+                  width: obj.width,
+                  height: obj.height,
+                  child: _buildLayoutObject(obj, _currentRecord, isDark, false,
+                      portalContents: portalContents[obj.id] ?? const []),
+                ),
+            ],
+          ),
+        );
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -2470,24 +2564,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (headerHeight > 0)
-                SizedBox(
-                  width: layout.width,
-                  height: headerHeight,
-                  child: Stack(
-                    children: [
-                      for (final obj in headerObjects)
-                        Positioned(
-                          left: obj.x,
-                          top: obj.y,
-                          width: obj.width,
-                          height: obj.height,
-                          child: _buildLayoutObject(obj, _currentRecord, isDark, false,
-                              portalContents: portalContents[obj.id] ?? const []),
-                        ),
-                    ],
-                  ),
-                ),
+              if (headerHeight > 0) band(0, headerHeight, headerObjects),
               for (final (i, rec) in _records.indexed)
                 // No double tap on the whole row: it would delay every single
                 // click (and so the start of editing) by the double-click
@@ -2500,9 +2577,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                     decoration: BoxDecoration(
                       color: i == _currentIndex
                           ? theme.colorScheme.primary.withValues(alpha: 0.08)
-                          : (i.isOdd
-                              ? (isDark ? const Color(0xFF1B2129) : const Color(0xFFF9FAFB))
-                              : Colors.transparent),
+                          : bodyFill ??
+                              (i.isOdd
+                                  ? (isDark ? const Color(0xFF1B2129) : const Color(0xFFF9FAFB))
+                                  : Colors.transparent),
                       border: Border(
                         bottom: BorderSide(
                           color: isDark ? const Color(0xFF30363D) : const Color(0xFFE5E7EB),
@@ -2537,6 +2615,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                     ),
                   ),
                 ),
+              if (footerHeight > 0 && bodyEnd.isFinite) band(bodyEnd, footerHeight, footerObjects),
             ],
           ),
         ),
@@ -2555,6 +2634,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       final external = widget.externalFieldNoticeOf(obj);
       if (external != null) {
         return relatedNotice(external, isDark: isDark, radius: obj.style.cornerRadius);
+      }
+      final unreadable = layoutFieldUnreadableNotice(obj.fieldBinding);
+      if (unreadable != null) {
+        return relatedNotice(unreadable, isDark: isDark, radius: obj.style.cornerRadius);
       }
       // A field of a related record, read with those of the other rows in
       // one request.
@@ -2632,11 +2715,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             filled: true,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(effStyle.cornerRadius),
-              borderSide: BorderSide(
-                color: effStyle.borderColor != null
-                    ? _parseColor(effStyle.borderColor!)
-                    : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
-              ),
+              borderSide: effStyle.borderWidth <= 0
+                  ? BorderSide.none
+                  : BorderSide(
+                      color: effStyle.borderColor != null
+                          ? _parseColor(effStyle.borderColor!)
+                          : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
+                      width: effStyle.borderWidth,
+                    ),
             ),
           ),
           onChanged: (v) => _onFieldChanged(col.name, v),
@@ -2671,11 +2757,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ),
           decoration: BoxDecoration(
             color: fillColor,
-            border: Border.all(
-              color: effStyle.borderColor != null
-                  ? _parseColor(effStyle.borderColor!)
-                  : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
-            ),
+            border: effStyle.borderWidth <= 0
+                ? null
+                : Border.all(
+                    color: effStyle.borderColor != null
+                        ? _parseColor(effStyle.borderColor!)
+                        : (isDark ? const Color(0xFF38404B) : const Color(0xFFD1D5DB)),
+                    width: effStyle.borderWidth,
+                  ),
             borderRadius: BorderRadius.circular(effStyle.cornerRadius),
           ),
           child: Text(
@@ -2964,7 +3053,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     };
 
     final (portalContents, insidePortal) = _portalContents(layout);
-    final topLevel = layout.objects.where((o) => !insidePortal.contains(o.id)).toList();
+    final hidden = isFindMode ? const <String>{} : _hiddenOn(layout, record);
+    final topLevel = layout.objects.where((o) => !insidePortal.contains(o.id) && !hidden.contains(o.id)).toList();
 
     return LayoutEntryTransition(
       key: ValueKey('layout-entry-${layout.id}'),
@@ -3148,7 +3238,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                     clipBehavior: Clip.none,
                     children: [
                       if (hasCustomBackground) Positioned.fill(child: LayoutBackgroundView(layout: layout)),
-                      // Subtle part boundaries
+                      // Each part's own fill (drawn with the background when the
+                      // layout has one), then subtle part boundaries
+                      if (!hasCustomBackground) ...layoutPartFills(layout),
                       ..._buildPartDividers(layout, canvasWidth, isDark),
                       if (widget.showPageMargins)
                         PageMarginsOverlay(
@@ -3205,6 +3297,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         );
         return Container(
           alignment: isMultilineLabel ? Alignment.topLeft : _parseAlignment(obj.style.textAlign),
+          decoration: layoutBoxDecoration(obj.style),
           padding: EdgeInsets.only(
             left: 4 + obj.style.indentLeft,
             right: 4 + obj.style.indentRight,
@@ -3222,6 +3315,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         final external = widget.externalFieldNoticeOf(obj);
         if (external != null) {
           return relatedNotice(external, isDark: isDark, radius: obj.style.cornerRadius);
+        }
+        final unreadable = layoutFieldUnreadableNotice(obj.fieldBinding);
+        if (unreadable != null) {
+          return relatedNotice(unreadable, isDark: isDark, radius: obj.style.cornerRadius);
         }
         // A field of a related record: `Companies::company_address` on a
         // Customers layout (#36). It is read through the relationship, not
@@ -3620,6 +3717,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       ),
       decoration: InputDecoration(
         isDense: true,
+        hintText: obj.fieldBinding?.placeholder,
+        hintStyle: TextStyle(fontSize: effStyle.fontSize > 0 ? effStyle.fontSize : 13, color: Colors.grey.shade500),
         contentPadding: EdgeInsets.only(
           left: 8 + effStyle.indentLeft,
           right: 8 + effStyle.indentRight,
@@ -3630,14 +3729,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             ? _parseColor(effStyle.fillColor!)
             : null,
         filled: effStyle.fillColor != null,
+        // A line of width 0 is no line: a zero-width side would still draw
+        // a hairline.
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(effStyle.cornerRadius),
-          borderSide: BorderSide(
-            color: effStyle.borderColor != null
-                ? _parseColor(effStyle.borderColor!)
-                : Colors.grey,
-            width: effStyle.borderWidth,
-          ),
+          borderSide: effStyle.borderWidth <= 0
+              ? BorderSide.none
+              : BorderSide(
+                  color: effStyle.borderColor != null
+                      ? _parseColor(effStyle.borderColor!)
+                      : Colors.grey,
+                  width: effStyle.borderWidth,
+                ),
         ),
         suffixIcon: computed
             ? const Tooltip(
@@ -3709,12 +3812,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                     ? _parseColor(effStyle.fillColor!)
                     : (isDark ? const Color(0xFF0D1117) : Colors.white),
                 borderRadius: BorderRadius.circular(effStyle.cornerRadius),
-                border: Border.all(
-                  color: effStyle.borderColor != null
-                      ? _parseColor(effStyle.borderColor!)
-                      : Colors.grey.shade400,
-                  width: effStyle.borderWidth > 0 ? effStyle.borderWidth : 1,
-                ),
+                border: effStyle.borderWidth <= 0
+                    ? null
+                    : Border.all(
+                        color: effStyle.borderColor != null
+                            ? _parseColor(effStyle.borderColor!)
+                            : Colors.grey.shade400,
+                        width: effStyle.borderWidth,
+                      ),
               ),
               child: Text(
                 formatted,

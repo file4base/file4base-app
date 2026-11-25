@@ -74,6 +74,10 @@ type SummaryCounts struct {
 	// CustomFunctions counts the custom functions migrated.
 	CustomFunctions int `json:"custom_functions,omitempty"`
 
+	// LayoutObjects counts the layout objects of each FileMaker kind the
+	// source has, and how many of them were migrated.
+	LayoutObjects map[string]LayoutObjectCount `json:"layout_objects,omitempty"`
+
 	// SourceTextValues counts the values migrated with their original text
 	// beside FileMaker's reading of it (#124).
 	SourceTextValues int `json:"source_text_values,omitempty"`
@@ -843,8 +847,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
+	layoutCtx := newLayoutObjectContext(root, bundle, binding, req.NativeDateOrder == "dmy")
 	for _, ln := range layoutNodes {
-		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences)
+		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences, layoutCtx)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
@@ -853,6 +858,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 	}
 	report.Counts.Layouts = len(bundle.Layouts)
+	report.Counts.LayoutObjects = layoutCtx.LayoutObjectCounts()
 
 	// 6. Extract Scripts & Steps
 	scriptNodes := catalogDefinitions(root, []string{"ScriptCatalog", "scripts"}, "Script", "script")
@@ -2056,6 +2062,7 @@ func convertLayoutNode(
 	occIDByName map[string]string,
 	occTableByName map[string]string,
 	deletedOccurrences map[string]bool,
+	objects *layoutObjectContext,
 ) (*schema.BundleLayout, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(ln, "name", "Name")
@@ -2111,6 +2118,8 @@ func convertLayoutNode(
 		if err := json.Unmarshal([]byte(defNode.Text), &parsed); err == nil {
 			def = parsed
 		}
+	} else if objects != nil && isNativeLayout(ln) {
+		items = append(items, convertNativeLayout(ln, objects, def, name, occName, occID, objectIDs)...)
 	} else {
 		// Convert parts and objects from FileMaker DDR <PartsList> / <Part> / <Object>
 		partNodes := findNodes(ln, "Part", "part")

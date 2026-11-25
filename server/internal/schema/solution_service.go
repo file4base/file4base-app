@@ -1067,65 +1067,11 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		scriptIDs[sc.ID] = created.ID
 	}
 
-	// 5. Layouts. Their script triggers get ids of their own here, once, so
-	// a solution imported into another that already has them — or imported
-	// twice — never has two triggers by one id (#26).
-	for _, l := range b.Layouts {
-		renewScriptTriggerIDs(l.Definition)
-	}
-	layoutIDs := map[string]string{}
-	layoutDefs := map[string]string{}
-	for _, l := range b.Layouts {
-		def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
-			"script_id":       scriptIDs,
-			"relationship_id": relIDs,
-		}))
-		if err != nil {
-			return nil, rollback(fmt.Errorf("layout %q: %w", l.Name, err))
-		}
-		layoutDefs[l.ID] = string(def)
-		if prev := plan.layoutFor(l); prev != nil {
-			if _, err := s.UpdateLayout(ctx, prev.ID, l.Name, def); err != nil {
-				return nil, rollback(fmt.Errorf("updating layout %q: %w", l.Name, err))
-			}
-			p := *prev
-			undo = append(undo, func() { _, _ = s.UpdateLayout(bg, p.ID, p.Name, p.Definition) })
-			report.LayoutsUpdated++
-			layoutIDs[l.ID] = prev.ID
-			continue
-		}
-		created, err := s.CreateLayout(ctx, l.Name, occIDs[l.TableOccurrenceID], def)
-		if err != nil {
-			return nil, rollback(fmt.Errorf("creating layout %q: %w", l.Name, err))
-		}
-		undo = append(undo, func() { _ = s.DeleteLayout(bg, created.ID) })
-		report.LayoutsCreated++
-		layoutIDs[l.ID] = created.ID
-	}
-	for _, l := range b.Layouts {
-		dstLayoutID := layoutIDs[l.ID]
-		if dstLayoutID == "" {
-			continue
-		}
-		def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
-			"script_id":        scriptIDs,
-			"relationship_id":  relIDs,
-			"layout_id":        layoutIDs,
-			"target_layout_id": layoutIDs,
-		}))
-		if err != nil {
-			return nil, rollback(fmt.Errorf("layout %q cross-layout reference: %w", l.Name, err))
-		}
-		if string(def) != layoutDefs[l.ID] {
-			if _, err := s.UpdateLayout(ctx, dstLayoutID, l.Name, def); err != nil {
-				return nil, rollback(fmt.Errorf("updating layout %q cross-layout reference: %w", l.Name, err))
-			}
-		}
-	}
-
-	// 5b. Value lists (#31). A list is matched by name, so importing the same
+	// 5a. Value lists (#31). A list is matched by name, so importing the same
 	// file twice does not make a second copy; a list taken from a field has
 	// its table, fields and occurrences rewritten to the destination's ids.
+	// They come before the layouts, whose fields name the list they offer.
+	valueListIDs := map[string]string{}
 	for _, vl := range b.ValueLists {
 		in := ValueListInput{Name: vl.Name, Kind: vl.Kind, CustomValues: vl.CustomValues}
 		if vl.Kind == ValueListFromField && vl.SourceTableID == nil && vl.SourceOccurrenceID != nil {
@@ -1179,6 +1125,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 				}, true)
 			})
 			report.ValueListsUpdated++
+			valueListIDs[vl.ID] = prev.ID
 			continue
 		}
 		created, unindexable, err := s.createValueList(ctx, in, true)
@@ -1188,6 +1135,64 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		warn(unindexable)
 		undo = append(undo, func() { _ = s.DeleteValueList(bg, created.ID) })
 		report.ValueListsCreated++
+		valueListIDs[vl.ID] = created.ID
+	}
+
+	// 5. Layouts. Their script triggers get ids of their own here, once, so
+	// a solution imported into another that already has them — or imported
+	// twice — never has two triggers by one id (#26).
+	for _, l := range b.Layouts {
+		renewScriptTriggerIDs(l.Definition)
+	}
+	layoutIDs := map[string]string{}
+	layoutDefs := map[string]string{}
+	for _, l := range b.Layouts {
+		def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
+			"script_id":       scriptIDs,
+			"relationship_id": relIDs,
+			"value_list_id":   valueListIDs,
+		}))
+		if err != nil {
+			return nil, rollback(fmt.Errorf("layout %q: %w", l.Name, err))
+		}
+		layoutDefs[l.ID] = string(def)
+		if prev := plan.layoutFor(l); prev != nil {
+			if _, err := s.UpdateLayout(ctx, prev.ID, l.Name, def); err != nil {
+				return nil, rollback(fmt.Errorf("updating layout %q: %w", l.Name, err))
+			}
+			p := *prev
+			undo = append(undo, func() { _, _ = s.UpdateLayout(bg, p.ID, p.Name, p.Definition) })
+			report.LayoutsUpdated++
+			layoutIDs[l.ID] = prev.ID
+			continue
+		}
+		created, err := s.CreateLayout(ctx, l.Name, occIDs[l.TableOccurrenceID], def)
+		if err != nil {
+			return nil, rollback(fmt.Errorf("creating layout %q: %w", l.Name, err))
+		}
+		undo = append(undo, func() { _ = s.DeleteLayout(bg, created.ID) })
+		report.LayoutsCreated++
+		layoutIDs[l.ID] = created.ID
+	}
+	for _, l := range b.Layouts {
+		dstLayoutID := layoutIDs[l.ID]
+		if dstLayoutID == "" {
+			continue
+		}
+		def, err := json.Marshal(rewriteRefs(l.Definition, map[string]map[string]string{
+			"script_id":        scriptIDs,
+			"relationship_id":  relIDs,
+			"layout_id":        layoutIDs,
+			"target_layout_id": layoutIDs,
+		}))
+		if err != nil {
+			return nil, rollback(fmt.Errorf("layout %q cross-layout reference: %w", l.Name, err))
+		}
+		if string(def) != layoutDefs[l.ID] {
+			if _, err := s.UpdateLayout(ctx, dstLayoutID, l.Name, def); err != nil {
+				return nil, rollback(fmt.Errorf("updating layout %q cross-layout reference: %w", l.Name, err))
+			}
+		}
 	}
 
 	// 6. Accounts: missing ones are created disabled, without a usable

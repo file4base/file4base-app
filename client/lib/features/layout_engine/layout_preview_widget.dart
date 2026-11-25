@@ -653,6 +653,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       case 'label':
         return Container(
           alignment: _parseAlignment(obj.style.textAlign),
+          decoration: layoutBoxDecoration(obj.style),
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: Text(
             resolveLayoutMergeText(obj.text,

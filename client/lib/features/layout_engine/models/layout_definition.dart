@@ -55,6 +55,7 @@ class LayoutPartModel {
     required this.type,
     required this.height,
     this.breakField,
+    this.fillColor,
   });
 
   factory LayoutPartModel.fromJson(Map<String, dynamic> json) {
@@ -63,6 +64,7 @@ class LayoutPartModel {
       type: json['type'] as String? ?? 'body',
       height: (json['height'] as num?)?.toDouble() ?? 120.0,
       breakField: json['break_field'] as String?,
+      fillColor: json['fill_color'] as String?,
     );
   }
   final String id;
@@ -77,11 +79,16 @@ class LayoutPartModel {
   /// sub-summary without one summarizes nothing and says so.
   final String? breakField;
 
+  /// The colour the part is filled with, as `#RRGGBB` or `#AARRGGBB`. Null
+  /// leaves it to the layout's background.
+  final String? fillColor;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'type': type,
         'height': height,
         if (breakField != null) 'break_field': breakField,
+        if (fillColor != null) 'fill_color': fillColor,
       };
 
   LayoutPartModel copyWith({
@@ -90,12 +97,15 @@ class LayoutPartModel {
     double? height,
     String? breakField,
     bool clearBreakField = false,
+    String? fillColor,
+    bool clearFillColor = false,
   }) {
     return LayoutPartModel(
       id: id ?? this.id,
       type: type ?? this.type,
       height: height ?? this.height,
       breakField: clearBreakField ? null : (breakField ?? this.breakField),
+      fillColor: clearFillColor ? null : (fillColor ?? this.fillColor),
     );
   }
 
@@ -114,6 +124,9 @@ class FieldControlStyle {
   static const String checkboxSet = 'checkbox_set';
   static const String radioButtonSet = 'radio_button_set';
 
+  /// An edit box that opens a calendar to pick a date from.
+  static const String dropDownCalendar = 'drop_down_calendar';
+
   /// The styles offered in the inspector, with the label each one shows.
   static const Map<String, String> labels = {
     editBox: 'Edit box',
@@ -121,10 +134,12 @@ class FieldControlStyle {
     popUpMenu: 'Pop-up menu',
     checkboxSet: 'Checkbox set',
     radioButtonSet: 'Radio button set',
+    dropDownCalendar: 'Drop-down calendar',
   };
 
   /// True when the style needs a value list to show anything.
-  static bool needsValueList(String style) => style != editBox;
+  static bool needsValueList(String style) =>
+      style == dropDownList || style == popUpMenu || style == checkboxSet || style == radioButtonSet;
 
   /// A style that lets the record hold more than one of the values.
   static bool isMultiValue(String style) => style == checkboxSet;
@@ -153,6 +168,9 @@ class FieldBindingModel {
     this.allowFindEntry = true,
     this.repetitionsShown,
     this.repetitionOrientation = RepetitionOrientation.vertical,
+    this.placeholder,
+    this.unresolvedRelationship = false,
+    this.missing = false,
   });
 
   factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
@@ -169,6 +187,9 @@ class FieldBindingModel {
       repetitionOrientation: json['repetition_orientation'] == RepetitionOrientation.horizontal
           ? RepetitionOrientation.horizontal
           : RepetitionOrientation.vertical,
+      placeholder: json['placeholder'] as String?,
+      unresolvedRelationship: json['unresolved_relationship'] as bool? ?? false,
+      missing: json['missing'] as bool? ?? false,
     );
   }
   /// The table occurrence the field is read from. Null, or the layout's own
@@ -205,6 +226,17 @@ class FieldBindingModel {
   /// One of [RepetitionOrientation]: whether the repetitions shown are
   /// stacked or side by side. They share the object's box equally.
   final String repetitionOrientation;
+
+  /// The text the control shows while it is empty.
+  final String? placeholder;
+
+  /// True when the field was read, in FileMaker, through more than one
+  /// relationship: File4Base follows one, so the field is shown as
+  /// unavailable rather than read from a column of the wrong record.
+  final bool unresolvedRelationship;
+
+  /// True when the field is not in the imported tables.
+  final bool missing;
 
   /// True when the field is read through a relationship rather than from the
   /// record in hand.
@@ -248,6 +280,8 @@ class FieldBindingModel {
     bool? allowFindEntry,
     int? repetitionsShown,
     String? repetitionOrientation,
+    String? placeholder,
+    bool clearPlaceholder = false,
   }) =>
       FieldBindingModel(
         tableOccurrence: clearRelationship ? null : (tableOccurrence ?? this.tableOccurrence),
@@ -260,6 +294,10 @@ class FieldBindingModel {
         allowFindEntry: allowFindEntry ?? this.allowFindEntry,
         repetitionsShown: repetitionsShown ?? this.repetitionsShown,
         repetitionOrientation: repetitionOrientation ?? this.repetitionOrientation,
+        placeholder: clearPlaceholder ? null : (placeholder ?? this.placeholder),
+        // Choosing another field or relationship settles what was unreachable.
+        unresolvedRelationship: fieldName == null && relationshipId == null && !clearRelationship && unresolvedRelationship,
+        missing: fieldName == null && missing,
       );
 
   Map<String, dynamic> toJson() => {
@@ -273,6 +311,9 @@ class FieldBindingModel {
         'allow_find_entry': allowFindEntry,
         if (repetitionsShown != null) 'repetitions_shown': repetitionsShown,
         if (repetitionOrientation != RepetitionOrientation.vertical) 'repetition_orientation': repetitionOrientation,
+        if (placeholder != null) 'placeholder': placeholder,
+        if (unresolvedRelationship) 'unresolved_relationship': true,
+        if (missing) 'missing': true,
       };
 
   /// How many repetitions an object bound to a field with [maxRepetitions]
@@ -930,6 +971,8 @@ class LayoutObjectModel { // picture / document shown inside the object
     this.action,
     this.tabOrder,
     this.media,
+    this.hideWhen,
+    this.hideInFind = false,
   });
 
   factory LayoutObjectModel.fromJson(Map<String, dynamic> json) {
@@ -964,6 +1007,8 @@ class LayoutObjectModel { // picture / document shown inside the object
       media: json['media'] is Map
           ? LayoutMediaModel.fromJson(Map<String, dynamic>.from(json['media'] as Map))
           : null,
+      hideWhen: json['hide_when'] as String?,
+      hideInFind: json['hide_in_find'] as bool? ?? false,
     );
   }
   final String id;
@@ -986,6 +1031,13 @@ class LayoutObjectModel { // picture / document shown inside the object
   final ButtonActionModel? action; // buttons: what a click runs in Browse mode
   final int? tabOrder; // position in the Tab key sequence (1-based); null = reading order
   final LayoutMediaModel? media;
+
+  /// A calculation, evaluated against the record shown: when it is true the
+  /// object is hidden in Browse mode, as FileMaker's "Hide object when".
+  final String? hideWhen;
+
+  /// Whether [hideWhen] applies in Find mode too.
+  final bool hideInFind;
 
   /// Objects that take keyboard focus in Browse mode and so have a tab order.
   bool get isTabStop => type == 'field' || type == 'button' || type == 'popover_button';
@@ -1033,6 +1085,8 @@ class LayoutObjectModel { // picture / document shown inside the object
         if (action != null) 'action': action!.toJson(),
         if (tabOrder != null) 'tab_order': tabOrder,
         if (media != null) 'media': media!.toJson(),
+        if (hideWhen != null) 'hide_when': hideWhen,
+        if (hideInFind) 'hide_in_find': true,
       };
 
   /// Copies the object. The `clear*` flags remove an optional value, which a
@@ -1060,6 +1114,9 @@ class LayoutObjectModel { // picture / document shown inside the object
     bool clearTabOrder = false,
     bool clearMedia = false,
     bool clearPortalConfig = false,
+    String? hideWhen,
+    bool clearHideWhen = false,
+    bool? hideInFind,
   }) {
     return LayoutObjectModel(
       id: id ?? this.id,
@@ -1080,6 +1137,8 @@ class LayoutObjectModel { // picture / document shown inside the object
       action: clearAction ? null : (action ?? this.action),
       tabOrder: clearTabOrder ? null : (tabOrder ?? this.tabOrder),
       media: clearMedia ? null : (media ?? this.media),
+      hideWhen: clearHideWhen ? null : (hideWhen ?? this.hideWhen),
+      hideInFind: hideInFind ?? this.hideInFind,
     );
   }
 }

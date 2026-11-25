@@ -1,0 +1,559 @@
+package migration
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/testdb"
+	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+// layoutObjectsFixture is a handwritten <FMSaveAsXML> layout in the shape
+// FileMaker writes one: parts with their size, objects with their bounds in
+// layout coordinates, a theme with CSS, a library picture and the usual
+// nesting of groups and tab panels. The names are invented.
+const layoutObjectsFixture = `<?xml version="1.0" encoding="UTF-8"?>
+<FMSaveAsXML Has_DDR_INFO="True">
+  <File name="Recipes.fmp12">
+    <BaseTableCatalog>
+      <BaseTable id="1" name="Recipes"/>
+      <BaseTable id="2" name="Ingredients"/>
+    </BaseTableCatalog>
+    <FieldsForTables>
+      <FieldCatalog>
+        <BaseTableSourceReference id="1" name="Recipes"/>
+        <Field id="1" name="Title" datatype="text" fieldtype="normal"/>
+        <Field id="2" name="Price" datatype="number" fieldtype="normal"/>
+        <Field id="3" name="Served On" datatype="date" fieldtype="normal"/>
+        <Field id="4" name="Unit" datatype="text" fieldtype="normal"/>
+        <Field id="5" name="Archived" datatype="number" fieldtype="normal"/>
+      </FieldCatalog>
+      <FieldCatalog>
+        <BaseTableSourceReference id="2" name="Ingredients"/>
+        <Field id="1" name="RecipeTitle" datatype="text" fieldtype="normal"/>
+        <Field id="2" name="Quantity" datatype="number" fieldtype="normal"/>
+      </FieldCatalog>
+    </FieldsForTables>
+    <RelationshipGraph>
+      <TableList>
+        <Table id="1" name="Recipes" baseTable="Recipes" baseTableId="1"/>
+        <Table id="2" name="Ingredients" baseTable="Ingredients" baseTableId="2"/>
+        <Table id="3" name="Loose Ingredients" baseTable="Ingredients" baseTableId="2"/>
+      </TableList>
+      <RelationshipList>
+        <Relationship id="1" name="Recipes_Ingredients">
+          <LeftTable name="Recipes"/>
+          <RightTable name="Ingredients"/>
+          <JoinPredicateList>
+            <JoinPredicate type="Equal">
+              <LeftField><Field name="Title" table="Recipes"/></LeftField>
+              <RightField><Field name="RecipeTitle" table="Ingredients"/></RightField>
+            </JoinPredicate>
+          </JoinPredicateList>
+        </Relationship>
+      </RelationshipList>
+    </RelationshipGraph>
+    <ValueListCatalog>
+      <ValueList name="Units"><CustomValues><Text>g</Text><Text>kg</Text></CustomValues></ValueList>
+    </ValueListCatalog>
+    <ThemeCatalog>
+      <Theme name="Plain">
+        <CSS><![CDATA[
+/* synthetic theme */
+body:normal .self { background-color: rgba(100%,100%,100%,1); }
+header:normal .self { background-color: rgba(0%,0%,50%,1); }
+text_box:normal .self { font-family: -fm-font-family(Inter,Inter-Regular); font-size: 12pt; color: rgba(10%,10%,10%,1); }
+text_box.title:normal .self { font-size: 20pt; font-weight: bold; text-align: center; }
+edit_box:normal .self { border-top-style: solid; border-top-width: 1pt; border-top-color: rgba(50%,50%,50%,1); border-top-left-radius: 3pt 3pt; }
+edit_box:hover .self { background-color: rgba(100%,0%,0%,1); }
+rectangle:normal .self { background-color: rgba(0%,0%,0%,0.5); }
+]]></CSS>
+      </Theme>
+    </ThemeCatalog>
+    <LibraryCatalog>
+      <BinaryData>
+        <LibraryReference id="7" key="1"/>
+        <StreamList>
+          <Stream name="FNAM" type="Hex">00</Stream>
+          <Stream name="PNGf" type="Base64" size="68">iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==</Stream>
+        </StreamList>
+      </BinaryData>
+    </LibraryCatalog>
+    <LayoutCatalog>
+      <Layout id="1" name="Recipe Card" width="600">
+        <TableOccurrenceReference id="1" name="Recipes"/>
+        <LayoutThemeReference name="Plain"/>
+        <PartsList>
+          <Part type="Header">
+            <Definition type="Header" kind="1" size="60" absolute="0"/>
+            <ObjectList>
+              <LayoutObject type="Text" name="heading">
+                <UUID>00000000-0000-0000-0000-000000000001</UUID>
+                <Bounds top="10" left="20" bottom="40" right="300"/>
+                <LocalCSS name="title"><![CDATA[self:normal .self { color: rgba(100%,0%,0%,1); }]]></LocalCSS>
+                <Text><StyledText><Data><![CDATA[Recipe <<Title>> of <<Ingredients::Quantity>>]]></Data></StyledText></Text>
+              </LayoutObject>
+            </ObjectList>
+          </Part>
+          <Part type="Body">
+            <Definition type="Body" kind="4" size="200" absolute="60"/>
+            <ObjectList>
+              <LayoutObject type="Group">
+                <UUID>00000000-0000-0000-0000-000000000002</UUID>
+                <Bounds top="70" left="20" bottom="130" right="320"/>
+                <GroupedButton>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box" name="price">
+                      <UUID>00000000-0000-0000-0000-000000000003</UUID>
+                      <Bounds top="70" left="20" bottom="90" right="200"/>
+                      <Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide></Conditions>
+                      <Tooltip><Calculation><Text><![CDATA["Price in euros"]]></Text></Calculation></Tooltip>
+                      <Field>
+                        <FieldReference name="Price" id="2"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference>
+                        <Display Style="0" show="1"><Placeholder findMode="False"><Calculation><Text><![CDATA["0.00"]]></Text></Calculation></Placeholder></Display>
+                      </Field>
+                      <ExtendedAttributes><Formatting><Numeric><Options>524</Options><DecimalDigits>2</DecimalDigits><Symbol>€</Symbol></Numeric></Formatting></ExtendedAttributes>
+                    </LayoutObject>
+                    <LayoutObject type="Drop-down Calendar">
+                      <UUID>00000000-0000-0000-0000-000000000004</UUID>
+                      <Bounds top="100" left="20" bottom="120" right="200"/>
+                      <Field>
+                        <FieldReference name="Served On" id="3"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference>
+                        <Display Style="6" show="1"/>
+                      </Field>
+                      <ExtendedAttributes><Formatting><Date><Separator>/</Separator></Date></Formatting></ExtendedAttributes>
+                    </LayoutObject>
+                  </ObjectList>
+                </GroupedButton>
+              </LayoutObject>
+              <LayoutObject type="Pop-up Menu">
+                <UUID>00000000-0000-0000-0000-000000000005</UUID>
+                <Bounds top="140" left="20" bottom="160" right="200"/>
+                <Field>
+                  <FieldReference name="Unit" id="4"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference>
+                  <Display Style="2" show="1"><ValueListReference name="Units" id="1"/></Display>
+                </Field>
+              </LayoutObject>
+              <LayoutObject type="Edit Box">
+                <UUID>00000000-0000-0000-0000-000000000006</UUID>
+                <Bounds top="170" left="20" bottom="190" right="200"/>
+                <Field>
+                  <FieldReference name="Quantity" id="2" repetition="1"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference>
+                  <Display Style="0" show="-3"/>
+                </Field>
+              </LayoutObject>
+              <LayoutObject type="Edit Box">
+                <UUID>00000000-0000-0000-0000-000000000007</UUID>
+                <Bounds top="200" left="20" bottom="220" right="200"/>
+                <Field>
+                  <FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Loose Ingredients" id="3"/></FieldReference>
+                  <Display Style="0" show="1"/>
+                </Field>
+              </LayoutObject>
+              <LayoutObject type="Rectangle">
+                <UUID>00000000-0000-0000-0000-000000000008</UUID>
+                <Bounds top="65" left="340" bottom="125" right="500"/>
+              </LayoutObject>
+              <LayoutObject type="Line">
+                <UUID>00000000-0000-0000-0000-000000000009</UUID>
+                <Bounds top="230" left="20" bottom="240" right="500"/>
+                <LocalCSS><![CDATA[self:normal .self { border-top-style: solid; border-top-width: 2pt; border-top-color: rgba(0%,0%,0%,1); }]]></LocalCSS>
+              </LayoutObject>
+              <LayoutObject type="Graphic">
+                <UUID>00000000-0000-0000-0000-00000000000a</UUID>
+                <Bounds top="130" left="340" bottom="180" right="400"/>
+                <Graphic><BinaryData><LibraryReference id="7" key="1"/></BinaryData><Formatting><Options>3</Options></Formatting></Graphic>
+              </LayoutObject>
+              <LayoutObject type="Tab Control">
+                <UUID>00000000-0000-0000-0000-00000000000b</UUID>
+                <Bounds top="130" left="420" bottom="250" right="590"/>
+                <TabControl default="1">
+                  <ObjectList>
+                    <LayoutObject type="Panel"><Bounds top="150" left="420" bottom="250" right="590"/>
+                      <TabPanel><Calculation><Text><![CDATA["One"]]></Text></Calculation><ObjectList>
+                        <LayoutObject type="Oval"><UUID>00000000-0000-0000-0000-00000000000c</UUID><Bounds top="160" left="430" bottom="180" right="450"/></LayoutObject>
+                      </ObjectList></TabPanel>
+                    </LayoutObject>
+                    <LayoutObject type="Panel"><Bounds top="150" left="420" bottom="250" right="590"/>
+                      <TabPanel><Calculation><Text><![CDATA["Two"]]></Text></Calculation><ObjectList>
+                        <LayoutObject type="Rounded Rectangle"><UUID>00000000-0000-0000-0000-00000000000d</UUID><Bounds top="160" left="430" bottom="200" right="500"/></LayoutObject>
+                      </ObjectList></TabPanel>
+                    </LayoutObject>
+                  </ObjectList>
+                </TabControl>
+              </LayoutObject>
+              <LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>
+            </ObjectList>
+          </Part>
+          <Part type="Footer">
+            <Definition type="Footer" kind="7" size="30" absolute="260"/>
+          </Part>
+        </PartsList>
+        <UUID>00000000-0000-0000-0000-0000000000ff</UUID>
+        <Options>512</Options>
+      </Layout>
+    </LayoutCatalog>
+  </File>
+</FMSaveAsXML>`
+
+func convertLayoutFixture(t *testing.T) (*ConvertedSolution, map[string]interface{}) {
+	t.Helper()
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: layoutObjectsFixture, NativeDateOrder: "dmy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Bundle.Layouts) != 1 {
+		t.Fatalf("layouts: %d (%+v)", len(got.Bundle.Layouts), got.Report.Rejected)
+	}
+	// What the import stores is JSON: read the definition back as it would.
+	raw, err := json.Marshal(got.Bundle.Layouts[0].Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var def map[string]interface{}
+	if err := json.Unmarshal(raw, &def); err != nil {
+		t.Fatal(err)
+	}
+	return got, def
+}
+
+func objectsByType(def map[string]interface{}) map[string][]map[string]interface{} {
+	out := map[string][]map[string]interface{}{}
+	for _, o := range def["objects"].([]interface{}) {
+		m := o.(map[string]interface{})
+		out[m["type"].(string)] = append(out[m["type"].(string)], m)
+	}
+	return out
+}
+
+func TestNativeLayoutPartsAndGeometry(t *testing.T) {
+	_, def := convertLayoutFixture(t)
+	if def["width"] != 600.0 || def["default_view"] != "list" {
+		t.Fatalf("layout width/view: %v %v", def["width"], def["default_view"])
+	}
+	parts := def["parts"].([]interface{})
+	want := []struct {
+		kind   string
+		height float64
+	}{{"header", 60}, {"body", 200}, {"footer", 30}}
+	if len(parts) != len(want) {
+		t.Fatalf("parts: %v", parts)
+	}
+	ids := map[string]bool{}
+	for i, p := range parts {
+		m := p.(map[string]interface{})
+		if m["type"] != want[i].kind || m["height"] != want[i].height {
+			t.Fatalf("part %d: %v", i, m)
+		}
+		id, _ := m["id"].(string)
+		if id == "" || ids[id] {
+			t.Fatalf("part %d needs its own id: %v", i, m)
+		}
+		ids[id] = true
+	}
+	if parts[0].(map[string]interface{})["fill_color"] != "#000080" {
+		t.Fatalf("header fill from the theme: %v", parts[0])
+	}
+
+	byType := objectsByType(def)
+	label := byType["label"][0]
+	if label["x"] != 20.0 || label["y"] != 10.0 || label["width"] != 280.0 || label["height"] != 30.0 {
+		t.Fatalf("label bounds: %v", label)
+	}
+	// A related field is not one of the layout's columns: left as written.
+	if label["text"] != "Recipe {{title}} of <<Ingredients::Quantity>>" {
+		t.Fatalf("merge text: %q", label["text"])
+	}
+	style := label["style"].(map[string]interface{})
+	if style["font_size"] != 20.0 || style["font_weight"] != "bold" || style["text_align"] != "center" ||
+		style["text_color"] != "#FF0000" || style["font_family"] != "Inter" {
+		t.Fatalf("label style cascade: %v", style)
+	}
+
+	// Grouped objects are kept one by one, at their own place; a hover state
+	// does not leak into the normal style.
+	fields := byType["field"]
+	if len(fields) != 5 {
+		t.Fatalf("fields: %d", len(fields))
+	}
+	price := fields[0]
+	if price["y"] != 70.0 || price["name"] != "price" || price["tooltip"] != "Price in euros" ||
+		price["hide_when"] != "archived = 1" || price["hide_in_find"] != true {
+		t.Fatalf("price field: %v", price)
+	}
+	ps := price["style"].(map[string]interface{})
+	if ps["number_format"] != "currency" || ps["currency_symbol"] != "€" || ps["decimal_places"] != 2.0 ||
+		ps["use_thousands_separator"] != true || ps["border_width"] != 1.0 || ps["corner_radius"] != 3.0 || ps["fill_color"] != nil {
+		t.Fatalf("price style: %v", ps)
+	}
+	pb := price["field_binding"].(map[string]interface{})
+	if pb["field_name"] != "price" || pb["placeholder"] != "0.00" || pb["control_style"] != "edit_box" {
+		t.Fatalf("price binding: %v", pb)
+	}
+	cal := fields[1]
+	if cal["field_binding"].(map[string]interface{})["control_style"] != "drop_down_calendar" ||
+		cal["style"].(map[string]interface{})["date_format"] != "dd/mm/yyyy" {
+		t.Fatalf("calendar: %v", cal)
+	}
+	unit := fields[2]["field_binding"].(map[string]interface{})
+	if unit["control_style"] != "pop_up_menu" || unit["value_list_id"] == nil || unit["value_list_id"] == "" {
+		t.Fatalf("pop-up menu: %v", unit)
+	}
+	related := fields[3]["field_binding"].(map[string]interface{})
+	if related["relationship_id"] == nil || related["table_occurrence"] != "Ingredients" ||
+		related["repetitions_shown"] != 3.0 || related["repetition_orientation"] != "horizontal" {
+		t.Fatalf("related field: %v", related)
+	}
+	loose := fields[4]["field_binding"].(map[string]interface{})
+	if loose["unresolved_relationship"] != true || loose["relationship_id"] != nil {
+		t.Fatalf("a field no relationship reaches must say so: %v", loose)
+	}
+
+	rect := byType["rect"][0]
+	if rect["style"].(map[string]interface{})["fill_color"] != "#80000000" {
+		t.Fatalf("rectangle: %v", rect)
+	}
+	line := byType["line"][0]
+	if line["height"] != 2.0 || line["y"] != 234.0 || line["width"] != 480.0 {
+		t.Fatalf("line box: %v", line)
+	}
+	media := byType["media"][0]["media"].(map[string]interface{})
+	if media["mime_type"] != "image/png" || media["fit"] != "fill" || !strings.HasPrefix(media["data"].(string), "iVBOR") {
+		t.Fatalf("picture: %v", media)
+	}
+	// The front tab (default="1") is shown; the other is left out.
+	if len(byType["rounded_rect"]) != 1 || len(byType["oval"]) != 0 {
+		t.Fatalf("front panel: %v", byType)
+	}
+	if len(byType["button"]) != 0 {
+		t.Fatalf("buttons are not converted yet")
+	}
+}
+
+func TestNativeLayoutObjectIDsAreStable(t *testing.T) {
+	first, def1 := convertLayoutFixture(t)
+	_, def2 := convertLayoutFixture(t)
+	ids := map[string]bool{}
+	for i, o := range def1["objects"].([]interface{}) {
+		id := o.(map[string]interface{})["id"].(string)
+		if id == "" || ids[id] {
+			t.Fatalf("object %d id %q not unique", i, id)
+		}
+		ids[id] = true
+		if def2["objects"].([]interface{})[i].(map[string]interface{})["id"] != id {
+			t.Fatalf("object %d id changed between two migrations of the same file", i)
+		}
+	}
+	_ = first
+}
+
+func TestNativeLayoutReportAndCounts(t *testing.T) {
+	got, _ := convertLayoutFixture(t)
+	counts := got.Report.Counts.LayoutObjects
+	check := func(kind string, source, migrated int) {
+		t.Helper()
+		if c := counts[kind]; c.Source != source || c.Migrated != migrated {
+			t.Fatalf("%s: %+v, want %d/%d", kind, c, source, migrated)
+		}
+	}
+	check("Edit Box", 3, 3)
+	check("Text", 1, 1)
+	check("Oval", 1, 0)
+	check("Rounded Rectangle", 1, 1)
+	check("Button", 1, 0)
+	check("Group", 1, 1)
+	if got.Report.Counts.RejectedCount != 0 {
+		t.Fatalf("layout objects must never reject a layout: %+v", got.Report.Rejected)
+	}
+	var unsupported, review int
+	for _, it := range append(append([]ReportItem{}, got.Report.Unsupported...), got.Report.ManualActionRequired...) {
+		if it.Domain != "layout" {
+			continue
+		}
+		switch it.Category {
+		case CategoryUnsupported:
+			unsupported++
+			if !strings.Contains(it.Detail, "1 button") || !strings.Contains(it.Detail, "front panel") {
+				t.Fatalf("unsupported detail: %s", it.Detail)
+			}
+		case CategoryManualActionRequired:
+			review++
+			if !strings.Contains(it.Detail, "1 field read through more than one relationship") ||
+				!strings.Contains(it.Detail, "1 merge field") {
+				t.Fatalf("review detail: %s", it.Detail)
+			}
+		}
+	}
+	if unsupported != 1 || review != 1 {
+		t.Fatalf("one item of each per layout: %d unsupported, %d review", unsupported, review)
+	}
+}
+
+func TestCalcLiteral(t *testing.T) {
+	for in, want := range map[string]string{`"a"`: "a", `"a¶b"`: "a\nb", `"say \"hi\""`: `say "hi"`} {
+		if got, ok := calcLiteral(in); !ok || got != want {
+			t.Fatalf("%s: %q %v", in, got, ok)
+		}
+	}
+	for _, in := range []string{`"a" & "b"`, `Title`, `""a`} {
+		if _, ok := calcLiteral(in); ok {
+			t.Fatalf("%s is not a literal", in)
+		}
+	}
+}
+
+func TestFMCSSColor(t *testing.T) {
+	for in, want := range map[string]string{
+		"rgba(100%,0%,0%,1)":   "#FF0000",
+		"rgba(0%,0%,0%,0.5)":   "#80000000",
+		"transparent":          "#00000000",
+		"rgb(255, 255, 255)":   "#FFFFFF",
+		"rgba(50%,50%,50%,1)":  "#808080",
+		"rgba(20%,40%,60%, 1)": "#336699",
+	} {
+		if got, ok := cssColor(in); !ok || got != want {
+			t.Fatalf("%s: %s", in, got)
+		}
+	}
+	if _, ok := cssColor("-fm-gradient(x)"); ok {
+		t.Fatal("a gradient is not a colour")
+	}
+}
+
+// A migrated field object names the value list it offers by the id the
+// migration gave the list; the import must point it at the list it creates.
+func TestNativeLayoutValueListSurvivesImport(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database not available:", err)
+	}
+	t.Cleanup(func() { _ = driver.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+	}
+
+	stamp := time.Now().UnixNano()
+	suffix := fmt.Sprintf(" %d", stamp)
+	design := strings.NewReplacer(
+		`name="Recipes"`, `name="Recipes`+suffix+`"`, `baseTable="Recipes"`, `baseTable="Recipes`+suffix+`"`,
+		`table="Recipes"`, `table="Recipes`+suffix+`"`,
+		`name="Ingredients"`, `name="Ingredients`+suffix+`"`, `baseTable="Ingredients"`, `baseTable="Ingredients`+suffix+`"`,
+		`table="Ingredients"`, `table="Ingredients`+suffix+`"`,
+		`name="Loose Ingredients"`, `name="Loose Ingredients`+suffix+`"`,
+		`name="Units"`, `name="Units`+suffix+`"`, `name="Recipe Card"`, `name="Recipe Card`+suffix+`"`,
+	).Replace(layoutObjectsFixture)
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	require.NoError(t, err)
+	require.Len(t, res.Bundle.Layouts, 1)
+	for i := range res.Bundle.TableOccurrences {
+		res.Bundle.TableOccurrences[i].XPos = float64(100_000 + stamp%1_000_000)
+		res.Bundle.TableOccurrences[i].YPos = float64(100_000 + i*200)
+	}
+	file, err := msgpack.Marshal(res.Bundle)
+	require.NoError(t, err)
+
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+	_, err = svc.ImportSolution(ctx, file)
+	require.NoError(t, err)
+
+	tables, err := svc.ListTables(ctx)
+	require.NoError(t, err)
+	for _, tbl := range res.Bundle.Tables {
+		for _, created := range tables {
+			if created.Name == tbl.Name {
+				id := created.ID
+				t.Cleanup(func() { _ = svc.DeleteTable(context.Background(), id) })
+			}
+		}
+	}
+	lists, err := svc.ListValueLists(ctx)
+	require.NoError(t, err)
+	listID := ""
+	for _, vl := range lists {
+		if vl.Name == "Units"+suffix {
+			listID = vl.ID
+			id := vl.ID
+			t.Cleanup(func() { _ = svc.DeleteValueList(context.Background(), id) })
+		}
+	}
+	require.NotEmpty(t, listID)
+	layouts, err := svc.ListLayouts(ctx)
+	require.NoError(t, err)
+	var stored map[string]interface{}
+	for _, l := range layouts {
+		if l.Name == "Recipe Card"+suffix {
+			id := l.ID
+			t.Cleanup(func() { _ = svc.DeleteLayout(context.Background(), id) })
+			require.NoError(t, json.Unmarshal(l.Definition, &stored))
+		}
+	}
+	require.NotNil(t, stored)
+	found := false
+	for _, o := range stored["objects"].([]interface{}) {
+		if fb, ok := o.(map[string]interface{})["field_binding"].(map[string]interface{}); ok && fb["value_list_id"] != nil {
+			require.Equal(t, listID, fb["value_list_id"], "the field offers the list the import created")
+			found = true
+		}
+	}
+	require.True(t, found)
+}
+
+// A layout of the classic look names no theme and takes the file's.
+func TestNativeLayoutWithoutThemeTakesTheFilesTheme(t *testing.T) {
+	design := strings.Replace(layoutObjectsFixture, `<LayoutThemeReference name="Plain"/>`, `<LayoutThemeReference></LayoutThemeReference>`, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := got.Bundle.Layouts[0].Definition["parts"].([]map[string]interface{})
+	if parts[0]["fill_color"] != "#000080" {
+		t.Fatalf("header fill: %v", parts[0])
+	}
+}
+
+// A trigger set on a migrated object is attached to that object by its id,
+// whether the object shows a field or not (#26).
+func TestNativeLayoutTriggersFindTheirObject(t *testing.T) {
+	trigger := `<ScriptTriggers membercount="1"><ScriptTrigger id="1" action="OnObjectEnter" browseMode="True"><ScriptReference id="1" name="Synthetic"/></ScriptTrigger></ScriptTriggers>`
+	design := strings.Replace(layoutObjectsFixture,
+		`<Tooltip><Calculation><Text><![CDATA["Price in euros"]]></Text></Calculation></Tooltip>`,
+		`<Tooltip><Calculation><Text><![CDATA["Price in euros"]]></Text></Calculation></Tooltip>`+trigger, 1)
+	design = strings.Replace(design,
+		`<Bounds top="65" left="340" bottom="125" right="500"/>`,
+		`<Bounds top="65" left="340" bottom="125" right="500"/>`+trigger, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := got.Bundle.Layouts[0].Definition
+	ids := map[string]string{}
+	for _, o := range def["objects"].([]map[string]interface{}) {
+		if o["type"] == "rect" || o["name"] == "price" {
+			ids[o["type"].(string)] = o["id"].(string)
+		}
+	}
+	list, _ := def[schema.LayoutScriptTriggersKey].([]interface{})
+	if len(list) != 2 {
+		t.Fatalf("triggers: %v", list)
+	}
+	attached := map[string]bool{}
+	for _, raw := range list {
+		attached[raw.(map[string]interface{})["object_id"].(string)] = true
+	}
+	if !attached[ids["field"]] || !attached[ids["rect"]] {
+		t.Fatalf("triggers %v not attached to objects %v", list, ids)
+	}
+}

@@ -22,6 +22,43 @@ Color? parseLayoutColor(String? value) {
   return v == null ? null : Color(v);
 }
 
+/// The box a text object draws behind itself: its fill, and its line when it
+/// has a colour and a width. Null when it draws neither, as a label made in
+/// File4Base does by default.
+BoxDecoration? layoutBoxDecoration(LayoutObjectStyle style) {
+  final fill = parseLayoutColor(style.fillColor);
+  final line = parseLayoutColor(style.borderColor);
+  final border = line == null || style.borderWidth <= 0 ? null : Border.all(color: line, width: style.borderWidth);
+  if (fill == null && border == null) return null;
+  return BoxDecoration(
+    color: fill,
+    border: border,
+    borderRadius: style.cornerRadius > 0 ? BorderRadius.circular(style.cornerRadius) : null,
+  );
+}
+
+/// What a field object shows instead of a value it cannot read: a field the
+/// migration did not find, or one FileMaker read through more than one
+/// relationship, which File4Base does not follow. Null for a readable field.
+String? layoutFieldUnreadableNotice(FieldBindingModel? binding) {
+  if (binding == null) return null;
+  final occurrence = binding.tableOccurrence;
+  final name = occurrence == null || occurrence.isEmpty ? binding.fieldName : '$occurrence::${binding.fieldName}';
+  if (binding.missing) return '<$name> is missing';
+  if (binding.unresolvedRelationship) return '<$name> is not reachable from this layout';
+  return null;
+}
+
+/// Whether a calculation's answer, as text, is true the way FileMaker reads
+/// a condition: a number other than zero.
+bool isLayoutConditionTrue(String text) {
+  final t = text.trim().toLowerCase();
+  if (t.isEmpty || t == 'false') return false;
+  if (t == 'true') return true;
+  final n = num.tryParse(t.replaceAll(',', '.'));
+  return n != null && n != 0;
+}
+
 /// Normalizes a color typed by the user (`fff`, `#1e88e5`) to `#RRGGBB`, or
 /// returns null when it is not a valid color.
 String? normalizeLayoutColor(String value) {
@@ -611,9 +648,24 @@ class LayoutBackgroundView extends StatelessWidget {
                 repeat: image.fit == 'tile' ? ImageRepeat.repeat : ImageRepeat.noRepeat,
               ),
       ),
-      child: const SizedBox.expand(),
+      child: SizedBox.expand(child: Stack(children: layoutPartFills(layout))),
     );
   }
+}
+
+/// The parts of [layout] that have a fill of their own, as bands to draw
+/// behind its objects.
+List<Widget> layoutPartFills(LayoutDefinitionModel layout) {
+  final widgets = <Widget>[];
+  var top = 0.0;
+  for (final part in layout.parts) {
+    final color = parseLayoutColor(part.fillColor);
+    if (color != null && part.height > 0) {
+      widgets.add(Positioned(top: top, left: 0, right: 0, height: part.height, child: ColoredBox(color: color)));
+    }
+    top += part.height;
+  }
+  return widgets;
 }
 
 /// Plays a layout's [effect] (a key of [kLayoutTransitions]) once when it is
