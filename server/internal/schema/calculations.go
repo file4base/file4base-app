@@ -65,7 +65,11 @@ func (s *Service) checkCalculation(
 	}
 
 	spec := data.ReadStoredCalculation(*formulaJSON)
-	expr, err := calc.Parse(spec.Formula)
+	lib, err := s.library(ctx)
+	if err != nil {
+		return err
+	}
+	expr, err := calc.ParseWith(spec.Formula, calc.Options{Library: lib})
 	if err != nil {
 		return fmt.Errorf("%w: the formula of %q is not valid: %s", ErrInvalidFieldOptions, fieldName, err.Error())
 	}
@@ -117,7 +121,7 @@ func (s *Service) checkCalculation(
 			continue
 		}
 		other := data.ReadStoredCalculation(*col.CalculationFormula)
-		otherExpr, err := calc.Parse(other.Formula)
+		otherExpr, err := calc.ParseWith(other.Formula, calc.Options{Library: lib})
 		if err != nil {
 			continue // already-broken formulas are reported when they are saved
 		}

@@ -296,6 +296,15 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           });
           return;
         }
+        if (_linking && e is ApiException && e.statusCode == 404 && e.title == 'Not A Dependency') {
+          setState(() {
+            _isLoggingIn = false;
+            _errorMessage = 'Nothing in ${widget.usedBy.isEmpty ? 'this solution' : widget.usedBy} reaches '
+                '${widget.linkDatabase}. Map a file reference to it in File > Manage > File References, '
+                'then sign in.';
+          });
+          return;
+        }
         setState(() {
           _isLoggingIn = false;
           _errorMessage = e.toString().replaceFirst('Exception: ', '').replaceFirst('Authentication failed: ', '');

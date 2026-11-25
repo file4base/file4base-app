@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/autoenter"
+	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
@@ -49,8 +51,14 @@ func copyName(base, suffix string) string {
 var ErrInvalidFieldOptions = errors.New("invalid field options")
 
 // ValidateFieldOptions checks a column's default_value. It holds the field's
-// auto-enter and storage options as a JSON object (see the Fields dialog), or
-// nothing. It is metadata only: it is never placed in SQL.
+// auto-enter and storage options as a JSON object (see the Fields dialog and
+// docs/specs/auto_enter_options.md), or nothing. It is metadata only: it is
+// never placed in SQL.
+//
+// It checks the shape only, so a solution bundle saved before an option was
+// checked more strictly still imports; the server skips an option it cannot
+// apply. A field saved through the Fields dialog is checked with
+// ValidateFieldOptionsFor.
 func ValidateFieldOptions(options *string) error {
 	if options == nil || strings.TrimSpace(*options) == "" {
 		return nil
@@ -59,7 +67,86 @@ func ValidateFieldOptions(options *string) error {
 	if err := json.Unmarshal([]byte(*options), &obj); err != nil || obj == nil {
 		return fmt.Errorf("%w: default_value must be a JSON object of field options", ErrInvalidFieldOptions)
 	}
+	if _, err := autoenter.Parse(options); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
+	}
 	return nil
+}
+
+// ValidateFieldOptionsFor is ValidateFieldOptions for a field of fieldType,
+// whose auto-enter options must also be ones such a field can hold. Its
+// auto-enter calculation may call the custom functions of functions.
+func ValidateFieldOptionsFor(fieldType string, options *string, functions *calc.Library) error {
+	if err := ValidateFieldOptions(options); err != nil {
+		return err
+	}
+	if err := autoenter.ValidateWith(fieldType, options, functions); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
+	}
+	return nil
+}
+
+// autoEnterLibrary is the custom functions an auto-enter calculation in
+// options may call; options without one need none, and are read without
+// reading them.
+func (s *Service) autoEnterLibrary(ctx context.Context, options *string) (*calc.Library, error) {
+	if o, err := autoenter.Parse(options); err != nil || !o.CalculatedEnabled {
+		return nil, nil
+	}
+	return s.library(ctx)
+}
+
+// writeFieldOptions stores a column's options. Options without serial_next
+// keep the next serial value the column has now, which records may have
+// moved on since the options were read: only options that name it set it
+// (see docs/specs/auto_enter_options.md). The row is locked while it is
+// read and written, as a serial number is allocated under the same lock.
+func (s *Service) writeFieldOptions(ctx context.Context, tableID, columnID string, options *string) error {
+	dialect := s.driver.Dialect()
+	tx, err := s.driver.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	lock := " FOR UPDATE"
+	if dialect.Engine() == dbal.EnginePostgres {
+		lock = " FOR NO KEY UPDATE"
+	}
+	var current sql.NullString
+	q := fmt.Sprintf("SELECT default_value FROM sys_columns WHERE id = %s AND table_id = %s%s",
+		dialect.Placeholder(1), dialect.Placeholder(2), lock)
+	if err := tx.QueryRowContext(ctx, q, columnID, tableID).Scan(&current); err != nil {
+		return err
+	}
+	value := options
+	if options != nil && current.Valid && !autoenter.HasKey(options, "serial_next") && autoenter.HasKey(&current.String, "serial_next") {
+		if live, err := autoenter.Parse(&current.String); err == nil {
+			merged, err := autoenter.WithSerialNext(options, live.SerialNext)
+			if err != nil {
+				return err
+			}
+			value = &merged
+		}
+	}
+	q = fmt.Sprintf("UPDATE sys_columns SET default_value = %s WHERE id = %s AND table_id = %s",
+		dialect.Placeholder(1), dialect.Placeholder(2), dialect.Placeholder(3))
+	if _, err := tx.ExecContext(ctx, q, value, columnID, tableID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// columnFieldType is the declared type of a column, "" when there is none.
+func (s *Service) columnFieldType(ctx context.Context, tableID, columnID string) (string, error) {
+	dialect := s.driver.Dialect()
+	q := fmt.Sprintf("SELECT field_type FROM sys_columns WHERE id = %s AND table_id = %s",
+		dialect.Placeholder(1), dialect.Placeholder(2))
+	var fieldType string
+	err := s.driver.DB().QueryRowContext(ctx, q, columnID, tableID).Scan(&fieldType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return fieldType, err
 }
 
 // TableMetadata represents a user database table entry in sys_tables
@@ -230,7 +317,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			source_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
 			created_at ` + ts + `,
 			updated_at ` + ts + `,
-			source_column_name VARCHAR(64)
+			source_column_name VARCHAR(64),
+			second_column_name VARCHAR(64)
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_users (
 			id VARCHAR(36) PRIMARY KEY,
@@ -415,11 +503,15 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		// Original filename, MIME type and SHA-256 metadata for migrated
 		// container fields (#125).
 		containermeta.CreateTableSQL,
+		// The solution's custom functions (see
+		// migrations/007_custom_functions.sql).
+		customFunctionsSQL(ts),
 	}
 	// The options of a value list taken from a field (#31) are added to
 	// sys_value_lists rather than declared in it, so a new database and an
 	// older one end up with the same columns and foreign keys.
 	queries = append(queries, valueListOptionsSQL(s.driver.Dialect().Engine())...)
+	queries = append(queries, customFunctionNameIndexSQL(s.driver.Dialect().Engine())...)
 
 	db := s.driver.DB()
 	for _, q := range queries {
@@ -651,7 +743,11 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	if err := dbal.CheckIdentifier("column", name); err != nil {
 		return nil, err
 	}
-	if err := ValidateFieldOptions(col.DefaultValue); err != nil {
+	functions, err := s.autoEnterLibrary(ctx, col.DefaultValue)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateFieldOptionsFor(string(col.FieldType), col.DefaultValue, functions); err != nil {
 		return nil, err
 	}
 	rules, err := validation.Parse(col.ValidationRules)
@@ -945,7 +1041,15 @@ type UpdateColumnOptions struct {
 // UpdateColumn updates a column's metadata (e.g. display name, options)
 func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID string, opts UpdateColumnOptions) (*ColumnMetadata, error) {
 	if opts.UpdateDefaultValue {
-		if err := ValidateFieldOptions(opts.DefaultValue); err != nil {
+		fieldType, err := s.columnFieldType(ctx, tableID, columnID)
+		if err != nil {
+			return nil, err
+		}
+		functions, err := s.autoEnterLibrary(ctx, opts.DefaultValue)
+		if err != nil {
+			return nil, err
+		}
+		if err := ValidateFieldOptionsFor(fieldType, opts.DefaultValue, functions); err != nil {
 			return nil, err
 		}
 	}
@@ -978,6 +1082,12 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 		}
 	}
 
+	if opts.UpdateDefaultValue {
+		if err := s.writeFieldOptions(ctx, tableID, columnID, opts.DefaultValue); err != nil {
+			return nil, err
+		}
+	}
+
 	db := s.driver.DB()
 	dialect := s.driver.Dialect()
 
@@ -987,10 +1097,6 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 		if opts.UpdateRepetitions {
 			sets = append(sets, "max_repetitions = ?")
 			args = append(args, opts.MaxRepetitions)
-		}
-		if opts.UpdateDefaultValue {
-			sets = append(sets, "default_value = ?")
-			args = append(args, opts.DefaultValue)
 		}
 		if opts.UpdateCalculation {
 			sets = append(sets, "calculation_formula = ?")
@@ -1025,11 +1131,6 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 	if opts.UpdateRepetitions {
 		sets = append(sets, fmt.Sprintf("max_repetitions = $%d", argIdx))
 		args = append(args, opts.MaxRepetitions)
-		argIdx++
-	}
-	if opts.UpdateDefaultValue {
-		sets = append(sets, fmt.Sprintf("default_value = $%d", argIdx))
-		args = append(args, opts.DefaultValue)
 		argIdx++
 	}
 	if opts.UpdateCalculation {

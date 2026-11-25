@@ -24,6 +24,23 @@ func Rewrite(src string, opts Options, rename func(table, field string) (string,
 	if err != nil {
 		return "", nil, err
 	}
+	return rewrite(expr, rename)
+}
+
+// RewriteFunction is Rewrite for the formula of a custom function, in which
+// its parameters are names of their own rather than fields. opts.Library
+// holds the functions it may call, itself included.
+func RewriteFunction(fn CustomFunction, opts Options, rename func(table, field string) (string, bool)) (out string, unresolved []Reference, err error) {
+	known := opts.names()
+	root, err := parseFormula(fn.Formula, known, opts.Library, fn.Parameters)
+	if err != nil {
+		return "", nil, err
+	}
+	return rewrite(&Expr{root: root, src: fn.Formula, lib: opts.Library, known: known}, rename)
+}
+
+func rewrite(expr *Expr, rename func(table, field string) (string, bool)) (out string, unresolved []Reference, err error) {
+	src := expr.src
 	tokens, err := lex(src, expr.known)
 	if err != nil {
 		return "", nil, err
@@ -39,7 +56,7 @@ func Rewrite(src string, opts Options, rename func(table, field string) (string,
 	}
 	var edits []edit
 	seen := map[int]bool{}
-	expr.walk(func(n node) {
+	expr.walkOwn(func(n node) {
 		f, ok := n.(fieldNode)
 		if !ok || seen[f.at] {
 			return
@@ -94,8 +111,18 @@ func QuoteName(name string) string {
 
 func isReservedWord(name string) bool {
 	switch strings.ToUpper(name) {
-	case "AND", "OR", "XOR", "NOT", "TRUE", "FALSE":
+	case "AND", "OR", "XOR", "NOT", "TRUE", "FALSE", "PI", "RANDOM", "SELF":
 		return true
 	}
 	return false
+}
+
+// QuoteFieldName is QuoteName for a field a formula calling the custom
+// functions of lib reads: a field named like one of them is quoted too, so
+// it is not read as a call to it.
+func QuoteFieldName(name string, lib *Library) string {
+	if lib.Has(name) {
+		return "${" + name + "}"
+	}
+	return QuoteName(name)
 }

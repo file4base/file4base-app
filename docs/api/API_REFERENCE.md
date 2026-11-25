@@ -345,7 +345,7 @@ Returns created `ColumnMetadata`.
 ### `PUT /api/v1/schemas/tables/{id}/columns/{columnId}`
 Updates column metadata and options (display name, auto-enter rules, default values, calculation formulas, and validation rules).
 
-`default_value` holds the field's auto-enter and storage options as a JSON object (written by the Fields dialog), or `null`. It is metadata only: it is never placed in SQL, so the physical column has no `DEFAULT`. Any other value, including SQL expressions, answers `422 Unprocessable Entity`; the same applies to `default_value` when adding a column. When `data_enabled` is `true`, `data_value` is the constant entered in that field by `POST /api/v1/data/{table}` when the request does not include the field.
+`default_value` holds the field's auto-enter and storage options as a JSON object (written by the Fields dialog), or `null`. It is metadata only: it is never placed in SQL, so the physical column has no `DEFAULT`. Any other value, including SQL expressions, answers `422 Unprocessable Entity`; the same applies to `default_value` when adding a column. The auto-enter keys — stamps, serial number, data, calculated value, looked-up value and prohibit modification — are documented in [docs/specs/auto_enter_options.md](../specs/auto_enter_options.md), and checked against the field's type when saved (`422 Invalid Field Options`). Options saved without `serial_next` keep the field's live next serial value.
 
 #### Request Body
 ```json
@@ -559,6 +559,8 @@ CALCULATION fields are filled in by their formula and are not writable: a value 
 
 The fields' validation rules (`validation_rules`, set in the Fields dialog) are enforced on `POST` (every ruled field) and `PUT` (the fields being changed): not empty, unique, existing value, strict type (`Numeric Only`, `Date`, `4-Digit Year`, `Time of Day`, `Text Only`), range and maximum length, with the custom message when one is set. A broken rule answers `422 Unprocessable Entity` naming the field and the rule in `invalid_params`, and nothing is written. Unique rules are backed by a unique index on PostgreSQL, so concurrent duplicates cannot both succeed; a unique rule cannot be enabled while records already share a value. Data import applies the rules whose timing is "Always", not those for "Only during data entry"; malformed rules are rejected with `422` when saved.
 
+The fields' **auto-enter options** enter their values on `POST` and `PUT` (stamps, serial numbers, data, calculated and looked-up values); a value the request gives wins. A data-entry write that changes a field whose options prohibit modification answers `422 Prohibited Modification`; a script step sends the header `X-File4Base-Entry: script`, which may set it and decides nothing about privileges. See [docs/specs/auto_enter_options.md](../specs/auto_enter_options.md).
+
 #### Request Body
 ```json
 {
@@ -570,7 +572,55 @@ The fields' validation rules (`validation_rules`, set in the Fields dialog) are 
 ---
 
 ### `PUT /api/v1/data/{table}/{id}`
-Updates an existing record by primary key ID.
+Updates an existing record by primary key ID. Auto-enter options apply as for `POST`: modification stamps when a stored, non-global field changes.
+
+---
+
+### `POST /api/v1/data/{table}/{id}/duplicate`
+Creates a copy of record `{id}`, as FileMaker's *Duplicate Record*: every stored field is copied, and the auto-enter options enter new values (a new serial number, new stamps), except a looked-up value and a calculated value with *Do not replace*, which are copied. Needs the create privilege. For a record of another solution's occurrence, use the occurrence route (§ 18), which duplicates it in that solution.
+
+#### Response `201 Created`
+The new record.
+
+---
+
+### `GET /api/v1/data/{table}/serials/{field}`
+### `PUT /api/v1/data/{table}/serials/{field}`
+Reads, or sets, the value the next record gets in a serial number field: FileMaker's `GetNextSerialValue` and *Set Next Serial Value*. `GET` needs read access to the table, `PUT` the edit privilege.
+
+#### Request Body (`PUT`)
+```json
+{"next_value": "INV0100"}
+```
+
+#### Response `200 OK`
+```json
+{"field": "invoice_number", "next_value": "INV0100"}
+```
+
+#### Errors
+- `422 Not a Serial Number Field` — the field has no serial number option.
+- `400 Serial Number Error` — a next value the field cannot take (a number field's next value that is not a whole number, a text with no digit).
+
+---
+
+### `POST /api/v1/data/{table}/relookup`
+FileMaker's *Relookup Field Contents*: copies again the looked-up values of the given records whose lookups start from the match field `field`. The records it changes are modified (stamps, calculated values). Needs the edit privilege; at most 10,000 records.
+
+#### Request Body
+```json
+{"field": "rate_code", "record_ids": ["b1f6…", "c27a…"]}
+```
+
+#### Response `200 OK`
+`records` are the records it changed, as they are now, for a client to update its found set in place.
+```json
+{"updated": 1, "records": [{"id": "c27a…", "rate_code": "R2", "rate": 12.5}]}
+```
+
+#### Errors
+- `400` — no looked-up value of the table starts from `field`.
+- `413 Too Many Records` — more than 10,000 `record_ids`.
 
 ---
 
@@ -667,7 +717,8 @@ Brings the records in. Same body, plus `options`:
     "date_order": "dmy",
     "mappings": [{"column": 0, "field": "last_name"}, {"column": 1, "field": "city"}],
     "match_fields": ["last_name"],
-    "add_unmatched": false
+    "add_unmatched": false,
+    "perform_auto_enter": true
   }
 }
 ```
@@ -675,6 +726,7 @@ Brings the records in. Same body, plus `options`:
 - `action` — `add` makes every row a new record; `update_matching` updates the record whose `match_fields` hold the same values, case-insensitively, and adds or passes over the rest according to `add_unmatched`.
 - `date_order` — `iso` (default), `dmy` or `mdy`. `03/04/2011` cannot be read without being told.
 - `mappings` — which column goes to which field. A column not listed is left out.
+- `perform_auto_enter` — FileMaker's *Perform auto-enter options while importing* (default `false`): the fields' auto-enter options enter their values over the imported ones, except a calculated value with *Do not replace*, which keeps an imported value. Prohibit modification never stops an import.
 
 **One transaction.** The first row that cannot be read or stored takes the whole file with it; nothing is written and the error names the row and the column. The field validation rules apply, and calculation fields are worked out for imported records.
 
@@ -1131,7 +1183,8 @@ A `field` list may also have the options FileMaker gives such a list. Left out, 
 | `sort_by` | `first` (default) or `second`: the field the values are sorted by. `second` needs a second field. |
 | `related_occurrence_id` | Include only the values of the records related to the current record of this table occurrence, following the relationship graph from it, across as many relationships as the path takes. |
 | `source_occurrence_id` | The occurrence of the list's table the related values are read through; required with `related_occurrence_id`, and cleared without it. |
-| `source_column_name` | A field of **another solution's table**, by name: the list has no `source_table_id` or `source_column_id`, and `source_occurrence_id` is the external occurrence it is read through (§ 18). No second field or related values yet. Resolving it answers `424 external_unavailable`. |
+| `source_column_name` | A field of **another solution's table**, by name: the list has no `source_table_id` or `source_column_id`, and `source_occurrence_id` is the external occurrence it is read through (§ 18). Resolving it answers `424 external_unavailable` when that solution cannot be read. |
+| `second_column_name` | The second field of a list with `source_column_name`, by name in the same table (`second_column_id` is refused on such a list, `422`). `show_second_only` and `sort_by` apply as above, and `related_occurrence_id` names an occurrence **of this solution** the related values start from (one of another solution's table answers `422`): the match values are read here, the values in that solution. |
 
 ```json
 {
@@ -1304,7 +1357,7 @@ Merges a solution file into the session's database (owner only). Version `2.0` f
 
 1. The whole file is validated first (structure, names, field options and every internal reference); a file with a dangling reference answers `400` and changes nothing.
 2. Existing objects are matched by name (tables, fields, occurrences, layouts and scripts, accounts by username) and every reference is rewritten to the database's own IDs, including the `script_id` of buttons and script triggers in layout definitions.
-3. Missing objects are created; matching layouts and scripts are updated; a relationship joining the same occurrences on the same criteria takes the file's options for each side (allow creation, delete related records, sort), counted in `relationships_updated` when they changed; existing tables, fields and accounts are left unchanged. Importing the same file twice creates nothing new.
+3. Missing objects are created; matching layouts and scripts are updated; a relationship joining the same occurrences on the same criteria takes the file's options for each side (allow creation, delete related records, sort), counted in `relationships_updated` when they changed; existing tables, fields and accounts are left unchanged. Custom functions are added before the tables, those the database does not have yet (matched by name, whatever its case), counted in `custom_functions_created`; one that does not read, calls one that does not, or is named like a built-in function refuses the file with `400`. Importing the same file twice creates nothing new.
 4. Missing accounts are created **disabled**, with a random password nobody knows, keeping their role and layout permissions: an owner enables them and sets their password in Manage Security.
 5. If a write fails, everything the import created is removed and every updated layout, script or relationship gets its previous version back; the response is `400` with the reason.
 6. A value list is restored as it was saved, even one whose field cannot be indexed (refused when a list is created or updated): a solution file must stay restorable. Such a list offers nothing until its field is stored or changed, and `warnings` says so; the import is not refused for it.
@@ -1464,7 +1517,7 @@ Revokes the session of the bearer token, and with the session a sign-in opened e
 ---
 
 ### `POST /api/v1/auth/link`
-Signs the session in to a solution its external occurrences read (§ 18), with an account **of that solution**: what a client asks for when a read answers `424` with `reason: "not_signed_in"`, or when the sign-in could not link it. The session group then reads that solution as that account, replacing the account it held there. Nothing of the signed-in account carries over: its role and privileges in the other solution are its own.
+Signs the session in to a solution its external occurrences read (§ 18), with an account **of that solution**: what a client asks for when a read answers `424` with `reason: "not_signed_in"`, or when the sign-in could not link it. A solution a **mapped file reference** names can be signed in to before any occurrence goes through it (to list its tables in Specify Table, or for a `Perform Script` or `Open File` through it), and so can the far solution of a **transfer** (`Import Records`, `Export Records`); `references` lists the file references that name it, empty for a transfer's. The session group then reads that solution as that account, replacing the account it held there. Nothing of the signed-in account carries over: its role and privileges in the other solution are its own.
 ```json
 { "database": "customers_db", "username": "alice", "password": "…", "totp_code": "123456" }
 ```
@@ -1475,7 +1528,7 @@ One entry of `linked`, with `status: "linked"`, `username`, `token` and `expires
 
 #### Errors
 - `401 Unauthorized`: wrong credentials, or `"mfa_required": true` when the code is missing or wrong.
-- `404 Not A Dependency`: no external occurrence of the session group's solutions is mapped to `database`; `404 Database Not Found`: it is not on this server.
+- `404 Not A Dependency`: no external occurrence, mapped file reference or transfer of the session group's solutions reaches `database`; `404 Database Not Found`: it is not on this server.
 - `409 Conflict`: `database` is the session's own solution, or the group was signed out.
 - `422 Unprocessable Entity`: `database` or `username` missing.
 - `429 Too Many Requests`: that account's lockout is active (`Retry-After`).
@@ -2607,6 +2660,7 @@ The records of a table occurrence, by id or name: those of a table of this solut
 | `GET /`, `POST /find`, `POST /summary`, `GET /{id}` | `GET /api/v1/data/{table}`, `/find`, `/summary`, `/{id}` | Read as the group's account there. A find on a related field: `424`. |
 | `POST /`, `PUT /{id}`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes (`PATCH` is `PUT`: both change only the fields sent) | Written there as the group's account, with its privileges (above). |
 | `GET /{id}/related`, `POST /related` | the related reads | Follow this solution's relationships from that record. |
+| `POST /{id}/duplicate`, `GET /serials/{field}`, `PUT /serials/{field}`, `POST /relookup` | the auto-enter routes (§ 4) | Run there as the group's account: the copy gets that solution's serial numbers and stamps. |
 
 An unknown occurrence answers `404 Table Occurrence Not Found`.
 

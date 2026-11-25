@@ -1,6 +1,7 @@
 package calc
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -138,17 +139,19 @@ func TestSelfAndLayoutObjectsNeedALayout(t *testing.T) {
 }
 
 func TestAstraPass3Regressions(t *testing.T) {
-	// A custom function named Random replaces the built-in.
+	// A custom function named Random does not replace the built-in, as
+	// FileMaker does not let it.
 	lib, err := NewLibrary([]CustomFunction{{Name: "Random", Formula: "4"}}, Options{})
-	if err != nil {
-		t.Fatal(err)
+	var refused *LibraryError
+	if !errors.As(err, &refused) || refused.Problems["Random"] == nil {
+		t.Fatalf("a custom Random: %v", err)
 	}
 	expr, err := ParseWith("Random + 1", Options{Library: lib})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v, err := EvaluateValue(expr, &RecordContext{}); err != nil || v.Text(nil) != "5" {
-		t.Errorf("custom Random + 1 = %v, %v; want 5", v, err)
+	if v, err := EvaluateValue(expr, &RecordContext{}); err != nil || v.Text(nil) == "5" {
+		t.Errorf("Random + 1 = %v, %v; want the built-in Random", v, err)
 	}
 	// An aggregate over a deleted field is the deleted-reference error.
 	expr, err = Parse("Sum ( Orders::<Field Missing> )")

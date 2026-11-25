@@ -1,17 +1,32 @@
+import 'dart:async';
+
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
+import 'package:file4base_client/features/schema_manager/manage_file_references_dialog.dart';
 import 'package:flutter/material.dart';
 
+/// Specify Table: the table a new occurrence shows, from this solution or,
+/// through a file reference, from another solution of the server (#107).
+///
+/// It answers `{base_table_id, name}` for a table of this solution and
+/// `{external: {file_reference, table}, name}` for one of another solution.
 class SpecifyTableDialog extends StatefulWidget {
 
   const SpecifyTableDialog({
     required this.tables, required this.existingOccurrences, super.key,
     this.activeDatabaseName = 'Current file',
     this.initialOccurrence,
+    this.apiClient,
   });
   final List<TableModel> tables;
   final List<TableOccurrenceModel> existingOccurrences;
   final String activeDatabaseName;
   final TableOccurrenceModel? initialOccurrence;
+
+  /// Lists the file references and, through the session this one holds in
+  /// the solution one is mapped to, that solution's tables. Without it only
+  /// this solution's tables are offered.
+  final ApiClient? apiClient;
 
   static Future<Map<String, dynamic>?> show(
     BuildContext context, {
@@ -19,6 +34,7 @@ class SpecifyTableDialog extends StatefulWidget {
     required List<TableOccurrenceModel> existingOccurrences,
     String activeDatabaseName = 'Current file',
     TableOccurrenceModel? initialOccurrence,
+    ApiClient? apiClient,
   }) {
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -27,6 +43,7 @@ class SpecifyTableDialog extends StatefulWidget {
         existingOccurrences: existingOccurrences,
         activeDatabaseName: activeDatabaseName,
         initialOccurrence: initialOccurrence,
+        apiClient: apiClient,
       ),
     );
   }
@@ -38,11 +55,30 @@ class SpecifyTableDialog extends StatefulWidget {
 class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
   TableModel? _selectedTable;
   late final TextEditingController _nameController;
-  String _selectedDataSource = 'Current file';
+
+  /// The data source: [_local], a file reference's id, or [_addReference]
+  /// while the dialog to add one is open.
+  String _selectedDataSource = _local;
+  static const _local = '';
+  static const _addReference = '+';
+
+  List<FileReferenceModel> _references = const [];
+
+  /// The tables of the selected file reference's solution, or why they are
+  /// not listed.
+  List<TableModel>? _externalTables;
+  bool _loadingExternal = false;
+  String? _externalProblem;
+  bool _needsSignIn = false;
+
+  FileReferenceModel? get _reference => _references.where((r) => r.id == _selectedDataSource).firstOrNull;
+
+  List<TableModel> get _listedTables => _selectedDataSource == _local ? widget.tables : (_externalTables ?? const []);
 
   @override
   void initState() {
     super.initState();
+    if (widget.apiClient != null && widget.initialOccurrence == null) unawaited(_loadReferences());
     if (widget.initialOccurrence != null) {
       _selectedTable = widget.tables.where((t) => t.id == widget.initialOccurrence!.baseTableId).firstOrNull ??
           (widget.tables.isNotEmpty ? widget.tables.first : null);
@@ -73,6 +109,96 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
       count++;
     }
     return '$baseName $count';
+  }
+
+  Future<void> _loadReferences() async {
+    try {
+      final refs = await widget.apiClient!.listFileReferences();
+      if (mounted) setState(() => _references = refs..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase())));
+    } catch (_) {
+      // Only this solution's tables are offered; the list says so.
+    }
+  }
+
+  Future<void> _chooseDataSource(String? value) async {
+    if (value == null) return;
+    if (value == _addReference) {
+      final created = await FileReferenceEditor.show(context, apiClient: widget.apiClient!);
+      if (!mounted) return;
+      if (created == null) return;
+      setState(() => _references = [..._references, created]);
+      value = created.id;
+    }
+    setState(() {
+      _selectedDataSource = value!;
+      _selectedTable = null;
+      _externalTables = null;
+      _externalProblem = null;
+      _needsSignIn = false;
+      if (value == _local) {
+        _selectedTable = widget.tables.firstOrNull;
+        if (_selectedTable != null) _nameController.text = _suggestOccurrenceName(_selectedTable!);
+      }
+    });
+    if (value != _local) await _loadExternalTables();
+  }
+
+  /// Lists the tables of the selected reference's solution, as the account
+  /// this session holds there.
+  Future<void> _loadExternalTables() async {
+    final ref = _reference;
+    final client = widget.apiClient;
+    if (ref == null || client == null) return;
+    if (!ref.isMapped) {
+      setState(() => _externalProblem = 'The file reference "${ref.name}" is not mapped to a solution yet. '
+          'Choose its solution in File > Manage > File References to list its tables.');
+      return;
+    }
+    final token = client.linkedToken(ref.database);
+    if (token == null) {
+      setState(() {
+        _needsSignIn = true;
+        _externalProblem = 'Not signed in to ${ref.database} (through "${ref.name}"). Sign in to it to list its tables.';
+      });
+      return;
+    }
+    setState(() {
+      _loadingExternal = true;
+      _externalProblem = null;
+      _needsSignIn = false;
+    });
+    try {
+      final tables = await client.forPeerSession(token).listTables();
+      if (!mounted || _reference?.id != ref.id) return;
+      setState(() {
+        _externalTables = tables;
+        _loadingExternal = false;
+        _externalProblem = tables.isEmpty ? '${ref.database} has no tables yet.' : null;
+        _selectedTable = tables.firstOrNull;
+        if (_selectedTable != null) _nameController.text = _suggestOccurrenceName(_selectedTable!);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final ended = e is ApiException && e.statusCode == 401;
+      if (ended) ExternalAccess.of(client).peerRejected(ref.database);
+      setState(() {
+        _loadingExternal = false;
+        _needsSignIn = ended;
+        _externalProblem = ended
+            ? 'Your session in ${ref.database} has ended. Sign in to it again to list its tables.'
+            : 'The tables of ${ref.database} (through "${ref.name}") could not be listed: '
+                '${e is ApiException ? e.detail : e}';
+      });
+    }
+  }
+
+  Future<void> _signIn() async {
+    final ref = _reference;
+    final client = widget.apiClient;
+    if (ref == null || client == null) return;
+    if (await ExternalAccess.of(client).signInTo(context, ref.database) && mounted) {
+      await _loadExternalTables();
+    }
   }
 
   void _onTableSelected(TableModel table) {
@@ -150,18 +276,30 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
                     ),
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String>(
+                        key: const ValueKey('specify-table-data-source'),
                         value: _selectedDataSource,
                         isDense: true,
                         isExpanded: true,
                         items: [
                           DropdownMenuItem(
-                            value: 'Current file',
+                            value: _local,
                             child: Text('Current file ("${widget.activeDatabaseName}")', style: const TextStyle(fontSize: 13)),
                           ),
+                          for (final ref in _references)
+                            DropdownMenuItem(
+                              value: ref.id,
+                              child: Text(
+                                ref.isMapped ? '${ref.name} (${ref.database})' : '${ref.name} (not mapped)',
+                                style: const TextStyle(fontSize: 13, fontStyle: FontStyle.italic),
+                              ),
+                            ),
+                          if (widget.apiClient != null)
+                            const DropdownMenuItem(
+                              value: _addReference,
+                              child: Text('Add File Reference…', style: TextStyle(fontSize: 13)),
+                            ),
                         ],
-                        onChanged: (val) {
-                          if (val != null) setState(() => _selectedDataSource = val);
-                        },
+                        onChanged: (val) => unawaited(_chooseDataSource(val)),
                       ),
                     ),
                   ),
@@ -176,14 +314,37 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
                 borderRadius: BorderRadius.circular(6),
                 color: theme.cardColor,
               ),
-              child: widget.tables.isEmpty
+              child: _loadingExternal
+                  ? const Center(child: CircularProgressIndicator())
+                  : _externalProblem != null
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(_externalProblem!,
+                                key: const ValueKey('specify-table-external-problem'),
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 12.5)),
+                            if (_needsSignIn)
+                              TextButton(
+                                key: const ValueKey('specify-table-sign-in'),
+                                onPressed: () => unawaited(_signIn()),
+                                child: Text('Sign in to ${_reference?.database}…'),
+                              ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : _listedTables.isEmpty
                   ? const Center(
                       child: Text('No tables available', style: TextStyle(color: Colors.grey, fontSize: 13)),
                     )
                   : ListView.builder(
-                      itemCount: widget.tables.length,
+                      itemCount: _listedTables.length,
                       itemBuilder: (ctx, idx) {
-                        final tbl = widget.tables[idx];
+                        final tbl = _listedTables[idx];
                         final isSelected = _selectedTable?.id == tbl.id;
                         return InkWell(
                           onTap: () => _onTableSelected(tbl),
@@ -252,8 +413,11 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
           onPressed: (external == null && _selectedTable == null) || _nameController.text.trim().isEmpty
               ? null
               : () {
+                  final reference = _reference;
                   Navigator.of(context).pop({
-                    if (external == null) 'base_table_id': _selectedTable!.id,
+                    if (external == null && reference == null) 'base_table_id': _selectedTable!.id,
+                    if (external == null && reference != null)
+                      'external': {'file_reference': reference.name, 'table': _selectedTable!.name},
                     'name': _nameController.text.trim(),
                   });
                 },

@@ -84,6 +84,12 @@ type formulaBinding struct {
 	// matchColumns are the columns (by id) a relationship matches on.
 	matchColumns map[string]bool
 	locale       *calc.Locale // nil when source_locale was not named
+	// functions are the solution's custom functions, as the source wrote
+	// them, which its formulas are read with, and stored the same functions
+	// as they were imported (see bindCustomFunctions). dropped are the ones
+	// that could not be, by upper-case name.
+	functions, stored *calc.Library
+	dropped           map[string]string
 }
 
 // boundOccurrence is an imported table occurrence: its name and its table.
@@ -195,20 +201,6 @@ func formulaLocale(loc *sourceLocale) *calc.Locale {
 // **quarantined**: the column keeps the type the calculation would have
 // produced and stores a plain value, and the report says why.
 func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeByTableCol map[string]string) []ReportItem {
-	names := b.fields[table.Name]
-	if names == nil {
-		names = newFieldNameMap()
-	}
-	var local []string
-	for _, name := range names.sources {
-		// A plain word is read as written, which keeps "Code" and "code"
-		// apart (#89); only a name a plain word cannot hold is declared.
-		if calc.QuoteName(name) != name {
-			local = append(local, name)
-		}
-	}
-	opts := calc.Options{Fields: local, Tables: b.occurrences, Locale: b.locale}
-
 	var items []ReportItem
 	var bound []boundCalculation
 	for i := range table.Columns {
@@ -230,93 +222,17 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 			items = append(items, this.quarantine(why, action, colTypeByTableCol)...)
 		}
 
-		expr, err := calc.ParseWith(formula, opts)
-		if err != nil {
-			why := fmt.Sprintf("could not be read (%v)", err)
-			if b.locale == nil && reCommaDecimal.MatchString(formula) {
-				why += "; it seems to write decimals with a comma, so name the locale of the source file (source_locale, such as fr-FR) and migrate again"
-			}
-			quarantine(why, fmt.Sprintf("Rewrite the calculation of %s in File4Base, or correct it in FileMaker and migrate again", target))
+		fb := b.bind(table.Name, formula, contextName(payload), target)
+		if fb.why != "" {
+			quarantine(fb.why, fb.action)
 			continue
 		}
-		var missing, related []string
-		for _, ref := range expr.RelatedFields() {
-			name := ref.Table + "::" + ref.Field
-			if ref.Missing {
-				missing = append(missing, name)
-			} else {
-				related = append(related, name)
-			}
-		}
-		if len(missing) > 0 {
-			quarantine(fmt.Sprintf("reads %s, a table or field that was deleted in FileMaker", quotedList(missing)),
-				fmt.Sprintf("Point the calculation of %s at an existing field, or remove that part of it", target))
-			continue
-		}
-		if slices.Contains(expr.Functions(), "GETLAYOUTOBJECTATTRIBUTE") {
-			quarantine("reads a layout object with GetLayoutObjectAttribute, which a field stored with its record cannot do",
-				fmt.Sprintf("Compute %s from fields instead of from a layout object, or fill it with a script", target))
-			continue
-		}
-
-		// The occurrence it is evaluated from, kept only when it is one of
-		// this table's: anything else would read the wrong records.
-		contextName, _ := payload["context"].(string)
-		from, hasContext := b.contextOf(table.Name, contextName)
-		if hasContext && strings.EqualFold(from.name, contextName) {
-			payload["context"] = from.name
+		if fb.context != "" {
+			payload["context"] = fb.context
 		} else {
 			delete(payload, "context")
 		}
-		var unreachable []string
-		for _, ref := range expr.RelatedFields() {
-			if to, ok := b.occByName[strings.ToLower(ref.Table)]; ok && (!hasContext || !b.reachable(from.id, to.id)) {
-				unreachable = append(unreachable, ref.Table+"::"+ref.Field)
-			}
-		}
-		if len(unreachable) > 0 {
-			quarantine(fmt.Sprintf("reads %s, but no relationship leads there from %s", quotedList(unreachable), table.Name),
-				fmt.Sprintf("Relate %s to the table it reads, or rewrite its calculation", target))
-			continue
-		}
-
-		rewritten, unresolved, err := calc.Rewrite(formula, opts, func(occurrence, field string) (string, bool) {
-			if occurrence == "" {
-				column, ok := names.resolve(field)
-				return calc.QuoteName(column), ok
-			}
-			occ, ok := b.occByName[strings.ToLower(occurrence)]
-			if ok && occ.external {
-				return calc.QuoteName(occ.name) + "::" + calc.QuoteName(externalFieldName(field)), true
-			}
-			if !ok || b.fields[occ.table] == nil {
-				return "", false
-			}
-			column, ok := b.fields[occ.table].resolve(field)
-			return calc.QuoteName(occ.name) + "::" + calc.QuoteName(column), ok
-		})
-		if err != nil {
-			quarantine(fmt.Sprintf("could not be read (%v)", err),
-				fmt.Sprintf("Rewrite the calculation of %s in File4Base", target))
-			continue
-		}
-		if len(unresolved) > 0 {
-			var refs []string
-			seen := map[string]bool{}
-			for _, ref := range unresolved {
-				name := ref.Field
-				if ref.Table != "" {
-					name = ref.Table + "::" + ref.Field
-				}
-				if !seen[name] {
-					seen[name] = true
-					refs = append(refs, name)
-				}
-			}
-			quarantine(fmt.Sprintf("reads %s, which the imported tables do not have", quotedList(refs)),
-				fmt.Sprintf("Repoint the calculation of %s at the fields it should read, or add the missing %s", target, quotedList(refs)))
-			continue
-		}
+		related, rewritten := fb.related, fb.rewritten
 
 		// A relationship matches on what the database holds, and an unstored
 		// calculation holds nothing there.
@@ -347,7 +263,34 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 		bound = append(bound, this)
 		items = append(items, item)
 	}
-	return append(items, finishCalculations(bound, b.matchColumns, colTypeByTableCol)...)
+	return append(items, finishCalculations(bound, b.matchColumns, colTypeByTableCol, b.stored)...)
+}
+
+// renamer names a field reference of a formula as the import named it: a
+// field of the formula's own table (names, nil for a formula of no table)
+// by its column, one read through an occurrence by the occurrence and the
+// column, a field of another file's table by the name its migration gives it.
+func (b formulaBinding) renamer(names *fieldNameMap) func(occurrence, field string) (string, bool) {
+	return func(occurrence, field string) (string, bool) {
+		if occurrence == "" {
+			if names == nil {
+				return "", false
+			}
+			// A column named like a custom function is quoted, so the
+			// stored formula still reads the field, not the function.
+			column, ok := names.resolve(field)
+			return calc.QuoteFieldName(column, b.stored), ok
+		}
+		occ, ok := b.occByName[strings.ToLower(occurrence)]
+		if ok && occ.external {
+			return calc.QuoteName(occ.name) + "::" + calc.QuoteName(externalFieldName(field)), true
+		}
+		if !ok || b.fields[occ.table] == nil {
+			return "", false
+		}
+		column, ok := b.fields[occ.table].resolve(field)
+		return calc.QuoteName(occ.name) + "::" + calc.QuoteName(column), ok
+	}
 }
 
 // boundCalculation is a calculation whose formula now reads the imported
@@ -377,13 +320,13 @@ func (c boundCalculation) quarantine(why, action string, colTypes map[string]str
 // was computed from changes. One a relationship matches on cannot be, and is
 // quarantined. Then it writes each formula into its column; an unstored
 // calculation's column holds nothing, so it is never required.
-func finishCalculations(bound []boundCalculation, matchColumns map[string]bool, colTypes map[string]string) []ReportItem {
+func finishCalculations(bound []boundCalculation, matchColumns map[string]bool, colTypes map[string]string, lib *calc.Library) []ReportItem {
 	unstored := map[string]bool{}
 	reads := map[string][]string{}
 	for _, c := range bound {
 		unstored[c.col.Name] = c.payload["stored"] == false
 		formula, _ := c.payload["formula"].(string)
-		if expr, err := calc.Parse(formula); err == nil {
+		if expr, err := calc.ParseWith(formula, calc.Options{Library: lib}); err == nil {
 			reads[c.col.Name] = expr.Fields()
 		}
 	}
@@ -455,17 +398,32 @@ func formulaText(raw string) string {
 
 // ownTableFormula is the formula of a Database Design Report calculation when
 // it reads only plain fields of its own table, the only kind that report's
-// route can apply.
-func ownTableFormula(raw string) (string, bool) {
+// route can apply. lib holds the solution's custom functions.
+func ownTableFormula(raw string, functions formulaBinding) (string, bool) {
 	formula := formulaText(raw)
 	if formula == "" {
 		return "", false
 	}
-	expr, err := calc.Parse(formula)
+	expr, err := calc.ParseWith(formula, calc.Options{Library: functions.stored})
 	if err != nil || len(expr.RelatedFields()) > 0 {
 		return formula, false
 	}
+	if _, ok := functions.callsDropped(expr); ok {
+		return formula, false
+	}
 	return formula, true
+}
+
+// callsDropped names a custom function the formula calls that could not be
+// migrated. A formula that reads at all calls one only when it is named
+// like a built-in function, which it would otherwise silently call instead.
+func (b formulaBinding) callsDropped(expr *calc.Expr) (string, bool) {
+	for _, fn := range expr.Functions() {
+		if name, ok := b.dropped[fn]; ok {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // quotedList renders names as "a", "b" and "c" for a report a person reads.
@@ -482,4 +440,115 @@ func quotedList(names []string) string {
 	default:
 		return strings.Join(quoted[:len(quoted)-1], ", ") + " and " + quoted[len(quoted)-1]
 	}
+}
+
+// contextName is the occurrence a calculation specification names.
+func contextName(payload map[string]interface{}) string {
+	name, _ := payload["context"].(string)
+	return name
+}
+
+// boundFormula is a formula bound to the imported names, or why it cannot
+// be: why and action are then set.
+type boundFormula struct {
+	rewritten string
+	// context is the occurrence it is evaluated from when it names one of
+	// its table's, empty otherwise.
+	context string
+	// related are the related fields it reads, as Occurrence::Field.
+	related     []string
+	why, action string
+}
+
+// bind reads a formula of table, evaluated from the occurrence contextName,
+// with the names the source wrote, and rewrites it with the names the import
+// gave them: what a calculation field and an auto-enter calculation share.
+// target names the field in the report.
+func (b formulaBinding) bind(tableName, formula, contextName, target string) boundFormula {
+	names := b.fields[tableName]
+	if names == nil {
+		names = newFieldNameMap()
+	}
+	var local []string
+	for _, name := range names.sources {
+		// A plain word is read as written, which keeps "Code" and "code"
+		// apart (#89); only a name a plain word cannot hold is declared.
+		if calc.QuoteName(name) != name {
+			local = append(local, name)
+		}
+	}
+	opts := calc.Options{Fields: local, Tables: b.occurrences, Locale: b.locale, Library: b.functions}
+	refuse := func(why, action string) boundFormula { return boundFormula{why: why, action: action} }
+
+	expr, err := calc.ParseWith(formula, opts)
+	if err != nil {
+		why := b.unreadable(formula, err)
+		if b.locale == nil && reCommaDecimal.MatchString(formula) {
+			why += "; it seems to write decimals with a comma, so name the locale of the source file (source_locale, such as fr-FR) and migrate again"
+		}
+		return refuse(why, fmt.Sprintf("Rewrite the calculation of %s in File4Base, or correct it in FileMaker and migrate again", target))
+	}
+	var missing, related []string
+	for _, ref := range expr.RelatedFields() {
+		name := ref.Table + "::" + ref.Field
+		if ref.Missing {
+			missing = append(missing, name)
+		} else {
+			related = append(related, name)
+		}
+	}
+	if len(missing) > 0 {
+		return refuse(fmt.Sprintf("reads %s, a table or field that was deleted in FileMaker", quotedList(missing)),
+			fmt.Sprintf("Point the calculation of %s at an existing field, or remove that part of it", target))
+	}
+	if name, ok := b.callsDropped(expr); ok {
+		return refuse(fmt.Sprintf("calls the custom function %s, which could not be migrated", name),
+			fmt.Sprintf("Rewrite the calculation of %s in File4Base, or correct it in FileMaker and migrate again", target))
+	}
+	if slices.Contains(expr.Functions(), "GETLAYOUTOBJECTATTRIBUTE") {
+		return refuse("reads a layout object with GetLayoutObjectAttribute, which a field stored with its record cannot do",
+			fmt.Sprintf("Compute %s from fields instead of from a layout object, or fill it with a script", target))
+	}
+
+	// The occurrence it is evaluated from, kept only when it is one of
+	// this table's: anything else would read the wrong records.
+	out := boundFormula{related: related}
+	from, hasContext := b.contextOf(tableName, contextName)
+	if hasContext && strings.EqualFold(from.name, contextName) {
+		out.context = from.name
+	}
+	var unreachable []string
+	for _, ref := range expr.RelatedFields() {
+		if to, ok := b.occByName[strings.ToLower(ref.Table)]; ok && (!hasContext || !b.reachable(from.id, to.id)) {
+			unreachable = append(unreachable, ref.Table+"::"+ref.Field)
+		}
+	}
+	if len(unreachable) > 0 {
+		return refuse(fmt.Sprintf("reads %s, but no relationship leads there from %s", quotedList(unreachable), tableName),
+			fmt.Sprintf("Relate %s to the table it reads, or rewrite its calculation", target))
+	}
+
+	rewritten, unresolved, err := calc.Rewrite(formula, opts, b.renamer(names))
+	if err != nil {
+		return refuse(fmt.Sprintf("could not be read (%v)", err),
+			fmt.Sprintf("Rewrite the calculation of %s in File4Base", target))
+	}
+	if len(unresolved) > 0 {
+		var refs []string
+		seen := map[string]bool{}
+		for _, ref := range unresolved {
+			name := ref.Field
+			if ref.Table != "" {
+				name = ref.Table + "::" + ref.Field
+			}
+			if !seen[name] {
+				seen[name] = true
+				refs = append(refs, name)
+			}
+		}
+		return refuse(fmt.Sprintf("reads %s, which the imported tables do not have", quotedList(refs)),
+			fmt.Sprintf("Repoint the calculation of %s at the fields it should read, or add the missing %s", target, quotedList(refs)))
+	}
+	out.rewritten = rewritten
+	return out
 }

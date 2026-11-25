@@ -25,6 +25,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onScriptWorkspace,
     this.onManageThemes,
     this.onManageValueLists,
+    this.onManageFileReferences,
     this.onNewDatabase,
     this.onOpenSolution,
     this.onSave,
@@ -53,6 +54,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onDeveloperUtilities,
     this.onNewRecord,
     this.onDuplicateRecord,
+    this.onRelookupFieldContents,
     this.onDeleteRecord,
     this.onSortRecords,
     this.onUnsortRecords,
@@ -121,6 +123,10 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onScriptWorkspace;
   final VoidCallback? onManageThemes;
   final VoidCallback? onManageValueLists;
+
+  /// File > Manage > File References (#107): the other solutions this one
+  /// reads tables from and performs scripts in.
+  final VoidCallback? onManageFileReferences;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
   final VoidCallback? onNewDatabase;
@@ -134,6 +140,10 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onPageSetup;
   final VoidCallback? onNewRecord;
   final VoidCallback? onDuplicateRecord;
+
+  /// Records > Relookup Field Contents, from the active field as the match
+  /// field. Null disables the command.
+  final VoidCallback? onRelookupFieldContents;
   final VoidCallback? onDeleteRecord;
   final VoidCallback? onSortRecords;
   final VoidCallback? onUnsortRecords;
@@ -648,6 +658,10 @@ class File4BaseMenuBar extends StatelessWidget {
             MenuItemButton(
               onPressed: () => _showRoadmapDialog(context, 'Custom Functions', 'Roadmap Phase 7', 'Calculation engine reusable functions and recursive formulas.'),
               child: const Text('Custom Functions...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageFileReferences,
+              child: const Text('File References...'),
             ),
             MenuItemButton(
               onPressed: onManageDataSources,
@@ -1522,8 +1536,9 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.equal, meta: true),
           child: const Text('Replace Field Contents...'),
         ),
-        const MenuItemButton(
-          child: Text('Relookup Field Contents'),
+        MenuItemButton(
+          onPressed: onRelookupFieldContents,
+          child: const Text('Relookup Field Contents'),
         ),
       ],
       child: const Text('Records', style: TextStyle(fontSize: 13)),
@@ -1830,6 +1845,11 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: onManageValueLists,
               leadingIcon: const Icon(Icons.list_alt_outlined, size: 18),
               child: const Text('Value Lists...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageFileReferences,
+              leadingIcon: const Icon(Icons.link, size: 18),
+              child: const Text('File References...'),
             ),
             MenuItemButton(
               onPressed: onManageDataSources,

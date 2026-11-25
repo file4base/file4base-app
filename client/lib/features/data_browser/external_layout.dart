@@ -54,12 +54,17 @@ class ExternalLayoutView extends StatefulWidget {
     required this.apiClient,
     required this.builder,
     this.onTable,
+    this.designing = false,
     super.key,
   });
 
   final String layoutName;
   final TableOccurrenceModel occurrence;
   final ApiClient apiClient;
+
+  /// Layout mode: [builder] designs the layout with the table's fields, and
+  /// the placeholder says the layout can be designed once they are read.
+  final bool designing;
 
   /// Browses the occurrence's table through a client whose record calls
   /// read the occurrence's records.
@@ -147,6 +152,7 @@ class _ExternalLayoutViewState extends State<ExternalLayoutView> {
       problem: _problem,
       error: _error,
       access: _access,
+      designing: widget.designing,
     );
   }
 }
@@ -160,11 +166,16 @@ class ExternalLayoutPlaceholder extends StatelessWidget {
     this.problem,
     this.error,
     this.access,
+    this.designing = false,
     super.key,
   });
 
   final String layoutName;
   final TableOccurrenceModel occurrence;
+
+  /// In Layout mode: the layout is designed with the fields of that table,
+  /// so it waits for them rather than for records.
+  final bool designing;
 
   /// Why the other solution could not be read, when it was tried.
   final ExternalUnavailable? problem;
@@ -182,10 +193,10 @@ class ExternalLayoutPlaceholder extends StatelessWidget {
       why = 'Its records could not be read: $error';
     } else if (external.database.isEmpty) {
       why = 'The file reference "${external.fileReference}" is not mapped to a solution yet. '
-          'Map it in Manage File References to show its records.';
+          'Map it in File > Manage > File References to show its records.';
     } else if (external.table.isEmpty) {
       why = 'Its records live in the solution "${external.database}", through the file reference '
-          '"${external.fileReference}", whose table is not known yet. Bind it in Manage File References.';
+          '"${external.fileReference}", whose table is not known yet. Bind it in File > Manage > File References.';
     } else {
       why = 'Its records live in the solution "${external.database}", table "${external.table}", '
           'through the file reference "${external.fileReference}".';
@@ -206,8 +217,12 @@ class ExternalLayoutPlaceholder extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              Text('$why This layout shows no records and record commands are disabled.',
-                  textAlign: TextAlign.center),
+              Text(
+                designing
+                    ? '$why It can be designed once the fields of that table can be read.'
+                    : '$why This layout shows no records and record commands are disabled.',
+                textAlign: TextAlign.center,
+              ),
               if (problem != null && problem.isNotSignedIn && access != null) ...[
                 const SizedBox(height: 16),
                 FilledButton.icon(

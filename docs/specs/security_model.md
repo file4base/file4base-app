@@ -126,8 +126,9 @@ privilege never crosses from one solution to another.
   number of accounts of the solutions it reads.
 - **Explicit sign-in.** `POST /api/v1/auth/link` signs in to a solution the
   group reads with an account of that solution, under the same lockout, and
-  replaces the account the group held there. It is refused for a solution no
-  external occurrence of the group is mapped to.
+  replaces the account the group held there. It is refused for a solution
+  that no external occurrence, mapped file reference or transfer of the
+  group's solutions reaches.
 - **Membership is the server's.** The linked sessions belong to the group of
   the session that signed in, kept in the server's session store; the client
   holds no credentials for them. Each linked session is checked against its

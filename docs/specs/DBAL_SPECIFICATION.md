@@ -184,11 +184,20 @@ An occurrence of a table of **another solution** (`#107`) has a NULL `base_table
 - `file_reference_id` (`sys_file_references.id`): the reference it goes through;
 - `external_table` (the table's name in that solution, NULL until bound; names, not ids, because ids differ between databases).
 
-A file reference keeps `paths` (TEXT, one FileMaker path per line) beside its `name` and `database_name`. A value list taken from a field of another solution's table has NULL `source_table_id`/`source_column_id`, its external occurrence in `source_occurrence_id`, and the field in `source_column_name`.
+A file reference keeps `paths` (TEXT, one FileMaker path per line) beside its `name` and `database_name`. A value list taken from a field of another solution's table has NULL `source_table_id`/`source_column_id`, its external occurrence in `source_occurrence_id`, the field in `source_column_name` and its second field, if any, in `second_column_name` (VARCHAR(64), migration 008).
 
 `sys_columns.source_field_id` (VARCHAR(32), digits, NULL for a column created here) keeps the FileMaker id of the field a migrated column comes from. A field of another solution that the source document names by id only is stored as the marker `#<id>` in `*_column_name` and `source_column_name` (an identifier never contains `#`), and matched against the other solution's `source_field_id` when the reference is bound.
 
 A catalog created before these columns existed is upgraded by `EnsureSystemTables`, and the first time an occurrence, a file reference, a value list or the columns of a table are used on it (`server/migrations/005_external_occurrences.sql`): the catalog is read first, so an upgraded one is only read.
+
+### 6. `sys_custom_functions` (Custom Functions)
+A solution's own functions, as FileMaker's Manage Custom Functions defines them, which every formula of the solution may call (`server/migrations/007_custom_functions.sql`):
+- `name` (VARCHAR(128), unique whatever its case: a unique index on `LOWER(name)` on PostgreSQL, the case-insensitive collation on MariaDB; never the name of a built-in function, which the server refuses)
+- `parameters` (TEXT, a JSON array of the parameter names, in order)
+- `formula` (TEXT, reading its parameters; it may call itself and the other custom functions)
+- `access` (`all`, or `full_access` for a function only full-access accounts see in the design, FileMaker's *Availability*)
+
+A catalog without the table has no custom functions; `EnsureSystemTables` creates it.
 
 ---
 

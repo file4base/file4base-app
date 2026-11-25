@@ -58,7 +58,7 @@ A side on an external occurrence has no column id: `left_column_name` or `right_
 
 **account**: `id`, `username`, `role` (`owner`, `admin` or `user`), `is_active`, `permissions` (array of `{layout_id, access_level}`, `access_level` being `read_write`, `read_only` or `none`).
 
-**value list**: `id`, `name`, `kind`, `custom_values` (optional), `source_table_id`, `source_column_id` and `second_column_id` (optional, remapped on import), `show_second_only` and `sort_by` (optional), `related_occurrence_id` and `source_occurrence_id` (optional, remapped on import), and `source_column_name` (optional). A list taken from a field of another solution's table has no `source_table_id` or `source_column_id`: `source_occurrence_id` is the external occurrence it is read through and `source_column_name` names the field. It has no second field or related values yet.
+**value list**: `id`, `name`, `kind`, `custom_values` (optional), `source_table_id`, `source_column_id` and `second_column_id` (optional, remapped on import), `show_second_only` and `sort_by` (optional), `related_occurrence_id` and `source_occurrence_id` (optional, remapped on import), and `source_column_name` and `second_column_name` (optional). A list taken from a field of another solution's table has no `source_table_id` or `source_column_id`: `source_occurrence_id` is the external occurrence it is read through, `source_column_name` names the field and `second_column_name` its second field, if any.
 
 **file reference**: `name`, `database` (optional: the solution it is mapped to) and `paths` (optional: the FileMaker paths of the data source, kept for the operator who binds it). Matched by name on import; a reference the destination has already mapped is never repointed.
 

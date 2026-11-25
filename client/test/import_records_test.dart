@@ -256,4 +256,27 @@ void main() {
     await _pump(tester);
     expect(find.byKey(const ValueKey('import-sheet')), findsNothing);
   });
+
+  testWidgets('auto-enter options are performed unless unchecked, as in FileMaker', (tester) async {
+    final api = await _pump(tester);
+    final box = find.byKey(const ValueKey('import-perform-auto-enter'));
+    expect(tester.widget<CheckboxListTile>(box).value, isTrue, reason: 'checked by default');
+
+    await tester.tap(find.byKey(const ValueKey('import-start')));
+    await tester.pumpAndSettle();
+    expect(api.imports.last['perform_auto_enter'], isTrue);
+  });
+
+  testWidgets('unchecking Perform auto-enter options imports the values as they are', (tester) async {
+    final api = await _pump(tester);
+    final box = find.byKey(const ValueKey('import-perform-auto-enter'));
+    await tester.ensureVisible(box);
+    await tester.pumpAndSettle();
+    await tester.tap(box);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('import-start')));
+    await tester.pumpAndSettle();
+    expect(api.imports.last['perform_auto_enter'], isFalse);
+  });
 }

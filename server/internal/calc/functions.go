@@ -75,6 +75,11 @@ func (ev *evaluator) callCustom(c callNode, cf *customFunc) (value, error) {
 	if cf.body == nil {
 		return empty, errorAt(c.at, "the custom function %s cannot be evaluated", cf.name)
 	}
+	if len(c.args) != len(cf.params) {
+		// A formula read with other custom functions than it is computed
+		// with: said, rather than reading past its arguments.
+		return empty, errorAt(c.at, "%s takes %d argument(s), got %d", cf.name, len(cf.params), len(c.args))
+	}
 	if ev.depth >= maxDepth {
 		return empty, errorAt(c.at, "%s calls itself too deeply", cf.name)
 	}
@@ -184,6 +189,24 @@ func logicalFunctions() map[string]function {
 				return ev.readField(fieldNode{table: table, name: field, at: c.at})
 			}
 			return ev.readField(fieldNode{name: name, at: c.at})
+		}),
+		// GetNextSerialValue ( fileName ; fieldName ) is the value the next
+		// record gets in a serial number field. The file is not read: a
+		// solution's fields are the ones the server holds.
+		"GETNEXTSERIALVALUE": fixed(2, func(ev *evaluator, c callNode, a []value) (value, error) {
+			field := strings.TrimSpace(a[1].asText(ev.loc))
+			if field == "" {
+				return empty, nil
+			}
+			serials, ok := ev.ctx.(Serials)
+			if !ok {
+				return empty, errorAt(c.at, "GetNextSerialValue is not available here")
+			}
+			next, err := serials.NextSerialValue(field)
+			if err != nil {
+				return empty, errorAt(c.at, "GetNextSerialValue: %v", err)
+			}
+			return textValue(next), nil
 		}),
 	}
 }

@@ -111,6 +111,10 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
   bool _addUnmatched = false;
   final List<String> _matchFields = [];
 
+  /// Perform auto-enter options while importing: checked by default, as in
+  /// FileMaker. Unchecked, the imported values are written as they are.
+  bool _performAutoEnter = true;
+
   /// Which field each column of the file goes to. A column that is not here
   /// is left out.
   final Map<int, String> _mapping = {};
@@ -331,6 +335,7 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
           'date_order': _dateOrder,
           'add_unmatched': _addUnmatched,
           'match_fields': _matchFields,
+          'perform_auto_enter': _performAutoEnter,
           'mappings': [
             for (final entry in _mapping.entries) {'column': entry.key, 'field': entry.value},
           ],
@@ -918,6 +923,16 @@ class _ImportRecordsDialogState extends State<ImportRecordsDialog> {
             ),
           ),
         ],
+        CheckboxListTile(
+          key: const ValueKey('import-perform-auto-enter'),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: const Text('Perform auto-enter options while importing',
+              style: TextStyle(fontSize: 11.5)),
+          value: _performAutoEnter,
+          onChanged: _busy ? null : (v) => setState(() => _performAutoEnter = v ?? true),
+        ),
         const Padding(
           padding: EdgeInsets.only(top: 6),
           child: Text(

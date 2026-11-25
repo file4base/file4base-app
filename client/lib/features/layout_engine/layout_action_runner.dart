@@ -94,6 +94,21 @@ abstract class LayoutActionHost {
   String actionResolveText(String text);
 }
 
+/// Script steps of the auto-enter options: Set Next Serial Value and
+/// Relookup Field Contents. Implemented by the data browser; a host without
+/// it makes the steps fail with FileMaker's error 3 (command unavailable).
+abstract class AutoEnterActionHost {
+  /// Sets the value the next record gets in the serial number [field] of the
+  /// current table. Returns a FileMaker error code: 0 when it was set.
+  Future<int> actionSetNextSerialValue(String field, String value);
+
+  /// Copies again the looked-up values of the found set whose lookups start
+  /// from the match field [field], after asking when [dialog] is true, and
+  /// reloads the records. Returns a FileMaker error code: 0 when it ran, 1
+  /// when the user cancelled.
+  Future<int> actionRelookupFieldContents(String field, {bool dialog = false});
+}
+
 /// Outcome of running a button action. [message] explains why a script
 /// stopped early (unsupported step, missing script, ...).
 class LayoutActionResult {
@@ -259,6 +274,8 @@ class LayoutActionRunner {
     'set_field_by_name',
     'insert_calculated_result',
     'replace_field_contents',
+    'set_next_serial_value',
+    'relookup_field_contents',
     'copy',
     'paste',
     'cut',
@@ -334,6 +351,7 @@ class LayoutActionRunner {
   final ScriptSessionState _defaultSession = ScriptSessionState();
 
   ExtendedLayoutActionHost? get _extHost => host is ExtendedLayoutActionHost ? host as ExtendedLayoutActionHost : null;
+  AutoEnterActionHost? get _autoEnterHost => host is AutoEnterActionHost ? host as AutoEnterActionHost : null;
 
   Future<LayoutActionResult> run(ButtonActionModel action) async {
     if (action.isPerformScript) {
@@ -1161,6 +1179,38 @@ class LayoutActionRunner {
           context: context,
           failOrCapture: failOrCapture,
         );
+      case 'set_next_serial_value':
+        final field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) return failOrCapture(102, 'Set Next Serial Value has no field selected.');
+        final value = params['value_is_calculation'] == true
+            ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
+            : p('value');
+        if (value == null) {
+          return const LayoutActionResult.stopped('Set Next Serial Value calculation is not supported in this context.');
+        }
+        final serialHost = _autoEnterHost;
+        if (serialHost == null) return failOrCapture(3, 'Set Next Serial Value is not available here.');
+        final code = await serialHost.actionSetNextSerialValue(field, value.trim());
+        if (code != 0) {
+          return failOrCapture(code, 'Set Next Serial Value could not set the next value of "$field".');
+        }
+        session.lastError = 0;
+      case 'relookup_field_contents':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isEmpty) {
+          return failOrCapture(102, 'Relookup Field Contents has no match field: name one or go to it first.');
+        }
+        final lookupHost = _autoEnterHost;
+        if (lookupHost == null) return failOrCapture(3, 'Relookup Field Contents is not available here.');
+        final code = await lookupHost.actionRelookupFieldContents(
+            field, dialog: !boolParam('no_dialog', defaultValue: true));
+        if (code != 0) {
+          return failOrCapture(code, 'Relookup Field Contents could not relookup from "$field".');
+        }
+        session.lastError = 0;
       case 'copy':
         var field = params['field']?.toString().trim() ?? '';
         if (field.isEmpty) {

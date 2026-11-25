@@ -845,7 +845,7 @@ func precomputeExtractedCalculations(
 				continue // a container result is computed on import, as a reference
 			}
 			formula := extractHTMLFormula(fm.RawOptions, sqlTable, sqlTable, knownCols)
-			exprStr, ok := ownTableFormula(formula)
+			exprStr, ok := ownTableFormula(formula, formulaBinding{})
 			if !ok {
 				continue
 			}

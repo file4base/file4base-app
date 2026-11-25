@@ -71,6 +71,9 @@ type SummaryCounts struct {
 	RejectedCount     int `json:"rejected_count"`
 	ManualActionCount int `json:"manual_action_count"`
 
+	// CustomFunctions counts the custom functions migrated.
+	CustomFunctions int `json:"custom_functions,omitempty"`
+
 	// SourceTextValues counts the values migrated with their original text
 	// beside FileMaker's reading of it (#124).
 	SourceTextValues int `json:"source_text_values,omitempty"`
@@ -245,6 +248,8 @@ var supportedScriptSteps = map[string]string{
 	// Fields, editing & containers
 	"set field":                "Set Field",
 	"set field by name":        "Set Field By Name",
+	"set next serial value":    "Set Next Serial Value",
+	"relookup field contents":  "Relookup Field Contents",
 	"insert calculated result": "Insert Calculated Result",
 	"insert current date":      "Insert Current Date",
 	"select all":               "Select All",
@@ -799,8 +804,16 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// related fields checked to be reachable.
 	externalFields := externalFieldRefs(root, externalOccs)
 	binding := newFormulaBinding(bundle, fieldNamesByTable, locale, externalFields)
+	// Custom functions first, so every calculation that calls one reads.
+	for _, it := range bindCustomFunctions(readXMLCustomFunctions(root), &binding, bundle) {
+		addReportItem(report, it)
+	}
+	report.Counts.CustomFunctions = len(bundle.CustomFunctions)
 	for i := range bundle.Tables {
 		for _, it := range bindTableCalculations(&bundle.Tables[i], binding, colTypeByTableCol) {
+			addReportItem(report, it)
+		}
+		for _, it := range bindTableAutoEnter(&bundle.Tables[i], binding) {
 			addReportItem(report, it)
 		}
 	}
@@ -1293,66 +1306,6 @@ func strictTypeFromDDR(raw string) string {
 		return "Text Only"
 	}
 	return ""
-}
-
-// convertFieldAutoEnter turns a field's nested <AutoEnter> element into a
-// File4Base default value where it is one, and reports the auto-entry options
-// that need a formula or a script instead (#102).
-func convertFieldAutoEnter(tableSQL, rawFieldName, colName string, an *xmlNode, col *schema.BundleColumn) []ReportItem {
-	if an == nil {
-		return nil
-	}
-	source := tableSQL + "." + rawFieldName
-	target := tableSQL + "." + colName
-	var items []ReportItem
-
-	if value, ok := nestedOption(an, "ConstantData", "constantData", "constant"); ok &&
-		value != "True" && value != "False" {
-		encoded, _ := json.Marshal(map[string]interface{}{"data_enabled": true, "data_value": value})
-		stored := string(encoded)
-		col.DefaultValue = &stored
-		items = append(items, ReportItem{
-			Category:   CategoryPreserved,
-			Domain:     "field",
-			SourceName: source,
-			TargetName: target,
-			Detail:     fmt.Sprintf("Auto-enter constant %q migrated as the field's default value", value),
-		})
-	}
-
-	for _, unsupported := range []struct {
-		element string
-		attr    string
-		what    string
-	}{
-		{"Serial", "serial", "an auto-entered serial number"},
-		{"Calculation", "calculation", "an auto-entered calculation"},
-		{"Lookup", "lookup", "a looked-up value"},
-		{"CreationTimestamp", "creationTimestamp", "the creation date, time or account"},
-		{"ModificationTimestamp", "modificationTimestamp", "the modification date, time or account"},
-	} {
-		present := nestedFlag(an, unsupported.element, unsupported.attr) ||
-			findFirstChild(an, unsupported.element) != nil
-		if !present {
-			continue
-		}
-		items = append(items,
-			ReportItem{
-				Category:   CategoryUnsupported,
-				Domain:     "field",
-				SourceName: source,
-				TargetName: target,
-				Detail:     fmt.Sprintf("Auto-entering %s was not migrated", unsupported.what),
-			},
-			ReportItem{
-				Category:   CategoryManualActionRequired,
-				Domain:     "field",
-				SourceName: source,
-				TargetName: target,
-				Detail:     fmt.Sprintf("Set up %s for %s with a calculation field, a default value or a script", unsupported.what, target),
-			})
-	}
-	return items
 }
 
 func normalizeCalcResultType(rawType string) string {
@@ -2853,7 +2806,7 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 	}
 	if calcText != "" {
 		switch canonicalStep {
-		case "Set Field", "Insert Calculated Result", "Replace Field Contents":
+		case "Set Field", "Insert Calculated Result", "Replace Field Contents", "Set Next Serial Value":
 			params["value"] = calcText
 			params["value_is_calculation"] = true
 		case "Set Field By Name":

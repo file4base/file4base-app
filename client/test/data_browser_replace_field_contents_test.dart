@@ -55,7 +55,8 @@ class _Api extends ApiClient {
   Future<List<TableModel>> listTables() async => [_table];
 
   @override
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data) async {
+  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data,
+      {bool script = false}) async {
     if (id == rejectId) {
       throw ApiException(statusCode: 422, title: 'Validation Failed', detail: 'code must be unique');
     }

@@ -98,6 +98,7 @@ func (e *Expr) RelatedReads() []RelatedRead {
 		seen[RelatedRead{Reference: Reference{Table: f.table, Field: f.name, Missing: f.missing},
 			Use: use, Function: function, N: n}] = struct{}{}
 	}
+	entered := map[string]bool{}
 	var rec func(n node)
 	rec = func(n node) {
 		if n == nil {
@@ -127,6 +128,9 @@ func (e *Expr) RelatedReads() []RelatedRead {
 				}
 				return
 			}
+		}
+		if body := e.customBody(n, entered); body != nil {
+			rec(body)
 		}
 		for _, child := range children(n) {
 			rec(child)
@@ -237,7 +241,29 @@ func sortedKeys(m map[string]struct{}) []string {
 	return out
 }
 
+// walk visits every node of the formula and of the custom functions it
+// calls, each function once: what a formula reads, calls or sets includes
+// what the custom functions it calls do.
 func (e *Expr) walk(visit func(node)) {
+	entered := map[string]bool{}
+	var rec func(node)
+	rec = func(n node) {
+		if n == nil {
+			return
+		}
+		visit(n)
+		if body := e.customBody(n, entered); body != nil {
+			rec(body)
+		}
+		for _, child := range children(n) {
+			rec(child)
+		}
+	}
+	rec(e.root)
+}
+
+// walkOwn visits the nodes of the formula itself, as it is written.
+func (e *Expr) walkOwn(visit func(node)) {
 	var rec func(node)
 	rec = func(n node) {
 		if n == nil {
@@ -249,6 +275,21 @@ func (e *Expr) walk(visit func(node)) {
 		}
 	}
 	rec(e.root)
+}
+
+// customBody is the formula of the custom function n calls, the first time
+// it is met (entered records it), and nil otherwise.
+func (e *Expr) customBody(n node, entered map[string]bool) node {
+	c, ok := n.(callNode)
+	if !ok || e.lib == nil || entered[c.name] {
+		return nil
+	}
+	cf, ok := e.lib.funcs[c.name]
+	if !ok {
+		return nil
+	}
+	entered[c.name] = true
+	return cf.body
 }
 
 // children are the nodes a node is made of.
@@ -791,7 +832,9 @@ func (p *parser) parseCall(name token) (node, error) {
 	}
 	fn, known := functions[upper]
 	if !known {
-		return nil, errorAt(name.pos, "there is no function called %q", name.text)
+		err := errorAt(name.pos, "there is no function called %q", name.text)
+		err.Function = name.text
+		return nil, err
 	}
 	if err := fn.checkArity(name.pos, upper, len(args)); err != nil {
 		return nil, err
