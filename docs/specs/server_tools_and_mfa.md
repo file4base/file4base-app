@@ -28,6 +28,25 @@ The `Server Tools` menu is positioned immediately after `Tools` in `File4BaseMen
 | 7 | **Audit & Security Logs...** | `audit_logs` | `GET /api/v1/server/audit-logs`<br>`POST /api/v1/server/audit-logs/clear` | Filterable security and administrative event log (`auth`, `mfa`, `backup`, `tls`, `container`, `maintenance`, `schedule`). |
 | 8 | **Database Maintenance & Optimizer...** | `maintenance` | `GET /api/v1/server/maintenance`<br>`POST /api/v1/server/maintenance/run` | Live per-table column and row counts with 1-click `VACUUM ANALYZE`, `ANALYZE`, and `REINDEX DATABASE` execution. |
 | 9 | **Server Notifications, SMTP & Webhooks...** | `notifications` | `GET /api/v1/server/notifications`<br>`PUT /api/v1/server/notifications`<br>`POST /api/v1/server/notifications/test` | Outbound SMTP email and Slack/Discord/Teams/Generic JSON webhook alerting with threshold triggers and test dispatch. |
+| 10 | **Send Mail (SMTP)** | `mail` | `GET /api/v1/server/mail-profiles`<br>`PUT /api/v1/server/mail-profiles`<br>`DELETE /api/v1/server/mail-profiles?solution=`<br>`POST /api/v1/server/mail-profiles/test`<br>`PUT /api/v1/server/mail-profiles/server-access` | The SMTP profiles the **Send Mail** script step sends through (`#133`): one per solution, and one server-wide that only the solutions a server administrator allows may use. See § 2.1. Separate from the alert settings of row 9, which send nothing. |
+
+
+### 2.1 Send Mail SMTP profiles (`#133`)
+
+Scripts send mail (`Send Mail` *via SMTP server*, one e-mail per record, attachments, and *via e-mail client* without dialog — see the [Script Workspace spec](script_workspace_spec.md) § 8) through the **profile of their solution**, or else the **server profile** — only when a server administrator has **allowed that solution** to use it (off by default, so a solution anyone creates cannot send through the server's account). Only server administrators see and change profiles and allowances; a database owner cannot.
+
+**Setting one up**
+
+1. Put the SMTP password in an environment variable of the API container whose name starts with **`FILE4BASE_SMTP_`**, `FILE4BASE_SMTP_PASSWORD` in `.env`, which `docker-compose.yml` passes to the API. For further accounts add `FILE4BASE_SMTP_SALES`, … to `.env` and to the API's `environment:` list. Recreate the API container so it sees the variable.
+2. **Server Tools > Send Mail (SMTP) > Add profile**: solution (empty for the server profile), SMTP server and port, security (`STARTTLS` — required, never falls back to clear text; `TLS` for port 465; `None` only without a user name, or towards a loopback relay), user name, **the name** of the password variable, sender name and address, reply-to, and the hourly limit per account (default 200).
+3. **Send a test message** from the profile's row.
+4. For the server profile: **Allow a solution** under *Solutions allowed to use the server profile* (`PUT /api/v1/server/mail-profiles/server-access` `{solution, allowed}`, audited; withdrawn with the row's button, and with the solution when it is deleted).
+
+**Secrets.** A profile stores the variable's *name*, never the password. The API never answers the password — only `password_available`, whether the variable is set, shown as *NOT SET on the server* in the panel. A variable outside the `FILE4BASE_SMTP_` prefix is refused, so a profile cannot be used to send another server secret (such as `DATABASE_URL`) to an SMTP server. A profile with a user name whose variable is not set sends nothing (`502`, FileMaker error `1501`). Neither the password nor the SMTP conversation is logged; the audit log records who changed a profile and, for each send, how many messages left and the FileMaker error — never an address, a subject or a body.
+
+**Limits.** Per account (database + user name) and per hour, the profile's `max_per_hour` (`429` past it, nothing sent). Per request: 100 messages, 32 MiB; the hourly quota and the password are checked before the attachments are decoded, and the messages are streamed to the SMTP server (attachments encoded as they are sent, once per message, never held encoded in memory). Per message: 50 recipients, 1 MiB of text, 20 MiB of attachments. Addresses, the sender name, the subject and attachment names containing CR, LF or NUL are refused (no header injection).
+
+**Sender.** Every message leaves as the profile's sender address (envelope and `From`). A step's own sender address is used when it is of the same domain; one of another domain becomes the reply-to address instead, so a script cannot send as anyone. A solution's profile is deleted with the solution.
 
 ---
 

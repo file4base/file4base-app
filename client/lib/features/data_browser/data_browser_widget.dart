@@ -6,20 +6,23 @@ import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/data_browser/external_layout.dart';
+import 'package:file4base_client/features/data_browser/mail_compose_dialog.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/data_browser/report_view.dart';
 import 'package:file4base_client/features/layout_engine/chart_view.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
+import 'package:file4base_client/features/layout_engine/layout_preview_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/layout_engine/script_trigger_runtime.dart';
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:file4base_client/main.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class DataBrowserWidget extends StatefulWidget {
@@ -150,7 +153,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         CalculationContextHost,
         RelatedFieldHost,
         PortalRowHost,
-        ScriptTriggerHost {
+        ScriptTriggerHost,
+        DocumentActionHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -5630,6 +5634,124 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   @override
   Future<void> actionSaveRecordsAsPdf({String? path, bool dialog = true, bool append = false}) async {
     await _requestMode(OperationalMode.preview);
+  }
+
+  // ─── Documents of a script: Save Records as PDF, Send Mail (#133) ─────────
+
+  @override
+  Future<List<PdfSheetPage>?> actionRenderRecordsPdf(String records) async {
+    if (!await _saveCurrentRecord() || !mounted) return null;
+    final List<Map<String, dynamic>> rows;
+    switch (records) {
+      case 'current':
+        rows = _records.isEmpty ? const [] : [Map<String, dynamic>.from(_currentRecord)];
+      case 'blank':
+        rows = [<String, dynamic>{}];
+      default:
+        if (!await _readWholeFoundSet() || !mounted) return null;
+        rows = List.of(_records);
+    }
+    if (rows.isEmpty) return const [];
+    return _drawOffscreen(rows);
+  }
+
+  /// Draws [rows] with the Preview mode sheet, out of sight, and captures
+  /// its pages: the window stays in Browse mode, as in FileMaker.
+  Future<List<PdfSheetPage>?> _drawOffscreen(List<Map<String, dynamic>> rows) async {
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return null;
+    LayoutPreviewWidgetState? preview;
+    final layout = widget.layout ??
+        LayoutDefinitionModel.defaultForTable(
+          widget.table.displayName,
+          widget.table.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
+        );
+    final entry = OverlayEntry(
+      builder: (_) => Positioned(
+        // Laid out and painted, so it can be captured, but off the screen.
+        left: -20000,
+        top: 0,
+        width: 1400,
+        height: 1800,
+        child: IgnorePointer(
+          child: Material(
+            child: LayoutPreviewWidget(
+              table: widget.table,
+              apiClient: widget.apiClient,
+              layout: layout,
+              pageSetup: widget.pageSetup,
+              currentUserName: widget.currentUserName,
+              findRequests: _foundSetFind ?? const [],
+              records: rows,
+              onAttach: (state) => preview = state,
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    try {
+      for (var i = 0; i < 200 && (preview == null || !preview!.isReady); i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      if (preview == null || !preview!.isReady) return null;
+      return await preview!.captureSheets();
+    } on Object {
+      return null;
+    } finally {
+      entry.remove();
+    }
+  }
+
+  @override
+  Future<bool> actionForEachFoundRecord(Future<bool> Function(int position, int count) visit) async {
+    if (!await _saveCurrentRecord() || !mounted) return false;
+    final startId = _records.isNotEmpty ? _records[_currentIndex]['id'] : null;
+    if (!await _readWholeFoundSet() || !mounted) return false;
+    final count = _records.length;
+    try {
+      for (var i = 0; i < count; i++) {
+        _currentIndex = i;
+        if (!await visit(i + 1, count) || !mounted) break;
+      }
+      return true;
+    } finally {
+      if (mounted) {
+        setState(() {
+          final idx = _records.indexWhere((r) => r['id'] == startId);
+          _currentIndex = idx < 0 ? 0 : idx;
+        });
+        _rebuildFieldControllers();
+      }
+    }
+  }
+
+  @override
+  Future<OutgoingMail?> actionComposeMail(OutgoingMail mail, {required String from, List<String> attachments = const []}) {
+    if (!mounted) return Future.value();
+    return MailComposeDialog.show(context, mail: mail, from: from, attachments: attachments);
+  }
+
+  @override
+  Future<void> actionOpenDocument(String path, String nativePath, Uint8List bytes) async {
+    final name = path.substring(path.lastIndexOf('/') + 1);
+    try {
+      if (kIsWeb) {
+        await Printing.sharePdf(bytes: bytes, filename: name);
+      } else {
+        await launchUrl(Uri.file(nativePath));
+      }
+    } on Object {
+      await actionNotify('Saved $nativePath');
+    }
+  }
+
+  @override
+  Future<void> actionNotify(String message) async {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 12), showCloseIcon: true),
+    );
   }
 
   @override

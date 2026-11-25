@@ -176,3 +176,18 @@ An occurrence through an ODBC data source, or through a data source the document
 Every migrated column keeps the **FileMaker id** of its field, from Save a Copy as XML, an XML DDR or an HTML DDR, as `sys_columns.source_field_id` (`source_field_id` in the solution bundle, absent for a column created in File4Base). That id is what another file's markers are resolved against, so a file read by another file's external occurrences is migrated with File4Base as well rather than recreated by hand.
 
 Two fields of the other file whose names sanitize to the same name are renamed by that file's own migration in a way this file cannot know; binding then reports the field as missing, and the reference is verified again after the field is fixed.
+
+## 7. `Save Records as PDF` and `Send Mail` (`#133`)
+
+Both steps convert as runnable steps with their options (paths, records, append, auto-open, create e-mail; addresses, subject, message, attachments, one e-mail per record, collected addresses, and the *via SMTP server* sender name, sender address and reply-to). What runs is in the [Script Workspace spec](script_workspace_spec.md) § 8. A step gets a migration note, and a `manual_action_required` item, only when it needs something from the administrator or will not run as written:
+
+| Step | Migration note |
+|---|---|
+| `Send Mail` via SMTP server, one e-mail per record, or with attachments | Needs an SMTP profile in Server Tools > Send Mail (SMTP); without one the step fails with `1506` (attachments with dialog: a draft and a notice instead). The step's own SMTP server, port and password are **never migrated**: the report records only that the step named one (`smtp_server_in_step`). |
+| `Send Mail` via e-mail client without dialog | Documented deviation: sent through the SMTP profile when there is one, a draft otherwise. |
+| `Send Mail` via e-mail client with dialog, no attachment | No note: it runs as written (a draft in the user's e-mail client). |
+| `Save Records as PDF` into a variable | Not supported, error 3. |
+| `Save Records as PDF` with security options (a password to open, print or edit) | Not supported: the step fails with error 3 rather than write an unprotected PDF. The password is not migrated. |
+| Either step naming a **fixed path** outside the script folders (`filemac:/Users/…/Desktop/…`, `filewin:/C:/…`) | Change it to `Get ( TemporaryPath )` or `Get ( DocumentsPath )`; as written the step fails with `800` (PDF) or `100` (attachment). A path in a `$variable` is not flagged: it is checked when the step runs. |
+
+**Passwords in step options.** The raw options of every converted step (`filemaker_parameters`) never hold a password: any option whose element, `type` or attribute names a password (an SMTP password, a PDF password) is stored as `[redacted]`.

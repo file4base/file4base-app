@@ -2266,6 +2266,9 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName m
 		}
 
 		params, structured, unmapped := decodeStepParams(stNode, canonical)
+		if canonical == "Save Records as PDF" && pdfSecurityRequested(stNode) {
+			params["pdf_security"] = true
+		}
 		// The instruction id and the name as the report wrote it are kept as
 		// diagnostic metadata: a localized report names its steps in its own
 		// language, and the id is the only language-free key the document
@@ -2908,7 +2911,45 @@ func decodeNodeChildren(n *xmlNode) map[string]interface{} {
 	return out
 }
 
+// redactedSecret replaces a secret a design document carries (an SMTP
+// password of Send Mail, a PDF password of Save Records as PDF) wherever the
+// migration keeps FileMaker's own options: such a value is never stored.
+const redactedSecret = "[redacted]"
+
+// isSecretName tells whether an element, attribute or option type names a
+// password.
+func isSecretName(name string) bool {
+	l := strings.ToLower(name)
+	return strings.Contains(l, "password") || strings.Contains(l, "passwd")
+}
+
+// redactedNode is what is kept of an element that holds a secret: whether
+// it is set (a True/False switch is not a secret), never its value.
+func redactedNode(n *xmlNode) interface{} {
+	value := map[string]interface{}{}
+	for k, v := range n.Attrs {
+		switch {
+		case strings.EqualFold(k, "type"), strings.EqualFold(k, "name"):
+			value[k] = v
+		case strings.EqualFold(v, "true"), strings.EqualFold(v, "false"):
+			value[k] = v
+		case strings.TrimSpace(v) != "":
+			value[k] = redactedSecret
+		}
+	}
+	if strings.TrimSpace(n.Text) != "" || len(n.Children) > 0 {
+		value["#text"] = redactedSecret
+	}
+	if len(value) == 0 {
+		return nil
+	}
+	return value
+}
+
 func decodeNodeValue(n *xmlNode) interface{} {
+	if isSecretName(n.Name) || isSecretName(firstAttr(n, "type")) {
+		return redactedNode(n)
+	}
 	text := strings.TrimSpace(n.Text)
 	children := decodeNodeChildren(n)
 	if len(n.Attrs) == 0 && children == nil {
@@ -2919,6 +2960,9 @@ func decodeNodeValue(n *xmlNode) interface{} {
 	}
 	value := make(map[string]interface{}, len(n.Attrs)+2)
 	for k, v := range n.Attrs {
+		if isSecretName(k) && strings.TrimSpace(v) != "" {
+			v = redactedSecret
+		}
 		value[k] = v
 	}
 	if text != "" {

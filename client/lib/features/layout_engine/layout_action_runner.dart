@@ -1,8 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/script_files.dart';
 import 'package:file4base_client/features/layout_engine/script_runtime_state.dart';
 import 'package:http/http.dart' as http;
 
+export 'package:file4base_client/features/layout_engine/script_files.dart';
 export 'package:file4base_client/features/layout_engine/script_runtime_state.dart';
 
 /// Steps a button can run directly (single step action), with their labels.
@@ -146,6 +150,35 @@ abstract class AutoEnterActionHost {
   Future<int> actionRelookupFieldContents(String field, {bool dialog = false});
 }
 
+/// Script steps that make a document or hand one over (#133): Save Records
+/// as PDF, and the compose window of Send Mail. Implemented by the data
+/// browser; a host without it makes Save Records as PDF fail with error 3.
+abstract class DocumentActionHost {
+  /// The pages of the layout in hand for [records]: `current` (the record
+  /// in hand), `browsed` (every record of the found set) or `blank` (the
+  /// layout with no data). An empty list when there is no record to draw;
+  /// null when the layout cannot be drawn.
+  Future<List<PdfSheetPage>?> actionRenderRecordsPdf(String records);
+
+  /// Makes each record of the found set the current one in turn, in order,
+  /// and calls [visit] with its 1-based position and the found count; stops
+  /// when [visit] answers false. The current record is the same afterwards.
+  /// Answers false when the found set could not be read.
+  Future<bool> actionForEachFoundRecord(Future<bool> Function(int position, int count) visit);
+
+  /// Shows File4Base's compose window for [mail], sent as [from] with the
+  /// files [attachments] (their names). Answers the message as the user
+  /// left it, or null when they cancelled.
+  Future<OutgoingMail?> actionComposeMail(OutgoingMail mail, {required String from, List<String> attachments = const []});
+
+  /// Opens a document a script saved: in its application on the desktop, as
+  /// a download in the browser.
+  Future<void> actionOpenDocument(String path, String nativePath, Uint8List bytes);
+
+  /// Tells the user something without stopping the script.
+  Future<void> actionNotify(String message);
+}
+
 /// Outcome of running a button action. [message] explains why a script
 /// stopped early (unsupported step, missing script, ...).
 class LayoutActionResult {
@@ -255,9 +288,18 @@ class LayoutActionRunner {
     this.peerTokenProvider,
     this.windowSolution,
     this.solutionName,
-  });
+    ScriptFileStore? files,
+  }) : files = files ?? ScriptFileStore.instance;
   final ApiClient apiClient;
   final LayoutActionHost host;
+
+  /// The folders a script reads and writes files in (#133).
+  final ScriptFileStore files;
+
+  /// Whether this solution sends mail through SMTP, read once (#133).
+  Future<MailStatus>? _mailStatus;
+
+  Future<MailStatus> _loadMailStatus() => _mailStatus ??= apiClient.mailStatus().catchError((Object _) => const MailStatus());
 
   /// The solution this runner's scripts belong to, when it is not the one on
   /// screen (#107). It names the solution in messages; null means "this
@@ -1000,10 +1042,7 @@ class LayoutActionRunner {
           );
         }
       case 'save_records_as_pdf':
-        // No PDF is written yet: reporting success would let the steps after
-        // it attach or send a file that does not exist.
-        return failOrCapture(3, _migrationNote(params,
-            'Save Records as PDF produces no PDF in File4Base yet (error 3, command unavailable).'));
+        return _runSaveRecordsAsPdf(params, vars, context, failOrCapture, boolParam, currentLayoutName());
       case 'save_records_as_excel':
         session.lastError = 0;
         if (ext != null) {
@@ -1468,49 +1507,7 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'send_mail':
-        // A draft opened in the user's e-mail client is the only way a
-        // File4Base script sends mail: an SMTP send, one mail per record, a
-        // collected address list or an attachment would be lost silently.
-        final unsupported = _sendMailRefusal(params);
-        if (unsupported != null) return failOrCapture(3, unsupported);
-        String? evalMailParam(String key) {
-          final raw = params[key]?.toString() ?? '';
-          if (raw.isEmpty) return '';
-          final value = resolveValue(raw, vars, callContext: context);
-          if (value != null) return value;
-          // A calculation that cannot be evaluated is never sent as its own
-          // text; a literal is still written as it stands.
-          return params['${key}_is_calculation'] == true ? null : _resolveParamsText(raw, vars);
-        }
-        final mailParts = <String, String>{};
-        for (final key in const ['to', 'cc', 'bcc', 'subject', 'message']) {
-          final value = evalMailParam(key);
-          if (value == null) {
-            return LayoutActionResult.stopped('Send Mail cannot evaluate its $key: ${params[key]}');
-          }
-          mailParts[key] = value;
-        }
-        final to = mailParts['to']!;
-        final cc = mailParts['cc']!;
-        final bcc = mailParts['bcc']!;
-        final subject = mailParts['subject']!;
-        final message = mailParts['message']!;
-        if (ext != null) {
-          await ext.actionSendMail(to: to, cc: cc, bcc: bcc, subject: subject, message: message);
-        } else if (to.isNotEmpty) {
-          final uri = Uri(
-            scheme: 'mailto',
-            path: to,
-            queryParameters: <String, String>{
-              if (cc.isNotEmpty) 'cc': cc,
-              if (bcc.isNotEmpty) 'bcc': bcc,
-              if (subject.isNotEmpty) 'subject': subject,
-              if (message.isNotEmpty) 'body': message,
-            },
-          );
-          await host.actionOpenUrl(uri.toString());
-        }
-        session.lastError = 0;
+        return _runSendMail(params, vars, context, failOrCapture);
       case 'show_dialog':
         final title = params['title_is_calculation'] == true
             ? resolveValue(params['title']?.toString() ?? '', vars, callContext: context)
@@ -1774,6 +1771,7 @@ class LayoutActionRunner {
     final external = LayoutActionRunner(
       apiClient: apiClient.forPeerSession(token),
       host: _WindowlessHost(host),
+      files: files,
       // Reaching back to the calling solution — a transfer in the called
       // script whose far end is the caller, say — uses the session the user is
       // already working in there. Any third solution is asked for as usual.
@@ -1796,21 +1794,328 @@ class LayoutActionRunner {
     return note.isEmpty ? fallback : note;
   }
 
-  /// Why a Send Mail step cannot run as a draft in the e-mail client, or
-  /// null when it can.
-  static String? _sendMailRefusal(Map<String, dynamic> params) {
-    final reasons = <String>[
-      if (params['send_via'] == 'smtp')
-        "it sends through an SMTP server, and File4Base scripts send mail only by opening a draft in the user's e-mail client",
-      if (params['one_email_per_record'] == true) 'it sends one e-mail per record of the found set',
-      for (final key in const ['to', 'cc', 'bcc'])
-        if (params['collect_$key'] == true)
-          'it collects the ${key.toUpperCase()} addresses across the found set',
-      if (params['attachments'] is List && (params['attachments'] as List).isNotEmpty)
-        'it attaches files, which a draft opened in the e-mail client cannot carry',
-    ];
-    if (reasons.isEmpty) return null;
-    return 'Send Mail cannot run as written: ${reasons.join('; ')}.';
+  /// The value of a Send Mail option: a calculation evaluated, a literal as
+  /// written. Null for a calculation that cannot be evaluated — never sent
+  /// as its own text.
+  String? _mailValue(Map<String, dynamic> params, String key, Map<String, String> vars, ScriptCallContext context) {
+    final raw = params[key]?.toString() ?? '';
+    if (raw.isEmpty) return '';
+    final value = resolveValue(raw, vars, callContext: context);
+    if (value != null) return value;
+    return params['${key}_is_calculation'] == true ? null : _resolveParamsText(raw, vars);
+  }
+
+  /// A path list of a step: a `$variable` entry stands for the variable's
+  /// value, any other entry for itself.
+  String _pathText(String raw, Map<String, String> vars, ScriptCallContext context) {
+    final lines = <String>[];
+    for (final line in raw.split(RegExp('[\r\n\u00b6]'))) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      lines.add(t.startsWith(r'$') ? (_lookupVariable(t, vars, callContext: context) ?? '') : t);
+    }
+    return lines.join('\n');
+  }
+
+  static const _pathModel = 'a File4Base script reads and writes files only in its temporary folder, '
+      'Get ( TemporaryPath ), and its documents folder, Get ( DocumentsPath ) (also Get ( DesktopPath ))';
+
+  /// Save Records as PDF (#133): the layout in hand, for the current record
+  /// or the found set, drawn as Print draws it and written at the step's
+  /// path, appended to a PDF saved earlier in this run when asked.
+  Future<LayoutActionResult> _runSaveRecordsAsPdf(
+    Map<String, dynamic> params,
+    Map<String, String> vars,
+    ScriptCallContext context,
+    LayoutActionResult Function(int code, String message) failOrCapture,
+    bool Function(String key, {bool defaultValue}) boolParam,
+    String layoutName,
+  ) async {
+    final session = context.session;
+    final docs = host is DocumentActionHost ? host as DocumentActionHost : null;
+    if (params['save_to'] == 'variable') {
+      return failOrCapture(3, _migrationNote(params, 'Save Records as PDF cannot save into a variable (error 3).'));
+    }
+    if (params['pdf_security'] == true) {
+      // Never an unprotected PDF where the script asked for a protected one.
+      return failOrCapture(3, _migrationNote(params,
+          'Save Records as PDF cannot protect a PDF with a password, and does not write it unprotected (error 3).'));
+    }
+    if (docs == null) {
+      return failOrCapture(3, 'Save Records as PDF needs a window to draw the records in (error 3).');
+    }
+    final paths = params['paths'] is List ? (params['paths'] as List).join('\n') : params['path']?.toString() ?? '';
+    var text = _pathText(paths, vars, context);
+    if (text.trim().isEmpty) {
+      final name = (layoutName.isEmpty ? 'Untitled' : layoutName).replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      text = '${files.documentsPath}$name.pdf';
+    }
+    final path = files.resolve(text);
+    if (path == null) {
+      return failOrCapture(800, 'Save Records as PDF cannot create "$text" (error 800): $_pathModel.');
+    }
+    final records = switch (params['records']?.toString()) {
+      'current' => 'current',
+      'blank' => 'blank',
+      _ => 'browsed',
+    };
+    final drawn = await docs.actionRenderRecordsPdf(records);
+    if (drawn == null) return failOrCapture(3, 'Save Records as PDF could not draw the layout (error 3).');
+    if (drawn.isEmpty) return failOrCapture(401, 'Save Records as PDF has no record to save (error 401).');
+    var pages = drawn;
+    if (boolParam('append')) {
+      final earlier = files.savedPdfPages[path];
+      if (earlier != null) {
+        pages = [...earlier, ...drawn];
+      } else if (await files.read(path) != null) {
+        return failOrCapture(3, 'Save Records as PDF can append only to a PDF saved by a script during this run '
+            'of File4Base, and "$path" was not (error 3).');
+      }
+    }
+    final Uint8List bytes;
+    try {
+      bytes = await assemblePdf(pages, title: layoutName);
+      await files.write(path, bytes);
+    } on Object catch (e) {
+      return failOrCapture(800, 'Save Records as PDF could not write "$path" (error 800): $e');
+    }
+    files.savedPdfPages[path] = pages;
+    session.lastError = 0;
+    if (boolParam('auto_open')) {
+      await docs.actionOpenDocument(path, files.nativePath(path), bytes);
+    }
+    if (boolParam('create_email')) {
+      // FileMaker opens a new e-mail with the PDF attached for the user to
+      // address: Send Mail with its dialog, and the file.
+      return _runSendMail(const {'dialog': true}, vars, context, failOrCapture, attachedPaths: [path]);
+    }
+    return const LayoutActionResult.ok();
+  }
+
+  /// Send Mail (#133).
+  ///
+  /// With its dialog and via the e-mail client, the step opens a draft in
+  /// the user's e-mail client, as FileMaker does. Everything a draft cannot
+  /// do goes through the SMTP profile a server administrator set for the
+  /// solution (or the server): a step sent via the SMTP server, one e-mail
+  /// per record, attachments (with the dialog: in File4Base's compose
+  /// window), and — a deliberate deviation — a step via the e-mail client
+  /// without dialog, which FileMaker sends without asking. Without a
+  /// profile, what an e-mail client can do still opens a draft (the user is
+  /// told which files to attach); the rest fails with error 1506.
+  Future<LayoutActionResult> _runSendMail(
+    Map<String, dynamic> params,
+    Map<String, String> vars,
+    ScriptCallContext context,
+    LayoutActionResult Function(int code, String message) failOrCapture, {
+    List<String>? attachedPaths,
+  }) async {
+    final session = context.session;
+    final docs = host is DocumentActionHost ? host as DocumentActionHost : null;
+    final smtpStep = params['send_via'] == 'smtp';
+    final dialog = params['dialog'] is bool ? params['dialog'] as bool : true;
+    final perRecord = params['one_email_per_record'] == true;
+    final collected = [for (final k in const ['to', 'cc', 'bcc']) if (params['collect_$k'] == true) k];
+
+    ({OutgoingMail? mail, String? failed}) evaluate() {
+      final parts = <String, String>{};
+      for (final key in const ['to', 'cc', 'bcc', 'subject', 'message']) {
+        final value = _mailValue(params, key, vars, context);
+        if (value == null) return (mail: null, failed: key);
+        parts[key] = value;
+      }
+      return (
+        mail: OutgoingMail(
+          to: parts['to']!, cc: parts['cc']!, bcc: parts['bcc']!,
+          subject: parts['subject']!, message: parts['message']!,
+        ),
+        failed: null,
+      );
+    }
+
+    LayoutActionResult unevaluated(String key) =>
+        LayoutActionResult.stopped('Send Mail cannot evaluate its $key: ${params[key]}');
+
+    // The files, before anything is sent or opened.
+    final rawAttachments = attachedPaths ??
+        [for (final e in (params['attachments'] is List ? params['attachments'] as List : const [])) e.toString()];
+    final paths = <String>[];
+    for (final raw in rawAttachments) {
+      final text = attachedPaths != null ? raw : _pathText(raw, vars, context);
+      final path = text.trim().isEmpty ? null : files.resolve(text);
+      if (path == null) {
+        return failOrCapture(100, 'Send Mail cannot attach "${text.isEmpty ? raw : text}" (error 100): $_pathModel.');
+      }
+      paths.add(path);
+    }
+    String fileName(String path) => path.substring(path.lastIndexOf('/') + 1);
+
+    var messages = <OutgoingMail>[];
+    if (perRecord || collected.isNotEmpty) {
+      if (docs == null) {
+        return failOrCapture(3, 'Send Mail goes through the records of the found set only in a window (error 3).');
+      }
+    }
+    if (perRecord) {
+      String? failed;
+      final read = await docs!.actionForEachFoundRecord((position, count) async {
+        final r = evaluate();
+        if (r.mail == null) {
+          failed = r.failed;
+          return false;
+        }
+        if (r.mail!.hasRecipient) messages.add(r.mail!);
+        return true;
+      });
+      if (failed != null) return unevaluated(failed!);
+      if (!read) return failOrCapture(1506, 'Send Mail could not read the records of the found set (error 1506).');
+    } else {
+      final r = evaluate();
+      if (r.mail == null) return unevaluated(r.failed!);
+      var mail = r.mail!;
+      if (collected.isNotEmpty) {
+        final gathered = {for (final k in collected) k: <String>[]};
+        String? failed;
+        final read = await docs!.actionForEachFoundRecord((position, count) async {
+          for (final k in collected) {
+            final value = _mailValue(params, k, vars, context);
+            if (value == null) {
+              failed = k;
+              return false;
+            }
+            for (final address in value.split(RegExp('[;,\r\n]'))) {
+              final a = address.trim();
+              if (a.isNotEmpty && !gathered[k]!.contains(a)) gathered[k]!.add(a);
+            }
+          }
+          return true;
+        });
+        if (failed != null) return unevaluated(failed!);
+        if (!read) return failOrCapture(1506, 'Send Mail could not read the records of the found set (error 1506).');
+        mail = OutgoingMail(
+          to: collected.contains('to') ? gathered['to']!.join('; ') : mail.to,
+          cc: collected.contains('cc') ? gathered['cc']!.join('; ') : mail.cc,
+          bcc: collected.contains('bcc') ? gathered['bcc']!.join('; ') : mail.bcc,
+          subject: mail.subject,
+          message: mail.message,
+        );
+      }
+      messages.add(mail);
+    }
+
+    // A draft in the user's e-mail client, which the user sends: what a
+    // dialog leads to when File4Base cannot show its own.
+    Future<LayoutActionResult> draft() async {
+      await _openMailDraft(messages.first);
+      if (paths.isNotEmpty) {
+        final list = paths.map((p) => files.nativePath(p)).join(', ');
+        final notice = 'An e-mail draft cannot carry attachments: attach ${paths.length == 1 ? 'this file' : 'these files'} '
+            'to the draft yourself: $list';
+        if (docs != null) {
+          await docs.actionNotify(notice);
+        } else {
+          await host.actionShowDialog('Send Mail', notice);
+        }
+      }
+      session.lastError = 0;
+      return const LayoutActionResult.ok();
+    }
+
+    // With its dialog, the user sees every message before it leaves. With
+    // no window to show the compose window in, one message becomes a draft;
+    // several cannot be shown, and none is sent.
+    if (dialog && docs == null) {
+      if (messages.length > 1 || perRecord) {
+        return failOrCapture(1, 'Send Mail shows each message before sending it, and there is no window '
+            'to show them in: nothing was sent (error 1).');
+      }
+      return draft();
+    }
+
+    final needsSmtp = smtpStep || perRecord || !dialog || paths.isNotEmpty;
+    final status = needsSmtp ? await _loadMailStatus() : const MailStatus();
+    if (!status.configured) {
+      if (smtpStep || perRecord) {
+        return failOrCapture(1506, 'Send Mail sends through SMTP, and no SMTP profile serves this solution: '
+            'a server administrator sets one in Server Tools (error 1506).');
+      }
+      // Via the e-mail client: a draft the user sends, as with a dialog.
+      return draft();
+    }
+
+    final fromName = _mailValue(params, 'smtp_from_name', vars, context);
+    final from = _mailValue(params, 'smtp_from', vars, context);
+    final replyTo = _mailValue(params, 'smtp_reply_to', vars, context);
+    if (fromName == null) return unevaluated('smtp_from_name');
+    if (from == null) return unevaluated('smtp_from');
+    if (replyTo == null) return unevaluated('smtp_reply_to');
+
+    if (dialog && docs != null) {
+      // Each message in the compose window, one per record in turn; a
+      // cancel sends none of them.
+      final edited = <OutgoingMail>[];
+      for (final m in messages) {
+        final e = await docs.actionComposeMail(m, from: status.fromLabel, attachments: [for (final p in paths) fileName(p)]);
+        if (e == null) {
+          session.lastError = 1; // the user cancelled
+          return const LayoutActionResult.ok();
+        }
+        edited.add(e);
+      }
+      messages = edited;
+    }
+    messages = messages.where((m) => m.hasRecipient).toList();
+    if (messages.isEmpty) {
+      return failOrCapture(1506, 'Send Mail has no recipient to send to (error 1506).');
+    }
+    final attachments = <MailAttachment>[];
+    for (final path in paths) {
+      final bytes = await files.read(path);
+      if (bytes == null) return failOrCapture(100, 'Send Mail cannot attach "$path": there is no such file (error 100).');
+      attachments.add(MailAttachment(name: fileName(path), bytes: bytes));
+    }
+    var sent = 0;
+    try {
+      for (var i = 0; i < messages.length; i += status.maxBatch) {
+        final end = i + status.maxBatch < messages.length ? i + status.maxBatch : messages.length;
+        sent += await apiClient.sendMail(
+          messages: messages.sublist(i, end),
+          attachments: attachments,
+          fromName: fromName,
+          from: from,
+          replyTo: replyTo,
+        );
+      }
+    } on ApiException catch (e) {
+      final raw = e.raw['filemaker_error'];
+      final code = raw is int && raw > 0 ? raw : 1506;
+      final before = sent + (e.raw['sent'] is int ? e.raw['sent'] as int : 0);
+      return failOrCapture(code, 'Send Mail: ${e.detail}${before > 0 ? ' ($before sent)' : ''} (error $code).');
+    } on Object catch (e) {
+      return failOrCapture(1506, 'Send Mail could not reach the server: $e (error 1506).');
+    }
+    session.lastError = 0;
+    return const LayoutActionResult.ok();
+  }
+
+  /// Opens [mail] as a draft in the user's e-mail client.
+  Future<void> _openMailDraft(OutgoingMail mail) async {
+    final ext = _extHost;
+    if (ext != null) {
+      await ext.actionSendMail(to: mail.to, cc: mail.cc, bcc: mail.bcc, subject: mail.subject, message: mail.message);
+    } else if (mail.to.isNotEmpty) {
+      final uri = Uri(
+        scheme: 'mailto',
+        path: mail.to,
+        queryParameters: <String, String>{
+          if (mail.cc.isNotEmpty) 'cc': mail.cc,
+          if (mail.bcc.isNotEmpty) 'bcc': mail.bcc,
+          if (mail.subject.isNotEmpty) 'subject': mail.subject,
+          if (mail.message.isNotEmpty) 'body': mail.message,
+        },
+      );
+      await host.actionOpenUrl(uri.toString());
+    }
   }
 
   /// Replace Field Contents over the whole found set. A calculation, or a
@@ -2197,6 +2502,12 @@ class LayoutActionRunner {
         case 'accountname':
           final acc = host.actionResolveText('{{AccountName}}');
           return acc == '{{AccountName}}' ? '' : acc;
+        // The folders a script may write in (#133): see ScriptFileStore.
+        case 'temporarypath':
+          return files.temporaryPath;
+        case 'documentspath':
+        case 'desktoppath':
+          return files.documentsPath;
       }
     }
 

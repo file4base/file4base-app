@@ -2,6 +2,7 @@
 // dynamic targets, window model, and runner/debugger parity.
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
@@ -469,6 +470,96 @@ LayoutActionRunner _runner(_FullExtendedHost host, Map<String, Map<String, dynam
     host: host,
   );
 }
+
+// A 1x1 PNG, the image of a drawn page.
+final Uint8List _png = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+
+/// A window that draws, composes and opens documents (#133).
+class _DocumentHost extends _FullExtendedHost implements DocumentActionHost {
+  _DocumentHost({super.records});
+
+  final List<String> renders = [];
+  final List<({OutgoingMail mail, List<String> attachments})> composed = [];
+  final List<String> opened = [];
+  final List<String> notices = [];
+  List<PdfSheetPage>? nextPages;
+  OutgoingMail? Function(OutgoingMail mail) compose = (m) => m;
+
+  @override
+  Future<List<PdfSheetPage>?> actionRenderRecordsPdf(String records) async {
+    renders.add(records);
+    if (nextPages != null) return nextPages;
+    final count = records == 'browsed' ? this.records.length : 1;
+    return [for (var i = 0; i < count; i++) PdfSheetPage(width: 595, height: 842, png: _png)];
+  }
+
+  @override
+  Future<bool> actionForEachFoundRecord(Future<bool> Function(int position, int count) visit) async {
+    final before = recordIdx;
+    for (var i = 0; i < records.length; i++) {
+      recordIdx = i;
+      if (!await visit(i + 1, records.length)) break;
+    }
+    recordIdx = before;
+    return true;
+  }
+
+  @override
+  Future<OutgoingMail?> actionComposeMail(OutgoingMail mail, {required String from, List<String> attachments = const []}) async {
+    composed.add((mail: mail, attachments: attachments));
+    return compose(mail);
+  }
+
+  @override
+  Future<void> actionOpenDocument(String path, String nativePath, Uint8List bytes) async => opened.add(path);
+
+  @override
+  Future<void> actionNotify(String message) async => notices.add(message);
+}
+
+/// The server's mail endpoints, as a script sees them: never real mail.
+class _MailServer {
+  _MailServer({this.configured = false, this.maxBatch = 100, this.refuseWith});
+  final bool configured;
+  final int maxBatch;
+  final int? refuseWith;
+  final List<Map<String, dynamic>> requests = [];
+
+  Future<http.Response> handle(http.Request req) async {
+    const json = {'content-type': 'application/json'};
+    if (req.url.path == '/api/v1/mail/status') {
+      return http.Response(jsonEncode({
+        'smtp_configured': configured,
+        'scope': configured ? 'server' : '',
+        'from_name': 'Example',
+        'from_address': 'noreply@example.invalid',
+        'max_batch': maxBatch,
+      }), 200, headers: json);
+    }
+    if (req.url.path == '/api/v1/mail/send' && req.method == 'POST') {
+      if (refuseWith != null) {
+        return http.Response(jsonEncode({
+          'title': 'Mail not sent',
+          'status': 502,
+          'detail': 'the SMTP server refused a recipient',
+          'sent': 0,
+          'filemaker_error': refuseWith,
+        }), 502, headers: {'content-type': 'application/problem+json'});
+      }
+      final body = Map<String, dynamic>.from(jsonDecode(req.body) as Map);
+      requests.add(body);
+      return http.Response(jsonEncode({'sent': (body['messages'] as List).length}), 200, headers: json);
+    }
+    return http.Response('Not found', 404);
+  }
+}
+
+LayoutActionRunner _mailRunner(_DocumentHost host, ScriptFileStore files, _MailServer server) => LayoutActionRunner(
+      apiClient: ApiClient(baseUrl: 'http://test:8080', httpClient: MockClient(server.handle)),
+      host: host,
+      files: files,
+    );
 
 void main() {
   test('Set Error Capture + Get(LastError) drive control flow (#133)', () async {
@@ -1099,35 +1190,40 @@ void main() {
           reason: 'closing the dialog is no button, and commits nothing');
     });
 
-    test('Save Records as PDF reports error 3 with its migration note, as no PDF is produced', () async {
+    test('Save Records as PDF into a variable reports error 3 with its migration note', () async {
       final host = _FullExtendedHost();
       final params = {
-        'path': r'$out',
+        'save_to': 'variable',
         'dialog': false,
-        'migration_note': 'Save Records as PDF produces no PDF in File4Base yet',
+        'migration_note': 'Save Records as PDF saves into a variable',
       };
       final stopped = await _runner(host, const {}).runStep('Save Records as PDF', params, depth: 0);
       expect(stopped.completed, isFalse);
-      expect(stopped.message, contains('produces no PDF'));
+      expect(stopped.message, contains('into a variable'));
       final session = ScriptSessionState()..errorCapture = true;
       final captured = await _runner(host, const {})
           .runStep('Save Records as PDF', params, depth: 0, callContext: ScriptCallContext(session: session));
       expect(captured.completed, isTrue);
       expect(session.lastError, 3);
-      expect(host.log.where((l) => l.startsWith('save_pdf')), isEmpty);
     });
 
-    test('Send Mail refuses what a mail draft cannot carry, and never sends formula text', () async {
+    test('Send Mail without an SMTP profile drafts what a client can carry, and never sends formula text', () async {
       final host = _FullExtendedHost();
       final runner = _runner(host, const {});
+      final files = runner.files;
       final attached = await runner.runStep('Send Mail', {
         'to': '"a@example.invalid"',
         'attachments': [r'$report'],
-      }, depth: 0);
-      expect(attached.completed, isFalse);
-      expect(attached.message, contains('attaches files'));
-      final smtp = await runner.runStep('Send Mail', {'to': '"a@example.invalid"', 'send_via': 'smtp'}, depth: 0);
+      }, depth: 0, localVars: {r'$report': '${files.temporaryPath}Report.pdf'});
+      expect(attached.completed, isTrue, reason: attached.message);
+      expect(host.log, contains('send_mail:a@example.invalid||'));
+      expect(host.log.where((l) => l.startsWith('show_dialog:Send Mail|An e-mail draft cannot carry attachments')),
+          hasLength(1), reason: 'the user is told which file to attach');
+      host.log.clear();
+      final smtp = await runner.runStep('Send Mail', {'to': '"a@example.invalid"', 'send_via': 'smtp', 'dialog': false}, depth: 0);
+      expect(smtp.completed, isFalse);
       expect(smtp.message, contains('SMTP'));
+      expect(smtp.message, contains('1506'));
       final unreadable = await runner.runStep('Send Mail', {
         'to': 'NoSuchFunction ( 1 ; 2 )',
         'to_is_calculation': true,
@@ -1168,6 +1264,252 @@ void main() {
         'params': {'migration_note': 'needs a transfer'},
       });
       expect(step.previewText, '[Needs attention: needs a transfer]');
+    });
+  });
+
+  group('Save Records as PDF and Send Mail (#133)', () {
+    test('a FileMaker path resolves only into the script folders', () {
+      const roots = ['/File4Base/Temporary/', '/File4Base/Documents/'];
+      String? resolve(String raw) => resolveScriptPath(raw, roots: roots, relativeRoot: roots[1]);
+      expect(resolve('/File4Base/Temporary/Invoice.pdf'), '/File4Base/Temporary/Invoice.pdf');
+      expect(resolve('filemac:/File4Base/Documents/Out/Report.pdf'), '/File4Base/Documents/Out/Report.pdf');
+      expect(resolve('file:Report.pdf'), '/File4Base/Documents/Report.pdf', reason: 'relative: the documents folder');
+      expect(resolve('filewin:/C:/Users/someone/Desktop/a.pdf'), isNull);
+      expect(resolve('/File4Base/Temporary/../../etc/passwd'), isNull);
+      expect(resolve('/elsewhere/a.pdf\n/File4Base/Temporary/b.pdf'), '/File4Base/Temporary/b.pdf',
+          reason: 'a path list uses its first path in a script folder');
+      expect(resolve(''), isNull);
+      const windows = ['/C:/Users/someone/AppData/Local/Temp/file4base-1/', '/C:/Users/someone/Documents/File4Base/'];
+      expect(
+        resolveScriptPath('filewin:/c:/users/SOMEONE/Documents/File4Base/x.pdf', roots: windows, relativeRoot: windows[1]),
+        isNotNull,
+        reason: 'a Windows path compares without case',
+      );
+    });
+
+    test('writes a real PDF at a path made with Get ( TemporaryPath ), and appends to it', () async {
+      final mail = _MailServer();
+      final host = _DocumentHost(records: [{'name': 'A', 'email': ''}, {'name': 'B', 'email': ''}]);
+      final files = MemoryScriptFileStore();
+      final runner = _mailRunner(host, files, mail);
+      final out = runner.resolveValue('Get ( TemporaryPath ) & "Invoice.pdf"', const {});
+      expect(out, '/File4Base/Temporary/Invoice.pdf');
+      final vars = {r'$out': out!};
+      final first = await runner.runStep('Save Records as PDF',
+          {'path': r'$out', 'records': 'current', 'dialog': false}, depth: 0, localVars: vars);
+      expect(first.completed, isTrue, reason: first.message);
+      expect(host.renders, ['current']);
+      final bytes = files.files[out]!;
+      expect(ascii.decode(bytes.sublist(0, 5)), '%PDF-');
+      expect(files.savedPdfPages[out], hasLength(1));
+
+      final second = await runner.runStep('Save Records as PDF',
+          {'path': r'$out', 'append': true, 'dialog': false}, depth: 0, localVars: vars);
+      expect(second.completed, isTrue, reason: second.message);
+      expect(host.renders, ['current', 'browsed'], reason: 'the found set by default');
+      expect(files.savedPdfPages[out], hasLength(3), reason: 'one page, then two more appended');
+      expect(files.files[out]!.length, greaterThan(bytes.length));
+      expect(mail.requests, isEmpty);
+    });
+
+    test('reports 800 for a path outside the script folders, 401 without record, 3 to append to a foreign PDF', () async {
+      final host = _DocumentHost();
+      final files = MemoryScriptFileStore();
+      final runner = _mailRunner(host, files, _MailServer());
+      final session = ScriptSessionState()..errorCapture = true;
+      final context = ScriptCallContext(session: session);
+
+      final stopped = await runner.runStep('Save Records as PDF',
+          {'path': 'filemac:/Users/someone/Desktop/Report.pdf', 'dialog': false}, depth: 0);
+      expect(stopped.completed, isFalse);
+      expect(stopped.message, contains('error 800'));
+      expect(stopped.message, contains('Get ( TemporaryPath )'));
+      await runner.runStep('Save Records as PDF',
+          {'path': 'filemac:/Users/someone/Desktop/Report.pdf', 'dialog': false}, depth: 0, callContext: context);
+      expect(session.lastError, 800);
+      expect(files.files, isEmpty);
+
+      host.nextPages = const [];
+      await runner.runStep('Save Records as PDF', {'path': 'file:Empty.pdf'}, depth: 0, callContext: context);
+      expect(session.lastError, 401);
+
+      host.nextPages = null;
+      files.files['/File4Base/Documents/Old.pdf'] = Uint8List.fromList(utf8.encode('%PDF-1.4'));
+      await runner.runStep('Save Records as PDF', {'path': 'file:Old.pdf', 'append': true}, depth: 0, callContext: context);
+      expect(session.lastError, 3);
+      expect(utf8.decode(files.files['/File4Base/Documents/Old.pdf']!), '%PDF-1.4', reason: 'left as it was');
+    });
+
+    test('Create email hands the PDF to Send Mail: composed in File4Base and sent through SMTP', () async {
+      final mail = _MailServer(configured: true);
+      final host = _DocumentHost()
+        ..compose = (m) => OutgoingMail(to: 'buyer@example.invalid', subject: 'Your invoice', message: m.message);
+      final files = MemoryScriptFileStore();
+      final runner = _mailRunner(host, files, mail);
+      final res = await runner.runStep('Save Records as PDF',
+          {'path': 'file:Invoice.pdf', 'records': 'current', 'create_email': true, 'auto_open': true}, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.opened, ['/File4Base/Documents/Invoice.pdf']);
+      expect(host.composed.single.attachments, ['Invoice.pdf']);
+      final sent = mail.requests.single;
+      expect(sent['messages'], [
+        {'to': 'buyer@example.invalid', 'cc': '', 'bcc': '', 'subject': 'Your invoice', 'message': ''},
+      ]);
+      final attachment = (sent['attachments'] as List).single as Map;
+      expect(attachment['name'], 'Invoice.pdf');
+      expect(base64Decode(attachment['data'] as String), files.files['/File4Base/Documents/Invoice.pdf']);
+    });
+
+    test("one e-mail per record goes in batches, with the step's sender and reply-to", () async {
+      final mail = _MailServer(configured: true, maxBatch: 2);
+      final host = _DocumentHost(records: [
+        {'name': 'Alpha', 'email': 'alpha@example.invalid'},
+        {'name': 'Beta', 'email': ''},
+        {'name': 'Gamma', 'email': 'gamma@example.invalid'},
+        {'name': 'Delta', 'email': 'delta@example.invalid'},
+      ])
+        ..recordIdx = 1;
+      final runner = _mailRunner(host, MemoryScriptFileStore(), mail);
+      final res = await runner.runStep('Send Mail', {
+        'send_via': 'smtp',
+        'one_email_per_record': true,
+        'dialog': false,
+        'to': 'email',
+        'to_is_calculation': true,
+        'subject': '"Hello " & name',
+        'subject_is_calculation': true,
+        'message': '"Body"',
+        'smtp_from_name': '"Sales"',
+        'smtp_from': '"sales@example.invalid"',
+        'smtp_reply_to': '"replies@example.invalid"',
+        'smtp_server_in_step': true,
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.recordIdx, 1, reason: 'the current record is the same afterwards');
+      expect(mail.requests, hasLength(2), reason: 'three messages, two per request');
+      expect(mail.requests.first['from_name'], 'Sales');
+      expect(mail.requests.first['from'], 'sales@example.invalid');
+      expect(mail.requests.first['reply_to'], 'replies@example.invalid');
+      final sent = [for (final r in mail.requests) ...(r['messages'] as List).cast<Map<String, dynamic>>()];
+      expect(sent.map((m) => '${m['to']}|${m['subject']}'), [
+        'alpha@example.invalid|Hello Alpha',
+        'gamma@example.invalid|Hello Gamma',
+        'delta@example.invalid|Hello Delta',
+      ], reason: 'a record without address is skipped');
+      expect(host.log.where((l) => l.startsWith('send_mail')), isEmpty, reason: 'no draft');
+    });
+
+    test('Send Mail reports the FileMaker errors: server refusal, missing file, cancelled, no profile', () async {
+      final session = ScriptSessionState()..errorCapture = true;
+      final context = ScriptCallContext(session: session);
+
+      final refusing = _MailServer(configured: true, refuseWith: 1503);
+      final host = _DocumentHost();
+      final files = MemoryScriptFileStore();
+      final runner = _mailRunner(host, files, refusing);
+      await runner.runStep('Send Mail', {'send_via': 'smtp', 'dialog': false, 'to': '"a@example.invalid"'},
+          depth: 0, callContext: context);
+      expect(session.lastError, 1503);
+
+      await runner.runStep('Send Mail', {'dialog': false, 'to': '"a@example.invalid"', 'attachments': ['file:Missing.pdf']},
+          depth: 0, callContext: context);
+      expect(session.lastError, 100, reason: 'a file the script folders do not have');
+      await runner.runStep('Send Mail', {'dialog': false, 'to': '"a@example.invalid"', 'attachments': ['/etc/passwd']},
+          depth: 0, callContext: context);
+      expect(session.lastError, 100, reason: 'a file outside the script folders');
+
+      final mail = _MailServer(configured: true);
+      final cancelling = _DocumentHost()..compose = (_) => null;
+      await _mailRunner(cancelling, files, mail)
+          .runStep('Send Mail', {'send_via': 'smtp', 'to': '"a@example.invalid"'}, depth: 0, callContext: context);
+      expect(session.lastError, 1, reason: 'the user cancelled the compose window');
+      expect(mail.requests, isEmpty);
+
+      final none = _MailServer();
+      final draftHost = _DocumentHost();
+      await _mailRunner(draftHost, files, none)
+          .runStep('Send Mail', {'send_via': 'smtp', 'to': '"a@example.invalid"'}, depth: 0, callContext: context);
+      expect(session.lastError, 1506);
+      await _mailRunner(draftHost, files, none).runStep('Send Mail',
+          {'dialog': false, 'to': '"a@example.invalid"', 'subject': '"S"'}, depth: 0, callContext: context);
+      expect(session.lastError, 0, reason: 'without a profile, a draft as before');
+      expect(draftHost.log, contains('send_mail:a@example.invalid|S|'));
+      expect(none.requests, isEmpty);
+    });
+
+    test('a protected PDF is refused, never written unprotected', () async {
+      final host = _DocumentHost();
+      final files = MemoryScriptFileStore();
+      final session = ScriptSessionState()..errorCapture = true;
+      await _mailRunner(host, files, _MailServer()).runStep('Save Records as PDF',
+          {'path': 'file:Locked.pdf', 'pdf_security': true}, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(session.lastError, 3);
+      expect(files.files, isEmpty);
+      expect(host.renders, isEmpty);
+    });
+
+    test('with its dialog and no window, Send Mail drafts one message and sends nothing', () async {
+      final mail = _MailServer(configured: true);
+      final windowless = _FullExtendedHost();
+      final files = MemoryScriptFileStore();
+      await files.write('/File4Base/Temporary/a.pdf', Uint8List.fromList([1, 2, 3]));
+      final runner = LayoutActionRunner(
+        apiClient: ApiClient(baseUrl: 'http://test:8080', httpClient: MockClient(mail.handle)),
+        host: windowless,
+        files: files,
+      );
+      final res = await runner.runStep('Send Mail', {
+        'send_via': 'smtp',
+        'to': '"a@example.invalid"',
+        'subject': '"S"',
+        'attachments': ['/File4Base/Temporary/a.pdf'],
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(mail.requests, isEmpty, reason: 'never sent without the dialog the step asks for');
+      expect(windowless.log, contains('send_mail:a@example.invalid|S|'));
+      expect(windowless.log.where((l) => l.startsWith('show_dialog:Send Mail|An e-mail draft cannot carry')), hasLength(1));
+    });
+
+    test('one e-mail per record with its dialog shows each message, and a cancel sends none', () async {
+      final records = [
+        {'name': 'Alpha', 'email': 'alpha@example.invalid'},
+        {'name': 'Beta', 'email': 'beta@example.invalid'},
+      ];
+      final params = {'send_via': 'smtp', 'one_email_per_record': true, 'to': 'email', 'to_is_calculation': true};
+      final mail = _MailServer(configured: true);
+      final host = _DocumentHost(records: records);
+      final res = await _mailRunner(host, MemoryScriptFileStore(), mail).runStep('Send Mail', params, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.composed.map((c) => c.mail.to), ['alpha@example.invalid', 'beta@example.invalid']);
+      expect((mail.requests.single['messages'] as List), hasLength(2));
+
+      final cancelling = _DocumentHost(records: records)..compose = (m) => m.to.startsWith('beta') ? null : m;
+      final none = _MailServer(configured: true);
+      final session = ScriptSessionState();
+      await _mailRunner(cancelling, MemoryScriptFileStore(), none)
+          .runStep('Send Mail', params, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(session.lastError, 1);
+      expect(none.requests, isEmpty);
+    });
+
+    test('the in-memory folders are emptied when the session ends', () async {
+      final files = MemoryScriptFileStore();
+      await files.write('/File4Base/Temporary/a.pdf', Uint8List.fromList([1]));
+      files.savedPdfPages['/File4Base/Temporary/a.pdf'] = const [];
+      await files.clear();
+      expect(files.files, isEmpty);
+      expect(files.savedPdfPages, isEmpty);
+    });
+
+    test('via the e-mail client without dialog sends through the profile when there is one', () async {
+      final mail = _MailServer(configured: true);
+      final host = _DocumentHost();
+      final res = await _mailRunner(host, MemoryScriptFileStore(), mail)
+          .runStep('Send Mail', {'dialog': false, 'to': '"a@example.invalid"', 'subject': '"S"', 'message': '"Line 1\rLine 2"'}, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.composed, isEmpty, reason: 'no dialog');
+      expect((mail.requests.single['messages'] as List).single, {'to': 'a@example.invalid', 'cc': '', 'bcc': '', 'subject': 'S', 'message': 'Line 1\rLine 2'});
+      expect(host.log.where((l) => l.startsWith('send_mail')), isEmpty);
     });
   });
 }
