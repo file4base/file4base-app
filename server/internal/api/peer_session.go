@@ -143,10 +143,10 @@ func (p *groupPeers) end(ctx context.Context, database string) (*peerEnd, error)
 	return end, nil
 }
 
-// Data implements data.Peers. The other solution reads, in turn, through
-// its own external occurrences as the same group, so a calculation there
-// that reads a third solution, or this one, is computed as the accounts the
-// group holds in those.
+// Data implements data.Peers. The other solution's service reads its own
+// external occurrences through the same group, so a chain of solutions, or
+// two that read each other, is followed with the session the group holds in
+// each.
 func (p *groupPeers) Data(ctx context.Context, database string) (*data.Service, error) {
 	end, err := p.end(ctx, database)
 	if err != nil {

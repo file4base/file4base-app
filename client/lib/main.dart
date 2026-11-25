@@ -162,8 +162,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   // solution's table (#107) from a local one.
   List<TableOccurrenceModel> _occurrences = const [];
   // Set while the active layout is on an external occurrence: no local
-  // table is selected and record commands are disabled.
+  // table is selected, and record commands follow what the session's
+  // account in the other solution may do, once its table is read.
   TableOccurrenceModel? _externalLayoutOccurrence;
+  RecordPrivileges? _externalPrivileges;
   LayoutDefinitionModel? _activeLayout;
   bool _isLoadingTables = false;
   bool _isToolbarVisible = true;
@@ -820,6 +822,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           _serverLayouts = layouts;
           _occurrences = occurrences;
           _externalLayoutOccurrence = null;
+          _externalPrivileges = null;
           _isLoadingTables = false;
 
           if (layouts.isNotEmpty) {
@@ -892,12 +895,19 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
+  /// Whether a record command is enabled: always on a layout of this
+  /// solution, and on one of another solution's table when the account the
+  /// session holds there may (#107).
+  bool _recordCommand(bool Function(RecordPrivileges privileges) allowed) =>
+      _externalLayoutOccurrence == null || allowed(_externalPrivileges ?? const RecordPrivileges());
+
   void _applyLayout(LayoutModel layoutModel, [List<TableModel>? tablesList]) {
     final tables = tablesList ?? _tables;
     // A layout on another solution's table is never bound to a local
     // table: Browse, New and Delete would act on that table's records.
     final external = externalOccurrenceOfLayout(layoutModel, _occurrences);
     _externalLayoutOccurrence = external;
+    _externalPrivileges = null;
     if (external != null) {
       _selectedTable = null;
       try {
@@ -2363,8 +2373,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onExportRecords: _handleExportRecords,
                   onImportRecords: _handleImportRecords,
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
-                  onNewRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.createNewRecord(),
-                  onDuplicateRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.duplicateRecord(),
+                  onNewRecord: _recordCommand((p) => p.create) ? () => _dataBrowserKey.currentState?.createNewRecord() : null,
+                  onDuplicateRecord: _recordCommand((p) => p.create) ? () => _dataBrowserKey.currentState?.duplicateRecord() : null,
                   onSortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.sortRecords() : null,
                   onUnsortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.unsort() : null,
                   onCommitRecord: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.commitRecord() : null,
@@ -2372,7 +2382,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onGoToRecord: mode == OperationalMode.browse
                       ? (target) => _dataBrowserKey.currentState?.goToRecordNamed(target)
                       : null,
-                  onDeleteRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                  onDeleteRecord: _recordCommand((p) => p.delete) ? () => _dataBrowserKey.currentState?.deleteCurrentRecord() : null,
                   onShowAllRecords: _externalLayoutOccurrence != null
                       ? null
                       : () {
@@ -2723,8 +2733,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                                       unawaited(_changeMode(OperationalMode.browse));
                                       _dataBrowserKey.currentState?.fetchRecords();
                                     },
-                              onNewRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.createNewRecord(),
-                              onDeleteRecord: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.deleteCurrentRecord(),
+                              onNewRecord: _recordCommand((p) => p.create) ? () => _dataBrowserKey.currentState?.createNewRecord() : null,
+                              onDeleteRecord: _recordCommand((p) => p.delete) ? () => _dataBrowserKey.currentState?.deleteCurrentRecord() : null,
                               selectedTool: _activeLayoutTool,
                               onToolSelected: (tool) => setState(() => _activeLayoutTool = tool),
                               strokeWidth: _layoutStrokeWidth,
@@ -3242,7 +3252,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
 
     final client = ref.read(apiClientProvider);
     // The browser of this solution's table, or of another solution's for a
-    // layout on an external occurrence: shown there, never typed into.
+    // layout on an external occurrence, written as far as its privileges go.
     Widget browser(TableModel table, ApiClient client, {TableOccurrenceModel? external}) {
       return DataBrowserWidget(
         key: _dataBrowserKey,
@@ -3256,6 +3266,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
             if (o.id != external?.id) o,
         ]),
         externalDatabase: external?.external?.database,
+        privileges: external != null ? table.privileges : null,
         mode: mode,
         onModeChanged: _changeMode,
         onTableModified: _loadTables,
@@ -3292,8 +3303,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
 
     // A layout on another solution's table browses that solution's records,
-    // read there as the account this session holds in it (#107). They are
-    // shown, not written from here yet: record commands stay disabled.
+    // read and written there as the account this session holds in it, with
+    // what that account may do (#107).
     ExternalAccess.of(client).solutionName = _activeSolutionName;
     final external = _externalLayoutOccurrence;
     if (external != null) {
@@ -3306,6 +3317,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         occurrence: external,
         apiClient: client,
         builder: (context, table, occurrenceClient) => browser(table, occurrenceClient, external: external),
+        onTable: (table) {
+          if (mounted) setState(() => _externalPrivileges = table?.privileges);
+        },
       );
     }
 

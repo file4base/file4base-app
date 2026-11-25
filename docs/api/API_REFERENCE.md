@@ -35,7 +35,7 @@ When an error occurs (HTTP 4xx or 5xx), the response body is encoded as `applica
 ```
 
 #### `424 Failed Dependency`: `external_unavailable`
-A request that reads records through an occurrence of **another solution's table** (§ 18, external occurrences) that cannot be read there, or does what is not done across solutions yet, is refused, never answered from a table of this solution:
+A request that reads or writes records through an occurrence of **another solution's table** (§ 18, external occurrences) that cannot be reached there, or does what is not done across solutions yet, is refused, never answered from a table of this solution:
 ```json
 {
   "type": "https://file4base.org/errors/external-unavailable",
@@ -54,9 +54,28 @@ A request that reads records through an occurrence of **another solution's table
 | `reason` | Meaning | Remedy |
 |---|---|---|
 | `not_signed_in` | The session is not signed in to that solution. | Sign in to it: `POST /api/v1/auth/link` (§ 7). |
-| `no_access` | The account the session holds there may not read that table. | Grant it read access in that solution. |
+| `no_access` | The account the session holds there may not read that table. | Grant it read access in that solution, or sign in to it with another account. |
 | `schema_mismatch` | The table, or a field read through the occurrence, is no longer in that solution. | Verify or bind the reference again (§ 18). |
-| `missing` | The reference is unmapped, the occurrence unbound, the solution not installed, or the request needs what is not done across solutions yet: writing their records, a cascading delete reaching them, a find on a related field from one of their records. `detail` says which. | Map or bind the reference (§ 18); otherwise, not yet available. |
+| `missing` | The reference is unmapped, the occurrence unbound, the solution not installed, or the request needs what is not done across solutions yet: a find on a related field through one, or from one of their records. `detail` says which. | Map or bind the reference (§ 18); otherwise, not yet available. |
+
+A write the account held there may read but not make (create, edit or delete) answers `403 Forbidden`; its `detail` names the occurrence, the table, the solution, the file reference and the account, and says to ask that solution's administrator for the privilege or to sign in to it with another account.
+
+#### `500 Internal Server Error`: `partial_delete`
+A cascading delete that reached another solution deletes that solution's records first, in a transaction of its own, then this solution's. No transaction spans two databases, so when this solution's part fails after another's committed, the answer says what is already done:
+```json
+{
+  "type": "https://file4base.org/errors/partial-delete",
+  "title": "Delete Partly Done",
+  "status": 500,
+  "detail": "…",
+  "instance": "/api/v1/data/orders/42",
+  "code": "partial_delete",
+  "partial": true,
+  "committed": ["customers_db"],
+  "database": "orders_db"
+}
+```
+`committed` are the solutions whose related records are deleted, `database` the one whose records are still there, without them. Deleting the record again once the cause is fixed finishes the cascade, but the re-run may leave records reachable only through the committed part: those records' parents are already gone, so the re-run no longer finds them.
 
 ---
 
@@ -445,7 +464,7 @@ A relationship is drawn from a **left** side to a **right** side, and File4Base 
 
 | Option | Acts |
 | --- | --- |
-| `allow_creation` | `POST /api/v1/data/{table}/{id}/related` creates a record on the right side, with every right-hand match field set from the left record. Without it, or when a criterion is not `=`, that request answers `403 Creation Not Allowed`. |
+| `allow_creation` | `POST /api/v1/data/{table}/{id}/related` creates a record on the right side, with every right-hand match field set from the left record; never on the left side from a right record. Without it, or when a criterion is not `=`, that request answers `403 Creation Not Allowed`. |
 | `cascade_delete` | `DELETE /api/v1/data/{table}/{id}` on a left-side record also deletes the right-side records that match it, down the whole chain. |
 | `sort_related` | The order the right side's records come back in when the caller asks for none. `asc` / `desc` mean the right field of the first criterion in that direction; anything else is read as a sort order (`last_name,-fee_paid`). Reading the relationship the other way round ignores it, since the fields it names are the right side's, and a field the side being read does not have is dropped rather than refused. |
 
@@ -553,7 +572,12 @@ Updates an existing record by primary key ID.
 ### `DELETE /api/v1/data/{table}/{id}`
 Deletes a record by primary key ID.
 
-Every relationship of the table whose `cascade_delete` is set and whose **left** side this table is takes its matching records with it, and so on down the chain; a ring of such relationships deletes each record once rather than recursing forever. This is schema-defined integrity, so it applies whatever access level the caller has on the related table.
+Every relationship of the table whose `cascade_delete` is set and whose **left** side this table is takes its matching records with it, and so on down the chain; a ring of such relationships deletes each record once rather than recursing forever. This is schema-defined integrity, so it applies whatever access level the caller has on the related table. The whole cascade is worked out first and then deleted in one transaction: every record goes, or none does. Each related record is deleted only if its match fields still hold the key of a record being deleted: one moved to another record between the two steps is kept.
+
+A cascade that reaches another solution's table through an external occurrence (§ 18) follows that solution's own cascading relationships too, and is refused before anything is deleted when the account held there may not delete one of the tables it reaches there (`403`) or that solution cannot be reached (`424`). See `partial_delete` (§ Errors) for a failure after another solution's part was deleted.
+
+#### Errors
+- `404 Record Not Found` — there is no record `{id}`.
 
 ---
 
@@ -1027,10 +1051,10 @@ Creates a record on the other side of a relationship and fills its match field f
 
 The match field belongs to the relationship: a value sent for it in the body is **overwritten** with the parent's, so a request cannot aim the new record at a different parent.
 
-The caller needs read access to `{table}` and write access to the related table.
+The caller needs read access to `{table}` and the create privilege on the related table (`403` otherwise, for a table of this solution as for another's). When the related table is another solution's (an external occurrence, § 18), the match values are read here and the record is created there as the account the session holds in that solution, which must be allowed to create records there (`403` otherwise, `424` when it cannot be reached).
 
 #### Errors
-- `403 Creation Not Allowed` — the relationship's `allow_creation` is off, or it matches with something other than `=`, in which case there is no single value to put in the new record's match field.
+- `403 Creation Not Allowed` — the relationship's `allow_creation` is off; `{table}` is its right side, not its left (allow-creation creates records of the right side from a record of the left, never the reverse); or it matches with something other than `=`, in which case there is no single value to put in the new record's match field.
 - `422 No Match Value` — the parent's match field is empty, so a new record would have nothing to be matched by.
 - `404 Relationship Not Found` — as above.
 
@@ -2554,7 +2578,16 @@ Through an external occurrence:
 - an **unstored calculation** reads its fields like those of any related table (`Occurrence::Field`, `Count`, `Sum`, `List`…), the other solution's own unstored calculations being computed there; the field is empty when that solution cannot be read, and `<No Access>` (in `POST /evaluate`) when the account there may not read the table, and the record is read all the same;
 - a **find** on one of its fields as a related field finds the records of this solution related to the records it matches there (§ Criteria on a related field).
 
-What cannot be read answers `424 external_unavailable` (§ Errors) with the reason. Writing records of another solution, a cascading delete reaching them, and a find through a relationship from one of its records are not done yet: `424` with `reason: "missing"`.
+What cannot be read answers `424 external_unavailable` (§ Errors) with the reason. A find through a relationship from one of its records is not done yet: `424` with `reason: "missing"`.
+
+### Writing records of another solution
+
+Writes are made in that solution, by its data service, as the account the session holds there: with that solution's validation, auto-enter values, stored calculations and the account's record privileges.
+- a **layout** or **portal row** on an external occurrence creates, edits and deletes with the routes below;
+- **creating a related record** through a relationship into one (`POST /api/v1/data/{table}/{id}/related`) reads the match values here and creates the record there with them (every criterion `=`);
+- a **cascading delete** reaching one is planned over every solution first, then deleted one solution, and one transaction, at a time (`DELETE /api/v1/data/{table}/{id}`).
+
+A write the account may not make answers `403` (§ Errors); one into a solution it may not read, or is not signed in to, `424`. The clients of the other solution are told of the change through the realtime channel, as for a write made there.
 
 ### `/api/v1/occurrences/{occurrence}/records`
 
@@ -2563,13 +2596,17 @@ The records of a table occurrence, by id or name: those of a table of this solut
 | Method and path | As | Another solution's table |
 |---|---|---|
 | `GET /`, `POST /find`, `POST /summary`, `GET /{id}` | `GET /api/v1/data/{table}`, `/find`, `/summary`, `/{id}` | Read as the group's account there. A find on a related field: `424`. |
-| `POST /`, `PUT /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes | `424` (`missing`). |
+| `POST /`, `PUT /{id}`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes (`PATCH` is `PUT`: both change only the fields sent) | Written there as the group's account, with its privileges (above). |
 | `GET /{id}/related`, `POST /related` | the related reads | Follow this solution's relationships from that record. |
 
 An unknown occurrence answers `404 Table Occurrence Not Found`.
 
 ### `GET /api/v1/occurrences/{occurrence}/table`
-The occurrence's table, with its fields, as `GET /api/v1/schemas/tables` gives one, read from the solution the table is in: what a client lays out and formats another solution's records with. `424` as above, with `reason: "schema_mismatch"` when the other solution no longer has the table; `404 Table Not Found` for an occurrence of this solution whose table is gone.
+The occurrence's table, with its fields, as `GET /api/v1/schemas/tables` gives one, read from the solution the table is in: what a client lays out and formats another solution's records with. `privileges` says what the session may do with its records: for another solution's table, what the account held there may do, which is what a client enables its record commands by.
+```json
+{ "id": "…", "name": "customers", "display_name": "Customers", "columns": [ … ],
+  "privileges": { "read": true, "create": false, "edit": true, "delete": false } }
+``` `424` as above, with `reason: "schema_mismatch"` when the other solution no longer has the table; `404 Table Not Found` for an occurrence of this solution whose table is gone.
 
 ### Restoring a solution bundle
 

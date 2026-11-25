@@ -26,8 +26,11 @@ import (
 // followed from such a record is this solution's: the relationship graph is
 // the one of the solution the layout belongs to.
 //
-// Writing to another solution, and finding through a relationship into one,
-// are refused with 424 until they exist.
+// Records of another solution are written the same way: created, edited and
+// deleted by that solution's data service as that account, which needs that
+// account's privilege, so its validation, auto-enter values and stored
+// calculations apply, and its own cascades. Finding through a relationship
+// into another solution is refused with 424 until it exists.
 
 type tableKey struct{}
 
@@ -60,9 +63,10 @@ func (h *DataHandler) RegisterOccurrenceRoutes(r chi.Router) {
 		r.Post("/related", h.ListOccurrenceRelatedRowsBatch)
 		read.Get("/{id}", h.GetRow)
 		write.Put("/{id}", h.UpdateRow)
+		write.Patch("/{id}", h.UpdateRow)
 		write.Delete("/{id}", h.DeleteRow)
 		r.Get("/{id}/related", h.ListOccurrenceRelatedRows)
-		write.Post("/{id}/related", h.CreateRelatedRow)
+		r.Post("/{id}/related", h.CreateOccurrenceRelatedRow)
 	})
 	r.With(RequireSession).Get("/api/v1/occurrences/{occurrence}/table", h.OccurrenceTable)
 }
@@ -103,31 +107,23 @@ func (h *DataHandler) openOccurrence(w http.ResponseWriter, r *http.Request) (da
 }
 
 // inOccurrence runs a /api/v1/data handler on the table of the request's
-// occurrence. The records of another solution's table are read with that
-// solution's session and driver in place of this one's, so the handler and
-// its access checks apply unchanged, as that account; writing them is
-// refused.
+// occurrence. The records of another solution's table are read and written
+// with that solution's session and driver in place of this one's, so the
+// handler and its access checks apply unchanged, as that account. A write
+// names the table it changes, and the solution, for its change event.
 func (h *DataHandler) inOccurrence(write bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if write {
-				origin, err := callerDataService(r).OccurrenceOrigin(r.Context(), chi.URLParam(r, "occurrence"))
-				if err != nil {
-					writeOccurrenceError(w, r, err)
-					return
-				}
-				if origin.External != nil {
-					writeExternalUnavailable(w, r, origin.External.Unsupported("writing records of another solution"))
-					return
-				}
-				noteChangedTable(r.Context(), origin.Table)
-				ctx := context.WithValue(r.Context(), tableKey{}, origin.Table)
-				next.ServeHTTP(w, r.WithContext(ctx))
-				return
-			}
 			origin, end, ok := h.openOccurrence(w, r)
 			if !ok {
 				return
+			}
+			if write {
+				database := ""
+				if origin.External != nil {
+					database = origin.External.Database
+				}
+				noteChangedTable(r.Context(), database, origin.Table)
 			}
 			ctx := context.WithValue(r.Context(), originKey{}, origin)
 			ctx = context.WithValue(ctx, tableKey{}, origin.Table)
@@ -196,6 +192,25 @@ func (h *DataHandler) ListOccurrenceRelatedRowsBatch(w http.ResponseWriter, r *h
 	}
 }
 
+// CreateOccurrenceRelatedRow is CreateRelatedRow for a record of the
+// occurrence, through a relationship of this solution's graph; a related
+// table of another solution is written there, as the group's account.
+//
+//	POST /api/v1/occurrences/{occurrence}/records/{id}/related?relationship=<id>&occurrence=<id>
+func (h *DataHandler) CreateOccurrenceRelatedRow(w http.ResponseWriter, r *http.Request) {
+	if svc, from, ok := h.relatedOrigin(w, r); ok {
+		h.createRelated(w, r, svc, from)
+	}
+}
+
+// occurrenceTable is a table of an occurrence with what the session may do
+// with its records: for another solution's, what the group's account there
+// may do, which is what a client enables record commands by (#107).
+type occurrenceTable struct {
+	*schema.TableMetadata
+	Privileges RecordPrivileges `json:"privileges"`
+}
+
 // OccurrenceTable describes the table of an occurrence: its fields, read from
 // the catalog of the solution the table is in. A client lays out and
 // formats the fields of another solution's table with it, since its own
@@ -208,8 +223,9 @@ func (h *DataHandler) OccurrenceTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	driver, _ := dbal.DriverFromContext(r.Context())
+	sess := currentSession(r)
 	if end != nil {
-		driver = end.driver
+		driver, sess = end.driver, end.session
 	} else if _, ok := h.authorize(w, r, origin.Table, false); !ok {
 		return
 	}
@@ -219,8 +235,13 @@ func (h *DataHandler) OccurrenceTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if found {
+		privileges, err := sessionPrivileges(r.Context(), driver, sess, origin.Table)
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(table)
+		_ = json.NewEncoder(w).Encode(occurrenceTable{TableMetadata: table, Privileges: privileges})
 		return
 	}
 	err = data.ErrTableNotFound

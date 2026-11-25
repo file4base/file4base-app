@@ -136,10 +136,15 @@ privilege never crosses from one solution to another.
   revocation or expiry, ends every session linked to it: a linked session's
   own token stops working with it, and using that token does not keep the
   group's session alive.
-- **What is read.** Each read of another solution runs with that solution's
-  session and access checks, the table access of the account there included,
-  so an account without access gets `424` with `no_access`, never the
-  records.
+- **What is read and written.** Each read of another solution, and each
+  write into it, runs with that solution's session and access checks, the
+  table access and record privileges (create, edit, delete) of the account
+  there included, so an account without access gets `424` with `no_access`,
+  never the records, and a write it may not make is refused with `403`
+  naming that solution and account. A cascading delete that reaches another
+  solution checks, before anything is deleted, that the account there may
+  delete every table it reaches there; the tables of the caller's own
+  solution are integrity defined by its schema, as for a local cascade.
 
 ## Super-owners
 

@@ -221,7 +221,9 @@ abstract class ExtendedLayoutActionHost {
     bool newWindow = false,
   });
   Future<GoToRecordOutcome> actionGoToPortalRow(String target);
-  Future<void> actionDeletePortalRow({required bool confirm});
+  /// Deletes the active portal row only, never the parent record; returns
+  /// the FileMaker error code (0 when a row was deleted).
+  Future<int> actionDeletePortalRow({required bool confirm});
   Future<bool> actionReplaceFieldContents({
     required String field,
     required String replaceType,

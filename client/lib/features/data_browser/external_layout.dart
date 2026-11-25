@@ -53,6 +53,7 @@ class ExternalLayoutView extends StatefulWidget {
     required this.occurrence,
     required this.apiClient,
     required this.builder,
+    this.onTable,
     super.key,
   });
 
@@ -63,6 +64,10 @@ class ExternalLayoutView extends StatefulWidget {
   /// Browses the occurrence's table through a client whose record calls
   /// read the occurrence's records.
   final Widget Function(BuildContext context, TableModel table, ApiClient client) builder;
+
+  /// Told the occurrence's table once it is read, with the privileges the
+  /// record commands follow, and null when it cannot be.
+  final ValueChanged<TableModel?>? onTable;
 
   @override
   State<ExternalLayoutView> createState() => _ExternalLayoutViewState();
@@ -113,9 +118,12 @@ class _ExternalLayoutViewState extends State<ExternalLayoutView> {
       _error = null;
     });
     unawaited(_access.table(widget.occurrence).then((table) {
-      if (mounted) setState(() => _table = table);
+      if (!mounted) return;
+      setState(() => _table = table);
+      widget.onTable?.call(table);
     }, onError: (Object e) {
       if (!mounted) return;
+      widget.onTable?.call(null);
       final problem = ExternalUnavailable.of(e);
       setState(() {
         _table = null;
