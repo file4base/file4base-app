@@ -26,6 +26,11 @@ var (
 	errAuthNotSupported = errors.New("authentication not supported")
 )
 
+// ErrPasswordUnavailable is reported when the environment variable a
+// profile names for its password is not set on the server (FileMaker error
+// 1501, authentication failed).
+var ErrPasswordUnavailable = fmt.Errorf("%w: %w: the password of the SMTP profile is not set on the server", ErrSend, errAuth)
+
 // FileMakerError is the error FileMaker's Send Mail reports for err:
 // 1501 authentication failed, 1502 connection refused, 1503 TLS error, 1504
 // the server requires an encrypted connection, 1505 the authentication is
@@ -154,7 +159,7 @@ func sendOne(c *smtp.Client, m *Prepared) error {
 		_ = c.Reset()
 		return fmt.Errorf("%w: %v", ErrSend, err)
 	}
-	if _, err := w.Write(m.Data); err != nil {
+	if err := m.Write(w); err != nil {
 		return fmt.Errorf("%w: %v", ErrSend, err)
 	}
 	if err := w.Close(); err != nil {

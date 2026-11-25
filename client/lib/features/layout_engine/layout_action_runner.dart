@@ -1836,6 +1836,11 @@ class LayoutActionRunner {
     if (params['save_to'] == 'variable') {
       return failOrCapture(3, _migrationNote(params, 'Save Records as PDF cannot save into a variable (error 3).'));
     }
+    if (params['pdf_security'] == true) {
+      // Never an unprotected PDF where the script asked for a protected one.
+      return failOrCapture(3, _migrationNote(params,
+          'Save Records as PDF cannot protect a PDF with a password, and does not write it unprotected (error 3).'));
+    }
     if (docs == null) {
       return failOrCapture(3, 'Save Records as PDF needs a window to draw the records in (error 3).');
     }
@@ -1998,14 +2003,9 @@ class LayoutActionRunner {
       messages.add(mail);
     }
 
-    final needsSmtp = smtpStep || perRecord || !dialog || paths.isNotEmpty;
-    final status = needsSmtp ? await _loadMailStatus() : const MailStatus();
-    if (!status.configured) {
-      if (smtpStep || perRecord) {
-        return failOrCapture(1506, 'Send Mail sends through SMTP, and no SMTP profile is set for this solution '
-            'or for the server: a server administrator sets one in Server Tools (error 1506).');
-      }
-      // Via the e-mail client: a draft the user sends, as with a dialog.
+    // A draft in the user's e-mail client, which the user sends: what a
+    // dialog leads to when File4Base cannot show its own.
+    Future<LayoutActionResult> draft() async {
       await _openMailDraft(messages.first);
       if (paths.isNotEmpty) {
         final list = paths.map((p) => files.nativePath(p)).join(', ');
@@ -2021,6 +2021,28 @@ class LayoutActionRunner {
       return const LayoutActionResult.ok();
     }
 
+    // With its dialog, the user sees every message before it leaves. With
+    // no window to show the compose window in, one message becomes a draft;
+    // several cannot be shown, and none is sent.
+    if (dialog && docs == null) {
+      if (messages.length > 1 || perRecord) {
+        return failOrCapture(1, 'Send Mail shows each message before sending it, and there is no window '
+            'to show them in: nothing was sent (error 1).');
+      }
+      return draft();
+    }
+
+    final needsSmtp = smtpStep || perRecord || !dialog || paths.isNotEmpty;
+    final status = needsSmtp ? await _loadMailStatus() : const MailStatus();
+    if (!status.configured) {
+      if (smtpStep || perRecord) {
+        return failOrCapture(1506, 'Send Mail sends through SMTP, and no SMTP profile serves this solution: '
+            'a server administrator sets one in Server Tools (error 1506).');
+      }
+      // Via the e-mail client: a draft the user sends, as with a dialog.
+      return draft();
+    }
+
     final fromName = _mailValue(params, 'smtp_from_name', vars, context);
     final from = _mailValue(params, 'smtp_from', vars, context);
     final replyTo = _mailValue(params, 'smtp_reply_to', vars, context);
@@ -2028,14 +2050,19 @@ class LayoutActionRunner {
     if (from == null) return unevaluated('smtp_from');
     if (replyTo == null) return unevaluated('smtp_reply_to');
 
-    if (dialog && !perRecord && docs != null) {
-      final edited = await docs.actionComposeMail(messages.first,
-          from: status.fromLabel, attachments: [for (final p in paths) fileName(p)]);
-      if (edited == null) {
-        session.lastError = 1; // the user cancelled
-        return const LayoutActionResult.ok();
+    if (dialog && docs != null) {
+      // Each message in the compose window, one per record in turn; a
+      // cancel sends none of them.
+      final edited = <OutgoingMail>[];
+      for (final m in messages) {
+        final e = await docs.actionComposeMail(m, from: status.fromLabel, attachments: [for (final p in paths) fileName(p)]);
+        if (e == null) {
+          session.lastError = 1; // the user cancelled
+          return const LayoutActionResult.ok();
+        }
+        edited.add(e);
       }
-      messages = [edited];
+      messages = edited;
     }
     messages = messages.where((m) => m.hasRecipient).toList();
     if (messages.isEmpty) {

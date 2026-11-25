@@ -120,6 +120,7 @@ func (h *ServerAdminHandler) registerMailAdminRoutes(r chi.Router) {
 	r.Put("/mail-profiles", h.PutMailProfile)
 	r.Delete("/mail-profiles", h.DeleteMailProfile)
 	r.Post("/mail-profiles/test", h.TestMailProfile)
+	r.Put("/mail-profiles/server-access", h.PutServerMailAccess)
 }
 
 // registerMailRoutes mounts what scripts use (any signed-in account).
@@ -146,10 +147,53 @@ func (h *ServerAdminHandler) ListMailProfiles(w http.ResponseWriter, r *http.Req
 		}
 		views = append(views, v)
 	}
+	granted, err := h.controlStore.ListServerMailGrants(r.Context())
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"profiles":            views,
 		"password_env_prefix": mail.PasswordEnvPrefix,
+		// The solutions allowed to send through the server-wide profile.
+		"server_profile_solutions": granted,
 	})
+}
+
+type serverMailAccessRequest struct {
+	Solution string `json:"solution"`
+	Allowed  bool   `json:"allowed"`
+}
+
+// PutServerMailAccess allows, or stops, one solution sending through the
+// server-wide profile. No solution may by default: anyone can create a
+// solution, and the server's mail account must not become theirs.
+func (h *ServerAdminHandler) PutServerMailAccess(w http.ResponseWriter, r *http.Request) {
+	sess := currentSession(r)
+	var req serverMailAccessRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", err.Error())
+		return
+	}
+	solution := strings.TrimSpace(req.Solution)
+	if solution == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid request", "a solution (database name) is required")
+		return
+	}
+	if req.Allowed && !h.databaseExists(r.Context(), solution) {
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Unknown database", fmt.Sprintf("no database is named %q", solution))
+		return
+	}
+	if err := h.controlStore.SetServerMailGrant(r.Context(), solution, sess.Username, req.Allowed); err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	what := "Stop using the server SMTP profile"
+	if req.Allowed {
+		what = "Allow the server SMTP profile"
+	}
+	h.recordAudit("mail", what, sess.Username, sess.Database, solution, "success", "")
+	writeJSON(w, http.StatusOK, map[string]interface{}{"solution": solution, "allowed": req.Allowed})
 }
 
 type putMailProfileRequest struct {
@@ -284,6 +328,17 @@ func (h *ServerAdminHandler) sessionMailProfile(ctx context.Context, database st
 		if candidate.scope == "solution" && strings.TrimSpace(candidate.name) == "" {
 			continue
 		}
+		// The server-wide profile serves only the solutions a server
+		// administrator allowed.
+		if candidate.scope == "server" {
+			granted, err := h.controlStore.ServerMailGranted(ctx, database)
+			if err != nil {
+				return nil, "", err
+			}
+			if strings.TrimSpace(database) == "" || !granted {
+				continue
+			}
+		}
 		rec, err := h.controlStore.GetMailProfile(ctx, candidate.name)
 		if errors.Is(err, control.ErrMailProfileNotFound) {
 			continue
@@ -351,7 +406,13 @@ func (h *ServerAdminHandler) SendMail(w http.ResponseWriter, r *http.Request) {
 	}
 	if profile == nil {
 		telemetry.WriteProblem(w, r, http.StatusConflict, "No SMTP profile",
-			"no SMTP profile is configured for this solution or for the server; a server administrator sets one in Server Tools")
+			"no SMTP profile serves this solution: a server administrator sets one for it in Server Tools, or allows it to use the server profile")
+		return
+	}
+	// A profile whose password is not on the server cannot send: say so
+	// before reading the request.
+	if profile.Username != "" && !profile.PasswordAvailable() {
+		writeMailFailure(w, r, mail.ErrPasswordUnavailable, 0, 0)
 		return
 	}
 	var req sendMailRequest
@@ -371,6 +432,18 @@ func (h *ServerAdminHandler) SendMail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// The hourly allowance is taken before anything is prepared, and given
+	// back for what is not sent.
+	key := strings.ToLower(sess.Database) + "\x00" + strings.ToLower(sess.Username)
+	ok, wait := h.mailLimiter.reserve(key, len(req.Messages), profile.MaxPerHour, now)
+	if !ok {
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+		telemetry.WriteProblem(w, r, http.StatusTooManyRequests, "Too many messages",
+			fmt.Sprintf("this account may send %d messages an hour through this profile", profile.MaxPerHour))
+		return
+	}
+	// Each message shares the request's attachments: preparing it copies
+	// and encodes nothing, the MIME text is written while it is sent.
 	prepared := make([]*mail.Prepared, 0, len(req.Messages))
 	for i, m := range req.Messages {
 		p, err := mail.Prepare(*profile, mail.Message{
@@ -383,18 +456,11 @@ func (h *ServerAdminHandler) SendMail(w http.ResponseWriter, r *http.Request) {
 			if len(req.Messages) > 1 {
 				detail = fmt.Sprintf("message %d: %s", i+1, detail)
 			}
+			h.mailLimiter.release(key, len(req.Messages))
 			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid message", detail)
 			return
 		}
 		prepared = append(prepared, p)
-	}
-	key := strings.ToLower(sess.Database) + "\x00" + strings.ToLower(sess.Username)
-	ok, wait := h.mailLimiter.reserve(key, len(prepared), profile.MaxPerHour, now)
-	if !ok {
-		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
-		telemetry.WriteProblem(w, r, http.StatusTooManyRequests, "Too many messages",
-			fmt.Sprintf("this account may send %d messages an hour through this profile", profile.MaxPerHour))
-		return
 	}
 	sent, err := h.mailSender.Send(r.Context(), *profile, profile.Password(), prepared)
 	h.mailLimiter.release(key, len(prepared)-sent)

@@ -147,6 +147,14 @@ func (s *Store) initSchema(ctx context.Context) error {
 			updated_by TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL
 		);`,
+		// The solutions a server administrator allowed to send through the
+		// server-wide SMTP profile. None is by default: anyone may create a
+		// solution, and the server's mail account is not theirs.
+		`CREATE TABLE IF NOT EXISTS mail_server_profile_grants (
+			database_name TEXT PRIMARY KEY,
+			granted_by TEXT NOT NULL DEFAULT '',
+			granted_at TEXT NOT NULL
+		);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -317,6 +325,7 @@ func (s *Store) DeleteProject(ctx context.Context, databaseName string) error {
 		`DELETE FROM project_users WHERE database_name = ?`,
 		// The server-wide SMTP profile is stored under the empty name.
 		`DELETE FROM mail_profiles WHERE database_name = ? AND database_name <> ''`,
+		`DELETE FROM mail_server_profile_grants WHERE database_name = ?`,
 		`DELETE FROM projects WHERE database_name = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, dbName); err != nil {
@@ -643,4 +652,60 @@ func (s *Store) DeleteMailProfile(ctx context.Context, databaseName string) erro
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM mail_profiles WHERE database_name = ?`, strings.TrimSpace(databaseName))
 	return err
+}
+
+// SetServerMailGrant allows (or stops) a database sending through the
+// server-wide SMTP profile.
+func (s *Store) SetServerMailGrant(ctx context.Context, databaseName, by string, allowed bool) error {
+	if s == nil || s.db == nil {
+		return errors.New("control store is not available")
+	}
+	name := strings.TrimSpace(databaseName)
+	if name == "" {
+		return errors.New("a database name is required")
+	}
+	if !allowed {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM mail_server_profile_grants WHERE database_name = ?`, name)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO mail_server_profile_grants (database_name, granted_by, granted_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(database_name) DO UPDATE SET granted_by = excluded.granted_by, granted_at = excluded.granted_at
+	`, name, by, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+// ServerMailGranted tells whether a database may send through the
+// server-wide SMTP profile.
+func (s *Store) ServerMailGranted(ctx context.Context, databaseName string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, nil
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM mail_server_profile_grants WHERE database_name = ?`, strings.TrimSpace(databaseName)).Scan(&n)
+	return n > 0, err
+}
+
+// ListServerMailGrants returns the databases allowed to send through the
+// server-wide SMTP profile, by name.
+func (s *Store) ListServerMailGrants(ctx context.Context) ([]string, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT database_name FROM mail_server_profile_grants ORDER BY database_name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
 }

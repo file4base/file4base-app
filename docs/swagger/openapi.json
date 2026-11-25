@@ -7140,7 +7140,7 @@
         "summary": "List the SMTP profiles of Send Mail (server administrator, #133)",
         "responses": {
           "200": {
-            "description": "profiles and password_env_prefix",
+            "description": "profiles, password_env_prefix and the solutions allowed to use the server profile",
             "content": {
               "application/json": {
                 "schema": {
@@ -7154,6 +7154,12 @@
                     },
                     "password_env_prefix": {
                       "type": "string"
+                    },
+                    "server_profile_solutions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
                     }
                   }
                 }
@@ -7302,6 +7308,82 @@
             }
           },
           "502": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/server/mail-profiles/server-access": {
+      "put": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Allow a solution to send through the server-wide SMTP profile, or withdraw it (off by default, #133)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "solution",
+                  "allowed"
+                ],
+                "properties": {
+                  "solution": {
+                    "type": "string"
+                  },
+                  "allowed": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The solution and whether it may use the server profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "solution": {
+                      "type": "string"
+                    },
+                    "allowed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "Problem details",
             "content": {
               "application/problem+json": {

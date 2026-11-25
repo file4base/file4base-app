@@ -51,6 +51,69 @@ class IoScriptFileStore extends ScriptFileStore {
     return path;
   }
 
+  /// A path is in a script folder only if the file it reaches is: a
+  /// symbolic link (or Windows junction) inside a folder that leads out of
+  /// it is refused. Links are resolved on the file, or for a file not made
+  /// yet on its nearest folder that exists.
+  @override
+  String? resolve(String raw) {
+    final path = super.resolve(raw);
+    if (path == null) return null;
+    final real = realPath(nativePath(path));
+    if (real == null) return null;
+    for (final root in [_temporaryDir.path, _documentsDir.path]) {
+      final realRoot = realPath(root);
+      if (realRoot != null && _inside(real, realRoot)) return path;
+    }
+    return null;
+  }
+
+  /// The path [native] reaches once every link of it is followed, or null
+  /// when it cannot be told (a dangling link).
+  static String? realPath(String native) {
+    final missing = <String>[];
+    var current = native;
+    while (true) {
+      if (FileSystemEntity.typeSync(current, followLinks: false) != FileSystemEntityType.notFound) {
+        try {
+          final resolved = Directory(current).resolveSymbolicLinksSync();
+          return [resolved, ...missing.reversed].join(Platform.pathSeparator);
+        } on FileSystemException {
+          return null;
+        }
+      }
+      final parent = File(current).parent.path;
+      if (parent == current) return null;
+      missing.add(current.substring(parent.length).replaceAll(RegExp(r'^[\\/]+'), ''));
+      current = parent;
+    }
+  }
+
+  static bool _inside(String path, String root) {
+    final sep = Platform.pathSeparator;
+    var p = path;
+    var r = root.endsWith(sep) ? root : '$root$sep';
+    if (Platform.isWindows) {
+      p = p.toLowerCase();
+      r = r.toLowerCase();
+    }
+    return p.startsWith(r) && p.length > r.length;
+  }
+
+  @override
+  Future<void> clear() async {
+    final temporary = _temporary;
+    _temporary = null;
+    if (temporary != null && temporary.existsSync()) {
+      try {
+        await temporary.delete(recursive: true);
+      } on FileSystemException {
+        // A file still open elsewhere; the folder is no longer the script's.
+      }
+    }
+    await super.clear();
+  }
+
   @override
   Future<void> write(String path, Uint8List bytes) async {
     final file = File(nativePath(path));

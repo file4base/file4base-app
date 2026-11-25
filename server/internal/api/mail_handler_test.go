@@ -118,7 +118,24 @@ func TestMail_ScriptsSendThroughTheirSolutionsProfile(t *testing.T) {
 	assert.Equal(t, "solution", status["scope"])
 	assert.Equal(t, "alice@example.invalid", status["from_address"])
 	s.do(http.MethodGet, "/api/v1/mail/status", s.bobToken, nil, &status)
-	assert.Equal(t, "server", status["scope"], "a solution without its own profile uses the server's")
+	assert.Equal(t, false, status["smtp_configured"], "the server's profile serves no solution by default")
+	rec = s.do(http.MethodPost, "/api/v1/mail/send", s.bobToken, map[string]interface{}{
+		"messages": []map[string]string{{"to": "x@example.invalid"}},
+	}, nil)
+	assert.Equal(t, http.StatusConflict, rec.Code, "a solution anyone created does not get the server's mail account")
+	rec = s.do(http.MethodPut, "/api/v1/server/mail-profiles/server-access", s.bobToken,
+		map[string]interface{}{"solution": s.bobDB, "allowed": true}, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, "a solution cannot allow itself")
+	rec = s.do(http.MethodPut, "/api/v1/server/mail-profiles/server-access", s.adminToken,
+		map[string]interface{}{"solution": s.bobDB, "allowed": true}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	s.do(http.MethodGet, "/api/v1/mail/status", s.bobToken, nil, &status)
+	assert.Equal(t, "server", status["scope"], "a solution allowed to uses the server's profile")
+	var listed struct {
+		Solutions []string `json:"server_profile_solutions"`
+	}
+	s.do(http.MethodGet, "/api/v1/server/mail-profiles", s.adminToken, nil, &listed)
+	assert.Equal(t, []string{s.bobDB}, listed.Solutions)
 
 	// One message per record, with the step's attachment.
 	pdf := []byte("%PDF-1.4 report")
@@ -180,11 +197,34 @@ func TestMail_ScriptsSendThroughTheirSolutionsProfile(t *testing.T) {
 	}, nil)
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	// Removing the solution's profile falls back on the server's.
+	// Without its own profile, a solution falls back on the server's only
+	// when it is allowed to.
 	rec = s.do(http.MethodDelete, "/api/v1/server/mail-profiles?solution="+s.aliceDB, s.adminToken, nil, nil)
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	s.do(http.MethodGet, "/api/v1/mail/status", s.aliceToken, nil, &status)
+	assert.Equal(t, false, status["smtp_configured"])
+	rec = s.do(http.MethodPut, "/api/v1/server/mail-profiles/server-access", s.adminToken,
+		map[string]interface{}{"solution": s.aliceDB, "allowed": true}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	s.do(http.MethodGet, "/api/v1/mail/status", s.aliceToken, nil, &status)
 	assert.Equal(t, "server", status["scope"])
+	rec = s.do(http.MethodPut, "/api/v1/server/mail-profiles/server-access", s.adminToken,
+		map[string]interface{}{"solution": s.aliceDB, "allowed": false}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	s.do(http.MethodGet, "/api/v1/mail/status", s.aliceToken, nil, &status)
+	assert.Equal(t, false, status["smtp_configured"], "the access is withdrawn")
+
+	// A profile whose password variable is not set fails before the
+	// request is read: FileMaker's authentication error, nothing sent.
+	before := len(fake.Received())
+	code, body = s.putProfile(t, fake, s.aliceDB, map[string]interface{}{"password_env": "FILE4BASE_SMTP_NOT_SET_7c1"})
+	require.Equal(t, http.StatusOK, code, body)
+	rec = s.do(http.MethodPost, "/api/v1/mail/send", s.aliceToken, map[string]interface{}{
+		"messages": []map[string]string{{"to": "a@example.invalid"}},
+	}, &failure)
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	assert.Equal(t, 1501, failure.FileMakerError)
+	assert.Len(t, fake.Received(), before)
 
 	rec = s.do(http.MethodGet, "/api/v1/server/audit-logs", s.adminToken, nil, nil)
 	assert.False(t, strings.Contains(rec.Body.String(), "one@example.invalid"), "the audit trail keeps no address")

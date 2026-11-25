@@ -185,7 +185,9 @@ func TestSenderAddressOfAnotherDomainBecomesTheReplyTo(t *testing.T) {
 		prepared, err := mail.Prepare(p, m, time.Now())
 		require.NoError(t, err)
 		assert.Equal(t, "orders@example.invalid", prepared.Sender, "the envelope sender is the profile's")
-		parsed, err := netmail.ReadMessage(strings.NewReader(string(prepared.Data)))
+		data, err := prepared.Bytes()
+		require.NoError(t, err)
+		parsed, err := netmail.ReadMessage(strings.NewReader(string(data)))
 		require.NoError(t, err)
 		return parsed.Header
 	}

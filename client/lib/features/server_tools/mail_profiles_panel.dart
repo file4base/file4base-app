@@ -18,6 +18,7 @@ class MailProfilesPanel extends StatefulWidget {
 
 class _MailProfilesPanelState extends State<MailProfilesPanel> {
   List<Map<String, dynamic>> _profiles = [];
+  List<String> _serverSolutions = [];
   String _prefix = 'FILE4BASE_SMTP_';
   bool _loading = true;
   String? _error;
@@ -35,6 +36,7 @@ class _MailProfilesPanelState extends State<MailProfilesPanel> {
       setState(() {
         _profiles = [for (final p in (res['profiles'] as List? ?? const [])) Map<String, dynamic>.from(p as Map)];
         _prefix = res['password_env_prefix']?.toString() ?? _prefix;
+        _serverSolutions = [for (final s in (res['server_profile_solutions'] as List? ?? const [])) s.toString()];
         _loading = false;
         _error = null;
       });
@@ -71,6 +73,34 @@ class _MailProfilesPanelState extends State<MailProfilesPanel> {
     } on ApiException catch (e) {
       _toast(e.detail, error: true);
     }
+  }
+
+  Future<void> _setServerAccess(String solution, {required bool allowed}) async {
+    try {
+      await widget.apiClient.setServerMailAccess(solution: solution, allowed: allowed);
+      _toast(allowed ? '$solution can send through the server profile.' : '$solution no longer sends through the server profile.');
+      await _load();
+    } on ApiException catch (e) {
+      _toast(e.detail, error: true);
+    }
+  }
+
+  Future<void> _allowSolution() async {
+    final ctrl = TextEditingController();
+    final solution = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Allow a solution to use the server profile'),
+        content: TextField(controller: ctrl, autofocus: true, decoration: const InputDecoration(labelText: 'Solution (database)')),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: const Text('Allow')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (solution == null || solution.isEmpty) return;
+    await _setServerAccess(solution, allowed: true);
   }
 
   Future<void> _test(Map<String, dynamic> profile) async {
@@ -116,7 +146,8 @@ class _MailProfilesPanelState extends State<MailProfilesPanel> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Scripts send mail through the profile of their solution, or else through the server profile. '
+          'Scripts send mail through the profile of their solution, or else through the server profile '
+          'if a server administrator allowed their solution to (no solution is allowed by default). '
           'A Send Mail step "via SMTP server", one e-mail per record, attachments, or "via e-mail client" '
           'without a dialog need one. The password is never stored here: put it in an environment variable '
           'of the server whose name starts with $_prefix, and name that variable in the profile.',
@@ -130,7 +161,7 @@ class _MailProfilesPanelState extends State<MailProfilesPanel> {
           Card(
             child: ListTile(
               leading: Icon((p['solution']?.toString() ?? '').isEmpty ? Icons.dns_outlined : Icons.folder_outlined),
-              title: Text((p['solution']?.toString() ?? '').isEmpty ? 'Server (every solution)' : 'Solution ${p['solution']}'),
+              title: Text((p['solution']?.toString() ?? '').isEmpty ? 'Server (the solutions allowed below)' : 'Solution ${p['solution']}'),
               subtitle: Text([
                 '${p['host']}:${p['port']} (${p['security']})',
                 'from ${p['from_address']}',
@@ -144,6 +175,34 @@ class _MailProfilesPanelState extends State<MailProfilesPanel> {
                   IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined), onPressed: () => _edit(p)),
                   IconButton(tooltip: 'Remove', icon: const Icon(Icons.delete_outline), onPressed: () => _delete(p)),
                 ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            const Expanded(
+              child: Text('Solutions allowed to use the server profile', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            OutlinedButton.icon(
+              onPressed: _allowSolution,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Allow a solution'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (_serverSolutions.isEmpty)
+          const Card(child: ListTile(leading: Icon(Icons.lock_outline), title: Text('None: only solutions with their own profile send mail.'))),
+        for (final s in _serverSolutions)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: Text(s),
+              trailing: IconButton(
+                tooltip: 'Withdraw',
+                icon: const Icon(Icons.remove_circle_outline),
+                onPressed: () => _setServerAccess(s, allowed: false),
               ),
             ),
           ),
@@ -219,7 +278,7 @@ class _MailProfileEditorState extends State<_MailProfileEditor> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _field('solution', 'Solution (database)', hint: 'Empty: the server profile, for every solution'),
+              _field('solution', 'Solution (database)', hint: 'Empty: the server profile, for the solutions allowed to use it'),
               _field('host', 'SMTP server'),
               Row(children: [
                 Expanded(child: _field('port', 'Port', hint: '587, 465 or 25')),

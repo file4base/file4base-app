@@ -559,6 +559,11 @@ func savePDFNote(params map[string]interface{}) string {
 		why = append(why, "it saves the PDF into a variable, which File4Base does not do: the step fails with "+
 			"error 3 (command unavailable); save it to a file instead")
 	}
+	if params["pdf_security"] == true {
+		why = append(why, "it protects the PDF with a password (to open it, or to print or edit it), which File4Base "+
+			"does not do: rather than write an unprotected PDF the step fails with error 3 (command unavailable); "+
+			"the password was not migrated")
+	}
 	path, _ := params["path"].(string)
 	paths := stringList(params["paths"])
 	if len(paths) == 0 && path != "" {
@@ -571,6 +576,41 @@ func savePDFNote(params map[string]interface{}) string {
 		return ""
 	}
 	return "Save Records as PDF: " + strings.Join(why, "; ")
+}
+
+// pdfSecurityRequested tells whether a Save Records as PDF step asks for a
+// protected PDF: a password to open it (<Security><Open value="True">) or
+// to print, edit or copy from it (<Control value="True">), or any password
+// the step carries.
+func pdfSecurityRequested(step *xmlNode) bool {
+	var walk func(n *xmlNode, inSecurity bool) bool
+	walk = func(n *xmlNode, inSecurity bool) bool {
+		if isSecretName(n.Name) || isSecretName(firstAttr(n, "type")) {
+			if v, ok := xmlAttrBool(n, "value"); !ok || v {
+				if ok || strings.TrimSpace(n.Text) != "" || len(n.Children) > 0 || len(n.Attrs) > 0 {
+					return true
+				}
+			}
+		}
+		for k, v := range n.Attrs {
+			if isSecretName(k) && strings.TrimSpace(v) != "" {
+				return true
+			}
+		}
+		if inSecurity && (strings.EqualFold(n.Name, "Open") || strings.EqualFold(n.Name, "Control")) {
+			if v, ok := xmlAttrBool(n, "value"); ok && v {
+				return true
+			}
+		}
+		security := inSecurity || strings.EqualFold(n.Name, "Security")
+		for _, ch := range n.Children {
+			if walk(ch, security) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(step, false)
 }
 
 // decodeReplaceOptions reads the <List> of a Replace Field Contents step:

@@ -16,12 +16,14 @@
 package mail
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -225,13 +227,87 @@ type Message struct {
 	Attachments []Attachment
 }
 
-// Prepared is a message ready for the SMTP conversation.
+// Prepared is a message checked and ready for the SMTP conversation. Its
+// MIME text is written only while it is sent (Write): the attachments,
+// shared by every message of a batch, are never copied or encoded ahead,
+// so a batch holds one copy of them whatever its size.
 type Prepared struct {
 	// Sender is the envelope sender: always the profile's address, the one
 	// the SMTP account may send as.
 	Sender     string
 	Recipients []string
-	Data       []byte
+
+	head        []byte // header lines, without the Content-Type
+	body        string // the message text, CRLF line breaks
+	attachments []Attachment
+}
+
+// Bytes is the whole message, for tests and diagnostics.
+func (p *Prepared) Bytes() ([]byte, error) {
+	var buf bytes.Buffer
+	if err := p.Write(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// Write writes the message, as sent, to w.
+func (p *Prepared) Write(w io.Writer) error {
+	bw := bufio.NewWriterSize(w, 32<<10)
+	if _, err := bw.Write(p.head); err != nil {
+		return err
+	}
+	header := func(name, value string) {
+		bw.WriteString(name)
+		bw.WriteString(": ")
+		bw.WriteString(value)
+		bw.WriteString("\r\n")
+	}
+	if len(p.attachments) == 0 {
+		header("Content-Type", "text/plain; charset=utf-8")
+		header("Content-Transfer-Encoding", "quoted-printable")
+		bw.WriteString("\r\n")
+		if err := writeQuotedPrintable(bw, p.body); err != nil {
+			return err
+		}
+		return bw.Flush()
+	}
+	mw := multipart.NewWriter(bw)
+	header("Content-Type", "multipart/mixed; boundary="+strconv.Quote(mw.Boundary()))
+	bw.WriteString("\r\n")
+	part, err := mw.CreatePart(textproto.MIMEHeader{
+		"Content-Type":              {"text/plain; charset=utf-8"},
+		"Content-Transfer-Encoding": {"quoted-printable"},
+	})
+	if err != nil {
+		return err
+	}
+	if err := writeQuotedPrintable(part, p.body); err != nil {
+		return err
+	}
+	for _, a := range p.attachments {
+		name := attachmentName(a.Name)
+		ctype := strings.TrimSpace(a.ContentType)
+		if ctype == "" {
+			ctype = mime.TypeByExtension(path.Ext(name))
+		}
+		if _, _, err := mime.ParseMediaType(ctype); err != nil || ctype == "" {
+			ctype = "application/octet-stream"
+		}
+		part, err := mw.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {mime.FormatMediaType(baseType(ctype), map[string]string{"name": name})},
+			"Content-Disposition":       {mime.FormatMediaType("attachment", map[string]string{"filename": name})},
+			"Content-Transfer-Encoding": {"base64"},
+		})
+		if err != nil {
+			return err
+		}
+		writeBase64Lines(part, a.Data)
+	}
+	if err := mw.Close(); err != nil {
+		return err
+	}
+	return bw.Flush()
 }
 
 // checkHeaderValue refuses a value that would end its header line.
@@ -425,53 +501,12 @@ func Prepare(p Profile, m Message, now time.Time) (*Prepared, error) {
 	header("MIME-Version", "1.0")
 	header("X-Mailer", "File4Base")
 
-	body := normalizeLineBreaks(m.Body)
-	if len(m.Attachments) == 0 {
-		header("Content-Type", "text/plain; charset=utf-8")
-		header("Content-Transfer-Encoding", "quoted-printable")
-		buf.WriteString("\r\n")
-		if err := writeQuotedPrintable(&buf, body); err != nil {
-			return nil, err
-		}
-	} else {
-		mw := multipart.NewWriter(&buf)
-		header("Content-Type", "multipart/mixed; boundary="+strconv.Quote(mw.Boundary()))
-		buf.WriteString("\r\n")
-		part, err := mw.CreatePart(textproto.MIMEHeader{
-			"Content-Type":              {"text/plain; charset=utf-8"},
-			"Content-Transfer-Encoding": {"quoted-printable"},
-		})
-		if err != nil {
-			return nil, err
-		}
-		if err := writeQuotedPrintable(part, body); err != nil {
-			return nil, err
-		}
-		for _, a := range m.Attachments {
-			name := attachmentName(a.Name)
-			ctype := strings.TrimSpace(a.ContentType)
-			if ctype == "" {
-				ctype = mime.TypeByExtension(path.Ext(name))
-			}
-			if _, _, err := mime.ParseMediaType(ctype); err != nil || ctype == "" {
-				ctype = "application/octet-stream"
-			}
-			part, err := mw.CreatePart(textproto.MIMEHeader{
-				"Content-Type":              {mime.FormatMediaType(baseType(ctype), map[string]string{"name": name})},
-				"Content-Disposition":       {mime.FormatMediaType("attachment", map[string]string{"filename": name})},
-				"Content-Transfer-Encoding": {"base64"},
-			})
-			if err != nil {
-				return nil, err
-			}
-			writeBase64Lines(part, a.Data)
-		}
-		if err := mw.Close(); err != nil {
-			return nil, err
-		}
+	prepared := &Prepared{
+		Sender:      p.FromAddress,
+		head:        buf.Bytes(),
+		body:        normalizeLineBreaks(m.Body),
+		attachments: m.Attachments,
 	}
-
-	prepared := &Prepared{Sender: p.FromAddress, Data: buf.Bytes()}
 	for _, name := range []string{"To", "Cc", "Bcc"} {
 		for _, a := range lists[name] {
 			prepared.Recipients = append(prepared.Recipients, a.Address)
@@ -532,13 +567,19 @@ func writeQuotedPrintable(w writer, s string) error {
 	return qp.Close()
 }
 
+// writeBase64Lines writes data in base64 lines of 76 characters, a line at a
+// time: no encoded copy of the attachment is ever held.
 func writeBase64Lines(w writer, data []byte) {
-	enc := base64.StdEncoding.EncodeToString(data)
-	for len(enc) > 76 {
-		_, _ = w.Write([]byte(enc[:76] + "\r\n"))
-		enc = enc[76:]
-	}
-	if enc != "" {
-		_, _ = w.Write([]byte(enc + "\r\n"))
+	var line [78]byte
+	for len(data) > 0 {
+		n := len(data)
+		if n > 57 {
+			n = 57
+		}
+		m := base64.StdEncoding.EncodedLen(n)
+		base64.StdEncoding.Encode(line[:m], data[:n])
+		line[m], line[m+1] = '\r', '\n'
+		_, _ = w.Write(line[:m+2])
+		data = data[n:]
 	}
 }

@@ -187,4 +187,7 @@ Both steps convert as runnable steps with their options (paths, records, append,
 | `Send Mail` via e-mail client without dialog | Documented deviation: sent through the SMTP profile when there is one, a draft otherwise. |
 | `Send Mail` via e-mail client with dialog, no attachment | No note: it runs as written (a draft in the user's e-mail client). |
 | `Save Records as PDF` into a variable | Not supported, error 3. |
+| `Save Records as PDF` with security options (a password to open, print or edit) | Not supported: the step fails with error 3 rather than write an unprotected PDF. The password is not migrated. |
 | Either step naming a **fixed path** outside the script folders (`filemac:/Users/…/Desktop/…`, `filewin:/C:/…`) | Change it to `Get ( TemporaryPath )` or `Get ( DocumentsPath )`; as written the step fails with `800` (PDF) or `100` (attachment). A path in a `$variable` is not flagged: it is checked when the step runs. |
+
+**Passwords in step options.** The raw options of every converted step (`filemaker_parameters`) never hold a password: any option whose element, `type` or attribute names a password (an SMTP password, a PDF password) is stored as `[redacted]`.

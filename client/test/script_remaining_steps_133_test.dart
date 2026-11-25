@@ -1220,7 +1220,7 @@ void main() {
       expect(host.log.where((l) => l.startsWith('show_dialog:Send Mail|An e-mail draft cannot carry attachments')),
           hasLength(1), reason: 'the user is told which file to attach');
       host.log.clear();
-      final smtp = await runner.runStep('Send Mail', {'to': '"a@example.invalid"', 'send_via': 'smtp'}, depth: 0);
+      final smtp = await runner.runStep('Send Mail', {'to': '"a@example.invalid"', 'send_via': 'smtp', 'dialog': false}, depth: 0);
       expect(smtp.completed, isFalse);
       expect(smtp.message, contains('SMTP'));
       expect(smtp.message, contains('1506'));
@@ -1435,6 +1435,70 @@ void main() {
       expect(session.lastError, 0, reason: 'without a profile, a draft as before');
       expect(draftHost.log, contains('send_mail:a@example.invalid|S|'));
       expect(none.requests, isEmpty);
+    });
+
+    test('a protected PDF is refused, never written unprotected', () async {
+      final host = _DocumentHost();
+      final files = MemoryScriptFileStore();
+      final session = ScriptSessionState()..errorCapture = true;
+      await _mailRunner(host, files, _MailServer()).runStep('Save Records as PDF',
+          {'path': 'file:Locked.pdf', 'pdf_security': true}, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(session.lastError, 3);
+      expect(files.files, isEmpty);
+      expect(host.renders, isEmpty);
+    });
+
+    test('with its dialog and no window, Send Mail drafts one message and sends nothing', () async {
+      final mail = _MailServer(configured: true);
+      final windowless = _FullExtendedHost();
+      final files = MemoryScriptFileStore();
+      await files.write('/File4Base/Temporary/a.pdf', Uint8List.fromList([1, 2, 3]));
+      final runner = LayoutActionRunner(
+        apiClient: ApiClient(baseUrl: 'http://test:8080', httpClient: MockClient(mail.handle)),
+        host: windowless,
+        files: files,
+      );
+      final res = await runner.runStep('Send Mail', {
+        'send_via': 'smtp',
+        'to': '"a@example.invalid"',
+        'subject': '"S"',
+        'attachments': ['/File4Base/Temporary/a.pdf'],
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(mail.requests, isEmpty, reason: 'never sent without the dialog the step asks for');
+      expect(windowless.log, contains('send_mail:a@example.invalid|S|'));
+      expect(windowless.log.where((l) => l.startsWith('show_dialog:Send Mail|An e-mail draft cannot carry')), hasLength(1));
+    });
+
+    test('one e-mail per record with its dialog shows each message, and a cancel sends none', () async {
+      final records = [
+        {'name': 'Alpha', 'email': 'alpha@example.invalid'},
+        {'name': 'Beta', 'email': 'beta@example.invalid'},
+      ];
+      final params = {'send_via': 'smtp', 'one_email_per_record': true, 'to': 'email', 'to_is_calculation': true};
+      final mail = _MailServer(configured: true);
+      final host = _DocumentHost(records: records);
+      final res = await _mailRunner(host, MemoryScriptFileStore(), mail).runStep('Send Mail', params, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.composed.map((c) => c.mail.to), ['alpha@example.invalid', 'beta@example.invalid']);
+      expect((mail.requests.single['messages'] as List), hasLength(2));
+
+      final cancelling = _DocumentHost(records: records)..compose = (m) => m.to.startsWith('beta') ? null : m;
+      final none = _MailServer(configured: true);
+      final session = ScriptSessionState();
+      await _mailRunner(cancelling, MemoryScriptFileStore(), none)
+          .runStep('Send Mail', params, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(session.lastError, 1);
+      expect(none.requests, isEmpty);
+    });
+
+    test('the in-memory folders are emptied when the session ends', () async {
+      final files = MemoryScriptFileStore();
+      await files.write('/File4Base/Temporary/a.pdf', Uint8List.fromList([1]));
+      files.savedPdfPages['/File4Base/Temporary/a.pdf'] = const [];
+      await files.clear();
+      expect(files.files, isEmpty);
+      expect(files.savedPdfPages, isEmpty);
     });
 
     test('via the e-mail client without dialog sends through the profile when there is one', () async {

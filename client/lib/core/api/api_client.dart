@@ -8,6 +8,7 @@ import 'package:file4base_client/core/models/file_reference_models.dart';
 import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/core/models/script_trigger_models.dart';
 import 'package:file4base_client/core/models/transfer_models.dart';
+import 'package:file4base_client/features/layout_engine/script_files.dart';
 import 'package:flutter/foundation.dart' show immutable;
 import 'package:http/http.dart' as http;
 
@@ -1971,6 +1972,8 @@ class ApiClient {
     }
     _signInLinks = const [];
     _anonymousScriptGlobals.clear();
+    // The files scripts of this session made are not the next account's.
+    unawaited(ScriptFileStore.forgetSession());
     _authToken = null;
   }
 
@@ -3503,6 +3506,17 @@ class ApiClient {
   Future<void> deleteMailProfile({String solution = ''}) async {
     final query = solution.isEmpty ? '' : '?solution=${Uri.encodeQueryComponent(solution)}';
     final response = await _httpClient.delete(Uri.parse('$baseUrl/api/v1/server/mail-profiles$query'), headers: _headers());
+    _checkResponse(response);
+  }
+
+  /// Lets a solution send through the server profile, or withdraws it: no
+  /// solution may until a server administrator allows it.
+  Future<void> setServerMailAccess({required String solution, required bool allowed}) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/server/mail-profiles/server-access'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'solution': solution, 'allowed': allowed}),
+    );
     _checkResponse(response);
   }
 

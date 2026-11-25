@@ -62,6 +62,16 @@ abstract class ScriptFileStore {
   /// lies in one of the script folders.
   String? resolve(String raw) =>
       resolveScriptPath(raw, roots: [temporaryPath, documentsPath], relativeRoot: documentsPath);
+
+  /// Forgets what scripts of the signed-out session made: the PDFs they
+  /// saved in this run and, in memory and in the temporary folder, their
+  /// files, so the next account signed in on this client cannot read or
+  /// send them. The documents folder, the user's own, stays.
+  Future<void> clear() async => savedPdfPages.clear();
+
+  /// Clears the store of this platform, when one was made (#133): called
+  /// when a session ends or another account signs in.
+  static Future<void> forgetSession() async => _instance?.clear();
 }
 
 final RegExp _prefix = RegExp('^(file|filemac|filewin|filelinux):', caseSensitive: false);
@@ -132,6 +142,12 @@ class MemoryScriptFileStore extends ScriptFileStore {
   final String documentsPath;
 
   final Map<String, Uint8List> files = {};
+
+  @override
+  Future<void> clear() async {
+    files.clear();
+    await super.clear();
+  }
 
   @override
   Future<void> write(String path, Uint8List bytes) async => files[path] = bytes;
