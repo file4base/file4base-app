@@ -12,6 +12,8 @@ Base URL (Default): `http://localhost:8080`
 - `traceparent` *(optional)*: W3C standard trace context (`00-{trace_id}-{span_id}-01`). Injected automatically by the Web client and desktop clients.
 - `tracestate` *(optional)*: W3C vendor state for distributed tracing.
 - `X-Trace-ID` *(optional)*: Trace identifier alias.
+- `X-File4Base-Entry: script` *(optional, record writes)*: the write is a script step's, not data entry (a script may set a field whose auto-enter options prohibit modification).
+- `X-File4Base-Validation: override` *(optional, record writes)*: the person was told the values break validation rules that allow it (*Allow user to override during data entry*) and keeps them; the rules that do not allow it still apply.
 
 ### Response Headers
 - `traceparent`: W3C trace context matching the active span.
@@ -511,7 +513,7 @@ Updates a layout definition and name. A definition without `script_triggers` kee
 Deletes a layout.
 
 ### `GET /api/v1/schemas/script-triggers`
-Lists every script trigger of every layout and layout object (#26), ordered by layout name — what File > Manage > Script Triggers shows. A trigger imported from FileMaker arrives with `enabled: false` and `quarantined_by_migration: true`, and no client runs it. Each one carries the problems that keep it from running, in plain words with what to do (`missing_script`, `unresolved_script`, `ambiguous_script` — several scripts have the name it gives —, `script_in_other_file` — its script is in another FileMaker file —, `unbound_parameter`, `find_mode_only`, `unsupported_event`, `object_missing`, `event_taken`, `duplicate_id` — its id names another trigger too —), and `can_enable`. File4Base runs `OnLayoutEnter` and `OnLayoutExit` set on a layout, in Browse mode, one per event; every other event is kept, disabled, with `unsupported_event`. Requires admin (owner or admin role).
+Lists every script trigger of every layout and layout object (#26), ordered by layout name — what File > Manage > Script Triggers shows. A trigger imported from FileMaker arrives with `enabled: false` and `quarantined_by_migration: true`, and no client runs it. Each one carries the problems that keep it from running, in plain words with what to do (`missing_script`, `unresolved_script`, `ambiguous_script` — several scripts have the name it gives —, `script_in_other_file` — its script is in another FileMaker file —, `unbound_parameter`, `find_mode_only`, `unsupported_event`, `object_missing`, `unsupported_object` — set on an object that is not a field —, `no_mode` — FileMaker runs it in no mode —, `event_taken`, `duplicate_id` — its id names another trigger too —), and `can_enable`. File4Base runs, one script per event of a layout or of one of its objects, `OnLayoutEnter`, `OnLayoutExit`, `OnRecordLoad`, `OnRecordCommit`, `OnRecordRevert`, `OnModeEnter` and `OnModeExit` set on a layout, and `OnObjectEnter`, `OnObjectExit`, `OnObjectModify`, `OnObjectValidate` and `OnObjectSave` set on a field; a trigger runs in the modes FileMaker ran it in (`modes`: Browse when absent; Find mode for the object enter/exit/modify and mode events). Every other event is kept, disabled, with `unsupported_event`. Requires admin (owner or admin role).
 
 ```json
 {
@@ -535,7 +537,7 @@ Lists every script trigger of every layout and layout object (#26), ordered by l
 ```
 
 ### `PUT /api/v1/schemas/script-triggers`
-Enables or disables triggers in bulk: `{"ids": ["…"], "enabled": true}`. All or none, in one transaction: an unknown id answers `404 Script Trigger Not Found`, an id that names more than one trigger answers `409 Script Trigger Id Not Unique`, and enabling a trigger that has a problem (or two of the same event on one layout) answers `409 Script Trigger Cannot Be Enabled` and changes nothing. Enabling one moves it into the layout's `on_layout_enter` / `on_layout_exit`, where a client runs it, and clears `quarantined_by_migration`; disabling one moves it back into `script_triggers`, under the same id. Every layout changed gets a new `updated_at`, and the change is announced as a schema change, so the other open clients read their layouts again. Answers `{"updated": 2, "layouts": ["layout-uuid"]}`. Requires admin (owner or admin role) and an unlocked design.
+Enables or disables triggers in bulk: `{"ids": ["…"], "enabled": true}`. All or none, in one transaction: an unknown id answers `404 Script Trigger Not Found`, an id that names more than one trigger answers `409 Script Trigger Id Not Unique`, and enabling a trigger that has a problem (or two of the same event on one layout) answers `409 Script Trigger Cannot Be Enabled` and changes nothing. Enabling an `OnLayoutEnter` / `OnLayoutExit` trigger moves it into the layout's `on_layout_enter` / `on_layout_exit`, where a client runs it, and disabling one moves it back into `script_triggers`, under the same id; every other trigger is switched where it is, in `script_triggers` (`"enabled": true`), which a client runs only when it says so. Enabling clears `quarantined_by_migration`. Two triggers of the same event on one layout, or on one object, cannot both be enabled. Every layout changed gets a new `updated_at`, and the change is announced as a schema change, so the other open clients read their layouts again. Answers `{"updated": 2, "layouts": ["layout-uuid"]}`. Requires admin (owner or admin role) and an unlocked design.
 
 ---
 
@@ -585,6 +587,17 @@ Dynamically inserts a row into any table. Generates a UUID `id` if not provided.
 CALCULATION fields are filled in by their formula and are not writable: a value sent for one is ignored. The formula is evaluated by the server when the record is written, and the answer is stored in the field's column, so a calculation field is sorted and found on like any other field. A `PUT` recomputes them from the record as it will be after the update, so changing a field a formula reads updates the result. A formula that cannot be computed for a record (dividing by zero, or text where a number is needed) answers `400 Invalid Value` and nothing is written. See [docs/specs/calculation_formulas.md](../specs/calculation_formulas.md).
 
 The fields' validation rules (`validation_rules`, set in the Fields dialog) are enforced on `POST` (every ruled field) and `PUT` (the fields being changed): not empty, unique, existing value, strict type (`Numeric Only`, `Date`, `4-Digit Year`, `Time of Day`, `Text Only`), range and maximum length, with the custom message when one is set. A broken rule answers `422 Unprocessable Entity` naming the field and the rule in `invalid_params`, and nothing is written. Unique rules are backed by a unique index on PostgreSQL, so concurrent duplicates cannot both succeed; a unique rule cannot be enabled while records already share a value. Data import applies the rules whose timing is "Always", not those for "Only during data entry"; malformed rules are rejected with `422` when saved.
+
+*Validated by calculation* (`calculation_enabled`, `calculation`, `calculation_context`) is a formula that must be true, read in the context occurrence with `Self` the field's value and the record as it is about to be saved; it may call the solution's custom functions. It is checked when the field is modified (a new record's field when it is not empty), or on every save with `calculation_always: true` (FileMaker's *Validate only if field has been modified* turned off). A formula that does not parse, or reads a field the table does not have, is refused with `422` when the rule is saved. A rule set with `allow_override: true` answers with `"overridable": true` in `invalid_params`; the client asks the person, and the same write sent again with `X-File4Base-Validation: override` is saved. Such a rule set is not backed by a unique index, and a migrated *not empty* rule that allows override does not make its column `NOT NULL`.
+
+```json
+{
+  "title": "Validation Failed",
+  "status": 422,
+  "detail": "The code has three characters",
+  "invalid_params": [{"name": "code", "reason": "calculation", "overridable": true}]
+}
+```
 
 The fields' **auto-enter options** enter their values on `POST` and `PUT` (stamps, serial numbers, data, calculated and looked-up values); a value the request gives wins. A data-entry write that changes a field whose options prohibit modification answers `422 Prohibited Modification`; a script step sends the header `X-File4Base-Entry: script`, which may set it and decides nothing about privileges. See [docs/specs/auto_enter_options.md](../specs/auto_enter_options.md).
 
@@ -844,6 +857,29 @@ read access to the table, nothing more.
 }
 ```
 
+A script step's formula the client cannot evaluate itself (a custom function,
+a related field, any function its own evaluator does not have) comes here
+with the script's state, in one request per evaluation:
+
+```json
+{
+  "expression": "Let ( $total = Doubled ( $n ) ; $total + 1 )",
+  "record_id": "a1b2…",
+  "variables": {"$n": "6", "$$mode": "draft"},
+  "get": {"ScriptParameter": "go", "LayoutName": "Orders", "FoundCount": "12"}
+}
+```
+
+`variables` are the script's `$` and `$$` variables by name, as text; a
+plain decimal (`12`, `-0.5`) reads as a number, anything else (`007`) as
+text. `get` answers the `Get ( … )` functions only the client knows, by
+selector. Each result then has `variables`: the ones the formula set with
+`Let`, by lower-case name, as text, for the script to keep. `values` are the
+fields of a record being edited and not committed yet, by name: they are
+read in place of the stored ones (calculation fields and unknown names are
+ignored), and the stored calculations and the unstored ones the formula
+reads are computed from them.
+
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
 answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`,
@@ -984,7 +1020,7 @@ Lists the registered connections and the engines available. Requires the
       "username": "reader",
       "schema": "public",
       "tls": false,
-      "password_env": "LEGACY_DB_PASSWORD"
+      "password_env": "FILE4BASE_DATASOURCE_LEGACY"
     }
   ]
 }
@@ -993,11 +1029,16 @@ Lists the registered connections and the engines available. Requires the
 #### `POST /api/v1/data-sources`
 Registers a connection. Requires the `owner` role: it names a machine the
 server will connect to. The body is the source without `id`; `password_env` is
-optional and is the **name** of an environment variable, never a password.
+optional and is the **name** of an environment variable, never a password; the
+name must start with `FILE4BASE_DATASOURCE_`, so a source cannot read another
+secret of the server (the server sends that password to the host the source
+names). A stored source or a solution file naming another variable reads no
+password from it.
 
 - `201 Created`, `403 Forbidden` for a non-owner, `409 Conflict` for a name
   already taken, `422 Unprocessable Entity` for an unknown engine, a missing
-  host or a `password_env` that is not an environment variable name.
+  host or a `password_env` that is not an environment variable name starting
+  with `FILE4BASE_DATASOURCE_`.
 
 #### `PUT /api/v1/data-sources/{id}` / `DELETE /api/v1/data-sources/{id}`
 Replace or remove a connection. Owner only.
@@ -1263,6 +1304,50 @@ A layout's field object says which control it uses and which list fills it:
 ```
 
 `control_style` is `edit_box`, `drop_down_list`, `pop_up_menu`, `checkbox_set` or `radio_button_set`. Everything but `edit_box` needs a value list; without one the field is drawn as an edit box. A `checkbox_set` keeps the chosen values in the field as a newline-separated list.
+
+### Custom functions
+
+*File > Manage > Custom Functions* (see [Custom Functions](../specs/custom_functions.md)). Every signed-in user reads the list, for the calculation editor; a function whose `access` is `full_access` is listed for full access (owner, admin) only. The rest is design: full access, and the design not locked.
+
+| Method | Path | |
+| --- | --- | --- |
+| `GET` | `/api/v1/custom-functions` | `{"custom_functions": [CustomFunction]}`, in name order |
+| `POST` | `/api/v1/custom-functions` | create; `201` with the function |
+| `GET` | `/api/v1/custom-functions/{id}` | one |
+| `PUT` | `/api/v1/custom-functions/{id}` | change; `?force=true` saves a change that breaks formulas |
+| `DELETE` | `/api/v1/custom-functions/{id}` | `204`; `?force=true` deletes one formulas call |
+| `GET` | `/api/v1/custom-functions/{id}/usages` | `{"usages": [Usage]}`: the formulas that call it |
+| `POST` | `/api/v1/formulas/check` | syntax check of a formula being written (any signed-in user) |
+
+```json
+{"id": "…", "name": "Doubled", "parameters": ["n"], "formula": "n * 2", "access": "all"}
+```
+
+A name is refused (`422 Invalid Custom Function`) when it is empty, a built-in function's, or another function's (whatever the case); so is a formula that does not parse, calls a function with the wrong number of arguments, or calls itself before any condition could stop it (recursion through `If`, `Case`, `Choose` or the right side of `and`/`or` is allowed, as in FileMaker), and a new name that formulas already read as a field.
+
+**Renaming rewrites the formulas that call it**, as FileMaker does (it refers to custom functions by id): calculation fields, auto-enter calculations, validation formulas, the other custom functions, script steps (their calculation parameters) and layout buttons and triggers (script parameters and step parameters). Only the calls are rewritten; text and comments stay as written. A formula in which the new name would capture a field it reads as a plain word is refused (quote the field as `${name}`). A change of parameters that would break a formula calling it, and deleting a function formulas call, answer `409 Conflict` with those formulas; `?force=true` goes ahead, and the formulas no longer read until they are fixed. A change under which calculation fields would read each other in a ring through the function is refused (`422`). When a formula the rename rewrites was saved by someone else in the meantime, nothing is written and the answer is `412 Changed Meanwhile`: save again.
+
+```json
+{
+  "title": "Custom Function In Use",
+  "status": 409,
+  "detail": "3 formulas call Doubled",
+  "usages": [
+    {"kind": "calculation", "id": "…", "name": "orders::total"},
+    {"kind": "script_step", "id": "…", "name": "Totals", "detail": "step 2"}
+  ]
+}
+```
+
+`kind` is `calculation`, `auto_enter`, `validation`, `custom_function`, `script_step` or `layout`.
+
+#### `POST /api/v1/formulas/check`
+
+```json
+{"formula": "Doubled ( 1 ; 2 )", "table": "orders", "function": "Margin", "parameters": ["price"]}
+```
+
+Answers `200` with `{"valid": false, "message": "…", "position": 0}`, or `{"valid": true, "fields": ["…"], "unknown_fields": ["…"]}`: `unknown_fields` are the fields `table` does not have. `function` and `parameters` check a custom function's own formula: it reads its parameters and may call itself.
 
 ---
 
@@ -2367,6 +2452,53 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `GET /api/v1/server/notifications` | server administrator | Returns SMTP and Webhook alert settings and subscribed `alert_events`. |
 | `PUT /api/v1/server/notifications` | server administrator | Saves SMTP and Webhook alert settings and subscribed `alert_events`. |
 | `POST /api/v1/server/notifications/test` | server administrator | Dispatches a test alert notification and records an audit event. |
+| `GET /api/v1/server/mail-profiles` | server administrator | The SMTP profiles of the **Send Mail** script step (`#133`): `{profiles: [...], password_env_prefix: "FILE4BASE_SMTP_", server_profile_solutions: ["<solution>", ...]}`. See *Send Mail through SMTP* below. |
+| `PUT /api/v1/server/mail-profiles` | server administrator | Creates or replaces the profile of `solution` (empty: the server-wide profile). |
+| `DELETE /api/v1/server/mail-profiles?solution=<name>` | server administrator | Removes the profile of `solution` (no parameter: the server-wide profile). `204`. |
+| `POST /api/v1/server/mail-profiles/test` | server administrator | `{solution, to}`: sends one test message through that profile. |
+| `PUT /api/v1/server/mail-profiles/server-access` | server administrator | `{solution, allowed}`: lets a solution send through the server-wide profile, or withdraws it. Off by default. `200 {solution, allowed}`; `404` for an unknown solution. Audited. |
+
+### Send Mail through SMTP (`#133`)
+
+The **Send Mail** script step sends through an SMTP profile that a server administrator sets in **Server Tools > Send Mail (SMTP)**: the profile of the script's solution, or else the server-wide one **if a server administrator allowed that solution to use it** (`PUT /api/v1/server/mail-profiles/server-access`; no solution is allowed by default, so a newly created solution cannot send through the server's account). Profiles and allowances live in the control store (`mail_profiles`, `mail_server_profile_grants`); both are removed with the solution.
+
+**A profile never holds its password.** It names an environment variable of the API server, which must start with `FILE4BASE_SMTP_` (`password_env`, e.g. `FILE4BASE_SMTP_PASSWORD`), so a profile cannot read any other server secret. No endpoint answers the password; a profile answers `password_available` (whether that variable is set). The password is never written to a log or to the audit log, and the audit log records how many messages were sent and the FileMaker error, never an address, a subject or a message.
+
+Profile (`PUT` body and each item of `profiles`):
+
+| Field | Meaning |
+| --- | --- |
+| `solution` | The database the profile is for; empty for the server-wide profile. |
+| `host`, `port` | The SMTP server. |
+| `security` | `starttls` (default: STARTTLS is required, the message is never sent in clear), `tls` (implicit TLS, port 465) or `none` — `none` with a user name only towards a loopback host. |
+| `username`, `password_env` | The account, and the `FILE4BASE_SMTP_*` variable holding its password (PLAIN or LOGIN authentication). Both empty: no authentication. |
+| `from_name`, `from_address` | The sender of every message. |
+| `reply_to` | The reply-to address, unless the step sets one. |
+| `max_per_hour` | Messages one account (database + user name) may send per hour, default `200`. |
+| `password_available`, `updated_by`, `updated_at` | Answers only. |
+
+#### `GET /api/v1/mail/status`
+
+Any session. Whether the session's solution can send: `{smtp_configured, scope: "solution"|"server", from_name, from_address, max_per_hour, max_recipients, max_attachment, max_batch}`; `{smtp_configured: false}` without a profile.
+
+#### `POST /api/v1/mail/send`
+
+Any session. Sends through the session's solution profile (or the server's).
+
+```json
+{
+  "from_name": "Sales",
+  "from": "sales@example.com",
+  "reply_to": "orders@example.com",
+  "attachments": [{"name": "Invoice.pdf", "content_type": "application/pdf", "data": "<base64>"}],
+  "messages": [{"to": "a@example.com; b@example.com", "cc": "", "bcc": "", "subject": "Invoice", "message": "Line 1\rLine 2"}]
+}
+```
+
+- One request carries 1 to 100 `messages` (one e-mail per record: the client sends the records in batches) sharing the sender and the attachments; it weighs at most 32 MiB. One message has at most 50 recipients (To, CC and BCC), a subject and message of 1 MiB, attachments of 20 MiB.
+- `from_name`, `from`, `reply_to` are the step's *via SMTP server* options. A `from` of the profile's domain is the sender; one of another domain is not put in `From` (the account could not send as it, and a script must not send as anyone) and becomes the reply-to address unless `reply_to` is set. The envelope sender is always the profile's address. BCC recipients get the message but appear in no header.
+- A carriage return, a line feed or a NUL in an address, the sender name, the subject or an attachment name is refused (`400`): no header can be injected. A message's own line breaks (FileMaker's `¶`) become CRLF.
+- The hourly quota is reserved, and a missing password detected, before the attachments are decoded; messages are streamed to the SMTP server, each attachment base64-encoded as it is written. Answers `200 {sent: n}`; `409` without a profile the solution may use; `400` for an invalid message (nothing is sent); `413` when too large; `429` with `Retry-After` past the hourly limit (nothing is sent); `502` when the SMTP server refuses, with `sent` (messages sent before) and `filemaker_error` — the FileMaker error of the step: `1501` (authentication failed, or the profile's password variable is not set — nothing is sent), `1502` (connection to the SMTP server failed), `1503` (TLS failed), `1504` (the server offers no STARTTLS though the profile requires it), `1505` (the server offers no supported authentication), `1506` (any other failure, e.g. a refused recipient).
 
 
 ---

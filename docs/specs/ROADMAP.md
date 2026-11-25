@@ -114,5 +114,8 @@
 - [x] Client-side script runner & step-by-step debugger ([#20](https://github.com/file4base/file4base-app/issues/20), [#51](https://github.com/file4base/file4base-app/issues/51)):
   - [x] Stepping through a script with breakpoints, over the client-side runner ([#51](https://github.com/file4base/file4base-app/issues/51)). A step the runner does not take stops the script and says so.
   - [x] Client-side runner for layout buttons: single step actions and Perform Script for record, navigation, found set, Set Field, dialog and URL steps. Control flow (`If`, `Loop`), variables and integration steps stop the script with a message until the server-side script runner is added.
+- [x] Custom functions: *File > Manage > Custom Functions* (create, edit, duplicate, delete, access), a rename rewriting the formulas that call it, changes that break formulas refused unless forced; every server-evaluated formula calls them, and script steps and button parameters the client cannot evaluate go to the server with the script's variables ([custom_functions.md](custom_functions.md)).
+- [x] Validation by calculation, with *Validate only if field has been modified* and *Allow user to override during data entry*, enforced on commit and migrated from FileMaker ([custom_functions.md](custom_functions.md#4-validation-by-calculation)).
+- [ ] Custom functions in layout calculations (hide object, tooltip, conditional formatting, portal filter).
 - [ ] Server-side script step runner for unattended control flow (`If`, `Loop`), `$local`/`$$global` variable mutation, and background scheduled scripts.
 

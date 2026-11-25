@@ -237,3 +237,58 @@ A FileMaker migration converts these five steps by instruction id (`13`, `50`, `
 **Open File.** The step takes a file reference, like `Perform Script` (§ 6), and fails with the same distinctions: an unknown reference (`114`), an unmapped one or a solution not installed on this server (`100`), a solution this session is not signed in to (`9`). A reference to this solution succeeds at once. Otherwise the step succeeds when the solution is installed and the user holds a session there, with their own account, whose privileges then govern every later step that reaches it. It opens nothing on screen: FileMaker, too, runs the steps after `Open File` in the file that holds the script. *Open hidden* (`hidden`) therefore changes nothing, and the step does not sign in for the user.
 
 **Open File — known gaps.** No window that runs scripts today — a layout button, a script trigger, a custom menu item, the debugger — hands the runner a way to reach the user's session in another solution (the peer session `Perform Script` across file references uses too). From those entry points an `Open File` that names another solution therefore fails with `9`, even when the user is signed in there; only a reference to this solution succeeds. Where a peer session is available, the step opens no window and does not run the opened solution's `OnFirstWindowOpen` (opening) script, which FileMaker runs even for a file opened hidden.
+
+## 8. `Save Records as PDF`, `Send Mail`, and the script folders (`#133`)
+
+### Where a script reads and writes files
+
+A FileMaker script names files by path. A File4Base script reaches **two folders of its own**, never the rest of the user's disk (`ScriptFileStore`, `client/lib/features/layout_engine/script_files.dart`):
+
+| Folder | `Get (…)` | Desktop client | Browser |
+|---|---|---|---|
+| Temporary | `Get ( TemporaryPath )` | A folder made for this run of File4Base in the system's temporary folder (`file4base-…`). | In memory, `/File4Base/Temporary/`. |
+| Documents | `Get ( DocumentsPath )`, `Get ( DesktopPath )` | `Documents/File4Base` in the user's home folder (`%USERPROFILE%\Documents\File4Base` on Windows), created on first write. | In memory, `/File4Base/Documents/`. |
+
+- Both answers are FileMaker paths ending with a slash: `/C:/Users/…/` on Windows, `/home/…/` elsewhere. A script never writes on the real desktop; its desktop is the documents folder.
+- A step's path is read as FileMaker writes it, optionally after `file:`, `filemac:`, `filewin:` or `filelinux:`. A `$variable` line stands for the variable's value. A **relative** path (`file:Report.pdf`) is in the documents folder, as FileMaker's "folder of the database file" has no counterpart. A **path list** (one path per line or `¶`) uses its first path that lies in one of the two folders.
+- Any other place, and any `..` that would leave a folder, is refused: `Save Records as PDF` reports **800** (cannot create the file), `Send Mail` **100** (file missing). A script therefore never writes over, or sends, a file of the user's it was not given. Comparison is case-insensitive under a Windows drive.
+- On the desktop, links are followed before the check: a path whose real location (that of its nearest existing folder, for a file not made yet) is outside both folders — a symbolic link or junction leading out, or a dangling link — is refused like any other place.
+- The browser's folders live in memory for the tab: a PDF saved there is opened as a download, and can be attached by a later Send Mail of the same session. **Signing out, or another user signing in, empties them** (and deletes the desktop's temporary folder), so one user's files are never another's.
+
+### `Save Records as PDF`
+
+| Parameter | What runs |
+|---|---|
+| `path` / `paths` | Resolved as above; empty: `<layout name>.pdf` in the documents folder. Invalid: **800**. |
+| `records` | `current` (the record in hand), `browsed` (every record of the found set, the default) or `blank`. No record: **401**. |
+| `append` | Adds the pages to the PDF at that path **saved by a script earlier in this run of File4Base**; a PDF that is there but was not saved by this run cannot be appended to (**3**) and is left as it was. No file yet: a new one. |
+| `auto_open` | Opens the PDF: in its application on the desktop, as a download in the browser. |
+| `create_email` | Runs `Send Mail` with its dialog and the PDF attached (below). |
+| `save_to: variable` | Not supported: **3**, with its migration note. |
+| Security options (a password to open, or to print or edit — `pdf_security`) | Not supported: **3**, with its migration note, and **nothing is written**: File4Base never writes unprotected a PDF that was to be protected. The password is not migrated. |
+| `dialog` | The *Save Records as PDF* dialog is not shown; the step saves as written. |
+
+The pages are those `Print` draws (`LayoutPrintService.slicePages`): the layout of the window drawn off screen for those records with the window's page setup, one image per sheet, assembled as a PDF. A window that cannot draw (no data browser) answers **3**.
+
+### `Send Mail`
+
+| Step as written | File4Base |
+|---|---|
+| Via e-mail client, **with dialog**, no attachment | A draft in the user's e-mail client (`mailto:`), as FileMaker. |
+| Via e-mail client, with dialog, **with attachments** | With an SMTP profile: File4Base's compose window (To, CC, BCC, Subject, Message, the attachments), then sent through the profile; Cancel sets `Get ( LastError )` to **1**. Without one: the draft, and the user is told which files to attach (a `mailto:` draft cannot carry a file). |
+| Via e-mail client, **without dialog** | **Documented deviation**: FileMaker sends through the e-mail client without asking, which a browser and most desktops cannot do. With an SMTP profile the message is sent through it; without one, a draft as before. |
+| **Via SMTP server** | Sent through the solution's SMTP profile (or the server's). The step's own server, port and password are **not** used and never migrated: only its sender name, sender address and reply-to are (`smtp_from_name`, `smtp_from`, `smtp_reply_to`). No profile: **1506**. |
+| **One e-mail per record** | Each record of the found set is made current in turn and its message evaluated; records without a recipient are skipped; the messages go through SMTP in batches of 100. No profile: **1506**. |
+| *Collect addresses across found set* (`collect_to` / `collect_cc` / `collect_bcc`) | The addresses of every record are joined, once each, into one message. |
+| **With dialog**, through SMTP (*via SMTP server*, one e-mail per record, attachments) | Every message is shown in the compose window before it is sent — one per record in turn; a cancel sends none (**1**). With **no window** to show it in (a script run without a data browser), one message becomes a draft in the e-mail client and several fail with **1**: a step that asks for its dialog never sends without it. |
+
+- A calculation that does not evaluate stops the script; its text is never sent.
+- An attachment that does not resolve, or a file that is not there, is **100**. A server refusal answers the FileMaker error the server reports (`1501`–`1506`, see the API reference, *Send Mail through SMTP*); nothing is drafted instead.
+- Profiles, limits and header-injection refusal are the server's: see [Server Tools](server_tools_and_mfa.md) and `docs/api/API_REFERENCE.md`.
+
+### Known gaps
+
+- `Export Field Contents`, `Insert File` and `Insert Picture` still do not read or write the script folders.
+- A path calculation that reads a related field is not evaluated on the client.
+- Append works within one run of File4Base only; a PDF from an earlier run is not appended to.
+- In a PDF of the found set, a summary field is computed by the server from the find that made the found set: records omitted from it afterwards (`Omit Record`, `Show Omitted Only`) are still counted. Preview mode has the same limitation.

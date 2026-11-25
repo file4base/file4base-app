@@ -24,7 +24,7 @@ class _ValidatingApi extends ApiClient {
       [for (final r in rows) Map<String, dynamic>.from(r)];
 
   @override
-  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false}) async {
+  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false, bool overrideValidation = false}) async {
     inserts.add(Map.of(record));
     if ((record['first_name']?.toString() ?? '').isEmpty) {
       throw Exception('first_name requires a value');

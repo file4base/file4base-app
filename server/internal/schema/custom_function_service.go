@@ -185,6 +185,7 @@ func (s *Service) importCustomFunctions(ctx context.Context, functions []BundleC
 		d.Placeholder(5), d.Placeholder(6), d.Placeholder(7))
 	now := time.Now().UTC()
 	ids := make([]string, 0, len(added))
+	defer data.InvalidateLibrary(s.driver)
 	for _, fn := range added {
 		params, err := json.Marshal(fn.Parameters)
 		if err != nil {
@@ -208,6 +209,7 @@ func (s *Service) importCustomFunctions(ctx context.Context, functions []BundleC
 func (s *Service) deleteCustomFunction(ctx context.Context, id string) error {
 	q := fmt.Sprintf(`DELETE FROM %s WHERE id = %s`, data.CustomFunctionsTable, s.driver.Dialect().Placeholder(1))
 	_, err := s.driver.DB().ExecContext(ctx, q, id)
+	data.InvalidateLibrary(s.driver)
 	return err
 }
 

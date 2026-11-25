@@ -79,6 +79,11 @@ var serverWideRoutes = []struct{ method, path string }{
 	{http.MethodDelete, "/api/v1/server/audit-logs"},
 	{http.MethodGet, "/api/v1/server/schedules"},
 	{http.MethodGet, "/api/v1/server/notifications"},
+	{http.MethodGet, "/api/v1/server/mail-profiles"},
+	{http.MethodPut, "/api/v1/server/mail-profiles"},
+	{http.MethodDelete, "/api/v1/server/mail-profiles"},
+	{http.MethodPost, "/api/v1/server/mail-profiles/test"},
+	{http.MethodPut, "/api/v1/server/mail-profiles/server-access"},
 }
 
 func TestServerTools_ServerWideToolsNeedTheServerAdministrator(t *testing.T) {

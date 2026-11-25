@@ -215,7 +215,7 @@ class _BrowseApi extends ApiClient {
   ApiClient forOccurrence(String occurrenceId) => _OccurrenceCalls(calls, occurrenceId);
 
   @override
-  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false}) async {
+  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false, bool overrideValidation = false}) async {
     calls.add('insert script=$script ${jsonEncode(record)}');
     // The server enters the serial number of a record that gives none.
     final created = {'id': '${rows.length + 1}', 'ref': 'T-000${rows.length + 1}', ...record};
@@ -225,7 +225,7 @@ class _BrowseApi extends ApiClient {
 
   @override
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> updates,
-      {bool script = false}) async {
+      {bool script = false, bool overrideValidation = false}) async {
     calls.add('update $id script=$script ${jsonEncode(updates)}');
     return {'id': id, ...updates};
   }

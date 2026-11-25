@@ -13,6 +13,7 @@ import 'package:file4base_client/features/layout_engine/layout_action_runner.dar
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/script_trigger_runtime.dart';
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior, kDoubleTapTimeout;
 import 'package:flutter/material.dart';
@@ -30,6 +31,15 @@ enum _ResizeHandle {
 }
 
 enum _LayoutSaveStatus { idle, dirty, saving, saved, error }
+
+/// The definition of [layout] as Layout mode saves it. A layout that had
+/// stored script triggers and has none left says so with an empty list: a
+/// definition without the list keeps the stored triggers (#26).
+Map<String, dynamic> layoutDefinitionJson(LayoutDefinitionModel layout, {required bool hadStoredTriggers}) {
+  final json = layout.toJson();
+  if (layout.scriptTriggers.isEmpty && hadStoredTriggers) json['script_triggers'] = <Object?>[];
+  return json;
+}
 
 class LayoutDesignerWidget extends StatefulWidget {
 
@@ -497,7 +507,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     if (_autoSaveStatus == _LayoutSaveStatus.dirty) {
       widget.onLayoutChanged?.call(_layout);
       if (_isPersisted) {
-        unawaited(widget.apiClient.updateLayout(_layout.id, _layout.name, _layout.toJson()).then((_) {}, onError: (_) {}));
+        unawaited(widget.apiClient.updateLayout(_layout.id, _layout.name, _layoutJson()).then((_) {}, onError: (_) {}));
       }
     }
     super.dispose();
@@ -669,8 +679,19 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     _markLayoutDirty();
   }
 
+  /// Whether the layout has had stored script triggers while open here:
+  /// once the last is removed, the definition says so with an empty list,
+  /// as one without the list keeps the stored triggers (#26).
+  bool _hadStoredTriggers = false;
+
+  Map<String, dynamic> _layoutJson() {
+    if (_layout.scriptTriggers.isNotEmpty) _hadStoredTriggers = true;
+    return layoutDefinitionJson(_layout, hadStoredTriggers: _hadStoredTriggers);
+  }
+
   /// Applies a change to the layout's own properties (background, scripts...).
   void _editLayout(LayoutDefinitionModel Function(LayoutDefinitionModel current) change) {
+    if (_layout.scriptTriggers.isNotEmpty) _hadStoredTriggers = true;
     _pushUndoState();
     setState(() => _layout = change(_layout));
     _markLayoutDirty();
@@ -773,13 +794,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         await widget.apiClient.updateLayout(
           _layout.id,
           _layout.name,
-          _layout.toJson(),
+          _layoutJson(),
         );
       } else {
         final created = await widget.apiClient.createLayout(
           _layout.name,
           toId: widget.externalOccurrence?.id ?? _currentTable.id,
-          definition: _layout.toJson(),
+          definition: _layoutJson(),
         );
         _layout = _layout.copyWith(id: created.id);
         _isPersisted = true;
@@ -802,13 +823,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         await widget.apiClient.updateLayout(
           _layout.id,
           _layout.name,
-          _layout.toJson(),
+          _layoutJson(),
         );
       } else {
         final created = await widget.apiClient.createLayout(
           _layout.name,
           toId: widget.externalOccurrence?.id ?? _currentTable.id,
-          definition: _layout.toJson(),
+          definition: _layoutJson(),
         );
         _layout = _layout.copyWith(id: created.id);
         _isPersisted = true;
@@ -5790,24 +5811,11 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 : (on) => _switchScriptTrigger(
                     current.triggerId ?? '${_layout.id}:${enter ? 'on_layout_enter' : 'on_layout_exit'}', on: on),
           ),
-      for (final t in stored)
-        Builder(builder: (_) {
-          final why = _layout.whyTriggerCannotRun(t, scriptIds: scriptIds) ??
-              (widget.canSwitchScriptTriggers ? null : _switchRefused);
-          return _triggerSwitchTile(
-            key: 'stored-${t.triggerId}',
-            event: t.event,
-            script: t.scriptName ?? '',
-            status: t.quarantinedByMigration ? 'Disabled by migration' : 'Disabled',
-            on: false,
-            why: why,
-            onChanged: why != null || t.triggerId == null ? null : (_) => _switchScriptTrigger(t.triggerId!, on: true),
-          );
-        }),
+      for (final t in stored) _storedTriggerTile('stored-${t.triggerId}', t, scriptIds),
       if (objectCount > 0)
         Padding(
           padding: const EdgeInsets.only(top: 4),
-          child: Text('$objectCount more set on objects of this layout, all disabled.',
+          child: Text('$objectCount more set on objects of this layout: select an object to see its triggers.',
               style: const TextStyle(color: Colors.grey, fontSize: 10)),
         ),
       if (widget.onReviewScriptTriggers != null && _layout.scriptTriggers.isNotEmpty)
@@ -5856,25 +5864,72 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     widget.onScriptTriggersChanged?.call(_layout.id);
   }
 
-  /// The triggers set on the selected object: kept, switched off, as
-  /// File4Base does not run object triggers yet (#26).
+  /// A trigger of the list, with its switch: an owner or an administrator
+  /// switches it on when File4Base can run it, and off at any time.
+  Widget _storedTriggerTile(String key, ButtonActionModel t, Set<String>? scriptIds) {
+    final on = t.extra['enabled'] == true;
+    final why = (on ? null : _layout.whyTriggerCannotRun(t, scriptIds: scriptIds)) ??
+        (widget.canSwitchScriptTriggers ? null : _switchRefused);
+    final parameter = (t.parameter ?? '').isEmpty ? '' : ' (${t.parameter})';
+    return _triggerSwitchTile(
+      key: key,
+      event: t.event,
+      script: (t.scriptName ?? '') + parameter,
+      status: on ? 'Enabled' : (t.quarantinedByMigration ? 'Disabled by migration' : 'Disabled'),
+      on: on,
+      why: why,
+      onChanged: why != null || t.triggerId == null ? null : (v) => _switchScriptTrigger(t.triggerId!, on: v),
+    );
+  }
+
+  /// The triggers set on the selected object (#26). File4Base runs the
+  /// OnObject… triggers of a field; an owner or an administrator adds,
+  /// changes, removes and switches them here.
   List<Widget> _objectTriggersSection(LayoutObjectModel sel) {
     final triggers = _layout.triggersOfObject(sel.id);
-    if (triggers.isEmpty) return const [];
+    final canEdit = widget.canSwitchScriptTriggers && sel.type == 'field';
+    if (triggers.isEmpty && !canEdit) return const [];
     return [
       const Divider(height: 24),
       _inspectorSectionTitle('SCRIPT TRIGGERS'),
       for (final t in triggers)
-        _triggerSwitchTile(
-          key: 'object-${t.triggerId}',
-          event: t.event,
-          script: t.scriptName ?? '',
-          status: t.quarantinedByMigration ? 'Disabled by migration' : 'Disabled',
-          on: false,
-          why: _layout.whyTriggerCannotRun(t),
-          onChanged: null,
+        Row(
+          children: [
+            Expanded(child: _storedTriggerTile('object-${t.triggerId}', t, null)),
+            if (canEdit) ...[
+              IconButton(
+                key: ValueKey('object-trigger-edit-${t.triggerId}'),
+                tooltip: 'Change the trigger',
+                iconSize: 16,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.edit_outlined),
+                onPressed: () => _editObjectTrigger(sel, t),
+              ),
+              IconButton(
+                key: ValueKey('object-trigger-remove-${t.triggerId}'),
+                tooltip: 'Remove the trigger',
+                iconSize: 16,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => _editLayout((l) => l.copyWith(scriptTriggers: [
+                      for (final other in l.scriptTriggers)
+                        if (other.triggerId != t.triggerId) other,
+                    ])),
+              ),
+            ],
+          ],
         ),
-      if (widget.onReviewScriptTriggers != null)
+      if (canEdit)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const ValueKey('add-object-trigger'),
+            icon: const Icon(Icons.add, size: 14),
+            label: const Text('Add Script Trigger...', style: TextStyle(fontSize: 11)),
+            onPressed: () => _editObjectTrigger(sel, null),
+          ),
+        ),
+      if (widget.onReviewScriptTriggers != null && triggers.isNotEmpty)
         Align(
           alignment: Alignment.centerLeft,
           child: TextButton.icon(
@@ -5884,6 +5939,118 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ),
         ),
     ];
+  }
+
+  /// Sets a trigger on the field [sel], or changes [existing]: its event,
+  /// the script it performs and the script parameter. It is enabled when
+  /// File4Base can run it, and saved with the layout.
+  Future<void> _editObjectTrigger(LayoutObjectModel sel, ButtonActionModel? existing) async {
+    final scripts = await (_scriptsFuture ??= widget.apiClient.listScripts().catchError((_) => <ScriptModel>[]));
+    if (!mounted) return;
+    final taken = {
+      for (final t in _layout.triggersOfObject(sel.id))
+        if (t.triggerId != existing?.triggerId) t.event.toLowerCase(),
+    };
+    final events = [
+      for (final e in kObjectTriggerEvents)
+        if (!taken.contains(e.toLowerCase())) e,
+    ];
+    if (events.isEmpty || scripts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(scripts.isEmpty
+            ? 'Create a script first: a trigger performs a script.'
+            : 'This field has a trigger for every event File4Base runs.'),
+      ));
+      return;
+    }
+    var event = events.firstWhere((e) => e.toLowerCase() == existing?.event.toLowerCase(), orElse: () => events.first);
+    var scriptId = scripts.any((sc) => sc.id == existing?.scriptId) ? existing!.scriptId! : scripts.first.id;
+    final parameter = TextEditingController(text: existing?.parameter ?? '');
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: Text(existing == null ? 'Add Script Trigger' : 'Change Script Trigger'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('object-trigger-event'),
+                  initialValue: event,
+                  decoration: const InputDecoration(labelText: 'Event', border: OutlineInputBorder(), isDense: true),
+                  items: [for (final e in events) DropdownMenuItem(value: e, child: Text(e))],
+                  onChanged: (v) => setDialog(() => event = v ?? event),
+                ),
+                const SizedBox(height: 4),
+                Text('Runs ${describeTriggerEvent(event)}.', style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('object-trigger-script'),
+                  initialValue: scriptId,
+                  decoration: const InputDecoration(labelText: 'Script', border: OutlineInputBorder(), isDense: true),
+                  items: [for (final sc in scripts) DropdownMenuItem(value: sc.id, child: Text(sc.name))],
+                  onChanged: (v) => setDialog(() => scriptId = v ?? scriptId),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  key: const ValueKey('object-trigger-parameter'),
+                  controller: parameter,
+                  decoration: const InputDecoration(
+                    labelText: 'Script parameter (optional calculation)',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              key: const ValueKey('object-trigger-ok'),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final text = parameter.text.trim();
+    parameter.dispose();
+    if (ok != true || !mounted) return;
+    final script = scripts.firstWhere((sc) => sc.id == scriptId);
+    // A trigger set here is reviewed: what a migration noted about it no
+    // longer holds.
+    const dropped = {'quarantined_by_migration', 'parameter_problem', 'file_reference', 'object', 'parameter'};
+    final entry = ButtonActionModel.fromJson({
+      if (existing != null)
+        for (final e in existing.toJson().entries)
+          if (!dropped.contains(e.key)) e.key: e.value,
+      'id': existing?.triggerId ?? 'trigger_${DateTime.now().microsecondsSinceEpoch}',
+      'event': event,
+      'type': 'perform_script',
+      'script_id': script.id,
+      'script_name': script.name,
+      if (text.isNotEmpty) 'parameter': text,
+      'object_id': sel.id,
+      'enabled': false,
+    });
+    _editLayout((l) {
+      final rest = [
+        for (final t in l.scriptTriggers)
+          if (t.triggerId != existing?.triggerId) t,
+      ];
+      final off = l.copyWith(scriptTriggers: [...rest, entry]);
+      final runs = off.whyTriggerCannotRun(entry, scriptIds: {for (final sc in scripts) sc.id}) == null;
+      return l.copyWith(scriptTriggers: [
+        for (final t in l.scriptTriggers)
+          if (t.triggerId == existing?.triggerId) runs ? entry.withEnabled(on: true) : entry else t,
+        if (existing == null) runs ? entry.withEnabled(on: true) : entry,
+      ]);
+    });
   }
 
   Widget _triggerSwitchTile({

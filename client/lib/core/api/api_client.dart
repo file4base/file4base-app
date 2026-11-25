@@ -8,6 +8,7 @@ import 'package:file4base_client/core/models/file_reference_models.dart';
 import 'package:file4base_client/core/models/script_models.dart';
 import 'package:file4base_client/core/models/script_trigger_models.dart';
 import 'package:file4base_client/core/models/transfer_models.dart';
+import 'package:file4base_client/features/layout_engine/script_files.dart';
 import 'package:flutter/foundation.dart' show immutable;
 import 'package:http/http.dart' as http;
 
@@ -16,6 +17,63 @@ export '../models/file_reference_models.dart';
 export '../models/script_models.dart';
 export '../models/script_trigger_models.dart';
 export '../models/transfer_models.dart';
+
+/// Whether the solution's scripts can send mail through SMTP (#133).
+@immutable
+class MailStatus {
+  const MailStatus({this.configured = false, this.scope = '', this.fromName = '', this.fromAddress = '', this.maxBatch = 100});
+
+  factory MailStatus.fromJson(Map<String, dynamic> json) => MailStatus(
+        configured: json['smtp_configured'] == true,
+        scope: json['scope']?.toString() ?? '',
+        fromName: json['from_name']?.toString() ?? '',
+        fromAddress: json['from_address']?.toString() ?? '',
+        maxBatch: json['max_batch'] is int && (json['max_batch'] as int) > 0 ? json['max_batch'] as int : 100,
+      );
+
+  final bool configured;
+
+  /// `solution` or `server`: whose profile it is.
+  final String scope;
+  final String fromName;
+  final String fromAddress;
+
+  /// The most messages one send request carries.
+  final int maxBatch;
+
+  /// "Name <address>", as the compose window shows the sender.
+  String get fromLabel => fromName.isEmpty ? fromAddress : '$fromName <$fromAddress>';
+}
+
+/// One message of a Send Mail step, its calculations evaluated.
+@immutable
+class OutgoingMail {
+  const OutgoingMail({this.to = '', this.cc = '', this.bcc = '', this.subject = '', this.message = ''});
+  final String to;
+  final String cc;
+  final String bcc;
+  final String subject;
+  final String message;
+
+  bool get hasRecipient => '$to$cc$bcc'.trim().isNotEmpty;
+
+  Map<String, dynamic> toJson() => {'to': to, 'cc': cc, 'bcc': bcc, 'subject': subject, 'message': message};
+}
+
+/// A file attached to a Send Mail step.
+@immutable
+class MailAttachment {
+  const MailAttachment({required this.name, required this.bytes, this.contentType = ''});
+  final String name;
+  final Uint8List bytes;
+  final String contentType;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        if (contentType.isNotEmpty) 'content_type': contentType,
+        'data': base64Encode(bytes),
+      };
+}
 
 /// RFC 9457 Problem Details Exception
 class ApiException implements Exception {
@@ -1091,6 +1149,115 @@ class UserModel {
   };
 }
 
+/// A custom function of the solution: a name, its parameters, and a formula
+/// over them, which every formula of the solution may call.
+class CustomFunctionModel {
+  const CustomFunctionModel({
+    required this.name,
+    this.id = '',
+    this.parameters = const [],
+    this.formula = '',
+    this.access = 'all',
+  });
+
+  factory CustomFunctionModel.fromJson(Map<String, dynamic> json) => CustomFunctionModel(
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        parameters: (json['parameters'] as List<dynamic>? ?? const []).map((p) => '$p').toList(),
+        formula: json['formula'] as String? ?? '',
+        access: json['access'] as String? ?? 'all',
+      );
+
+  final String id;
+  final String name;
+  final List<String> parameters;
+  final String formula;
+
+  /// `all`, or `full_access` for a function only full-access accounts see.
+  final String access;
+
+  bool get fullAccessOnly => access == 'full_access';
+
+  /// How the calculation editor shows it: `Name ( a ; b )`, or the name
+  /// alone for a function without parameters.
+  String get signature => parameters.isEmpty ? name : '$name ( ${parameters.join(' ; ')} )';
+
+  CustomFunctionModel copyWith({String? id, String? name, List<String>? parameters, String? formula, String? access}) =>
+      CustomFunctionModel(
+        id: id ?? this.id,
+        name: name ?? this.name,
+        parameters: parameters ?? this.parameters,
+        formula: formula ?? this.formula,
+        access: access ?? this.access,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'parameters': parameters,
+        'formula': formula,
+        'access': access,
+      };
+}
+
+/// A formula that calls a custom function: of a field (`calculation`,
+/// `auto_enter`, `validation`), of another custom function, of a script step,
+/// or of a layout's button or trigger.
+class CustomFunctionUsage {
+  const CustomFunctionUsage({
+    required this.kind,
+    required this.id,
+    required this.name,
+    this.detail = '',
+  });
+
+  factory CustomFunctionUsage.fromJson(Map<String, dynamic> json) => CustomFunctionUsage(
+        kind: json['kind'] as String? ?? '',
+        id: json['id'] as String? ?? '',
+        name: json['name'] as String? ?? '',
+        detail: json['detail'] as String? ?? '',
+      );
+
+  static List<CustomFunctionUsage> listFrom(Object? raw) => (raw as List<dynamic>? ?? const [])
+      .whereType<Map<String, dynamic>>()
+      .map(CustomFunctionUsage.fromJson)
+      .toList();
+
+  final String kind;
+  final String id;
+  final String name;
+  final String detail;
+
+  String get describe {
+    final what = switch (kind) {
+      'calculation' => 'Calculation field',
+      'auto_enter' => 'Auto-enter calculation',
+      'validation' => 'Validation formula',
+      'custom_function' => 'Custom function',
+      'script_step' => 'Script',
+      'layout' => 'Layout',
+      _ => kind,
+    };
+    return detail.isEmpty ? '$what: $name' : '$what: $name ($detail)';
+  }
+}
+
+/// What the server says of a formula being written.
+class FormulaCheckModel {
+  const FormulaCheckModel({required this.valid, this.message = '', this.position, this.unknownFields = const []});
+
+  factory FormulaCheckModel.fromJson(Map<String, dynamic> json) => FormulaCheckModel(
+        valid: json['valid'] as bool? ?? false,
+        message: json['message'] as String? ?? '',
+        position: (json['position'] as num?)?.toInt(),
+        unknownFields: (json['unknown_fields'] as List<dynamic>? ?? const []).map((f) => '$f').toList(),
+      );
+
+  final bool valid;
+  final String message;
+  final int? position;
+  final List<String> unknownFields;
+}
+
 /// What one watched expression came to (#50): a value, or the reason it has
 /// none.
 class EvaluationModel {
@@ -1102,6 +1269,7 @@ class EvaluationModel {
     this.fields = const [],
     this.unknownFields = const [],
     this.error = '',
+    this.variables = const {},
   });
 
   factory EvaluationModel.fromJson(Map<String, dynamic> json) {
@@ -1114,6 +1282,9 @@ class EvaluationModel {
       fields: strings('fields'),
       unknownFields: strings('unknown_fields'),
       error: json['error'] as String? ?? '',
+      variables: {
+        for (final e in (json['variables'] as Map<String, dynamic>? ?? const {}).entries) e.key: '${e.value}',
+      },
     );
   }
   final String expression;
@@ -1122,6 +1293,10 @@ class EvaluationModel {
   final List<String> fields;
   final List<String> unknownFields;
   final String error;
+
+  /// The $ and $$ variables the expression set with Let, by lower-case
+  /// name, as text: a script keeps them.
+  final Map<String, String> variables;
 
   bool get failed => error.isNotEmpty;
 
@@ -1914,6 +2089,8 @@ class ApiClient {
     }
     _signInLinks = const [];
     _anonymousScriptGlobals.clear();
+    // The files scripts of this session made are not the next account's.
+    unawaited(ScriptFileStore.forgetSession());
     _authToken = null;
   }
 
@@ -2172,14 +2349,31 @@ class ApiClient {
   /// FileMaker script may. It is a data-entry rule, not a privilege.
   static const entryHeader = 'X-File4Base-Entry';
 
-  Map<String, String>? _entry({required bool script}) => script ? const {entryHeader: 'script'} : null;
+  /// The header a write sent again carries when the person chose to keep
+  /// values that break validation rules allowing them to (FileMaker's "Allow
+  /// user to override during data entry"); the other rules still apply.
+  static const validationHeader = 'X-File4Base-Validation';
+
+  Map<String, String> _entry({required bool script, bool overrideValidation = false}) => {
+        if (script) entryHeader: 'script',
+        if (overrideValidation) validationHeader: 'override',
+      };
 
   /// Creates a record. [script] marks the write as a script step's
-  /// ([entryHeader]); without it, it is data entry.
-  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false}) async {
+  /// ([entryHeader]); without it, it is data entry. [overrideValidation]
+  /// keeps values the person was told break a rule they may override.
+  Future<Map<String, dynamic>> insertRow(
+    String table,
+    Map<String, dynamic> record, {
+    bool script = false,
+    bool overrideValidation = false,
+  }) async {
     final response = await _httpClient.post(
       Uri.parse(_records(table)),
-      headers: _headers(extra: _entry(script: script), contentType: 'application/json'),
+      headers: _headers(
+        extra: _entry(script: script, overrideValidation: overrideValidation),
+        contentType: 'application/json',
+      ),
       body: jsonEncode(record),
     );
     _checkResponse(response);
@@ -2187,16 +2381,21 @@ class ApiClient {
   }
 
   /// Changes a record. [script] marks the write as a script step's
-  /// ([entryHeader]); without it, it is data entry.
+  /// ([entryHeader]); without it, it is data entry. [overrideValidation]
+  /// keeps values the person was told break a rule they may override.
   Future<Map<String, dynamic>> updateRow(
     String table,
     String id,
     Map<String, dynamic> updates, {
     bool script = false,
+    bool overrideValidation = false,
   }) async {
     final response = await _httpClient.put(
       Uri.parse('${_records(table)}/$id'),
-      headers: _headers(extra: _entry(script: script), contentType: 'application/json'),
+      headers: _headers(
+        extra: _entry(script: script, overrideValidation: overrideValidation),
+        contentType: 'application/json',
+      ),
       body: jsonEncode(updates),
     );
     _checkResponse(response);
@@ -2384,6 +2583,87 @@ class ApiClient {
       headers: _headers(),
     );
     _checkResponse(response);
+  }
+
+  // ─── Custom functions (File > Manage > Custom Functions) ──────────────────
+
+  /// The solution's custom functions, in name order. An account without full
+  /// access does not get the ones kept for full access.
+  Future<List<CustomFunctionModel>> listCustomFunctions() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/custom-functions'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['custom_functions'] as List<dynamic>? ?? const [])
+        .map((item) => CustomFunctionModel.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<CustomFunctionModel> createCustomFunction(CustomFunctionModel fn) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/custom-functions'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(fn.toJson()),
+    );
+    _checkResponse(response);
+    return CustomFunctionModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Saves a custom function. A new name is written into every formula that
+  /// calls it by the server. A conflict (409) lists the formulas the change
+  /// would break, in [ApiException.raw] `usages`; [force] saves it anyway.
+  Future<CustomFunctionModel> updateCustomFunction(CustomFunctionModel fn, {bool force = false}) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/custom-functions/${fn.id}${force ? '?force=true' : ''}'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(fn.toJson()),
+    );
+    _checkResponse(response);
+    return CustomFunctionModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<void> deleteCustomFunction(String id, {bool force = false}) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/custom-functions/$id${force ? '?force=true' : ''}'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  /// The formulas that call a custom function.
+  Future<List<CustomFunctionUsage>> customFunctionUsages(String id) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/custom-functions/$id/usages'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return CustomFunctionUsage.listFrom(body['usages']);
+  }
+
+  /// Checks a formula being written with the server: [table] lists the
+  /// fields it reads that the table does not have; [function] and
+  /// [parameters] check a custom function's own formula.
+  Future<FormulaCheckModel> checkFormula(
+    String formula, {
+    String? table,
+    String? function,
+    List<String>? parameters,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/formulas/check'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'formula': formula,
+        if (table != null && table.isNotEmpty) 'table': table,
+        if (function != null && function.isNotEmpty) 'function': function,
+        if (parameters != null && parameters.isNotEmpty) 'parameters': parameters,
+      }),
+    );
+    _checkResponse(response);
+    return FormulaCheckModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   /// Reads an uploaded file and reports what is in it, without writing
@@ -3422,6 +3702,86 @@ class ApiClient {
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
+  // ─── Send Mail through SMTP (#133) ─────────────────────────────────────────
+
+  /// SMTP profiles (server administrators): the server-wide one has an
+  /// empty `solution`. A profile never carries its password, only the name
+  /// of the server variable holding it and whether that variable is set.
+  Future<Map<String, dynamic>> listMailProfiles() async {
+    final response = await _httpClient.get(Uri.parse('$baseUrl/api/v1/server/mail-profiles'), headers: _headers());
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> putMailProfile(Map<String, dynamic> profile) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/server/mail-profiles'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(profile),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<void> deleteMailProfile({String solution = ''}) async {
+    final query = solution.isEmpty ? '' : '?solution=${Uri.encodeQueryComponent(solution)}';
+    final response = await _httpClient.delete(Uri.parse('$baseUrl/api/v1/server/mail-profiles$query'), headers: _headers());
+    _checkResponse(response);
+  }
+
+  /// Lets a solution send through the server profile, or withdraws it: no
+  /// solution may until a server administrator allows it.
+  Future<void> setServerMailAccess({required String solution, required bool allowed}) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/server/mail-profiles/server-access'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'solution': solution, 'allowed': allowed}),
+    );
+    _checkResponse(response);
+  }
+
+  Future<void> testMailProfile({required String to, String solution = ''}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/mail-profiles/test'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'solution': solution, 'to': to}),
+    );
+    _checkResponse(response);
+  }
+
+  /// Whether this solution's scripts can send through SMTP, and as whom.
+  Future<MailStatus> mailStatus() async {
+    final response = await _httpClient.get(Uri.parse('$baseUrl/api/v1/mail/status'), headers: _headers());
+    _checkResponse(response);
+    return MailStatus.fromJson(Map<String, dynamic>.from(jsonDecode(response.body) as Map));
+  }
+
+  /// Sends [messages] through this solution's SMTP profile, with the same
+  /// sender and attachments; answers how many were sent. A refusal is an
+  /// [ApiException] whose `raw['filemaker_error']` is the step's error.
+  Future<int> sendMail({
+    required List<OutgoingMail> messages,
+    List<MailAttachment> attachments = const [],
+    String fromName = '',
+    String from = '',
+    String replyTo = '',
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/mail/send'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (fromName.isNotEmpty) 'from_name': fromName,
+        if (from.isNotEmpty) 'from': from,
+        if (replyTo.isNotEmpty) 'reply_to': replyTo,
+        if (attachments.isNotEmpty) 'attachments': [for (final a in attachments) a.toJson()],
+        'messages': [for (final m in messages) m.toJson()],
+      }),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body);
+    return body is Map && body['sent'] is int ? body['sent'] as int : messages.length;
+  }
+
   /// Signs out: closes the server session and forgets the token.
   Future<void> logout() async {
     final token = _authToken;
@@ -3590,11 +3950,19 @@ class ApiClient {
   ///
   /// One expression that does not parse does not stop the others: each
   /// result carries either a value or its own error.
+  ///
+  /// A script step gives its [variables] ($ and $$, by name) and the answers
+  /// to the Get functions only the client knows ([get], by selector, such as
+  /// `ScriptParameter`), so the server evaluates what the client cannot with
+  /// the solution's custom functions in one request.
   Future<List<EvaluationModel>> evaluateExpressions(
     String table, {
     required List<String> expressions,
     String? recordId,
     String resultType = 'Text',
+    Map<String, String>? variables,
+    Map<String, Object?>? get,
+    Map<String, Object?>? values,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
@@ -3603,6 +3971,9 @@ class ApiClient {
         'expressions': expressions,
         if (recordId != null && recordId.isNotEmpty) 'record_id': recordId,
         'result_type': resultType,
+        if (variables != null && variables.isNotEmpty) 'variables': variables,
+        if (get != null && get.isNotEmpty) 'get': get,
+        if (values != null && values.isNotEmpty) 'values': values,
       }),
     );
     _checkResponse(response);

@@ -18,13 +18,23 @@ import (
 // entry. It decides nothing about privileges.
 const EntryHeader = "X-File4Base-Entry"
 
+// ValidationHeader set to "override" sends again a write whose values break
+// validation rules that allow the person to override them, as FileMaker's
+// "Allow user to override during data entry": the person was told, and
+// chose to keep the values. The rules that do not allow it still apply.
+const ValidationHeader = "X-File4Base-Validation"
+
 // entryContext is the request's context, marked as a script's when the
-// request says it is one.
+// request says it is one, and as overriding validation when it says so.
 func entryContext(r *http.Request) context.Context {
+	ctx := r.Context()
 	if strings.EqualFold(strings.TrimSpace(r.Header.Get(EntryHeader)), "script") {
-		return data.AsScript(r.Context())
+		ctx = data.AsScript(ctx)
 	}
-	return r.Context()
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get(ValidationHeader)), "override") {
+		ctx = data.WithValidationOverride(ctx)
+	}
+	return ctx
 }
 
 // DuplicateRow creates a copy of a record, as FileMaker's Duplicate Record.

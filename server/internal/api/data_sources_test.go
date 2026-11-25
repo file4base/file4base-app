@@ -213,6 +213,7 @@ func TestAPI_ImportFromAnExternalSource(t *testing.T) {
 		"unknown engine": {"name": "x", "engine": "oracle", "host": "h", "database": "d"},
 		"no host":        {"name": "y", "engine": "postgres", "database": "d"},
 		"bad env name":   {"name": "z", "engine": "postgres", "host": "h", "password_env": "not a name"},
+		"server secret":  {"name": "w", "engine": "postgres", "host": "h", "password_env": "DATABASE_URL"},
 	} {
 		rec = h.do(http.MethodPost, "/api/v1/data-sources", owner, bad, nil)
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, name)

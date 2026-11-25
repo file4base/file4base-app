@@ -44,7 +44,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.21.0}
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.22.0}
     container_name: file4base-api
     restart: unless-stopped
     ports:
@@ -73,6 +73,10 @@ services:
       CONTROL_DB_PATH: "/app/data/file4base_control.db"
       # Shared secret for AES-256-GCM encrypted payload channel between Web/Desktop and API
       FILE4BASE_CHANNEL_SECRET: "${FILE4BASE_CHANNEL_SECRET:-}"
+      # Password of the SMTP account a Send Mail profile names (Server Tools >
+      # Send Mail). A profile only names a FILE4BASE_SMTP_* variable; add one
+      # line per account.
+      FILE4BASE_SMTP_PASSWORD: "${FILE4BASE_SMTP_PASSWORD:-}"
       # The File4Base Local CA and the certificate it signs live here (shared
       # read-only with the Web Client's Nginx). The authority is created once
       # and reused: install it from Server Tools > TLS and the browser stops
@@ -106,7 +110,7 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
-    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.21.0}
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.22.0}
     container_name: file4base-web
     restart: unless-stopped
     ports:

@@ -26,6 +26,8 @@ class ScriptTriggerProblem {
   static const ambiguousScript = 'ambiguous_script';
   static const scriptInOtherFile = 'script_in_other_file';
   static const duplicateId = 'duplicate_id';
+  static const unsupportedObject = 'unsupported_object';
+  static const noMode = 'no_mode';
 
   final String code;
   final String message;
@@ -43,6 +45,8 @@ class ScriptTriggerProblem {
         ambiguousScript => 'Several scripts have this name',
         scriptInOtherFile => 'Script in another file',
         duplicateId => 'Shared id',
+        unsupportedObject => 'Not a field',
+        noMode => 'No mode',
         _ => code,
       };
 }

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/file_options_model.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/core/providers/locale_provider.dart';
 import 'package:file4base_client/core/providers/zoom_provider.dart';
 import 'package:file4base_client/core/services/auto_save_service.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
@@ -31,9 +32,11 @@ import 'package:file4base_client/features/layout_engine/models/layout_definition
 import 'package:file4base_client/features/layout_engine/new_layout_assistant.dart';
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:file4base_client/features/preflight/preflight_dialog.dart';
+import 'package:file4base_client/features/preferences/preferences_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_database_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_file_references_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_script_triggers_dialog.dart';
+import 'package:file4base_client/features/schema_manager/manage_custom_functions_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_value_lists_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
@@ -54,6 +57,7 @@ import 'package:file4base_client/features/tools/design_report_dialog.dart';
 import 'package:file4base_client/features/tools/developer_utilities_dialog.dart';
 import 'package:file4base_client/features/tools/manage_custom_menus_dialog.dart';
 import 'package:file4base_client/core/realtime/realtime_service.dart';
+import 'package:file4base_client/l10n/app_localizations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -122,11 +126,13 @@ class File4BaseApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final activeTheme = ref.watch(appThemeProvider);
+    final activeLocale = ref.watch(appLocaleProvider);
     return MaterialApp(
       title: 'File4Base',
       debugShowCheckedModeBanner: false,
-      locale: const Locale('en'),
-      supportedLocales: const [Locale('en')],
+      locale: activeLocale,
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
       theme: activeTheme.toThemeData(),
       darkTheme: activeTheme.isDark ? activeTheme.toThemeData() : AppThemes.dark.toThemeData(),
       themeMode: activeTheme.isDark ? ThemeMode.dark : ThemeMode.light,
@@ -479,6 +485,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         subtitle: 'Reusable value lists',
         icon: Icons.list_alt_outlined,
         onSelected: () => unawaited(ManageValueListsDialog.show(context)),
+      ),
+      ServerToolsManagementAction(
+        label: 'Custom Functions',
+        subtitle: 'Reusable formulas',
+        icon: Icons.functions,
+        onSelected: () => unawaited(ManageCustomFunctionsDialog.show(context)),
       ),
       ServerToolsManagementAction(
         label: 'File References',
@@ -1465,6 +1477,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         return;
       }
     }
+    // The layout's OnModeExit trigger, or its active field's triggers, may
+    // keep the window in the mode it is in (#26).
+    final browser = _dataBrowserKey.currentState;
+    if (browser != null && currentMode != OperationalMode.layout && !await browser.confirmModeExit(newMode)) return;
+    if (!mounted) return;
     ref.read(operationalModeProvider.notifier).setMode(newMode);
   }
 
@@ -1899,6 +1916,27 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         );
       }
     }
+  }
+
+  void _openServerConnectionDialog() {
+    final currentUrl = ref.read(serverUrlProvider);
+    unawaited(ServerConnectionDialog.show(
+      context,
+      currentUrl: currentUrl,
+      onConnect: (newUrl) {
+        ref.read(serverUrlProvider.notifier).setUrl(newUrl);
+        unawaited(_checkServer());
+      },
+    ));
+  }
+
+  void _handlePreferences() {
+    final currentUrl = ref.read(serverUrlProvider);
+    unawaited(PreferencesDialog.show(
+      context,
+      currentServerUrl: currentUrl,
+      onOpenServerSettings: _openServerConnectionDialog,
+    ));
   }
 
   Future<void> _handleFileOptions() async {
@@ -2367,6 +2405,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           const SingleActivator(LogicalKeyboardKey.keyO, meta: true): _handleOpenSolution,
           const SingleActivator(LogicalKeyboardKey.keyN, meta: true): _handleNewDatabase,
           const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): _handlePageSetup,
+          const SingleActivator(LogicalKeyboardKey.comma, meta: true): _handlePreferences,
+          const SingleActivator(LogicalKeyboardKey.comma, control: true): _handlePreferences,
         },
         const SingleActivator(LogicalKeyboardKey.keyQ, meta: true): _handleQuit,
         const SingleActivator(LogicalKeyboardKey.keyQ, control: true): _handleQuit,
@@ -2460,17 +2500,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                     );
                   },
                   onManageThemes: () => ManageThemesDialog.show(context),
-                  onOpenRemote: () {
-                    final currentUrl = ref.read(serverUrlProvider);
-                    unawaited(ServerConnectionDialog.show(
-                      context,
-                      currentUrl: currentUrl,
-                      onConnect: (newUrl) {
-                        ref.read(serverUrlProvider.notifier).setUrl(newUrl);
-                        unawaited(_checkServer());
-                      },
-                    ));
-                  },
+                  onPreferences: _handlePreferences,
+                  onOpenRemote: _openServerConnectionDialog,
                   onAbout: () => AboutFile4BaseDialog.show(context, serverStatus: _serverStatus),
                   onNewDatabase: _handleNewDatabase,
                   onOpenSolution: _handleOpenSolution,
@@ -2511,6 +2542,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onManageValueLists: _currentUser == null
                       ? null
                       : () => ManageValueListsDialog.show(context),
+                  onManageCustomFunctions: _currentUser == null
+                      ? null
+                      : () => ManageCustomFunctionsDialog.show(context),
                   onManageFileReferences: _currentUser == null ? null : _handleManageFileReferences,
                   onManageScriptTriggers: _currentUser == null ? null : _handleManageScriptTriggers,
                   onPerformFind: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.performFind(),

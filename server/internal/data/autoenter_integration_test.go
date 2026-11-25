@@ -629,8 +629,10 @@ func TestAutoEnter_SelfAndCustomFunctions(t *testing.T) {
 		d.Placeholder(1)+`, `+d.Placeholder(2)+`, `+d.Placeholder(3)+`, `+d.Placeholder(4)+`, 'all', `+d.Placeholder(5)+`, `+d.Placeholder(6)+`)`,
 		fmt.Sprintf("ae-cf-%d", stamp), shout, `["t"]`, `Upper ( t ) & "!"`, time.Now().UTC(), time.Now().UTC())
 	require.NoError(t, err)
+	data.InvalidateLibrary(driver) // written behind the server's back
 	t.Cleanup(func() {
 		_, _ = driver.DB().ExecContext(context.Background(), `DELETE FROM `+data.CustomFunctionsTable+` WHERE name = `+d.Placeholder(1), shout)
+		data.InvalidateLibrary(driver)
 	})
 	f.setOptions(t, ctx, "shout", calcOpt(shout+` ( first )`))
 	row = f.insert(t, ctx, map[string]interface{}{"first": "hey"})

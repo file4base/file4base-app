@@ -3,7 +3,7 @@
   "info": {
     "title": "File4Base API Engine",
     "description": "Enterprise-grade REST and Dynamic Relational DDL Database Engine for File4Base. Supports runtime schema migrations, table occurrences, relationships graph, dynamic Find Mode formula parsing, security ACL, and solution archiving. Every endpoint except the health probes, sign-in and the database selector requires a session token: sign in with POST /api/v1/auth/login and send the returned token as 'Authorization: Bearer <token>'. A session is bound to the database it signed in to.",
-    "version": "0.21.0",
+    "version": "0.22.0",
     "contact": {
       "name": "File4Base Core Team",
       "url": "https://github.com/file4base/file4base-app"
@@ -612,7 +612,7 @@
           "Schemas & DDL"
         ],
         "summary": "List Script Triggers",
-        "description": "Every script trigger of every layout and layout object, with the problems that keep it from running and their remedy. Requires admin (owner or admin role).",
+        "description": "Every script trigger of every layout and layout object, with the problems that keep it from running and their remedy. File4Base runs OnLayoutEnter, OnLayoutExit, OnRecordLoad, OnRecordCommit, OnRecordRevert, OnModeEnter and OnModeExit set on a layout, and OnObjectEnter, OnObjectExit, OnObjectModify, OnObjectValidate and OnObjectSave set on a field, one script per event of a layout or object. Requires admin (owner or admin role).",
         "responses": {
           "200": {
             "description": "Script triggers, by layout name",
@@ -645,7 +645,7 @@
           "Schemas & DDL"
         ],
         "summary": "Enable or Disable Script Triggers",
-        "description": "Enables or disables the triggers named, all or none, in one transaction; every layout changed gets a new version, so open clients read it again. Enabling a trigger with a problem refuses the whole batch. Requires admin (owner or admin role) and an unlocked design.",
+        "description": "Enables or disables the triggers named, all or none, in one transaction; every layout changed gets a new version, so open clients read it again. An OnLayoutEnter or OnLayoutExit trigger moves into its slot when enabled; every other trigger is switched where it is, in the layout's script_triggers list. Enabling a trigger with a problem, or two of the same event on one layout or object, refuses the whole batch. Requires admin (owner or admin role) and an unlocked design.",
         "requestBody": {
           "required": true,
           "content": {
@@ -7142,6 +7142,430 @@
           }
         }
       }
+    },
+    "/api/v1/server/mail-profiles": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "List the SMTP profiles of Send Mail (server administrator, #133)",
+        "responses": {
+          "200": {
+            "description": "profiles, password_env_prefix and the solutions allowed to use the server profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "profiles": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MailProfile"
+                      }
+                    },
+                    "password_env_prefix": {
+                      "type": "string"
+                    },
+                    "server_profile_solutions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Create or replace the SMTP profile of a solution, or the server-wide one",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MailProfile"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored profile, without its password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MailProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Remove the SMTP profile of a solution (no parameter: the server-wide one)",
+        "parameters": [
+          {
+            "name": "solution",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/server/mail-profiles/test": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Send one test message through an SMTP profile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "to"
+                ],
+                "properties": {
+                  "solution": {
+                    "type": "string"
+                  },
+                  "to": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sent"
+          },
+          "400": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/server/mail-profiles/server-access": {
+      "put": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Allow a solution to send through the server-wide SMTP profile, or withdraw it (off by default, #133)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "solution",
+                  "allowed"
+                ],
+                "properties": {
+                  "solution": {
+                    "type": "string"
+                  },
+                  "allowed": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The solution and whether it may use the server profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "solution": {
+                      "type": "string"
+                    },
+                    "allowed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/status": {
+      "get": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Whether the session's solution can send mail through SMTP (#133)",
+        "responses": {
+          "200": {
+            "description": "smtp_configured, scope, from_name, from_address, max_per_hour, max_recipients, max_attachment, max_batch"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/mail/send": {
+      "post": {
+        "tags": [
+          "Server Administration"
+        ],
+        "summary": "Send Send Mail messages through the session's SMTP profile (#133)",
+        "description": "1 to 100 messages sharing sender and attachments; at most 32 MiB per request, 50 recipients and 20 MiB of attachments per message. CR, LF or NUL in an address, the sender name, the subject or an attachment name is refused. A sender of another domain than the profile's becomes the reply-to address. On an SMTP failure, 502 carries sent and filemaker_error (1501-1506).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "messages"
+                ],
+                "properties": {
+                  "from_name": {
+                    "type": "string"
+                  },
+                  "from": {
+                    "type": "string"
+                  },
+                  "reply_to": {
+                    "type": "string"
+                  },
+                  "attachments": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "data"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "content_type": {
+                          "type": "string"
+                        },
+                        "data": {
+                          "type": "string",
+                          "format": "byte"
+                        }
+                      }
+                    }
+                  },
+                  "messages": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 100,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "to": {
+                          "type": "string"
+                        },
+                        "cc": {
+                          "type": "string"
+                        },
+                        "bcc": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "sent: how many messages were sent"
+          },
+          "400": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Problem details",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8019,7 +8443,9 @@
               "unsupported_event",
               "object_missing",
               "event_taken",
-              "duplicate_id"
+              "duplicate_id",
+              "unsupported_object",
+              "no_mode"
             ]
           },
           "message": {
@@ -8089,6 +8515,67 @@
           "can_enable": {
             "type": "boolean",
             "description": "Disabled, and nothing keeps it from running once enabled."
+          }
+        }
+      },
+      "MailProfile": {
+        "type": "object",
+        "description": "An SMTP profile of the Send Mail script step (#133). It never holds its password: password_env names an environment variable of the server, starting with FILE4BASE_SMTP_, that does.",
+        "properties": {
+          "solution": {
+            "type": "string",
+            "description": "The database the profile is for; empty for the server-wide profile."
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "security": {
+            "type": "string",
+            "enum": [
+              "starttls",
+              "tls",
+              "none"
+            ],
+            "default": "starttls"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password_env": {
+            "type": "string",
+            "description": "Name of the server environment variable holding the password; must start with FILE4BASE_SMTP_."
+          },
+          "from_name": {
+            "type": "string"
+          },
+          "from_address": {
+            "type": "string",
+            "format": "email"
+          },
+          "reply_to": {
+            "type": "string"
+          },
+          "max_per_hour": {
+            "type": "integer",
+            "default": 200,
+            "description": "Messages one account may send per hour."
+          },
+          "password_available": {
+            "type": "boolean",
+            "readOnly": true,
+            "description": "Whether the password variable is set on the server. The password itself is never answered."
+          },
+          "updated_by": {
+            "type": "string",
+            "readOnly": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "readOnly": true
           }
         }
       }

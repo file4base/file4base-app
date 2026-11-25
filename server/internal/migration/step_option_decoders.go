@@ -338,6 +338,13 @@ func orTable(table string) string {
 // decodeSendMail reads a <Send> element of a Send Mail step: how the mail
 // leaves, its addressees, subject and body, and whether it is sent once per
 // record of the found set.
+//
+// A step sent "via SMTP server" also carries FileMaker's SMTP options. The
+// sender's name and address and the reply-to address are kept: File4Base
+// sends with them. The server, port, account and password written in the
+// step are not: File4Base sends through the SMTP profile a server
+// administrator sets, and a password read from a design file is never
+// stored in a converted step.
 func decodeSendMail(send *xmlNode, out map[string]interface{}) []string {
 	var unknown []string
 	if v, ok := xmlAttrBool(send, "SMTP"); ok {
@@ -354,14 +361,7 @@ func decodeSendMail(send *xmlNode, out map[string]interface{}) []string {
 		switch ch.Name {
 		case "To", "CC", "BCC", "Subject", "Message":
 			key := strings.ToLower(ch.Name)
-			if calc := findFirstChild(ch, "Calculation"); calc != nil {
-				out[key] = calculationText(calc)
-				out[key+"_is_calculation"] = true
-			} else if v := firstAttr(ch, "value"); v != "" {
-				out[key] = v
-			} else if t := strings.TrimSpace(ch.Text); t != "" {
-				out[key] = t
-			}
+			readMailValue(ch, key, out)
 			if collect := findFirstChild(ch, "CollectAddresses"); collect != nil {
 				if v, ok := xmlAttrBool(collect, "value"); ok && v {
 					out["collect_"+key] = true
@@ -371,38 +371,246 @@ func decodeSendMail(send *xmlNode, out map[string]interface{}) []string {
 			if v, ok := xmlAttrBool(ch, "value"); ok {
 				out["one_email_per_record"] = v
 			}
+		case "SMTP", "SMTPOptions", "SMTPServer", "SMTPInfo":
+			unknown = append(unknown, decodeSMTPOptions(ch, out)...)
 		default:
-			unknown = append(unknown, "Parameter.Email."+ch.Name)
+			if !decodeSMTPOption(ch, out) {
+				unknown = append(unknown, "Parameter.Email."+ch.Name)
+			}
 		}
 	}
 	return unknown
 }
 
-// sendMailNote says why a Send Mail step converted from FileMaker cannot run
-// as written, or "" when it can.
-func sendMailNote(params map[string]interface{}) string {
-	var why []string
-	if params["send_via"] == "smtp" {
-		why = append(why, "it sends through an SMTP server, and File4Base scripts send mail only by opening a draft in the user's e-mail client")
+// readMailValue keeps a Send Mail value under key: a calculation, a value
+// attribute, or text.
+func readMailValue(n *xmlNode, key string, out map[string]interface{}) {
+	if calc := findFirstChild(n, "Calculation"); calc != nil {
+		out[key] = calculationText(calc)
+		out[key+"_is_calculation"] = true
+	} else if v := firstAttr(n, "value"); v != "" {
+		out[key] = v
+	} else if t := strings.TrimSpace(n.Text); t != "" {
+		out[key] = t
 	}
-	if v, _ := params["one_email_per_record"].(bool); v {
-		why = append(why, "it sends one e-mail per record of the found set")
-	}
-	for _, key := range []string{"to", "cc", "bcc"} {
-		if v, _ := params["collect_"+key].(bool); v {
-			why = append(why, fmt.Sprintf("it collects the %s addresses across the found set", strings.ToUpper(key)))
+}
+
+// smtpOptionKeys are the SMTP options of a Send Mail step File4Base sends
+// with, by the lower-cased names FileMaker may give them.
+var smtpOptionKeys = map[string]string{
+	"fromname":       "smtp_from_name",
+	"name":           "smtp_from_name",
+	"from":           "smtp_from",
+	"fromaddress":    "smtp_from",
+	"fromemail":      "smtp_from",
+	"email":          "smtp_from",
+	"emailaddress":   "smtp_from",
+	"replyto":        "smtp_reply_to",
+	"replytoaddress": "smtp_reply_to",
+	"replytoemail":   "smtp_reply_to",
+}
+
+// smtpServerOptions are the SMTP options of a Send Mail step that File4Base
+// does not take from the step (the profile says them), by lower-cased name.
+var smtpServerOptions = map[string]bool{
+	"server": true, "smtpserver": true, "host": true, "port": true, "authentication": true,
+	"auth": true, "encryption": true, "security": true, "ssl": true, "tls": true,
+	"username": true, "user": true, "account": true, "password": true,
+}
+
+// decodeSMTPOptions reads a block of SMTP options.
+func decodeSMTPOptions(n *xmlNode, out map[string]interface{}) []string {
+	var unknown []string
+	for _, ch := range n.Children {
+		if !decodeSMTPOption(ch, out) {
+			unknown = append(unknown, "Parameter.Email.SMTP."+ch.Name)
 		}
 	}
-	if paths, _ := params["attachments"].([]string); len(paths) > 0 {
-		why = append(why, "it attaches files, which a draft opened in the e-mail client cannot carry")
+	return unknown
+}
+
+// decodeSMTPOption reads one SMTP option, and reports whether it was one.
+func decodeSMTPOption(n *xmlNode, out map[string]interface{}) bool {
+	name := strings.ToLower(n.Name)
+	if key, ok := smtpOptionKeys[name]; ok {
+		readMailValue(n, key, out)
+		return true
+	}
+	if smtpServerOptions[name] {
+		out["smtp_server_in_step"] = true
+		return true
+	}
+	return false
+}
+
+// fixedDiskPaths are the paths of a list that name a fixed place on a
+// FileMaker user's disk ("filemac:/Macintosh HD/Users/…", "/C:/Reports/…"),
+// which File4Base cannot write or read: a script reaches only the File4Base
+// folders, through Get ( TemporaryPath ), Get ( DocumentsPath ) and
+// Get ( DesktopPath ). A path held by a variable, and a path relative to the
+// file ("file:Report.pdf", saved in the documents folder), are not.
+func fixedDiskPaths(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" || strings.Contains(p, "$") {
+			continue
+		}
+		rest := p
+		if i := strings.IndexByte(rest, ':'); i > 0 {
+			switch strings.ToLower(rest[:i]) {
+			case "file", "filemac", "filewin", "filelinux", "image", "imagemac", "imagewin":
+				rest = rest[i+1:]
+			}
+		}
+		rest = strings.ReplaceAll(rest, "\\", "/")
+		if strings.HasPrefix(rest, "/") || (len(rest) > 1 && rest[1] == ':') {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func stringList(v interface{}) []string {
+	switch t := v.(type) {
+	case []string:
+		return t
+	case []interface{}:
+		out := make([]string, 0, len(t))
+		for _, e := range t {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if t != "" {
+			return []string{t}
+		}
+	}
+	return nil
+}
+
+// fixedPathNote explains why fixed paths of a step will not be found.
+func fixedPathNote(step string, fixed []string) string {
+	quoted := make([]string, len(fixed))
+	for i, p := range fixed {
+		quoted[i] = fmt.Sprintf("%q", p)
+	}
+	return fmt.Sprintf("the path %s is a fixed place on a FileMaker user's disk, and a File4Base script reaches only "+
+		"its own folders: %s fails there with error 800 (cannot create the file) or 100 (file missing). Build the "+
+		"path from Get ( TemporaryPath ), Get ( DocumentsPath ) or Get ( DesktopPath )",
+		strings.Join(quoted, ", "), step)
+}
+
+// sendMailNote explains what a Send Mail step converted from FileMaker
+// needs to run as written, or "" when it runs as FileMaker runs it.
+//
+// File4Base sends mail itself through an SMTP profile that a server
+// administrator sets in Server Tools (one per solution, or the server's).
+// A step sent via the SMTP server needs one. A step sent via the e-mail
+// client without a dialog — FileMaker sends it without asking — is sent
+// through the profile when there is one, a deliberate deviation: it does not
+// go through the user's e-mail client. A step with a dialog opens a draft in
+// the user's e-mail client, as in FileMaker; a draft cannot carry
+// attachments, so a step with attachments opens File4Base's own compose
+// window and sends through the profile instead.
+func sendMailNote(params map[string]interface{}) string {
+	var why []string
+	smtp := params["send_via"] == "smtp"
+	dialog, _ := params["dialog"].(bool)
+	attachments := stringList(params["attachments"])
+	perRecord, _ := params["one_email_per_record"].(bool)
+	switch {
+	case smtp:
+		what := "it sends through an SMTP server: File4Base sends it through the SMTP profile a server administrator " +
+			"sets for this solution, or for the server, in Server Tools (without one the step fails with error 1506)"
+		if params["smtp_server_in_step"] == true {
+			what += "; the server, account and password written in the step are not used"
+		}
+		why = append(why, what)
+	case !dialog:
+		why = append(why, "FileMaker sends it via the e-mail client without asking: File4Base sends it through the "+
+			"solution's SMTP profile when a server administrator has set one in Server Tools (a deliberate deviation: "+
+			"it does not go through the user's e-mail client, and it leaves from the profile's address); without "+
+			"one it opens a draft that the user sends")
+	case len(attachments) > 0:
+		why = append(why, "it attaches files, which a draft in the e-mail client cannot carry: File4Base opens its own "+
+			"compose window with the files and sends through the solution's SMTP profile when a server administrator "+
+			"has set one in Server Tools; without one it opens the draft and tells the user which files to attach")
+	case perRecord:
+		why = append(why, "it sends one e-mail per record of the found set, which File4Base does through the "+
+			"solution's SMTP profile (set in Server Tools); without one the step fails with error 1506")
+	}
+	if fixed := fixedDiskPaths(attachments); len(fixed) > 0 {
+		why = append(why, fixedPathNote("attaching it", fixed))
 	}
 	if len(why) == 0 {
-		// It runs, but not as FileMaker does: without a dialog FileMaker
-		// sends the mail itself.
-		return "Send Mail via the e-mail client opens a draft in the user's e-mail client, and the user " +
-			"sends it: it does not send unattended"
+		return ""
 	}
-	return "Send Mail cannot run as written: " + strings.Join(why, "; ")
+	return "Send Mail: " + strings.Join(why, "; ")
+}
+
+// savePDFNote explains what a Save Records as PDF step converted from
+// FileMaker needs to run as written, or "" when it runs as written.
+func savePDFNote(params map[string]interface{}) string {
+	var why []string
+	if params["save_to"] == "variable" {
+		why = append(why, "it saves the PDF into a variable, which File4Base does not do: the step fails with "+
+			"error 3 (command unavailable); save it to a file instead")
+	}
+	if params["pdf_security"] == true {
+		why = append(why, "it protects the PDF with a password (to open it, or to print or edit it), which File4Base "+
+			"does not do: rather than write an unprotected PDF the step fails with error 3 (command unavailable); "+
+			"the password was not migrated")
+	}
+	path, _ := params["path"].(string)
+	paths := stringList(params["paths"])
+	if len(paths) == 0 && path != "" {
+		paths = []string{path}
+	}
+	if fixed := fixedDiskPaths(paths); len(fixed) > 0 {
+		why = append(why, fixedPathNote("saving the PDF", fixed))
+	}
+	if len(why) == 0 {
+		return ""
+	}
+	return "Save Records as PDF: " + strings.Join(why, "; ")
+}
+
+// pdfSecurityRequested tells whether a Save Records as PDF step asks for a
+// protected PDF: a password to open it (<Security><Open value="True">) or
+// to print, edit or copy from it (<Control value="True">), or any password
+// the step carries.
+func pdfSecurityRequested(step *xmlNode) bool {
+	var walk func(n *xmlNode, inSecurity bool) bool
+	walk = func(n *xmlNode, inSecurity bool) bool {
+		if isSecretName(n.Name) || isSecretName(firstAttr(n, "type")) {
+			if v, ok := xmlAttrBool(n, "value"); !ok || v {
+				if ok || strings.TrimSpace(n.Text) != "" || len(n.Children) > 0 || len(n.Attrs) > 0 {
+					return true
+				}
+			}
+		}
+		for k, v := range n.Attrs {
+			if isSecretName(k) && strings.TrimSpace(v) != "" {
+				return true
+			}
+		}
+		if inSecurity && (strings.EqualFold(n.Name, "Open") || strings.EqualFold(n.Name, "Control")) {
+			if v, ok := xmlAttrBool(n, "value"); ok && v {
+				return true
+			}
+		}
+		security := inSecurity || strings.EqualFold(n.Name, "Security")
+		for _, ch := range n.Children {
+			if walk(ch, security) {
+				return true
+			}
+		}
+		return false
+	}
+	return walk(step, false)
 }
 
 // decodeReplaceOptions reads the <List> of a Replace Field Contents step:
@@ -537,12 +745,8 @@ func stepOptionItems(canonical string, params map[string]interface{}, occTableBy
 		}
 	case "Send Mail":
 		note = sendMailNote(params)
-	case "Go to Portal Row":
-		note = "Go to Portal Row is not supported in Browse mode yet: File4Base does not move to a portal " +
-			"row and reports error 101, so the steps after it act on the record, not on a portal row"
 	case "Save Records as PDF":
-		note = "Save Records as PDF produces no PDF in File4Base yet: the step fails with error 3 (command " +
-			"unavailable), and the script stops there unless Set Error Capture is on"
+		note = savePDFNote(params)
 	}
 	if note == "" {
 		return nil
