@@ -359,6 +359,17 @@ class _ValueListEditorState extends State<_ValueListEditor> {
       setState(() => _error = 'Choose the second field, or stop displaying one.');
       return;
     }
+    if (fromField) {
+      for (final id in [_sourceColumnId, second]) {
+        final column = _sourceColumns.where((c) => c.id == id).firstOrNull;
+        final why = column?.unindexableReason;
+        if (why != null) {
+          setState(() => _error =
+              '"${column!.displayName}" cannot be indexed, so a value list cannot take its values from it: $why.');
+          return;
+        }
+      }
+    }
     final related = fromField && _related;
     if (related && (_relatedOccurrenceId == null || _sourceOccurrenceId == null)) {
       setState(() => _error = 'Choose the occurrence the related values start from, and the one they are read through.');

@@ -294,6 +294,62 @@ func TestSaveAsXMLValueLists(t *testing.T) {
 	}
 }
 
+// FileMaker cannot index an unstored calculation and refuses one for a value
+// list ("This field cannot be indexed"). A list that names one anyway is
+// reported rather than migrated as a list that would always be empty; one
+// that names it as its second field keeps its first field and says so.
+func TestValueListOfAnUnindexableFieldIsReported(t *testing.T) {
+	doc := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Colours"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Colours"/><ObjectList>
+  <Field id="1" name="Code" datatype="Text" fieldtype="Normal"/><Field id="2" name="Label" datatype="Text" fieldtype="Normal"/>
+  <Field id="3" name="Shout" datatype="Text" fieldtype="Calculated"><Calculation><Calculation><Text>Upper ( Label )</Text></Calculation></Calculation><Storage storeCalculationResults="False"/></Field>
+  <Field id="4" name="Whisper" datatype="Text" fieldtype="Calculated"><Calculation><Calculation><Text>Lower ( Label )</Text></Calculation></Calculation></Field>
+ </ObjectList></FieldCatalog></FieldsForTables>
+ <TableOccurrenceCatalog><TableOccurrence id="7" name="Palette"><BaseTableSourceReference><BaseTableReference id="129" name="Colours"/></BaseTableSourceReference></TableOccurrence></TableOccurrenceCatalog>
+ <ValueListCatalog>
+  <ValueList id="1" name="Shouts"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="3" name="Shout"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField></Field></ValueList>
+  <ValueList id="2" name="Shouted codes"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField><SecondaryField show="True" sort="False"><FieldReference id="3" name="Shout"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></SecondaryField></Field></ValueList>
+  <ValueList id="3" name="Whispers"><Source value="FromField"></Source><Field><PrimaryField show="True" sort="True"><FieldReference id="4" name="Whisper"><TableOccurrenceReference id="7" name="Palette"/></FieldReference></PrimaryField></Field></ValueList>
+ </ValueListCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lists := map[string]schema.BundleValueList{}
+	for _, vl := range got.Bundle.ValueLists {
+		lists[vl.Name] = vl
+	}
+	if _, ok := lists["Shouts"]; ok {
+		t.Errorf("a list of an unstored calculation was migrated: %+v", lists["Shouts"])
+	}
+	if vl, ok := lists["Shouted codes"]; !ok || vl.SourceColumnID == nil || vl.SecondColumnID != nil {
+		t.Errorf("Shouted codes must keep its first field and lose its unstored second one: %+v", vl)
+	}
+	if _, ok := lists["Whispers"]; !ok {
+		t.Error("a list of a stored calculation must migrate")
+	}
+
+	reported := map[string]ReportItem{}
+	for _, it := range append(got.Report.Unsupported, got.Report.ManualActionRequired...) {
+		if it.Domain == "value_list" {
+			reported[it.SourceName] = it
+		}
+	}
+	if it := reported["Shouts"]; it.Category != CategoryManualActionRequired ||
+		!strings.Contains(it.Detail, "Palette::Shout") || !strings.Contains(it.Detail, "cannot be indexed") ||
+		!strings.Contains(it.Detail, "unstored calculation") {
+		t.Errorf("Shouts report = %+v", it)
+	}
+	if it := reported["Shouted codes"]; !strings.Contains(it.Detail, "second field Palette::Shout, which cannot be indexed") {
+		t.Errorf("Shouted codes report = %+v", it)
+	}
+	if it, ok := reported["Whispers"]; ok {
+		t.Errorf("Whispers reported: %+v", it)
+	}
+}
+
 // A DDR writes the options of a list taken from a field in the value list
 // itself, naming each field with <Field table name>, where table is the
 // field's table occurrence, and the occurrence related values start from

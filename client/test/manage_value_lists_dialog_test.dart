@@ -16,6 +16,13 @@ const _codes = TableModel(id: 't2', name: 'codes', displayName: 'Codes', columns
   ColumnModel(id: 'c1', tableId: 't2', name: 'id', displayName: 'ID', fieldType: 'TEXT', isPrimaryKey: true),
   ColumnModel(id: 'c-code', tableId: 't2', name: 'code', displayName: 'Code', fieldType: 'TEXT'),
   ColumnModel(id: 'c-label', tableId: 't2', name: 'label', displayName: 'Label', fieldType: 'TEXT'),
+  ColumnModel(
+      id: 'c-shout',
+      tableId: 't2',
+      name: 'shout',
+      displayName: 'Shout',
+      fieldType: 'CALCULATION',
+      calculationFormula: '{"formula":"Upper ( label )","result_type":"Text","stored":false}'),
 ]);
 
 class _Api extends ApiClient {
@@ -97,5 +104,33 @@ void main() {
     expect(saved.relatedOccurrenceId, 'o-customers');
     expect(saved.sourceOccurrenceId, 'o-codes',
         reason: 'the only occurrence of the list table is chosen for the user');
+  });
+
+  testWidgets('a list from a field that cannot be indexed is refused, as in FileMaker', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final api = _Api();
+    await tester.pumpWidget(ProviderScope(
+      overrides: [apiClientProvider.overrideWithValue(api)],
+      child: const MaterialApp(home: Scaffold(body: ManageValueListsDialog())),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('New Value List...'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Value List Name'), 'Shouts');
+    await tester.tap(find.text('From a field'));
+    await tester.pumpAndSettle();
+    await _choose(tester, const ValueKey('value-list-source-table'), 'Codes');
+    await _choose(tester, const ValueKey('value-list-source-column-t2'), 'Shout');
+
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(api.created, isEmpty);
+    expect(find.textContaining('"Shout" cannot be indexed'), findsOneWidget);
+    expect(find.textContaining('unstored calculation'), findsOneWidget);
   });
 }

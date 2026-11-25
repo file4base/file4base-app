@@ -240,9 +240,12 @@ func normalizeFieldOptions(in ValueListInput) (ValueListInput, error) {
 // checkValueListReferences checks that the fields and occurrences a list
 // taken from a field names exist and fit together: both fields in the list's
 // table, and the related values read through an occurrence of that table.
-func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInput) error {
+// unindexable says why one of the fields cannot be indexed (UnindexableField),
+// which the caller decides about: a new definition is refused, a list
+// restored from a solution file is kept.
+func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInput) (unindexable string, err error) {
 	if in.Kind != ValueListFromField {
-		return nil
+		return "", nil
 	}
 	db := s.driver.DB()
 	if in.SourceTableID == nil {
@@ -250,35 +253,43 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 		// of that table.
 		occ, err := s.GetTableOccurrence(ctx, *in.SourceOccurrenceID)
 		if err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
+			return "", fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
 		}
 		if occ.External == nil {
-			return fmt.Errorf("%w: %q is an occurrence of a table of this solution: name the table and the field instead",
+			return "", fmt.Errorf("%w: %q is an occurrence of a table of this solution: name the table and the field instead",
 				ErrInvalidFieldOptions, occ.Name)
+		}
+		return "", nil
+	}
+	// inTable is nil when the column is a field of the list's table, and
+	// notes why it cannot be indexed when it cannot.
+	inTable := func(columnID, notInTable string) error {
+		var name, fieldType string
+		var formula *string
+		q := fmt.Sprintf(`SELECT name, field_type, calculation_formula FROM sys_columns WHERE id = %s AND table_id = %s`,
+			s.valueListPlaceholder(1), s.valueListPlaceholder(2))
+		err := db.QueryRowContext(ctx, q, columnID, *in.SourceTableID).Scan(&name, &fieldType, &formula)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrInvalidFieldOptions, notInTable)
+		}
+		if err != nil {
+			return err
+		}
+		if why := UnindexableField(fieldType, formula); why != "" && unindexable == "" {
+			unindexable = fmt.Sprintf("%q cannot be indexed, so a value list cannot take its values from it: %s", name, why)
 		}
 		return nil
 	}
-	inTable := func(columnID string) (bool, error) {
-		var n int
-		q := fmt.Sprintf(`SELECT COUNT(*) FROM sys_columns WHERE id = %s AND table_id = %s`,
-			s.valueListPlaceholder(1), s.valueListPlaceholder(2))
-		err := db.QueryRowContext(ctx, q, columnID, *in.SourceTableID).Scan(&n)
-		return n > 0, err
-	}
-	if ok, err := inTable(*in.SourceColumnID); err != nil {
-		return err
-	} else if !ok {
-		return fmt.Errorf("%w: the field a value list reads must be a field of its table", ErrInvalidFieldOptions)
+	if err := inTable(*in.SourceColumnID, "the field a value list reads must be a field of its table"); err != nil {
+		return "", err
 	}
 	if in.SecondColumnID != nil {
-		if ok, err := inTable(*in.SecondColumnID); err != nil {
-			return err
-		} else if !ok {
-			return fmt.Errorf("%w: the second field of a value list must be a field of the same table as the first", ErrInvalidFieldOptions)
+		if err := inTable(*in.SecondColumnID, "the second field of a value list must be a field of the same table as the first"); err != nil {
+			return "", err
 		}
 	}
 	if in.RelatedOccurrenceID == nil {
-		return nil
+		return unindexable, nil
 	}
 
 	baseTable := func(occurrenceID string) (string, error) {
@@ -292,37 +303,66 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 		return tableID.String, err
 	}
 	if tableID, err := baseTable(*in.RelatedOccurrenceID); err != nil {
-		return err
+		return "", err
 	} else if tableID == "" {
-		return fmt.Errorf("%w: the table occurrence the related values start from does not exist", ErrInvalidFieldOptions)
+		return "", fmt.Errorf("%w: the table occurrence the related values start from does not exist", ErrInvalidFieldOptions)
 	}
 	if tableID, err := baseTable(*in.SourceOccurrenceID); err != nil {
-		return err
+		return "", err
 	} else if tableID != *in.SourceTableID {
-		return fmt.Errorf("%w: the related values must be read through an occurrence of the value list's table", ErrInvalidFieldOptions)
+		return "", fmt.Errorf("%w: the related values must be read through an occurrence of the value list's table", ErrInvalidFieldOptions)
 	}
-	return nil
+	return unindexable, nil
+}
+
+// UnindexableField says why a value list cannot take its values from a field
+// of this type and formula, or is empty when it can. FileMaker refuses such a
+// field ("This field cannot be indexed"): an unstored calculation is computed
+// only when it is shown and a summary field has no value in a record, so
+// neither keeps values a list could read, and a list of one would always be
+// empty.
+func UnindexableField(fieldType string, formula *string) string {
+	switch dbal.AgnosticFieldType(fieldType) {
+	case dbal.FieldTypeSummary:
+		return "it is a summary field, which has no value in a record; choose another field"
+	case dbal.FieldTypeCalculation:
+		if formula != nil && !data.ReadStoredCalculation(*formula).IsStored() {
+			return "it is an unstored calculation, computed only when it is shown; " +
+				"store its result (Field Options > Storage) or choose another field"
+		}
+	}
+	return ""
 }
 
 // prepareValueList checks a list before it is written: its definition, that
 // its name is free, and what it refers to.
-func (s *Service) prepareValueList(ctx context.Context, in ValueListInput, exceptID string) (ValueListInput, error) {
+//
+// A field that cannot be indexed refuses a definition, as FileMaker does. A
+// list restored from a solution file was valid when the file was saved, and
+// a backup must stay restorable, so restoring keeps it: unindexable then
+// says why it offers nothing, for the import report.
+func (s *Service) prepareValueList(
+	ctx context.Context, in ValueListInput, exceptID string, restoring bool,
+) (_ ValueListInput, unindexable string, err error) {
 	if err := s.ensureExternalCatalog(ctx); err != nil {
-		return in, err
+		return in, "", err
 	}
-	in, err := normalizeValueListInput(in)
+	in, err = normalizeValueListInput(in)
 	if err != nil {
-		return in, err
+		return in, "", err
 	}
 	if taken, err := s.valueListNameTaken(ctx, in.Name, exceptID); err != nil {
-		return in, err
+		return in, "", err
 	} else if taken {
-		return in, fmt.Errorf("%w: %s", ErrValueListExists, in.Name)
+		return in, "", fmt.Errorf("%w: %s", ErrValueListExists, in.Name)
 	}
-	if err := s.checkValueListReferences(ctx, in); err != nil {
-		return in, err
+	if unindexable, err = s.checkValueListReferences(ctx, in); err != nil {
+		return in, "", err
 	}
-	return in, s.ensureValueListOptions(ctx)
+	if unindexable != "" && !restoring {
+		return in, "", fmt.Errorf("%w: %s", ErrInvalidFieldOptions, unindexable)
+	}
+	return in, unindexable, s.ensureValueListOptions(ctx)
 }
 
 // nullableSort is the sort order as stored: nothing for a custom list.
@@ -335,9 +375,16 @@ func nullableSort(sortBy string) *string {
 
 // CreateValueList registers a new value list.
 func (s *Service) CreateValueList(ctx context.Context, in ValueListInput) (*ValueList, error) {
-	in, err := s.prepareValueList(ctx, in, "")
+	list, _, err := s.createValueList(ctx, in, false)
+	return list, err
+}
+
+// createValueList registers a list, defined or restored (see
+// prepareValueList).
+func (s *Service) createValueList(ctx context.Context, in ValueListInput, restoring bool) (*ValueList, string, error) {
+	in, unindexable, err := s.prepareValueList(ctx, in, "", restoring)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	now := time.Now().UTC()
@@ -370,16 +417,23 @@ func (s *Service) CreateValueList(ctx context.Context, in ValueListInput) (*Valu
 		list.SourceTableID, list.SourceColumnID, list.SecondColumnID, list.ShowSecondOnly, nullableSort(list.SortBy),
 		list.SourceOccurrenceID, list.RelatedOccurrenceID, list.CreatedAt, list.UpdatedAt,
 		nullable(list.SourceColumnName)); err != nil {
-		return nil, fmt.Errorf("failed creating value list %q: %w", list.Name, err)
+		return nil, "", fmt.Errorf("failed creating value list %q: %w", list.Name, err)
 	}
-	return list, nil
+	return list, unindexable, nil
 }
 
 // UpdateValueList replaces a value list's definition.
 func (s *Service) UpdateValueList(ctx context.Context, id string, in ValueListInput) (*ValueList, error) {
-	in, err := s.prepareValueList(ctx, in, id)
+	list, _, err := s.updateValueList(ctx, id, in, false)
+	return list, err
+}
+
+// updateValueList replaces a list's definition, defined or restored (see
+// prepareValueList).
+func (s *Service) updateValueList(ctx context.Context, id string, in ValueListInput, restoring bool) (*ValueList, string, error) {
+	in, unindexable, err := s.prepareValueList(ctx, in, id, restoring)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	now := time.Now().UTC()
@@ -393,12 +447,13 @@ func (s *Service) UpdateValueList(ctx context.Context, id string, in ValueListIn
 		in.SourceTableID, in.SourceColumnID, in.SecondColumnID, in.ShowSecondOnly, nullableSort(in.SortBy),
 		in.SourceOccurrenceID, in.RelatedOccurrenceID, now, nullable(in.SourceColumnName), id)
 	if err != nil {
-		return nil, fmt.Errorf("failed updating value list %s: %w", id, err)
+		return nil, "", fmt.Errorf("failed updating value list %s: %w", id, err)
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return nil, fmt.Errorf("%w: %s", ErrValueListNotFound, id)
+		return nil, "", fmt.Errorf("%w: %s", ErrValueListNotFound, id)
 	}
-	return s.GetValueList(ctx, id)
+	list, err := s.GetValueList(ctx, id)
+	return list, unindexable, err
 }
 
 // DeleteValueList removes a value list. Layout fields that pointed at it fall

@@ -672,6 +672,7 @@ type ImportReport struct {
 	TransfersCreated        int                    `json:"transfers_created"`
 	FileReferencesCreated   int                    `json:"file_references_created"`
 	AccountsPendingPassword []string               `json:"accounts_pending_password"`
+	Warnings                []string               `json:"warnings,omitempty"` // restored as saved but not working, such as a value list of an unindexable field
 	FileOptions             map[string]interface{} `json:"file_options,omitempty"`
 	PageSetup               map[string]interface{} `json:"page_setup,omitempty"`
 	// Totals in the bundle, kept for older clients.
@@ -1113,27 +1114,40 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			in.RelatedOccurrenceID = remappedID(occIDs, vl.RelatedOccurrenceID)
 		}
 
+		// A list whose field cannot be indexed is refused when it is
+		// defined, but one in a solution file was valid when the file was
+		// saved: it is restored as it was, never failing the import, and
+		// reported.
+		warn := func(unindexable string) {
+			if unindexable != "" {
+				report.Warnings = append(report.Warnings, fmt.Sprintf(
+					"value list %q was restored as saved but offers no values: %s", vl.Name, unindexable))
+			}
+		}
 		if prev := plan.valueLists[strings.ToLower(strings.TrimSpace(vl.Name))]; prev != nil {
-			if _, err := s.UpdateValueList(ctx, prev.ID, in); err != nil {
+			_, unindexable, err := s.updateValueList(ctx, prev.ID, in, true)
+			if err != nil {
 				return nil, rollback(fmt.Errorf("updating value list %q: %w", vl.Name, err))
 			}
+			warn(unindexable)
 			p := *prev
 			undo = append(undo, func() {
-				_, _ = s.UpdateValueList(bg, p.ID, ValueListInput{
+				_, _, _ = s.updateValueList(bg, p.ID, ValueListInput{
 					Name: p.Name, Kind: p.Kind, CustomValues: p.CustomValues,
 					SourceTableID: p.SourceTableID, SourceColumnID: p.SourceColumnID,
 					SecondColumnID: p.SecondColumnID, ShowSecondOnly: p.ShowSecondOnly, SortBy: p.SortBy,
 					SourceOccurrenceID: p.SourceOccurrenceID, RelatedOccurrenceID: p.RelatedOccurrenceID,
 					SourceColumnName: p.SourceColumnName,
-				})
+				}, true)
 			})
 			report.ValueListsUpdated++
 			continue
 		}
-		created, err := s.CreateValueList(ctx, in)
+		created, unindexable, err := s.createValueList(ctx, in, true)
 		if err != nil {
 			return nil, rollback(fmt.Errorf("creating value list %q: %w", vl.Name, err))
 		}
+		warn(unindexable)
 		undo = append(undo, func() { _ = s.DeleteValueList(bg, created.ID) })
 		report.ValueListsCreated++
 	}

@@ -307,6 +307,26 @@ class ColumnModel {
     }
   }
 
+  /// Why a value list cannot take its values from this field, or null when
+  /// it can. FileMaker refuses a field it cannot index, and so does the
+  /// server: an unstored calculation is computed only when it is shown, and a
+  /// summary field has no value in a record, so a list of either would always
+  /// be empty.
+  String? get unindexableReason {
+    if (fieldType == 'SUMMARY') return 'it is a summary field, which has no value in a record';
+    if (fieldType != 'CALCULATION' || calculationFormula == null) return null;
+    try {
+      final raw = jsonDecode(calculationFormula!);
+      if (raw is Map && raw['stored'] == false) {
+        return 'it is an unstored calculation, computed only when it is shown; '
+            'store its result (Field Options > Storage) or choose another field';
+      }
+    } on FormatException {
+      // A formula kept as plain text is stored.
+    }
+    return null;
+  }
+
   ColumnModel copyWith({
     String? id,
     String? tableId,
