@@ -32,9 +32,12 @@ type FindCriterion struct {
 	// RelationshipID searches a field of a *related* record instead of the
 	// record's own (#46): the criterion then finds the records that have a
 	// related record matching it. Occurrence names the side to read when the
-	// relationship joins a table to itself.
+	// relationship joins a table to itself; Side ("left" or "right") names
+	// the end when it joins an occurrence to itself, where the occurrence
+	// alone names the right end (as `side` does for related reads).
 	RelationshipID string `json:"relationship_id,omitempty"`
 	Occurrence     string `json:"occurrence,omitempty"`
+	Side           string `json:"side,omitempty"`
 }
 
 // isRelated reports whether the criterion searches a related record.
@@ -290,6 +293,7 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err := normalizeRepetitionKeys(fields, tableName, record); err != nil {
 		return nil, err
 	}
+	normalizeTemporalValues(fields, record)
 
 	// The auto-enter options (Fields dialog) enter what the caller did not
 	// give: a value given wins.
@@ -409,6 +413,7 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 	if err := normalizeRepetitionKeys(fields, tableName, updates); err != nil {
 		return nil, err
 	}
+	normalizeTemporalValues(fields, updates)
 	// Protect the primary key from alteration, also when it is sent as its
 	// first repetition, "id[1]", which the line above makes "id".
 	delete(updates, "id")
@@ -682,18 +687,29 @@ func buildFindWhere(include, omit []string) string {
 }
 
 // criterionClause renders one criterion against an already-quoted column
-// expression, appending the values its placeholders take. colIdent is the
-// record's own column, or a related table's column when the criterion reaches
-// through a relationship (#46), so both read the same operators.
+// expression of fieldType, appending the values its placeholders take.
+// colIdent is the record's own column, or a related table's column when the
+// criterion reaches through a relationship (#46), so both read the same
+// operators. A date or a timestamp is compared as one (see temporal_find.go).
 func criterionClause(
-	dialect dbal.Dialect, colIdent string, crit FindCriterion, idx *int, values *[]interface{},
-) string {
+	dialect dbal.Dialect, colIdent string, fieldType dbal.AgnosticFieldType,
+	crit FindCriterion, idx *int, values *[]interface{},
+) (string, error) {
 	place := func() string {
 		p := dialect.Placeholder(*idx)
 		*idx++
 		return p
 	}
+	if clause, ok, err := temporalCriterionClause(dialect, colIdent, fieldType, crit, place, values); err != nil || ok {
+		return clause, err
+	}
+	return textCriterionClause(dialect, colIdent, crit, place, values), nil
+}
 
+// textCriterionClause renders a criterion that compares text, or numbers.
+func textCriterionClause(
+	dialect dbal.Dialect, colIdent string, crit FindCriterion, place func() string, values *[]interface{},
+) string {
 	switch crit.Operator {
 	case "IS_EMPTY":
 		return fmt.Sprintf("(%s IS NULL OR %s = '')", colIdent, dialect.CastToText(colIdent))
@@ -816,8 +832,12 @@ func buildFindClauses(
 				if err := checkField(fields, tableName, crit.FieldName); err != nil {
 					return findClauses{}, err
 				}
-				andClauses = append(andClauses, criterionClause(
-					dialect, dialect.QuoteIdentifier(crit.FieldName), crit, &idx, &out.values))
+				clause, err := criterionClause(dialect, dialect.QuoteIdentifier(crit.FieldName),
+					fields[crit.FieldName], crit, &idx, &out.values)
+				if err != nil {
+					return findClauses{}, err
+				}
+				andClauses = append(andClauses, clause)
 			}
 
 			if len(andClauses) > 0 {
@@ -850,7 +870,7 @@ func normalizeCriterion(crit FindCriterion) FindCriterion {
 		strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
 		strings.Contains(strVal, "//") {
 		parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
-		parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
+		parsed.RelationshipID, parsed.Occurrence, parsed.Side = crit.RelationshipID, crit.Occurrence, crit.Side
 		return parsed
 	}
 	return crit

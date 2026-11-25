@@ -390,13 +390,14 @@ func (s *Service) ImportRecords(
 				record[repetition.Key(field, n+1)] = value
 			}
 		}
+		normalizeTemporalValues(fields, record)
 
 		if opts.Action == ImportUpdateMatching {
 			// The match is looked up before the calculations are computed: an
 			// update evaluates its formulas over the stored row merged with the
 			// mapped values, so a formula reading a field this row does not
 			// carry sees what the record holds rather than nothing (#92).
-			id, err := findMatchingRecord(ctx, tx, dialect, tableName, opts.MatchFields, record)
+			id, err := findMatchingRecord(ctx, tx, dialect, fields, tableName, opts.MatchFields, record)
 			if err != nil {
 				return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 			}
@@ -552,9 +553,12 @@ func storedRow(
 }
 
 // findMatchingRecord returns the id of the record whose match fields hold the
-// same values as the row, or "" when none does.
+// same values as the row, or "" when none does. Text is compared whatever its
+// case; a date or a timestamp is compared as the day or the instant it is, as
+// the column holds it, since its text is not the same on two engines (and
+// not the RFC 3339 an import reads).
 func findMatchingRecord(
-	ctx context.Context, tx execer, dialect dbal.Dialect,
+	ctx context.Context, tx execer, dialect dbal.Dialect, fields fieldSet,
 	tableName string, matchFields []string, record map[string]interface{},
 ) (string, error) {
 	clauses := make([]string, 0, len(matchFields))
@@ -566,9 +570,16 @@ func findMatchingRecord(
 			// follows (#36).
 			return "", nil
 		}
-		clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
-			dialect.CastToText(dialect.QuoteIdentifier(field)), dialect.Placeholder(i+1)))
-		values = append(values, fmt.Sprint(value))
+		column := dialect.QuoteIdentifier(field)
+		switch fields[field] {
+		case dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
+			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
+			values = append(values, dbal.TemporalValue(dialect.Engine(), fields[field], value))
+		default:
+			clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
+				dialect.CastToText(column), dialect.Placeholder(i+1)))
+			values = append(values, fmt.Sprint(value))
+		}
 	}
 
 	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT 1",

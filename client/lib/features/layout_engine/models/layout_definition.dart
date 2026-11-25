@@ -130,11 +130,23 @@ class FieldControlStyle {
   static bool isMultiValue(String style) => style == checkboxSet;
 }
 
+/// The ends of a relationship a layout object can read (#167): which one is
+/// meant only needs saying when the relationship joins an occurrence to
+/// itself, so the occurrence is at both ends.
+abstract final class RelationshipSide {
+  static const left = 'left';
+  static const right = 'right';
+
+  /// [value] when it names an end, otherwise null (the right end).
+  static String? parse(Object? value) => value is String && (value == left || value == right) ? value : null;
+}
+
 class FieldBindingModel {
 
   const FieldBindingModel({
     required this.fieldName, this.tableOccurrence,
     this.relationshipId,
+    this.relationshipSide,
     this.controlStyle = FieldControlStyle.editBox,
     this.valueListId,
     this.allowBrowseEntry = true,
@@ -147,6 +159,7 @@ class FieldBindingModel {
     return FieldBindingModel(
       tableOccurrence: json['table_occurrence'] as String?,
       relationshipId: json['relationship_id'] as String?,
+      relationshipSide: RelationshipSide.parse(json['relationship_side']),
       fieldName: json['field_name'] as String? ?? '',
       controlStyle: json['control_style'] as String? ?? FieldControlStyle.editBox,
       valueListId: json['value_list_id'] as String?,
@@ -167,6 +180,11 @@ class FieldBindingModel {
   /// needs one: the same two tables can be joined more than once, so the
   /// occurrence alone does not say which join to follow.
   final String? relationshipId;
+
+  /// The end of [relationshipId] the field is read from, one of
+  /// [RelationshipSide], when the relationship joins an occurrence to itself.
+  /// Null reads the right end.
+  final String? relationshipSide;
 
   final String fieldName;
 
@@ -220,6 +238,7 @@ class FieldBindingModel {
   FieldBindingModel copyWith({
     String? tableOccurrence,
     String? relationshipId,
+    String? relationshipSide,
     bool clearRelationship = false,
     String? fieldName,
     String? controlStyle,
@@ -233,6 +252,7 @@ class FieldBindingModel {
       FieldBindingModel(
         tableOccurrence: clearRelationship ? null : (tableOccurrence ?? this.tableOccurrence),
         relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
+        relationshipSide: clearRelationship ? null : (relationshipSide ?? this.relationshipSide),
         fieldName: fieldName ?? this.fieldName,
         controlStyle: controlStyle ?? this.controlStyle,
         valueListId: clearValueList ? null : (valueListId ?? this.valueListId),
@@ -245,6 +265,7 @@ class FieldBindingModel {
   Map<String, dynamic> toJson() => {
         if (tableOccurrence != null) 'table_occurrence': tableOccurrence,
         if (relationshipId != null) 'relationship_id': relationshipId,
+        if (relationshipSide != null) 'relationship_side': relationshipSide,
         'field_name': fieldName,
         'control_style': controlStyle,
         if (valueListId != null) 'value_list_id': valueListId,
@@ -597,6 +618,13 @@ class LayoutObjectStyle {
 /// same step types and parameters as the Script Workspace) or `perform_script`
 /// (a stored script referenced by `scriptId` / `scriptName`, with an optional
 /// `parameter`).
+///
+/// A script trigger has the same shape, with what [extra] carries besides:
+/// its `id`, its FileMaker `event`, `enabled` (absent means on),
+/// `quarantined_by_migration`, the `object_id` of the layout object it is set
+/// on, and why its parameter could not be bound (`parameter_problem`). Keys
+/// this model does not know are kept as they are, so saving a layout never
+/// drops what another version of File4Base stored in it.
 class ButtonActionModel {
 
   const ButtonActionModel({
@@ -606,6 +634,7 @@ class ButtonActionModel {
     this.scriptId,
     this.scriptName,
     this.parameter,
+    this.extra = const {},
   });
 
   const ButtonActionModel.singleStep(String step, {Map<String, dynamic> params = const {}})
@@ -622,8 +651,15 @@ class ButtonActionModel {
       scriptId: json['script_id'] as String?,
       scriptName: json['script_name'] as String?,
       parameter: json['parameter'] as String?,
+      extra: {
+        for (final e in json.entries)
+          if (!_knownKeys.contains(e.key)) e.key: e.value,
+      },
     );
   }
+
+  static const _knownKeys = {'type', 'step_type', 'params', 'script_id', 'script_name', 'parameter'};
+
   final String type;
   final String? stepType;
   final Map<String, dynamic> params;
@@ -631,9 +667,57 @@ class ButtonActionModel {
   final String? scriptName;
   final String? parameter;
 
+  /// Every other key of the stored action, kept as it was read.
+  final Map<String, dynamic> extra;
+
   bool get isPerformScript => type == 'perform_script';
 
+  /// A trigger's id, when it has one.
+  String? get triggerId => extra['id'] as String?;
+
+  /// The FileMaker event of a trigger, such as `OnLayoutEnter`.
+  String get event => extra['event'] as String? ?? '';
+
+  /// False only when the action says so: an action that predates the flag
+  /// is on.
+  bool get enabled => extra['enabled'] != false;
+
+  /// Set while a migrated trigger has not been enabled since its import.
+  bool get quarantinedByMigration => extra['quarantined_by_migration'] == true;
+
+  /// The layout object a trigger is set on.
+  String? get objectId => extra['object_id'] as String?;
+
+  /// The FileMaker object a trigger was set on, when that object was not
+  /// migrated: its `type`, `name` and `field`.
+  Map<String, dynamic>? get sourceObject =>
+      extra['object'] is Map ? Map<String, dynamic>.from(extra['object'] as Map) : null;
+
+  /// Why the trigger's parameter could not be bound to the imported fields.
+  String? get parameterProblem => extra['parameter_problem'] as String?;
+
+  /// FileMaker runs the trigger in Find mode only.
+  bool get findModeOnly => extra['modes'] is List && (extra['modes'] as List).length == 1 && (extra['modes'] as List).first == 'find';
+
+  /// This action, switched on or off. Switching a trigger on means it has
+  /// been reviewed, so it is no longer marked as held back by a migration.
+  ButtonActionModel withEnabled({required bool on, String? event}) => ButtonActionModel(
+        type: type,
+        stepType: stepType,
+        params: params,
+        scriptId: scriptId,
+        scriptName: scriptName,
+        parameter: parameter,
+        extra: {
+          for (final e in extra.entries)
+            if (!(on && e.key == 'quarantined_by_migration')) e.key: e.value,
+          'enabled': on,
+          'event': ?event,
+        },
+      );
+
   Map<String, dynamic> toJson() => {
+        ...extra,
         'type': type,
         if (stepType != null) 'step_type': stepType,
         if (params.isNotEmpty) 'params': params,
@@ -708,6 +792,7 @@ class PortalConfigModel {
   const PortalConfigModel({
     this.relationshipId,
     this.occurrence,
+    this.relationshipSide,
     this.initialRow = 1,
     this.rowCount = 5,
     this.rowHeight,
@@ -721,6 +806,7 @@ class PortalConfigModel {
     return PortalConfigModel(
       relationshipId: json['relationship_id'] as String?,
       occurrence: json['occurrence'] as String?,
+      relationshipSide: RelationshipSide.parse(json['relationship_side']),
       initialRow: (json['initial_row'] as num?)?.toInt() ?? 1,
       rowCount: (json['row_count'] as num?)?.toInt() ?? 5,
       rowHeight: (json['row_height'] as num?)?.toDouble(),
@@ -734,8 +820,13 @@ class PortalConfigModel {
   final String? relationshipId;
 
   /// The occurrence whose records the rows show. It is what tells the two ends
-  /// apart when a relationship joins a table to itself.
+  /// apart when a relationship joins two occurrences of the same table.
   final String? occurrence;
+
+  /// The end of the relationship whose records the rows show, one of
+  /// [RelationshipSide], when the relationship joins an occurrence to itself:
+  /// [occurrence] is then at both ends. Null reads the right end, as before.
+  final String? relationshipSide;
 
   /// First related record shown, counting from 1, so a portal can start past
   /// the first row.
@@ -779,6 +870,7 @@ class PortalConfigModel {
   Map<String, dynamic> toJson() => {
         if (relationshipId != null) 'relationship_id': relationshipId,
         if (occurrence != null) 'occurrence': occurrence,
+        if (relationshipSide != null) 'relationship_side': relationshipSide,
         'initial_row': initialRow,
         'row_count': rowCount,
         if (rowHeight != null) 'row_height': rowHeight,
@@ -791,6 +883,7 @@ class PortalConfigModel {
   PortalConfigModel copyWith({
     String? relationshipId,
     String? occurrence,
+    String? relationshipSide,
     bool clearRelationship = false,
     int? initialRow,
     int? rowCount,
@@ -804,6 +897,7 @@ class PortalConfigModel {
     return PortalConfigModel(
       relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
       occurrence: clearRelationship ? null : (occurrence ?? this.occurrence),
+      relationshipSide: clearRelationship ? null : (relationshipSide ?? this.relationshipSide),
       initialRow: initialRow ?? this.initialRow,
       rowCount: rowCount ?? this.rowCount,
       rowHeight: clearRowHeight ? null : (rowHeight ?? this.rowHeight),
@@ -1014,6 +1108,7 @@ class LayoutDefinitionModel {
     this.backgroundImage,
     this.onLayoutEnter,
     this.onLayoutExit,
+    this.scriptTriggers = const [],
     this.transition = 'none',
     this.labelStock,
   });
@@ -1112,6 +1207,11 @@ class LayoutDefinitionModel {
       onLayoutExit: json['on_layout_exit'] is Map
           ? ButtonActionModel.fromJson(Map<String, dynamic>.from(json['on_layout_exit'] as Map))
           : null,
+      scriptTriggers: [
+        if (json['script_triggers'] is List)
+          for (final t in json['script_triggers'] as List)
+            if (t is Map) ButtonActionModel.fromJson(Map<String, dynamic>.from(t)),
+      ],
       transition: json['transition'] as String? ?? 'none',
       labelStock: json['label_stock'] is Map
           ? Map<String, dynamic>.from(json['label_stock'] as Map)
@@ -1138,6 +1238,89 @@ class LayoutDefinitionModel {
   /// layout is shown (OnLayoutEnter) or left for another layout (OnLayoutExit).
   final ButtonActionModel? onLayoutEnter;
   final ButtonActionModel? onLayoutExit;
+
+  /// Every other trigger of the layout and of its objects: those switched
+  /// off, those of events File4Base does not run, and those set on an object
+  /// (#26). None of them runs. A migrated trigger arrives here, off.
+  final List<ButtonActionModel> scriptTriggers;
+
+  /// The OnLayoutEnter trigger to run, unless it is switched off.
+  ButtonActionModel? get activeOnLayoutEnter => onLayoutEnter?.enabled == true ? onLayoutEnter : null;
+
+  /// The OnLayoutExit trigger to run, unless it is switched off.
+  ButtonActionModel? get activeOnLayoutExit => onLayoutExit?.enabled == true ? onLayoutExit : null;
+
+  /// The stored triggers set on the layout itself, not on an object.
+  List<ButtonActionModel> get layoutLevelTriggers =>
+      scriptTriggers.where((t) => t.objectId == null && t.sourceObject == null).toList();
+
+  /// The stored triggers set on the object [objectId].
+  List<ButtonActionModel> triggersOfObject(String objectId) =>
+      scriptTriggers.where((t) => t.objectId == objectId).toList();
+
+  /// Why the stored [trigger] cannot be switched on here, or null when it
+  /// can: File4Base runs OnLayoutEnter and OnLayoutExit set on the layout, in
+  /// Browse mode, of a script that exists, one per event.
+  String? whyTriggerCannotRun(ButtonActionModel trigger, {Set<String>? scriptIds}) {
+    if (trigger.objectId != null || trigger.sourceObject != null) {
+      return 'File4Base does not run triggers set on layout objects (${trigger.event}) yet.';
+    }
+    final slot = _slotOf(trigger.event);
+    if (slot == null) return 'File4Base does not run ${trigger.event.isEmpty ? 'this event' : trigger.event} triggers yet.';
+    if (trigger.scriptId == null && (trigger.scriptName ?? '').isEmpty) return 'The trigger runs no script.';
+    final otherFile = trigger.extra['file_reference'] as String?;
+    if (otherFile != null && otherFile.isNotEmpty) {
+      return 'The script "${trigger.scriptName ?? ''}" is in another file ($otherFile).';
+    }
+    if (scriptIds != null && (trigger.scriptId == null || !scriptIds.contains(trigger.scriptId))) {
+      return 'The script "${trigger.scriptName ?? trigger.scriptId}" is not in this solution.';
+    }
+    if (trigger.parameterProblem != null) return 'The script parameter ${trigger.parameterProblem}.';
+    if (trigger.findModeOnly) return 'FileMaker runs this trigger in Find mode only.';
+    final current = slot == 'on_layout_enter' ? onLayoutEnter : onLayoutExit;
+    if (current != null) return 'The layout already runs "${current.scriptName ?? ''}" on ${trigger.event}.';
+    return null;
+  }
+
+  static String? _slotOf(String event) => switch (event.toLowerCase()) {
+        'onlayoutenter' => 'on_layout_enter',
+        'onlayoutexit' => 'on_layout_exit',
+        _ => null,
+      };
+
+  /// This layout with the stored trigger [triggerId] switched on, which moves
+  /// it into the OnLayoutEnter / OnLayoutExit slot. Call it only when
+  /// [whyTriggerCannotRun] says nothing.
+  LayoutDefinitionModel enableStoredTrigger(String triggerId) {
+    final trigger = scriptTriggers.where((t) => t.triggerId == triggerId).firstOrNull;
+    if (trigger == null) return this;
+    final on = trigger.withEnabled(on: true);
+    final rest = scriptTriggers.where((t) => t.triggerId != triggerId).toList();
+    return switch (_slotOf(trigger.event)) {
+      'on_layout_enter' => copyWith(onLayoutEnter: on, scriptTriggers: rest),
+      'on_layout_exit' => copyWith(onLayoutExit: on, scriptTriggers: rest),
+      _ => this,
+    };
+  }
+
+  /// This layout with its OnLayoutEnter (or OnLayoutExit) trigger switched
+  /// off: it is kept in [scriptTriggers], where nothing runs it.
+  LayoutDefinitionModel disableSlotTrigger({required bool enter}) {
+    final current = enter ? onLayoutEnter : onLayoutExit;
+    if (current == null) return this;
+    final off = current.withEnabled(on: false, event: enter ? 'OnLayoutEnter' : 'OnLayoutExit');
+    final kept = off.triggerId != null
+        ? off
+        : ButtonActionModel.fromJson({...off.toJson(), 'id': 'trigger_${DateTime.now().microsecondsSinceEpoch}'});
+    return enter
+        ? copyWith(clearOnLayoutEnter: true, scriptTriggers: [...scriptTriggers, kept])
+        : copyWith(clearOnLayoutExit: true, scriptTriggers: [...scriptTriggers, kept]);
+  }
+
+  /// This layout with a stored trigger switched off.
+  LayoutDefinitionModel disableStoredTrigger(String triggerId) => copyWith(scriptTriggers: [
+        for (final t in scriptTriggers) t.triggerId == triggerId ? t.withEnabled(on: false) : t,
+      ]);
 
   /// Effect played when the layout is shown, a key of [kLayoutTransitions].
   final String transition;
@@ -1255,6 +1438,7 @@ class LayoutDefinitionModel {
         if (backgroundImage != null) 'background_image': backgroundImage!.toJson(),
         if (onLayoutEnter != null) 'on_layout_enter': onLayoutEnter!.toJson(),
         if (onLayoutExit != null) 'on_layout_exit': onLayoutExit!.toJson(),
+        if (scriptTriggers.isNotEmpty) 'script_triggers': [for (final t in scriptTriggers) t.toJson()],
         if (transition != 'none') 'transition': transition,
         if (labelStock != null) 'label_stock': labelStock,
       };
@@ -1276,6 +1460,7 @@ class LayoutDefinitionModel {
     bool clearOnLayoutEnter = false,
     ButtonActionModel? onLayoutExit,
     bool clearOnLayoutExit = false,
+    List<ButtonActionModel>? scriptTriggers,
     String? transition,
     Map<String, dynamic>? labelStock,
     bool clearLabelStock = false,
@@ -1293,6 +1478,7 @@ class LayoutDefinitionModel {
       backgroundImage: clearBackgroundImage ? null : (backgroundImage ?? this.backgroundImage),
       onLayoutEnter: clearOnLayoutEnter ? null : (onLayoutEnter ?? this.onLayoutEnter),
       onLayoutExit: clearOnLayoutExit ? null : (onLayoutExit ?? this.onLayoutExit),
+      scriptTriggers: scriptTriggers ?? this.scriptTriggers,
       transition: transition ?? this.transition,
       labelStock: clearLabelStock ? null : (labelStock ?? this.labelStock),
     );

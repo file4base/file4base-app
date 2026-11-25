@@ -45,6 +45,9 @@ class LayoutDesignerWidget extends StatefulWidget {
     this.onManageDatabase,
     this.onManageSecurity,
     this.onManageScripts,
+    this.onReviewScriptTriggers,
+    this.onScriptTriggersChanged,
+    this.canSwitchScriptTriggers = false,
     this.onManageThemes,
     this.onAutoSaveDirty,
     this.onLayoutChanged,
@@ -71,6 +74,17 @@ class LayoutDesignerWidget extends StatefulWidget {
   /// Opens the Script Workspace; completes when it is closed, so the
   /// designer can reload the scripts available to buttons.
   final Future<void> Function()? onManageScripts;
+
+  /// Opens File > Manage > Script Triggers on this layout's triggers (#26).
+  final ValueChanged<String>? onReviewScriptTriggers;
+
+  /// Called with the layout's id once one of its triggers was switched.
+  final ValueChanged<String>? onScriptTriggersChanged;
+
+  /// Switching a trigger on or off is an owner's or an administrator's, and
+  /// goes through the trigger review, as File > Manage > Script Triggers
+  /// does: the layout is never saved with a trigger switched on (#26).
+  final bool canSwitchScriptTriggers;
   final VoidCallback? onManageThemes;
   final VoidCallback onSaved;
   final VoidCallback? onAutoSaveDirty;
@@ -429,11 +443,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       );
 
   /// The occurrence a related binding names, or null when it is not a related
-  /// binding or the relationship it followed is gone.
-  RelatedTarget? _targetOf(String? relationshipId, String? occurrence) {
+  /// binding or the relationship it followed is gone. A relationship joining
+  /// an occurrence to itself is read at the end [side] names, the right one
+  /// by default.
+  RelatedTarget? _targetOf(String? relationshipId, String? occurrence, {String? side}) {
     if (relationshipId == null || relationshipId.isEmpty) return null;
     for (final t in _relatedTargets) {
       if (t.relationship.id != relationshipId) continue;
+      if (t.requestSide != null && t.side != (side ?? RelationshipSide.right)) continue;
       if (occurrence == null || occurrence.isEmpty) return t;
       if (occurrence == t.occurrence.id || occurrence == t.occurrence.name) return t;
     }
@@ -721,6 +738,32 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     widget.onLayoutChanged?.call(_layout);
     setState(() => _autoSaveStatus = _LayoutSaveStatus.dirty);
     _autoSaveTimer = Timer(_autoSaveDelay, _performAutoSave);
+  }
+
+  /// Selects the object [objectId] (from Manage Script Triggers), when the
+  /// layout has it.
+  void selectObject(String objectId) {
+    if (!_layout.objects.any((o) => o.id == objectId)) return;
+    setState(() {
+      _selectedObjectId = objectId;
+      _inspectorTab = 2;
+    });
+  }
+
+  /// Takes the script triggers of [fresh], the same layout as read again
+  /// after Manage Script Triggers switched some (#26), keeping every other
+  /// edit made here.
+  void adoptScriptTriggers(LayoutDefinitionModel fresh) {
+    if (fresh.id != _layout.id) return;
+    setState(() {
+      _layout = _layout.copyWith(
+        onLayoutEnter: fresh.onLayoutEnter,
+        clearOnLayoutEnter: fresh.onLayoutEnter == null,
+        onLayoutExit: fresh.onLayoutExit,
+        clearOnLayoutExit: fresh.onLayoutExit == null,
+        scriptTriggers: fresh.scriptTriggers,
+      );
+    });
   }
 
   Future<LayoutDefinitionModel> commitAndSave() async {
@@ -4279,7 +4322,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
 
       case 'portal':
         final portal = obj.portal;
-        final target = _targetOf(portal.relationshipId, portal.occurrence);
+        final target = _targetOf(portal.relationshipId, portal.occurrence, side: portal.relationshipSide);
         final rowHeight = portal.effectiveRowHeight(obj.height);
         return Padding(
           padding: const EdgeInsets.all(6),
@@ -4611,6 +4654,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 const SizedBox(height: 4),
                 const Text('Run in Browse mode when this layout is shown, and when you go to another layout.',
                     style: TextStyle(color: Colors.grey, fontSize: 10)),
+                ..._storedLayoutTriggers(snap.hasData ? scripts.map((s) => s.id).toSet() : null),
               ],
             );
           },
@@ -5089,12 +5133,19 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   /// Identifies one entry of the Table Occurrence picker. The layout's own
   /// table is the empty string; a related occurrence is its relationship and
   /// its occurrence, because the same two tables can be joined more than once.
-  static String _targetKey(RelatedTarget t) => '${t.relationship.id}|${t.occurrence.id}';
+  /// A relationship joining an occurrence to itself is reachable at both of
+  /// its ends, which only the end tells apart.
+  static String _targetKey(RelatedTarget t) => '${t.relationship.id}|${t.occurrence.id}|${t.side}';
+
+  static String _targetLabel(RelatedTarget t) {
+    final label = '${t.occurrence.name}  ·  through "${t.relationship.name}"';
+    return t.requestSide == null ? label : '$label, ${t.side} end';
+  }
 
   List<Widget> _fieldBindingSection(LayoutObjectModel sel, bool isDark) {
     final binding = sel.fieldBinding;
     final targets = _relatedTargets;
-    final related = _targetOf(binding?.relationshipId, binding?.tableOccurrence);
+    final related = _targetOf(binding?.relationshipId, binding?.tableOccurrence, side: binding?.relationshipSide);
 
     // A field is read from the record in hand, or from a related record (#36),
     // and that decides which table's fields it can be bound to.
@@ -5120,8 +5171,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             for (final t in targets)
               DropdownMenuItem(
                 value: _targetKey(t),
-                child: Text('${t.occurrence.name}  ·  through "${t.relationship.name}"',
-                    style: const TextStyle(fontSize: 11)),
+                child: Text(_targetLabel(t), style: const TextStyle(fontSize: 11)),
               ),
           ],
           onChanged: (key) {
@@ -5142,9 +5192,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             // it is re-pointed at the related table's first field.
             final keepsField = target.table.columns.any((c) => c.name == existing.fieldName);
             _editSelected((sel) => sel.copyWith(
-              fieldBinding: existing.copyWith(
+              fieldBinding: existing.copyWith(clearRelationship: true).copyWith(
                 relationshipId: target.relationship.id,
                 tableOccurrence: target.occurrence.name,
+                relationshipSide: target.requestSide,
                 fieldName: keepsField
                     ? existing.fieldName
                     : (target.table.columns.firstOrNull?.name ?? existing.fieldName),
@@ -5272,8 +5323,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   /// and whether a row can be added or removed.
   List<Widget> _portalSetupSection(LayoutObjectModel sel, bool isDark) {
     final config = sel.portal;
-    final targets = _relatedTargets;
-    final target = _targetOf(config.relationshipId, config.occurrence);
+    // A relationship joining an occurrence to itself is listed once: which of
+    // its ends the rows show is chosen below.
+    final targets = [
+      for (final t in _relatedTargets)
+        if (t.requestSide == null || t.side == RelationshipSide.right) t,
+    ];
+    String keyOf(RelatedTarget t) => '${t.relationship.id}|${t.occurrence.id}';
+    final target = _targetOf(config.relationshipId, config.occurrence, side: config.relationshipSide);
     final dangling = config.isBound && target == null;
 
     void edit(PortalConfigModel Function(PortalConfigModel) change) {
@@ -5287,26 +5344,55 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       const SizedBox(height: 4),
       DropdownButtonFormField<String>(
         key: const ValueKey('inspector-portal-relationship'),
-        initialValue: dangling || target == null ? null : _targetKey(target),
+        isExpanded: true,
+        initialValue: dangling || target == null ? null : keyOf(target),
         decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
         hint: const Text('Choose an occurrence', style: TextStyle(fontSize: 11)),
         items: [
           for (final t in targets)
             DropdownMenuItem(
-              value: _targetKey(t),
+              value: keyOf(t),
               child: Text('${t.occurrence.name}  ·  through "${t.relationship.name}"',
-                  style: const TextStyle(fontSize: 11)),
+                  style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis),
             ),
         ],
         onChanged: (key) {
-          final picked = targets.where((t) => _targetKey(t) == key).firstOrNull;
+          final picked = targets.where((t) => keyOf(t) == key).firstOrNull;
           if (picked == null) return;
-          edit((c) => c.copyWith(
+          // The one already shown keeps its end; another relationship starts
+          // from its default end.
+          if (target != null && keyOf(target) == key) return;
+          edit((c) => c.copyWith(clearRelationship: true).copyWith(
                 relationshipId: picked.relationship.id,
                 occurrence: picked.occurrence.name,
               ));
         },
       ),
+      if (target != null && target.requestSide != null) ...[
+        const SizedBox(height: 10),
+        Text('"${target.relationship.name}" joins ${target.occurrence.name} to itself. Show the records at its:',
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        SegmentedButton<String>(
+          key: const ValueKey('portal-relationship-side'),
+          segments: const [
+            ButtonSegment(value: RelationshipSide.left, label: Text('Left end', style: TextStyle(fontSize: 11))),
+            ButtonSegment(value: RelationshipSide.right, label: Text('Right end', style: TextStyle(fontSize: 11))),
+          ],
+          selected: {target.side},
+          showSelectedIcon: false,
+          onSelectionChanged: (picked) => edit((c) => c.copyWith(relationshipSide: picked.first)),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            target.side == RelationshipSide.left
+                ? "The rows are the records whose left-hand match fields match this record's right-hand ones."
+                : "The rows are the records whose right-hand match fields match this record's left-hand ones.",
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ),
+      ],
       if (dangling)
         Padding(
           padding: const EdgeInsets.only(top: 6),
@@ -5395,44 +5481,53 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         ),
       ),
       const SizedBox(height: 4),
-      CheckboxListTile(
-        key: const ValueKey('portal-show-scroll-bar'),
-        title: const Text('Show vertical scroll bar', style: TextStyle(fontSize: 11)),
-        value: config.showScrollBar,
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        onChanged: (v) => edit((c) => c.copyWith(showScrollBar: v ?? true)),
-      ),
-      CheckboxListTile(
-        key: const ValueKey('portal-allow-creation'),
-        title: const Text('Allow creation of records in this portal',
-            style: TextStyle(fontSize: 11)),
-        subtitle: Text(
-          target != null && !target.allowsCreation
-              ? 'The relationship "${target.relationship.name}" does not allow creating records '
-                  'in ${target.occurrence.name} yet, so the portal offers no row for it. '
-                  'Turn it on for ${target.occurrence.name} in Specify Relationship.'
-              : 'An empty row at the end creates a related record.',
-          style: TextStyle(
-            fontSize: 10,
-            color: target != null && !target.allowsCreation
-                ? Colors.orange.shade800
-                : Colors.grey,
-          ),
+      Material(
+        type: MaterialType.transparency,
+        child: CheckboxListTile(
+          key: const ValueKey('portal-show-scroll-bar'),
+          title: const Text('Show vertical scroll bar', style: TextStyle(fontSize: 11)),
+          value: config.showScrollBar,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          onChanged: (v) => edit((c) => c.copyWith(showScrollBar: v ?? true)),
         ),
-        value: config.allowCreation,
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        onChanged: (v) => edit((c) => c.copyWith(allowCreation: v ?? false)),
       ),
-      CheckboxListTile(
-        key: const ValueKey('portal-allow-deletion'),
-        title: const Text('Allow deletion of records in this portal',
-            style: TextStyle(fontSize: 11)),
-        value: config.allowDeletion,
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        onChanged: (v) => edit((c) => c.copyWith(allowDeletion: v ?? false)),
+      Material(
+        type: MaterialType.transparency,
+        child: CheckboxListTile(
+          key: const ValueKey('portal-allow-creation'),
+          title: const Text('Allow creation of records in this portal',
+              style: TextStyle(fontSize: 11)),
+          subtitle: Text(
+            target != null && !target.allowsCreation
+                ? 'The relationship "${target.relationship.name}" does not allow creating records '
+                    'in ${target.occurrence.name} yet, so the portal offers no row for it. '
+                    'Turn it on for ${target.occurrence.name} in Specify Relationship.'
+                : 'An empty row at the end creates a related record.',
+            style: TextStyle(
+              fontSize: 10,
+              color: target != null && !target.allowsCreation
+                  ? Colors.orange.shade800
+                  : Colors.grey,
+            ),
+          ),
+          value: config.allowCreation,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          onChanged: (v) => edit((c) => c.copyWith(allowCreation: v ?? false)),
+        ),
+      ),
+      Material(
+        type: MaterialType.transparency,
+        child: CheckboxListTile(
+          key: const ValueKey('portal-allow-deletion'),
+          title: const Text('Allow deletion of records in this portal',
+              style: TextStyle(fontSize: 11)),
+          value: config.allowDeletion,
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          onChanged: (v) => edit((c) => c.copyWith(allowDeletion: v ?? false)),
+        ),
       ),
     ];
   }
@@ -5479,6 +5574,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         if (sel.type == 'portal') ..._portalSetupSection(sel, isDark),
         if (sel.type == 'chart') ..._chartSetupSection(sel),
         if (isButton) ..._buttonActionSection(sel, isDark),
+        ..._objectTriggersSection(sel),
         if (sel.isTabStop) ...[
           const Divider(height: 24),
           _inspectorSectionTitle('TAB ORDER'),
@@ -5635,6 +5731,163 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       child: IconButton(
         icon: Icon(icon, color: isSel ? const Color(0xFF1E88E5) : Colors.grey, size: 18),
         onPressed: () => _editSelected((sel) => sel.copyWith(style: sel.style.copyWith(textAlign: align))),
+      ),
+    );
+  }
+
+  /// The layout's OnLayoutEnter / OnLayoutExit triggers with an on/off
+  /// switch, then its stored triggers, those a migration imported switched
+  /// off among them (#26). Switching one on moves it where it runs.
+  List<Widget> _storedLayoutTriggers(Set<String>? scriptIds) {
+    final stored = _layout.layoutLevelTriggers;
+    final objectCount = _layout.scriptTriggers.length - stored.length;
+    final hasSlot = _layout.onLayoutEnter != null || _layout.onLayoutExit != null;
+    if (stored.isEmpty && objectCount == 0 && !hasSlot) return const [];
+    return [
+      const SizedBox(height: 8),
+      for (final (enter, current) in [(true, _layout.onLayoutEnter), (false, _layout.onLayoutExit)])
+        if (current != null)
+          _triggerSwitchTile(
+            key: 'slot-${enter ? 'enter' : 'exit'}',
+            event: enter ? 'OnLayoutEnter' : 'OnLayoutExit',
+            script: current.scriptName ?? '',
+            status: current.enabled ? 'Enabled' : 'Disabled',
+            on: current.enabled,
+            why: widget.canSwitchScriptTriggers ? null : _switchRefused,
+            onChanged: !widget.canSwitchScriptTriggers
+                ? null
+                : (on) => _switchScriptTrigger(
+                    current.triggerId ?? '${_layout.id}:${enter ? 'on_layout_enter' : 'on_layout_exit'}', on: on),
+          ),
+      for (final t in stored)
+        Builder(builder: (_) {
+          final why = _layout.whyTriggerCannotRun(t, scriptIds: scriptIds) ??
+              (widget.canSwitchScriptTriggers ? null : _switchRefused);
+          return _triggerSwitchTile(
+            key: 'stored-${t.triggerId}',
+            event: t.event,
+            script: t.scriptName ?? '',
+            status: t.quarantinedByMigration ? 'Disabled by migration' : 'Disabled',
+            on: false,
+            why: why,
+            onChanged: why != null || t.triggerId == null ? null : (_) => _switchScriptTrigger(t.triggerId!, on: true),
+          );
+        }),
+      if (objectCount > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text('$objectCount more set on objects of this layout, all disabled.',
+              style: const TextStyle(color: Colors.grey, fontSize: 10)),
+        ),
+      if (widget.onReviewScriptTriggers != null && _layout.scriptTriggers.isNotEmpty)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const ValueKey('review-script-triggers'),
+            icon: const Icon(Icons.bolt, size: 14),
+            label: const Text('Review All Script Triggers...', style: TextStyle(fontSize: 11)),
+            onPressed: () => widget.onReviewScriptTriggers!(_layout.id),
+          ),
+        ),
+    ];
+  }
+
+  static const _switchRefused = 'Only an owner or an administrator can switch a script trigger.';
+
+  /// Switches the trigger [id] through the trigger review: the layout is
+  /// saved first, then the trigger switched where it is stored, then read
+  /// back, so that nothing this designer holds writes over it.
+  Future<void> _switchScriptTrigger(String id, {required bool on}) async {
+    if (!_isPersisted) return;
+    await commitAndSave();
+    String? refused;
+    try {
+      await widget.apiClient.setScriptTriggersEnabled([id], enabled: on);
+    } on ApiException catch (e) {
+      refused = e.detail;
+    } on Object catch (e) {
+      refused = e.toString();
+    }
+    try {
+      final fresh = await widget.apiClient.getLayout(_layout.id);
+      if (!mounted) return;
+      adoptScriptTriggers(LayoutDefinitionModel.fromJson(fresh.definition).copyWith(id: _layout.id));
+    } on Object catch (_) {
+      // Read again with the layout list.
+    }
+    if (!mounted) return;
+    if (refused != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('The trigger was not switched: $refused'), backgroundColor: Colors.orange.shade800),
+      );
+      return;
+    }
+    widget.onScriptTriggersChanged?.call(_layout.id);
+  }
+
+  /// The triggers set on the selected object: kept, switched off, as
+  /// File4Base does not run object triggers yet (#26).
+  List<Widget> _objectTriggersSection(LayoutObjectModel sel) {
+    final triggers = _layout.triggersOfObject(sel.id);
+    if (triggers.isEmpty) return const [];
+    return [
+      const Divider(height: 24),
+      _inspectorSectionTitle('SCRIPT TRIGGERS'),
+      for (final t in triggers)
+        _triggerSwitchTile(
+          key: 'object-${t.triggerId}',
+          event: t.event,
+          script: t.scriptName ?? '',
+          status: t.quarantinedByMigration ? 'Disabled by migration' : 'Disabled',
+          on: false,
+          why: _layout.whyTriggerCannotRun(t),
+          onChanged: null,
+        ),
+      if (widget.onReviewScriptTriggers != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            icon: const Icon(Icons.bolt, size: 14),
+            label: const Text('Review All Script Triggers...', style: TextStyle(fontSize: 11)),
+            onPressed: () => widget.onReviewScriptTriggers!(_layout.id),
+          ),
+        ),
+    ];
+  }
+
+  Widget _triggerSwitchTile({
+    required String key,
+    required String event,
+    required String script,
+    required String status,
+    required bool on,
+    required ValueChanged<bool>? onChanged,
+    String? why,
+  }) {
+    return Tooltip(
+      message: why ?? '',
+      child: Row(
+        key: ValueKey('trigger-tile-$key'),
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$event → ${script.isEmpty ? '(no script)' : script}',
+                    overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11)),
+                Text(why == null ? status : '$status · $why',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10, color: why == null ? Colors.grey : Colors.orange.shade800)),
+              ],
+            ),
+          ),
+          Switch(
+            key: ValueKey('trigger-switch-$key'),
+            value: on,
+            onChanged: onChanged,
+          ),
+        ],
       ),
     );
   }

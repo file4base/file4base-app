@@ -94,6 +94,19 @@ abstract class LayoutActionHost {
   String actionResolveText(String text);
 }
 
+/// Where a calculation is evaluated (#26): the occurrence the window's layout
+/// is based on, and the record in hand. Implemented by the data browser.
+abstract class CalculationContextHost {
+  /// The names a field of this window's own occurrence is qualified with —
+  /// its table occurrence and its table — lower-cased.
+  Set<String> get actionOwnOccurrenceNames;
+
+  /// [expression] evaluated by the server against the record in hand, related
+  /// fields read through the relationships, as a calculation field is. Null
+  /// when it cannot be: no record, or an expression that does not evaluate.
+  Future<String?> actionEvaluateCalculation(String expression);
+}
+
 /// Script steps of the auto-enter options: Set Next Serial Value and
 /// Relookup Field Contents. Implemented by the data browser; a host without
 /// it makes the steps fail with FileMaker's error 3 (command unavailable).
@@ -358,7 +371,7 @@ class LayoutActionRunner {
       if (action.scriptId == null && (action.scriptName == null || action.scriptName!.isEmpty)) {
         return const LayoutActionResult.stopped('This button has no script selected.');
       }
-      final parameter = resolveValue(action.parameter ?? '', <String, String>{});
+      final parameter = await evaluateParameter(action.parameter ?? '', <String, String>{});
       if (parameter == null) {
         return const LayoutActionResult.stopped('Cannot evaluate the script parameter.');
       }
@@ -1470,7 +1483,7 @@ class LayoutActionRunner {
         if (name.isEmpty) {
           return LayoutActionResult.stopped(_migrationNote(params, 'Perform Script has no script name.'));
         }
-        final parameter = resolveValue((params['script_parameter'] ?? params['parameter'])?.toString() ?? '', vars, callContext: context);
+        final parameter = await evaluateParameter((params['script_parameter'] ?? params['parameter'])?.toString() ?? '', vars, callContext: context);
         if (parameter == null) {
           return const LayoutActionResult.stopped('Perform Script cannot evaluate its parameter.');
         }
@@ -1964,6 +1977,23 @@ class LayoutActionRunner {
     return host.actionResolveText(raw);
   }
 
+  /// A script parameter's value: evaluated here when it can be, otherwise —
+  /// a related field, a function — by the server in the record's context,
+  /// as a calculation field is. Null when neither can evaluate it. A
+  /// parameter reading a variable is evaluated here only, as the server does
+  /// not have the script's variables.
+  Future<String?> evaluateParameter(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) async {
+    final local = resolveValue(raw, localVars, callContext: callContext);
+    if (local != null) return local;
+    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+    if (context == null || raw.contains(r'$')) return null;
+    try {
+      return await context.actionEvaluateCalculation(raw);
+    } on Object catch (_) {
+      return null;
+    }
+  }
+
   String _resolveExpressionValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) =>
       resolveValue(raw, localVars, callContext: callContext) ?? '';
 
@@ -2051,7 +2081,14 @@ class LayoutActionRunner {
     if (expr.contains('{{')) {
       return host.actionResolveText(expr);
     }
-    // Qualified or unqualified field reference (e.g. `recipes::URL` or `URL`)
+    // Qualified or unqualified field reference (e.g. `recipes::URL` or `URL`).
+    // A field of another occurrence is a related field: it is not the field
+    // of this record that has the same name, so it is not read here (#26).
+    if (expr.contains('::')) {
+      final occurrence = expr.split('::').first.trim().toLowerCase();
+      final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+      if (context == null || !context.actionOwnOccurrenceNames.contains(occurrence)) return null;
+    }
     final fieldPart = expr.contains('::') ? expr.split('::').last.trim() : expr;
     if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_ ]*$').hasMatch(fieldPart)) {
       return null; // not a field name: an expression File4Base does not evaluate

@@ -142,7 +142,7 @@ class FindRequestDraft {
 }
 
 class DataBrowserWidgetState extends State<DataBrowserWidget>
-    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost {
+    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost, CalculationContextHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -1402,7 +1402,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     unawaited(_loadValueLists());
     if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
     unawaited(_fetchRecords().then((_) {
-      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.onLayoutEnter));
+      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.activeOnLayoutEnter));
     }));
     HardwareKeyboard.instance.addHandler(_handleRecordShortcut);
   }
@@ -1420,9 +1420,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   /// Runs an OnLayoutEnter / OnLayoutExit script. A trigger started while
   /// another one runs (e.g. the script itself goes to another layout) is
-  /// skipped, so layouts that switch to each other cannot loop forever.
+  /// skipped, so layouts that switch to each other cannot loop forever. A
+  /// trigger switched off — as every migrated one arrives — never runs.
   Future<void> _runLayoutTrigger(ButtonActionModel? action) async {
-    if (action == null || _runningLayoutTrigger) return;
+    if (action == null || !action.enabled || _runningLayoutTrigger) return;
     _runningLayoutTrigger = true;
     try {
       final result = await _actionRunner().run(action);
@@ -1468,8 +1469,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         oldWidget.layout?.objects.length != widget.layout?.objects.length ||
         oldWidget.mode != widget.mode;
     if (oldWidget.layout?.id != widget.layout?.id && widget.mode == OperationalMode.browse) {
-      final exit = oldWidget.layout?.onLayoutExit;
-      final enter = widget.layout?.onLayoutEnter;
+      final exit = oldWidget.layout?.activeOnLayoutExit;
+      final enter = widget.layout?.activeOnLayoutEnter;
       if (exit != null || enter != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           await _runLayoutTrigger(exit);
@@ -1650,19 +1651,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// controllers and in a saved find's values (#46). An own field is held
   /// under its plain name, so the two cannot collide: a field name is
   /// lower-case letters, digits and underscores, and never contains a colon.
-  static String relatedCriterionKey(String relationshipId, String occurrence, String field) =>
-      'rel:$relationshipId:$occurrence:$field';
+  /// [side] is the end of a relationship joining an occurrence to itself
+  /// ([RelationshipSide]): the same field read from either end is two
+  /// criteria. A key without one, as saved before, reads the right end.
+  static String relatedCriterionKey(String relationshipId, String occurrence, String field, {String? side}) =>
+      'rel:$relationshipId:$occurrence:$field${side == null ? '' : ':$side'}';
 
   /// Reads back what [relatedCriterionKey] wrote, or null for an own field.
-  static ({String relationshipId, String occurrence, String field})? parseRelatedCriterionKey(String key) {
+  static ({String relationshipId, String occurrence, String field, String? side})? parseRelatedCriterionKey(
+      String key) {
     if (!key.startsWith('rel:')) return null;
     final parts = key.split(':');
     if (parts.length < 4) return null;
+    String? side;
+    if (parts.length > 4 && (parts.last == RelationshipSide.left || parts.last == RelationshipSide.right)) {
+      side = parts.removeLast();
+    }
     return (
       relationshipId: parts[1],
       occurrence: parts[2],
       // A field name has no colon, but rejoin anyway rather than lose text.
       field: parts.sublist(3).join(':'),
+      side: side,
     );
   }
 
@@ -1720,6 +1730,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         criteria.last['relationship_id'] = related.relationshipId;
         if (related.occurrence.isNotEmpty) {
           criteria.last['occurrence'] = related.occurrence;
+        }
+        if (related.side != null) {
+          criteria.last['side'] = related.side;
         }
       }
     });
@@ -3226,6 +3239,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
               binding.relationshipId ?? '',
               binding.tableOccurrence ?? '',
               binding.fieldName,
+              side: binding.relationshipSide,
             );
             final controller = _findControllers.putIfAbsent(key, () {
               return TextEditingController(text: _currentFindRequest.values[key] ?? '');
@@ -3943,6 +3957,26 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   String actionResolveText(String text) => _resolveTextForRecord(text, _currentRecord);
+
+  @override
+  Set<String> get actionOwnOccurrenceNames => {
+        for (final name in [widget.layout?.tableOccurrence, widget.table.name, widget.table.displayName])
+          if (name != null && name.trim().isNotEmpty) name.trim().toLowerCase(),
+      };
+
+  @override
+  Future<String?> actionEvaluateCalculation(String expression) async {
+    final recordId = _currentRecord['id']?.toString() ?? '';
+    if (recordId.isEmpty || expression.trim().isEmpty) return null;
+    final results = await widget.apiClient.evaluateExpressions(
+      widget.table.name,
+      expressions: [expression],
+      recordId: recordId,
+    );
+    final result = results.firstOrNull;
+    if (result == null || result.error.isNotEmpty || result.unknownFields.isNotEmpty) return null;
+    return result.text;
+  }
 
   /// What a field's value looks like inside merge text.
   String _mergeFieldText(String fieldName, Object? value) {

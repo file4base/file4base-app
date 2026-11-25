@@ -165,6 +165,7 @@ A `Perform Script` that names a **file reference** stops the script when the ref
 ### 4.3 Script Triggers
 | Trigger Scope | Supported Triggers | Migration Quarantine Policy (`#26`) |
 |---|---|---|
-| **File Lifecycle** (`File > File Options...`) | `OnFirstWindowOpen`, `OnLastWindowClose` | Quarantined (disabled) on FileMaker XML import until reviewed by an administrator. |
-| **Layout Lifecycle** (`Layout Setup > Script Triggers`) | `OnRecordLoad`, `OnRecordCommit`, `OnRecordRevert`, `OnLayoutEnter`, `OnLayoutExit` | Quarantined (disabled) on FileMaker XML import until reviewed by an administrator. |
+| **File Lifecycle** (`File > File Options...`) | `OnFirstWindowOpen` and `OnLastWindowClose` are stored in File Options but not run yet. | Not imported; listed in one `unsupported` report item per solution. |
+| **Layout Lifecycle** (`Layout Setup > Script Triggers`) | `OnLayoutEnter`, `OnLayoutExit` (Browse mode). Other layout events (`OnRecordLoad`, `OnRecordCommit`, `OnRecordRevert`, `OnModeEnter`, …) are stored but not run. | Imported disabled (`enabled: false`, `quarantined_by_migration: true`) and reviewed in File > Manage > Script Triggers, which enables those that can run (#26). |
+| **Object Triggers** (`OnObjectSave`, `OnObjectExit`, `OnObjectValidate`, …) | Stored, not run. | Imported disabled, with the object they were set on; listed in File > Manage > Script Triggers and the object inspector. |
 | **Object Events** (Inspector) | Button `OnClick` (`Perform Script` or single action) | Preserved with target script reference; never auto-executed during import. |

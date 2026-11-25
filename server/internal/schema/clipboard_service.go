@@ -633,6 +633,8 @@ func (s *Service) pasteLayout(
 	// matching names in the destination database.
 	def := cloneMap(l.Definition)
 	s.remapLayoutDefinitionByNames(ctx, def, env.ReferencedScripts, env.ReferencedValueList)
+	// A pasted layout's triggers are not the copied one's (#26).
+	renewScriptTriggerIDs(def)
 	rawDef, err := json.Marshal(def)
 	if err != nil {
 		return nil, err
