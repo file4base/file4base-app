@@ -805,10 +805,20 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 	}
 
-	// 4. Extract Value Lists
+	// 4. Extract Value Lists. Only now is it known which calculations are
+	// unstored, and a list cannot take its values from a field that cannot be
+	// indexed.
+	unindexable := map[string]string{}
+	for _, t := range bundle.Tables {
+		for _, c := range t.Columns {
+			if why := schema.UnindexableField(c.FieldType, c.CalculationFormula); why != "" {
+				unindexable[c.ID] = why
+			}
+		}
+	}
 	vlNodes := catalogDefinitions(root, []string{"ValueListCatalog", "value_lists"}, "ValueList", "value_list")
 	for _, vn := range vlNodes {
-		vl, items := convertValueListNode(vn, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable, externalOccs)
+		vl, items := convertValueListNode(vn, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable, externalOccs, unindexable)
 		for _, item := range items {
 			addReportItem(report, item)
 		}
@@ -1675,6 +1685,7 @@ func convertValueListNode(
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
 	externalOccs map[string]string,
+	unindexable map[string]string,
 ) (*schema.BundleValueList, []ReportItem) {
 	name := firstAttr(vn, "name", "Name")
 	if name == "" {
@@ -1699,7 +1710,7 @@ func convertValueListNode(
 		}}
 	}
 	if kind == "field" || kind == "fromfield" || findFirstChild(vn, "Field") != nil {
-		return convertFieldValueList(vn, name, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable, externalOccs)
+		return convertFieldValueList(vn, name, tableIDByName, canonicalTableName, occTableByName, occIDByName, colIDByTableCol, fieldNamesByTable, externalOccs, unindexable)
 	}
 
 	var vals []string
@@ -1779,7 +1790,8 @@ func splitValueListLines(text string) []string {
 // Both write show="False" on the first field when only the second is shown,
 // and sort="True" on the field the values are sorted by. An option whose
 // field or occurrence was not migrated is reported rather than silently
-// dropped.
+// dropped. So is a list whose field cannot be indexed (unindexable, by column
+// id): FileMaker refuses one, and File4Base would offer nothing from it.
 func convertFieldValueList(
 	vn *xmlNode,
 	name string,
@@ -1790,6 +1802,7 @@ func convertFieldValueList(
 	colIDByTableCol map[string]string,
 	fieldNamesByTable map[string]*fieldNameMap,
 	externalOccs map[string]string,
+	unindexable map[string]string,
 ) (*schema.BundleValueList, []ReportItem) {
 	tblName := firstAttr(vn, "table", "base_table")
 	fldName := firstAttr(vn, "field")
@@ -1859,6 +1872,15 @@ func convertFieldValueList(
 			Detail:     fmt.Sprintf("Value list %q takes its values from %s, which was not migrated; recreate it in Manage Database > Value Lists", name, source),
 		}}
 	}
+	if why := unindexable[cID]; why != "" {
+		return nil, []ReportItem{{
+			Category:   CategoryManualActionRequired,
+			Domain:     "value_list",
+			SourceName: name,
+			Detail: fmt.Sprintf("Value list %q takes its values from %s, which cannot be indexed, so the list was not migrated: %s; "+
+				"then recreate it in Manage Database > Value Lists", name, source, why),
+		}}
+	}
 	vl := &schema.BundleValueList{
 		ID:             uuid.NewString(),
 		Name:           name,
@@ -1881,6 +1903,8 @@ func convertFieldValueList(
 		}
 		if secondID == "" {
 			lost = append(lost, fmt.Sprintf("its second field %s (it now shows the first field only)", second))
+		} else if unindexable[secondID] != "" {
+			lost = append(lost, fmt.Sprintf("its second field %s, which cannot be indexed (it now shows the first field only)", second))
 		} else {
 			vl.SecondColumnID = &secondID
 			vl.ShowSecondOnly = primary != nil && strings.EqualFold(firstAttr(primary, "show"), "false")

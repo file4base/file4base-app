@@ -820,4 +820,83 @@ func TestValueListEntriesOfBooleansAndContainers(t *testing.T) {
 	})
 }
 
+// FileMaker cannot index an unstored calculation or a summary field, and
+// refuses either for a value list: "This field cannot be indexed". File4Base
+// refuses them too, rather than keep a list that would always be empty, and
+// will not make unstored a calculation a list already reads.
+func TestValueListRefusesAFieldThatCannotBeIndexed(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database unavailable:", err)
+		return
+	}
+	defer driver.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+		return
+	}
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+
+	stamp := uniqueTestStamp()
+	name := fmt.Sprintf("vli_lines_%d", stamp)
+	tbl, err := svc.CreateTable(ctx, name, name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.DeleteTable(context.Background(), tbl.ID) })
+	add := func(col schema.ColumnMetadata) *schema.ColumnMetadata {
+		t.Helper()
+		col.DisplayName, col.IsNullable = col.Name, true
+		created, err := svc.AddColumn(ctx, tbl.ID, col)
+		require.NoError(t, err)
+		return created
+	}
+	calculation := func(formula string, stored bool) *string {
+		raw := fmt.Sprintf(`{"formula":%q,"result_type":"Text","stored":%t}`, formula, stored)
+		return &raw
+	}
+	label := add(schema.ColumnMetadata{Name: "label", FieldType: dbal.FieldTypeText})
+	shout := add(schema.ColumnMetadata{Name: "shout", FieldType: dbal.FieldTypeCalculation, CalculationFormula: calculation("Upper ( label )", false)})
+	whisper := add(schema.ColumnMetadata{Name: "whisper", FieldType: dbal.FieldTypeCalculation, CalculationFormula: calculation("Lower ( label )", true)})
+	total := add(schema.ColumnMetadata{Name: "total", FieldType: dbal.FieldTypeSummary, CalculationFormula: ptr(`{"summary_type":"count","field":"label"}`)})
+
+	list := func(first, second *schema.ColumnMetadata) schema.ValueListInput {
+		in := schema.ValueListInput{Name: fmt.Sprintf("Lines %d %s", stamp, first.Name), Kind: schema.ValueListFromField,
+			SourceTableID: &tbl.ID, SourceColumnID: &first.ID}
+		if second != nil {
+			in.Name += " " + second.Name
+			in.SecondColumnID = &second.ID
+		}
+		return in
+	}
+
+	for _, c := range []struct {
+		first, second *schema.ColumnMetadata
+		why           string
+	}{
+		{shout, nil, "unstored calculation"},
+		{label, shout, "unstored calculation"},
+		{total, nil, "summary field"},
+	} {
+		_, err := svc.CreateValueList(ctx, list(c.first, c.second))
+		require.ErrorIs(t, err, schema.ErrInvalidFieldOptions)
+		assert.Contains(t, err.Error(), "cannot be indexed")
+		assert.Contains(t, err.Error(), c.why)
+	}
+
+	stored, err := svc.CreateValueList(ctx, list(whisper, label))
+	require.NoError(t, err, "a stored calculation is indexed like any field")
+	t.Cleanup(func() { _ = svc.DeleteValueList(context.Background(), stored.ID) })
+
+	_, err = svc.UpdateValueList(ctx, stored.ID, list(shout, label))
+	require.ErrorIs(t, err, schema.ErrInvalidFieldOptions, "an update is checked as a creation is")
+
+	_, err = svc.UpdateColumn(ctx, tbl.ID, whisper.ID, schema.UpdateColumnOptions{
+		DisplayName: whisper.DisplayName, CalculationFormula: calculation("Lower ( label )", false), UpdateCalculation: true,
+	})
+	require.ErrorIs(t, err, schema.ErrInvalidFieldOptions)
+	assert.Contains(t, err.Error(), stored.Name, "the refusal names the list that reads the field")
+}
+
 func ptr(s string) *string { return &s }

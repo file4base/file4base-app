@@ -258,23 +258,32 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 		}
 		return nil
 	}
-	inTable := func(columnID string) (bool, error) {
-		var n int
-		q := fmt.Sprintf(`SELECT COUNT(*) FROM sys_columns WHERE id = %s AND table_id = %s`,
+	// inTable is nil when the column is a field of the list's table that can
+	// be indexed, and otherwise says why the list cannot read it.
+	inTable := func(columnID, notInTable string) error {
+		var name, fieldType string
+		var formula *string
+		q := fmt.Sprintf(`SELECT name, field_type, calculation_formula FROM sys_columns WHERE id = %s AND table_id = %s`,
 			s.valueListPlaceholder(1), s.valueListPlaceholder(2))
-		err := db.QueryRowContext(ctx, q, columnID, *in.SourceTableID).Scan(&n)
-		return n > 0, err
+		err := db.QueryRowContext(ctx, q, columnID, *in.SourceTableID).Scan(&name, &fieldType, &formula)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrInvalidFieldOptions, notInTable)
+		}
+		if err != nil {
+			return err
+		}
+		if why := UnindexableField(fieldType, formula); why != "" {
+			return fmt.Errorf("%w: %q cannot be indexed, so a value list cannot take its values from it: %s",
+				ErrInvalidFieldOptions, name, why)
+		}
+		return nil
 	}
-	if ok, err := inTable(*in.SourceColumnID); err != nil {
+	if err := inTable(*in.SourceColumnID, "the field a value list reads must be a field of its table"); err != nil {
 		return err
-	} else if !ok {
-		return fmt.Errorf("%w: the field a value list reads must be a field of its table", ErrInvalidFieldOptions)
 	}
 	if in.SecondColumnID != nil {
-		if ok, err := inTable(*in.SecondColumnID); err != nil {
+		if err := inTable(*in.SecondColumnID, "the second field of a value list must be a field of the same table as the first"); err != nil {
 			return err
-		} else if !ok {
-			return fmt.Errorf("%w: the second field of a value list must be a field of the same table as the first", ErrInvalidFieldOptions)
 		}
 	}
 	if in.RelatedOccurrenceID == nil {
@@ -302,6 +311,25 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 		return fmt.Errorf("%w: the related values must be read through an occurrence of the value list's table", ErrInvalidFieldOptions)
 	}
 	return nil
+}
+
+// UnindexableField says why a value list cannot take its values from a field
+// of this type and formula, or is empty when it can. FileMaker refuses such a
+// field ("This field cannot be indexed"): an unstored calculation is computed
+// only when it is shown and a summary field has no value in a record, so
+// neither keeps values a list could read, and a list of one would always be
+// empty.
+func UnindexableField(fieldType string, formula *string) string {
+	switch dbal.AgnosticFieldType(fieldType) {
+	case dbal.FieldTypeSummary:
+		return "it is a summary field, which has no value in a record; choose another field"
+	case dbal.FieldTypeCalculation:
+		if formula != nil && !data.ReadStoredCalculation(*formula).IsStored() {
+			return "it is an unstored calculation, computed only when it is shown; " +
+				"store its result (Field Options > Storage) or choose another field"
+		}
+	}
+	return ""
 }
 
 // prepareValueList checks a list before it is written: its definition, that

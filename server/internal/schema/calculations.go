@@ -205,8 +205,8 @@ func (s *Service) checkRelatedReads(ctx context.Context, tableID, fieldName, con
 
 // checkUnstorable refuses to make unstored a calculation that cannot be: one
 // whose column is required, since an unstored calculation's column stays
-// empty, or one a relationship matches on, since the match would read that
-// empty column.
+// empty, or one a value list or a relationship reads, since the list and the
+// match would read that empty column.
 func (s *Service) checkUnstorable(ctx context.Context, col ColumnMetadata, formulaJSON *string) error {
 	if col.FieldType != dbal.FieldTypeCalculation || formulaJSON == nil || data.ReadStoredCalculation(*formulaJSON).IsStored() {
 		return nil
@@ -218,6 +218,19 @@ func (s *Service) checkUnstorable(ctx context.Context, col ColumnMetadata, formu
 	if col.ID == "" {
 		return nil
 	}
+	// Nor may a value list read it: an unstored calculation cannot be
+	// indexed, so the list would offer nothing.
+	lists, err := s.ListValueLists(ctx)
+	if err != nil {
+		return err
+	}
+	for _, list := range lists {
+		if (list.SourceColumnID != nil && *list.SourceColumnID == col.ID) ||
+			(list.SecondColumnID != nil && *list.SecondColumnID == col.ID) {
+			return fmt.Errorf("%w: %q cannot be unstored: the value list %q takes its values from it, "+
+				"and an unstored calculation cannot be indexed", ErrInvalidFieldOptions, col.Name, list.Name)
+		}
+	}
 	// A Cartesian criterion (×) reads no field, so it does not count.
 	q := `SELECT name FROM sys_relationships WHERE (left_column_id = $1 OR right_column_id = $1) AND COALESCE(operator, '=') <> '×'`
 	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
@@ -228,7 +241,7 @@ func (s *Service) checkUnstorable(ctx context.Context, col ColumnMetadata, formu
 		args = append(args, col.ID)
 	}
 	var relationship string
-	err := s.driver.DB().QueryRowContext(ctx, q, args...).Scan(&relationship)
+	err = s.driver.DB().QueryRowContext(ctx, q, args...).Scan(&relationship)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Nor may a criterion after the first match on it.
 		d := s.driver.Dialect()
