@@ -10,6 +10,7 @@ import 'package:file4base_client/features/layout_engine/models/layout_definition
     show LayoutObjectStyle;
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart'
     show kFormatColorSwatches, kLayoutFontFamilies, kLayoutFontSizes;
+import 'package:file4base_client/l10n/l10n.dart';
 import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,6 +28,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onManageValueLists,
     this.onManageFileReferences,
     this.onManageScriptTriggers,
+    this.onPreferences,
     this.onNewDatabase,
     this.onOpenSolution,
     this.onSave,
@@ -132,6 +134,11 @@ class File4BaseMenuBar extends StatelessWidget {
   /// File > Manage > Script Triggers (#26): every trigger of the solution's
   /// layouts, to review and enable those imported disabled by a migration.
   final VoidCallback? onManageScriptTriggers;
+
+  /// Edit > Preferences...: opens the application preferences dialog (menu
+  /// language management and client settings). Falls back to [onOpenRemote]
+  /// when omitted.
+  final VoidCallback? onPreferences;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
   final VoidCallback? onNewDatabase;
@@ -270,23 +277,24 @@ class File4BaseMenuBar extends StatelessWidget {
 
   /// Asks for a record number and goes there.
   Future<void> _promptGoToRecord(BuildContext context) async {
+    final l10n = context.l10n;
     final controller = TextEditingController();
     final target = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Go to Record'),
+        title: Text(l10n.dialogGoToRecordTitle),
         content: TextField(
           controller: controller,
           autofocus: true,
           keyboardType: TextInputType.number,
-          decoration: const InputDecoration(labelText: 'Record number'),
+          decoration: InputDecoration(labelText: l10n.dialogGoToRecordNumberLabel),
           onSubmitted: (value) => Navigator.pop(ctx, value.trim()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(l10n.dialogCancel)),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Go'),
+            child: Text(l10n.dialogGo),
           ),
         ],
       ),
@@ -354,7 +362,7 @@ class File4BaseMenuBar extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Close'),
+            child: Text(context.l10n.dialogClose),
           ),
         ],
       ),
@@ -411,7 +419,7 @@ class File4BaseMenuBar extends StatelessWidget {
           _applyCustomMenu(
             'Tools',
             _buildToolsMenu(context),
-            preservedSuffix: [_buildCustomMenusSubmenu()],
+            preservedSuffix: [_buildCustomMenusSubmenu(context)],
           ),
           if (!_isMenuHidden('Server Tools'))
             _applyCustomMenu('Server Tools', _buildServerToolsMenu(context)),
@@ -546,17 +554,18 @@ class File4BaseMenuBar extends StatelessWidget {
 
   // 1. File Menu
   Widget _buildFileMenu(BuildContext context) {
+    final l10n = context.l10n;
     return SubmenuButton(
       menuChildren: [
         if (!isAuthenticated) ...[
           MenuItemButton(
             onPressed: onSignIn,
             shortcut: const SingleActivator(LogicalKeyboardKey.keyL, meta: true),
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.login, size: 16, color: Color(0xFF1E88E5)),
-                SizedBox(width: 8),
-                Text('Sign In...'),
+                const Icon(Icons.login, size: 16, color: Color(0xFF1E88E5)),
+                const SizedBox(width: 8),
+                Text(l10n.menuFileSignIn),
               ],
             ),
           ),
@@ -565,77 +574,77 @@ class File4BaseMenuBar extends StatelessWidget {
         MenuItemButton(
           onPressed: onNewDatabase,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-          child: const Text('New Database...'),
+          child: Text(l10n.menuFileNewDatabase),
         ),
         MenuItemButton(
           onPressed: onOpenSolution,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true),
-          child: const Text('Open...'),
+          child: Text(l10n.menuFileOpen),
         ),
         MenuItemButton(
           onPressed: onOpenRemote,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyO, meta: true, shift: true),
-          child: const Text('Open Remote...'),
+          child: Text(l10n.menuFileOpenRemote),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: !isAuthenticated
-              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
+              ? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthSaveSolution)
               : onSave,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
-          child: const Text('Save'),
+          child: Text(l10n.menuFileSave),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
-              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save solution changes.')
+              ? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthSaveSolution)
               : onSaveAs,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
-          child: const Text('Save As...'),
+          child: Text(l10n.menuFileSaveAs),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
-              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to save a copy.')
+              ? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthSaveCopy)
               : onSaveCopyAs,
-          child: const Text('Save a Copy As...'),
+          child: Text(l10n.menuFileSaveCopyAs),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
-              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export database data.')
+              ? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthExportData)
               : onExportData,
-          child: const Text('Export Data...'),
+          child: Text(l10n.menuFileExportData),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
-              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to import database data.')
+              ? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthImportData)
               : onImportData,
-          child: const Text('Import Data (.f4data)...'),
+          child: Text(l10n.menuFileImportData),
         ),
         const Divider(height: 1),
-        const SubmenuButton(
+        SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              child: Text('Local Host (localhost:8080)'),
+              child: Text(l10n.menuFileLocalHost),
             ),
           ],
-          child: Text('Open Favorite'),
+          child: Text(l10n.menuFileOpenFavorite),
         ),
-        const SubmenuButton(
-          menuChildren: [
+        SubmenuButton(
+          menuChildren: const [
             MenuItemButton(
               child: Text('default_workspace (PostgreSQL)'),
             ),
           ],
-          child: Text('Open Recent'),
+          child: Text(l10n.menuFileOpenRecent),
         ),
         const Divider(height: 1),
         if (isAuthenticated && onSignOut != null) ...[
           MenuItemButton(
             onPressed: onSignOut,
-            child: const Row(
+            child: Row(
               children: [
-                Icon(Icons.lock_outline, size: 16, color: Colors.orange),
-                SizedBox(width: 8),
-                Text('Sign Out (Lock Session)'),
+                const Icon(Icons.lock_outline, size: 16, color: Colors.orange),
+                const SizedBox(width: 8),
+                Text(l10n.menuFileSignOutLock),
               ],
             ),
           ),
@@ -645,136 +654,137 @@ class File4BaseMenuBar extends StatelessWidget {
           menuChildren: [
             MenuItemButton(
               onPressed: !isAuthenticated
-                  ? (onSignIn ?? () => _showNotice(context, 'Authentication Required', 'Please sign in to manage database schema.'))
+                  ? (onSignIn ?? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthManageSchema))
                   : onManageDatabase,
               shortcut: const SingleActivator(LogicalKeyboardKey.keyD, meta: true, shift: true),
-              child: const Text('Database...'),
+              child: Text(l10n.menuManageDatabase),
             ),
             MenuItemButton(
               onPressed: onManageSecurity ??
                   () => _showRoadmapDialog(context, 'Manage Security', 'Roadmap Phase 8', 'User accounts, privilege sets, and extended access rules.'),
               shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
-              child: const Text('Security...'),
+              child: Text(l10n.menuManageSecurity),
             ),
             MenuItemButton(
               onPressed: onManageValueLists,
-              child: const Text('Value Lists...'),
+              child: Text(l10n.menuManageValueLists),
             ),
             MenuItemButton(
               onPressed: () => _showRoadmapDialog(context, 'Custom Functions', 'Roadmap Phase 7', 'Calculation engine reusable functions and recursive formulas.'),
-              child: const Text('Custom Functions...'),
+              child: Text(l10n.menuManageCustomFunctions),
             ),
             MenuItemButton(
               onPressed: onManageFileReferences,
-              child: const Text('File References...'),
+              child: Text(l10n.menuManageFileReferences),
             ),
             MenuItemButton(
               onPressed: onManageDataSources,
-              child: const Text('External Data Sources...'),
+              child: Text(l10n.menuManageExternalDataSources),
             ),
             MenuItemButton(
               onPressed: onManageLayouts ?? () => onModeChanged(OperationalMode.layout),
-              child: const Text('Layouts...'),
+              child: Text(l10n.menuManageLayouts),
             ),
             MenuItemButton(
               onPressed: onManageScripts ?? onScriptWorkspace ?? () => _showRoadmapDialog(context, 'Manage Scripts', 'Roadmap Phase 7', 'Automated workflows and calculation scripts.'),
-              child: const Text('Scripts...'),
+              child: Text(l10n.menuManageScripts),
             ),
             MenuItemButton(
               onPressed: onManageScriptTriggers,
-              child: const Text('Script Triggers...'),
+              child: Text(l10n.menuManageScriptTriggers),
             ),
             MenuItemButton(
               onPressed: onManageThemes ?? () => _showRoadmapDialog(context, 'Themes', 'Roadmap Phase 5', 'Visual styling themes, typography rules, and CSS presets.'),
-              child: const Text('Themes...'),
+              child: Text(l10n.menuManageThemes),
             ),
           ],
-          child: const Text('Manage'),
+          child: Text(l10n.menuFileManage),
         ),
         MenuItemButton(
           onPressed: onFileOptions,
-          child: const Text('File Options...'),
+          child: Text(l10n.menuFileOptions),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
-              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to change password.')
+              ? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthChangePassword)
               : onChangePassword,
-          child: const Text('Change Password...'),
+          child: Text(l10n.menuFileChangePassword),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onPageSetup ?? () => onModeChanged(OperationalMode.preview),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true),
-          child: const Text('Page Setup...'),
+          child: Text(l10n.menuFilePageSetup),
         ),
         MenuItemButton(
           onPressed: onPrint ?? () => onModeChanged(OperationalMode.preview),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyP, meta: true),
-          child: const Text('Print...'),
+          child: Text(l10n.menuFilePrint),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
               onPressed: !isAuthenticated
-                  ? () => _showNotice(context, 'Authentication Required',
-                      'Please sign in to import records.')
+                  ? () => _showNotice(context, l10n.noticeAuthRequiredTitle,
+                      l10n.noticeAuthImportRecords)
                   : onImportRecords,
-              child: const Text('File...'),
+              child: Text(l10n.menuFileImportFile),
             ),
             // Importing a folder of pictures into container fields is a
             // separate piece of work; the item is shown disabled rather than
             // opening a dialog that does nothing (#38).
-            const MenuItemButton(
-              child: Text('Folder...'),
+            MenuItemButton(
+              child: Text(l10n.menuFileImportFolder),
             ),
             MenuItemButton(
               onPressed: !isAuthenticated
-                  ? () => _showNotice(context, 'Authentication Required',
-                      'Please sign in to import records.')
+                  ? () => _showNotice(context, l10n.noticeAuthRequiredTitle,
+                      l10n.noticeAuthImportRecords)
                   : onImportRecords,
-              child: const Text('XML Data Source...'),
+              child: Text(l10n.menuFileImportXmlDataSource),
             ),
             // Not ODBC: File4Base reads the engines it has Go drivers for,
             // and the item says so rather than promising a bridge (#47).
             MenuItemButton(
               onPressed: !isAuthenticated
-                  ? () => _showNotice(context, 'Authentication Required',
-                      'Please sign in to import records.')
+                  ? () => _showNotice(context, l10n.noticeAuthRequiredTitle,
+                      l10n.noticeAuthImportRecords)
                   : onImportFromDataSource,
-              child: const Text('External SQL Data Source...'),
+              child: Text(l10n.menuFileImportExternalSqlDataSource),
             ),
           ],
-          child: const Text('Import Records'),
+          child: Text(l10n.menuFileImportRecords),
         ),
         MenuItemButton(
           onPressed: !isAuthenticated
-              ? () => _showNotice(context, 'Authentication Required', 'Please sign in to export records.')
+              ? () => _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthExportRecords)
               : onExportRecords,
-          child: const Text('Export Records...'),
+          child: Text(l10n.menuFileExportRecords),
         ),
-        const MenuItemButton(
-          child: Text('Recover...'),
+        MenuItemButton(
+          child: Text(l10n.menuFileRecover),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onQuit ?? SolutionStorageService.triggerQuit,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyQ, meta: true),
-          child: const Row(
+          child: Row(
             children: [
-              Icon(Icons.exit_to_app, size: 16, color: Colors.redAccent),
-              SizedBox(width: 8),
-              Text('Quit'),
+              const Icon(Icons.exit_to_app, size: 16, color: Colors.redAccent),
+              const SizedBox(width: 8),
+              Text(l10n.menuFileQuit),
             ],
           ),
         ),
       ],
-      child: const Text('File', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuFile, style: const TextStyle(fontSize: 13)),
     );
   }
 
   // 2. Edit Menu
   Widget _buildEditMenu(BuildContext context) {
+    final l10n = context.l10n;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
@@ -786,7 +796,7 @@ class File4BaseMenuBar extends StatelessWidget {
             }
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyZ, meta: true),
-          child: const Text('Undo'),
+          child: Text(l10n.menuEditUndo),
         ),
         MenuItemButton(
           onPressed: () {
@@ -797,7 +807,7 @@ class File4BaseMenuBar extends StatelessWidget {
             }
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true),
-          child: const Text('Redo'),
+          child: Text(l10n.menuEditRedo),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -809,7 +819,7 @@ class File4BaseMenuBar extends StatelessWidget {
             }
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyX, meta: true),
-          child: const Text('Cut'),
+          child: Text(l10n.menuEditCut),
         ),
         MenuItemButton(
           onPressed: () {
@@ -820,7 +830,7 @@ class File4BaseMenuBar extends StatelessWidget {
             }
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyC, meta: true),
-          child: const Text('Copy'),
+          child: Text(l10n.menuEditCopy),
         ),
         MenuItemButton(
           onPressed: () {
@@ -831,7 +841,7 @@ class File4BaseMenuBar extends StatelessWidget {
             }
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyV, meta: true),
-          child: const Text('Paste'),
+          child: Text(l10n.menuEditPaste),
         ),
         MenuItemButton(
           onPressed: () {
@@ -841,7 +851,7 @@ class File4BaseMenuBar extends StatelessWidget {
               EditMenuFocusTracker.instance.clearActiveText(context);
             }
           },
-          child: const Text('Clear'),
+          child: Text(l10n.menuEditClear),
         ),
         MenuItemButton(
           onPressed: () {
@@ -852,65 +862,67 @@ class File4BaseMenuBar extends StatelessWidget {
             }
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyA, meta: true),
-          child: const Text('Select All'),
+          child: Text(l10n.menuEditSelectAll),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
               onPressed: () => onModeChanged(OperationalMode.find),
-              child: const Text('Find/Replace...'),
+              child: Text(l10n.menuEditFindReplaceEllipsis),
             ),
-            const MenuItemButton(
-              child: Text('Find Next'),
+            MenuItemButton(
+              child: Text(l10n.menuEditFindNext),
             ),
-            const MenuItemButton(
-              child: Text('Find Previous'),
+            MenuItemButton(
+              child: Text(l10n.menuEditFindPrevious),
             ),
           ],
-          child: const Text('Find/Replace'),
+          child: Text(l10n.menuEditFindReplace),
         ),
-        const SubmenuButton(
+        SubmenuButton(
           menuChildren: [
             MenuItemButton(
-              child: Text('Check Selection...'),
+              child: Text(l10n.menuEditCheckSelection),
             ),
             MenuItemButton(
-              child: Text('Check Record...'),
+              child: Text(l10n.menuEditCheckRecord),
             ),
             MenuItemButton(
-              child: Text('Correct Word...'),
+              child: Text(l10n.menuEditCorrectWord),
             ),
             MenuItemButton(
-              child: Text('Dictionaries...'),
+              child: Text(l10n.menuEditDictionaries),
             ),
             MenuItemButton(
-              child: Text('Edit User Dictionary...'),
+              child: Text(l10n.menuEditEditUserDictionary),
             ),
             MenuItemButton(
-              child: Text('Options...'),
+              child: Text(l10n.menuEditSpellingOptions),
             ),
           ],
-          child: Text('Spelling'),
+          child: Text(l10n.menuEditSpelling),
         ),
         const Divider(height: 1),
         MenuItemButton(
-          onPressed: onOpenRemote,
-          child: const Text('Preferences...'),
+          onPressed: onPreferences ?? onOpenRemote,
+          shortcut: const SingleActivator(LogicalKeyboardKey.comma, meta: true),
+          child: Text(l10n.menuEditPreferences),
         ),
       ],
-      child: const Text('Edit', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuEdit, style: const TextStyle(fontSize: 13)),
     );
   }
 
   // 3. View Menu
   Widget _buildViewMenu(BuildContext context) {
+    final l10n = context.l10n;
     void handleModeChange(OperationalMode mode) {
       if (!isAuthenticated) {
         if (onSignIn != null) {
           onSignIn!();
         } else {
-          _showNotice(context, 'Authentication Required', 'Please sign in to access database views.');
+          _showNotice(context, l10n.noticeAuthRequiredTitle, l10n.noticeAuthDatabaseViews);
         }
         return;
       }
@@ -923,25 +935,25 @@ class File4BaseMenuBar extends StatelessWidget {
           leadingIcon: activeMode == OperationalMode.browse ? const Icon(Icons.check, size: 14) : null,
           onPressed: () => handleModeChange(OperationalMode.browse),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyB, meta: true),
-          child: const Text('Browse Mode'),
+          child: Text(l10n.menuViewBrowseMode),
         ),
         MenuItemButton(
           leadingIcon: activeMode == OperationalMode.find ? const Icon(Icons.check, size: 14) : null,
           onPressed: () => handleModeChange(OperationalMode.find),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyF, meta: true),
-          child: const Text('Find Mode'),
+          child: Text(l10n.menuViewFindMode),
         ),
         MenuItemButton(
           leadingIcon: activeMode == OperationalMode.layout ? const Icon(Icons.check, size: 14) : null,
           onPressed: () => handleModeChange(OperationalMode.layout),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyL, meta: true),
-          child: const Text('Layout Mode'),
+          child: Text(l10n.menuViewLayoutMode),
         ),
         MenuItemButton(
           leadingIcon: activeMode == OperationalMode.preview ? const Icon(Icons.check, size: 14) : null,
           onPressed: () => handleModeChange(OperationalMode.preview),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyU, meta: true),
-          child: const Text('Preview Mode'),
+          child: Text(l10n.menuViewPreviewMode),
         ),
         const Divider(height: 1),
         MenuItemButton(
@@ -949,42 +961,42 @@ class File4BaseMenuBar extends StatelessWidget {
           onPressed: onTogglePageMargins != null
               ? () => onTogglePageMargins!(!isPageMarginsVisible)
               : null,
-          child: const Text('Page Margins'),
+          child: Text(l10n.menuViewPageMargins),
         ),
         MenuItemButton(
           leadingIcon: isToolbarVisible ? const Icon(Icons.check, size: 14) : null,
           onPressed: () => onToggleToolbar(!isToolbarVisible),
-          child: const Text('Status Toolbar'),
+          child: Text(l10n.menuViewStatusToolbar),
         ),
         MenuItemButton(
           leadingIcon: isFormattingBarVisible ? const Icon(Icons.check, size: 14) : null,
           onPressed: onToggleFormattingBar != null
               ? () => onToggleFormattingBar!(!isFormattingBarVisible)
               : null,
-          child: const Text('Formatting Bar'),
+          child: Text(l10n.menuViewFormattingBar),
         ),
         MenuItemButton(
           leadingIcon: isTextRulerVisible ? const Icon(Icons.check, size: 14) : null,
           onPressed: onToggleTextRuler != null
               ? () => onToggleTextRuler!(!isTextRulerVisible)
               : null,
-          child: const Text('Text Ruler'),
+          child: Text(l10n.menuViewTextRuler),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onZoomIn,
           shortcut: const SingleActivator(LogicalKeyboardKey.equal, meta: true),
-          child: const Text('Zoom In'),
+          child: Text(l10n.menuViewZoomIn),
         ),
         MenuItemButton(
           onPressed: onZoomOut,
           shortcut: const SingleActivator(LogicalKeyboardKey.minus, meta: true),
-          child: const Text('Zoom Out'),
+          child: Text(l10n.menuViewZoomOut),
         ),
         MenuItemButton(
           onPressed: onResetZoom,
           shortcut: const SingleActivator(LogicalKeyboardKey.digit0, meta: true),
-          child: const Text('Actual Size (100%)'),
+          child: Text(l10n.menuViewActualSize),
         ),
         SubmenuButton(
           menuChildren: [
@@ -997,10 +1009,10 @@ class File4BaseMenuBar extends StatelessWidget {
                 child: Text('${(level * 100).round()}%'),
               ),
           ],
-          child: const Text('Zoom Level'),
+          child: Text(l10n.menuViewZoomLevel),
         ),
       ],
-      child: const Text('View', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuView, style: const TextStyle(fontSize: 13)),
     );
   }
 
@@ -1009,6 +1021,7 @@ class File4BaseMenuBar extends StatelessWidget {
   // host); in the other modes there is nothing to insert into, so they are
   // disabled rather than reporting an insertion that did not happen.
   Widget _buildInsertMenu(BuildContext context) {
+    final l10n = context.l10n;
     final media = onInsertMedia;
     final symbol = onInsertSymbol;
     return SubmenuButton(
@@ -1018,80 +1031,81 @@ class File4BaseMenuBar extends StatelessWidget {
           onPressed: media != null
               ? () => media('image')
               : null, // only available in Layout mode
-          child: const Text('Picture...'),
+          child: Text(l10n.menuInsertPicture),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.movie_outlined, size: 16),
           onPressed: media != null
               ? () => media('video')
               : null, // only available in Layout mode
-          child: const Text('Audio/Video...'),
+          child: Text(l10n.menuInsertAudioVideo),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.picture_as_pdf_outlined, size: 16),
           onPressed: media != null
               ? () => media('pdf')
               : null, // only available in Layout mode
-          child: const Text('PDF...'),
+          child: Text(l10n.menuInsertPdf),
         ),
         MenuItemButton(
           onPressed: media != null
               ? () => media('video')
               : null, // only available in Layout mode
-          child: const Text('QuickTime...'),
+          child: Text(l10n.menuInsertQuickTime),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.attach_file, size: 16),
           onPressed: media != null
               ? () => media('file')
               : null, // only available in Layout mode
-          child: const Text('File...'),
+          child: Text(l10n.menuInsertFile),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: symbol != null
               ? () => symbol(LayoutMergeSymbols.currentDate)
               : null, // only available in Layout mode
-          child: const Text('Current Date'),
+          child: Text(l10n.menuInsertCurrentDate),
         ),
         MenuItemButton(
           onPressed: symbol != null
               ? () => symbol(LayoutMergeSymbols.currentTime)
               : null, // only available in Layout mode
-          child: const Text('Current Time'),
+          child: Text(l10n.menuInsertCurrentTime),
         ),
         MenuItemButton(
           onPressed: symbol != null
               ? () => symbol(LayoutMergeSymbols.currentUser)
               : null, // only available in Layout mode
-          child: const Text('Current User Name'),
+          child: Text(l10n.menuInsertCurrentUserName),
         ),
         if (symbol != null)
           MenuItemButton(
             onPressed: () => symbol(LayoutMergeSymbols.pageNumber),
-            child: const Text('Page Number'),
+            child: Text(l10n.menuInsertPageNumber),
           ),
         const Divider(height: 1),
-        const MenuItemButton(
-          child: Text('From Index...'),
+        MenuItemButton(
+          child: Text(l10n.menuInsertFromIndex),
         ),
-        const MenuItemButton(
-          child: Text('From Last Visited Record'),
+        MenuItemButton(
+          child: Text(l10n.menuInsertFromLastVisitedRecord),
         ),
         MenuItemButton(
           onPressed: onInsertMergeField,
-          child: const Text('Merge Field...'),
+          child: Text(l10n.menuInsertMergeField),
         ),
-        const MenuItemButton(
-          child: Text('Merge Variable...'),
+        MenuItemButton(
+          child: Text(l10n.menuInsertMergeVariable),
         ),
       ],
-      child: const Text('Insert', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuInsert, style: const TextStyle(fontSize: 13)),
     );
   }
 
   // 5. Format Menu
   Widget _buildFormatMenu(BuildContext context) {
+    final l10n = context.l10n;
     final s = activeObjectStyle;
     final apply = onFormatStyleChanged;
 
@@ -1107,7 +1121,7 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: apply != null
                   ? () => apply(s.copyWith(clearFontFamily: true))
                   : null,
-              child: const Text('System Default'),
+              child: Text(l10n.menuFormatSystemDefault),
             ),
             const Divider(height: 1),
             for (final fam in kLayoutFontFamilies)
@@ -1121,7 +1135,7 @@ class File4BaseMenuBar extends StatelessWidget {
                 child: Text(fam, style: TextStyle(fontFamily: fam)),
               ),
           ],
-          child: const Text('Font'),
+          child: Text(l10n.menuFormatFont),
         ),
 
         // 2. Size Submenu
@@ -1135,10 +1149,10 @@ class File4BaseMenuBar extends StatelessWidget {
                 onPressed: apply != null
                     ? () => apply(s.copyWith(fontSize: sz))
                     : null,
-                child: Text('${sz.round()} pt'),
+                child: Text(l10n.menuFormatSizePt(sz.round())),
               ),
           ],
-          child: const Text('Size'),
+          child: Text(l10n.menuFormatSize),
         ),
 
         // 3. Style Submenu
@@ -1163,7 +1177,7 @@ class File4BaseMenuBar extends StatelessWidget {
                         ),
                       )
                   : null,
-              child: const Text('Plain Text'),
+              child: Text(l10n.menuFormatPlainText),
             ),
             const Divider(height: 1),
             MenuItemButton(
@@ -1177,7 +1191,10 @@ class File4BaseMenuBar extends StatelessWidget {
                         ),
                       )
                   : null,
-              child: const Text('Bold', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: Text(
+                l10n.menuFormatBold,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
             ),
             MenuItemButton(
               leadingIcon: s.fontStyle == 'italic'
@@ -1190,16 +1207,19 @@ class File4BaseMenuBar extends StatelessWidget {
                         ),
                       )
                   : null,
-              child: const Text('Italic', style: TextStyle(fontStyle: FontStyle.italic)),
+              child: Text(
+                l10n.menuFormatItalic,
+                style: const TextStyle(fontStyle: FontStyle.italic),
+              ),
             ),
             MenuItemButton(
               leadingIcon: s.underline ? const Icon(Icons.check, size: 14) : null,
               onPressed: apply != null
                   ? () => apply(s.copyWith(underline: !s.underline))
                   : null,
-              child: const Text(
-                'Underline',
-                style: TextStyle(decoration: TextDecoration.underline),
+              child: Text(
+                l10n.menuFormatUnderline,
+                style: const TextStyle(decoration: TextDecoration.underline),
               ),
             ),
             MenuItemButton(
@@ -1207,9 +1227,9 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: apply != null
                   ? () => apply(s.copyWith(strikethrough: !s.strikethrough))
                   : null,
-              child: const Text(
-                'Strikethrough',
-                style: TextStyle(decoration: TextDecoration.lineThrough),
+              child: Text(
+                l10n.menuFormatStrikethrough,
+                style: const TextStyle(decoration: TextDecoration.lineThrough),
               ),
             ),
             const Divider(height: 1),
@@ -1222,7 +1242,7 @@ class File4BaseMenuBar extends StatelessWidget {
                         ),
                       )
                   : null,
-              child: const Text('UPPERCASE'),
+              child: Text(l10n.menuFormatUppercase),
             ),
             MenuItemButton(
               leadingIcon: s.textCase == 'lower' ? const Icon(Icons.check, size: 14) : null,
@@ -1233,7 +1253,7 @@ class File4BaseMenuBar extends StatelessWidget {
                         ),
                       )
                   : null,
-              child: const Text('lowercase'),
+              child: Text(l10n.menuFormatLowercase),
             ),
             MenuItemButton(
               leadingIcon: s.textCase == 'title' ? const Icon(Icons.check, size: 14) : null,
@@ -1244,20 +1264,20 @@ class File4BaseMenuBar extends StatelessWidget {
                         ),
                       )
                   : null,
-              child: const Text('Title Case'),
+              child: Text(l10n.menuFormatTitleCase),
             ),
           ],
-          child: const Text('Style'),
+          child: Text(l10n.menuFormatStyle),
         ),
 
         // 4. Align Text Submenu
         SubmenuButton(
           menuChildren: [
-            for (final entry in const [
-              ('left', 'Left', Icons.format_align_left),
-              ('center', 'Center', Icons.format_align_center),
-              ('right', 'Right', Icons.format_align_right),
-              ('justify', 'Full (Justify)', Icons.format_align_justify),
+            for (final entry in [
+              ('left', l10n.menuFormatAlignLeft, Icons.format_align_left),
+              ('center', l10n.menuFormatAlignCenter, Icons.format_align_center),
+              ('right', l10n.menuFormatAlignRight, Icons.format_align_right),
+              ('justify', l10n.menuFormatAlignJustify, Icons.format_align_justify),
             ])
               MenuItemButton(
                 leadingIcon: s.textAlign == entry.$1
@@ -1269,18 +1289,18 @@ class File4BaseMenuBar extends StatelessWidget {
                 child: Text(entry.$2),
               ),
           ],
-          child: const Text('Align Text'),
+          child: Text(l10n.menuFormatAlignText),
         ),
 
         // 5. Line Spacing Submenu
         SubmenuButton(
           menuChildren: [
-            for (final sp in const [
-              (1.0, 'Single (1.0x)'),
-              (1.15, '1.15x'),
-              (1.2, 'Standard (1.2x)'),
-              (1.5, 'One and a Half (1.5x)'),
-              (2.0, 'Double (2.0x)'),
+            for (final sp in [
+              (1.0, l10n.menuFormatLineSpacingSingle),
+              (1.15, l10n.menuFormatLineSpacing115),
+              (1.2, l10n.menuFormatLineSpacingStandard),
+              (1.5, l10n.menuFormatLineSpacingOneHalf),
+              (2.0, l10n.menuFormatLineSpacingDouble),
             ])
               MenuItemButton(
                 leadingIcon: (s.lineSpacing - sp.$1).abs() < 0.02
@@ -1292,7 +1312,7 @@ class File4BaseMenuBar extends StatelessWidget {
                 child: Text(sp.$2),
               ),
           ],
-          child: const Text('Line Spacing'),
+          child: Text(l10n.menuFormatLineSpacing),
         ),
 
         // 6. Text Color Submenu
@@ -1305,7 +1325,7 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: apply != null
                   ? () => apply(s.copyWith(clearTextColor: true))
                   : null,
-              child: const Text('Default / Theme Color'),
+              child: Text(l10n.menuFormatDefaultThemeColor),
             ),
             const Divider(height: 1),
             for (final entry in kFormatColorSwatches.entries)
@@ -1327,43 +1347,43 @@ class File4BaseMenuBar extends StatelessWidget {
                 onPressed: apply != null
                     ? () => apply(s.copyWith(textColor: entry.key))
                     : null,
-                child: Text(entry.value),
+                child: Text(localizedFormatColorName(l10n, entry.key, entry.value)),
               ),
           ],
-          child: const Text('Text Color'),
+          child: Text(l10n.menuFormatTextColor),
         ),
 
         const Divider(height: 1),
         MenuItemButton(
           leadingIcon: const Icon(Icons.font_download_outlined, size: 15),
           onPressed: onOpenTextFormat,
-          child: const Text('Text...'),
+          child: Text(l10n.menuFormatText),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.numbers, size: 15),
           onPressed: onOpenNumberFormat,
-          child: const Text('Number...'),
+          child: Text(l10n.menuFormatNumber),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.calendar_today_outlined, size: 15),
           onPressed: onOpenDateFormat,
-          child: const Text('Date...'),
+          child: Text(l10n.menuFormatDate),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.access_time, size: 15),
           onPressed: onOpenTimeFormat,
-          child: const Text('Time...'),
+          child: Text(l10n.menuFormatTime),
         ),
         MenuItemButton(
           leadingIcon: const Icon(Icons.schedule_outlined, size: 15),
           onPressed: onOpenTimestampFormat,
-          child: const Text('Timestamp...'),
+          child: Text(l10n.menuFormatTimestamp),
         ),
         const Divider(height: 1),
         MenuItemButton(
           leadingIcon: const Icon(Icons.auto_fix_high, size: 15),
           onPressed: onOpenConditionalFormatting,
-          child: const Text('Conditional...'),
+          child: Text(l10n.menuFormatConditional),
         ),
 
         if (activeMode == OperationalMode.layout) ...[
@@ -1373,36 +1393,36 @@ class File4BaseMenuBar extends StatelessWidget {
               MenuItemButton(
                 leadingIcon: const Icon(Icons.align_horizontal_left, size: 15),
                 onPressed: onAlignObjects != null ? () => onAlignObjects!('left') : null,
-                child: const Text('Align Left Edges'),
+                child: Text(l10n.menuFormatAlignLeftEdges),
               ),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.align_horizontal_center, size: 15),
                 onPressed: onAlignObjects != null ? () => onAlignObjects!('center_h') : null,
-                child: const Text('Align Horizontal Centers'),
+                child: Text(l10n.menuFormatAlignHorizontalCenters),
               ),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.align_horizontal_right, size: 15),
                 onPressed: onAlignObjects != null ? () => onAlignObjects!('right') : null,
-                child: const Text('Align Right Edges'),
+                child: Text(l10n.menuFormatAlignRightEdges),
               ),
               const Divider(height: 1),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.align_vertical_top, size: 15),
                 onPressed: onAlignObjects != null ? () => onAlignObjects!('top') : null,
-                child: const Text('Align Top Edges'),
+                child: Text(l10n.menuFormatAlignTopEdges),
               ),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.align_vertical_center, size: 15),
                 onPressed: onAlignObjects != null ? () => onAlignObjects!('center_v') : null,
-                child: const Text('Align Vertical Centers'),
+                child: Text(l10n.menuFormatAlignVerticalCenters),
               ),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.align_vertical_bottom, size: 15),
                 onPressed: onAlignObjects != null ? () => onAlignObjects!('bottom') : null,
-                child: const Text('Align Bottom Edges'),
+                child: Text(l10n.menuFormatAlignBottomEdges),
               ),
             ],
-            child: const Text('Align Object'),
+            child: Text(l10n.menuFormatAlignObject),
           ),
           SubmenuButton(
             menuChildren: [
@@ -1411,168 +1431,170 @@ class File4BaseMenuBar extends StatelessWidget {
                 onPressed: onDistributeObjects != null
                     ? () => onDistributeObjects!('horizontal')
                     : null,
-                child: const Text('Distribute Horizontally'),
+                child: Text(l10n.menuFormatDistributeHorizontally),
               ),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.vertical_distribute, size: 15),
                 onPressed: onDistributeObjects != null
                     ? () => onDistributeObjects!('vertical')
                     : null,
-                child: const Text('Distribute Vertically'),
+                child: Text(l10n.menuFormatDistributeVertically),
               ),
             ],
-            child: const Text('Distribute'),
+            child: Text(l10n.menuFormatDistribute),
           ),
           SubmenuButton(
             menuChildren: [
               MenuItemButton(
                 leadingIcon: const Icon(Icons.swap_horiz, size: 15),
                 onPressed: onResizeObjects != null ? () => onResizeObjects!('width') : null,
-                child: const Text('Match Smallest/Primary Width'),
+                child: Text(l10n.menuFormatMatchWidth),
               ),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.swap_vert, size: 15),
                 onPressed: onResizeObjects != null ? () => onResizeObjects!('height') : null,
-                child: const Text('Match Smallest/Primary Height'),
+                child: Text(l10n.menuFormatMatchHeight),
               ),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.aspect_ratio, size: 15),
                 onPressed: onResizeObjects != null ? () => onResizeObjects!('both') : null,
-                child: const Text('Match Both Width & Height'),
+                child: Text(l10n.menuFormatMatchBoth),
               ),
               const Divider(height: 1),
               MenuItemButton(
                 leadingIcon: const Icon(Icons.grid_on, size: 15),
                 onPressed: onResizeObjects != null ? () => onResizeObjects!('grid') : null,
-                child: const Text('Snap Bounds to 8pt Grid'),
+                child: Text(l10n.menuFormatSnapToGrid),
               ),
             ],
-            child: const Text('Resize'),
+            child: Text(l10n.menuFormatResize),
           ),
         ],
       ],
-      child: const Text('Format', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuFormat, style: const TextStyle(fontSize: 13)),
     );
   }
 
   // 6. Records Menu (Browse Mode)
   Widget _buildRecordsMenu(BuildContext context) {
+    final l10n = context.l10n;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
           onPressed: onNewRecord,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-          child: const Text('New Record'),
+          child: Text(l10n.menuRecordsNewRecord),
         ),
         MenuItemButton(
           onPressed: onDuplicateRecord,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyD, meta: true),
-          child: const Text('Duplicate Record'),
+          child: Text(l10n.menuRecordsDuplicateRecord),
         ),
         MenuItemButton(
           onPressed: onDeleteRecord,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyE, meta: true),
-          child: const Text('Delete Record...'),
+          child: Text(l10n.menuRecordsDeleteRecord),
         ),
-        const MenuItemButton(
-          child: Text('Delete All Records...'),
+        MenuItemButton(
+          child: Text(l10n.menuRecordsDeleteAllRecords),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onCommitRecord,
-          child: const Text('Commit Record'),
+          child: Text(l10n.menuRecordsCommitRecord),
         ),
         MenuItemButton(
           onPressed: onRevertRecord,
-          child: const Text('Revert Record'),
+          child: Text(l10n.menuRecordsRevertRecord),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
               onPressed: onGoToRecord == null ? null : () => onGoToRecord!('first'),
-              child: const Text('First'),
+              child: Text(l10n.menuNavFirst),
             ),
             MenuItemButton(
               onPressed: onGoToRecord == null ? null : () => onGoToRecord!('previous'),
-              child: const Text('Previous'),
+              child: Text(l10n.menuNavPrevious),
             ),
             MenuItemButton(
               onPressed: onGoToRecord == null ? null : () => onGoToRecord!('next'),
-              child: const Text('Next'),
+              child: Text(l10n.menuNavNext),
             ),
             MenuItemButton(
               onPressed: onGoToRecord == null ? null : () => onGoToRecord!('last'),
-              child: const Text('Last'),
+              child: Text(l10n.menuNavLast),
             ),
             MenuItemButton(
               onPressed: onGoToRecord == null ? null : () => _promptGoToRecord(context),
-              child: const Text('By Number...'),
+              child: Text(l10n.menuNavByNumber),
             ),
           ],
-          child: const Text('Go to Record'),
+          child: Text(l10n.menuRecordsGoToRecord),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onShowAllRecords,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
-          child: const Text('Show All Records'),
+          child: Text(l10n.menuRecordsShowAllRecords),
         ),
-        _buildSavedFindsMenu(),
-        const MenuItemButton(
-          child: Text('Show Omitted Only'),
+        _buildSavedFindsMenu(context),
+        MenuItemButton(
+          child: Text(l10n.menuRecordsShowOmittedOnly),
         ),
-        const MenuItemButton(
-          shortcut: SingleActivator(LogicalKeyboardKey.keyM, meta: true),
-          child: Text('Omit Record'),
+        MenuItemButton(
+          shortcut: const SingleActivator(LogicalKeyboardKey.keyM, meta: true),
+          child: Text(l10n.menuRecordsOmitRecord),
         ),
-        const MenuItemButton(
-          child: Text('Omit Multiple...'),
+        MenuItemButton(
+          child: Text(l10n.menuRecordsOmitMultiple),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onSortRecords,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true),
-          child: const Text('Sort Records...'),
+          child: Text(l10n.menuRecordsSortRecords),
         ),
         MenuItemButton(
           onPressed: onUnsortRecords,
-          child: const Text('Unsort'),
+          child: Text(l10n.menuRecordsUnsort),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: () => _showRoadmapDialog(context, 'Replace Field Contents', 'Roadmap Phase 4', 'Batch replace field values across all found records with calculation, serial, or constant.'),
           shortcut: const SingleActivator(LogicalKeyboardKey.equal, meta: true),
-          child: const Text('Replace Field Contents...'),
+          child: Text(l10n.menuRecordsReplaceFieldContents),
         ),
         MenuItemButton(
           onPressed: onRelookupFieldContents,
-          child: const Text('Relookup Field Contents'),
+          child: Text(l10n.menuRecordsRelookupFieldContents),
         ),
       ],
-      child: const Text('Records', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuRecords, style: const TextStyle(fontSize: 13)),
     );
   }
 
   /// Records > Saved Finds (#34): save the requests in hand under a name,
   /// run one of the finds saved on this table, or open the list to rename
   /// and delete them.
-  Widget _buildSavedFindsMenu() {
+  Widget _buildSavedFindsMenu(BuildContext context) {
+    final l10n = context.l10n;
     final run = onRunSavedFind;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
           onPressed: onSaveCurrentFind,
-          child: const Text('Save Current Find...'),
+          child: Text(l10n.menuRecordsSaveCurrentFind),
         ),
         MenuItemButton(
           onPressed: savedFinds.isEmpty ? null : onManageSavedFinds,
-          child: const Text('Edit Saved Finds...'),
+          child: Text(l10n.menuRecordsEditSavedFinds),
         ),
         const Divider(height: 1),
         if (savedFinds.isEmpty)
-          const MenuItemButton(
-            child: Text('No saved finds for this table'),
+          MenuItemButton(
+            child: Text(l10n.menuRecordsNoSavedFinds),
           )
         else
           for (final find in savedFinds)
@@ -1581,7 +1603,7 @@ class File4BaseMenuBar extends StatelessWidget {
               child: Text(find.name),
             ),
       ],
-      child: const Text('Saved Finds'),
+      child: Text(l10n.menuRecordsSavedFinds),
     );
   }
 
@@ -1590,64 +1612,65 @@ class File4BaseMenuBar extends StatelessWidget {
   // Find mode holds several requests: the records that match any of them,
   // minus the records matched by a request marked Omit.
   Widget _buildRequestsMenu(BuildContext context) {
+    final l10n = context.l10n;
     final goTo = onGoToFindRequest;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
           onPressed: onPerformFind,
           shortcut: const SingleActivator(LogicalKeyboardKey.enter),
-          child: const Text('Perform Find'),
+          child: Text(l10n.menuRequestsPerformFind),
         ),
         MenuItemButton(
           onPressed: onNewFindRequest,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyN, meta: true),
-          child: const Text('New Request'),
+          child: Text(l10n.menuRequestsNewRequest),
         ),
         MenuItemButton(
           onPressed: onDuplicateFindRequest,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyD, meta: true),
-          child: const Text('Duplicate Request'),
+          child: Text(l10n.menuRequestsDuplicateRequest),
         ),
         MenuItemButton(
           onPressed: onDeleteFindRequest,
           shortcut: const SingleActivator(LogicalKeyboardKey.keyE, meta: true),
-          child: const Text('Delete Request'),
+          child: Text(l10n.menuRequestsDeleteRequest),
         ),
         MenuItemButton(
           onPressed: onDeleteAllFindRequests,
-          child: const Text('Delete All Requests'),
+          child: Text(l10n.menuRequestsDeleteAllRequests),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onToggleFindOmit,
-          child: const Text('Include / Omit'),
+          child: Text(l10n.menuRequestsIncludeOmit),
         ),
         const Divider(height: 1),
         SubmenuButton(
           menuChildren: [
             MenuItemButton(
               onPressed: goTo == null ? null : () => goTo('first'),
-              child: const Text('First'),
+              child: Text(l10n.menuNavFirst),
             ),
             MenuItemButton(
               onPressed: goTo == null ? null : () => goTo('previous'),
-              child: const Text('Previous'),
+              child: Text(l10n.menuNavPrevious),
             ),
             MenuItemButton(
               onPressed: goTo == null ? null : () => goTo('next'),
-              child: const Text('Next'),
+              child: Text(l10n.menuNavNext),
             ),
             MenuItemButton(
               onPressed: goTo == null ? null : () => goTo('last'),
-              child: const Text('Last'),
+              child: Text(l10n.menuNavLast),
             ),
           ],
-          child: const Text('Go to Request'),
+          child: Text(l10n.menuRequestsGoToRequest),
         ),
         const Divider(height: 1),
         // The same submenu as in Records, because the criteria to save are
         // the ones being typed here (#34).
-        _buildSavedFindsMenu(),
+        _buildSavedFindsMenu(context),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: () {
@@ -1655,15 +1678,19 @@ class File4BaseMenuBar extends StatelessWidget {
             if (onShowAllRecords != null) onShowAllRecords!();
           },
           shortcut: const SingleActivator(LogicalKeyboardKey.keyJ, meta: true),
-          child: const Text('Show All Records (Cancel Find)'),
+          child: Text(l10n.menuRequestsShowAllCancelFind),
         ),
       ],
-      child: const Text('Requests', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+      child: Text(
+        l10n.menuRequests,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+      ),
     );
   }
 
   // 7. Scripts Menu
   Widget _buildScriptsMenu(BuildContext context) {
+    final l10n = context.l10n;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
@@ -1674,19 +1701,20 @@ class File4BaseMenuBar extends StatelessWidget {
             'The Script Workspace provides an action-block programming environment to automate records, UI navigation, validations, and custom business logic.',
           ),
           shortcut: const SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true),
-          child: const Text('Script Workspace...'),
+          child: Text(l10n.menuScriptsWorkspace),
         ),
         const Divider(height: 1),
-        const MenuItemButton(
-          child: Text('[Custom User Scripts List]'),
+        MenuItemButton(
+          child: Text(l10n.menuScriptsCustomListPlaceholder),
         ),
       ],
-      child: const Text('Scripts', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuScripts, style: const TextStyle(fontSize: 13)),
     );
   }
 
   // 8. Tools Menu
   Widget _buildToolsMenu(BuildContext context) {
+    final l10n = context.l10n;
     // A tool that does not exist is shown disabled. The Tools menu used to
     // open a "roadmap" dialog for each of them, which read as though the
     // tool were there (#48).
@@ -1694,42 +1722,43 @@ class File4BaseMenuBar extends StatelessWidget {
       menuChildren: [
         MenuItemButton(
           onPressed: onScriptDebugger,
-          child: const Text('Script Debugger'),
+          child: Text(l10n.menuToolsScriptDebugger),
         ),
         MenuItemButton(
           onPressed: onDataViewer,
-          child: const Text('Data Viewer'),
+          child: Text(l10n.menuToolsDataViewer),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: onDesignReport,
-          child: const Text('Database Design Report...'),
+          child: Text(l10n.menuToolsDatabaseDesignReport),
         ),
         MenuItemButton(
           onPressed: onSaveDesignAsText,
-          child: const Text('Save a Copy as XML...'),
+          child: Text(l10n.menuToolsSaveCopyAsXml),
         ),
         const Divider(height: 1),
-        _buildCustomMenusSubmenu(),
+        _buildCustomMenusSubmenu(context),
         MenuItemButton(
           onPressed: onDeveloperUtilities,
-          child: const Text('Developer Utilities...'),
+          child: Text(l10n.menuToolsDeveloperUtilities),
         ),
         MenuItemButton(
           onPressed: onManageThemes,
-          child: const Text('Layout Themes...'),
+          child: Text(l10n.menuToolsLayoutThemes),
         ),
       ],
-      child: const Text('Tools', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuTools, style: const TextStyle(fontSize: 13)),
     );
   }
 
-  Widget _buildCustomMenusSubmenu() {
+  Widget _buildCustomMenusSubmenu(BuildContext context) {
+    final l10n = context.l10n;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
           onPressed: onManageCustomMenus,
-          child: const Text('Manage Custom Menus...'),
+          child: Text(l10n.menuToolsManageCustomMenus),
         ),
         if (menuSets.isNotEmpty) ...[
           const Divider(height: 1),
@@ -1740,7 +1769,7 @@ class File4BaseMenuBar extends StatelessWidget {
             onPressed: onSelectMenuSet == null
                 ? null
                 : () => onSelectMenuSet!(null),
-            child: const Text('[Standard File4Base Menus]'),
+            child: Text(l10n.menuToolsStandardMenus),
           ),
           for (final set in menuSets)
             MenuItemButton(
@@ -1754,12 +1783,13 @@ class File4BaseMenuBar extends StatelessWidget {
             ),
         ],
       ],
-      child: const Text('Custom Menus'),
+      child: Text(l10n.menuToolsCustomMenus),
     );
   }
 
   // 8b. Server Tools Menu
   Widget _buildServerToolsMenu(BuildContext context) {
+    final l10n = context.l10n;
     VoidCallback? trigger(String key) {
       if (!isAuthenticated || onServerToolSelected == null) return null;
       return () => onServerToolSelected!(key);
@@ -1767,7 +1797,7 @@ class File4BaseMenuBar extends StatelessWidget {
 
     final latestLabel = (containerLatestVersion != null && containerLatestVersion!.isNotEmpty)
         ? 'v$containerLatestVersion'
-        : 'NEW';
+        : l10n.menuServerToolsNewBadge;
 
     return SubmenuButton(
       menuChildren: [
@@ -1786,53 +1816,53 @@ class File4BaseMenuBar extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
-                    'UPDATE $latestLabel',
+                    l10n.menuServerToolsUpdateBadge(latestLabel),
                     style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 )
               : null,
-          child: const Text('Containers & Services...'),
+          child: Text(l10n.menuServerToolsContainers),
         ),
         MenuItemButton(
           onPressed: trigger('backups'),
           leadingIcon: const Icon(Icons.backup_outlined, size: 18),
-          child: const Text('Backups & Snapshots...'),
+          child: Text(l10n.menuServerToolsBackups),
         ),
         MenuItemButton(
           onPressed: trigger('domain_tls'),
           leadingIcon: const Icon(Icons.https_outlined, size: 18),
-          child: const Text('Domain & SSL/TLS Certificates (ACME)...'),
+          child: Text(l10n.menuServerToolsDomainTls),
         ),
         MenuItemButton(
           onPressed: trigger('telemetry'),
           leadingIcon: const Icon(Icons.insights_outlined, size: 18),
-          child: const Text('API Telemetry & Live Metrics...'),
+          child: Text(l10n.menuServerToolsTelemetry),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: trigger('sessions'),
           leadingIcon: const Icon(Icons.people_alt_outlined, size: 18),
-          child: const Text('Connected Clients & Sessions...'),
+          child: Text(l10n.menuServerToolsSessions),
         ),
         MenuItemButton(
           onPressed: trigger('schedules'),
           leadingIcon: const Icon(Icons.schedule_outlined, size: 18),
-          child: const Text('Scheduled Tasks & Cron Scripts...'),
+          child: Text(l10n.menuServerToolsSchedules),
         ),
         MenuItemButton(
           onPressed: trigger('audit_logs'),
           leadingIcon: const Icon(Icons.policy_outlined, size: 18),
-          child: const Text('Audit & Security Logs...'),
+          child: Text(l10n.menuServerToolsAuditLogs),
         ),
         MenuItemButton(
           onPressed: trigger('maintenance'),
           leadingIcon: const Icon(Icons.build_circle_outlined, size: 18),
-          child: const Text('Database Maintenance & Optimizer...'),
+          child: Text(l10n.menuServerToolsMaintenance),
         ),
         MenuItemButton(
           onPressed: trigger('notifications'),
           leadingIcon: const Icon(Icons.notifications_active_outlined, size: 18),
-          child: const Text('Server Notifications, SMTP & Webhooks...'),
+          child: Text(l10n.menuServerToolsNotifications),
         ),
         const Divider(height: 1),
         // The same "Manage" menu as File > Manage, at the end of Server Tools
@@ -1843,51 +1873,51 @@ class File4BaseMenuBar extends StatelessWidget {
             MenuItemButton(
               onPressed: onManageDatabase,
               leadingIcon: const Icon(Icons.storage_outlined, size: 18),
-              child: const Text('Database...'),
+              child: Text(l10n.menuManageDatabase),
             ),
             MenuItemButton(
               onPressed: onManageSecurity,
               leadingIcon: const Icon(Icons.security_outlined, size: 18),
-              child: const Text('Security...'),
+              child: Text(l10n.menuManageSecurity),
             ),
             MenuItemButton(
               onPressed: onManageValueLists,
               leadingIcon: const Icon(Icons.list_alt_outlined, size: 18),
-              child: const Text('Value Lists...'),
+              child: Text(l10n.menuManageValueLists),
             ),
             MenuItemButton(
               onPressed: onManageFileReferences,
               leadingIcon: const Icon(Icons.link, size: 18),
-              child: const Text('File References...'),
+              child: Text(l10n.menuManageFileReferences),
             ),
             MenuItemButton(
               onPressed: onManageDataSources,
               leadingIcon: const Icon(Icons.cable_outlined, size: 18),
-              child: const Text('External Data Sources...'),
+              child: Text(l10n.menuManageExternalDataSources),
             ),
             MenuItemButton(
               onPressed: onManageLayouts ?? () => onModeChanged(OperationalMode.layout),
               leadingIcon: const Icon(Icons.dashboard_customize_outlined, size: 18),
-              child: const Text('Layouts...'),
+              child: Text(l10n.menuManageLayouts),
             ),
             MenuItemButton(
               onPressed: onManageScripts ?? onScriptWorkspace,
               leadingIcon: const Icon(Icons.code, size: 18),
-              child: const Text('Scripts...'),
+              child: Text(l10n.menuManageScripts),
             ),
             MenuItemButton(
               onPressed: onManageScriptTriggers,
               leadingIcon: const Icon(Icons.bolt, size: 18),
-              child: const Text('Script Triggers...'),
+              child: Text(l10n.menuManageScriptTriggers),
             ),
           ],
-          child: const Text('Manage'),
+          child: Text(l10n.menuFileManage),
         ),
       ],
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('Server Tools', style: TextStyle(fontSize: 13)),
+          Text(l10n.menuServerTools, style: const TextStyle(fontSize: 13)),
           if (containerUpdateAvailable) ...[
             const SizedBox(width: 5),
             Container(
@@ -1913,40 +1943,41 @@ class File4BaseMenuBar extends StatelessWidget {
 
   // 9. Window Menu
   Widget _buildWindowMenu(BuildContext context) {
+    final l10n = context.l10n;
     return SubmenuButton(
       menuChildren: [
-        const MenuItemButton(
-          shortcut: SingleActivator(LogicalKeyboardKey.keyM, meta: true),
-          child: Text('Minimize'),
+        MenuItemButton(
+          shortcut: const SingleActivator(LogicalKeyboardKey.keyM, meta: true),
+          child: Text(l10n.menuWindowMinimize),
         ),
-        const MenuItemButton(
-          child: Text('Zoom'),
-        ),
-        const Divider(height: 1),
-        const MenuItemButton(
-          child: Text('Tile Horizontally'),
-        ),
-        const MenuItemButton(
-          child: Text('Tile Vertically'),
-        ),
-        const MenuItemButton(
-          child: Text('Cascade'),
+        MenuItemButton(
+          child: Text(l10n.menuWindowZoom),
         ),
         const Divider(height: 1),
-        const MenuItemButton(
-          child: Text('New Window'),
+        MenuItemButton(
+          child: Text(l10n.menuWindowTileHorizontally),
         ),
-        const MenuItemButton(
-          child: Text('Show Window'),
+        MenuItemButton(
+          child: Text(l10n.menuWindowTileVertically),
+        ),
+        MenuItemButton(
+          child: Text(l10n.menuWindowCascade),
+        ),
+        const Divider(height: 1),
+        MenuItemButton(
+          child: Text(l10n.menuWindowNewWindow),
+        ),
+        MenuItemButton(
+          child: Text(l10n.menuWindowShowWindow),
         ),
         const Divider(height: 1),
         MenuItemButton(
           leadingIcon: const Icon(Icons.check, size: 14),
           onPressed: () {},
-          child: const Text('1 File4Base (Main Workspace)'),
+          child: Text(l10n.menuWindowMainWorkspace),
         ),
       ],
-      child: const Text('Window', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuWindow, style: const TextStyle(fontSize: 13)),
     );
   }
 
@@ -1959,46 +1990,47 @@ class File4BaseMenuBar extends StatelessWidget {
 
   // 10. Help Menu
   Widget _buildHelpMenu(BuildContext context) {
+    final l10n = context.l10n;
     return SubmenuButton(
       menuChildren: [
         MenuItemButton(
           onPressed: () => _launchUrl('https://file4base.github.io/file4base-app/'),
           leadingIcon: const Icon(Icons.help_center_outlined, size: 18),
-          child: const Text('File4Base Help'),
+          child: Text(l10n.menuHelpFile4BaseHelp),
         ),
         MenuItemButton(
           onPressed: () => _launchUrl('https://file4base.github.io/file4base-app/#guides'),
           leadingIcon: const Icon(Icons.menu_book_outlined, size: 18),
-          child: const Text('Resource Center'),
+          child: Text(l10n.menuHelpResourceCenter),
         ),
         MenuItemButton(
           onPressed: () => _launchUrl('https://file4base.github.io/file4base-app/#rest-api'),
           leadingIcon: const Icon(Icons.description_outlined, size: 18),
-          child: const Text('Product Documentation'),
+          child: Text(l10n.menuHelpProductDocumentation),
         ),
         MenuItemButton(
           onPressed: () => _launchUrl('https://github.com/file4base/file4base-app/discussions'),
           leadingIcon: const Icon(Icons.forum_outlined, size: 18),
-          child: const Text('File4Base Community'),
+          child: Text(l10n.menuHelpCommunity),
         ),
         MenuItemButton(
           onPressed: () => IssuesGuideDialog.show(context),
           leadingIcon: const Icon(Icons.support_agent_outlined, size: 18),
-          child: const Text('Service & Support...'),
+          child: Text(l10n.menuHelpServiceSupport),
         ),
         const Divider(height: 1),
         MenuItemButton(
           onPressed: () => CheckUpdatesDialog.show(context),
           leadingIcon: const Icon(Icons.system_update_outlined, size: 18),
-          child: const Text('Check for Updates...'),
+          child: Text(l10n.menuHelpCheckForUpdates),
         ),
         MenuItemButton(
           onPressed: onAbout,
           leadingIcon: const Icon(Icons.info_outline, size: 18),
-          child: const Text('About File4Base'),
+          child: Text(l10n.menuHelpAbout),
         ),
       ],
-      child: const Text('Help', style: TextStyle(fontSize: 13)),
+      child: Text(l10n.menuHelp, style: const TextStyle(fontSize: 13)),
     );
   }
 }
