@@ -238,7 +238,14 @@ class ScriptStepModel {
     }
   }
 
+  /// What the FileMaker migration says about a converted step that cannot
+  /// run as written (an Import Records with no transfer yet, a call to a
+  /// deleted script...), or an empty string.
+  String get migrationNote => params['migration_note']?.toString().trim() ?? '';
+
   String get previewText {
+    final note = migrationNote;
+    if (note.isNotEmpty) return '[Needs attention: $note]';
     switch (stepType) {
       case 'go_to_layout':
         return '[${params['layout_name'] ?? 'Original layout'}]';

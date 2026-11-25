@@ -164,6 +164,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   String? _error;
   int _currentIndex = 0;
   bool _isFoundSet = false;
+
+  /// The find requests behind the found set, so that the records of it not
+  /// read yet can be (Replace Field Contents covers them all); null when the
+  /// found set is every record, or [_foundSetInHand].
+  List<Map<String, dynamic>>? _foundSetFind;
+
+  /// The found set is the records in hand and nothing else (Show Omitted
+  /// Only builds it from them).
+  bool _foundSetInHand = false;
+
+  /// Records omitted from the found set since it was found.
+  final Set<String> _omittedIds = <String>{};
   String? _lastFocusedFindField;
   String? _lastFocusedBrowseField;
   String _viewMode = 'form'; // 'form' (layout), 'list' (record list) or 'table' (spreadsheet grid)
@@ -1543,11 +1555,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         ? _records[_currentIndex]['id']?.toString()
         : null;
     final keepFoundSet = loadAll && _isFoundSet;
-    final findRequests = keepFoundSet ? _findRequestPayload() : const <Map<String, dynamic>>[];
+    final findRequests =
+        keepFoundSet ? (_foundSetFind ?? _findRequestPayload()) : const <Map<String, dynamic>>[];
     setState(() {
       _isLoading = true;
       _error = null;
       if (!preserveCurrent && !keepFoundSet) _isFoundSet = false;
+      if (!keepFoundSet) {
+        _foundSetFind = null;
+        _foundSetInHand = false;
+        _omittedIds.clear();
+      }
     });
     try {
       // A report covers the whole found set: its totals would not match the
@@ -1562,6 +1580,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       } else {
         rows = await widget.apiClient.listRows(widget.table.name);
       }
+      if (keepFoundSet) rows.removeWhere((r) => _omittedIds.contains(r['id']?.toString()));
       if (mounted) {
         setState(() {
           _records = rows;
@@ -1782,6 +1801,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           _sortOrder = const [];
           _currentIndex = 0;
           _isFoundSet = true;
+          _foundSetFind = requests;
+          _foundSetInHand = false;
+          _omittedIds.clear();
           _isLoading = false;
         });
         _rebuildFieldControllers();
@@ -4382,6 +4404,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         _records = List<Map<String, dynamic>>.from(results);
         _currentIndex = 0;
         _isFoundSet = true;
+        _foundSetFind = payload;
+        _foundSetInHand = false;
+        _omittedIds.clear();
       });
       _rebuildFieldControllers();
       _requestMode(OperationalMode.browse);
@@ -4426,6 +4451,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     }
     final removedId = _records[_currentIndex]['id'];
     setState(() {
+      if (removedId != null) _omittedIds.add(removedId.toString());
       _records.removeAt(_currentIndex);
       _unsortedRecords.removeWhere((r) => r['id'] == removedId);
       if (_currentIndex >= _records.length && _records.isNotEmpty) {
@@ -4457,6 +4483,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         _records = List<Map<String, dynamic>>.from(omitted);
         _currentIndex = 0;
         _isFoundSet = true;
+        _foundSetFind = null;
+        _foundSetInHand = true;
+        _omittedIds.clear();
       });
       _rebuildFieldControllers();
       widget.onRecordChanged?.call(_currentIndex, _records.length);
@@ -4565,22 +4594,123 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   Future<int> actionDeletePortalRow({required bool confirm}) async => 101;
 
   @override
-  Future<bool> actionReplaceFieldContents({
+  Future<ReplaceOutcome> actionReplaceFieldContents({
     required String field,
-    required String replaceType,
-    String? value,
+    String? table,
+    String? Function(int position, int count)? valueFor,
   }) async {
+    // A step that names a table occurrence is placed against the graph,
+    // read once if this layout never needed it.
+    if (table != null && table.trim().isNotEmpty && _occurrences.isEmpty) await _loadRelationshipGraph();
+    if (!mounted) return const ReplaceOutcome(errorCode: 3, detail: 'the window is closed');
+    if (_namesOtherOccurrence(field, table)) return const ReplaceOutcome(relatedField: true);
     final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
-    if (col == null || col.isPrimaryKey) return false;
-    final effective = value ?? (_records.isNotEmpty ? _records[_currentIndex][col.name]?.toString() ?? '' : '');
-    for (final rec in _records) {
-      final id = rec['id']?.toString();
-      if (id == null || id.isEmpty) continue;
-      await _write(() => widget.apiClient.updateRow(widget.table.name, id, {col.name: effective}, script: true));
-      rec[col.name] = effective;
+    if (col == null || col.isPrimaryKey) {
+      return ReplaceOutcome(errorCode: 102, detail: 'the field "$field" is not in this table');
     }
-    _rebuildFieldControllers();
+    if (const {'CALCULATION', 'SUMMARY'}.contains(col.fieldType.toUpperCase())) {
+      return ReplaceOutcome(errorCode: 201, detail: 'the field "$field" is a ${col.fieldType.toLowerCase()} field');
+    }
+    // The record in hand is committed first: its contents may be the value,
+    // and a new record must exist before it can be replaced.
+    if (!await _saveCurrentRecord() || !mounted) {
+      return const ReplaceOutcome(errorCode: 509, detail: 'the record in hand could not be committed');
+    }
+    final inHand = _records.isNotEmpty ? _records[_currentIndex] : const <String, dynamic>{};
+    final contents = inHand[col.name]?.toString() ?? '';
+    final startId = inHand['id'];
+    if (!await _readWholeFoundSet()) {
+      return const ReplaceOutcome(errorCode: -1, detail: 'the records of the found set could not be read');
+    }
+    final records = List.of(_records);
+    final count = records.length;
+    var replaced = 0;
+    try {
+      for (var i = 0; i < count; i++) {
+        final rec = records[i];
+        final id = rec['id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        // The record is the current one while its value is worked out.
+        _currentIndex = i;
+        final text = valueFor == null ? contents : valueFor(i + 1, count);
+        if (text == null) return ReplaceOutcome(count: count, replaced: replaced, unevaluatedAt: i + 1);
+        Object? toSave = text;
+        if (col.fieldType == 'DATE' && text.trim().isNotEmpty) {
+          toSave = _normalizeDateInput(text);
+          if (toSave == null) {
+            return ReplaceOutcome(errorCode: 500, detail: '"$text" is not a date', count: count, replaced: replaced);
+          }
+        } else if (col.fieldType == 'DATE') {
+          toSave = null;
+        }
+        try {
+          await _write(() => widget.apiClient.updateRow(widget.table.name, id, {col.name: toSave}, script: true));
+        } on Exception catch (e) {
+          return ReplaceOutcome(
+            errorCode: _fileMakerWriteError(e),
+            detail: e is ApiException ? e.detail : e.toString(),
+            count: count,
+            replaced: replaced,
+          );
+        }
+        rec[col.name] = toSave;
+        final texts = rec[sourceTextKey];
+        if (texts is Map) texts.remove(col.name);
+        replaced++;
+        if (!mounted) return ReplaceOutcome(count: count, replaced: replaced);
+      }
+      return ReplaceOutcome(count: count, replaced: replaced);
+    } finally {
+      if (mounted) {
+        setState(() {
+          final idx = _records.indexWhere((r) => r['id'] == startId);
+          _currentIndex = idx < 0 ? 0 : idx;
+        });
+        _rebuildFieldControllers();
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
+      }
+    }
+  }
+
+  /// Reads the records of the found set that are not in hand yet: the found
+  /// set on screen may be its first page only. The records in hand stay as
+  /// they are, with the rest after them, in the found set's sort order.
+  Future<bool> _readWholeFoundSet() async {
+    if (_isFoundSet && _foundSetInHand) return true;
+    final List<Map<String, dynamic>> rows;
+    try {
+      final find = _isFoundSet ? _foundSetFind : null;
+      if (_isFoundSet && find == null) return true;
+      rows = find != null
+          ? await widget.apiClient.executeFindAll(widget.table.name, find)
+          : await widget.apiClient.listAllRows(widget.table.name);
+    } on Exception {
+      return false;
+    }
+    if (!mounted) return false;
+    final known = {for (final r in _unsortedRecords) r['id']?.toString()};
+    final rest = rows.where((r) {
+      final id = r['id']?.toString();
+      return !known.contains(id) && !_omittedIds.contains(id);
+    }).toList();
+    if (rest.isEmpty) return true;
+    _unsortedRecords = [..._unsortedRecords, ...rest];
+    if (!_isFoundSet) _totalInTable = _unsortedRecords.length;
+    _applySortOrder(_sortOrder);
     return true;
+  }
+
+  /// The FileMaker error a write the server rejected reports.
+  static int _fileMakerWriteError(Object error) {
+    if (error is! ApiException) return -1;
+    final text = '${error.title} ${error.detail}'.toLowerCase();
+    return switch (error.statusCode) {
+      400 || 422 => text.contains('unique') ? 504 : 509,
+      403 => 200,
+      404 => 101,
+      409 || 423 => 301,
+      _ => -1,
+    };
   }
 
   @override
@@ -4590,7 +4720,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     List<Map<String, dynamic>>? buttons,
     List<Map<String, dynamic>>? inputFields,
   }) async {
-    if (!mounted) return const ScriptDialogResult(buttonIndex: 1);
+    if (!mounted) return const ScriptDialogResult(buttonIndex: ScriptDialogResult.dismissed);
     final effectiveButtons = (buttons == null || buttons.isEmpty)
         ? const [<String, dynamic>{'label': 'OK', 'commit': true}]
         : buttons;
@@ -4635,7 +4765,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             if (i == 0)
               FilledButton(
                 onPressed: () => Navigator.of(ctx).pop(1),
-                child: Text(effectiveButtons[i]['label']?.toString() ?? 'OK'),
+                child: Text(switch (effectiveButtons[i]['label']?.toString() ?? '') {
+                  '' => 'OK',
+                  final label => label,
+                }),
               )
             else
               TextButton(
@@ -4651,7 +4784,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     for (final c in controllers.values) {
       c.dispose();
     }
-    return ScriptDialogResult(buttonIndex: choice ?? 1, inputValues: values);
+    // Closing the dialog without a button (Escape, a click outside it) is
+    // not the first button: a script asking "Replace?" must not go ahead.
+    return ScriptDialogResult(buttonIndex: choice ?? ScriptDialogResult.dismissed, inputValues: values);
   }
 
   @override
