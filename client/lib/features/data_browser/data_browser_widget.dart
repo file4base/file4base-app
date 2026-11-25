@@ -13,6 +13,7 @@ import 'package:file4base_client/features/layout_engine/layout_action_runner.dar
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/script_trigger_runtime.dart';
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:file4base_client/main.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
@@ -142,7 +143,14 @@ class FindRequestDraft {
 }
 
 class DataBrowserWidgetState extends State<DataBrowserWidget>
-    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost, CalculationContextHost, RelatedFieldHost {
+    implements
+        LayoutActionHost,
+        ExtendedLayoutActionHost,
+        AutoEnterActionHost,
+        CalculationContextHost,
+        RelatedFieldHost,
+        PortalRowHost,
+        ScriptTriggerHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -355,7 +363,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         if (!saved || !mounted) return;
         setState(() => _currentIndex--);
         _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
+        _recordChanged();
       }));
     }
   }
@@ -366,7 +374,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         if (!saved || !mounted) return;
         setState(() => _currentIndex++);
         _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
+        _recordChanged();
       }));
     }
   }
@@ -379,7 +387,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     if (!saved || !mounted) return false;
     setState(() => _currentIndex = index);
     _rebuildFieldControllers();
-    widget.onRecordChanged?.call(_currentIndex, _records.length);
+    _recordChanged();
     return true;
   }
 
@@ -488,13 +496,39 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   OperationalMode get _mode => _requestedMode ?? widget.mode;
 
-  void _requestMode(OperationalMode mode) {
+  /// Switches the window to [mode], once the layout's OnModeExit trigger,
+  /// and the triggers of the active field, let it leave the mode it is in
+  /// (#26); false when they keep it there. Without such triggers the mode
+  /// is asked of the parent before this returns.
+  Future<bool> _requestMode(OperationalMode mode) async {
+    if (!await _mayLeaveModeFor(mode)) return false;
+    _applyMode(mode);
+    return true;
+  }
+
+  /// Whether the layout's OnModeExit trigger, and the active field's, let
+  /// the window leave its mode for [mode].
+  Future<bool> _mayLeaveModeFor(OperationalMode mode) async {
+    if (widget.onModeChanged == null) return false;
+    if (mode == _mode) return true;
+    final box = _activeBox;
+    final exit = _trigger('OnModeExit');
+    if (exit != null || (box != null && _boxHasTriggers(box.object))) {
+      if (!await _leaveMode()) return false;
+      if (!mounted) return false;
+    }
+    return true;
+  }
+
+  void _applyMode(OperationalMode mode) {
     if (widget.onModeChanged == null) return;
+    final changed = mode != _mode;
     // Find mode opens on one blank request, set up now rather than when the
     // parent rebuilds: the script steps that follow write into it first.
     if (mode == OperationalMode.find && _mode != OperationalMode.find) _initFindControllers();
     _requestedMode = mode;
     widget.onModeChanged!.call(mode);
+    if (changed && _recordLoadArmed) _enteredMode(mode);
   }
 
   /// How many times each portal, by object id, was asked to reload its
@@ -1168,11 +1202,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     fn.addListener(() {
       if (fn.hasFocus) {
         _lastFocusedBrowseField = col.name;
-        _activePortalRow = null;
+        _deactivatePortal();
         if (mounted) setState(() {});
         widget.onFocusedFieldChanged?.call();
       } else {
         _fieldDebounceTimers[key]?.cancel();
+        // A field its triggers validate and save is saved as it is left,
+        // by [_exitBox], once OnObjectValidate lets it.
+        if (_keyGuarded(key) || _holdFieldSaves) return;
         if (col.fieldType == 'DATE' &&
             ctrl.text.trim().isNotEmpty &&
             _normalizeDateInput(ctrl.text) == null) {
@@ -1195,8 +1232,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     });
   }
 
-  void _onFieldChanged(String colName, String newVal) {
+  void _onFieldChanged(String colName, String newVal, {LayoutObjectModel? object}) {
+    if (object != null) _triggers.post(_trigger('OnObjectModify', objectId: object.id));
     _fieldDebounceTimers[colName]?.cancel();
+    if (_keyGuarded(colName) || _holdFieldSaves) return;
     _fieldDebounceTimers[colName] = Timer(
       const Duration(milliseconds: 800),
       () => _saveField(colName, newVal),
@@ -1207,14 +1246,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// write (Set Field and the like), which may set a field that prohibits
   /// modification during data entry; a new record a script set a value in
   /// is committed as a script's write too.
-  Future<void> _saveField(String colName, String newVal, {bool script = false}) async {
-    if (_records.isEmpty) return;
+  Future<bool> _saveField(String colName, String newVal, {bool script = false}) async {
+    if (_records.isEmpty) return true;
     final column = _columnForKey(colName);
     final current = _records[_currentIndex];
     if (column != null && current[_draftKey] != true && newVal == keyFieldText(column, colName, current)) {
       // Leaving a field unchanged writes nothing. In particular it must not
       // replace a migrated value's original text with its reading (#124).
-      return;
+      return true;
     }
     Object? valueToSave = newVal;
     if (column?.fieldType == 'DATE') {
@@ -1224,7 +1263,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         valueToSave = _normalizeDateInput(newVal);
         // Do not submit partial input such as "23/06/" while the user is
         // typing. A complete valid value is sent as canonical ISO date.
-        if (valueToSave == null) return;
+        if (valueToSave == null) return false;
       }
     }
     final record = _records[_currentIndex];
@@ -1232,11 +1271,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       // A new record is sent as a whole when it is committed
       record[colName] = valueToSave;
       if (script) _scriptSetDrafts.add(record);
-      return;
+      return true;
     }
     final id = record['id']?.toString();
-    if (id == null) return;
+    if (id == null) return true;
 
+    _recordWritten = true;
     _records[_currentIndex][colName] = valueToSave;
     if (mounted) setState(() => _fieldSaving[colName] = true);
     try {
@@ -1248,6 +1288,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       if (mounted) setState(() => _fieldSaving[colName] = null);
       // The field may be a match field of a list of related values.
       if (mounted && identical(record, _records.elementAtOrNull(_currentIndex))) _resolveRelatedValueLists();
+      return true;
     } catch (e) {
       if (mounted) {
         setState(() => _fieldSaving[colName] = false);
@@ -1259,6 +1300,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ),
         );
       }
+      return false;
     }
   }
 
@@ -1311,6 +1353,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// record. Returns false when the server rejected it (for example a field
   /// validation rule); the user stays on the record and sees why.
   Future<bool> _saveCurrentRecord() async {
+    // FileMaker leaves the active field first (OnObjectValidate,
+    // OnObjectSave, OnObjectExit), then runs OnRecordCommit, whose False
+    // keeps the record uncommitted (#26): a new record is not created, and
+    // what is typed and not saved yet stays unsaved. A field saved when it
+    // was left stays saved.
+    if (!await _leaveActiveBox()) return false;
+    if (_recordDirty && !await _triggers.fire(_trigger('OnRecordCommit'))) {
+      // The record stays uncommitted: what is typed waits for the next
+      // commit, rather than being saved by a field's pending save.
+      _holdFieldSaves = true;
+      for (final timer in _fieldDebounceTimers.values) {
+        timer?.cancel();
+      }
+      return false;
+    }
+    _holdFieldSaves = false;
     // Every box: the fields, and the repetitions of repeating fields.
     for (final key in _fieldControllers.keys.toList()) {
       final col = _columnForKey(key);
@@ -1337,6 +1395,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       }
     }
     if (_onDraft) return _commitDraft();
+    _recordWritten = false;
     return true;
   }
 
@@ -1355,6 +1414,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       final script = _scriptSetDrafts.contains(draft);
       final created = await _write(() => widget.apiClient.insertRow(widget.table.name, values, script: script));
       _scriptSetDrafts.remove(draft);
+      // Committing a new record loads no other record.
+      _loadedRecordKey = created['id']?.toString();
+      _recordWritten = false;
       if (mounted) {
         setState(() {
           _records[_currentIndex] = created;
@@ -1392,7 +1454,424 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     if (_currentIndex >= _records.length) _currentIndex = _records.length - 1;
     if (_currentIndex < 0) _currentIndex = 0;
     _rebuildFieldControllers();
+    _recordChanged();
+  }
+
+  // ─── Script triggers of the layout and of its fields (#26) ────────────────
+
+  late final ScriptTriggerRuntime _triggers = ScriptTriggerRuntime(
+    perform: (trigger) => _actionRunner().run(trigger),
+    onStopped: (message) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: Colors.orange.shade800),
+      );
+    },
+  );
+
+  /// The enabled trigger of [event] set on the layout, or on its object
+  /// [objectId], that runs in the window's mode (or [mode]). Preview mode
+  /// runs none.
+  ButtonActionModel? _trigger(String event, {String? objectId, OperationalMode? mode}) {
+    final m = mode ?? _mode;
+    if (m != OperationalMode.browse && m != OperationalMode.find) return null;
+    return widget.layout?.runningTrigger(event, objectId: objectId, mode: m == OperationalMode.find ? 'find' : 'browse');
+  }
+
+  @override
+  int actionTriggerMark() => _triggers.mark();
+
+  @override
+  Future<void> actionSettleTriggers(int since) => _triggers.settle(since);
+
+  /// Whether the field object has a trigger that runs as it is entered or
+  /// left.
+  bool _boxHasTriggers(LayoutObjectModel object) => const [
+        'OnObjectEnter',
+        'OnObjectExit',
+        'OnObjectValidate',
+        'OnObjectSave',
+      ].any((e) => _trigger(e, objectId: object.id) != null);
+
+  /// Whether the field object's value is validated and saved by its
+  /// triggers as it is left, rather than saved as it is typed.
+  bool _guarded(LayoutObjectModel object) =>
+      _trigger('OnObjectValidate', objectId: object.id) != null || _trigger('OnObjectSave', objectId: object.id) != null;
+
+  /// Whether the box of record key [key] is [_guarded] by an object of the
+  /// layout showing that field.
+  bool _keyGuarded(String key) {
+    final col = _columnForKey(key);
+    final layout = widget.layout;
+    if (col == null || layout == null || layout.scriptTriggers.isEmpty) return false;
+    return layout.objects.any((o) =>
+        o.type == 'field' &&
+        o.fieldBinding != null &&
+        !o.fieldBinding!.isRelated &&
+        o.fieldBinding!.fieldName.toLowerCase() == col.name.toLowerCase() &&
+        _guarded(o));
+  }
+
+  /// The field box FileMaker calls the active field: the one entered last,
+  /// by the user or a script step, until it is left.
+  TriggerBox? _activeBox;
+
+  /// What the focus did, handled one change after the other.
+  Future<void> _focusChain = Future<void>.value();
+
+  void _boxFocusChanged(TriggerBox box, bool focused) {
+    _focusChain = _focusChain
+        .then((_) => focused ? _enterBox(box) : _leaveBoxOnBlur(box))
+        .catchError((Object _) {});
+  }
+
+  /// The user put the focus in [box]: the active field is left, unless its
+  /// triggers keep it active, and [box] is entered.
+  Future<void> _enterBox(TriggerBox box) async {
+    if (!mounted || box.same(_activeBox) || !box.hasFocus()) return;
+    final previous = _activeBox;
+    if (previous != null && !await _exitBox(previous)) {
+      await _refocus(previous);
+      return;
+    }
+    _activateBox(box);
+    await _triggers.fire(_trigger('OnObjectEnter', objectId: box.object.id));
+  }
+
+  /// The focus left [box] for something that is not a field box.
+  Future<void> _leaveBoxOnBlur(TriggerBox box) async {
+    if (!mounted || !box.same(_activeBox) || box.hasFocus()) return;
+    if (!await _exitBox(box)) {
+      await _refocus(box);
+      return;
+    }
+    if (box.same(_activeBox)) _activeBox = null;
+  }
+
+  /// Puts the focus back in a box its triggers keep active, and lets the
+  /// focus changes that makes settle before the next one is handled.
+  Future<void> _refocus(TriggerBox box) async {
+    if (!mounted) return;
+    box.focus();
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  /// Leaves [box] as FileMaker leaves a field: a changed value is validated
+  /// (OnObjectValidate) and saved, then OnObjectSave and OnObjectExit run.
+  /// False when one of them, or the save, keeps the field active.
+  Future<bool> _exitBox(TriggerBox box) async {
+    final id = box.object.id;
+    if (!box.find && _guarded(box.object) && box.modified()) {
+      // The script validates the value typed, read from the record.
+      final unstage = box.stage?.call();
+      final valid = await _triggers.fire(_trigger('OnObjectValidate', objectId: id));
+      unstage?.call();
+      if (!valid) return false;
+      if (!await box.save()) return false;
+      if (!await _triggers.fire(_trigger('OnObjectSave', objectId: id))) return false;
+    }
+    return _triggers.fire(_trigger('OnObjectExit', objectId: id));
+  }
+
+  /// Leaves the active field before the record is committed or the mode
+  /// left; false when its triggers keep it active.
+  Future<bool> _leaveActiveBox() async {
+    final box = _activeBox;
+    if (box == null) return true;
+    if (!_boxHasTriggers(box.object)) {
+      _activeBox = null;
+      return true;
+    }
+    if (!await _exitBox(box)) {
+      if (!box.hasFocus()) box.focus();
+      return false;
+    }
+    if (box.same(_activeBox)) _activeBox = null;
+    if (box.hasFocus()) FocusManager.instance.primaryFocus?.unfocus();
+    return true;
+  }
+
+  void _activateBox(TriggerBox box) {
+    _activeBox = box;
+    final portal = box.portal;
+    if (portal != null) {
+      final rows = _portalRowController(portal);
+      _makePortalActive(portal.id);
+      rows.activate(box.rowNumber);
+    } else {
+      _deactivatePortal();
+    }
+  }
+
+  /// The box of the field object [obj] of the record in hand, under its
+  /// record [key].
+  TriggerBox _fieldBox(LayoutObjectModel obj, ColumnModel col, String key) => TriggerBox(
+        object: obj,
+        key: key,
+        modified: () {
+          final ctrl = _fieldControllers[key];
+          if (ctrl == null || _records.isEmpty) return false;
+          return ctrl.text != keyFieldText(col, key, _records[_currentIndex]);
+        },
+        stage: () {
+          final ctrl = _fieldControllers[key];
+          if (ctrl == null || _records.isEmpty) return () {};
+          final record = _records[_currentIndex];
+          final had = record.containsKey(key);
+          final before = record[key];
+          final texts = record[sourceTextKey];
+          final text = texts is Map ? texts.remove(key) : null;
+          final typed = ctrl.text;
+          final staged = col.fieldType == 'DATE' && typed.trim().isEmpty
+              ? null
+              : (col.fieldType == 'DATE' ? _normalizeDateInput(typed) ?? typed : typed);
+          record[key] = staged;
+          return () {
+            // A value the script set meanwhile stays.
+            if (record[key] != staged) return;
+            if (had) {
+              record[key] = before;
+            } else {
+              record.remove(key);
+            }
+            if (text != null && texts is Map) texts[key] = text;
+          };
+        },
+        save: () async {
+          final ctrl = _fieldControllers[key];
+          if (ctrl == null) return true;
+          _fieldDebounceTimers[key]?.cancel();
+          if (col.fieldType == 'DATE' && ctrl.text.trim().isNotEmpty && _normalizeDateInput(ctrl.text) == null) {
+            if (mounted) {
+              setState(() => _fieldSaving[key] = false);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
+              );
+            }
+            return false;
+          }
+          return _saveField(key, ctrl.text);
+        },
+        focus: () => _fieldFocusNodes[key]?.requestFocus(),
+        hasFocus: () => _fieldFocusNodes[key]?.hasFocus ?? false,
+      );
+
+  /// The box of a field object in Find mode: its text is a criterion.
+  TriggerBox _findBox(LayoutObjectModel obj, String key, FocusNode node) => TriggerBox(
+        object: obj,
+        key: key,
+        find: true,
+        modified: () => false,
+        save: () async => true,
+        focus: node.requestFocus,
+        hasFocus: () => node.hasFocus,
+      );
+
+  final Map<String, FocusNode> _findFocusNodes = {};
+
+  /// Tells the triggers when the focus enters or leaves [box].
+  Widget _withTriggers(TriggerBox Function() box, Widget child) => Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onFocusChange: (focused) => _boxFocusChanged(box(), focused),
+        child: child,
+      );
+
+  /// A value-list control of a field its triggers validate and save: the
+  /// value chosen is validated and saved at once, as it is in FileMaker.
+  Future<void> _validateAndSave(TriggerBox box) async {
+    if (!box.modified()) return;
+    if (!await _triggers.fire(_trigger('OnObjectValidate', objectId: box.object.id))) {
+      if (mounted) setState(_showRecordInFieldsAgain);
+      return;
+    }
+    if (!await box.save()) return;
+    await _triggers.fire(_trigger('OnObjectSave', objectId: box.object.id));
+  }
+
+  void _showRecordInFieldsAgain() {
+    if (_records.isNotEmpty) _showRecordInFields(_records[_currentIndex]);
+  }
+
+  // Record triggers: the record loaded last, and whether it was written
+  // since.
+  static final Object _notLoaded = Object();
+  Object? _loadedRecordKey;
+  bool _recordWritten = false;
+
+  /// Set once the window has run its OnLayoutEnter and OnModeEnter, before
+  /// which no OnRecordLoad runs.
+  bool _recordLoadArmed = false;
+
+  /// The record in hand changed, or may have: tells the window, and runs
+  /// OnRecordLoad when it is another record.
+  void _recordChanged() {
     widget.onRecordChanged?.call(_currentIndex, _records.length);
+    _noteRecordShown();
+  }
+
+  /// Runs OnRecordLoad when the record in hand is not the one loaded last,
+  /// or [again] for a layout gone to or a mode entered.
+  void _noteRecordShown({bool again = false}) {
+    if (again) _loadedRecordKey = _notLoaded;
+    // Records being read (another table's layout gone to): the record is
+    // loaded once they are, not the one shown before.
+    if (_isLoading) return;
+    final record = currentRecord;
+    final Object? key = record == null ? null : (record[_draftKey] == true ? record : record['id']?.toString());
+    if (key == _loadedRecordKey) return;
+    _loadedRecordKey = key;
+    _recordWritten = false;
+    _holdFieldSaves = false;
+    _activeBox = null;
+    _deactivatePortal(keepParent: key is String ? key : null);
+    if (key != null && _recordLoadArmed && _mode == OperationalMode.browse) {
+      _triggers.post(_trigger('OnRecordLoad'));
+    }
+  }
+
+  /// Set when OnRecordCommit kept the record uncommitted: its fields are no
+  /// longer saved as they are typed or left, until it is committed,
+  /// reverted or left.
+  bool _holdFieldSaves = false;
+
+  /// Whether the record in hand has changes to commit: a new record, a
+  /// field written since it was loaded, or text typed and not saved yet.
+  bool get _recordDirty {
+    if (_records.isEmpty) return false;
+    if (_recordWritten || _onDraft) return true;
+    final record = _records[_currentIndex];
+    for (final entry in _fieldControllers.entries) {
+      final col = _columnForKey(entry.key);
+      if (col == null || col.isPrimaryKey) continue;
+      if (entry.value.text != keyFieldText(col, entry.key, record)) return true;
+    }
+    return false;
+  }
+
+  /// Leaves the mode the window is in: the active field, then OnModeExit,
+  /// whose False keeps the window in its mode.
+  Future<bool> _leaveMode() async {
+    if (!await _leaveActiveBox()) return false;
+    return _triggers.fire(_trigger('OnModeExit'));
+  }
+
+  /// Asked by the window before it switches this layout to another mode
+  /// from its toolbar or menus: false when the layout's OnModeExit trigger,
+  /// or the active field's, keeps it in the mode it is in.
+  Future<bool> confirmModeExit(OperationalMode to) async {
+    if (_mode == to || !_recordLoadArmed) return true;
+    return _leaveMode();
+  }
+
+  /// The window has entered [mode]: OnModeEnter runs, and in Browse mode the
+  /// record in hand is loaded.
+  void _enteredMode(OperationalMode mode) {
+    _activeBox = null;
+    _deactivatePortal();
+    _triggers.post(_trigger('OnModeEnter', mode: mode));
+    if (mode != OperationalMode.browse) return;
+    _loadedRecordKey = _notLoaded;
+    // The records of a find, or of Show All Records, may still be read.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_isLoading && identical(_loadedRecordKey, _notLoaded)) _noteRecordShown();
+    });
+  }
+
+  // Portal rows (#26): the controller of each portal of the layout in hand,
+  // by object id, and the portal whose row is active.
+  final Map<String, PortalRowController> _portalRows = {};
+  String? _activePortalId;
+
+  /// The portal whose row is active, while it shows the related records of
+  /// the record in hand: a portal still showing the record left has none.
+  PortalRowController? get _activePortal {
+    final rows = _activePortalId == null ? null : _portalRows[_activePortalId];
+    if (rows == null || !_portalOfCurrentRecord(rows)) return null;
+    return rows;
+  }
+
+  bool _portalOfCurrentRecord(PortalRowController rows) {
+    final parent = rows.parentId;
+    final current = currentRecord?['id']?.toString();
+    return parent == null || current == null || parent == current;
+  }
+
+  /// The controller of [portal]; in a list, of the portal of the list row
+  /// of record [listRecordId], which runs no object triggers.
+  PortalRowController _portalRowController(LayoutObjectModel portal, {String? listRecordId}) {
+    final key = listRecordId == null ? portal.id : '${portal.id}@$listRecordId';
+    return _portalRows.putIfAbsent(key, () {
+      final rows = PortalRowController(portal)
+        ..onActivated = () => _makePortalActive(key);
+      if (listRecordId == null) {
+        rows
+          ..onCellFocus = _boxFocusChanged
+          ..guarded = _guarded
+          ..onCellModified = (content) => _triggers.post(_trigger('OnObjectModify', objectId: content.id));
+      }
+      return rows;
+    });
+  }
+
+  void _makePortalActive(String key) {
+    for (final entry in _portalRows.entries) {
+      if (entry.key != key) entry.value.activate(0);
+    }
+    _activePortalId = key;
+  }
+
+  /// Leaves the active portal row, unless [keepParent] is the record whose
+  /// portal it is (a list row's portal clicked into, then its record gone to).
+  void _deactivatePortal({String? keepParent}) {
+    final active = _activePortalId == null ? null : _portalRows[_activePortalId];
+    if (keepParent != null && active != null && active.activeRow > 0 && active.parentId == keepParent) {
+      _makePortalActive(_activePortalId!);
+      return;
+    }
+    for (final rows in _portalRows.values) {
+      rows.activate(0);
+    }
+    _activePortalId = null;
+  }
+
+  @override
+  ActivePortalRow? actionActivePortalRow({String? occurrence}) {
+    final rows = _activePortal;
+    final record = rows?.activeRecord;
+    final target = rows?.target;
+    if (rows == null || record == null || target == null) return null;
+    if (occurrence != null) {
+      final wanted = occurrence.trim().toLowerCase();
+      if (wanted != target.occurrence.name.toLowerCase() && wanted != target.occurrence.id.toLowerCase()) return null;
+    }
+    final rowId = record['id']?.toString() ?? '';
+    final write = rows.writeRow;
+    return ActivePortalRow(
+      portalObjectId: rows.object.id,
+      portalName: rows.object.name ?? '',
+      occurrence: target.occurrence.name,
+      table: target.table.name,
+      rowNumber: rows.activeRow,
+      recordId: rowId,
+      record: Map<String, dynamic>.unmodifiable(record),
+      write: write == null ? null : (values, {script = false}) => write(rowId, values, script: script),
+    );
+  }
+
+  @override
+  int get actionActivePortalRowNumber => _activePortal?.activeRow ?? 0;
+
+  @override
+  String get actionActiveFieldTableName {
+    final box = _activeBox;
+    final portal = box?.portal;
+    if (portal != null) return _portalRows[portal.id]?.target?.occurrence.name ?? '';
+    if (box != null || _aFieldIsFocused) {
+      final occurrence = widget.layout?.tableOccurrence;
+      return occurrence == null || occurrence.isEmpty ? widget.table.name : occurrence;
+    }
+    return '';
   }
 
   @override
@@ -1402,8 +1881,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     _externalAccess.addListener(_onExternalSignedIn);
     unawaited(_loadValueLists());
     if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
-    unawaited(_fetchRecords().then((_) {
-      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.activeOnLayoutEnter));
+    unawaited(_fetchRecords().then((_) async {
+      // A window opens on OnLayoutEnter, then OnModeEnter, then
+      // OnRecordLoad (#26).
+      if (mounted && widget.mode == OperationalMode.browse) await _runLayoutTrigger(widget.layout?.activeOnLayoutEnter);
+      if (!mounted) return;
+      await _triggers.fire(_trigger('OnModeEnter'));
+      if (!mounted) return;
+      _recordLoadArmed = true;
+      _noteRecordShown(again: true);
     }));
     HardwareKeyboard.instance.addHandler(_handleRecordShortcut);
   }
@@ -1469,15 +1955,30 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         oldWidget.layout?.id != widget.layout?.id ||
         oldWidget.layout?.objects.length != widget.layout?.objects.length ||
         oldWidget.mode != widget.mode;
+    if (oldWidget.layout?.id != widget.layout?.id) {
+      // Another layout: its own fields and portals, none of them active.
+      _activeBox = null;
+      _activePortalId = null;
+      _portalRows.clear();
+    }
     if (oldWidget.layout?.id != widget.layout?.id && widget.mode == OperationalMode.browse) {
       final exit = oldWidget.layout?.activeOnLayoutExit;
       final enter = widget.layout?.activeOnLayoutEnter;
-      if (exit != null || enter != null) {
+      final load = _recordLoadArmed && _trigger('OnRecordLoad') != null;
+      if (exit != null || enter != null || load) {
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           await _runLayoutTrigger(exit);
           if (mounted) await _runLayoutTrigger(enter);
+          // The record is loaded on the layout gone to.
+          if (mounted) _noteRecordShown(again: true);
         });
       }
+    } else if (oldWidget.mode != widget.mode && !requestedHere && _recordLoadArmed) {
+      // The mode was switched from the window's toolbar or menus.
+      final mode = widget.mode;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _mode == mode) _enteredMode(mode);
+      });
     }
     if (oldWidget.table.id != widget.table.id || columnsChanged || layoutChanged) {
       final onlyRequestedMode = requestedHere &&
@@ -1539,6 +2040,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     for (final c in _findControllers.values) {
       c.dispose();
     }
+    for (final f in _findFocusNodes.values) {
+      f.dispose();
+    }
     for (final c in _fieldControllers.values) {
       c.dispose();
     }
@@ -1593,7 +2097,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           _isLoading = false;
         });
         _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
+        _recordChanged();
         if (_layoutIsReport) unawaited(_loadReportFigures());
         unawaited(_loadChartFigures());
         if (!keepFoundSet) widget.onFoundSetChanged?.call(const []);
@@ -1620,7 +2124,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       _currentIndex = _records.length - 1;
     });
     _rebuildFieldControllers();
-    widget.onRecordChanged?.call(_currentIndex, _records.length);
+    _recordChanged();
   }
 
   Future<void> _deleteCurrentRecord() async {
@@ -1755,6 +2259,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   Future<void> _performFind() async {
     final requests = _findRequestPayload();
+    // OnModeExit decides before the found set is replaced (#26).
+    if (!await _mayLeaveModeFor(OperationalMode.browse) || !mounted) return;
 
     setState(() { _isLoading = true; _error = null; });
     try {
@@ -1784,7 +2290,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                 onPressed: () {
                   Navigator.of(ctx).pop();
                   unawaited(_fetchRecords());
-                  _requestMode(OperationalMode.browse);
+                  _applyMode(OperationalMode.browse);
                 },
                 child: const Text('Show All Records (Cancel)'),
               ),
@@ -1808,8 +2314,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           _isLoading = false;
         });
         _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
-        _requestMode(OperationalMode.browse);
+        _recordChanged();
+        _applyMode(OperationalMode.browse);
         // A report totals the found set, so its figures are read again for
         // the set the find just returned (#32).
         if (_layoutIsReport) unawaited(_loadReportFigures());
@@ -1986,7 +2492,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                 label: const Text('Cancel Find'),
                 onPressed: () {
                   deleteAllFindRequests();
-                  _requestMode(OperationalMode.browse);
+                  unawaited(_requestMode(OperationalMode.browse));
                   unawaited(_fetchRecords());
                 },
               ),
@@ -2155,7 +2661,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                   hasRecords && (_canDelete || _onDraft) ? () => actionDeleteRecord(confirm: true) : null,
                   color: Colors.red.shade700),
               const SizedBox(width: 10),
-              _barButton(Icons.search, 'Find', () => _requestMode(OperationalMode.find)),
+              _barButton(Icons.search, 'Find', () => unawaited(_requestMode(OperationalMode.find))),
               _barButton(Icons.sort, 'Sort', hasRecords ? _showSortDialog : null),
               _barButton(Icons.list_alt, 'Show All', _fetchRecords),
               const Spacer(),
@@ -2248,7 +2754,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       _currentIndex = idx < 0 ? 0 : idx;
     });
     _rebuildFieldControllers();
-    widget.onRecordChanged?.call(_currentIndex, _records.length);
+    _recordChanged();
   }
 
   Future<void> _showSortDialog() async {
@@ -3299,8 +3805,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
         if (isFindMode) {
           final findCtrl = _findControllers[col.name];
-          return TextField(
+          final findNode = listRow ? null : _findFocusNodes.putIfAbsent(obj.id, FocusNode.new);
+          final findField = TextField(
             controller: findCtrl,
+            focusNode: findNode,
+            onChanged: findNode == null
+                ? null
+                : (_) => _triggers.post(_trigger('OnObjectModify', objectId: obj.id)),
             textAlign: _parseTextAlign(obj.style.textAlign),
             style: layoutTextStyle(
               obj.style,
@@ -3327,6 +3838,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             },
             onSubmitted: (_) => _performFind(),
           );
+          if (findNode == null) return findField;
+          return _withTriggers(() => _findBox(obj, col.name, findNode), findField);
         }
 
         if (_records.isEmpty) {
@@ -3409,13 +3922,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                       top: !horizontal && n > 1 ? 1 : 0,
                       left: horizontal && n > 1 ? 1 : 0,
                     ),
-                    child: _buildFieldCell(cell, col, record, isDark, ColumnModel.repetitionKey(col.name, n)),
+                    child: _buildFieldCell(cell, col, record, isDark, ColumnModel.repetitionKey(col.name, n),
+                        trigger: listRow ? null : obj),
                   ),
                 ),
             ],
           );
         }
-        return _buildFieldCell(obj, col, record, isDark, col.name);
+        return _buildFieldCell(obj, col, record, isDark, col.name, trigger: listRow ? null : obj);
 
       case 'button':
       case 'popover_button':
@@ -3519,7 +4033,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           isDark: isDark,
           refreshGeneration: _portalRefreshes[obj.id] ?? 0,
           onChanged: () => unawaited(_fetchRecords()),
-          onRowActivated: _activatePortalRow,
+          rowController: _portalRowController(obj, listRecordId: listRow ? related.recordId : null),
         );
 
       default:
@@ -3560,16 +4074,33 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   /// One box of a field object: the field itself, or one repetition of a
   /// repeating field, under its record [key].
+  ///
+  /// [trigger] is the field object whose script triggers the box runs (#26),
+  /// null in a list row.
   Widget _buildFieldCell(
     LayoutObjectModel obj,
     ColumnModel col,
     Map<String, dynamic> record,
     bool isDark,
-    String key,
-  ) {
+    String key, {
+    LayoutObjectModel? trigger,
+  }) {
     if (col.storageType == 'CONTAINER') {
       return _buildContainerFieldObject(obj, col, record, isDark, key: key);
     }
+    final cell = _buildFieldBox(obj, col, record, isDark, key, trigger: trigger);
+    if (trigger == null) return cell;
+    return _withTriggers(() => _fieldBox(trigger, col, key), cell);
+  }
+
+  Widget _buildFieldBox(
+    LayoutObjectModel obj,
+    ColumnModel col,
+    Map<String, dynamic> record,
+    bool isDark,
+    String key, {
+    LayoutObjectModel? trigger,
+  }) {
 
     final ctrl = _fieldControllers[key];
     final fn = _fieldFocusNodes[key];
@@ -3589,7 +4120,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         current: ctrl?.text ?? '',
         onChanged: (value) {
           ctrl?.text = value;
-          _onFieldChanged(key, value);
+          _onFieldChanged(key, value, object: trigger);
+          if (trigger != null && _guarded(trigger)) unawaited(_validateAndSave(_fieldBox(trigger, col, key)));
         },
       );
     }
@@ -3661,12 +4193,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                         ? _valueListProblemIcon(listProblem)
                         : null,
       ),
-      onChanged: computed ? null : (v) => _onFieldChanged(key, v),
+      onChanged: computed ? null : (v) => _onFieldChanged(key, v, object: trigger),
       onEditingComplete: computed
           ? null
           : () {
               _fieldDebounceTimers[key]?.cancel();
-              unawaited(_saveField(key, ctrl?.text ?? ''));
+              // A field its triggers validate and save is saved as it is
+              // left (#26).
+              if (!_keyGuarded(key)) unawaited(_saveField(key, ctrl?.text ?? ''));
               fn?.nextFocus();
             },
     );
@@ -4016,7 +4550,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         _currentIndex = _records.length - 1;
       });
       _rebuildFieldControllers();
-      widget.onRecordChanged?.call(_currentIndex, _records.length);
+      _recordChanged();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4058,6 +4592,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   Future<void> actionRevertRecord() async {
+    // OnRecordRevert runs before a changed record is reverted, and False
+    // keeps its changes (#26).
+    if (_recordDirty && !await _triggers.fire(_trigger('OnRecordRevert'))) return;
+    _activeBox = null;
+    _holdFieldSaves = false;
+    for (final timer in _fieldDebounceTimers.values) {
+      timer?.cancel();
+    }
     FocusManager.instance.primaryFocus?.unfocus();
     if (!mounted) return;
     // Reverting a new record that was never committed discards it
@@ -4089,7 +4631,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   Future<void> actionShowAllRecords() async {
-    _requestMode(OperationalMode.browse);
+    if (!await _requestMode(OperationalMode.browse)) return;
     await _fetchRecords();
   }
 
@@ -4124,21 +4666,23 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   // ---- RelatedFieldHost ----
 
-  /// The portal row last clicked into, on the record whose portal it is (in
-  /// a list, the record of that list row): a step writing a field of that
+  /// The active portal row (#26), on the record whose portal it is (in a
+  /// list, the record of that list row): a step writing a field of that
   /// portal's occurrence writes this row, as FileMaker writes the active
   /// portal row, while it is still related. Going to a field of the record
   /// itself leaves the portal.
-  ({String recordId, String occurrenceId, String rowId})? _activePortalRow;
+  ({String recordId, String occurrenceId, String rowId})? get _activePortalRow {
+    final rows = _activePortal;
+    final rowId = rows?.activeRecord?['id']?.toString() ?? '';
+    final recordId = rows?.parentId ?? '';
+    final target = rows?.target;
+    if (target == null || recordId.isEmpty || rowId.isEmpty) return null;
+    return (recordId: recordId, occurrenceId: target.occurrence.id, rowId: rowId);
+  }
 
   /// Counts the writes of related records, so the related fields shown read
   /// theirs again.
   int _relatedWrites = 0;
-
-  void _activatePortalRow(String? recordId, String occurrenceId, String rowId) {
-    if (recordId == null || recordId.isEmpty || rowId.isEmpty) return;
-    _activePortalRow = (recordId: recordId, occurrenceId: occurrenceId, rowId: rowId);
-  }
 
   /// Whether [occurrence], as a step names it, is the occurrence this layout
   /// is on. Only the layout's occurrence is: another occurrence of the same
@@ -4244,7 +4788,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       if (activeRow != null) {
         return (code: 0, related: related, target: target, column: column, rowId: active.rowId, row: activeRow);
       }
-      _activePortalRow = null;
+      _deactivatePortal();
     }
     final first = rows.firstOrNull;
     return (code: 0, related: related, target: target, column: column, rowId: first?['id']?.toString(), row: first);
@@ -4543,7 +5087,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   Future<void> actionEnterFindModeEx({List<Map<String, dynamic>>? requests, bool restore = false}) async {
-    _requestMode(OperationalMode.find);
+    if (!await _requestMode(OperationalMode.find)) return;
     if (restore && requests != null && requests.isNotEmpty) {
       final drafts = <FindRequestDraft>[];
       for (final req in requests) {
@@ -4580,6 +5124,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       await _performFind();
       return _records.length;
     }
+    // OnModeExit decides before the found set is replaced (#26); its False
+    // cancels the find.
+    if (!await _mayLeaveModeFor(OperationalMode.browse)) return -1;
     try {
       final results = _layoutIsReport
           ? await widget.apiClient.executeFindAll(widget.table.name, payload)
@@ -4598,8 +5145,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         _omittedIds.clear();
       });
       _rebuildFieldControllers();
-      _requestMode(OperationalMode.browse);
-      widget.onRecordChanged?.call(_currentIndex, _records.length);
+      _applyMode(OperationalMode.browse);
+      _recordChanged();
       return results.length;
     } catch (_) {
       return 0;
@@ -4649,7 +5196,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       _isFoundSet = true;
     });
     _rebuildFieldControllers();
-    widget.onRecordChanged?.call(_currentIndex, _records.length);
+    _recordChanged();
     return true;
   }
 
@@ -4677,7 +5224,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         _omittedIds.clear();
       });
       _rebuildFieldControllers();
-      widget.onRecordChanged?.call(_currentIndex, _records.length);
+      _recordChanged();
     } catch (_) {
       // Preserve current found set if server reload fails.
     }
@@ -4720,6 +5267,27 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   Future<bool> actionGoToField(String field, {bool select = false}) async {
     final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
     if (col == null) return false;
+    // The active field is left, and the field gone to entered, with their
+    // triggers (#26). A trigger that keeps the active field active leaves
+    // the step without effect.
+    final object = widget.layout?.objects
+        .where((o) =>
+            o.type == 'field' &&
+            o.fieldBinding != null &&
+            !o.fieldBinding!.isRelated &&
+            o.fieldBinding!.fieldName.toLowerCase() == col.name.toLowerCase())
+        .firstOrNull;
+    if (object != null && !col.isPrimaryKey && _mode != OperationalMode.preview) {
+      final box = _mode == OperationalMode.find
+          ? _findBox(object, col.name, _findFocusNodes.putIfAbsent(object.id, FocusNode.new))
+          : _fieldBox(object, col, col.name);
+      if (!box.same(_activeBox)) {
+        final previous = _activeBox;
+        if (previous != null && !await _exitBox(previous)) return true;
+        _activateBox(box);
+        await _triggers.fire(_trigger('OnObjectEnter', objectId: object.id));
+      }
+    }
     _lastFocusedBrowseField = col.name;
     widget.onFocusedFieldChanged?.call();
     if (select) {
@@ -4769,18 +5337,94 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     return false;
   }
 
+  /// Go to Portal Row (#26): in the active portal, or the first portal of
+  /// the layout when none is active, makes a row the active one. The field
+  /// active in the portal stays the active field of the new row (left and
+  /// entered with its triggers), otherwise the first field of the row that
+  /// takes entry is; [select] selects the whole row instead. Past either
+  /// end, or for a row the portal does not have, the step sets error 101.
   @override
-  Future<GoToRecordOutcome> actionGoToPortalRow(String target) async {
-    return const GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
+  Future<GoToRecordOutcome> actionGoToPortalRow(String target, {bool select = false}) async {
+    const missing = GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
+    final layout = widget.layout;
+    if (layout == null || _mode != OperationalMode.browse) return missing;
+    var rows = _activePortal;
+    if (rows == null) {
+      final first = layout.objects.where((o) => o.type == 'portal').firstOrNull;
+      if (first == null) return missing;
+      final inList = _viewMode == 'list';
+      final current = currentRecord?['id']?.toString();
+      rows = _portalRowController(first, listRecordId: inList ? current : null);
+    }
+    // A portal still showing the record left reads the record in hand's
+    // related records first: never a row of another record's.
+    if (!_portalOfCurrentRecord(rows)) {
+      rows.loading();
+      await WidgetsBinding.instance.endOfFrame;
+    }
+    await rows.whenLoaded();
+    if (!mounted || !_portalOfCurrentRecord(rows)) return missing;
+    final count = rows.rows.length;
+    final current = rows.activeRow;
+    final t = target.trim().toLowerCase();
+    final int row;
+    switch (t) {
+      case 'first':
+        row = 1;
+      case 'last':
+        row = count;
+      case 'previous' || 'prev':
+        if (current == 1) return missing;
+        row = current == 0 ? 1 : current - 1;
+      case 'next':
+        if (current >= count) return missing;
+        row = current + 1;
+      default:
+        final n = num.tryParse(t)?.truncate();
+        if (n == null) return missing;
+        row = n;
+    }
+    if (count == 0 || row < 1 || row > count) return missing;
+
+    final previous = _activeBox;
+    final inPortal = previous?.portal?.id == rows.object.id ? previous!.object : null;
+    if (previous != null) {
+      if (!await _exitBox(previous)) return const GoToRecordOutcome(moved: false, errorCode: 20);
+      if (previous.same(_activeBox)) _activeBox = null;
+    }
+    _makePortalActive(_portalRows.entries.firstWhere((e) => e.value == rows).key);
+    rows.activate(row);
+    if (select) {
+      if (previous?.hasFocus() ?? false) FocusManager.instance.primaryFocus?.unfocus();
+      return const GoToRecordOutcome(moved: true);
+    }
+    final fields = rows.enterableFields?.call() ?? const <LayoutObjectModel>[];
+    final field = inPortal != null && fields.any((f) => f.id == inPortal.id) ? inPortal : fields.firstOrNull;
+    final box = field == null ? null : await rows.focusCell?.call(row, field.id);
+    if (box != null && mounted) {
+      _activateBox(box);
+      await _triggers.fire(_trigger('OnObjectEnter', objectId: box.object.id));
+    }
+    return const GoToRecordOutcome(moved: true);
   }
 
-  /// Deletes nothing: this browser has no active portal row (Go to Portal Row
-  /// is not supported), and the current record is the portal's parent, so
-  /// deleting it here would delete the parent and cascade. Portal rows are
-  /// deleted from their own delete control, through the portal target's
-  /// client. Returns FileMaker's 101 (record is missing).
+  /// Delete Portal Row (#26): deletes the related record of the active
+  /// portal row, never the record in hand, which is the portal's parent.
+  /// Without an active row the step sets error 101.
   @override
-  Future<int> actionDeletePortalRow({required bool confirm}) async => 101;
+  Future<int> actionDeletePortalRow({required bool confirm}) async {
+    final rows = _activePortal;
+    final record = rows?.activeRecord;
+    final delete = rows?.deleteRow;
+    final rowId = record?['id']?.toString() ?? '';
+    if (rows == null || delete == null || rowId.isEmpty) return 101;
+    final code = await delete(rowId, confirm: confirm);
+    if (code == 0) {
+      if (_activeBox?.portal?.id == rows.object.id) _activeBox = null;
+      _deactivatePortal();
+    }
+    return code;
+  }
 
   @override
   Future<ReplaceOutcome> actionReplaceFieldContents({
@@ -4856,7 +5500,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           _currentIndex = idx < 0 ? 0 : idx;
         });
         _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
+        _recordChanged();
       }
     }
   }
@@ -4980,12 +5624,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   Future<void> actionPrint({bool dialog = true, Map<String, dynamic>? printSettings}) async {
-    _requestMode(OperationalMode.preview);
+    await _requestMode(OperationalMode.preview);
   }
 
   @override
   Future<void> actionSaveRecordsAsPdf({String? path, bool dialog = true, bool append = false}) async {
-    _requestMode(OperationalMode.preview);
+    await _requestMode(OperationalMode.preview);
   }
 
   @override
@@ -5243,11 +5887,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     } else if (lower.contains('prev') || lower.contains('anterior')) {
       previousRecord();
     } else if (lower.contains('find') || lower.contains('buscar')) {
-      _requestMode(OperationalMode.find);
+      unawaited(_requestMode(OperationalMode.find));
     } else if (lower.contains('print') ||
         lower.contains('imprimir') ||
         lower.contains('preview')) {
-      _requestMode(OperationalMode.preview);
+      unawaited(_requestMode(OperationalMode.preview));
     } else if (lower.contains('save') || lower.contains('guardar')) {
       unawaited(_saveCurrentRecord());
     } else if (lower.contains('home') ||
@@ -5685,7 +6329,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                         label: const Text('Cancel Find'),
                         onPressed: () {
                           deleteAllFindRequests();
-                          _requestMode(OperationalMode.browse);
+                          unawaited(_requestMode(OperationalMode.browse));
                           unawaited(_fetchRecords());
                         },
                       ),

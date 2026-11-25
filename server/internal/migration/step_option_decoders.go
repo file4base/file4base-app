@@ -537,9 +537,6 @@ func stepOptionItems(canonical string, params map[string]interface{}, occTableBy
 		}
 	case "Send Mail":
 		note = sendMailNote(params)
-	case "Go to Portal Row":
-		note = "Go to Portal Row is not supported in Browse mode yet: File4Base does not move to a portal " +
-			"row and reports error 101, so the steps after it act on the record, not on a portal row"
 	case "Save Records as PDF":
 		note = "Save Records as PDF produces no PDF in File4Base yet: the step fails with error 3 (command " +
 			"unavailable), and the script stops there unless Set Error Capture is on"
