@@ -2408,6 +2408,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onSaveLayout: () => _layoutDesignerKey.currentState?.saveLayout(),
                   onNewRecord: _recordCommand((p) => p.create) ? () => _dataBrowserKey.currentState?.createNewRecord() : null,
                   onDuplicateRecord: _recordCommand((p) => p.create) ? () => _dataBrowserKey.currentState?.duplicateRecord() : null,
+                  // The relookup endpoint is the data API's, not an
+                  // occurrence's: unavailable on another solution's table.
+                  onRelookupFieldContents: mode == OperationalMode.browse && _externalLayoutOccurrence == null
+                      ? () => unawaited(_dataBrowserKey.currentState?.relookupFieldContents() ?? Future<void>.value())
+                      : null,
                   onSortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.sortRecords() : null,
                   onUnsortRecords: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.unsort() : null,
                   onCommitRecord: mode == OperationalMode.browse ? () => _dataBrowserKey.currentState?.commitRecord() : null,

@@ -26,7 +26,7 @@ class _Api extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data) async => {'id': id, ...data};
+  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data, {bool script = false}) async => {'id': id, ...data};
 }
 
 final _layout = LayoutDefinitionModel(id: 'l', name: 'L', tableOccurrence: 'contacts', objects: const [

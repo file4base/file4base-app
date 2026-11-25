@@ -1432,6 +1432,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
         );
 
       case 'set_field':
+      case 'set_next_serial_value':
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1647,6 +1648,51 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
                     ),
                   ),
                 ),
+              ],
+            ),
+          ],
+        );
+
+      case 'relookup_field_contents':
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.tune, color: theme.recordsColor, size: 16),
+                const SizedBox(width: 6),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Text('Match field: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                SizedBox(
+                  width: 200,
+                  height: 30,
+                  child: TextFormField(
+                    key: ValueKey('${step.id}-field'),
+                    initialValue: step.params['field']?.toString() ?? '',
+                    style: TextStyle(color: theme.fieldsColor, fontSize: 12, fontFamily: 'monospace'),
+                    decoration: InputDecoration(
+                      hintText: 'Table::Field (empty: active field)',
+                      hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      filled: true,
+                      fillColor: theme.surfaceContainer,
+                      border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
+                    ),
+                    onChanged: (v) => _updateStepParam('field', v),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Checkbox(
+                  key: ValueKey('${step.id}-with-dialog'),
+                  value: step.params['no_dialog'] == false,
+                  onChanged: (v) => _updateStepParam('no_dialog', v != true),
+                ),
+                Text('With dialog', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
               ],
             ),
           ],

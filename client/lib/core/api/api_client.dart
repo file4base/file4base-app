@@ -307,6 +307,24 @@ class ColumnModel {
 
   bool get isRepeating => maxRepetitions > 1;
 
+  /// The field's auto-enter and storage options, kept as a JSON object in
+  /// [defaultValue]; empty when it holds none (or an older plain text).
+  Map<String, dynamic> get fieldOptions {
+    final raw = defaultValue;
+    if (raw == null || raw.isEmpty || !raw.trimLeft().startsWith('{')) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? decoded : const {};
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  /// Whether the auto-enter options prohibit modifying the value during data
+  /// entry: Browse mode shows the field read-only, and only a script's write
+  /// may set it.
+  bool get prohibitsModification => fieldOptions['prohibit_modification'] == true;
+
   /// The record key of repetition [n] of the field [name]: the field itself
   /// for the first, `name[n]` for the others.
   static String repetitionKey(String name, int n) => n <= 1 ? name : '$name[$n]';
@@ -2146,24 +2164,95 @@ class ApiClient {
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
-  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record) async {
+  /// The header a script step's write carries: such a write may set a field
+  /// whose auto-enter options prohibit modification during data entry, as a
+  /// FileMaker script may. It is a data-entry rule, not a privilege.
+  static const entryHeader = 'X-File4Base-Entry';
+
+  Map<String, String>? _entry({required bool script}) => script ? const {entryHeader: 'script'} : null;
+
+  /// Creates a record. [script] marks the write as a script step's
+  /// ([entryHeader]); without it, it is data entry.
+  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false}) async {
     final response = await _httpClient.post(
       Uri.parse(_records(table)),
-      headers: _headers(contentType: 'application/json'),
+      headers: _headers(extra: _entry(script: script), contentType: 'application/json'),
       body: jsonEncode(record),
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> updates) async {
+  /// Changes a record. [script] marks the write as a script step's
+  /// ([entryHeader]); without it, it is data entry.
+  Future<Map<String, dynamic>> updateRow(
+    String table,
+    String id,
+    Map<String, dynamic> updates, {
+    bool script = false,
+  }) async {
     final response = await _httpClient.put(
       Uri.parse('${_records(table)}/$id'),
-      headers: _headers(contentType: 'application/json'),
+      headers: _headers(extra: _entry(script: script), contentType: 'application/json'),
       body: jsonEncode(updates),
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  /// Whether this client's record calls read a table occurrence
+  /// ([forOccurrence]) rather than the data API's tables.
+  bool get readsOccurrence => _occurrence != null;
+
+  /// Duplicates the record [id] of [table], as FileMaker's Duplicate Record:
+  /// the stored fields are copied and the auto-enter options enter new values
+  /// (serial numbers, creation stamps). Returns the new record.
+  Future<Map<String, dynamic>> duplicateRow(String table, String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/${Uri.encodeComponent(id)}/duplicate'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  String _serialsUrl(String table, String field) =>
+      '$baseUrl/api/v1/data/$table/serials/${Uri.encodeComponent(field)}';
+
+  /// The value the next record gets in the serial number [field] of [table]
+  /// (FileMaker's GetNextSerialValue).
+  Future<String> getNextSerialValue(String table, String field) async {
+    final response = await _httpClient.get(Uri.parse(_serialsUrl(table, field)), headers: _headers());
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['next_value']?.toString() ?? '';
+  }
+
+  /// Sets the value the next record gets in the serial number [field] of
+  /// [table] (FileMaker's Set Next Serial Value). Returns the value set.
+  Future<String> setNextSerialValue(String table, String field, String nextValue) async {
+    final response = await _httpClient.put(
+      Uri.parse(_serialsUrl(table, field)),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'next_value': nextValue}),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['next_value']?.toString() ?? nextValue;
+  }
+
+  /// Copies again the looked-up values of the records [recordIds] of
+  /// [table] whose lookups start from the match field [matchField]
+  /// (FileMaker's Relookup Field Contents). Returns how many records changed.
+  Future<int> relookupFieldContents(String table, String matchField, List<String> recordIds) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/relookup'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'field': matchField, 'record_ids': recordIds}),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (body['updated'] as num?)?.toInt() ?? 0;
   }
 
   Future<void> deleteRow(String table, String id) async {
