@@ -165,8 +165,10 @@ To allow dynamic table and field creation without code recompilation, metadata i
 - `right_table_id` (FK -> `sys_tables.id`)
 - `right_column_id` (FK -> `sys_columns.id`)
 - `operator` (`=`, `!=`, `<`, `<=`, `>`, `>=`)
-- `cascade_delete` (Boolean)
-- `allow_creation` (Boolean, allow creating related records via portal)
+- `cascade_delete` (Boolean: deleting a left record deletes the right records it matches)
+- `allow_creation` (Boolean: right records may be created from a left record, as a portal's last row does)
+- `sort_related` (Text, nullable: the order of the right records read from a left record)
+- `left_cascade_delete`, `left_allow_creation` (Boolean, default false), `left_sort_related` (Text, nullable): the same options of the left side, acting on the left records from a right one (`server/migrations/006_relationship_left_options.sql`)
 - `left_column_name`, `right_column_name` (field names kept beside the ids; the only name of a side on an occurrence of another solution's table, whose `*_column_id` is NULL)
 
 ### 4. `sys_relationship_predicates` (Further Match Criteria)

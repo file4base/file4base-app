@@ -32,6 +32,11 @@ class RelatedTarget {
   /// Whether the records are another solution's: they are read and written
   /// there, as the account the session holds in it.
   bool get isExternal => occurrence.isExternal;
+
+  /// Whether a record of the other side may create records here: the
+  /// relationship's allow-creation of the side looked through, as FileMaker
+  /// sets it per side.
+  bool get allowsCreation => relationship.allowsCreationIn(occurrence.id);
 }
 
 /// Every occurrence reachable from [fromTable] by following one relationship,
@@ -805,7 +810,9 @@ class _PortalViewState extends State<PortalView> {
       for (final (i, row) in visible.indexed)
         _row(target, row, rowHeight, striped: i.isOdd),
     ];
-    if (_config.allowCreation && _privileges.create) {
+    // The empty last row is offered only where the relationship allows
+    // creating the records it would create: on the side the portal shows.
+    if (_config.allowCreation && target.allowsCreation && _privileges.create) {
       children.add(_newRow(target, rowHeight));
     }
 

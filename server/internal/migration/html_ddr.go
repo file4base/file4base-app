@@ -456,8 +456,20 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		relName := cleanHTMLText(rm[1])
 		relTableHTML := rm[2]
 		var leftOcc, leftField, rightOcc, rightField string
-		allowCreate := false
-		cascadeDelete := false
+		// The report gives each side's options in that side's column, as
+		// FileMaker sets them: the second cell is the left table's, the
+		// fourth the right table's, each acting on the records of its own
+		// table. They are never merged: a left table's "delete related
+		// records in this table" read as the right table's would delete a
+		// parent with its child.
+		var left, right struct {
+			create, purge bool
+			sort          string // raw cell, read once the tables are known
+		}
+		// A report that lists the options without saying whose they are
+		// (a "Create" or "Delete" row of three cells) leaves the side to
+		// guess.
+		unsidedCreate, unsidedDelete := false, false
 
 		for _, tr := range reHTMLTableRow.FindAllStringSubmatch(relTableHTML, -1) {
 			cells := reHTMLTableCell.FindAllStringSubmatch(tr[1], -1)
@@ -473,13 +485,11 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 					leftField = c1
 					rightField = c3
 				case strings.Contains(rowTitle, "allow creation"):
-					if strings.EqualFold(c1, "On") || strings.EqualFold(c1, "Yes") || strings.EqualFold(c3, "On") || strings.EqualFold(c3, "Yes") {
-						allowCreate = true
-					}
+					left.create, right.create = htmlOptionOn(c1), htmlOptionOn(c3)
 				case strings.Contains(rowTitle, "delete related"):
-					if strings.EqualFold(c1, "On") || strings.EqualFold(c1, "Yes") || strings.EqualFold(c3, "On") || strings.EqualFold(c3, "Yes") {
-						cascadeDelete = true
-					}
+					left.purge, right.purge = htmlOptionOn(c1), htmlOptionOn(c3)
+				case strings.HasPrefix(rowTitle, "sort records"):
+					left.sort, right.sort = cells[1][1], cells[3][1]
 				}
 			} else if len(cells) >= 3 {
 				c1 := cleanHTMLText(cells[1][1])
@@ -492,16 +502,20 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 					}
 				}
 				if strings.EqualFold(c1, "Create") && strings.EqualFold(c2, "Yes") {
-					allowCreate = true
+					unsidedCreate = true
 				}
 				if strings.EqualFold(c1, "Delete") && strings.EqualFold(c2, "Yes") {
-					cascadeDelete = true
+					unsidedDelete = true
 				}
 			}
 		}
 		if leftOcc == "" || rightOcc == "" || leftField == "" || rightField == "" {
 			continue
 		}
+		// Allowing creation on the side drawn second is what such a report
+		// has always been read as, and it creates nothing by itself. A
+		// delete is not guessed: on the wrong side it deletes the other way.
+		right.create = right.create || unsidedCreate
 
 		leftOccID := occIDByName[strings.ToLower(leftOcc)]
 		rightOccID := occIDByName[strings.ToLower(rightOcc)]
@@ -530,7 +544,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		if _, exists := relIDByOccurrence[rLow]; !exists {
 			relIDByOccurrence[rLow] = relID
 		}
-		bundle.Relationships = append(bundle.Relationships, schema.BundleRelationship{
+		rel := schema.BundleRelationship{
 			ID:                relID,
 			Name:              relName,
 			LeftOccurrenceID:  leftOccID,
@@ -538,16 +552,60 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			RightOccurrenceID: rightOccID,
 			RightColumnID:     rightColID,
 			Operator:          "=",
-			AllowCreation:     allowCreate,
-			CascadeDelete:     cascadeDelete,
-		})
+			AllowCreation:     right.create,
+			CascadeDelete:     right.purge,
+			LeftAllowCreation: left.create,
+			LeftCascadeDelete: left.purge,
+		}
+		var notes []ReportItem
+		for _, side := range []struct {
+			occurrence, table, cell string
+			sort                    *string
+		}{
+			{leftOcc, leftTbl, left.sort, &rel.LeftSortRelated},
+			{rightOcc, rightTbl, right.sort, &rel.SortRelated},
+		} {
+			table := side.table
+			spec, dropped := htmlSideSort(side.cell, side.occurrence, func(field string) string {
+				name := sanitizeIdentifier(field)
+				if colIDByTableCol[table+"."+name] == "" {
+					return ""
+				}
+				return name
+			})
+			*side.sort = spec
+			if len(dropped) > 0 {
+				notes = append(notes, ReportItem{
+					Category:   CategoryTranslated,
+					Domain:     "relationship",
+					SourceName: relName,
+					TargetName: relName,
+					Detail:     fmt.Sprintf("Sort records of %s: %s", side.occurrence, strings.Join(dropped, "; ")),
+				})
+			}
+		}
+		if unsidedDelete {
+			notes = append(notes, ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "relationship",
+				SourceName: relName,
+				TargetName: relName,
+				Detail: fmt.Sprintf("The report deletes related records through this relationship without saying on which side; "+
+					"no delete cascades through it until \"Delete related records\" is turned on for %s or %s in Edit Relationship",
+					leftOcc, rightOcc),
+			})
+		}
+		bundle.Relationships = append(bundle.Relationships, rel)
 		addReportItem(report, ReportItem{
 			Category:   CategoryPreserved,
 			Domain:     "relationship",
 			SourceName: relName,
 			TargetName: relName,
-			Detail:     fmt.Sprintf("%s.%s = %s.%s", leftOcc, leftField, rightOcc, rightField),
+			Detail:     fmt.Sprintf("%s.%s = %s.%s", leftOcc, leftField, rightOcc, rightField) + relationshipOptionsDetail(leftOcc, rightOcc, &rel),
 		})
+		for _, item := range notes {
+			addReportItem(report, item)
+		}
 	}
 	report.Counts.Relationships = len(bundle.Relationships)
 
@@ -2162,6 +2220,48 @@ func sectionBetween(s, startMarker, endMarker string) string {
 		}
 	}
 	return rest
+}
+
+// htmlOptionOn reads a relationship option cell of an HTML report.
+func htmlOptionOn(cell string) bool {
+	return strings.EqualFold(cell, "On") || strings.EqualFold(cell, "Yes")
+}
+
+// reHTMLSortLevel is one field of a "Sort records" cell: its name, then the
+// list of its options, which says the order.
+var reHTMLSortLevel = regexp.MustCompile(`(?is)Field:\s*(.*?)</p>\s*<ul>(.*?)</ul>`)
+
+// htmlSideSort reads the "Sort records" cell of one side of a relationship in
+// an HTML report — "On", then each field with its order — as a sort order of
+// the side's fields, like relationshipSideSort does for an XML document.
+func htmlSideSort(cell, occurrence string, column func(field string) string) (string, []string) {
+	if !strings.HasPrefix(strings.ToLower(cleanHTMLText(cell)), "on") {
+		return "", nil
+	}
+	var levels, notes []string
+	for _, m := range reHTMLSortLevel.FindAllStringSubmatch(cell, -1) {
+		field := cleanHTMLText(m[1])
+		if owner, name, qualified := strings.Cut(field, "::"); qualified {
+			if !strings.EqualFold(strings.TrimSpace(owner), occurrence) {
+				notes = append(notes, fmt.Sprintf("%s is a field of another occurrence, which is not kept", field))
+				continue
+			}
+			field = strings.TrimSpace(name)
+		}
+		name := column(field)
+		if name == "" {
+			notes = append(notes, fmt.Sprintf("%s is not a migrated field of %s, which is not kept", field, occurrence))
+			continue
+		}
+		switch options := strings.ToLower(cleanHTMLText(m[2])); {
+		case strings.Contains(options, "descending"):
+			name = "-" + name
+		case strings.Contains(options, "custom") || strings.Contains(options, "value list"):
+			notes = append(notes, fmt.Sprintf("%s is sorted by a value list in FileMaker, and ascending here", field))
+		}
+		levels = append(levels, name)
+	}
+	return strings.Join(levels, ","), notes
 }
 
 func cleanHTMLText(raw string) string {

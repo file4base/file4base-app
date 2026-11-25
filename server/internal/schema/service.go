@@ -102,6 +102,12 @@ type ColumnMetadata struct {
 // it meets all of them. The first one is also given as LeftColumnID, Operator
 // and RightColumnID, which is all a relationship had before it could have
 // several.
+//
+// Each side has its own options, as in FileMaker's Edit Relationship dialog,
+// and each acts on the side it is set on. AllowCreation, CascadeDelete and
+// SortRelated are the right side's, which is all a relationship had before
+// the left side's could be kept: LeftAllowCreation, LeftCascadeDelete and
+// LeftSortRelated.
 type RelationshipMetadata struct {
 	ID                string                  `json:"id"`
 	Name              string                  `json:"name"`
@@ -114,6 +120,9 @@ type RelationshipMetadata struct {
 	AllowCreation     bool                    `json:"allow_creation"`
 	CascadeDelete     bool                    `json:"cascade_delete"`
 	SortRelated       string                  `json:"sort_related,omitempty"`
+	LeftAllowCreation bool                    `json:"left_allow_creation"`
+	LeftCascadeDelete bool                    `json:"left_cascade_delete"`
+	LeftSortRelated   string                  `json:"left_sort_related,omitempty"`
 	CreatedAt         time.Time               `json:"created_at"`
 }
 
@@ -195,7 +204,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			sort_related TEXT,
 			left_column_name VARCHAR(64),
 			right_column_name VARCHAR(64),
-			created_at ` + ts + `
+			created_at ` + ts + `,
+			left_allow_creation BOOLEAN NOT NULL DEFAULT FALSE,
+			left_cascade_delete BOOLEAN NOT NULL DEFAULT FALSE,
+			left_sort_related TEXT
 		);`,
 		// The match criteria of a relationship after its first.
 		relationshipPredicatesSQL(ts),

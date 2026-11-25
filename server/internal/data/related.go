@@ -60,9 +60,12 @@ type RelationSide struct {
 
 // Relationship is a catalog relationship with both of its sides resolved.
 //
-// A relationship is drawn from a left side to a right side, and File4Base reads
-// that direction as parent to child: AllowCreation and CascadeDelete act on the
-// right side when a record of the left side is the one in hand.
+// Each side has its own options, as in FileMaker, and each acts on the side it
+// is set on. AllowCreation, CascadeDelete and SortRelated are the right side's:
+// a record of the left side creates records on the right, deleting it deletes
+// its records on the right, and its records on the right are read in that
+// order. LeftAllowCreation, LeftCascadeDelete and LeftSortRelated are the left
+// side's, which act the other way round.
 //
 // It relates the records that meet every one of its Predicates. The first
 // predicate is also Operator, Left.Column and Right.Column; a relationship
@@ -77,6 +80,29 @@ type Relationship struct {
 	AllowCreation bool                `json:"allow_creation"`
 	CascadeDelete bool                `json:"cascade_delete"`
 	SortRelated   string              `json:"sort_related,omitempty"`
+
+	LeftAllowCreation bool   `json:"left_allow_creation"`
+	LeftCascadeDelete bool   `json:"left_cascade_delete"`
+	LeftSortRelated   string `json:"left_sort_related,omitempty"`
+}
+
+// allowsCreationIn reports whether records of target may be created through
+// the relationship, from a record of its other side: the option of the side
+// they are created in.
+func (r *Relationship) allowsCreationIn(target RelationSide) bool {
+	if target.OccurrenceID == r.Right.OccurrenceID {
+		return r.AllowCreation
+	}
+	return r.LeftAllowCreation
+}
+
+// sortOf is the "Sort records" order of a side: the order its records are
+// read in from a record of the other side.
+func (r *Relationship) sortOf(target RelationSide) string {
+	if target.OccurrenceID == r.Right.OccurrenceID {
+		return r.SortRelated
+	}
+	return r.LeftSortRelated
 }
 
 // RelationPredicate is one match criterion of a relationship, with its two
@@ -269,6 +295,7 @@ func (r *Relationship) SidesFrom(from Origin, targetOccurrence string) (source, 
 // leave out every relationship with a side on an occurrence of another
 // solution's table, which has neither a local table nor local columns.
 const relationshipSelect = `SELECT r.id, r.name, r.operator, r.allow_creation, r.cascade_delete, r.sort_related,
+		r.left_allow_creation, r.left_cascade_delete, r.left_sort_related,
 		lo.id, lo.name, lt.name, lc.name,
 		ro.id, ro.name, rt.name, rc.name
 	FROM sys_relationships r
@@ -385,9 +412,11 @@ func (s *Service) attachPredicates(ctx context.Context, rels []*Relationship, on
 
 func scanRelationship(row interface{ Scan(...any) error }) (*Relationship, error) {
 	var rel Relationship
-	var sortRelated sql.NullString
+	var sortRelated, leftSortRelated sql.NullString
+	var leftAllowCreation, leftCascadeDelete sql.NullBool
 	err := row.Scan(
 		&rel.ID, &rel.Name, &rel.Operator, &rel.AllowCreation, &rel.CascadeDelete, &sortRelated,
+		&leftAllowCreation, &leftCascadeDelete, &leftSortRelated,
 		&rel.Left.OccurrenceID, &rel.Left.OccurrenceName, &rel.Left.TableName, &rel.Left.Column,
 		&rel.Right.OccurrenceID, &rel.Right.OccurrenceName, &rel.Right.TableName, &rel.Right.Column,
 	)
@@ -395,6 +424,8 @@ func scanRelationship(row interface{ Scan(...any) error }) (*Relationship, error
 		return nil, err
 	}
 	rel.SortRelated = sortRelated.String
+	rel.LeftAllowCreation, rel.LeftCascadeDelete, rel.LeftSortRelated =
+		leftAllowCreation.Bool, leftCascadeDelete.Bool, leftSortRelated.String
 	return &rel, nil
 }
 
@@ -426,31 +457,26 @@ func ParseSortSpec(spec string) []SortField {
 }
 
 // relatedSortOrder is the order a portal's records come back in: the one the
-// caller asked for, otherwise the relationship's own "Sort related records".
+// caller asked for, otherwise the "Sort records" of the side being read.
 //
 // That option was stored as the bare word "asc" or "desc" before a sort order
 // could be written out, which means the match field in that direction.
 //
-// Like the relationship's other two options it belongs to the **right** side,
-// because that is the side they all act on. A relationship is read both ways —
-// a company's customers, and a customer's company — and the fields it names
-// only exist on one of them, so reading the left side ignores it. A field the
-// side being read does not have is dropped rather than refused: a stale
-// setting on the relationship must not leave a portal blank. What the caller
-// asked for is checked as usual, so a sort typed into Portal Setup is still
-// reported.
+// Each side has its own, as in FileMaker, and it names fields of that side: a
+// company's customers are read in the customers side's order, a customer's
+// companies in the companies side's. A field the side being read does not have
+// is dropped rather than refused: a stale setting on the relationship must not
+// leave a portal blank. What the caller asked for is checked as usual, so a
+// sort typed into Portal Setup is still reported.
 func relatedSortOrder(rel *Relationship, target RelationSide, fields fieldSet, opts QueryOptions) []SortField {
 	if order := opts.SortOrder(); len(order) > 0 {
 		return order
 	}
-	if target.OccurrenceID != rel.Right.OccurrenceID {
-		return nil
-	}
 
-	// "asc" and "desc" sort by the right side's field of the first criterion.
+	// "asc" and "desc" sort by the side's field of the first criterion.
 
 	var order []SortField
-	switch spec := strings.TrimSpace(rel.SortRelated); strings.ToLower(spec) {
+	switch spec := strings.TrimSpace(rel.sortOf(target)); strings.ToLower(spec) {
 	case "":
 		return nil
 	case "asc", "ascending":
@@ -912,16 +938,17 @@ func (s *Service) CreateRelatedRowFrom(
 	if err != nil {
 		return nil, err
 	}
-	if !rel.AllowCreation {
-		return nil, fmt.Errorf("%w: %s", ErrCreationNotAllowed, rel.Name)
-	}
-	// Allow-creation is set on the right side, as FileMaker's on the side
-	// it acts on: a record of the left side creates there, never the reverse.
-	if target.OccurrenceID != rel.Right.OccurrenceID || source.OccurrenceID != rel.Left.OccurrenceID {
+	// Allow-creation is set per side, as in FileMaker, on the side records
+	// are created in: a record of one side creates on the other only when
+	// that other side allows it.
+	if !rel.allowsCreationIn(target) {
+		if !rel.AllowCreation && !rel.LeftAllowCreation {
+			return nil, fmt.Errorf("%w: %s", ErrCreationNotAllowed, rel.Name)
+		}
 		return nil, fmt.Errorf("%w: relationship %s creates records of %s from a record of %s, not of %s from %s: "+
-			"create the record from %s, or draw the relationship from %s to %s",
-			ErrCreationNotAllowed, rel.Name, rel.Right.OccurrenceName, rel.Left.OccurrenceName,
-			target.OccurrenceName, source.OccurrenceName, rel.Left.OccurrenceName, source.OccurrenceName, target.OccurrenceName)
+			"create the record from %s, or allow creation of records in %s through it",
+			ErrCreationNotAllowed, rel.Name, source.OccurrenceName, target.OccurrenceName,
+			target.OccurrenceName, source.OccurrenceName, target.OccurrenceName, target.OccurrenceName)
 	}
 	terms, err := rel.matchTerms(source)
 	if err != nil {
@@ -975,31 +1002,51 @@ func (s *Service) CreateRelatedRowFrom(
 	return inserted, nil
 }
 
-// cascadingRelationships returns the relationships whose "Delete related
-// records" option is on and whose left side is the given table, which is the
-// parent-to-child direction a cascade follows.
-func (s *Service) cascadingRelationships(ctx context.Context, tableName string) ([]string, error) {
+// cascadeLink is a relationship a delete follows, from the table of the
+// record being deleted to the side whose records it deletes.
+type cascadeLink struct {
+	relationship string
+	// toLeft is set when the table is on the right and the left side's
+	// option deletes the records of the left side; otherwise the table is on
+	// the left and the right side's option deletes those of the right.
+	toLeft bool
+}
+
+// cascadingRelationships returns the relationships a delete of a record of
+// the given table follows: "Delete related records in this table when a
+// record is deleted in the other table" is set per side, as in FileMaker, on
+// the side whose records go. A relationship with the table on its left
+// follows the right side's option, one with the table on its right the left
+// side's; a relationship joining the table to itself may follow both.
+func (s *Service) cascadingRelationships(ctx context.Context, tableName string) ([]cascadeLink, error) {
 	dialect := s.driver.Dialect()
-	q := `SELECT r.id FROM sys_relationships r
+	q := `SELECT r.id, 0 FROM sys_relationships r
 		JOIN sys_table_occurrences lo ON lo.id = r.left_occurrence_id
 		JOIN sys_tables lt ON lt.id = lo.base_table_id
-		WHERE r.cascade_delete = ` + trueLiteral(dialect) + ` AND lt.name = ` + dialect.Placeholder(1)
+		WHERE r.cascade_delete = ` + trueLiteral(dialect) + ` AND lt.name = ` + dialect.Placeholder(1) + `
+		UNION ALL
+		SELECT r.id, 1 FROM sys_relationships r
+		JOIN sys_table_occurrences ro ON ro.id = r.right_occurrence_id
+		JOIN sys_tables rt ON rt.id = ro.base_table_id
+		WHERE r.left_cascade_delete = ` + trueLiteral(dialect) + ` AND rt.name = ` + dialect.Placeholder(2)
 
-	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
+	rows, err := s.driver.DB().QueryContext(ctx, q, tableName, tableName)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading the relationships of %s: %w", tableName, err)
 	}
 	defer rows.Close()
 
-	ids := make([]string, 0)
+	links := make([]cascadeLink, 0)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var link cascadeLink
+		var toLeft int
+		if err := rows.Scan(&link.relationship, &toLeft); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		link.toLeft = toLeft == 1
+		links = append(links, link)
 	}
-	return ids, rows.Err()
+	return links, rows.Err()
 }
 
 // trueLiteral is how each engine spells a true boolean in a statement.

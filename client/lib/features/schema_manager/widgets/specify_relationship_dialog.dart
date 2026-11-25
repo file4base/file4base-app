@@ -65,17 +65,17 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   String? _notice;
   /// How the two sides are named in the option labels, so they say which
   /// table they act on instead of "this table" (#36).
-  String get _leftSideName => _occurrenceName(_leftOccurrence, 'the other table');
-  String get _rightSideName => _occurrenceName(_rightOccurrence, 'this table');
+  String get _leftSideName => _occurrenceName(_leftOccurrence, 'the left table');
+  String get _rightSideName => _occurrenceName(_rightOccurrence, 'the right table');
 
   String _occurrenceName(TableOccurrenceModel? occurrence, String fallback) {
     final name = occurrence?.name.trim() ?? '';
     return name.isEmpty ? fallback : '"$name"';
   }
 
-  bool _allowCreation = false;
-  bool _cascadeDelete = false;
-  bool _sortRelated = false;
+  /// Each side's options, as FileMaker sets them on the side they act on.
+  final _left = _SideOptions();
+  final _right = _SideOptions();
   late final TextEditingController _nameController;
 
   final List<String> _operators = ['=', '≠', '<', '≤', '>', '≥', '×'];
@@ -99,9 +99,8 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
       _operator = rel.operator;
       _predicates.addAll(rel.predicates);
       _selectedPredicate = 0;
-      _allowCreation = rel.allowCreation;
-      _cascadeDelete = rel.cascadeDelete;
-      _sortRelated = rel.sortRelated != null && rel.sortRelated!.isNotEmpty;
+      _left.load(allowCreation: rel.leftAllowCreation, cascadeDelete: rel.leftCascadeDelete, sort: rel.leftSortRelated);
+      _right.load(allowCreation: rel.allowCreation, cascadeDelete: rel.cascadeDelete, sort: rel.sortRelated);
       _nameController = TextEditingController(text: rel.name);
     } else {
       if (widget.preselectedLeftOccurrenceId != null) {
@@ -455,7 +454,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               style: TextStyle(fontSize: 11.5, color: theme.colorScheme.error),
             ),
           ),
-        if (_allowCreation && !allEqual)
+        if ((_left.allowCreation || _right.allowCreation) && !allEqual)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
@@ -464,6 +463,66 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
               style: TextStyle(fontSize: 11.5, color: Colors.orange.shade800),
             ),
           ),
+      ],
+    );
+  }
+
+  /// The options of one side, under the name of its occurrence. [name] and
+  /// [otherName] are the two sides as the labels quote them.
+  Widget _buildSideOptions({
+    required String side,
+    required _SideOptions options,
+    required TableOccurrenceModel? occurrence,
+    required String name,
+    required String otherName,
+  }) {
+    const label = TextStyle(fontSize: 12.5);
+    final title = occurrence?.name.trim() ?? '';
+    final sortSpec = options.initialSort;
+    return Column(
+      key: ValueKey('relationship-$side-options'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title.isEmpty ? (side == 'left' ? 'Left table' : 'Right table') : title,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          overflow: TextOverflow.ellipsis,
+        ),
+        CheckboxListTile(
+          key: ValueKey('relationship-$side-allow-creation'),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          value: options.allowCreation,
+          title: Text('Allow creation of records in $name via this relationship', style: label),
+          controlAffinity: ListTileControlAffinity.leading,
+          onChanged: (val) => setState(() => options.allowCreation = val ?? false),
+        ),
+        CheckboxListTile(
+          key: ValueKey('relationship-$side-cascade-delete'),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          value: options.cascadeDelete,
+          title: Text('Delete related records in $name when a record is deleted in $otherName', style: label),
+          controlAffinity: ListTileControlAffinity.leading,
+          onChanged: (val) => setState(() => options.cascadeDelete = val ?? false),
+        ),
+        CheckboxListTile(
+          key: ValueKey('relationship-$side-sort'),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          value: options.sorted,
+          title: Text('Sort records of $name', style: label),
+          // A sort written out (a migrated one) is kept as it is; one
+          // turned on here sorts by the match field.
+          subtitle: Text(
+            sortSpec != null && !_SideOptions.isMatchFieldSort(sortSpec)
+                ? 'By ${sortSpec.split(',').map((f) => f.trim()).join(', ')}'
+                : 'By the match field',
+            style: const TextStyle(fontSize: 10.5, color: Colors.grey),
+          ),
+          controlAffinity: ListTileControlAffinity.leading,
+          onChanged: (val) => setState(() => options.sorted = val ?? false),
+        ),
       ],
     );
   }
@@ -715,51 +774,36 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
             const SizedBox(height: 12),
             const Divider(),
             const SizedBox(height: 8),
-            // These options act on the right-hand occurrence: the
-            // relationship is drawn left to right, and File4Base reads that as
-            // parent to child (#36). They name the tables rather than saying
-            // "this table", which said nothing in a dialog showing two.
-            Text(
-              'These options act on $_rightSideName, the side this relationship points at.',
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            // Each side has its own options, as in FileMaker's Edit
+            // Relationship dialog: a column per occurrence, each option
+            // acting on the records of the occurrence it is under.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _buildSideOptions(
+                    side: 'left',
+                    options: _left,
+                    occurrence: _leftOccurrence,
+                    name: _leftSideName,
+                    otherName: _rightSideName,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: _buildSideOptions(
+                    side: 'right',
+                    options: _right,
+                    occurrence: _rightOccurrence,
+                    name: _rightSideName,
+                    otherName: _leftSideName,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 4),
-            CheckboxListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _allowCreation,
-              title: Text(
-                'Allow records to be created in $_rightSideName through this relationship',
-                style: const TextStyle(fontSize: 12.5),
-              ),
-              controlAffinity: ListTileControlAffinity.leading,
-              onChanged: (val) => setState(() => _allowCreation = val ?? false),
-            ),
-            CheckboxListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _cascadeDelete,
-              title: Text(
-                'Delete the matching records in $_rightSideName when a record is deleted in $_leftSideName',
-                style: const TextStyle(fontSize: 12.5),
-              ),
-              controlAffinity: ListTileControlAffinity.leading,
-              onChanged: (val) => setState(() => _cascadeDelete = val ?? false),
-            ),
-            CheckboxListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              value: _sortRelated,
-              title: Text(
-                'Sort the related records of $_rightSideName by their match field',
-                style: const TextStyle(fontSize: 12.5),
-              ),
-              subtitle: const Text(
-                'A portal can override this with a sort order of its own, in Portal Setup.',
-                style: TextStyle(fontSize: 10.5, color: Colors.grey),
-              ),
-              controlAffinity: ListTileControlAffinity.leading,
-              onChanged: (val) => setState(() => _sortRelated = val ?? false),
+            const Text(
+              'A portal can override a sort with one of its own, in Portal Setup.',
+              style: TextStyle(fontSize: 10.5, color: Colors.grey),
             ),
           ],
         ),
@@ -791,9 +835,12 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                     'right_column_id': predicates.first.rightColumnId,
                     'operator': predicates.first.operator,
                     'predicates': predicates,
-                    'allow_creation': _allowCreation,
-                    'cascade_delete': _cascadeDelete,
-                    'sort_related': _sortRelated ? 'asc' : null,
+                    'allow_creation': _right.allowCreation,
+                    'cascade_delete': _right.cascadeDelete,
+                    'sort_related': _right.sortResult,
+                    'left_allow_creation': _left.allowCreation,
+                    'left_cascade_delete': _left.cascadeDelete,
+                    'left_sort_related': _left.sortResult,
                   });
                 },
           child: const Text('OK'),
@@ -801,4 +848,35 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
       ],
     );
   }
+}
+
+/// The options of one side of a relationship, as the dialog edits them.
+class _SideOptions {
+  bool allowCreation = false;
+  bool cascadeDelete = false;
+  bool sorted = false;
+
+  /// The sort the relationship had when the dialog opened, which OK keeps
+  /// while the side stays sorted.
+  String? initialSort;
+
+  void load({required bool allowCreation, required bool cascadeDelete, String? sort}) {
+    this.allowCreation = allowCreation;
+    this.cascadeDelete = cascadeDelete;
+    final spec = sort?.trim() ?? '';
+    initialSort = spec.isEmpty ? null : spec;
+    sorted = initialSort != null;
+  }
+
+  /// What OK sends for the sort: the one it had, or the match field when it
+  /// is turned on here; an empty text clears one it had, and nothing is sent
+  /// for a side that had none and still has none.
+  String? get sortResult {
+    if (sorted) return initialSort ?? 'asc';
+    return initialSort == null ? null : '';
+  }
+
+  /// Whether [spec] is the bare direction that sorts by the match field.
+  static bool isMatchFieldSort(String spec) =>
+      const {'asc', 'ascending', 'desc', 'descending'}.contains(spec.trim().toLowerCase());
 }

@@ -33,10 +33,24 @@ type UpdateOccurrenceInput struct {
 	ExternalTable *string  `json:"external_table,omitempty"`
 }
 
+// relationshipSideColumns are the options of a relationship's left side, which
+// a catalog created before they were kept lacks: such a relationship keeps
+// the options it had, on its right side, and none on its left.
+// server/migrations/006 adds the same.
+var relationshipSideColumns = []struct{ table, column, typ string }{
+	{"sys_relationships", "left_allow_creation", "BOOLEAN NOT NULL DEFAULT FALSE"},
+	{"sys_relationships", "left_cascade_delete", "BOOLEAN NOT NULL DEFAULT FALSE"},
+	{"sys_relationships", "left_sort_related", "TEXT"},
+}
+
 // CreateRelationshipInput creates a relationship. Its match criteria are
 // Predicates, in order; a client that sends none gives its one criterion as
 // LeftColumnID, Operator and RightColumnID, as before relationships could
 // have several.
+//
+// AllowCreation, CascadeDelete and SortRelated are the right side's options,
+// LeftAllowCreation, LeftCascadeDelete and LeftSortRelated the left side's;
+// each acts on the side it is set on (see RelationshipMetadata).
 type CreateRelationshipInput struct {
 	Name              string                  `json:"name"`
 	LeftOccurrenceID  string                  `json:"left_occurrence_id"`
@@ -48,6 +62,9 @@ type CreateRelationshipInput struct {
 	AllowCreation     bool                    `json:"allow_creation"`
 	CascadeDelete     bool                    `json:"cascade_delete"`
 	SortRelated       *string                 `json:"sort_related,omitempty"`
+	LeftAllowCreation bool                    `json:"left_allow_creation"`
+	LeftCascadeDelete bool                    `json:"left_cascade_delete"`
+	LeftSortRelated   *string                 `json:"left_sort_related,omitempty"`
 }
 
 // UpdateRelationshipInput changes a relationship. Predicates, when sent,
@@ -59,6 +76,10 @@ type UpdateRelationshipInput struct {
 	AllowCreation *bool                   `json:"allow_creation,omitempty"`
 	CascadeDelete *bool                   `json:"cascade_delete,omitempty"`
 	SortRelated   *string                 `json:"sort_related,omitempty"`
+
+	LeftAllowCreation *bool   `json:"left_allow_creation,omitempty"`
+	LeftCascadeDelete *bool   `json:"left_cascade_delete,omitempty"`
+	LeftSortRelated   *string `json:"left_sort_related,omitempty"`
 }
 
 // CreateTableOccurrence registers a new occurrence of a base table, or of a
@@ -229,6 +250,12 @@ func (s *Service) DeleteTableOccurrence(ctx context.Context, id string) error {
 
 // ListRelationships returns all relationships defined in sys_relationships
 func (s *Service) ListRelationships(ctx context.Context) ([]RelationshipMetadata, error) {
+	// A catalog not upgraded since the server was lacks the left side's
+	// options; sign-in adds them, and so does this on a database reached
+	// before anyone signed in to it.
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	db := s.driver.DB()
 	rows, err := db.QueryContext(ctx, `SELECT `+relationshipColumns+` FROM sys_relationships r
 		LEFT JOIN sys_columns lc ON lc.id = r.left_column_id
@@ -270,17 +297,22 @@ func (s *Service) ListRelationships(ctx context.Context) ([]RelationshipMetadata
 // field is the name kept with it.
 const relationshipColumns = `r.id, r.name, r.left_occurrence_id, r.left_column_id, r.right_occurrence_id, r.right_column_id,
 	r.operator, r.allow_creation, r.cascade_delete, r.sort_related, r.created_at,
-	COALESCE(lc.name, r.left_column_name, ''), COALESCE(rc.name, r.right_column_name, '')`
+	COALESCE(lc.name, r.left_column_name, ''), COALESCE(rc.name, r.right_column_name, ''),
+	r.left_allow_creation, r.left_cascade_delete, r.left_sort_related`
 
 func scanRelationshipMetadata(row interface{ Scan(...any) error }) (r RelationshipMetadata, leftName, rightName string, err error) {
-	var sortRelated, operator, leftColumn, rightColumn sql.NullString
+	var sortRelated, leftSortRelated, operator, leftColumn, rightColumn sql.NullString
+	var leftAllowCreation, leftCascadeDelete sql.NullBool
 	err = row.Scan(
 		&r.ID, &r.Name, &r.LeftOccurrenceID, &leftColumn, &r.RightOccurrenceID, &rightColumn,
 		&operator, &r.AllowCreation, &r.CascadeDelete, &sortRelated, &r.CreatedAt,
 		&leftName, &rightName,
+		&leftAllowCreation, &leftCascadeDelete, &leftSortRelated,
 	)
 	r.LeftColumnID, r.RightColumnID = leftColumn.String, rightColumn.String
 	r.SortRelated = sortRelated.String
+	r.LeftAllowCreation, r.LeftCascadeDelete, r.LeftSortRelated =
+		leftAllowCreation.Bool, leftCascadeDelete.Bool, leftSortRelated.String
 	r.Operator = operator.String
 	if r.Operator == "" {
 		r.Operator = "="
@@ -315,15 +347,23 @@ func (s *Service) CreateRelationship(ctx context.Context, input CreateRelationsh
 	if err := s.ensureRelationshipPredicates(ctx); err != nil {
 		return nil, err
 	}
-
-	qIns := `INSERT INTO sys_relationships (id, name, left_occurrence_id, left_column_id, left_column_name, right_occurrence_id, right_column_id, right_column_name, operator, allow_creation, cascade_delete, sort_related, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`
-	if dialect.Engine() == dbal.EngineMariaDB {
-		qIns = `INSERT INTO sys_relationships (id, name, left_occurrence_id, left_column_id, left_column_name, right_occurrence_id, right_column_id, right_column_name, operator, allow_creation, cascade_delete, sort_related, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
 	}
 
-	var sortRelatedVal interface{}
+	marks := make([]string, 16)
+	for i := range marks {
+		marks[i] = dialect.Placeholder(i + 1)
+	}
+	qIns := `INSERT INTO sys_relationships (id, name, left_occurrence_id, left_column_id, left_column_name, right_occurrence_id, right_column_id, right_column_name, operator,
+		allow_creation, cascade_delete, sort_related, left_allow_creation, left_cascade_delete, left_sort_related, created_at) VALUES (` + strings.Join(marks, ", ") + `)`
+
+	var sortRelatedVal, leftSortRelatedVal interface{}
 	if input.SortRelated != nil {
 		sortRelatedVal = *input.SortRelated
+	}
+	if input.LeftSortRelated != nil {
+		leftSortRelatedVal = *input.LeftSortRelated
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -333,7 +373,8 @@ func (s *Service) CreateRelationship(ctx context.Context, input CreateRelationsh
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, qIns, relID, name, input.LeftOccurrenceID, nullable(first.LeftColumnID), first.LeftColumnName,
 		input.RightOccurrenceID, nullable(first.RightColumnID), first.RightColumnName, first.Operator,
-		input.AllowCreation, input.CascadeDelete, sortRelatedVal, now); err != nil {
+		input.AllowCreation, input.CascadeDelete, sortRelatedVal,
+		input.LeftAllowCreation, input.LeftCascadeDelete, leftSortRelatedVal, now); err != nil {
 		return nil, fmt.Errorf("failed creating relationship: %w", err)
 	}
 	if len(predicates) > 1 {
@@ -356,10 +397,15 @@ func (s *Service) CreateRelationship(ctx context.Context, input CreateRelationsh
 		Predicates:        predicates,
 		AllowCreation:     input.AllowCreation,
 		CascadeDelete:     input.CascadeDelete,
+		LeftAllowCreation: input.LeftAllowCreation,
+		LeftCascadeDelete: input.LeftCascadeDelete,
 		CreatedAt:         now,
 	}
 	if input.SortRelated != nil {
 		res.SortRelated = *input.SortRelated
+	}
+	if input.LeftSortRelated != nil {
+		res.LeftSortRelated = *input.LeftSortRelated
 	}
 	return res, nil
 }
@@ -419,6 +465,15 @@ func (s *Service) UpdateRelationship(ctx context.Context, id string, input Updat
 	if input.SortRelated != nil {
 		set("sort_related", *input.SortRelated)
 	}
+	if input.LeftAllowCreation != nil {
+		set("left_allow_creation", *input.LeftAllowCreation)
+	}
+	if input.LeftCascadeDelete != nil {
+		set("left_cascade_delete", *input.LeftCascadeDelete)
+	}
+	if input.LeftSortRelated != nil {
+		set("left_sort_related", *input.LeftSortRelated)
+	}
 	if len(sets) == 0 {
 		return cur, nil
 	}
@@ -452,6 +507,9 @@ func (s *Service) UpdateRelationship(ctx context.Context, id string, input Updat
 
 // relationshipByID reads one relationship with every criterion.
 func (s *Service) relationshipByID(ctx context.Context, id string) (*RelationshipMetadata, error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, err
+	}
 	qGet := `SELECT ` + relationshipColumns + ` FROM sys_relationships r
 		LEFT JOIN sys_columns lc ON lc.id = r.left_column_id
 		LEFT JOIN sys_columns rc ON rc.id = r.right_column_id

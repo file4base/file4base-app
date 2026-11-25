@@ -108,6 +108,11 @@ func bundleOccurrence(o TableOccurrence) BundleOccurrence {
 // A side on an occurrence of another solution's table has no column id: its
 // field is named, by LeftColumnName or RightColumnName for the first
 // criterion and in Predicates for every one.
+//
+// AllowCreation, CascadeDelete and SortRelated are the right side's options;
+// the left side's are LeftAllowCreation, LeftCascadeDelete and
+// LeftSortRelated, which a file written before they were kept does not have:
+// its relationships have none on the left, as they had none there before.
 type BundleRelationship struct {
 	ID                string            `msgpack:"id"`
 	Name              string            `msgpack:"name"`
@@ -122,6 +127,9 @@ type BundleRelationship struct {
 	SortRelated       string            `msgpack:"sort_related"`
 	LeftColumnName    string            `msgpack:"left_column_name,omitempty"`
 	RightColumnName   string            `msgpack:"right_column_name,omitempty"`
+	LeftAllowCreation bool              `msgpack:"left_allow_creation,omitempty"`
+	LeftCascadeDelete bool              `msgpack:"left_cascade_delete,omitempty"`
+	LeftSortRelated   string            `msgpack:"left_sort_related,omitempty"`
 }
 
 // BundlePredicate is one match criterion of a relationship of a solution
@@ -491,6 +499,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			LeftOccurrenceID: r.LeftOccurrenceID, LeftColumnID: r.LeftColumnID,
 			RightOccurrenceID: r.RightOccurrenceID, RightColumnID: r.RightColumnID,
 			Operator: r.Operator, AllowCreation: r.AllowCreation, CascadeDelete: r.CascadeDelete, SortRelated: r.SortRelated,
+			LeftAllowCreation: r.LeftAllowCreation, LeftCascadeDelete: r.LeftCascadeDelete, LeftSortRelated: r.LeftSortRelated,
 		}
 		br.WithPredicates(bundlePredicates(r.Predicates))
 		b.Relationships = append(b.Relationships, br)
@@ -953,10 +962,15 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			LeftOccurrenceID: occIDs[r.LeftOccurrenceID], RightOccurrenceID: occIDs[r.RightOccurrenceID],
 			Predicates:    predicates,
 			AllowCreation: r.AllowCreation, CascadeDelete: r.CascadeDelete,
+			LeftAllowCreation: r.LeftAllowCreation, LeftCascadeDelete: r.LeftCascadeDelete,
 		}
 		if r.SortRelated != "" {
 			sort := r.SortRelated
 			in.SortRelated = &sort
+		}
+		if r.LeftSortRelated != "" {
+			sort := r.LeftSortRelated
+			in.LeftSortRelated = &sort
 		}
 		key := relKey(in.LeftOccurrenceID, in.RightOccurrenceID, in.Predicates)
 		if existing := haveRel[key]; existing != "" {

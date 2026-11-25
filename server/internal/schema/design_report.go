@@ -127,6 +127,10 @@ func (s *Service) DesignReport(ctx context.Context, opts DesignReportOptions) (*
 			AllowCreation: relationship.AllowCreation,
 			CascadeDelete: relationship.CascadeDelete,
 			SortRelated:   relationship.SortRelated,
+
+			LeftAllowCreation: relationship.LeftAllowCreation,
+			LeftCascadeDelete: relationship.LeftCascadeDelete,
+			LeftSortRelated:   relationship.LeftSortRelated,
 		}
 		if len(relationship.Predicates) > 1 {
 			for _, p := range relationship.Predicates {

@@ -662,6 +662,9 @@ class RelationshipModel {
     this.allowCreation = false,
     this.cascadeDelete = false,
     this.sortRelated,
+    this.leftAllowCreation = false,
+    this.leftCascadeDelete = false,
+    this.leftSortRelated,
     this._predicates,
   });
 
@@ -678,6 +681,9 @@ class RelationshipModel {
       allowCreation: json['allow_creation'] as bool? ?? false,
       cascadeDelete: json['cascade_delete'] as bool? ?? false,
       sortRelated: json['sort_related'] as String?,
+      leftAllowCreation: json['left_allow_creation'] as bool? ?? false,
+      leftCascadeDelete: json['left_cascade_delete'] as bool? ?? false,
+      leftSortRelated: json['left_sort_related'] as String?,
       predicates: rawPredicates == null || rawPredicates.isEmpty
           ? null
           : rawPredicates
@@ -692,10 +698,25 @@ class RelationshipModel {
   final String rightOccurrenceId;
   final String rightColumnId;
   final String operator;
+
+  /// The right side's options, as FileMaker sets them on the side they act
+  /// on: records of the right side are created from a record of the left,
+  /// deleted with it, and read from it in this order.
   final bool allowCreation;
   final bool cascadeDelete;
   final String? sortRelated;
+
+  /// The left side's options, which act the other way round.
+  final bool leftAllowCreation;
+  final bool leftCascadeDelete;
+  final String? leftSortRelated;
+
   final List<RelationshipPredicateModel>? _predicates;
+
+  /// Whether records of [occurrenceId], one of the two sides, may be created
+  /// through the relationship from a record of the other side.
+  bool allowsCreationIn(String occurrenceId) =>
+      occurrenceId == rightOccurrenceId ? allowCreation : occurrenceId == leftOccurrenceId && leftAllowCreation;
 
   /// Every match criterion in order. The first is the relationship's own
   /// left field, operator and right field; a server that predates multiple
@@ -715,6 +736,9 @@ class RelationshipModel {
     'allow_creation': allowCreation,
     'cascade_delete': cascadeDelete,
     if (sortRelated != null) 'sort_related': sortRelated,
+    'left_allow_creation': leftAllowCreation,
+    'left_cascade_delete': leftCascadeDelete,
+    if (leftSortRelated != null) 'left_sort_related': leftSortRelated,
     'predicates': predicates.map((p) => p.toJson()).toList(),
   };
 }
@@ -2479,6 +2503,9 @@ class ApiClient {
     bool allowCreation = false,
     bool cascadeDelete = false,
     String? sortRelated,
+    bool leftAllowCreation = false,
+    bool leftCascadeDelete = false,
+    String? leftSortRelated,
     List<RelationshipPredicateModel>? predicates,
   }) async {
     final response = await _httpClient.post(
@@ -2494,6 +2521,9 @@ class ApiClient {
         'allow_creation': allowCreation,
         'cascade_delete': cascadeDelete,
         'sort_related': ?sortRelated,
+        'left_allow_creation': leftAllowCreation,
+        'left_cascade_delete': leftCascadeDelete,
+        'left_sort_related': ?leftSortRelated,
         if (predicates != null) 'predicates': predicates.map((p) => p.toJson()).toList(),
       }),
     );
@@ -2510,6 +2540,9 @@ class ApiClient {
     bool? allowCreation,
     bool? cascadeDelete,
     String? sortRelated,
+    bool? leftAllowCreation,
+    bool? leftCascadeDelete,
+    String? leftSortRelated,
     List<RelationshipPredicateModel>? predicates,
   }) async {
     final response = await _httpClient.put(
@@ -2521,6 +2554,9 @@ class ApiClient {
         'allow_creation': ?allowCreation,
         'cascade_delete': ?cascadeDelete,
         'sort_related': ?sortRelated,
+        'left_allow_creation': ?leftAllowCreation,
+        'left_cascade_delete': ?leftCascadeDelete,
+        'left_sort_related': ?leftSortRelated,
         if (predicates != null) 'predicates': predicates.map((p) => p.toJson()).toList(),
       }),
     );

@@ -57,6 +57,7 @@ final _relationships = [
     'left_occurrence_id': 'occ-orders',
     'left_column_id': 't-orders-customer_code',
     'right_occurrence_id': 'occ-cust',
+    'allow_creation': true,
   },
 ];
 
