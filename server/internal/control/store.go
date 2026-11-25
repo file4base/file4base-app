@@ -137,6 +137,16 @@ func (s *Store) initSchema(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			PRIMARY KEY (database_name, user_id, layout_id)
 		);`,
+		// SMTP profiles of the Send Mail script step (#133): one per
+		// database, and the server-wide one under the empty name. The
+		// profile names the environment variable of its password and never
+		// holds the password itself.
+		`CREATE TABLE IF NOT EXISTS mail_profiles (
+			database_name TEXT PRIMARY KEY,
+			profile_json TEXT NOT NULL,
+			updated_by TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
@@ -305,6 +315,8 @@ func (s *Store) DeleteProject(ctx context.Context, databaseName string) error {
 		`DELETE FROM project_table_permissions WHERE database_name = ?`,
 		`DELETE FROM project_layout_permissions WHERE database_name = ?`,
 		`DELETE FROM project_users WHERE database_name = ?`,
+		// The server-wide SMTP profile is stored under the empty name.
+		`DELETE FROM mail_profiles WHERE database_name = ? AND database_name <> ''`,
 		`DELETE FROM projects WHERE database_name = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, dbName); err != nil {
@@ -538,4 +550,97 @@ func parseJSONMap(raw string) map[string]interface{} {
 		return make(map[string]interface{})
 	}
 	return out
+}
+
+// ErrMailProfileNotFound is returned when no SMTP profile is stored for a
+// database (or server-wide).
+var ErrMailProfileNotFound = errors.New("no SMTP profile")
+
+// MailProfileRecord is a stored SMTP profile. Database is empty for the
+// server-wide profile. Profile is the profile's JSON, which holds no secret.
+type MailProfileRecord struct {
+	Database  string          `json:"database"`
+	Profile   json.RawMessage `json:"profile"`
+	UpdatedBy string          `json:"updated_by"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// PutMailProfile stores the SMTP profile of a database ("" for the
+// server-wide one), replacing any.
+func (s *Store) PutMailProfile(ctx context.Context, rec MailProfileRecord) error {
+	if s == nil || s.db == nil {
+		return errors.New("no control store")
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO mail_profiles (database_name, profile_json, updated_by, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(database_name) DO UPDATE SET
+			profile_json = excluded.profile_json,
+			updated_by = excluded.updated_by,
+			updated_at = excluded.updated_at
+	`, strings.TrimSpace(rec.Database), string(rec.Profile), rec.UpdatedBy, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// GetMailProfile fetches the SMTP profile of a database ("" for the
+// server-wide one).
+func (s *Store) GetMailProfile(ctx context.Context, databaseName string) (*MailProfileRecord, error) {
+	if s == nil || s.db == nil {
+		return nil, ErrMailProfileNotFound
+	}
+	var rec MailProfileRecord
+	var raw, updated string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT database_name, profile_json, updated_by, updated_at FROM mail_profiles WHERE database_name = ?
+	`, strings.TrimSpace(databaseName)).Scan(&rec.Database, &raw, &rec.UpdatedBy, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrMailProfileNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	rec.Profile = json.RawMessage(raw)
+	if t, err := time.Parse(time.RFC3339Nano, updated); err == nil {
+		rec.UpdatedAt = t
+	}
+	return &rec, nil
+}
+
+// ListMailProfiles returns every stored SMTP profile, the server-wide one
+// first.
+func (s *Store) ListMailProfiles(ctx context.Context) ([]MailProfileRecord, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT database_name, profile_json, updated_by, updated_at FROM mail_profiles ORDER BY database_name ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MailProfileRecord
+	for rows.Next() {
+		var rec MailProfileRecord
+		var raw, updated string
+		if err := rows.Scan(&rec.Database, &raw, &rec.UpdatedBy, &updated); err != nil {
+			return nil, err
+		}
+		rec.Profile = json.RawMessage(raw)
+		if t, err := time.Parse(time.RFC3339Nano, updated); err == nil {
+			rec.UpdatedAt = t
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// DeleteMailProfile removes the SMTP profile of a database ("" for the
+// server-wide one). Removing one that is not there is not an error.
+func (s *Store) DeleteMailProfile(ctx context.Context, databaseName string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM mail_profiles WHERE database_name = ?`, strings.TrimSpace(databaseName))
+	return err
 }

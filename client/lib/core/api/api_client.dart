@@ -17,6 +17,63 @@ export '../models/script_models.dart';
 export '../models/script_trigger_models.dart';
 export '../models/transfer_models.dart';
 
+/// Whether the solution's scripts can send mail through SMTP (#133).
+@immutable
+class MailStatus {
+  const MailStatus({this.configured = false, this.scope = '', this.fromName = '', this.fromAddress = '', this.maxBatch = 100});
+
+  factory MailStatus.fromJson(Map<String, dynamic> json) => MailStatus(
+        configured: json['smtp_configured'] == true,
+        scope: json['scope']?.toString() ?? '',
+        fromName: json['from_name']?.toString() ?? '',
+        fromAddress: json['from_address']?.toString() ?? '',
+        maxBatch: json['max_batch'] is int && (json['max_batch'] as int) > 0 ? json['max_batch'] as int : 100,
+      );
+
+  final bool configured;
+
+  /// `solution` or `server`: whose profile it is.
+  final String scope;
+  final String fromName;
+  final String fromAddress;
+
+  /// The most messages one send request carries.
+  final int maxBatch;
+
+  /// "Name <address>", as the compose window shows the sender.
+  String get fromLabel => fromName.isEmpty ? fromAddress : '$fromName <$fromAddress>';
+}
+
+/// One message of a Send Mail step, its calculations evaluated.
+@immutable
+class OutgoingMail {
+  const OutgoingMail({this.to = '', this.cc = '', this.bcc = '', this.subject = '', this.message = ''});
+  final String to;
+  final String cc;
+  final String bcc;
+  final String subject;
+  final String message;
+
+  bool get hasRecipient => '$to$cc$bcc'.trim().isNotEmpty;
+
+  Map<String, dynamic> toJson() => {'to': to, 'cc': cc, 'bcc': bcc, 'subject': subject, 'message': message};
+}
+
+/// A file attached to a Send Mail step.
+@immutable
+class MailAttachment {
+  const MailAttachment({required this.name, required this.bytes, this.contentType = ''});
+  final String name;
+  final Uint8List bytes;
+  final String contentType;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        if (contentType.isNotEmpty) 'content_type': contentType,
+        'data': base64Encode(bytes),
+      };
+}
+
 /// RFC 9457 Problem Details Exception
 class ApiException implements Exception {
 
@@ -3420,6 +3477,75 @@ class ApiClient {
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  // ─── Send Mail through SMTP (#133) ─────────────────────────────────────────
+
+  /// SMTP profiles (server administrators): the server-wide one has an
+  /// empty `solution`. A profile never carries its password, only the name
+  /// of the server variable holding it and whether that variable is set.
+  Future<Map<String, dynamic>> listMailProfiles() async {
+    final response = await _httpClient.get(Uri.parse('$baseUrl/api/v1/server/mail-profiles'), headers: _headers());
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> putMailProfile(Map<String, dynamic> profile) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/server/mail-profiles'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode(profile),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  Future<void> deleteMailProfile({String solution = ''}) async {
+    final query = solution.isEmpty ? '' : '?solution=${Uri.encodeQueryComponent(solution)}';
+    final response = await _httpClient.delete(Uri.parse('$baseUrl/api/v1/server/mail-profiles$query'), headers: _headers());
+    _checkResponse(response);
+  }
+
+  Future<void> testMailProfile({required String to, String solution = ''}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/server/mail-profiles/test'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'solution': solution, 'to': to}),
+    );
+    _checkResponse(response);
+  }
+
+  /// Whether this solution's scripts can send through SMTP, and as whom.
+  Future<MailStatus> mailStatus() async {
+    final response = await _httpClient.get(Uri.parse('$baseUrl/api/v1/mail/status'), headers: _headers());
+    _checkResponse(response);
+    return MailStatus.fromJson(Map<String, dynamic>.from(jsonDecode(response.body) as Map));
+  }
+
+  /// Sends [messages] through this solution's SMTP profile, with the same
+  /// sender and attachments; answers how many were sent. A refusal is an
+  /// [ApiException] whose `raw['filemaker_error']` is the step's error.
+  Future<int> sendMail({
+    required List<OutgoingMail> messages,
+    List<MailAttachment> attachments = const [],
+    String fromName = '',
+    String from = '',
+    String replyTo = '',
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/mail/send'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (fromName.isNotEmpty) 'from_name': fromName,
+        if (from.isNotEmpty) 'from': from,
+        if (replyTo.isNotEmpty) 'reply_to': replyTo,
+        if (attachments.isNotEmpty) 'attachments': [for (final a in attachments) a.toJson()],
+        'messages': [for (final m in messages) m.toJson()],
+      }),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body);
+    return body is Map && body['sent'] is int ? body['sent'] as int : messages.length;
   }
 
   /// Signs out: closes the server session and forgets the token.

@@ -2367,6 +2367,52 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `GET /api/v1/server/notifications` | server administrator | Returns SMTP and Webhook alert settings and subscribed `alert_events`. |
 | `PUT /api/v1/server/notifications` | server administrator | Saves SMTP and Webhook alert settings and subscribed `alert_events`. |
 | `POST /api/v1/server/notifications/test` | server administrator | Dispatches a test alert notification and records an audit event. |
+| `GET /api/v1/server/mail-profiles` | server administrator | The SMTP profiles of the **Send Mail** script step (`#133`): `{profiles: [...], password_env_prefix: "FILE4BASE_SMTP_"}`. See *Send Mail through SMTP* below. |
+| `PUT /api/v1/server/mail-profiles` | server administrator | Creates or replaces the profile of `solution` (empty: the server-wide profile). |
+| `DELETE /api/v1/server/mail-profiles?solution=<name>` | server administrator | Removes the profile of `solution` (no parameter: the server-wide profile). `204`. |
+| `POST /api/v1/server/mail-profiles/test` | server administrator | `{solution, to}`: sends one test message through that profile. |
+
+### Send Mail through SMTP (`#133`)
+
+The **Send Mail** script step sends through an SMTP profile that a server administrator sets in **Server Tools > Send Mail (SMTP)**: the profile of the script's solution, or else the server-wide one. Profiles live in the control store (`mail_profiles`); a solution's profile is removed with the solution.
+
+**A profile never holds its password.** It names an environment variable of the API server, which must start with `FILE4BASE_SMTP_` (`password_env`, e.g. `FILE4BASE_SMTP_PASSWORD`), so a profile cannot read any other server secret. No endpoint answers the password; a profile answers `password_available` (whether that variable is set). The password is never written to a log or to the audit log, and the audit log records how many messages were sent and the FileMaker error, never an address, a subject or a message.
+
+Profile (`PUT` body and each item of `profiles`):
+
+| Field | Meaning |
+| --- | --- |
+| `solution` | The database the profile is for; empty for the server-wide profile. |
+| `host`, `port` | The SMTP server. |
+| `security` | `starttls` (default: STARTTLS is required, the message is never sent in clear), `tls` (implicit TLS, port 465) or `none` — `none` with a user name only towards a loopback host. |
+| `username`, `password_env` | The account, and the `FILE4BASE_SMTP_*` variable holding its password (PLAIN or LOGIN authentication). Both empty: no authentication. |
+| `from_name`, `from_address` | The sender of every message. |
+| `reply_to` | The reply-to address, unless the step sets one. |
+| `max_per_hour` | Messages one account (database + user name) may send per hour, default `200`. |
+| `password_available`, `updated_by`, `updated_at` | Answers only. |
+
+#### `GET /api/v1/mail/status`
+
+Any session. Whether the session's solution can send: `{smtp_configured, scope: "solution"|"server", from_name, from_address, max_per_hour, max_recipients, max_attachment, max_batch}`; `{smtp_configured: false}` without a profile.
+
+#### `POST /api/v1/mail/send`
+
+Any session. Sends through the session's solution profile (or the server's).
+
+```json
+{
+  "from_name": "Sales",
+  "from": "sales@example.com",
+  "reply_to": "orders@example.com",
+  "attachments": [{"name": "Invoice.pdf", "content_type": "application/pdf", "data": "<base64>"}],
+  "messages": [{"to": "a@example.com; b@example.com", "cc": "", "bcc": "", "subject": "Invoice", "message": "Line 1\rLine 2"}]
+}
+```
+
+- One request carries 1 to 100 `messages` (one e-mail per record: the client sends the records in batches) sharing the sender and the attachments; it weighs at most 32 MiB. One message has at most 50 recipients (To, CC and BCC), a subject and message of 1 MiB, attachments of 20 MiB.
+- `from_name`, `from`, `reply_to` are the step's *via SMTP server* options. A `from` of the profile's domain is the sender; one of another domain is not put in `From` (the account could not send as it, and a script must not send as anyone) and becomes the reply-to address unless `reply_to` is set. The envelope sender is always the profile's address. BCC recipients get the message but appear in no header.
+- A carriage return, a line feed or a NUL in an address, the sender name, the subject or an attachment name is refused (`400`): no header can be injected. A message's own line breaks (FileMaker's `¶`) become CRLF.
+- Answers `200 {sent: n}`; `409` without a profile; `400` for an invalid message (nothing is sent); `413` when too large; `429` with `Retry-After` past the hourly limit (nothing is sent); `502` when the SMTP server refuses, with `sent` (messages sent before) and `filemaker_error` — the FileMaker error of the step: `1501` (authentication failed), `1502` (connection to the SMTP server failed), `1503` (TLS failed), `1504` (the server offers no STARTTLS though the profile requires it), `1505` (the server offers no supported authentication), `1506` (any other failure, e.g. a refused recipient).
 
 
 ---

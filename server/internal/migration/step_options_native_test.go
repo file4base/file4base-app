@@ -88,6 +88,22 @@ const stepOptionsDesign = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddActio
   <Parameter type="Field2"><Boolean type="Password" value="True"/>
    <Parameter type="Target"><Variable value="$secret"/></Parameter></Parameter>
  </ParameterValues></Step>
+ <Step id="63" name="Send Mail" enable="True"><ParameterValues><Parameter type="Email">
+  <Boolean type="With dialog" value="False"/>
+  <Send SMTP="True" OAuthAuthentication="False">
+   <To><CollectAddresses value="True"/><Calculation><Calculation><Text>Contacts::Email</Text></Calculation></Calculation></To>
+   <SMTP><FromName><Calculation><Calculation><Text>"Sales desk"</Text></Calculation></Calculation></FromName>
+    <FromAddress value="sales@example.invalid"/><ReplyTo value="desk@example.invalid"/>
+    <Server value="smtp.example.invalid"/><Port value="587"/><UserName value="sales"/><Password value="not-kept"/></SMTP>
+   <Multiple value="True"/>
+  </Send>
+  <UniversalPathList membercount="1"><ObjectList><Location>filemac:/Macintosh HD/Users/someone/Desktop/offer.pdf</Location></ObjectList></UniversalPathList>
+ </Parameter></ParameterValues></Step>
+ <Step id="144" name="Save Records as PDF" enable="True"><ParameterValues>
+  <Parameter type="Options"><Options type="Records being browsed" value="1"/></Parameter>
+  <Parameter type="UniversalPathList"><UniversalPathList membercount="1"><ObjectList><Location>filewin:/C:/Reports/list.pdf</Location></ObjectList></UniversalPathList></Parameter>
+  <Parameter type="SaveResult"><List name="File" value="0"/></Parameter>
+ </ParameterValues></Step>
  </ObjectList></Script></StepsForScripts>
  </AddAction></Structure></FMSaveAsXML>`
 
@@ -102,7 +118,7 @@ func TestStepOptionsAreRead(t *testing.T) {
 		}
 	}
 	steps := result.Bundle.Scripts[0].Steps
-	if len(steps) != 12 {
+	if len(steps) != 14 {
 		t.Fatalf("steps = %d", len(steps))
 	}
 
@@ -173,12 +189,30 @@ func TestStepOptionsAreRead(t *testing.T) {
 			p["message"] != "$body" || p["send_via"] != "email_client" || p["dialog"] != true || p["one_email_per_record"] != false {
 			t.Fatalf("params = %#v", p)
 		}
-		if note, _ := p["migration_note"].(string); !strings.Contains(note, "opens a draft") ||
-			!strings.Contains(note, "does not send unattended") || strings.Contains(note, "cannot run") {
+		// A draft in the e-mail client, with a dialog, is what FileMaker does.
+		if note, ok := p["migration_note"]; ok {
 			t.Fatalf("note = %q", note)
 		}
 		note, _ := steps[5].Params["migration_note"].(string)
-		if !strings.Contains(note, "SMTP") || !strings.Contains(note, "attaches files") {
+		if !strings.Contains(note, "SMTP profile") || !strings.Contains(note, "Server Tools") {
+			t.Fatalf("note = %q", note)
+		}
+	})
+
+	t.Run("Send Mail via SMTP keeps the sender, never the account", func(t *testing.T) {
+		p := steps[12].Params
+		if p["smtp_from_name"] != `"Sales desk"` || p["smtp_from_name_is_calculation"] != true ||
+			p["smtp_from"] != "sales@example.invalid" || p["smtp_reply_to"] != "desk@example.invalid" ||
+			p["smtp_server_in_step"] != true || p["collect_to"] != true || p["one_email_per_record"] != true {
+			t.Fatalf("params = %#v", p)
+		}
+		for k, v := range p {
+			if v == "not-kept" || v == "smtp.example.invalid" {
+				t.Fatalf("the step keeps %s = %v", k, v)
+			}
+		}
+		note, _ := p["migration_note"].(string)
+		if !strings.Contains(note, "not used") || !strings.Contains(note, "fixed place") || !strings.Contains(note, "offer.pdf") {
 			t.Fatalf("note = %q", note)
 		}
 	})
@@ -188,7 +222,11 @@ func TestStepOptionsAreRead(t *testing.T) {
 		if p["save_to"] != "file" || p["records"] != "current" || p["path"] != "$out" || p["create_email"] != true {
 			t.Fatalf("params = %#v", p)
 		}
-		if note, _ := p["migration_note"].(string); !strings.Contains(note, "error 3") {
+		if note, ok := p["migration_note"]; ok {
+			t.Fatalf("a PDF saved to a variable's path runs as written; note = %q", note)
+		}
+		note, _ := steps[13].Params["migration_note"].(string)
+		if !strings.Contains(note, "error 800") || !strings.Contains(note, "Get ( DocumentsPath )") {
 			t.Fatalf("note = %q", note)
 		}
 	})
