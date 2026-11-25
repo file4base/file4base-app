@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -136,6 +135,8 @@ type Service struct {
 	// canWrite, when set, says whether the caller may create, edit or
 	// delete the records of a table (see WithWriteAccess).
 	canWrite func(ctx context.Context, tableName, action string) error
+	// account is the account the service writes as (see WithAccount).
+	account string
 }
 
 func NewService(driver dbal.DatabaseDriver) *Service {
@@ -214,37 +215,6 @@ func (s *Service) checker(ctx context.Context, tableName string) (*validation.Ch
 	return &validation.Checker{Dialect: s.driver.Dialect(), DB: s.driver.DB(), Table: tableName, Fields: fields}, nil
 }
 
-// autoEnterConstants returns the constant auto-enter value of each field of
-// the table whose options (sys_columns.default_value) enable one.
-func (s *Service) autoEnterConstants(ctx context.Context, tableName string) (map[string]interface{}, error) {
-	q := `SELECT c.name, c.default_value FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1 AND c.default_value IS NOT NULL`
-	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT c.name, c.default_value FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ? AND c.default_value IS NOT NULL`
-	}
-	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
-	if err != nil {
-		return nil, fmt.Errorf("failed reading field options of %s: %w", tableName, err)
-	}
-	defer rows.Close()
-
-	constants := make(map[string]interface{})
-	for rows.Next() {
-		var name, raw string
-		if err := rows.Scan(&name, &raw); err != nil {
-			return nil, err
-		}
-		var opts struct {
-			DataEnabled bool    `json:"data_enabled"`
-			DataValue   *string `json:"data_value"`
-		}
-		// Options that are not a JSON object (legacy values) enable nothing.
-		if json.Unmarshal([]byte(raw), &opts) == nil && opts.DataEnabled && opts.DataValue != nil && *opts.DataValue != "" {
-			constants[name] = *opts.DataValue
-		}
-	}
-	return constants, rows.Err()
-}
-
 // decodeContainerValues turns the base64 text of CONTAINER fields into the
 // bytes to store. JSON has no binary type, so the data API exchanges
 // CONTAINER values as standard base64 (see rowsToMaps).
@@ -297,8 +267,14 @@ func checkField(fields fieldSet, tableName, fieldName string) error {
 	return nil
 }
 
-// InsertRow dynamically inserts a record into any table
+// InsertRow dynamically inserts a record into any table. The auto-enter
+// options of its fields apply (see autoenter.go); a write made with a
+// context marked by AsScript is a script's, not data entry.
 func (s *Service) InsertRow(ctx context.Context, tableName string, record map[string]interface{}) (map[string]interface{}, error) {
+	return s.insertRow(ctx, tableName, record, writeMode(ctx))
+}
+
+func (s *Service) insertRow(ctx context.Context, tableName string, record map[string]interface{}, mode autoMode) (map[string]interface{}, error) {
 	if record == nil {
 		record = make(map[string]interface{})
 	}
@@ -315,16 +291,10 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 		return nil, err
 	}
 
-	// Auto-enter constant values (Fields dialog: "Data") for fields the
-	// caller did not supply. An explicit value, even empty, wins.
-	constants, err := s.autoEnterConstants(ctx, tableName)
-	if err != nil {
+	// The auto-enter options (Fields dialog) enter what the caller did not
+	// give: a value given wins.
+	if err := s.applyAutoEnter(ctx, tableName, fields, mode, record, ""); err != nil {
 		return nil, err
-	}
-	for col, val := range constants {
-		if _, given := record[col]; !given {
-			record[col] = val
-		}
 	}
 	if err := decodeContainerValues(fields, tableName, record); err != nil {
 		return nil, err
@@ -423,8 +393,13 @@ func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[
 	return results[0], nil
 }
 
-// UpdateRow dynamically updates a row by id
+// UpdateRow dynamically updates a row by id. The auto-enter options of its
+// fields apply, as for InsertRow.
 func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}) (map[string]interface{}, error) {
+	return s.updateRow(ctx, tableName, id, updates, writeMode(ctx))
+}
+
+func (s *Service) updateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode) (map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -446,6 +421,11 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
+	}
+	// Modification stamps, and the calculated and looked-up values the
+	// change reaches (see autoenter.go).
+	if err := s.applyAutoEnter(ctx, tableName, fields, mode, updates, id); err != nil {
+		return nil, err
 	}
 	if err := decodeContainerValues(fields, tableName, updates); err != nil {
 		return nil, err

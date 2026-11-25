@@ -48,7 +48,11 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireCapability(schema.CapabilityBulkImport)).Post("/import", h.ImportRows)
 		r.With(RequireCapability(schema.CapabilityBulkExport)).Post("/export", h.ExportRows)
 		r.Post("/related", h.ListRelatedRowsBatch)
+		r.Post("/relookup", h.RelookupRows)
+		r.Get("/serials/{field}", h.GetNextSerialValue)
+		r.Put("/serials/{field}", h.SetNextSerialValue)
 		r.Get("/{id}", h.GetRow)
+		r.Post("/{id}/duplicate", h.DuplicateRow)
 		r.Get("/{id}/related", h.ListRelatedRows)
 		r.Post("/{id}/related", h.CreateRelatedRow)
 		r.Put("/{id}", h.UpdateRow)
@@ -183,7 +187,7 @@ func callerDataService(r *http.Request) *data.Service {
 // records of another solution a request of this one writes (#107), what it
 // may create and delete.
 func dataServiceAs(driver dbal.DatabaseDriver, sess auth.Session) *data.Service {
-	dataSvc := data.NewService(driver).WithDatabase(sess.Database)
+	dataSvc := data.NewService(driver).WithDatabase(sess.Database).WithAccount(sess.Username)
 	if !sess.IsAdmin() {
 		schemaSvc, userID, username := schema.NewService(driver), sess.UserID, sess.Username
 		dataSvc.WithReadAccess(func(ctx context.Context, table string) (bool, error) {
@@ -325,6 +329,10 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		telemetry.WriteProblem(w, r, http.StatusForbidden, "Creation Not Allowed", err.Error())
 	case errors.Is(err, data.ErrNoMatchValue):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "No Match Value", err.Error())
+	case errors.Is(err, data.ErrProhibitedModification):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Prohibited Modification", err.Error())
+	case errors.Is(err, data.ErrNotSerial):
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Not a Serial Number Field", err.Error())
 	case errors.Is(err, data.ErrUnknownField):
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Unknown Field", err.Error())
 	case errors.Is(err, data.ErrUnstoredField):
@@ -408,7 +416,7 @@ func (h *DataHandler) InsertRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inserted, err := svc.InsertRow(r.Context(), table, record)
+	inserted, err := svc.InsertRow(entryContext(r), table, record)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Data Insert Error", err)
 		return
@@ -459,7 +467,7 @@ func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, err := svc.UpdateRow(r.Context(), table, id, updates)
+	updated, err := svc.UpdateRow(entryContext(r), table, id, updates)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Data Update Error", err)
 		return
