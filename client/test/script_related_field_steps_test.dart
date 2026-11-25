@@ -61,6 +61,24 @@ class _Host implements LayoutActionHost, RelatedFieldHost, AutoEnterActionHost {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// A window whose dialogs answer with what the user typed into each input.
+class _DialogHost extends _Host implements ExtendedLayoutActionHost {
+  List<Map<String, dynamic>>? shownInputs;
+
+  @override
+  Future<ScriptDialogResult> actionShowDialogEx({
+    required String title,
+    required String message,
+    List<Map<String, dynamic>>? buttons,
+    List<Map<String, dynamic>>? inputFields,
+  }) async {
+    shownInputs = inputFields;
+    return ScriptDialogResult(inputValues: {
+      for (final input in inputFields ?? const <Map<String, dynamic>>[]) input['field'].toString(): 'typed ${input['field']}',
+    });
+  }
+}
+
 /// A window that cannot write a related field.
 class _PlainHost implements LayoutActionHost {
   final own = <String, String>{'note': 'own note'};
@@ -185,6 +203,25 @@ void main() {
     await _run(host, 'Set Next Serial Value', {'field': 'ref', 'field_table': 'Lines', 'value': '7'});
     await _run(host, 'Relookup Field Contents', {'field': 'code', 'field_table': 'Lines'});
     expect(host.autoEnter, ['serial Lines::ref', 'relookup Lines::code']);
+  });
+
+  test('a custom dialog input on a related field shows and commits the related field', () async {
+    final host = _DialogHost();
+    final (result, _) = await _run(host, 'Show Custom Dialog', {
+      'title': 'T',
+      'message': 'M',
+      'buttons': [
+        {'label': 'OK', 'commit': true},
+      ],
+      'input_fields': [
+        {'field': 'note', 'field_table': 'Lines', 'label': 'Related'},
+        {'field': 'note', 'label': 'Own'},
+      ],
+    });
+    expect(result.completed, isTrue, reason: result.message);
+    expect(host.shownInputs?.map((i) => '${i['field']}=${i['value']}'), ['Lines::note=related note', 'note=own note']);
+    expect(host.related['note'], 'typed Lines::note');
+    expect(host.own['note'], 'typed note', reason: 'each input goes back into its own field');
   });
 
   test('Insert File into a related field writes nothing', () async {

@@ -2565,7 +2565,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           return relatedNotice('<${obj.fieldBinding!.qualifiedName}>', isDark: isDark, radius: obj.style.cornerRadius);
         }
         return RelatedFieldView(
-          key: ValueKey('related-${obj.id}-${related.recordId}'),
+          key: ValueKey('related-${obj.id}-${related.recordId}-$_relatedWrites'),
           object: obj,
           related: related,
           isDark: isDark,
@@ -3962,7 +3962,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   Set<String> get actionOwnOccurrenceNames => {
-        for (final name in [widget.layout?.tableOccurrence, widget.table.name, widget.table.displayName])
+        for (final name in [
+          widget.layout?.tableOccurrence,
+          _layoutOccurrence?.name,
+          // The table's names stand for the layout's occurrence only where
+          // they are not another occurrence's (a self-join).
+          if (_isOwnOccurrence(widget.table.name)) widget.table.name,
+          if (_isOwnOccurrence(widget.table.displayName)) widget.table.displayName,
+        ])
           if (name != null && name.trim().isNotEmpty) name.trim().toLowerCase(),
       };
 
@@ -4117,9 +4124,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   // ---- RelatedFieldHost ----
 
-  /// The portal row last clicked into, on the record it was clicked on: a
-  /// step writing a field of that portal's occurrence writes this row, as
-  /// FileMaker writes the active portal row. Going to a field of the record
+  /// The portal row last clicked into, on the record whose portal it is (in
+  /// a list, the record of that list row): a step writing a field of that
+  /// portal's occurrence writes this row, as FileMaker writes the active
+  /// portal row, while it is still related. Going to a field of the record
   /// itself leaves the portal.
   ({String recordId, String occurrenceId, String rowId})? _activePortalRow;
 
@@ -4127,29 +4135,64 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// theirs again.
   int _relatedWrites = 0;
 
-  void _activatePortalRow(String occurrenceId, String rowId) {
-    final recordId = currentRecordId;
-    if (recordId == null || rowId.isEmpty) return;
+  void _activatePortalRow(String? recordId, String occurrenceId, String rowId) {
+    if (recordId == null || recordId.isEmpty || rowId.isEmpty) return;
     _activePortalRow = (recordId: recordId, occurrenceId: occurrenceId, rowId: rowId);
   }
 
   /// Whether [occurrence], as a step names it, is the occurrence this layout
-  /// shows. Any other name is another occurrence, even one the graph does
-  /// not know: its field is never taken for the layout's own of that name.
+  /// is on. Only the layout's occurrence is: another occurrence of the same
+  /// table (a self-join) is a related one. The table's own name stands for
+  /// the layout's occurrence only where no occurrence of the graph has that
+  /// name, or the layout does not say its occurrence. Any other name, even
+  /// one the graph does not know, is never taken for the layout's own.
   bool _isOwnOccurrence(String occurrence) {
     final key = _occurrenceKey(occurrence);
     if (key.isEmpty) return true;
     final layoutOccurrence = widget.layout?.tableOccurrence ?? '';
-    return <String>{
-      _occurrenceKey(widget.table.name),
+    final own = <String>{
       _occurrenceKey(layoutOccurrence),
-      _occurrenceKey(_occurrences[layoutOccurrence]?.name ?? ''),
-    }.contains(key);
+      _occurrenceKey(_layoutOccurrence?.name ?? ''),
+    }..remove('');
+    if (own.contains(key)) return true;
+    if (key != _occurrenceKey(widget.table.name)) return false;
+    if (own.isEmpty) return true;
+    return _occurrences.isNotEmpty && _occurrenceNamed(occurrence) == null;
   }
 
   TableOccurrenceModel? _occurrenceNamed(String occurrence) {
     final key = _occurrenceKey(occurrence);
     return _occurrences[occurrence] ?? _occurrences.values.where((o) => _occurrenceKey(o.name) == key).firstOrNull;
+  }
+
+  /// The occurrence this layout is on, once the graph is read.
+  TableOccurrenceModel? get _layoutOccurrence {
+    final raw = widget.layout?.tableOccurrence ?? '';
+    return raw.trim().isEmpty ? null : _occurrenceNamed(raw);
+  }
+
+  /// The relationship from the layout's occurrence to [occurrence] in the
+  /// graph, and the end of it [occurrence] is. A layout that does not say
+  /// its occurrence follows the relationships of its table.
+  RelatedTarget? _relationshipTo(TableOccurrenceModel occurrence) {
+    final from = _layoutOccurrence;
+    if (from == null) {
+      return (widget.layout?.tableOccurrence ?? '').trim().isEmpty ? _relatedContext?.resolve(null, occurrence.id) : null;
+    }
+    final external = occurrence.external;
+    final table = external == null
+        ? _tablesById[occurrence.baseTableId]
+        : TableModel(id: occurrence.id, name: external.table, displayName: occurrence.name);
+    if (table == null) return null;
+    for (final rel in _relationships.values) {
+      if (rel.leftOccurrenceId == from.id && rel.rightOccurrenceId == occurrence.id) {
+        return RelatedTarget(relationship: rel, occurrence: occurrence, table: table);
+      }
+      if (rel.rightOccurrenceId == from.id && rel.leftOccurrenceId == occurrence.id) {
+        return RelatedTarget(relationship: rel, occurrence: occurrence, table: table, side: 'left');
+      }
+    }
+    return null;
   }
 
   @override
@@ -4167,11 +4210,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   Future<({int code, RelatedContext? related, RelatedTarget? target, ColumnModel? column, String? rowId, Map<String, dynamic>? row})>
       _relatedSlot(String occurrence, String field) async {
     const none = (code: 102, related: null, target: null, column: null, rowId: null, row: null);
+    // A record not committed yet has no related records: it is committed
+    // first, as FileMaker does before following a relationship from it, so
+    // what is read and what is written are the same record's.
+    if (_onDraft && !await _saveCurrentRecord()) {
+      return (code: 3, related: null, target: null, column: null, rowId: null, row: null);
+    }
     if (_occurrences.isEmpty) await _loadRelationshipGraph();
     final related = _relatedContext;
     final occ = _occurrenceNamed(occurrence);
     if (related == null || occ == null) return none;
-    final target = related.resolve(null, occ.id);
+    final target = _relationshipTo(occ);
     if (target == null) return (code: 103, related: null, target: null, column: null, rowId: null, row: null);
     TableModel table;
     try {
@@ -4185,11 +4234,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     if (column == null) return none;
     final recordId = related.recordId;
     if (recordId == null) return (code: 101, related: related, target: target, column: column, rowId: null, row: null);
-    final active = _activePortalRow;
-    if (active != null && active.recordId == recordId && active.occurrenceId == target.occurrence.id) {
-      return (code: 0, related: related, target: target, column: column, rowId: active.rowId, row: null);
+    var active = _activePortalRow;
+    if (active != null && (active.recordId != recordId || active.occurrenceId != target.occurrence.id)) active = null;
+    // The active row is written only while it is still related: a write may
+    // have changed a match field since it was clicked.
+    final rows = await related.rows(target, limit: active == null ? 1 : 1000);
+    if (active != null) {
+      final activeRow = rows.where((r) => r['id']?.toString() == active!.rowId).firstOrNull;
+      if (activeRow != null) {
+        return (code: 0, related: related, target: target, column: column, rowId: active.rowId, row: activeRow);
+      }
+      _activePortalRow = null;
     }
-    final rows = await related.rows(target, limit: 1);
     final first = rows.firstOrNull;
     return (code: 0, related: related, target: target, column: column, rowId: first?['id']?.toString(), row: first);
   }
@@ -4202,8 +4258,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       if (column == null) return null;
       final rowId = slot.rowId;
       if (rowId == null) return '';
-      final row = slot.row ?? await slot.related!.clientFor(slot.target!).getRow(slot.target!.table.name, rowId);
-      return recordFieldText(column, row);
+      return recordFieldText(column, slot.row ?? const {});
     } on Object catch (_) {
       return null;
     }
@@ -4213,9 +4268,6 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   Future<int> actionSetRelatedField(String occurrence, String field, String value) async {
     if (!mounted) return 3;
     if (_mode != OperationalMode.browse) return 3;
-    // A record not committed yet has no related records: it is committed
-    // first, as FileMaker does before following a relationship from it.
-    if (_onDraft && !await _saveCurrentRecord()) return 3;
     try {
       final slot = await _relatedSlot(occurrence, field);
       if (slot.code != 0) return slot.code;
@@ -5050,14 +5102,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   bool _namesOtherOccurrence(String field, String? table) {
     if (table == null || table.trim().isEmpty) return false;
     final key = _occurrenceKey(table);
-    final layoutOccurrence = widget.layout?.tableOccurrence ?? '';
     final graph = _occurrences;
-    final own = <String>{
-      _occurrenceKey(widget.table.name),
-      _occurrenceKey(layoutOccurrence),
-      _occurrenceKey(graph[layoutOccurrence]?.name ?? ''),
-    }..remove('');
-    if (own.contains(key)) return false;
+    if (_isOwnOccurrence(table)) return false;
     if (graph.isNotEmpty) return true;
     final objects = widget.layout?.objects ?? const <LayoutObjectModel>[];
     return objects.any((o) {
@@ -5071,7 +5117,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   String? actionFieldType(String field, {String? table}) {
-    if (_namesOtherOccurrence(field, table)) return null;
+    if (_namesOtherOccurrence(field, table)) {
+      // A related field's type is its own table's.
+      final occurrence = _occurrenceNamed(table!);
+      final other = occurrence == null || occurrence.external != null ? null : _tablesById[occurrence.baseTableId];
+      final name = field.trim().toLowerCase();
+      return (other?.columns.where((c) => c.name.toLowerCase() == name).firstOrNull ??
+              other?.columns.where((c) => c.displayName.toLowerCase() == name).firstOrNull)
+          ?.fieldType;
+    }
     return widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull?.fieldType;
   }
 

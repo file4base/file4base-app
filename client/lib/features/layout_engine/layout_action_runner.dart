@@ -1193,6 +1193,9 @@ class LayoutActionRunner {
           return failOrCapture(102, 'Insert Current Date has no target or active field.');
         }
         final table = named.occurrence;
+        // Placing the occurrence first lets the window read the type of a
+        // related field from its own table.
+        final ownField = await _isOwnOccurrence(table);
         final fieldType = ext?.actionFieldType(field, table: table.isEmpty ? null : table)?.toUpperCase();
         if (fieldType != null && const {'CALCULATION', 'SUMMARY', 'CONTAINER'}.contains(fieldType)) {
           return failOrCapture(201, 'Insert Current Date cannot write the date into "$field", a '
@@ -1215,6 +1218,7 @@ class LayoutActionRunner {
           session.lastError = 0;
           return const LayoutActionResult.ok();
         }
+        if (!ownField) return insertRelated();
         if (ext != null) {
           final outcome = await ext.actionInsertIntoField(
               field: field, text: value, replaceAll: replaceAll, table: table.isEmpty ? null : table);
@@ -1521,21 +1525,27 @@ class LayoutActionRunner {
                 : _resolveParamsText(b['label']?.toString() ?? 'OK', vars);
             return <String, dynamic>{'label': lbl, 'commit': b['commit'] != false};
           }).toList();
-          final resolvedInputs = rawInputs?.map((inp) {
-            final lbl = inp['label_is_calculation'] == true
-                ? (resolveValue(inp['label']?.toString() ?? '', vars, callContext: context) ?? '')
-                : _resolveParamsText(inp['label']?.toString() ?? '', vars);
-            final fieldKey = inp['field']?.toString() ?? '';
-            final current = fieldKey.startsWith(r'$')
-                ? (_lookupVariable(fieldKey, vars) ?? '')
-                : (host.actionResolveText('{{$fieldKey}}') == '{{$fieldKey}}' ? '' : host.actionResolveText('{{$fieldKey}}'));
-            return <String, dynamic>{
-              'field': fieldKey,
-              'label': lbl,
-              'value': current,
-              'password': inp['password'] == true,
-            };
-          }).toList();
+          List<Map<String, dynamic>>? resolvedInputs;
+          if (rawInputs != null) {
+            resolvedInputs = [];
+            for (final inp in rawInputs) {
+              final lbl = inp['label_is_calculation'] == true
+                  ? (resolveValue(inp['label']?.toString() ?? '', vars, callContext: context) ?? '')
+                  : _resolveParamsText(inp['label']?.toString() ?? '', vars);
+              final raw = inp['field']?.toString() ?? '';
+              // A field input is keyed by its occurrence too, so what is typed
+              // goes back into that field: a related one into the related record.
+              final target = raw.startsWith(r'$') ? (occurrence: '', field: raw) : fieldTarget(raw, inp['field_table']?.toString() ?? '');
+              final fieldKey = _qualified(target);
+              final current = raw.startsWith(r'$') ? (_lookupVariable(raw, vars) ?? '') : (await _readField(target) ?? '');
+              resolvedInputs.add(<String, dynamic>{
+                'field': fieldKey,
+                'label': lbl,
+                'value': current,
+                'password': inp['password'] == true,
+              });
+            }
+          }
           final dialogResult = await ext.actionShowDialogEx(
             title: title,
             message: message,

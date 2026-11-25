@@ -544,10 +544,10 @@ class PortalView extends StatefulWidget {
   /// (Refresh Portal, Refresh Window), whether or not the record changed.
   final int refreshGeneration;
 
-  /// Called with the occurrence and the row of a related record clicked
-  /// into: the active portal row, which a script step writing a field of
-  /// that occurrence writes.
-  final void Function(String occurrenceId, String rowId)? onRowActivated;
+  /// Called with the record whose portal it is, the occurrence and the row
+  /// of a related record clicked into: the active portal row, which a script
+  /// step writing a field of that occurrence writes.
+  final void Function(String? recordId, String occurrenceId, String rowId)? onRowActivated;
 
   @override
   State<PortalView> createState() => _PortalViewState();
@@ -890,7 +890,7 @@ class _PortalViewState extends State<PortalView> {
     final rowId = row['id']?.toString() ?? '';
     // Clicking anywhere in a row makes it the active portal row.
     return Listener(
-      onPointerDown: (_) => widget.onRowActivated?.call(target.occurrence.id, rowId),
+      onPointerDown: (_) => widget.onRowActivated?.call(widget.related.recordId, target.occurrence.id, rowId),
       child: _rowBox(target, row, rowId, rowHeight, striped: striped),
     );
   }
