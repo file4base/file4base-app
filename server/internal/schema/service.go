@@ -415,11 +415,15 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		// Original filename, MIME type and SHA-256 metadata for migrated
 		// container fields (#125).
 		containermeta.CreateTableSQL,
+		// The solution's custom functions (see
+		// migrations/007_custom_functions.sql).
+		customFunctionsSQL(ts),
 	}
 	// The options of a value list taken from a field (#31) are added to
 	// sys_value_lists rather than declared in it, so a new database and an
 	// older one end up with the same columns and foreign keys.
 	queries = append(queries, valueListOptionsSQL(s.driver.Dialect().Engine())...)
+	queries = append(queries, customFunctionNameIndexSQL(s.driver.Dialect().Engine())...)
 
 	db := s.driver.DB()
 	for _, q := range queries {

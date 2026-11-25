@@ -149,6 +149,10 @@ func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]ca
 	if err != nil {
 		return nil, err
 	}
+	lib, err := LoadLibrary(ctx, s.driver)
+	if err != nil {
+		return nil, err
+	}
 	q := `SELECT c.name, c.calculation_formula FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id
 	      WHERE t.name = $1 AND c.field_type = $2 AND c.calculation_formula IS NOT NULL`
 	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
@@ -170,7 +174,7 @@ func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]ca
 			return nil, err
 		}
 		stored := ReadStoredCalculation(raw)
-		expr, err := calc.Parse(stored.Formula)
+		expr, err := calc.ParseWith(stored.Formula, calc.Options{Library: lib})
 		if err != nil {
 			continue
 		}

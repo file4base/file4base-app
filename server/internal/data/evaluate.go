@@ -54,7 +54,11 @@ func (s *Service) EvaluateExpression(
 		return nil, fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
 	}
 
-	expr, err := calc.Parse(expression)
+	lib, err := LoadLibrary(ctx, s.driver)
+	if err != nil {
+		return nil, err
+	}
+	expr, err := calc.ParseWith(expression, calc.Options{Library: lib})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
 	}

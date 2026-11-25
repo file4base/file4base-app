@@ -33,6 +33,7 @@ type DesignSnapshot struct {
 	valueListIDs  map[string]bool
 	userIDs       map[string]bool
 	fileRefIDs    map[string]bool
+	functionIDs   map[string]bool
 }
 
 // SnapshotDesign records the design of the active database so that
@@ -53,6 +54,7 @@ func (s *Service) SnapshotDesign(ctx context.Context, solutionName string) (*Des
 		valueListIDs:  map[string]bool{},
 		userIDs:       map[string]bool{},
 		fileRefIDs:    map[string]bool{},
+		functionIDs:   map[string]bool{},
 	}
 
 	tables, err := s.ListTables(ctx)
@@ -110,6 +112,13 @@ func (s *Service) SnapshotDesign(ctx context.Context, solutionName string) (*Des
 	}
 	for _, f := range refs {
 		snap.fileRefIDs[f.ID] = true
+	}
+	functions, err := s.ListCustomFunctions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, fn := range functions {
+		snap.functionIDs[fn.ID] = true
 	}
 	return snap, nil
 }
@@ -206,6 +215,17 @@ func (s *Service) RestoreDesign(ctx context.Context, snap *DesignSnapshot) error
 		for _, u := range users {
 			if !snap.userIDs[u.ID] {
 				fail("account "+u.Username, s.DeleteUser(ctx, u.ID))
+			}
+		}
+	}
+
+	// Custom functions last: the calculations calling them are gone by now.
+	if functions, err := s.ListCustomFunctions(ctx); err != nil {
+		fail("custom functions", err)
+	} else {
+		for _, fn := range functions {
+			if !snap.functionIDs[fn.ID] {
+				fail("custom function "+fn.Name, s.deleteCustomFunction(ctx, fn.ID))
 			}
 		}
 	}

@@ -266,6 +266,14 @@ and the families around them:
 | Formatting | `TextFormatRemove`, `TextColor`, `TextFont`, `TextSize`, `TextStyleAdd` and their `…Remove` forms return the plain text; `RGB` |
 
 Custom functions are evaluated, recursion included, up to a depth limit.
+They belong to the solution (`sys_custom_functions`): every formula of the
+solution may call them, a function may call itself, one defined after it and
+one that calls it back, and a formula reads, for its dependencies, what the
+functions it calls read. A function whose formula does not read, or named
+like a built-in function, is left out, with every function that calls it; a
+custom function never replaces a built-in one. Calling one with another
+number of arguments than it takes is an error naming it. Solution files carry them, and the
+FileMaker migration imports them; there is no editor for them yet.
 `TODAY()`, `NOW()`, `COALESCE` and `CONCAT` remain for formulas written in
 File4Base before.
 

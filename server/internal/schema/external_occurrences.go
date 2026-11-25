@@ -407,12 +407,16 @@ func (s *Service) externalFieldUses(ctx context.Context, occurrences []TableOccu
 		})
 	}
 
+	lib, err := s.library(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, t := range tables {
 		for _, c := range t.Columns {
 			if c.FieldType != dbal.FieldTypeCalculation || c.CalculationFormula == nil {
 				continue
 			}
-			expr, err := calc.Parse(data.ReadStoredCalculation(*c.CalculationFormula).Formula)
+			expr, err := calc.ParseWith(data.ReadStoredCalculation(*c.CalculationFormula).Formula, calc.Options{Library: lib})
 			if err != nil {
 				continue
 			}

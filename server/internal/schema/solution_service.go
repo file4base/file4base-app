@@ -330,6 +330,16 @@ type BundleFileReference struct {
 	Paths    []string `msgpack:"paths,omitempty"`
 }
 
+// BundleCustomFunction carries a custom function: its name, its parameters
+// and its formula, which reads the solution's fields by the names the bundle
+// gives them, and who may see it in the design.
+type BundleCustomFunction struct {
+	Name       string   `msgpack:"name"`
+	Parameters []string `msgpack:"parameters,omitempty"`
+	Formula    string   `msgpack:"formula"`
+	Access     string   `msgpack:"access,omitempty"`
+}
+
 // BundleMenuSet carries a menu set (#52). Its items name scripts and layouts
 // by id, and layouts may name a menu set by id, so those ids are remapped on
 // import like every other reference.
@@ -359,6 +369,7 @@ type SolutionBundle struct {
 	MenuSets           []BundleMenuSet        `msgpack:"menu_sets,omitempty"`
 	Transfers          []BundleTransfer       `msgpack:"transfers,omitempty"`
 	FileReferences     []BundleFileReference  `msgpack:"file_references,omitempty"`
+	CustomFunctions    []BundleCustomFunction `msgpack:"custom_functions,omitempty"`
 	FileOptions        map[string]interface{} `msgpack:"file_options,omitempty"`
 	PageSetup          map[string]interface{} `msgpack:"page_setup,omitempty"`
 }
@@ -446,6 +457,10 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	fileReferences, err := s.ListFileReferences(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed listing file references: %w", err)
+	}
+	customFunctions, err := s.ListCustomFunctions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed listing custom functions: %w", err)
 	}
 
 	conn := opts.Connection
@@ -551,6 +566,9 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 	}
 	for _, f := range fileReferences {
 		b.FileReferences = append(b.FileReferences, BundleFileReference{Name: f.Name, Database: f.Database, Paths: f.Paths})
+	}
+	for _, f := range customFunctions {
+		b.CustomFunctions = append(b.CustomFunctions, BundleCustomFunction{Name: f.Name, Parameters: f.Parameters, Formula: f.Formula, Access: f.Access})
 	}
 	for _, d := range dataSources {
 		b.DataSources = append(b.DataSources, BundleDataSource{
@@ -671,6 +689,7 @@ type ImportReport struct {
 	MenuSetsCreated         int                    `json:"menu_sets_created"`
 	TransfersCreated        int                    `json:"transfers_created"`
 	FileReferencesCreated   int                    `json:"file_references_created"`
+	CustomFunctionsCreated  int                    `json:"custom_functions_created"`
 	AccountsPendingPassword []string               `json:"accounts_pending_password"`
 	Warnings                []string               `json:"warnings,omitempty"` // restored as saved but not working, such as a value list of an unindexable field
 	FileOptions             map[string]interface{} `json:"file_options,omitempty"`
@@ -758,6 +777,16 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	}
 	// Undo steps run after the request may have been cancelled.
 	bg := context.WithoutCancel(ctx)
+
+	// 0. Custom functions, before any formula that calls them is saved.
+	addedFunctions, err := s.importCustomFunctions(ctx, b.CustomFunctions)
+	for _, id := range addedFunctions {
+		undo = append(undo, func() { _ = s.deleteCustomFunction(bg, id) })
+	}
+	if err != nil {
+		return nil, rollback(fmt.Errorf("restoring the custom functions: %w", err))
+	}
+	report.CustomFunctionsCreated = len(addedFunctions)
 
 	// 1. Tables and columns
 	tableIDs := map[string]string{}  // bundle table id -> destination id

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -189,6 +190,19 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 	fmpTableRawNames := make(map[int]string)            // fmpTableID -> raw source table name
 	fmpFieldMeta := make(map[int]map[int]htmlFieldMeta) // fmpTableID -> fmpFieldID -> meta
 
+	// Calculation fields are converted once the custom functions they may
+	// call are bound, which needs the tables and the occurrences first.
+	type pendingHTMLCalc struct {
+		table                                        int
+		placeholder                                  schema.BundleColumn
+		sqlName, rawTableName, rawName, rawType, opt string
+		known                                        map[string]string
+		fmpTableID, fmpFieldID                       int
+	}
+	var pendingCalcs []pendingHTMLCalc
+	fieldNamesByTable := map[string]*fieldNameMap{}
+	fieldOrder := map[string]int{} // column id -> its place among the table's fields
+
 	// 1. Parse Base Tables & Fields
 	btMatches := reHTMLBaseTable1.FindAllStringSubmatch(rawHTML, -1)
 	if len(btMatches) == 0 {
@@ -247,6 +261,8 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		}
 		var rawFields []rawFieldRow
 		knownSameTableCols := map[string]string{"id": "id"}
+		fieldNames := newFieldNameMap()
+		fieldNamesByTable[sqlName] = fieldNames
 		for _, rMatch := range rows {
 			cells := reHTMLTableCell.FindAllStringSubmatch(rMatch[1], -1)
 			if len(cells) < 3 {
@@ -320,10 +336,17 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				continue
 			}
 			seenCols[rf.colName] = true
+			fieldNames.claim(rf.rawName, rf.colName, true)
 
-			col, items := convertHTMLField(sqlName, rawTableName, rf.rawName, rf.colName, rf.rawType, rf.rawOptions, knownSameTableCols)
-			for _, it := range items {
-				addReportItem(report, it)
+			var col schema.BundleColumn
+			if isHTMLCalculationType(rf.rawType) {
+				col = schema.BundleColumn{ID: uuid.NewString(), Name: rf.colName, DisplayName: rf.rawName, FieldType: "CALCULATION", IsNullable: true}
+			} else {
+				var items []ReportItem
+				col, items = convertHTMLField(sqlName, rawTableName, rf.rawName, rf.colName, rf.rawType, rf.rawOptions, knownSameTableCols, formulaBinding{})
+				for _, it := range items {
+					addReportItem(report, it)
+				}
 			}
 			if rf.fmpFieldID > 0 {
 				col.SourceFieldID = strconv.Itoa(rf.fmpFieldID)
@@ -336,10 +359,14 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			}
 			if col.FieldType == "CALCULATION" {
 				calcCols = append(calcCols, col)
+				pendingCalcs = append(pendingCalcs, pendingHTMLCalc{table: len(bundle.Tables), placeholder: col,
+					sqlName: sqlName, rawTableName: rawTableName, rawName: rf.rawName, rawType: rf.rawType, opt: rf.rawOptions,
+					known: knownSameTableCols, fmpTableID: fmpTblID, fmpFieldID: rf.fmpFieldID})
 			} else {
 				nonCalcCols = append(nonCalcCols, col)
 			}
 			colIDByTableCol[sqlName+"."+rf.colName] = col.ID
+			fieldOrder[col.ID] = len(fieldOrder) + 1
 			colIDByTableCol[strings.ToLower(rawTableName)+"."+strings.ToLower(rf.rawName)] = col.ID
 			colTypeByTableCol[sqlName+"."+rf.colName] = col.FieldType
 			if fmpTblID > 0 && rf.fmpFieldID > 0 {
@@ -444,6 +471,50 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		}
 	}
 	report.Counts.Occurrences = len(bundle.TableOccurrences)
+
+	// 2b. Custom functions, read against the occurrences and their fields,
+	// and then the calculation fields, which may call them.
+	locale, _ := parseSourceLocale(req.SourceLocale) // checked by AnalyzeAndConvert
+	functions := newFormulaBinding(bundle, fieldNamesByTable, locale, nil)
+	for _, it := range bindCustomFunctions(readHTMLCustomFunctions(rawHTML), &functions, bundle) {
+		addReportItem(report, it)
+	}
+	report.Counts.CustomFunctions = len(bundle.CustomFunctions)
+	reordered := map[int]bool{}
+	for _, pc := range pendingCalcs {
+		col, items := convertHTMLField(pc.sqlName, pc.rawTableName, pc.rawName, pc.placeholder.Name, pc.rawType, pc.opt, pc.known, functions)
+		for _, it := range items {
+			addReportItem(report, it)
+		}
+		col.ID, col.SourceFieldID, col.MaxRepetitions = pc.placeholder.ID, pc.placeholder.SourceFieldID, pc.placeholder.MaxRepetitions
+		columns := bundle.Tables[pc.table].Columns
+		for i := range columns {
+			if columns[i].ID == col.ID {
+				columns[i] = col
+			}
+		}
+		colTypeByTableCol[pc.sqlName+"."+col.Name] = col.FieldType
+		if pc.fmpTableID > 0 && pc.fmpFieldID > 0 {
+			meta := fmpFieldMeta[pc.fmpTableID][pc.fmpFieldID]
+			meta.FieldType = col.FieldType
+			fmpFieldMeta[pc.fmpTableID][pc.fmpFieldID] = meta
+		}
+		if col.FieldType != "CALCULATION" {
+			reordered[pc.table] = true
+		}
+	}
+	// A calculation stored as a plain column goes back among the other
+	// plain columns, in field order, before the calculations.
+	for ti := range reordered {
+		columns := bundle.Tables[ti].Columns
+		sort.SliceStable(columns, func(i, j int) bool {
+			ci, cj := columns[i].FieldType == "CALCULATION", columns[j].FieldType == "CALCULATION"
+			if ci != cj {
+				return cj
+			}
+			return fieldOrder[columns[i].ID] < fieldOrder[columns[j].ID]
+		})
+	}
 
 	// 3. Parse Relationships from Details section
 	relIDByOccurrence := make(map[string]string) // lower(occName) -> relID
@@ -947,9 +1018,16 @@ func parseHTMLScriptsSection(scriptsSection string) []htmlParsedScript {
 	return out
 }
 
+// isHTMLCalculationType reports whether an HTML report's field type is a
+// calculation's.
+func isHTMLCalculationType(rawType string) bool {
+	upper := strings.ToUpper(rawType)
+	return strings.Contains(upper, "CALCULATED") || strings.Contains(upper, "CALCULATION")
+}
+
 func convertHTMLField(
 	tableSQL, rawTableName, rawFieldName, colName, rawType, rawOptions string,
-	knownSameTableCols map[string]string,
+	knownSameTableCols map[string]string, functions formulaBinding,
 ) (schema.BundleColumn, []ReportItem) {
 	var items []ReportItem
 	col := schema.BundleColumn{
@@ -961,7 +1039,7 @@ func convertHTMLField(
 	}
 
 	upperType := strings.ToUpper(rawType)
-	if strings.Contains(upperType, "CALCULATED") || strings.Contains(upperType, "CALCULATION") {
+	if isHTMLCalculationType(rawType) {
 		resType := "Text"
 		if strings.Contains(upperType, "NUMBER") {
 			resType = "Number"
@@ -973,7 +1051,7 @@ func convertHTMLField(
 			resType = "Container"
 		}
 		formula := extractHTMLFormula(rawOptions, tableSQL, rawTableName, knownSameTableCols)
-		expr, ok := ownTableFormula(formula)
+		expr, ok := ownTableFormula(formula, functions)
 		if ok {
 			payload, _ := json.Marshal(map[string]interface{}{
 				"formula":     expr,

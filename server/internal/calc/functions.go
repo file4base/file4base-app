@@ -75,6 +75,11 @@ func (ev *evaluator) callCustom(c callNode, cf *customFunc) (value, error) {
 	if cf.body == nil {
 		return empty, errorAt(c.at, "the custom function %s cannot be evaluated", cf.name)
 	}
+	if len(c.args) != len(cf.params) {
+		// A formula read with other custom functions than it is computed
+		// with: said, rather than reading past its arguments.
+		return empty, errorAt(c.at, "%s takes %d argument(s), got %d", cf.name, len(cf.params), len(c.args))
+	}
 	if ev.depth >= maxDepth {
 		return empty, errorAt(c.at, "%s calls itself too deeply", cf.name)
 	}

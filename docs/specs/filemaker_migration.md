@@ -49,9 +49,24 @@ Before any database table, column, layout, script, account, or row is written, `
 |---|---|---|
 | `preserved` | Imported 1:1 with identical semantics. | Base tables, `Text`/`Number`/`Date`/`Timestamp`/`Container` fields, Table Occurrences, `=`, `≠`, `<`, `≤`, `>`, `≥` relationships, custom & field-backed value lists (with their second field when it is on the same table occurrence as the first, "show values only from second field", sort field and "include only related values" options), layouts & parts, compatible calculations (Container result calculations included, kept as calculations that refer to the container they answer), compatible script steps, and `FMPXMLRESULT` rows. |
 | `translated` | Mapped to the closest safe File4Base construct and documented in the report. | `Time` fields → `TIMESTAMP`; `Get(CurrentDate)` → `TODAY()`; `Get(CurrentTimestamp)` → `NOW()`; global fields → standard columns; catalog-only script steps (`Set Variable`, `Print`, `Insert from URL`); FileMaker privilege sets → `owner`/`admin`/`user` roles. |
-| `unsupported` | Cannot be executed by File4Base's runtime; preserved safely as inert data/comments so the solution imports cleanly. | Unsupported calculation functions (`ExecuteSQL`, `Let`, `While`) downgraded to stored columns; unsupported script steps (`Perform AppleScript`, plug-in steps) converted to disabled `Comment` steps (`[UNSUPPORTED FM STEP: ...]`); Cartesian (`x`) relationships skipped. |
+| `unsupported` | Cannot be executed by File4Base's runtime; preserved safely as inert data/comments so the solution imports cleanly. | Calculations calling a function File4Base does not run (`ExecuteSQL is not supported`, a plug-in function shown as `<Function Missing>`, a custom function that could not be migrated) downgraded to stored columns; unsupported script steps (`Perform AppleScript`, plug-in steps) converted to disabled `Comment` steps (`[UNSUPPORTED FM STEP: ...]`); Cartesian (`x`) relationships skipped. |
 | `rejected` | Invalid or unsafe items excluded from import. | `[Guest]` anonymous accounts; relationships referencing non-existent tables or columns; malformed XML datasets. |
 | `manual_action_required` | Explicit post-migration checklist for the solution owner. | Reviewing quarantined script triggers; setting passwords for migrated accounts; rewriting unsupported calculation formulas or script steps; normalizing repeating fields; recreating a value list whose field cannot be indexed (an unstored calculation or a summary field, which FileMaker refuses for a value list and which would offer nothing), which is not migrated; an unindexable second field is dropped and reported as `unsupported`. |
+
+### Custom functions
+
+A solution's custom functions (*File > Manage > Custom Functions*) are read from the XML DDR (`File/CustomFunctionCatalog/CustomFunction`, with `parameters="a;b"` and `visible`), Save a Copy as XML (`Structure/AddAction/CustomFunctionsCatalog`, with its `Parameter` objects and `access`) and the HTML DDR (its *Custom Functions* section), and imported into `sys_custom_functions` before any field, so a calculation calling one is read against it:
+
+- A function may call itself, call one that calls it back, and call one listed after it: they are all read together, whatever the catalog order.
+- A function named like a built-in function (whatever its case) is not imported, as FileMaker does not allow it, with every function and calculation that calls it; the report asks to rename it.
+- Its formula is rewritten like a field calculation's, against every table occurrence (the HTML DDR's too, read once its occurrences are), in the `source_locale`: field references renamed to the imported names, numbers written with `.`. Its parameters are left alone.
+- A field whose imported name is a custom function's (`_rate` imported as `rate` beside a function `Rate`) is written `${rate}` in the formulas that read it, so it still reads the field.
+- Its *Availability* is kept: `all` (*All accounts*) or `full_access`.
+- Each function is reported once: `preserved`, or `translated` when its formula had to be rewritten, naming the function, its parameters, its availability and its formula.
+- A function that does not read (a syntax error, a field no occurrence has, a plug-in function, `ExecuteSQL`) is `unsupported`, with a `manual_action_required` item to rewrite it; so is every function that calls it. The other functions still import.
+- A calculation calling a function that could not be migrated is quarantined like any formula that does not read, and says which function it calls and why: `calls ExecuteSQL: ExecuteSQL is not supported`, `calls a function FileMaker shows as <Function Missing>` (a plug-in function), or `calls the custom function X, which could not be migrated`.
+
+`ExecuteSQL` is not implemented: File4Base calculations do not run SQL queries. A French DDR writes the built-in functions inside a custom function in French, as it does in every formula; those are not translated yet.
 
 ### Field names that had to change, and the formulas that read them (`#111`)
 
