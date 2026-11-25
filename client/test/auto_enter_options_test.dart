@@ -182,16 +182,43 @@ class _BrowseApi extends ApiClient {
     {'id': '2', 'title': 'Second', 'ref': 'T-0002'},
   ];
   final calls = <String>[];
+  int listed = 0;
 
   @override
   Future<List<Map<String, dynamic>>> listRows(String table,
-          {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true, List<String>? sort}) async =>
-      [for (final r in rows) Map<String, dynamic>.from(r)];
+      {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true, List<String>? sort}) async {
+    listed++;
+    return [for (final r in rows) Map<String, dynamic>.from(r)];
+  }
+
+  @override
+  Future<List<TableOccurrenceModel>> listOccurrences() async => const [
+        TableOccurrenceModel(id: 'b1', baseTableId: 't9', name: 'tickets', xPos: 0, yPos: 0),
+        TableOccurrenceModel(id: 'b2', baseTableId: 't2', name: 'Ticket Vendors', xPos: 0, yPos: 0),
+        TableOccurrenceModel(
+          id: 'b3',
+          baseTableId: null,
+          name: 'Remote Customers',
+          xPos: 0,
+          yPos: 0,
+          external: ExternalOccurrenceModel(fileReferenceId: 'f1', fileReference: 'Remote', table: 'customers'),
+        ),
+      ];
+
+  @override
+  Future<List<RelationshipModel>> listRelationships() async => const [];
+
+  @override
+  Future<List<TableModel>> listTables() async => const [_tickets, _vendors];
+
+  @override
+  ApiClient forOccurrence(String occurrenceId) => _OccurrenceCalls(calls, occurrenceId);
 
   @override
   Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false}) async {
     calls.add('insert script=$script ${jsonEncode(record)}');
-    final created = {'id': '${rows.length + 1}', ...record};
+    // The server enters the serial number of a record that gives none.
+    final created = {'id': '${rows.length + 1}', 'ref': 'T-000${rows.length + 1}', ...record};
     rows.add(created);
     return created;
   }
@@ -218,9 +245,27 @@ class _BrowseApi extends ApiClient {
   }
 
   @override
-  Future<int> relookupFieldContents(String table, String matchField, List<String> recordIds) async {
+  Future<({int updated, List<Map<String, dynamic>> records})> relookupFieldContents(
+      String table, String matchField, List<String> recordIds) async {
     calls.add('relookup $table.$matchField ${recordIds.join(',')}');
-    return recordIds.length;
+    final changed = [
+      for (final r in rows)
+        if (recordIds.contains(r['id'])) {...r, 'title': 'Re-${r['id']}'},
+    ];
+    return (updated: changed.length, records: changed);
+  }
+}
+
+/// The calls a data browser makes through an occurrence's records route.
+class _OccurrenceCalls extends ApiClient {
+  _OccurrenceCalls(this.calls, this.occurrence) : super(baseUrl: 'http://localhost:1');
+  final List<String> calls;
+  final String occurrence;
+
+  @override
+  Future<String> setNextSerialValue(String table, String field, String nextValue) async {
+    calls.add('serial@$occurrence $table.$field=$nextValue');
+    return nextValue;
   }
 }
 
@@ -575,6 +620,49 @@ void main() {
       expect(api.calls.last, 'relookup tickets.title 1,2');
     });
 
+    testWidgets('a committed record shows what the server entered, and a later save keeps it', (tester) async {
+      final (state, api) = await _browse(tester);
+      state.createNewRecord();
+      await tester.pumpAndSettle();
+      await tester.enterText(_formField(tester, 0), 'Typed');
+      await state.actionCommitRecord();
+      await tester.pumpAndSettle();
+      expect(api.calls.last, 'insert script=false {"title":"Typed"}');
+      expect(tester.widget<TextField>(_formField(tester, 1)).controller!.text, 'T-0003');
+      await state.actionCommitRecord();
+      await tester.pumpAndSettle();
+      expect(api.calls.where((c) => c.startsWith('update')), isEmpty, reason: 'the serial is not written back blank');
+      expect(state.currentRecord?['ref'], 'T-0003');
+    });
+
+    testWidgets('Relookup sends only the found set and keeps it', (tester) async {
+      final (state, api) = await _browse(tester);
+      await state.actionOmitRecord();
+      await tester.pumpAndSettle();
+      final listed = api.listed;
+      expect(await state.actionRelookupFieldContents('title'), 0);
+      await tester.pumpAndSettle();
+      expect(api.calls.last, 'relookup tickets.title 2');
+      expect(api.listed, listed, reason: 'the found set is not replaced by the first page of the table');
+      expect(state.totalRecords, 1);
+      expect(state.currentRecord?['title'], 'Re-2');
+      expect(tester.widget<TextField>(_formField(tester, 0)).controller!.text, 'Re-2');
+    });
+
+    testWidgets("Set Next Serial Value on Occurrence::Field sets it in that occurrence's table", (tester) async {
+      final (state, api) = await _browse(tester);
+      expect(await state.actionSetNextSerialValue('Ticket Vendors::Label', 'V-9'), 0);
+      expect(api.calls.last, 'serial@b2 vendors.label=V-9');
+      expect(await state.actionSetNextSerialValue('Remote Customers::ref', 'R-1'), 0);
+      expect(api.calls.last, 'serial@b3 Remote Customers.ref=R-1', reason: 'another solution checks its own field');
+      final before = api.calls.length;
+      expect(await state.actionSetNextSerialValue('Ticket Vendors::nope', '1'), 102);
+      await tester.pumpAndSettle();
+      expect(find.text('Set Next Serial Value: Ticket Vendors has no field "nope".'), findsOneWidget);
+      expect(await state.actionSetNextSerialValue('Nowhere::ref', '1'), 102);
+      expect(api.calls.length, before, reason: 'nothing is set on the layout table instead');
+    });
+
     testWidgets('Relookup with a dialog asks first, naming the records and the field', (tester) async {
       final (state, api) = await _browse(tester);
       final run = state.actionRelookupFieldContents('title', dialog: true);
@@ -686,10 +774,34 @@ void main() {
     });
 
     test('relookupFieldContents sends the match field and the records', () async {
-      final (api, requests) = await client((r) => {'updated': 2});
-      expect(await api.relookupFieldContents('items', 'vendor_id', ['1', '2']), 2);
+      final (api, requests) = await client((r) => {
+            'updated': 1,
+            'records': [
+              {'id': '2', 'vendor_id': 'V2'},
+            ],
+          });
+      final result = await api.relookupFieldContents('items', 'vendor_id', ['1', '2']);
+      expect(result.updated, 1);
+      expect(result.records.single['id'], '2');
       expect('${requests.single.method} ${requests.single.url.path}', 'POST /api/v1/data/items/relookup');
       expect(jsonDecode(requests.single.body), {'field': 'vendor_id', 'record_ids': ['1', '2']});
+    });
+
+    test("an occurrence's client duplicates, sets serials and relooks up through its records route", () async {
+      final (api, requests) = await client((r) => r.url.path.endsWith('/relookup')
+          ? {'updated': 0, 'records': <Object>[]}
+          : {'id': '9', 'field': 'ref', 'next_value': 'R-1'});
+      final occ = api.forOccurrence('o 7');
+      await occ.duplicateRow('ignored', '3');
+      await occ.getNextSerialValue('ignored', 'ref');
+      await occ.setNextSerialValue('ignored', 'ref', 'R-1');
+      await occ.relookupFieldContents('ignored', 'code', ['3']);
+      expect(requests.map((r) => '${r.method} ${r.url.path}'), [
+        'POST /api/v1/occurrences/o%207/records/3/duplicate',
+        'GET /api/v1/occurrences/o%207/records/serials/ref',
+        'PUT /api/v1/occurrences/o%207/records/serials/ref',
+        'POST /api/v1/occurrences/o%207/records/relookup',
+      ]);
     });
 
     test('importRecords passes perform_auto_enter through its options', () async {

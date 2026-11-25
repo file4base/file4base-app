@@ -2207,17 +2207,20 @@ class ApiClient {
   /// Duplicates the record [id] of [table], as FileMaker's Duplicate Record:
   /// the stored fields are copied and the auto-enter options enter new values
   /// (serial numbers, creation stamps). Returns the new record.
+  ///
+  /// On a client of another solution's occurrence ([forOccurrence]) that
+  /// solution duplicates it, as the account signed in there, with its own
+  /// serial numbers and stamps.
   Future<Map<String, dynamic>> duplicateRow(String table, String id) async {
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/data/$table/${Uri.encodeComponent(id)}/duplicate'),
+      Uri.parse('${_records(table)}/${Uri.encodeComponent(id)}/duplicate'),
       headers: _headers(),
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
-  String _serialsUrl(String table, String field) =>
-      '$baseUrl/api/v1/data/$table/serials/${Uri.encodeComponent(field)}';
+  String _serialsUrl(String table, String field) => '${_records(table)}/serials/${Uri.encodeComponent(field)}';
 
   /// The value the next record gets in the serial number [field] of [table]
   /// (FileMaker's GetNextSerialValue).
@@ -2243,16 +2246,23 @@ class ApiClient {
 
   /// Copies again the looked-up values of the records [recordIds] of
   /// [table] whose lookups start from the match field [matchField]
-  /// (FileMaker's Relookup Field Contents). Returns how many records changed.
-  Future<int> relookupFieldContents(String table, String matchField, List<String> recordIds) async {
+  /// (FileMaker's Relookup Field Contents). Returns how many records changed,
+  /// and each of them as it is now.
+  Future<({int updated, List<Map<String, dynamic>> records})> relookupFieldContents(
+      String table, String matchField, List<String> recordIds) async {
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/data/$table/relookup'),
+      Uri.parse('${_records(table)}/relookup'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({'field': matchField, 'record_ids': recordIds}),
     );
     _checkResponse(response);
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    return (body['updated'] as num?)?.toInt() ?? 0;
+    return (
+      updated: (body['updated'] as num?)?.toInt() ?? 0,
+      records: [
+        for (final r in (body['records'] as List?) ?? const []) Map<String, dynamic>.from(r as Map),
+      ],
+    );
   }
 
   Future<void> deleteRow(String table, String id) async {

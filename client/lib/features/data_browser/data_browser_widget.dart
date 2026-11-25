@@ -1342,7 +1342,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       final script = _scriptSetDrafts.contains(draft);
       final created = await _write(() => widget.apiClient.insertRow(widget.table.name, values, script: script));
       _scriptSetDrafts.remove(draft);
-      if (mounted) setState(() => _records[_currentIndex] = created);
+      if (mounted) {
+        setState(() {
+          _records[_currentIndex] = created;
+          // The boxes show what the server entered (serial numbers,
+          // stamps, calculated and looked-up values), so a later save does
+          // not write the draft's empty text back over them.
+          _showRecordInFields(created);
+        });
+      }
       return true;
     } catch (e) {
       if (mounted) {
@@ -1351,6 +1359,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         );
       }
       return false;
+    }
+  }
+
+  /// Puts [record]'s values in the field boxes already shown, without
+  /// rebuilding them, so the box being typed in keeps its focus.
+  void _showRecordInFields(Map<String, dynamic> record) {
+    for (final entry in _fieldControllers.entries) {
+      final col = _columnForKey(entry.key);
+      if (col == null || col.isPrimaryKey) continue;
+      _fieldDebounceTimers[entry.key]?.cancel();
+      final text = keyFieldText(col, entry.key, record);
+      if (entry.value.text != text) entry.value.text = text;
     }
   }
 
@@ -3917,24 +3937,21 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     if (!await _saveCurrentRecord()) return;
     final source = _records[_currentIndex];
     final sourceId = source['id']?.toString() ?? '';
+    if (sourceId.isEmpty) return;
     try {
-      if (!widget.apiClient.readsOccurrence && sourceId.isNotEmpty) {
-        // The server copies the record and its auto-enter options enter new
-        // serial numbers and stamps, as FileMaker's Duplicate Record does.
-        await _write(() => widget.apiClient.duplicateRow(widget.table.name, sourceId));
-      } else {
-        final copy = <String, dynamic>{
-          for (final col in widget.table.columns)
-            if (!col.isPrimaryKey) col.name: source[col.name],
-        };
-        await _write(() => widget.apiClient.insertRow(widget.table.name, copy));
-      }
-      await _fetchRecords();
-      if (_records.isNotEmpty && mounted) {
-        setState(() => _currentIndex = _records.length - 1);
-        _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
-      }
+      // The server copies the record and its auto-enter options enter new
+      // serial numbers and stamps, as FileMaker's Duplicate Record does. A
+      // record of another solution is duplicated there, with its serials.
+      final created = await _write(() => widget.apiClient.duplicateRow(widget.table.name, sourceId));
+      if (!mounted) return;
+      // The copy joins the found set in hand, as the current record.
+      setState(() {
+        _records.add(created);
+        _unsortedRecords.add(created);
+        _currentIndex = _records.length - 1;
+      });
+      _rebuildFieldControllers();
+      widget.onRecordChanged?.call(_currentIndex, _records.length);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -4071,14 +4088,49 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   Future<int> actionSetNextSerialValue(String field, String value) async {
-    final col = _columnNamed(field);
-    if (col == null) return 102;
-    // The serial endpoints are the data API's: not an occurrence's.
-    if (widget.apiClient.readsOccurrence) return 3;
+    // A field named Occurrence::Field is that occurrence's table's, which
+    // may not be the layout's, nor even this solution's.
+    final cut = field.indexOf('::');
+    final occurrence = cut < 0 ? null : field.substring(0, cut).trim();
+    final name = cut < 0 ? field.trim() : field.substring(cut + 2).trim();
+    if (occurrence != null && occurrence.isNotEmpty && _occurrences.isEmpty) await _loadRelationshipGraph();
+    if (!mounted) return 3;
+    if (occurrence == null || !_namesOtherOccurrence(name, occurrence)) {
+      final col = _columnNamed(name);
+      if (col == null) return 102;
+      try {
+        await _write(() => widget.apiClient.setNextSerialValue(widget.table.name, col.name, value));
+        return 0;
+      } on Object catch (e) {
+        return _errorCodeOf(e);
+      }
+    }
+    final key = _occurrenceKey(occurrence);
+    final target = _occurrences.values.where((o) => _occurrenceKey(o.name) == key).firstOrNull;
+    if (target == null) {
+      _notify('Set Next Serial Value: there is no table occurrence "$occurrence".', error: true);
+      return 102;
+    }
+    var fieldName = name;
+    final base = target.baseTableId == null ? null : _tablesById[target.baseTableId];
+    if (target.external == null) {
+      final col = base?.columns
+              .where((c) => c.name.toLowerCase() == name.toLowerCase() || c.displayName.toLowerCase() == name.toLowerCase())
+              .firstOrNull;
+      if (base == null || col == null) {
+        _notify('Set Next Serial Value: $occurrence has no field "$name".', error: true);
+        return 102;
+      }
+      fieldName = col.name;
+    }
     try {
-      await _write(() => widget.apiClient.setNextSerialValue(widget.table.name, col.name, value));
+      // The occurrence's records route sets it in its table, in the
+      // solution it is in, as the account signed in there.
+      final client = widget.apiClient.forOccurrence(target.id);
+      await _write(() => client.setNextSerialValue(base?.name ?? target.name, fieldName, value));
       return 0;
     } on Object catch (e) {
+      _notify('Set Next Serial Value could not set $occurrence::$name: $e', error: true);
       return _errorCodeOf(e);
     }
   }
@@ -4092,10 +4144,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   }
 
   /// Relookup Field Contents from the match field [col] over the found set
-  /// in hand, then reloads it. Returns FileMaker's error code and how many
-  /// records the server changed.
+  /// in hand, which keeps it: only its records are sent, and those the server
+  /// changed are shown as they are now. Returns FileMaker's error code and how
+  /// many records the server changed.
   Future<(int, int)> _relookup(ColumnModel col, {required bool dialog}) async {
-    if (widget.apiClient.readsOccurrence) return (3, 0);
     if (!await _saveCurrentRecord()) return (3, 0);
     final ids = [
       for (final r in _records)
@@ -4120,9 +4172,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       if (ok != true) return (1, 0);
     }
     try {
-      final updated = await _write(() => widget.apiClient.relookupFieldContents(widget.table.name, col.name, ids));
-      await _fetchRecords(preserveCurrent: true);
-      return (0, updated);
+      final result = await _write(() => widget.apiClient.relookupFieldContents(widget.table.name, col.name, ids));
+      // The found set stays as it is, in its order: the records the server
+      // changed are put in place of what was read of them.
+      if (mounted && result.records.isNotEmpty) {
+        final byId = {for (final r in result.records) r['id']?.toString(): r};
+        List<Map<String, dynamic>> refreshed(List<Map<String, dynamic>> rows) =>
+            [for (final r in rows) byId[r['id']?.toString()] ?? r];
+        setState(() {
+          _records = refreshed(_records);
+          _unsortedRecords = refreshed(_unsortedRecords);
+        });
+        _rebuildFieldControllers();
+      }
+      return (0, result.updated);
     } on Object catch (e) {
       if (dialog) _notify('Relookup Field Contents failed: $e', error: true);
       return (_errorCodeOf(e), 0);
