@@ -258,6 +258,8 @@ type BundleValueList struct {
 	// table or field: SourceOccurrenceID is the external occurrence it is
 	// read through and the field is named, as it has no id here (#107).
 	SourceColumnName string `msgpack:"source_column_name,omitempty"`
+	// SecondColumnName is such a list's second field, by name.
+	SecondColumnName string `msgpack:"second_column_name,omitempty"`
 }
 
 // remappedID is an optional reference of a bundle rewritten to the
@@ -543,7 +545,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			SourceTableID: vl.SourceTableID, SourceColumnID: vl.SourceColumnID,
 			SecondColumnID: vl.SecondColumnID, ShowSecondOnly: vl.ShowSecondOnly, SortBy: vl.SortBy,
 			SourceOccurrenceID: vl.SourceOccurrenceID, RelatedOccurrenceID: vl.RelatedOccurrenceID,
-			SourceColumnName: vl.SourceColumnName,
+			SourceColumnName: vl.SourceColumnName, SecondColumnName: vl.SecondColumnName,
 		})
 	}
 	for _, f := range savedFinds {
@@ -1125,6 +1127,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			// Taken from a field of another solution's table (#107).
 			occ := occIDs[*vl.SourceOccurrenceID]
 			in.SourceOccurrenceID, in.SourceColumnName = &occ, vl.SourceColumnName
+			in.SecondColumnName, in.ShowSecondOnly, in.SortBy = vl.SecondColumnName, vl.ShowSecondOnly, vl.SortBy
+			in.RelatedOccurrenceID = remappedID(occIDs, vl.RelatedOccurrenceID)
 		} else if vl.Kind == ValueListFromField {
 			srcTable, srcColumn := "", ""
 			if vl.SourceTableID != nil {
@@ -1166,7 +1170,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 					SourceTableID: p.SourceTableID, SourceColumnID: p.SourceColumnID,
 					SecondColumnID: p.SecondColumnID, ShowSecondOnly: p.ShowSecondOnly, SortBy: p.SortBy,
 					SourceOccurrenceID: p.SourceOccurrenceID, RelatedOccurrenceID: p.RelatedOccurrenceID,
-					SourceColumnName: p.SourceColumnName,
+					SourceColumnName: p.SourceColumnName, SecondColumnName: p.SecondColumnName,
 				}, true)
 			})
 			report.ValueListsUpdated++
@@ -1650,14 +1654,21 @@ func (s *Service) planImport(ctx context.Context, b *SolutionBundle) (*importPla
 		seenValueLists[key] = true
 		if vl.Kind == ValueListFromField && vl.SourceTableID == nil && vl.SourceOccurrenceID != nil {
 			// Taken from a field of another solution's table: named, through
-			// one of the file's external occurrences, without the options a
-			// list of this solution's field has.
+			// one of the file's external occurrences, its second field named
+			// too, and its related values starting from one of the file's
+			// own occurrences.
 			_, nameErr := normalizeExternalField(vl.SourceColumnName)
 			if vl.SourceColumnID != nil || !occExternal[*vl.SourceOccurrenceID] || nameErr != nil {
 				return nil, invalid("value list %q reads a field of another solution's table that is not named through one of the file's external occurrences", vl.Name)
 			}
-			if vl.SecondColumnID != nil || vl.RelatedOccurrenceID != nil || vl.ShowSecondOnly {
-				return nil, invalid("value list %q reads a field of another solution's table with a second field or related values, which are not supported yet", vl.Name)
+			if vl.SecondColumnID != nil {
+				return nil, invalid("value list %q reads a field of another solution's table and names its second field by id; it is named, as the first one is", vl.Name)
+			}
+			if _, secondErr := normalizeExternalField(vl.SecondColumnName); vl.SecondColumnName != "" && secondErr != nil {
+				return nil, invalid("value list %q reads a second field of another solution's table that is not a field name", vl.Name)
+			}
+			if vl.RelatedOccurrenceID != nil && occTable[*vl.RelatedOccurrenceID] == "" {
+				return nil, invalid("value list %q includes only related values starting from an occurrence that is not one of the file's occurrences of its own tables", vl.Name)
 			}
 		} else if vl.Kind == ValueListFromField {
 			if vl.SourceColumnID == nil || columnTable[*vl.SourceColumnID] == "" {

@@ -54,6 +54,7 @@ class LayoutDesignerWidget extends StatefulWidget {
     this.showTextRuler = false,
     this.pageSetup = const PageSetupModel(),
     this.onSelectionChanged,
+    this.externalOccurrence,
   });
   final TableModel table;
   final List<TableModel> tables;
@@ -79,6 +80,13 @@ class LayoutDesignerWidget extends StatefulWidget {
   final bool showTextRuler;
   final PageSetupModel pageSetup;
   final VoidCallback? onSelectionChanged;
+
+  /// The occurrence of another solution's table the layout is based on
+  /// (#107), when it is: [table] is then that table, read in its solution.
+  /// Its fields are placed and bound as any other, by name; they are
+  /// defined in that solution, so none can be added here, and its
+  /// relationships are not followed from this layout yet.
+  final TableOccurrenceModel? externalOccurrence;
 
   /// Reports tool changes made inside the designer (toolbar picks, the
   /// automatic return to the pointer after placing an object) so other tool
@@ -399,8 +407,21 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         widget.table.id: widget.table,
       };
 
-  /// The occurrences this layout can show through one relationship.
-  List<RelatedTarget> get _relatedTargets => reachableTargets(
+  /// The occurrence a field of the record in hand names: the layout's own.
+  String get _ownOccurrence => widget.externalOccurrence?.name ?? _currentTable.name;
+
+  /// Why no field can be added to the layout's table here, or null.
+  String? get _externalFieldsNotice {
+    final external = widget.externalOccurrence?.external;
+    if (external == null) return null;
+    return 'The fields of ${external.table} are defined in ${external.database}, through the file reference '
+        '"${external.fileReference}". Add a field there, then reopen this layout.';
+  }
+
+  /// The occurrences this layout can show through one relationship. A
+  /// layout on another solution's table follows none yet: that table's
+  /// name says nothing about this solution's occurrences.
+  List<RelatedTarget> get _relatedTargets => widget.externalOccurrence != null ? const [] : reachableTargets(
         fromTable: _currentTable.name,
         relationships: _relationships,
         occurrencesById: _occurrences,
@@ -714,7 +735,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       } else {
         final created = await widget.apiClient.createLayout(
           _layout.name,
-          toId: _currentTable.id,
+          toId: widget.externalOccurrence?.id ?? _currentTable.id,
           definition: _layout.toJson(),
         );
         _layout = _layout.copyWith(id: created.id);
@@ -743,7 +764,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       } else {
         final created = await widget.apiClient.createLayout(
           _layout.name,
-          toId: _currentTable.id,
+          toId: widget.externalOccurrence?.id ?? _currentTable.id,
           definition: _layout.toJson(),
         );
         _layout = _layout.copyWith(id: created.id);
@@ -1842,6 +1863,18 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   // ─── Dialogs ───────────────────────────────────────────────────────────────
 
   Future<void> _showNewFieldDialog() async {
+    final externalNotice = _externalFieldsNotice;
+    if (externalNotice != null) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('New Field'),
+          content: Text(externalNotice, key: const ValueKey('external-new-field-notice')),
+          actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+        ),
+      );
+      return;
+    }
     final nameCtrl = TextEditingController();
     var selectedType = 'varchar';
     final formKey = GlobalKey<FormState>();
@@ -2593,9 +2626,19 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
       cols.sort((a, b) => a.displayName.compareTo(b.displayName));
     }
 
+    final external = widget.externalOccurrence;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (external != null)
+          Padding(
+            key: const ValueKey('external-fields-source'),
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+            child: Text(
+              '"${external.name}": fields of ${external.external!.table} in ${external.external!.database}',
+              style: const TextStyle(fontSize: 10.5, fontStyle: FontStyle.italic),
+            ),
+          ),
         // Table Occurrence Selector
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
@@ -2755,6 +2798,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                       ),
                       icon: const Icon(Icons.add, size: 14, color: Colors.green),
                       label: const Text('New Field', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      // On another solution's table it says where fields
+                      // are added instead.
                       onPressed: _showNewFieldDialog,
                     ),
                   ),
@@ -5069,7 +5114,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           items: [
             DropdownMenuItem(
               value: '',
-              child: Text('${_currentTable.displayName} (this layout)',
+              child: Text('${widget.externalOccurrence?.name ?? _currentTable.displayName} (this layout)',
                   style: const TextStyle(fontSize: 11)),
             ),
             for (final t in targets)
@@ -5086,7 +5131,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               _editSelected((sel) => sel.copyWith(
                 fieldBinding: existing.copyWith(
                   clearRelationship: true,
-                  tableOccurrence: _currentTable.name,
+                  tableOccurrence: _ownOccurrence,
                 ),
               ));
               return;
@@ -5125,6 +5170,15 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               style: TextStyle(fontSize: 10, color: Colors.grey),
             ),
           )
+        else if (widget.externalOccurrence != null)
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'This layout shows a table of another solution: its fields are bound here, related '
+              'fields are not offered from it yet.',
+              style: TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          )
         else if (targets.isEmpty)
           const Padding(
             padding: EdgeInsets.only(top: 6),
@@ -5151,7 +5205,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               final existing = sel.fieldBinding ?? const FieldBindingModel(fieldName: '');
               _editSelected((sel) => sel.copyWith(
                 fieldBinding: existing.copyWith(
-                  tableOccurrence: related?.occurrence.name ?? _currentTable.name,
+                  tableOccurrence: related?.occurrence.name ?? _ownOccurrence,
                   fieldName: f,
                 ),
               ));

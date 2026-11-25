@@ -1,14 +1,15 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
+import 'package:file4base_client/features/schema_manager/manage_file_references_dialog.dart';
 import 'package:file4base_client/features/schema_manager/widgets/specify_relationship_dialog.dart';
 import 'package:file4base_client/features/schema_manager/widgets/specify_table_dialog.dart';
 import 'package:flutter/material.dart';
 
-/// The fields a graph card lists for an occurrence of another solution's
-/// table: those its relationships match on, by name, in the order they are
-/// first used. The other solution's catalog is not read here, so these are
-/// the only fields the graph knows.
+/// The fields an occurrence of another solution's table is matched on by
+/// its relationships, by name, in the order they are first used.
 List<String> externalFieldNames(TableOccurrenceModel occ, List<RelationshipModel> relationships) {
   final names = <String>[];
   void add(String? name) {
@@ -23,11 +24,84 @@ List<String> externalFieldNames(TableOccurrenceModel occ, List<RelationshipModel
   return names;
 }
 
+/// The fields a graph card lists for an occurrence of another solution's
+/// table: that table's, as its solution has them, then those its
+/// relationships match on that it does not have. Until the table is read,
+/// only the latter are known.
+List<String> externalCardFields(TableOccurrenceModel occ, List<RelationshipModel> relationships, TableModel? table) {
+  final names = [for (final c in table?.columns ?? const <ColumnModel>[]) c.name];
+  for (final name in externalFieldNames(occ, relationships)) {
+    if (!names.contains(name)) names.add(name);
+  }
+  return names;
+}
+
+/// Where an occurrence of another solution's table stands, as the badge of
+/// its card says (#107).
+enum ExternalOccurrenceState { unbound, reading, ok, notSignedIn, missing, noAccess, schemaMismatch, failed }
+
+/// The state of [occ], an external occurrence, given what reading its table
+/// gave: the table, why it could not be read, or nothing yet.
+ExternalOccurrenceState externalOccurrenceState(TableOccurrenceModel occ, {TableModel? table, Object? error}) {
+  final external = occ.external!;
+  if (external.database.isEmpty || external.table.isEmpty) return ExternalOccurrenceState.unbound;
+  if (table != null) return ExternalOccurrenceState.ok;
+  if (error == null) return ExternalOccurrenceState.reading;
+  switch (ExternalUnavailable.of(error)?.reason) {
+    case ExternalUnavailable.notSignedIn:
+      return ExternalOccurrenceState.notSignedIn;
+    case ExternalUnavailable.noAccess:
+      return ExternalOccurrenceState.noAccess;
+    case ExternalUnavailable.schemaMismatch:
+      return ExternalOccurrenceState.schemaMismatch;
+    case ExternalUnavailable.missing:
+      return ExternalOccurrenceState.missing;
+    default:
+      return ExternalOccurrenceState.failed;
+  }
+}
+
+/// The badge's words.
+String externalStateLabel(ExternalOccurrenceState state) => switch (state) {
+      ExternalOccurrenceState.unbound => 'Unbound',
+      ExternalOccurrenceState.reading => '…',
+      ExternalOccurrenceState.ok => 'OK',
+      ExternalOccurrenceState.notSignedIn => 'Not signed in',
+      ExternalOccurrenceState.missing => 'Missing',
+      ExternalOccurrenceState.noAccess => 'No access',
+      ExternalOccurrenceState.schemaMismatch => 'Mismatch',
+      ExternalOccurrenceState.failed => 'Error',
+    };
+
+/// What the badge's tooltip says: where the records are, or what is wrong
+/// and what to do.
+String externalStateMessage(TableOccurrenceModel occ, ExternalOccurrenceState state, {Object? error}) {
+  final external = occ.external!;
+  final ref = '"${external.fileReference}"';
+  switch (state) {
+    case ExternalOccurrenceState.unbound:
+      return external.database.isEmpty
+          ? 'The file reference $ref is not mapped to a solution. Map and bind it in File > Manage > File References.'
+          : '$ref is mapped to ${external.database}, but the table "${occ.name}" shows there is not chosen yet. '
+              'Bind it in File > Manage > File References.';
+    case ExternalOccurrenceState.reading:
+      return 'Reading the table ${external.table} in ${external.database}…';
+    case ExternalOccurrenceState.ok:
+      return 'Table ${external.table} of ${external.database}, through $ref.';
+    case ExternalOccurrenceState.failed:
+      return 'The table ${external.table} of ${external.database} could not be read: '
+          '${error is ApiException ? error.detail : error}';
+    default:
+      final problem = error == null ? null : ExternalUnavailable.of(error);
+      return problem?.message ?? 'The table ${external.table} of ${external.database} is not available.';
+  }
+}
+
 /// The row of a card a criterion's field is drawn from: by id for a local
-/// table, by name for an external occurrence.
-int _fieldRow(TableModel? table, TableOccurrenceModel occ, List<RelationshipModel> relationships, String columnId, String? columnName) {
+/// table, by name among [externalRows] for an external occurrence.
+int _fieldRow(TableModel? table, TableOccurrenceModel occ, List<String>? externalRows, String columnId, String? columnName) {
   final index = occ.isExternal
-      ? externalFieldNames(occ, relationships).indexOf(columnName ?? '')
+      ? (externalRows ?? const <String>[]).indexOf(columnName ?? '')
       : (table?.columns ?? const <ColumnModel>[]).indexWhere((c) => c.id == columnId);
   return index < 0 ? 0 : index;
 }
@@ -59,11 +133,19 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
   static const double _headerHeight = 32.0;
   static const double _rowHeight = 22.0;
 
+  /// The tables of the external occurrences, read in their solutions, and
+  /// what reading one gave when it failed (#107).
+  late ExternalAccess _access;
+  final Map<String, TableModel> _externalTables = {};
+  final Map<String, Object> _externalErrors = {};
+
   @override
   void initState() {
     super.initState();
     _occurrences = List.from(widget.occurrences);
     _relationships = List.from(widget.relationships);
+    _access = ExternalAccess.of(widget.apiClient)..addListener(_readExternalTables);
+    _readExternalTables();
   }
 
   @override
@@ -71,6 +153,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     super.didUpdateWidget(oldWidget);
     if (widget.occurrences != oldWidget.occurrences) {
       _occurrences = List.from(widget.occurrences);
+      _readExternalTables();
     }
     if (widget.relationships != oldWidget.relationships) {
       _relationships = List.from(widget.relationships);
@@ -79,8 +162,51 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
 
   @override
   void dispose() {
+    _access.removeListener(_readExternalTables);
     _transformController.dispose();
     super.dispose();
+  }
+
+  /// Reads, in its solution, the table of every bound external occurrence.
+  void _readExternalTables() {
+    for (final occ in _occurrences) {
+      if (!occ.isExternal || externalOccurrenceState(occ) == ExternalOccurrenceState.unbound) continue;
+      unawaited(_access.table(occ).then((table) {
+        if (!mounted) return;
+        setState(() {
+          _externalTables[occ.id] = table;
+          _externalErrors.remove(occ.id);
+        });
+      }, onError: (Object e) {
+        if (!mounted) return;
+        setState(() {
+          _externalTables.remove(occ.id);
+          _externalErrors[occ.id] = e;
+        });
+      }));
+    }
+  }
+
+  ExternalOccurrenceState _stateOf(TableOccurrenceModel occ) =>
+      externalOccurrenceState(occ, table: _externalTables[occ.id], error: _externalErrors[occ.id]);
+
+  /// The field rows of every external occurrence's card, by occurrence,
+  /// worked out once per build.
+  Map<String, List<String>> _externalRows = const {};
+
+  /// What the badge of an external occurrence does: sign in to its solution,
+  /// or open File References, where it is mapped, bound and verified.
+  Future<void> _onExternalBadge(TableOccurrenceModel occ) async {
+    final state = _stateOf(occ);
+    if (state == ExternalOccurrenceState.ok || state == ExternalOccurrenceState.reading) return;
+    final error = _externalErrors[occ.id];
+    final problem = error == null ? null : ExternalUnavailable.of(error);
+    if (state == ExternalOccurrenceState.notSignedIn && problem != null) {
+      await _access.signIn(context, problem);
+      return;
+    }
+    await ManageFileReferencesDialog.show(context, apiClient: widget.apiClient);
+    if (mounted) widget.onSchemaChanged();
   }
 
   TableModel? _getTable(String? baseTableId) {
@@ -89,7 +215,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
   }
 
   Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, String? columnName, bool isExit) {
-    final colIndex = _fieldRow(_getTable(occ.baseTableId), occ, _relationships, columnId, columnName);
+    final colIndex = _fieldRow(_getTable(occ.baseTableId), occ, _externalRows[occ.id], columnId, columnName);
 
     final isCollapsed = _collapsedOccurrences.contains(occ.id);
     final yOffset = isCollapsed ? (_headerHeight / 2) : (_headerHeight + (colIndex * _rowHeight) + (_rowHeight / 2));
@@ -103,6 +229,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       context,
       tables: widget.tables,
       existingOccurrences: _occurrences,
+      apiClient: widget.apiClient,
     );
     if (res != null && mounted) {
       try {
@@ -115,8 +242,11 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
           newY = last.yPos + 40.0;
         }
 
+        final external = res['external'] as Map<String, dynamic>?;
         final created = await widget.apiClient.createOccurrence(
-          baseTableId: res['base_table_id'] as String,
+          baseTableId: res['base_table_id'] as String? ?? '',
+          externalReference: external?['file_reference'] as String?,
+          externalTable: external?['table'] as String?,
           name: res['name'] as String,
           xPos: newX,
           yPos: newY,
@@ -127,6 +257,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
           _selectedOccurrenceId = created.id;
           _selectedRelationshipId = null;
         });
+        _readExternalTables();
         widget.onSchemaChanged();
       } catch (e) {
         if (mounted) {
@@ -159,6 +290,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       preselectedRightOccurrenceId: rightOccId,
       preselectedLeftColumnId: leftColId,
       preselectedRightColumnId: rightColId,
+      apiClient: widget.apiClient,
     );
 
     if (res != null && mounted) {
@@ -200,6 +332,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
       occurrences: _occurrences,
       tables: widget.tables,
       initialRelationship: rel,
+      apiClient: widget.apiClient,
     );
 
     if (res != null && mounted) {
@@ -322,6 +455,10 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    _externalRows = {
+      for (final occ in _occurrences)
+        if (occ.isExternal) occ.id: externalCardFields(occ, _relationships, _externalTables[occ.id]),
+    };
 
     return Column(
       children: [
@@ -427,6 +564,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                               occurrences: _occurrences,
                               relationships: _relationships,
                               tables: widget.tables,
+                              externalRows: _externalRows,
                               selectedRelationshipId: _selectedRelationshipId,
                               collapsedOccurrences: _collapsedOccurrences,
                               isDark: isDark,
@@ -544,6 +682,40 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     return '${occ.name}::$field';
   }
 
+  Widget _externalBadge(TableOccurrenceModel occ, ExternalOccurrenceState state, bool isDark) {
+    final Color color = switch (state) {
+      ExternalOccurrenceState.ok => Colors.green.shade600,
+      ExternalOccurrenceState.reading || ExternalOccurrenceState.unbound => Colors.grey.shade600,
+      ExternalOccurrenceState.notSignedIn || ExternalOccurrenceState.schemaMismatch => Colors.orange.shade800,
+      _ => Colors.red.shade600,
+    };
+    final actionable = state != ExternalOccurrenceState.ok && state != ExternalOccurrenceState.reading;
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Tooltip(
+        message: externalStateMessage(occ, state, error: _externalErrors[occ.id]) +
+            (state == ExternalOccurrenceState.notSignedIn
+                ? '\nClick to sign in.'
+                : actionable
+                    ? '\nClick to open File References.'
+                    : ''),
+        child: InkWell(
+          key: ValueKey('external-status-${occ.id}'),
+          onTap: actionable ? () => unawaited(_onExternalBadge(occ)) : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              border: Border.all(color: color),
+              borderRadius: BorderRadius.circular(8),
+              color: color.withValues(alpha: isDark ? 0.18 : 0.08),
+            ),
+            child: Text(externalStateLabel(state), style: TextStyle(fontSize: 9.5, color: color, fontWeight: FontWeight.w600)),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildOccurrenceCard(BuildContext context, TableOccurrenceModel occ, bool isDark) {
     final isSelected = _selectedOccurrenceId == occ.id;
     final isCollapsed = _collapsedOccurrences.contains(occ.id);
@@ -551,8 +723,11 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
     final columns = tbl?.columns ?? [];
     final external = occ.external;
     // An occurrence of another solution's table has no local columns: it
-    // lists the fields its relationships match on, by name.
-    final externalFields = external == null ? const <String>[] : externalFieldNames(occ, _relationships);
+    // lists that table's fields, read in its solution, and any field its
+    // relationships match on that the table does not have.
+    final externalTable = _externalTables[occ.id];
+    final externalFields = external == null ? const <String>[] : _externalRows[occ.id]!;
+    final externalState = external == null ? null : _stateOf(occ);
 
     return Positioned(
       left: occ.xPos,
@@ -688,6 +863,7 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
                               ),
                             ),
                     ),
+                    if (externalState != null) _externalBadge(occ, externalState, isDark),
                     InkWell(
                       onTap: () {
                         setState(() {
@@ -711,27 +887,45 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
               // Fields List
               if (!isCollapsed) ...[
                 if (external != null)
-                  ...externalFields.map((name) => Container(
-                        height: _rowHeight,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Row(
-                          children: [
-                            Icon(Icons.commit, size: 11, color: Colors.grey[500]),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: Text(
-                                name,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontStyle: FontStyle.italic,
-                                  color: isDark ? Colors.grey[300] : Colors.grey[800],
-                                ),
-                                overflow: TextOverflow.ellipsis,
+                  ...externalFields.map((name) {
+                    final column = externalTable?.columns.where((c) => c.name == name).firstOrNull;
+                    // A field matched on that the table, as read, lacks.
+                    final missing = externalTable != null && column == null;
+                    final row = Container(
+                      key: ValueKey('external-field-${occ.id}-$name'),
+                      height: _rowHeight,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        children: [
+                          Icon(
+                            missing ? Icons.error_outline : (column?.isPrimaryKey ?? false ? Icons.key : Icons.commit),
+                            size: 11,
+                            color: missing ? Colors.red[400] : (column?.isPrimaryKey ?? false ? Colors.amber[700] : Colors.grey[500]),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              column == null || column.displayName.isEmpty ? name : column.displayName,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                                color: missing ? Colors.red[400] : (isDark ? Colors.grey[300] : Colors.grey[800]),
+                                decoration: missing ? TextDecoration.lineThrough : null,
                               ),
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          ],
-                        ),
-                      ))
+                          ),
+                        ],
+                      ),
+                    );
+                    return missing
+                        ? Tooltip(
+                            message: '"$name" is not a field of ${external.table} in ${external.database}. '
+                                'Change the relationship, or verify the file reference in File > Manage > File References.',
+                            child: row,
+                          )
+                        : row;
+                  })
                 else if (columns.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(8.0),
@@ -784,6 +978,7 @@ class _RelationshipLinesPainter extends CustomPainter {
     required this.occurrences,
     required this.relationships,
     required this.tables,
+    required this.externalRows,
     required this.selectedRelationshipId,
     required this.collapsedOccurrences,
     required this.isDark,
@@ -791,6 +986,7 @@ class _RelationshipLinesPainter extends CustomPainter {
   final List<TableOccurrenceModel> occurrences;
   final List<RelationshipModel> relationships;
   final List<TableModel> tables;
+  final Map<String, List<String>> externalRows;
   final String? selectedRelationshipId;
   final Set<String> collapsedOccurrences;
   final bool isDark;
@@ -801,7 +997,7 @@ class _RelationshipLinesPainter extends CustomPainter {
   }
 
   Offset _getAnchorPoint(TableOccurrenceModel occ, String columnId, String? columnName, bool isExit) {
-    final colIndex = _fieldRow(_getTable(occ.baseTableId), occ, relationships, columnId, columnName);
+    final colIndex = _fieldRow(_getTable(occ.baseTableId), occ, externalRows[occ.id], columnId, columnName);
 
     final isCollapsed = collapsedOccurrences.contains(occ.id);
     final yOffset = isCollapsed
@@ -862,6 +1058,7 @@ class _RelationshipLinesPainter extends CustomPainter {
   bool shouldRepaint(covariant _RelationshipLinesPainter oldDelegate) {
     return oldDelegate.occurrences != occurrences ||
         oldDelegate.relationships != relationships ||
+        oldDelegate.externalRows != externalRows ||
         oldDelegate.selectedRelationshipId != selectedRelationshipId ||
         oldDelegate.collapsedOccurrences != collapsedOccurrences;
   }

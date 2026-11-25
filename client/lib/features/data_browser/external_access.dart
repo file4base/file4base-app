@@ -16,9 +16,14 @@ class ExternalAccess extends ChangeNotifier {
 
   /// The one for the session [apiClient] holds: clients of the same session
   /// (one per occurrence, for instance) share it.
-  factory ExternalAccess.of(ApiClient apiClient) =>
-      _bySession.putIfAbsent(apiClient.authToken ?? '', () => ExternalAccess._(apiClient));
+  factory ExternalAccess.of(ApiClient apiClient) {
+    final token = apiClient.authToken ?? '';
+    // A client with no session yet shares nothing with another one.
+    if (token.isEmpty) return _unsigned[apiClient] ??= ExternalAccess._(apiClient);
+    return _bySession.putIfAbsent(token, () => ExternalAccess._(apiClient));
+  }
   static final Map<String, ExternalAccess> _bySession = {};
+  static final Expando<ExternalAccess> _unsigned = Expando();
 
   final ApiClient apiClient;
 
@@ -44,11 +49,21 @@ class ExternalAccess extends ChangeNotifier {
     }
   }
 
+  /// Forgets the tables read so far, after a file reference was remapped or
+  /// bound, so every view reads them again.
+  void refresh() {
+    _tables.clear();
+    notifyListeners();
+  }
+
   /// Asks for an account of the solution [problem] names and signs the
   /// session in to it. Every view that meets the same solution shares one
   /// dialog; once signed in, they read again.
-  Future<bool> signIn(BuildContext context, ExternalUnavailable problem) {
-    final database = problem.database;
+  Future<bool> signIn(BuildContext context, ExternalUnavailable problem) => signInTo(context, problem.database);
+
+  /// Asks for an account of [database] and signs the session in to it, with
+  /// one dialog however many views ask at once.
+  Future<bool> signInTo(BuildContext context, String database) {
     if (database.isEmpty) return Future.value(false);
     return _signIns.putIfAbsent(database, () async {
       try {
@@ -67,6 +82,49 @@ class ExternalAccess extends ChangeNotifier {
         unawaited(_signIns.remove(database));
       }
     });
+  }
+
+  /// The token of the session this one opened in [database], for a script
+  /// step that reaches that solution: Perform Script and Open File through a
+  /// file reference, Import and Export Records through a transfer (the
+  /// runner's peerTokenProvider). With none yet, it asks for an account of
+  /// that solution, as a read does. Null when the user cancels: the step
+  /// then stops and says so.
+  ///
+  /// A token kept from earlier is checked first, with one light request
+  /// (`GET /api/v1/auth/session` there): one that solution no longer accepts (`401`: the
+  /// account there was disabled or changed its password, or that session
+  /// ended) is dropped and the user asked to sign in again, rather than
+  /// handed to a step that would fail with it.
+  Future<String?> peerToken(BuildContext context, String database) async {
+    final known = apiClient.linkedToken(database);
+    if (known != null && known.isNotEmpty) {
+      if (await _accepted(known)) return known;
+      peerRejected(database);
+    }
+    if (!context.mounted || !await signInTo(context, database)) return null;
+    return apiClient.linkedToken(database);
+  }
+
+  /// Whether the solution a linked [token] was opened in still accepts it.
+  Future<bool> _accepted(String token) async {
+    try {
+      await apiClient.forPeerSession(token).sessionCapabilities();
+    } on ApiException catch (e) {
+      // Anything but a refused session is the step's to meet and report.
+      return e.statusCode != 401;
+    } on Object {
+      // Likewise: unreachable now is not signed out.
+    }
+    return true;
+  }
+
+  /// Forgets the session held in [database], which answered `401`: the
+  /// next read or step that needs it asks for an account there again.
+  void peerRejected(String database) {
+    apiClient.forgetLinked(database);
+    _tables.clear();
+    notifyListeners();
   }
 
   /// Runs [call], a write into another solution, and when the session is not

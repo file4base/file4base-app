@@ -157,8 +157,12 @@ func (h *SecurityHandler) linkDependencies(r *http.Request, group, database stri
 	return out
 }
 
-// groupDependencies lists the solutions a session group's solutions read:
-// the one it signed in to and every one linked since.
+// groupDependencies lists the solutions a session group's solutions reach:
+// the one it signed in to and every one linked since. A solution is reached
+// when an external occurrence reads it, or when a file reference is mapped to
+// it, or when a transfer's far end is in it, so that a script's Perform
+// Script, Open File or Import Records, and the design of a first occurrence
+// through a new reference, can sign in to it too.
 func (h *SecurityHandler) groupDependencies(ctx context.Context, sess auth.Session) map[string][]string {
 	sessions := h.sessions.Members(sess.Group)
 	if root, ok := h.sessions.Root(sess.Group); ok {
@@ -170,12 +174,29 @@ func (h *SecurityHandler) groupDependencies(ctx context.Context, sess auth.Sessi
 		if err != nil {
 			continue
 		}
-		list, err := schema.NewService(driver).ExternalDependencies(ctx)
-		if err != nil {
-			continue
+		svc := schema.NewService(driver)
+		if list, err := svc.ExternalDependencies(ctx); err == nil {
+			for _, dep := range list {
+				deps[dep.Database] = append(deps[dep.Database], dep.References...)
+			}
 		}
-		for _, dep := range list {
-			deps[dep.Database] = append(deps[dep.Database], dep.References...)
+		if refs, err := svc.ListFileReferences(ctx); err == nil {
+			for _, ref := range refs {
+				if ref.IsMapped() && ref.Database != member.Database {
+					deps[ref.Database] = append(deps[ref.Database], ref.Name)
+				}
+			}
+		}
+		// A transfer names its far solution itself, through no reference.
+		if transfers, err := svc.ListTransfers(ctx); err == nil {
+			for _, tr := range transfers {
+				for _, end := range []schema.TransferEnd{tr.Source, tr.Destination} {
+					db := strings.TrimSpace(end.Database)
+					if _, known := deps[db]; db != "" && db != member.Database && !known {
+						deps[db] = []string{}
+					}
+				}
+			}
 		}
 	}
 	return deps
@@ -213,7 +234,7 @@ func (h *SecurityHandler) Link(w http.ResponseWriter, r *http.Request) {
 	references, uses := h.groupDependencies(r.Context(), sess)[database]
 	if !uses {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Not A Dependency",
-			"no external table occurrence of this session's solutions is mapped to '"+database+"'")
+			"no external table occurrence, file reference or transfer of this session's solutions reaches '"+database+"'")
 		return
 	}
 

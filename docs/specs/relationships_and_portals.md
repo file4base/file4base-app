@@ -345,6 +345,11 @@ could not link is signed in to with `POST /api/v1/auth/link`.
   is the id. When no field, or more than one, has it, the read answers `424`
   with `schema_mismatch`.
 - **Value lists** of a field of the other table offer that solution's values.
+  Their second field is named too (`second_column_name`), shown beside the
+  first or in its place and sorted by either, and *include only related
+  values* starts from an occurrence of this solution (`related_occurrence_id`;
+  one of another solution's table is refused with `422`): the match values
+  are read here, the values there.
 - **Unstored calculations** read it like any related table:
   `Occurrence::Field`, `Count`, `Sum`, `List` and the other aggregates, along
   a path that may cross both solutions. The other solution's own unstored
@@ -410,6 +415,52 @@ never this session's.
   record being deleted: one moved to another record after the plan is kept.
 - Other solutions' clients are told of the change, as for a write made there.
 
+**In the client.** Every view says which file reference and which solution
+a problem is about, and what to do, with no dead end:
+
+- **Relationship graph.** An external occurrence's card has an italic header
+  and a badge: *Unbound* (the reference is not mapped, or no table is chosen
+  through it), *Not signed in*, *Missing*, *No access*, *Mismatch* or *OK*,
+  its tooltip giving the reason and the remedy. Clicking it signs in to the
+  solution (*Not signed in*) or opens Manage File References. The card lists
+  the fields of the table as that solution's catalog has them
+  (`GET /api/v1/occurrences/{occurrence}/table`), then, struck through, any
+  field a criterion names that the table no longer has.
+- **Specify Table.** *Data Source* offers the current file, each file
+  reference (*Catalog (catalog_db)*, or *(not mapped)*) and *Add File
+  Reference…*. A mapped reference lists that solution's tables, read with the
+  session held there (`POST /api/v1/auth/link` signs in to it first, even
+  before any occurrence goes through the reference); the new occurrence is
+  created with `external: {file_reference, table}`.
+- **Specify Relationship** reads the fields of an external side in its
+  solution, and a criterion names them (`right_column_name`). Not signed in,
+  the field list offers to sign in. A marker (`#<id>`) is shown as the field
+  it resolves to and saved as it is stored; one no field resolves is shown
+  as *field #<id> (unresolved)*, kept untouched, and never replaced by
+  another field. Value lists do the same.
+- **File > Manage > File References** lists the references, adds and edits
+  them (name, solution, FileMaker paths; a path naming one installed solution
+  is *suggested*, never chosen), binds, verifies and deletes them. Bind and
+  Verify read the other solution's design, which needs an owner or
+  administrator account there: the dialog signs in to it, and when the
+  account held there is not one, says so and offers to sign in as another
+  account. The report lists each occurrence (*bound*, *unbound* with its
+  candidate tables, or *mismatch* with the reasons), and an unbound one
+  with no candidate gets a choice of that solution's tables.
+- **After a sign-in**, a banner lists the solutions this one reads that the
+  account could not be signed in to (`refused`, `mfa_required`, `throttled`),
+  each with *Sign in…*; signing in never fails because of them.
+- **Script steps** that reach another solution (Perform Script and Open File
+  through a file reference, Import and Export Records through a transfer) use
+  the session held there, kept by the solution's exact name, or ask for an
+  account of it first. A session that solution no longer accepts (`401`) is
+  dropped and the user asked to sign in again.
+- **Layout mode** on a layout of an external occurrence designs it with that
+  table's fields; a new field is added in that solution. Until its fields can
+  be read, the layout says why.
+- **Manage Value Lists** offers the external occurrences as sources (in
+  italics), with their fields, second field and related values.
+
 Not done across solutions yet, refused with `424` and `reason` `missing`: a
 find on a related field from a record of one (a layout on an external
 occurrence). Unstored calculations reading through an external occurrence,
@@ -431,7 +482,8 @@ the same name.
 - **Reading a related field in a formula.** A calculation reads the record's own
   fields; see [calculation_formulas.md](calculation_formulas.md).
 - **Portals of portals**, and relationships followed through more than one hop.
-- A find through a relationship from a record of another solution, and the
-  second-field and related options of a value list on an external occurrence
-  come later. The clients of this solution are not told when another
+- A find through a relationship from a record of another solution comes
+  later, and so do, in Layout mode, related fields and portals on a layout of
+  an external occurrence and related fields of one placed on a local layout.
+  The clients of this solution are not told when another
   solution's records they show change; they read them again when they reload.

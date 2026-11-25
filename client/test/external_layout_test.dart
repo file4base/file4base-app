@@ -64,7 +64,7 @@ void main() {
     ));
     expect(find.textContaining('Layout "Remote List" shows "Remote Occ"'), findsOneWidget);
     expect(find.textContaining('file reference "Catalog" is not mapped'), findsOneWidget);
-    expect(find.textContaining('Map it in Manage File References'), findsOneWidget);
+    expect(find.textContaining('Map it in File > Manage > File References'), findsOneWidget);
     expect(find.textContaining('record commands are disabled'), findsOneWidget);
 
     await tester.pumpWidget(MaterialApp(

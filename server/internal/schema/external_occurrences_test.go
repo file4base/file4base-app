@@ -302,6 +302,7 @@ func TestExternalOccurrences_UpgradeAnOlderCatalog(t *testing.T) {
 		`ALTER TABLE sys_table_occurrences DROP COLUMN external_table`,
 		`ALTER TABLE sys_file_references DROP COLUMN paths`,
 		`ALTER TABLE sys_value_lists DROP COLUMN source_column_name`,
+		`ALTER TABLE sys_value_lists DROP COLUMN second_column_name`,
 		`ALTER TABLE sys_columns DROP COLUMN source_field_id`,
 	}
 	for _, c := range []string{"sys_table_occurrences.base_table_id", "sys_relationships.left_column_id",
@@ -640,6 +641,7 @@ func TestExternalOccurrences_AbsentFromALocalSolutionFile(t *testing.T) {
 	assert.NotContains(t, rel, "right_column_name")
 	assert.NotContains(t, keysOf(generic["file_references"]), "paths")
 	assert.NotContains(t, keysOf(generic["value_lists"]), "source_column_name")
+	assert.NotContains(t, keysOf(generic["value_lists"]), "second_column_name")
 	var columns map[string]interface{}
 	for _, tbl := range generic["tables"].([]interface{}) {
 		if cols, ok := tbl.(map[string]interface{})["columns"].([]interface{}); ok && len(cols) > 0 {
