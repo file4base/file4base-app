@@ -1067,7 +1067,12 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		scriptIDs[sc.ID] = created.ID
 	}
 
-	// 5. Layouts
+	// 5. Layouts. Their script triggers get ids of their own here, once, so
+	// a solution imported into another that already has them — or imported
+	// twice — never has two triggers by one id (#26).
+	for _, l := range b.Layouts {
+		renewScriptTriggerIDs(l.Definition)
+	}
 	layoutIDs := map[string]string{}
 	layoutDefs := map[string]string{}
 	for _, l := range b.Layouts {

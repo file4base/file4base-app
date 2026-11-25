@@ -69,22 +69,55 @@
     },
     "on_layout_enter": {
       "type": "object",
-      "description": "Script trigger run in Browse mode when the layout is shown. Same shape as a button action with type perform_script.",
+      "description": "Script trigger run in Browse mode when the layout is shown, unless enabled is false. Same shape as a button action with type perform_script.",
       "properties": {
         "type": { "type": "string", "enum": ["perform_script"] },
+        "id": { "type": "string" },
+        "event": { "type": "string" },
         "script_id": { "type": "string" },
         "script_name": { "type": "string" },
-        "parameter": { "type": "string" }
+        "parameter": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true, "description": "False switches the trigger off; absent means on." }
       }
     },
     "on_layout_exit": {
       "type": "object",
-      "description": "Script trigger run in Browse mode when another layout replaces this one. Same shape as on_layout_enter.",
+      "description": "Script trigger run in Browse mode when another layout replaces this one, unless enabled is false. Same shape as on_layout_enter.",
       "properties": {
         "type": { "type": "string", "enum": ["perform_script"] },
+        "id": { "type": "string" },
+        "event": { "type": "string" },
         "script_id": { "type": "string" },
         "script_name": { "type": "string" },
-        "parameter": { "type": "string" }
+        "parameter": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    },
+    "script_triggers": {
+      "type": "array",
+      "description": "Every other trigger of the layout and of its objects (#26): those switched off, those of events File4Base does not run, and those set on an object. Nothing in this list runs. A trigger imported from FileMaker arrives here with enabled false and quarantined_by_migration true; File > Manage > Script Triggers enables it, which moves it into on_layout_enter or on_layout_exit.",
+      "items": {
+        "type": "object",
+        "required": ["id", "event", "type"],
+        "properties": {
+          "id": { "type": "string", "description": "Unique across the solution; a copied layout gets new ids." },
+          "event": { "type": "string", "description": "The FileMaker event, such as OnLayoutEnter, OnRecordLoad or OnObjectSave." },
+          "type": { "type": "string", "enum": ["perform_script"] },
+          "script_id": { "type": "string", "description": "The imported script it runs; absent when the script was not found." },
+          "script_name": { "type": "string" },
+          "parameter": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "quarantined_by_migration": { "type": "boolean" },
+          "object_id": { "type": "string", "description": "The layout object the trigger is set on." },
+          "object": {
+            "type": "object",
+            "description": "The FileMaker object the trigger was set on, when that object was not migrated.",
+            "properties": { "type": { "type": "string" }, "name": { "type": "string" }, "field": { "type": "string" } }
+          },
+          "parameter_problem": { "type": "string", "description": "Why the parameter could not be bound to the imported fields." },
+          "file_reference": { "type": "string", "description": "The FileMaker file reference of a script in another file. Such a trigger is never bound to a script of this solution." },
+          "modes": { "type": "array", "items": { "type": "string", "enum": ["browse", "find"] } }
+        }
       }
     },
     "transition": {
