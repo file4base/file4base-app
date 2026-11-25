@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
+import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/data_browser/report_view.dart';
 import 'package:file4base_client/features/layout_engine/chart_view.dart';
 import 'package:file4base_client/features/layout_engine/label_sheet_view.dart';
@@ -72,8 +73,62 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     super.initState();
     widget.onAttach?.call(this);
     unawaited(_fetchRecords());
+    if (widget.layout.objects.any((o) => o.fieldBinding?.isRelated ?? false)) unawaited(_loadRelationshipGraph());
     _initKioskCountdown();
   }
+
+  /// The relationship graph a related field is read through, read only for
+  /// a layout that has one. Until it is read, and when it cannot be, the
+  /// field shows its name rather than a column of the layout's table.
+  Map<String, RelationshipModel> _relationships = const {};
+  Map<String, TableOccurrenceModel> _occurrences = const {};
+  Map<String, TableModel> _tablesById = const {};
+
+  Future<void> _loadRelationshipGraph() async {
+    try {
+      final results = await Future.wait([
+        widget.apiClient.listRelationships(),
+        widget.apiClient.listOccurrences(),
+        widget.apiClient.listTables(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _relationships = {for (final r in results[0] as List<RelationshipModel>) r.id: r};
+        _occurrences = {for (final o in results[1] as List<TableOccurrenceModel>) o.id: o};
+        _tablesById = {for (final t in results[2] as List<TableModel>) t.id: t};
+      });
+    } on Exception catch (_) {
+      // Left empty: the field shows its name.
+    }
+  }
+
+  RelatedContext? _relatedFor(Map<String, dynamic> record) {
+    if (_relationships.isEmpty || _occurrences.isEmpty || _tablesById.isEmpty) return null;
+    return RelatedContext(
+      apiClient: widget.apiClient,
+      fromTable: widget.table.name,
+      recordId: record['id']?.toString(),
+      relationshipsById: _relationships,
+      occurrencesById: _occurrences,
+      tablesById: _tablesById,
+      formatValue: DataBrowserWidgetState.fieldText,
+      batched: true,
+    );
+  }
+
+  /// A field box that shows a notice rather than a value.
+  Widget _fieldNotice(LayoutObjectModel obj, String text) => Container(
+        alignment: _parseAlignment(obj.style.textAlign),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(obj.style.cornerRadius),
+          border: Border.all(color: Colors.grey.shade400, width: obj.style.borderWidth),
+        ),
+        child: Text(text,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: Colors.amber.shade800)),
+      );
 
   void _initKioskCountdown() {
     _kioskCountdownTimer?.cancel();
@@ -668,7 +723,22 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         );
 
       case 'field':
-        final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
+        // A field of another record is read through its relationship, never
+        // from a column of this table with the same name.
+        final binding = obj.fieldBinding;
+        final unreadable = layoutFieldUnreadableNotice(binding);
+        if (unreadable != null) return _fieldNotice(obj, unreadable);
+        if (binding != null && binding.isRelated) {
+          final related = _relatedFor(record);
+          if (related == null || related.recordId == null) return _fieldNotice(obj, '<${binding.qualifiedName}>');
+          return RelatedFieldView(
+            key: ValueKey('preview-related-${obj.id}-${related.recordId}'),
+            object: obj,
+            related: related,
+            isDark: false,
+          );
+        }
+        final fieldName = binding?.fieldName ?? obj.text;
         final col = widget.table.columns
             .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
             .firstOrNull;

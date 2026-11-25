@@ -502,54 +502,116 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// its count changes.
   final Map<String, int> _portalRefreshes = {};
 
-  /// The objects hidden by their "Hide object when" calculation, by layout
-  /// and record as it was read; and the last answer for each layout and
-  /// record, shown while the record's new values are evaluated.
+  /// The objects hidden by their "Hide object when" calculation, by layout,
+  /// record, the record's values and how fresh the answer is; and the last
+  /// answer for each layout and record, shown while it is evaluated again.
   final Map<String, Set<String>> _hiddenObjects = {};
   final Map<String, Set<String>> _lastHiddenObjects = {};
+
+  /// What is waiting to be evaluated: the key of each answer, with its
+  /// layout and record. The asks made while a list is drawn go together.
+  final Map<String, ({LayoutDefinitionModel layout, String recordId, String base})> _hiddenQueue = {};
   final Set<String> _hiddenPending = {};
 
-  /// The objects of [layout] hidden on [record]. The answer comes from the
-  /// server, which evaluates each calculation as a calculation field would;
-  /// until it does, the record's last answer holds, and nothing is hidden
-  /// on a record seen for the first time.
-  Set<String> _hiddenOn(LayoutDefinitionModel layout, Map<String, dynamic> record) {
-    final conditional = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o];
-    final recordId = record['id']?.toString() ?? '';
-    if (conditional.isEmpty || recordId.isEmpty) return const {};
-    final base = '${layout.id}|$recordId';
-    final key = '$base|${Object.hashAllUnordered(record.entries.map((e) => Object.hash(e.key, e.value?.toString())))}';
-    final known = _hiddenObjects[key];
-    if (known != null) return known;
-    if (_hiddenPending.add(key)) unawaited(_evaluateHidden(conditional, recordId, base, key));
-    return _lastHiddenObjects[base] ?? const {};
+  /// An answer is evaluated again once the records are read again (which
+  /// is when related records may have changed), and the current record's
+  /// once it is committed or moved to.
+  int _hiddenGeneration = 0;
+  final Map<String, int> _hiddenRecordGeneration = {};
+
+  /// Forgets the answers for [recordId], or for every record.
+  void _invalidateHidden([String? recordId]) {
+    if (recordId == null) {
+      _hiddenGeneration++;
+      _hiddenRecordGeneration.clear();
+      _hiddenObjects.clear();
+    } else {
+      _hiddenRecordGeneration[recordId] = (_hiddenRecordGeneration[recordId] ?? 0) + 1;
+    }
   }
 
-  Future<void> _evaluateHidden(List<LayoutObjectModel> objects, String recordId, String base, String key) async {
-    final hidden = <String>{};
-    try {
-      // The endpoint takes a bounded number of expressions at once.
-      for (var i = 0; i < objects.length; i += 50) {
-        final chunk = objects.sublist(i, math.min(i + 50, objects.length));
-        final results = await widget.apiClient.evaluateExpressions(
-          widget.table.name,
-          expressions: [for (final o in chunk) o.hideWhen!],
-          recordId: recordId,
-          resultType: 'Number',
-        );
-        for (final (j, r) in results.indexed) {
-          if (j < chunk.length && r.error.isEmpty && isLayoutConditionTrue(r.text)) hidden.add(chunk[j].id);
+  /// The objects of [layout] hidden on [record]. The answer comes from the
+  /// server, which evaluates each calculation from the layout's occurrence
+  /// as a calculation field would; until it does, the record's last answer
+  /// holds, and on a record seen for the first time every object with a
+  /// condition is hidden, so nothing hidden is ever shown or typed into.
+  Set<String> _hiddenOn(LayoutDefinitionModel layout, Map<String, dynamic> record) {
+    final conditional = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o.id];
+    final recordId = record['id']?.toString() ?? '';
+    if (conditional.isEmpty || recordId.isEmpty || record[_draftKey] == true) return const {};
+    final base = '${layout.id}|$recordId';
+    final values = Object.hashAllUnordered(record.entries.map((e) => Object.hash(e.key, e.value?.toString())));
+    final key = '$base|$_hiddenGeneration|${_hiddenRecordGeneration[recordId] ?? 0}|$values';
+    final known = _hiddenObjects[key];
+    if (known != null) return known;
+    if (_hiddenPending.add(key)) {
+      if (_hiddenQueue.isEmpty) scheduleMicrotask(() => unawaited(_evaluateHidden()));
+      _hiddenQueue[key] = (layout: layout, recordId: recordId, base: base);
+    }
+    return _lastHiddenObjects[base] ?? conditional.toSet();
+  }
+
+  /// [objects] of [layout] less those hidden on [record].
+  List<LayoutObjectModel> _shownOn(LayoutDefinitionModel layout, Map<String, dynamic> record, List<LayoutObjectModel> objects) {
+    final hidden = _hiddenOn(layout, record);
+    return hidden.isEmpty ? objects : [for (final o in objects) if (!hidden.contains(o.id)) o];
+  }
+
+  /// Evaluates what is queued: for each layout, every condition against
+  /// every record waiting, in as few requests as the endpoint allows.
+  Future<void> _evaluateHidden() async {
+    final queued = Map.of(_hiddenQueue);
+    _hiddenQueue.clear();
+    final byLayout = <String, List<String>>{};
+    for (final e in queued.entries) {
+      byLayout.putIfAbsent(e.value.layout.id, () => []).add(e.key);
+    }
+    final answers = <String, Set<String>>{};
+    for (final keys in byLayout.values) {
+      final layout = queued[keys.first]!.layout;
+      final objects = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o];
+      final recordOf = {for (final k in keys) k: queued[k]!.recordId};
+      final ids = recordOf.values.toSet().toList();
+      final hidden = <String, Set<String>>{for (final id in ids) id: {}};
+      final failed = <String>{};
+      for (var r = 0; r < ids.length; r += ApiClient.maxEvaluatedRecords) {
+        final chunkIds = ids.sublist(r, math.min(r + ApiClient.maxEvaluatedRecords, ids.length));
+        for (var i = 0; i < objects.length; i += 50) {
+          final chunk = objects.sublist(i, math.min(i + 50, objects.length));
+          try {
+            final results = await widget.apiClient.evaluateForRecords(
+              widget.table.name,
+              expressions: [for (final o in chunk) o.hideWhen!],
+              recordIds: chunkIds,
+              occurrence: layout.tableOccurrence,
+              resultType: 'Number',
+            );
+            for (final id in chunkIds) {
+              for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {
+                if (j < chunk.length && result.error.isEmpty && isLayoutConditionTrue(result.text)) {
+                  hidden[id]!.add(chunk[j].id);
+                }
+              }
+            }
+          } on Exception catch (_) {
+            // A calculation that cannot be evaluated hides nothing; the
+            // records are asked about again when next drawn.
+            failed.addAll(chunkIds);
+          }
         }
       }
-    } on Exception catch (_) {
-      // A calculation that cannot be evaluated hides nothing.
+      for (final k in keys) {
+        answers[k] = failed.contains(recordOf[k]) ? const {} : hidden[recordOf[k]]!;
+      }
     }
     if (!mounted) return;
-    if (_hiddenObjects.length > 200) _hiddenObjects.clear();
+    if (_hiddenObjects.length > 2000) _hiddenObjects.clear();
     setState(() {
-      _hiddenPending.remove(key);
-      _hiddenObjects[key] = hidden;
-      _lastHiddenObjects[base] = hidden;
+      for (final e in answers.entries) {
+        _hiddenPending.remove(e.key);
+        _hiddenObjects[e.key] = e.value;
+        _lastHiddenObjects[queued[e.key]!.base] = e.value;
+      }
     });
   }
 
@@ -1170,15 +1232,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
     if (_records.isEmpty) return;
     final record = _records[_currentIndex];
+    // Moving to a record evaluates its hide conditions again.
+    final recordId = record['id']?.toString();
+    if (recordId != null) _invalidateHidden(recordId);
 
     for (final col in widget.table.columns) {
       if (col.isPrimaryKey) continue;
-      _attachFieldController(col, col.name, recordFieldText(col, record));
+      _attachFieldController(col, col.name, _keyText(col, col.name, record));
       // The other repetitions a layout object shows of a repeating field
       // are edited under their own record key, "field[n]".
       for (var n = 2; n <= _repetitionsOnLayout(col); n++) {
         final key = ColumnModel.repetitionKey(col.name, n);
-        _attachFieldController(col, key, fieldText(col, record[key]));
+        _attachFieldController(col, key, _keyText(col, key, record));
       }
     }
   }
@@ -1191,7 +1256,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       final binding = o.fieldBinding;
       if (o.type != 'field' || binding == null || binding.isRelated) continue;
       if (binding.fieldName.toLowerCase() != col.name.toLowerCase()) continue;
-      most = math.max(most, binding.shownRepetitions(col.maxRepetitions));
+      most = math.max(most, binding.repetitionNumbers(col.maxRepetitions).last);
     }
     return most;
   }
@@ -1225,11 +1290,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         _fieldDebounceTimers[key]?.cancel();
         if (col.fieldType == 'DATE' &&
             ctrl.text.trim().isNotEmpty &&
-            _normalizeDateInput(ctrl.text) == null) {
+            _normalizeDateInput(ctrl.text, key) == null) {
           if (mounted) {
             setState(() => _fieldSaving[key] = false);
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
+              SnackBar(content: Text('Enter a valid date as ${_dateHint(key)} or YYYY-MM-DD.')),
             );
           }
           return;
@@ -1261,7 +1326,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     if (_records.isEmpty) return;
     final column = _columnForKey(colName);
     final current = _records[_currentIndex];
-    if (column != null && current[_draftKey] != true && newVal == keyFieldText(column, colName, current)) {
+    if (column != null && current[_draftKey] != true && newVal == _keyText(column, colName, current)) {
       // Leaving a field unchanged writes nothing. In particular it must not
       // replace a migrated value's original text with its reading (#124).
       return;
@@ -1271,7 +1336,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       if (newVal.trim().isEmpty) {
         valueToSave = null;
       } else {
-        valueToSave = _normalizeDateInput(newVal);
+        valueToSave = _normalizeDateInput(newVal, colName);
         // Do not submit partial input such as "23/06/" while the user is
         // typing. A complete valid value is sent as canonical ISO date.
         if (valueToSave == null) return;
@@ -1295,6 +1360,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       // text, and so does the record in hand.
       final texts = record[sourceTextKey];
       if (texts is Map) texts.remove(colName);
+      _invalidateHidden(id);
       if (mounted) setState(() => _fieldSaving[colName] = null);
       // The field may be a match field of a list of related values.
       if (mounted && identical(record, _records.elementAtOrNull(_currentIndex))) _resolveRelatedValueLists();
@@ -1312,35 +1378,65 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     }
   }
 
-  /// Converts a complete ISO or day/month/year date into the ISO representation
-  /// expected by the database. Invalid and partial dates return null.
-  String? _normalizeDateInput(String input) {
-    final value = input.trim();
-    final iso = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})$').firstMatch(value);
-    final local = RegExp(r'^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$').firstMatch(value);
-
-    int year;
-    int month;
-    int day;
-    if (iso != null) {
-      year = int.parse(iso.group(1)!);
-      month = int.parse(iso.group(2)!);
-      day = int.parse(iso.group(3)!);
-    } else if (local != null) {
-      day = int.parse(local.group(1)!);
-      month = int.parse(local.group(2)!);
-      year = int.parse(local.group(3)!);
-    } else {
-      return null;
+  /// The order a date of the field under record key [key] is typed and
+  /// shown in, `dmy`, `mdy` or `iso`: the date format of the layout's first
+  /// box of the field that has one, else the layout's own order (the
+  /// solution it was migrated from), else null.
+  String? _explicitDateOrder(String key) {
+    final column = _columnForKey(key)?.name.toLowerCase() ?? key.toLowerCase();
+    final layout = widget.layout;
+    for (final o in layout?.objects ?? const <LayoutObjectModel>[]) {
+      final binding = o.fieldBinding;
+      if (o.type != 'field' || binding == null || binding.isRelated) continue;
+      if (binding.fieldName.toLowerCase() != column) continue;
+      final order = dateOrderOfFormat(o.style.dateFormat);
+      if (order != null) return order;
     }
-
-    if (year < 1) return null;
-    final date = DateTime(year, month, day);
-    if (date.year != year || date.month != month || date.day != day) return null;
-    return '${year.toString().padLeft(4, '0')}-'
-        '${month.toString().padLeft(2, '0')}-'
-        '${day.toString().padLeft(2, '0')}';
+    return layout?.dateOrder;
   }
+
+  /// [_explicitDateOrder], or the device's order.
+  String _dateOrderOf(String? key) {
+    final order = key == null ? widget.layout?.dateOrder : _explicitDateOrder(key);
+    if (order == 'dmy' || order == 'mdy') return order!;
+    return deviceDateOrder();
+  }
+
+  /// Lets a date be picked for record key [key] and saves it, written as
+  /// the box writes dates.
+  Future<void> _pickDate(String key, TextEditingController? ctrl) async {
+    final current = _normalizeDateInput(ctrl?.text ?? '', key);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: (current == null ? null : DateTime.tryParse(current)) ?? DateTime.now(),
+      firstDate: DateTime(1),
+      lastDate: DateTime(9999, 12, 31),
+    );
+    if (picked == null || !mounted) return;
+    final iso = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+    final text = dateInOrder(iso, _explicitDateOrder(key));
+    ctrl?.text = text;
+    _fieldDebounceTimers[key]?.cancel();
+    await _saveField(key, text);
+  }
+
+  String _dateHint(String key) => _dateOrderOf(key) == 'mdy' ? 'MM/DD/YYYY' : 'DD/MM/YYYY';
+
+  /// What the box of record key [key] holds while it is edited: a date in
+  /// the order it is typed in when the layout says which, as it was stored
+  /// otherwise.
+  String _keyText(ColumnModel col, String key, Map<String, dynamic> record) {
+    final text = keyFieldText(col, key, record);
+    if (col.fieldType != 'DATE' || sourceText(record, key) != null) return text;
+    return dateInOrder(text, _explicitDateOrder(key));
+  }
+
+  /// Converts a complete date, ISO or in the field's order ([_dateOrderOf]),
+  /// into the ISO representation expected by the database. Invalid and
+  /// partial dates return null.
+  String? _normalizeDateInput(String input, [String? key]) =>
+      normalizeDateInput(input, order: _dateOrderOf(key));
 
   String _displayName(String colName) {
     final col = _columnForKey(colName);
@@ -1369,16 +1465,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       if (ctrl == null) continue;
       _fieldDebounceTimers[key]?.cancel();
       final cached = _records.isNotEmpty
-          ? keyFieldText(col, key, _records[_currentIndex])
+          ? _keyText(col, key, _records[_currentIndex])
           : '';
       if (ctrl.text != cached) {
         if (col.fieldType == 'DATE' &&
             ctrl.text.trim().isNotEmpty &&
-            _normalizeDateInput(ctrl.text) == null) {
+            _normalizeDateInput(ctrl.text, key) == null) {
           if (mounted) {
             setState(() => _fieldSaving[key] = false);
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Enter a valid date as DD/MM/YYYY or YYYY-MM-DD.')),
+              SnackBar(content: Text('Enter a valid date as ${_dateHint(key)} or YYYY-MM-DD.')),
             );
           }
           return false;
@@ -1636,6 +1732,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         setState(() {
           _records = rows;
           _unsortedRecords = List.of(rows);
+          // Read again, related records may have changed too.
+          _invalidateHidden();
           if (!keepFoundSet) _totalInTable = rows.length;
           _sortOrder = const [];
           final keptIdx = keepId == null ? -1 : rows.indexWhere((r) => r['id']?.toString() == keepId);
@@ -2589,7 +2687,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                     ),
                     child: Stack(
                       children: [
-                        for (final obj in bodyObjects)
+                        // Each row hides what its record's conditions hide.
+                        for (final obj in _shownOn(layout, rec, bodyObjects))
                           Positioned(
                             left: obj.x,
                             top: obj.y - headerHeight,
@@ -2683,16 +2782,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ),
         );
       }
-      final rawVal = col != null ? rec[col.name] : rec[fieldName];
+      // The record key of what the box shows: the repetition it starts at.
+      final key = col == null
+          ? fieldName
+          : ColumnModel.repetitionKey(col.name, obj.fieldBinding?.repetitionNumbers(col.maxRepetitions).first ?? 1);
+      final rawVal = rec[key];
       final effStyle = obj.style.effectiveForValue(rawVal);
-      if (col != null &&
-          recordIndex == _currentIndex &&
+      // A field FileMaker would not let be entered in Browse mode is shown,
+      // never typed into, in the list as in the form.
+      final enterable = col != null &&
           !col.isPrimaryKey &&
           !_isEntryLocked(col.name) &&
           _entryAllowed &&
-          (obj.fieldBinding?.allowBrowseEntry ?? true)) {
-        final ctrl = _fieldControllers[col.name];
-        final fn = _fieldFocusNodes[col.name];
+          (obj.fieldBinding?.allowBrowseEntry ?? true);
+      if (col != null && enterable && recordIndex == _currentIndex) {
+        final ctrl = _fieldControllers[key];
+        final fn = _fieldFocusNodes[key];
         return TextField(
           controller: ctrl,
           focusNode: fn,
@@ -2725,18 +2830,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                     ),
             ),
           ),
-          onChanged: (v) => _onFieldChanged(col.name, v),
+          onChanged: (v) => _onFieldChanged(key, v),
           onEditingComplete: () {
-            _fieldDebounceTimers[col.name]?.cancel();
-            unawaited(_saveField(col.name, ctrl?.text ?? ''));
+            _fieldDebounceTimers[key]?.cancel();
+            unawaited(_saveField(key, ctrl?.text ?? ''));
             fn?.nextFocus();
           },
         );
       }
-      final rawText = col != null ? recordFieldText(col, rec) : (rawVal?.toString() ?? '');
+      final rawText = col != null ? _keyText(col, key, rec) : (rawVal?.toString() ?? '');
       final hasCustomFormat = layoutStyleHasDisplayFormat(effStyle);
       // An original text is shown as it was written, not reformatted.
-      final hasOriginal = col != null && sourceText(rec, col.name) != null;
+      final hasOriginal = col != null && sourceText(rec, key) != null;
       final valText = hasCustomFormat && !hasOriginal
           ? formatLayoutDisplayValue(rawVal ?? rawText, effStyle)
           : rawText;
@@ -2744,9 +2849,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ? _parseColor(effStyle.fillColor!)
           : (isDark ? const Color(0xFF0D1117) : Colors.white);
       return GestureDetector(
-        onTap: col == null || _isEntryLocked(col.name)
-            ? null
-            : () => _editFieldOfRecord(recordIndex, col.name),
+        onTap: !enterable ? null : () => _editFieldOfRecord(recordIndex, key),
         child: Container(
           alignment: _parseAlignment(effStyle.textAlign),
           padding: EdgeInsets.only(
@@ -3395,8 +3498,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
         if (isFindMode) {
           final findCtrl = _findControllers[col.name];
+          // A field the layout does not let be entered in Find mode takes
+          // no criterion.
+          final findable = obj.fieldBinding?.allowFindEntry ?? true;
           return TextField(
             controller: findCtrl,
+            readOnly: !findable,
+            enabled: findable,
             textAlign: _parseTextAlign(obj.style.textAlign),
             style: layoutTextStyle(
               obj.style,
@@ -3404,7 +3512,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             ),
             decoration: InputDecoration(
               isDense: true,
-              hintText: 'Search ${col.displayName}...',
+              hintText: findable ? 'Search ${col.displayName}...' : null,
               hintStyle: TextStyle(fontSize: 11, color: Colors.grey.shade400),
               contentPadding: EdgeInsets.only(
                 left: 8 + obj.style.indentLeft,
@@ -3488,7 +3596,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
         // A repeating field shows its repetitions in the object's box,
         // which they share equally: stacked, or side by side.
-        final shown = obj.fieldBinding?.shownRepetitions(col.maxRepetitions) ?? 1;
+        final numbers = obj.fieldBinding?.repetitionNumbers(col.maxRepetitions) ?? const [1];
+        final shown = numbers.length;
         if (shown > 1) {
           final horizontal = obj.fieldBinding?.repetitionOrientation == RepetitionOrientation.horizontal;
           final cell = horizontal
@@ -3498,12 +3607,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             direction: horizontal ? Axis.horizontal : Axis.vertical,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (var n = 1; n <= shown; n++)
+              for (final n in numbers)
                 Expanded(
                   child: Padding(
                     padding: EdgeInsets.only(
-                      top: !horizontal && n > 1 ? 1 : 0,
-                      left: horizontal && n > 1 ? 1 : 0,
+                      top: !horizontal && n > numbers.first ? 1 : 0,
+                      left: horizontal && n > numbers.first ? 1 : 0,
                     ),
                     child: _buildFieldCell(cell, col, record, isDark, ColumnModel.repetitionKey(col.name, n)),
                   ),
@@ -3511,7 +3620,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             ],
           );
         }
-        return _buildFieldCell(obj, col, record, isDark, col.name);
+        // A box of one repetition past the first edits that repetition.
+        return _buildFieldCell(obj, col, record, isDark, ColumnModel.repetitionKey(col.name, numbers.first));
 
       case 'button':
       case 'popover_button':
@@ -3669,8 +3779,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final ctrl = _fieldControllers[key];
     final fn = _fieldFocusNodes[key];
     final saving = _fieldSaving[key];
-    // Shown like a calculation: read, not typed into.
-    final computed = _isEntryLocked(col.name) || !_entryAllowed;
+    // Shown like a calculation: read, not typed into. So is a field the
+    // layout does not let be entered in Browse mode.
+    final locked = _isEntryLocked(col.name) || !_entryAllowed;
+    final computed = locked || !(obj.fieldBinding?.allowBrowseEntry ?? true);
 
     // A field bound to a value list is filled from a control rather than
     // typed into (#31).
@@ -3697,6 +3809,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final effStyle = obj.style.effectiveForValue(rawVal);
     final isFocused = fn?.hasFocus ?? false;
     final hasDisplayFormatting = layoutStyleHasDisplayFormat(effStyle);
+
+    // A drop-down calendar picks its date from a calendar, as FileMaker's
+    // does, and can still be typed into.
+    final calendar = !computed &&
+            col.fieldType == 'DATE' &&
+            obj.fieldBinding?.controlStyle == FieldControlStyle.dropDownCalendar
+        ? IconButton(
+            key: ValueKey('calendar-${obj.id}'),
+            icon: const Icon(Icons.calendar_today, size: 14),
+            tooltip: 'Choose a date',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => unawaited(_pickDate(key, ctrl)),
+          )
+        : null;
 
     final isMultilineField = obj.height > 44;
     final verticalPad = obj.height < 32
@@ -3742,7 +3868,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                   width: effStyle.borderWidth,
                 ),
         ),
-        suffixIcon: computed
+        suffixIcon: locked
             ? const Tooltip(
                 message: 'Filled in by its formula',
                 child: Icon(Icons.functions, size: 14, color: Colors.grey),
@@ -3760,7 +3886,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                     ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
                     : listProblem != null
                         ? _valueListProblemIcon(listProblem)
-                        : null,
+                        : calendar,
       ),
       onChanged: computed ? null : (v) => _onFieldChanged(key, v),
       onEditingComplete: computed
@@ -4741,7 +4867,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         if (text == null) return ReplaceOutcome(count: count, replaced: replaced, unevaluatedAt: i + 1);
         Object? toSave = text;
         if (col.fieldType == 'DATE' && text.trim().isNotEmpty) {
-          toSave = _normalizeDateInput(text);
+          toSave = _normalizeDateInput(text, col.name);
           if (toSave == null) {
             return ReplaceOutcome(errorCode: 500, detail: '"$text" is not a date', count: count, replaced: replaced);
           }

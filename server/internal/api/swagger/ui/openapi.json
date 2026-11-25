@@ -4280,13 +4280,16 @@
         "summary": "Evaluate Calculation Formula in Record Context",
         "responses": {
           "200": {
-            "description": "Evaluate Calculation Formula in Record Context"
+            "description": "Evaluate Calculation Formula in Record Context. With record_ids, the answer is {\"records\": {id: [results] or null}}, null for a record not found."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "Too Many Records: more than 100 record_ids in one request."
           }
         },
         "parameters": [
@@ -4304,7 +4307,15 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "expression": { "type": "string" },
+                  "expressions": { "type": "array", "items": { "type": "string" } },
+                  "record_id": { "type": "string" },
+                  "record_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100, "description": "Evaluates every expression against each record, in one request." },
+                  "occurrence": { "type": "string", "description": "Occurrence of the table (id or name) the expressions are evaluated from, as a layout on it does; a related field is read through its relationships. Absent: the table's own occurrence." },
+                  "result_type": { "type": "string" }
+                }
               }
             }
           }

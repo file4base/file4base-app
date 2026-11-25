@@ -49,20 +49,20 @@ type layoutObjectContext struct {
 	library       map[string]*xmlNode // library reference id -> <BinaryData>
 	themes        map[string]*fmTheme // theme name -> its CSS
 	defaultTheme  *fmTheme            // for a layout that names no theme
-	dayFirst      bool
+	dateOrder     string              // dmy, mdy or iso: how the file writes dates; empty when unknown
 
 	counts map[string]*LayoutObjectCount
 	media  map[string]map[string]interface{}
 }
 
-func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, binding formulaBinding, dayFirst bool) *layoutObjectContext {
+func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, binding formulaBinding, dateOrder string) *layoutObjectContext {
 	ctx := &layoutObjectContext{
 		binding:       binding,
 		valueLists:    map[string]string{},
 		relationships: bundle.Relationships,
 		library:       map[string]*xmlNode{},
 		themes:        map[string]*fmTheme{},
-		dayFirst:      dayFirst,
+		dateOrder:     dateOrder,
 		counts:        map[string]*LayoutObjectCount{},
 		media:         map[string]map[string]interface{}{},
 	}
@@ -220,6 +220,11 @@ func convertNativeLayout(ln *xmlNode, ctx *layoutObjectContext, def map[string]i
 	}
 	if view := nativeLayoutView(ln); view != "" {
 		def["default_view"] = view
+	}
+	// How a date typed into a field with no date format of its own is read:
+	// in the order the file writes dates, as FileMaker reads it.
+	if ctx.dateOrder != "" {
+		def["date_order"] = ctx.dateOrder
 	}
 	for _, obj := range findNodes(ln, "LayoutObject") {
 		ctx.count(firstAttr(obj, "type")).Source++
@@ -635,7 +640,7 @@ func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface
 	if occ.name != "" {
 		binding["table_occurrence"] = occ.name
 	}
-	if ok && !occ.external && occ.id != l.occID {
+	if ok && occ.id != l.occID {
 		if rel := l.relationshipBetween(l.occID, occ.id); rel != "" {
 			binding["relationship_id"] = rel
 		} else {
@@ -661,6 +666,24 @@ func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface
 		if ph := findFirstChild(display, "Placeholder"); ph != nil {
 			if text, ok := calcLiteral(calculationText(ph)); ok && text != "" {
 				binding["placeholder"] = text
+			}
+		}
+	}
+	// A box showing Amount[3] alone, or from repetition 3, starts there.
+	if n, err := strconv.Atoi(firstAttr(ref, "repetition")); err == nil && n > 1 {
+		binding["first_repetition"] = n
+	}
+	// Field entry, per mode: bit 0 is FileMaker's "Browse mode" left
+	// unchecked, bit 2 its "Find mode" (as an authentic export was seen to
+	// write them). Bit 1 is taken as no entry in Browse mode too, so a field
+	// FileMaker may only select is never typed into here.
+	if usage := findFirstChild(fn, "Usage"); usage != nil {
+		if t, err := strconv.Atoi(firstAttr(usage, "type")); err == nil {
+			if t&0x3 != 0 {
+				binding["allow_browse_entry"] = false
+			}
+			if t&0x4 != 0 {
+				binding["allow_find_entry"] = false
 			}
 		}
 	}
@@ -715,9 +738,10 @@ func (l *nativeLayout) displayFormat(obj *xmlNode, style map[string]interface{})
 		}
 	}
 	if d := findFirstChild(f, "Date"); d != nil && childText(d, "Separator") == "/" {
-		if l.ctx.dayFirst {
+		switch l.ctx.dateOrder {
+		case "dmy":
 			style["date_format"] = "dd/mm/yyyy"
-		} else {
+		case "mdy":
 			style["date_format"] = "mm/dd/yyyy"
 		}
 	}

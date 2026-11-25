@@ -167,6 +167,7 @@ class FieldBindingModel {
     this.allowBrowseEntry = true,
     this.allowFindEntry = true,
     this.repetitionsShown,
+    this.firstRepetition = 1,
     this.repetitionOrientation = RepetitionOrientation.vertical,
     this.placeholder,
     this.unresolvedRelationship = false,
@@ -184,6 +185,7 @@ class FieldBindingModel {
       allowBrowseEntry: json['allow_browse_entry'] as bool? ?? true,
       allowFindEntry: json['allow_find_entry'] as bool? ?? true,
       repetitionsShown: (json['repetitions_shown'] as num?)?.toInt(),
+      firstRepetition: math.max(1, (json['first_repetition'] as num?)?.toInt() ?? 1),
       repetitionOrientation: json['repetition_orientation'] == RepetitionOrientation.horizontal
           ? RepetitionOrientation.horizontal
           : RepetitionOrientation.vertical,
@@ -222,6 +224,10 @@ class FieldBindingModel {
   /// from the first, as FileMaker's "Show repetitions 1 through N". Null
   /// shows them all.
   final int? repetitionsShown;
+
+  /// The repetition the object starts at, from 1: a box showing `Amount[3]`
+  /// alone has 3 here and shows one repetition.
+  final int firstRepetition;
 
   /// One of [RepetitionOrientation]: whether the repetitions shown are
   /// stacked or side by side. They share the object's box equally.
@@ -293,6 +299,7 @@ class FieldBindingModel {
         allowBrowseEntry: allowBrowseEntry ?? this.allowBrowseEntry,
         allowFindEntry: allowFindEntry ?? this.allowFindEntry,
         repetitionsShown: repetitionsShown ?? this.repetitionsShown,
+        firstRepetition: firstRepetition,
         repetitionOrientation: repetitionOrientation ?? this.repetitionOrientation,
         placeholder: clearPlaceholder ? null : (placeholder ?? this.placeholder),
         // Choosing another field or relationship settles what was unreachable.
@@ -310,6 +317,7 @@ class FieldBindingModel {
         'allow_browse_entry': allowBrowseEntry,
         'allow_find_entry': allowFindEntry,
         if (repetitionsShown != null) 'repetitions_shown': repetitionsShown,
+        if (firstRepetition > 1) 'first_repetition': firstRepetition,
         if (repetitionOrientation != RepetitionOrientation.vertical) 'repetition_orientation': repetitionOrientation,
         if (placeholder != null) 'placeholder': placeholder,
         if (unresolvedRelationship) 'unresolved_relationship': true,
@@ -320,8 +328,16 @@ class FieldBindingModel {
   /// shows: [repetitionsShown] within 1 and the maximum, all by default.
   int shownRepetitions(int maxRepetitions) {
     final max = maxRepetitions < 1 ? 1 : maxRepetitions;
-    final shown = repetitionsShown ?? max;
-    return shown < 1 ? 1 : (shown > max ? max : shown);
+    final first = math.min(firstRepetition, max);
+    final left = max - first + 1;
+    final shown = repetitionsShown ?? left;
+    return shown < 1 ? 1 : (shown > left ? left : shown);
+  }
+
+  /// The repetitions the object shows, in order, from [firstRepetition].
+  List<int> repetitionNumbers(int maxRepetitions) {
+    final first = math.min(firstRepetition, maxRepetitions < 1 ? 1 : maxRepetitions);
+    return [for (var i = 0; i < shownRepetitions(maxRepetitions); i++) first + i];
   }
 }
 
@@ -1161,6 +1177,7 @@ class LayoutDefinitionModel {
     this.width = 1024.0,
     this.theme = 'Enlightened',
     this.defaultView = 'form',
+    this.dateOrder,
     this.parts = const [],
     this.objects = const [],
     this.backgroundColor,
@@ -1254,6 +1271,10 @@ class LayoutDefinitionModel {
       width: (json['width'] as num?)?.toDouble() ?? 1024.0,
       theme: json['theme'] as String? ?? 'Enlightened',
       defaultView: json['default_view'] as String? ?? 'form',
+      dateOrder: switch (json['date_order']) {
+        final String o when o == 'dmy' || o == 'mdy' || o == 'iso' => o,
+        _ => null,
+      },
       parts: rawParts.map((p) => LayoutPartModel.fromJson(p as Map<String, dynamic>)).toList(),
       objects: rawObjs.map((o) => LayoutObjectModel.fromJson(o as Map<String, dynamic>)).toList(),
       backgroundColor: json['background_color'] as String?,
@@ -1283,6 +1304,11 @@ class LayoutDefinitionModel {
   final double width;
   final String theme;
   final String defaultView;
+
+  /// How a date typed into a field with no date format of its own is read,
+  /// `dmy`, `mdy` or `iso`: the order the solution it was migrated from
+  /// writes dates in. Null reads it in the device's order.
+  final String? dateOrder;
   final List<LayoutPartModel> parts;
   final List<LayoutObjectModel> objects;
 
@@ -1491,6 +1517,7 @@ class LayoutDefinitionModel {
         'width': width,
         'theme': theme,
         'default_view': defaultView,
+        if (dateOrder != null) 'date_order': dateOrder,
         'parts': parts.map((p) => p.toJson()).toList(),
         'objects': objects.map((o) => o.toJson()).toList(),
         if (backgroundColor != null) 'background_color': backgroundColor,
@@ -1531,6 +1558,7 @@ class LayoutDefinitionModel {
       width: width ?? this.width,
       theme: theme ?? this.theme,
       defaultView: defaultView ?? this.defaultView,
+      dateOrder: dateOrder,
       parts: parts ?? this.parts,
       objects: objects ?? this.objects,
       backgroundColor: clearBackgroundColor ? null : (backgroundColor ?? this.backgroundColor),

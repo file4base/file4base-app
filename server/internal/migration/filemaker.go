@@ -847,7 +847,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
-	layoutCtx := newLayoutObjectContext(root, bundle, binding, req.NativeDateOrder == "dmy")
+	layoutCtx := newLayoutObjectContext(root, bundle, binding, req.NativeDateOrder)
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences, layoutCtx)
 		for _, it := range items {

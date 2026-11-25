@@ -127,6 +127,7 @@ rectangle:normal .self { background-color: rgba(0%,0%,0%,0.5); }
                       <Field>
                         <FieldReference name="Served On" id="3"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference>
                         <Display Style="6" show="1"/>
+                        <Usage type="4" inputMode="0"/>
                       </Field>
                       <ExtendedAttributes><Formatting><Date><Separator>/</Separator></Date></Formatting></ExtendedAttributes>
                     </LayoutObject>
@@ -139,13 +140,14 @@ rectangle:normal .self { background-color: rgba(0%,0%,0%,0.5); }
                 <Field>
                   <FieldReference name="Unit" id="4"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference>
                   <Display Style="2" show="1"><ValueListReference name="Units" id="1"/></Display>
+                  <Usage type="1" inputMode="0"/>
                 </Field>
               </LayoutObject>
               <LayoutObject type="Edit Box">
                 <UUID>00000000-0000-0000-0000-000000000006</UUID>
                 <Bounds top="170" left="20" bottom="190" right="200"/>
                 <Field>
-                  <FieldReference name="Quantity" id="2" repetition="1"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference>
+                  <FieldReference name="Quantity" id="2" repetition="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference>
                   <Display Style="0" show="-3"/>
                 </Field>
               </LayoutObject>
@@ -555,5 +557,56 @@ func TestNativeLayoutTriggersFindTheirObject(t *testing.T) {
 	}
 	if !attached[ids["field"]] || !attached[ids["rect"]] {
 		t.Fatalf("triggers %v not attached to objects %v", list, ids)
+	}
+}
+
+// A field object keeps the repetition it starts at and whether it may be
+// entered in each mode; a date is read in the file's order, and in no
+// guessed order when the file's is unknown.
+func TestNativeLayoutEntryRepetitionAndDates(t *testing.T) {
+	_, def := convertLayoutFixture(t)
+	if def["date_order"] != "dmy" {
+		t.Fatalf("date order: %v", def["date_order"])
+	}
+	fields := objectsByType(def)["field"]
+	binding := func(i int) map[string]interface{} { return fields[i]["field_binding"].(map[string]interface{}) }
+	if b := binding(0); b["allow_browse_entry"] != nil || b["allow_find_entry"] != nil {
+		t.Fatalf("a field FileMaker lets be entered says nothing: %v", b)
+	}
+	if b := binding(1); b["allow_find_entry"] != false || b["allow_browse_entry"] != nil {
+		t.Fatalf("no entry in Find mode: %v", b)
+	}
+	if b := binding(2); b["allow_browse_entry"] != false || b["allow_find_entry"] != nil {
+		t.Fatalf("no entry in Browse mode: %v", b)
+	}
+	if b := binding(3); b["first_repetition"] != 2.0 || b["repetitions_shown"] != 3.0 {
+		t.Fatalf("repetitions 2 to 4: %v", b)
+	}
+	if _, ok := binding(0)["first_repetition"]; ok {
+		t.Fatalf("a box from the first repetition says nothing: %v", binding(0))
+	}
+
+	for order, want := range map[string]interface{}{"mdy": "mm/dd/yyyy", "dmy": "dd/mm/yyyy", "": nil} {
+		got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: layoutObjectsFixture, NativeDateOrder: order})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := got.Bundle.Layouts[0].Definition
+		calendars := 0
+		for _, o := range d["objects"].([]map[string]interface{}) {
+			if b, _ := o["field_binding"].(map[string]interface{}); b != nil && b["control_style"] == "drop_down_calendar" {
+				calendars++
+				style, _ := o["style"].(map[string]interface{})
+				if got := style["date_format"]; got != want {
+					t.Fatalf("order %q: date format %v, want %v", order, got, want)
+				}
+			}
+		}
+		if calendars != 1 {
+			t.Fatalf("calendars: %d", calendars)
+		}
+		if order == "" && d["date_order"] != nil {
+			t.Fatalf("no date order is made up: %v", d["date_order"])
+		}
 	}
 }

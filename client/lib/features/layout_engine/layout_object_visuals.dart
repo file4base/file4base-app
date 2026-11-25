@@ -714,3 +714,62 @@ class _LayoutEntryTransitionState extends State<LayoutEntryTransition> with Sing
     };
   }
 }
+
+/// The order a date format writes a date in, `dmy`, `mdy` or `iso`, or null
+/// for a format that writes no date or says nothing of the order.
+String? dateOrderOfFormat(String? format) => switch (format) {
+      'dd/mm/yyyy' => 'dmy',
+      'mm/dd/yyyy' => 'mdy',
+      'yyyy-mm-dd' => 'iso',
+      _ => null,
+    };
+
+/// The order the device writes dates in: month first in the United States
+/// and the few places that write dates its way, day first elsewhere.
+String deviceDateOrder([Locale? locale]) {
+  final country = (locale ?? WidgetsBinding.instance.platformDispatcher.locale).countryCode?.toUpperCase();
+  return const {'US', 'PH', 'FM', 'MH', 'PW', 'AS', 'GU', 'MP', 'PR', 'UM', 'VI'}.contains(country) ? 'mdy' : 'dmy';
+}
+
+/// An ISO date (`2026-04-03`) written in [order]; any other text, or no
+/// order, as it is.
+String dateInOrder(String text, String? order) {
+  final iso = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(text.trim());
+  if (iso == null) return text;
+  final (y, m, d) = (iso.group(1)!, iso.group(2)!, iso.group(3)!);
+  return switch (order) {
+    'dmy' => '$d/$m/$y',
+    'mdy' => '$m/$d/$y',
+    _ => text,
+  };
+}
+
+/// A complete date typed into a field, ISO or with its day and month in
+/// [order] (`dmy` or `mdy`), as the ISO date the database stores. Invalid
+/// and partial dates are null.
+String? normalizeDateInput(String input, {required String order}) {
+  final value = input.trim();
+  final iso = RegExp(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$').firstMatch(value);
+  final local = RegExp(r'^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$').firstMatch(value);
+  int year;
+  int month;
+  int day;
+  if (iso != null) {
+    year = int.parse(iso.group(1)!);
+    month = int.parse(iso.group(2)!);
+    day = int.parse(iso.group(3)!);
+  } else if (local != null) {
+    final first = int.parse(local.group(1)!);
+    final second = int.parse(local.group(2)!);
+    (day, month) = order == 'mdy' ? (second, first) : (first, second);
+    year = int.parse(local.group(3)!);
+  } else {
+    return null;
+  }
+  if (year < 1) return null;
+  final date = DateTime(year, month, day);
+  if (date.year != year || date.month != month || date.day != day) return null;
+  return '${year.toString().padLeft(4, '0')}-'
+      '${month.toString().padLeft(2, '0')}-'
+      '${day.toString().padLeft(2, '0')}';
+}

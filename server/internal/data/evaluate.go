@@ -50,19 +50,41 @@ type Evaluation struct {
 func (s *Service) EvaluateExpression(
 	ctx context.Context, tableName, recordID, expression, resultType string,
 ) (*Evaluation, error) {
-	if strings.TrimSpace(expression) == "" {
-		return nil, fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
-	}
+	return s.EvaluateExpressionFrom(ctx, tableName, "", recordID, expression, resultType)
+}
 
+// EvaluateExpressionFrom is EvaluateExpression seen from the occurrence
+// occurrence of the table, by name or id: what a related field the formula
+// reads is related to, as a formula on a layout reads from the layout's
+// occurrence. Empty is the table's own occurrence.
+func (s *Service) EvaluateExpressionFrom(
+	ctx context.Context, tableName, occurrence, recordID, expression, resultType string,
+) (*Evaluation, error) {
+	evaluations, err := s.EvaluateExpressions(ctx, tableName, occurrence, recordID, []string{expression}, resultType)
+	if err != nil {
+		return nil, err
+	}
+	return evaluations[0].Evaluation, evaluations[0].Err
+}
+
+// ExpressionResult is one expression's answer, or why it has none.
+type ExpressionResult struct {
+	*Evaluation
+	Err error
+}
+
+// EvaluateExpressions evaluates several expressions against one record,
+// read once, seen from occurrence as EvaluateExpressionFrom is. An
+// expression that does not parse or evaluate has its own error (wrapping
+// ErrInvalidExpression); the error returned is about the record or the
+// table, and then nothing is evaluated.
+func (s *Service) EvaluateExpressions(
+	ctx context.Context, tableName, occurrence, recordID string, expressions []string, resultType string,
+) ([]ExpressionResult, error) {
 	lib, err := LoadLibrary(ctx, s.driver)
 	if err != nil {
 		return nil, err
 	}
-	expr, err := calc.ParseWith(expression, calc.Options{Library: lib})
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
-	}
-
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -79,34 +101,47 @@ func (s *Service) EvaluateExpression(
 		}
 	}
 
-	read := expr.Fields()
-	unknown := []string{}
-	for _, name := range read {
-		if _, ok := fields[name]; !ok {
-			unknown = append(unknown, name)
+	result := calc.ParseResultType(resultType)
+	// Related fields are read from the occurrence given, or the table's own
+	// occurrence, as a formula typed in the Data Viewer is in FileMaker. One
+	// reader serves every expression, so what one reads the others reuse.
+	env := &unstoredContext{RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating()},
+		reader: s.newRelatedReader(), ctx: ctx, table: tableName, occurrence: occurrence, row: row}
+	out := make([]ExpressionResult, len(expressions))
+	for i, expression := range expressions {
+		if strings.TrimSpace(expression) == "" {
+			out[i].Err = fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
+			continue
+		}
+		expr, err := calc.ParseWith(expression, calc.Options{Library: lib})
+		if err != nil {
+			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
+			continue
+		}
+		read := expr.Fields()
+		unknown := []string{}
+		for _, name := range read {
+			if _, ok := fields[name]; !ok {
+				unknown = append(unknown, name)
+			}
+		}
+		sort.Strings(unknown)
+		value, err := calc.EvaluateWith(expr, env, result)
+		if err != nil {
+			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
+			continue
+		}
+		out[i].Evaluation = &Evaluation{
+			Expression:    expression,
+			Value:         value,
+			Text:          evaluationText(value, result),
+			ResultType:    string(result),
+			Fields:        read,
+			UnknownFields: unknown,
+			RecordID:      recordID,
 		}
 	}
-	sort.Strings(unknown)
-
-	result := calc.ParseResultType(resultType)
-	// Related fields are read from the table's own occurrence, as a formula
-	// typed in the Data Viewer is in FileMaker.
-	env := &unstoredContext{RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating()},
-		reader: s.newRelatedReader(), ctx: ctx, table: tableName, row: row}
-	value, err := calc.EvaluateWith(expr, env, result)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
-	}
-
-	return &Evaluation{
-		Expression:    expression,
-		Value:         value,
-		Text:          evaluationText(value, result),
-		ResultType:    string(result),
-		Fields:        read,
-		UnknownFields: unknown,
-		RecordID:      recordID,
-	}, nil
+	return out, nil
 }
 
 // evaluationText writes the answer the way the viewer shows it, in the same

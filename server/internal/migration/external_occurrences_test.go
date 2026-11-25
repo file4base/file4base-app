@@ -418,3 +418,30 @@ func TestALayoutFieldOfAnExternalOccurrenceKeepsItsOccurrence(t *testing.T) {
 		t.Fatalf("external fields = %v", fields)
 	}
 }
+
+// A field of another file on a Save a Copy as XML layout is read through
+// the relationship joining its occurrence to the layout's, like any related
+// field, rather than shown as out of reach.
+func TestNativeLayoutExternalRelatedFieldKeepsItsRelationship(t *testing.T) {
+	layout := `<Layout id="1" name="Order"><TableOccurrenceReference id="1" name="Orders"/>
+  <PartsList><Part type="Body"><Definition type="Body" kind="4" size="200" absolute="0"/><ObjectList>
+   <LayoutObject type="Edit Box" name="customer"><Bounds top="10" left="20" bottom="30" right="200"/>
+    <Field><FieldReference id="3" name=""><TableOccurrenceReference id="2" name="Order Customers"/></FieldReference><Display Style="0" show="1"/></Field>
+   </LayoutObject>
+  </ObjectList></Part></PartsList></Layout>`
+	start := strings.Index(externalNamelessXML, "<LayoutCatalog>")
+	end := strings.Index(externalNamelessXML, "</LayoutCatalog>")
+	doc := externalNamelessXML[:start] + "<LayoutCatalog>" + layout + externalNamelessXML[end:]
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	if len(res.Bundle.Layouts) != 1 || len(res.Bundle.Relationships) != 1 {
+		t.Fatalf("layouts = %d, relationships = %d", len(res.Bundle.Layouts), len(res.Bundle.Relationships))
+	}
+	encoded, _ := json.Marshal(res.Bundle.Layouts[0].Definition)
+	def := string(encoded)
+	if !strings.Contains(def, `"relationship_id":"`+res.Bundle.Relationships[0].ID+`"`) || strings.Contains(def, "unresolved_relationship") {
+		t.Fatalf("an external related field must keep its relationship: %s", def)
+	}
+}

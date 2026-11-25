@@ -110,6 +110,36 @@ func TestAPI_EvaluateExpression(t *testing.T) {
 	assert.Empty(t, results[1].Error)
 	assert.InDelta(t, 101, results[1].Value, 0.001)
 
+	// A list of records is evaluated in one request, each record answering
+	// every expression; a record deleted since the list was read answers
+	// nothing rather than failing the others.
+	var second map[string]interface{}
+	rec = h.do(http.MethodPost, "/api/v1/data/customers", owner,
+		map[string]interface{}{"last_name": "Martin", "city": "Lyon", "fee_paid": 0}, &second)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	secondID, _ := second["id"].(string)
+	var batch struct {
+		Records map[string][]evaluationResult `json:"records"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/data/customers/evaluate", owner, map[string]interface{}{
+		"expressions": []string{"fee_paid > 50", "last_name"},
+		"record_ids":  []string{id, secondID, "gone"},
+		"result_type": "Number",
+	}, &batch)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, batch.Records, 3)
+	require.Len(t, batch.Records[id], 2)
+	assert.Equal(t, "1", batch.Records[id][0].Text)
+	assert.Equal(t, "0", batch.Records[secondID][0].Text)
+	assert.Nil(t, batch.Records["gone"])
+	tooManyRecords := make([]string, 101)
+	for i := range tooManyRecords {
+		tooManyRecords[i] = id
+	}
+	rec = h.do(http.MethodPost, "/api/v1/data/customers/evaluate", owner,
+		map[string]interface{}{"expressions": []string{"1"}, "record_ids": tooManyRecords}, nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+
 	// What is about the request, rather than about one expression, is an
 	// error on the request.
 	rec = h.do(http.MethodPost, "/api/v1/data/customers/evaluate", owner,
