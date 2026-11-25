@@ -1390,7 +1390,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     unawaited(_loadValueLists());
     if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
     unawaited(_fetchRecords().then((_) {
-      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.onLayoutEnter));
+      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.activeOnLayoutEnter));
     }));
     HardwareKeyboard.instance.addHandler(_handleRecordShortcut);
   }
@@ -1408,9 +1408,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   /// Runs an OnLayoutEnter / OnLayoutExit script. A trigger started while
   /// another one runs (e.g. the script itself goes to another layout) is
-  /// skipped, so layouts that switch to each other cannot loop forever.
+  /// skipped, so layouts that switch to each other cannot loop forever. A
+  /// trigger switched off — as every migrated one arrives — never runs.
   Future<void> _runLayoutTrigger(ButtonActionModel? action) async {
-    if (action == null || _runningLayoutTrigger) return;
+    if (action == null || !action.enabled || _runningLayoutTrigger) return;
     _runningLayoutTrigger = true;
     try {
       final result = await _actionRunner().run(action);
@@ -1456,8 +1457,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         oldWidget.layout?.objects.length != widget.layout?.objects.length ||
         oldWidget.mode != widget.mode;
     if (oldWidget.layout?.id != widget.layout?.id && widget.mode == OperationalMode.browse) {
-      final exit = oldWidget.layout?.onLayoutExit;
-      final enter = widget.layout?.onLayoutEnter;
+      final exit = oldWidget.layout?.activeOnLayoutExit;
+      final enter = widget.layout?.activeOnLayoutEnter;
       if (exit != null || enter != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           await _runLayoutTrigger(exit);

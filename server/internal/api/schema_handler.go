@@ -137,6 +137,11 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		valueLists("/value-lists")(r)
 		savedFinds("/saved-finds")(r)
 		menuSets("/menu-sets")(r)
+		// Script trigger review (#26): every trigger of every layout, and
+		// switching them on or off in bulk. Triggers decide which scripts
+		// run on their own, so this is a developer's tool.
+		r.With(RequireAdmin).Get("/script-triggers", h.ListScriptTriggers)
+		r.With(RequireAdmin, RequireDesignUnlocked).Put("/script-triggers", h.SetScriptTriggersEnabled)
 	})
 
 	r.Route("/api/v1/saved-finds", func(r chi.Router) {
@@ -1302,4 +1307,51 @@ func writeMenuSetError(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		writeSchemaError(w, r, err)
 	}
+}
+
+// ListScriptTriggers lists the triggers of every layout and layout object,
+// with what keeps each one from running.
+func (h *SchemaHandler) ListScriptTriggers(w http.ResponseWriter, r *http.Request) {
+	triggers, err := schemaService(r).ListScriptTriggers(r.Context())
+	if err != nil {
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Triggers []schema.ScriptTrigger `json:"triggers"`
+	}{triggers})
+}
+
+// SetScriptTriggersRequest switches the triggers with the given ids on or
+// off, all of them or none.
+type SetScriptTriggersRequest struct {
+	IDs     []string `json:"ids"`
+	Enabled *bool    `json:"enabled"`
+}
+
+func (h *SchemaHandler) SetScriptTriggersEnabled(w http.ResponseWriter, r *http.Request) {
+	var req SetScriptTriggersRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if len(req.IDs) == 0 || req.Enabled == nil {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Validation Failed", "ids and enabled are required")
+		return
+	}
+	update, err := schemaService(r).SetScriptTriggersEnabled(r.Context(), req.IDs, *req.Enabled)
+	switch {
+	case errors.Is(err, schema.ErrScriptTriggerNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Script Trigger Not Found", err.Error())
+		return
+	case errors.Is(err, schema.ErrScriptTriggerCannotEnable):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Script Trigger Cannot Be Enabled", err.Error())
+		return
+	case err != nil:
+		telemetry.WriteInternalError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(update)
 }

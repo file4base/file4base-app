@@ -33,6 +33,7 @@ import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:file4base_client/features/preflight/preflight_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_database_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_file_references_dialog.dart';
+import 'package:file4base_client/features/schema_manager/manage_script_triggers_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_value_lists_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
@@ -1206,6 +1207,50 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     if (!changed || !mounted) return;
     if (_dataBrowserKey.currentState?.hasUncommittedRecord ?? false) return;
     unawaited(_loadTables(targetLayoutId: _activeLayout?.id));
+  }
+
+  /// File > Manage > Script Triggers (#26), on every layout's triggers or
+  /// on [layoutId]'s (from Layout Setup). The record in hand is committed
+  /// and the layout being designed saved first, so that reading the
+  /// switched triggers again loses nothing. Closing on a trigger's script or
+  /// object opens it.
+  Future<void> _handleManageScriptTriggers({String? layoutId}) async {
+    final role = _currentUser?.role;
+    final browser = _dataBrowserKey.currentState;
+    if (browser != null) await browser.commitRecord();
+    final designer = _layoutDesignerKey.currentState;
+    if (designer != null) await designer.commitAndSave();
+    if (!mounted) return;
+    final client = ref.read(apiClientProvider);
+    final result = await ManageScriptTriggersDialog.show(
+      context,
+      apiClient: client,
+      solutionName: _activeSolutionName,
+      canEdit: role == 'owner' || role == 'admin',
+      initialLayoutId: layoutId,
+    );
+    if (!mounted) return;
+    if (result.changed && !(_dataBrowserKey.currentState?.hasUncommittedRecord ?? false)) {
+      await _loadTables(targetLayoutId: _activeLayout?.id);
+      if (!mounted) return;
+      final fresh = _activeLayout;
+      if (fresh != null) _layoutDesignerKey.currentState?.adoptScriptTriggers(fresh);
+    }
+    final script = result.openScript;
+    final target = result.openLayout;
+    if (script != null) {
+      await ScriptWorkspaceDialog.show(context, client,
+          databaseName: _activeDatabaseName, initialScriptId: script.scriptId);
+    } else if (target != null) {
+      final layout = _serverLayouts.where((l) => l.id == target.layoutId).firstOrNull;
+      if (layout == null) return;
+      if (_activeLayout?.id != layout.id) _selectLayout(layout);
+      await _changeMode(OperationalMode.layout);
+      final objectId = target.objectId;
+      if (objectId != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _layoutDesignerKey.currentState?.selectObject(objectId));
+      }
+    }
   }
 
   Future<void> _handleManageLayouts() async {
@@ -2431,6 +2476,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                       ? null
                       : () => ManageValueListsDialog.show(context),
                   onManageFileReferences: _currentUser == null ? null : _handleManageFileReferences,
+                  onManageScriptTriggers: _currentUser == null ? null : _handleManageScriptTriggers,
                   onPerformFind: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.performFind(),
                   onNewFindRequest: mode == OperationalMode.find
                       ? () => _dataBrowserKey.currentState?.newFindRequest()
@@ -3365,6 +3411,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         onLayoutSelected: _selectLayout,
         onNewLayout: _handleNewLayout,
         onManageLayouts: _handleManageLayouts,
+        onReviewScriptTriggers: (layoutId) => unawaited(_handleManageScriptTriggers(layoutId: layoutId)),
         onRenameLayout: _handleRenameActiveLayout,
         onExitLayout: () => _changeMode(OperationalMode.browse),
         onManageDatabase: () async {

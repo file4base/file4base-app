@@ -123,6 +123,11 @@ func buildSourceSolution(t *testing.T, h *apiHarness, token string) solutionSour
 		"definition": map[string]interface{}{
 			"width":           900,
 			"on_layout_enter": map[string]interface{}{"type": "perform_script", "script_id": script.ID, "script_name": "Archive"},
+			// A trigger held back by a migration travels with its flag (#26).
+			"script_triggers": []interface{}{map[string]interface{}{
+				"id": "t-load", "event": "OnRecordLoad", "type": "perform_script", "script_id": script.ID,
+				"script_name": "Archive", "enabled": false, "quarantined_by_migration": true,
+			}},
 			"objects": []interface{}{map[string]interface{}{
 				"id": "btn", "type": "button", "x": 10, "y": 10.5, "width": 120, "height": 30, "tab_order": 1,
 				"action": map[string]interface{}{"type": "perform_script", "script_id": script.ID, "script_name": "Archive"},
@@ -301,6 +306,12 @@ func verifyRestoredSolution(t *testing.T, h *apiHarness, token string) {
 				OnLayoutEnter struct {
 					ScriptID string `json:"script_id"`
 				} `json:"on_layout_enter"`
+				ScriptTriggers []struct {
+					ID                     string `json:"id"`
+					ScriptID               string `json:"script_id"`
+					Enabled                *bool  `json:"enabled"`
+					QuarantinedByMigration bool   `json:"quarantined_by_migration"`
+				} `json:"script_triggers"`
 				Objects []struct {
 					Y        float64 `json:"y"`
 					TabOrder int     `json:"tab_order"`
@@ -311,6 +322,12 @@ func verifyRestoredSolution(t *testing.T, h *apiHarness, token string) {
 			}
 			require.NoError(t, json.Unmarshal(l.Definition, &def))
 			assert.Equal(t, sc.ID, def.OnLayoutEnter.ScriptID, "triggers point to the restored script")
+			require.Len(t, def.ScriptTriggers, 1)
+			assert.Equal(t, "t-load", def.ScriptTriggers[0].ID)
+			assert.Equal(t, sc.ID, def.ScriptTriggers[0].ScriptID, "a stored trigger points to the restored script")
+			require.NotNil(t, def.ScriptTriggers[0].Enabled)
+			assert.False(t, *def.ScriptTriggers[0].Enabled, "a disabled trigger stays disabled")
+			assert.True(t, def.ScriptTriggers[0].QuarantinedByMigration)
 			require.Len(t, def.Objects, 1)
 			assert.Equal(t, sc.ID, def.Objects[0].Action.ScriptID, "buttons point to the restored script")
 			assert.Equal(t, 10.5, def.Objects[0].Y)

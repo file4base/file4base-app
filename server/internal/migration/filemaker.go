@@ -841,7 +841,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	report.Counts.ValueLists = len(bundle.ValueLists)
 
-	// 5. Extract Layouts (and quarantine any layout triggers)
+	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences)
@@ -856,6 +856,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 	// 6. Extract Scripts & Steps
 	scriptNodes := catalogDefinitions(root, []string{"ScriptCatalog", "scripts"}, "Script", "script")
+	scripts := newScriptIndex()
 	defaultContextTable := ""
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
@@ -871,9 +872,17 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		}
 		if sc != nil {
 			bundle.Scripts = append(bundle.Scripts, *sc)
+			scripts.add(firstAttr(sn, "id", "ID"), sc)
 		}
 	}
 	report.Counts.Scripts = len(bundle.Scripts)
+	// Only now are the scripts known, which the layouts' triggers run.
+	for _, it := range bindLayoutTriggers(bundle, scripts, binding, report.SolutionName) {
+		addReportItem(report, it)
+	}
+	for _, it := range fileTriggerItem(readFileTriggers(root), report.SolutionName) {
+		addReportItem(report, it)
+	}
 	collectFileReferences(bundle, report)
 	for i := range bundle.FileReferences {
 		// A reference a script names is given its data source's paths.
@@ -2080,6 +2089,10 @@ func convertLayoutNode(
 		}
 	}
 
+	// objectIDs maps the field node of each migrated object to its id, so a
+	// trigger set on that object is attached to it.
+	objectIDs := map[*xmlNode]string{}
+
 	// Check if an explicit File4Base JSON layout definition exists
 	def := map[string]interface{}{
 		"name":         name,
@@ -2157,8 +2170,10 @@ func convertLayoutNode(
 			if n, ok := parseRepetitions(firstAttr(fn, "numOfReps", "repetitions")); ok {
 				binding["repetitions_shown"] = n
 			}
+			objID := uuid.NewString()
+			objectIDs[fn] = objID
 			objs = append(objs, map[string]interface{}{
-				"id":            uuid.NewString(),
+				"id":            objID,
 				"type":          "field",
 				"field_name":    colName,
 				"label":         fName,
@@ -2174,27 +2189,12 @@ func convertLayoutNode(
 		}
 	}
 
-	// Quarantine any layout-level script triggers so imported scripts never auto-execute
-	if _, hasTriggers := def["script_triggers"]; hasTriggers {
-		delete(def, "script_triggers")
-		items = append(items, ReportItem{
-			Category:   CategoryManualActionRequired,
-			Domain:     "trigger",
-			SourceName: name,
-			TargetName: name,
-			Detail:     "Layout script triggers were quarantined (disabled on import); review and re-enable in Layout Setup",
-		})
-	}
-	for _, trigNode := range findNodes(ln, "ScriptTrigger", "Trigger") {
-		trigName := firstAttr(trigNode, "event", "name", "type")
-		scriptRef := firstAttr(trigNode, "script", "scriptName")
-		items = append(items, ReportItem{
-			Category:   CategoryManualActionRequired,
-			Domain:     "trigger",
-			SourceName: fmt.Sprintf("%s (%s -> %s)", name, trigName, scriptRef),
-			TargetName: name,
-			Detail:     "Layout script trigger quarantined on import; review target script before enabling in Layout Setup",
-		})
+	// Script triggers are kept, switched off, until the developer reviews
+	// them: an imported script never runs because a layout was opened.
+	quarantineDefinitionTriggers(def)
+	if triggers := readLayoutTriggers(ln); len(triggers) > 0 {
+		list, _ := def[schema.LayoutScriptTriggersKey].([]interface{})
+		def[schema.LayoutScriptTriggersKey] = append(list, layoutTriggerEntries(triggers, objectIDs)...)
 	}
 
 	items = append(items, ReportItem{

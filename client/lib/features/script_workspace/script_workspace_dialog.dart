@@ -12,14 +12,20 @@ class ScriptWorkspaceDialog extends ConsumerStatefulWidget {
   const ScriptWorkspaceDialog({
     required this.apiClient, super.key,
     this.databaseName,
+    this.initialScriptId,
   });
   final ApiClient apiClient;
   final String? databaseName;
+
+  /// The script to open first (from Manage Script Triggers), instead of the
+  /// first one of the list.
+  final String? initialScriptId;
 
   static Future<void> show(
     BuildContext context,
     ApiClient apiClient, {
     String? databaseName,
+    String? initialScriptId,
   }) {
     return showDialog(
       context: context,
@@ -27,6 +33,7 @@ class ScriptWorkspaceDialog extends ConsumerStatefulWidget {
       builder: (ctx) => ScriptWorkspaceDialog(
         apiClient: apiClient,
         databaseName: databaseName,
+        initialScriptId: initialScriptId,
       ),
     );
   }
@@ -88,9 +95,10 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
         _isLoading = false;
 
         if (_scripts.isNotEmpty) {
-          _openScriptIds.add(_scripts.first.id);
-          _activeScriptId = _scripts.first.id;
-          if (_scripts.first.steps.isNotEmpty) {
+          final first = _scripts.firstWhere((s) => s.id == widget.initialScriptId, orElse: () => _scripts.first);
+          _openScriptIds.add(first.id);
+          _activeScriptId = first.id;
+          if (first.steps.isNotEmpty) {
             _selectedStepIdx = 0;
           }
         }

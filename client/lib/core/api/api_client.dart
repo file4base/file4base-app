@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:file4base_client/core/crypto/payload_cipher.dart';
 import 'package:file4base_client/core/models/file_reference_models.dart';
 import 'package:file4base_client/core/models/script_models.dart';
+import 'package:file4base_client/core/models/script_trigger_models.dart';
 import 'package:file4base_client/core/models/transfer_models.dart';
 import 'package:flutter/foundation.dart' show immutable;
 import 'package:http/http.dart' as http;
@@ -13,6 +14,7 @@ import 'package:http/http.dart' as http;
 export '../crypto/payload_cipher.dart';
 export '../models/file_reference_models.dart';
 export '../models/script_models.dart';
+export '../models/script_trigger_models.dart';
 export '../models/transfer_models.dart';
 
 /// RFC 9457 Problem Details Exception
@@ -3874,6 +3876,33 @@ class ApiClient {
     _checkResponse(response);
     final list = jsonDecode(response.body) as List<dynamic>? ?? const [];
     return [for (final item in list) FileReferenceModel.fromJson(item as Map<String, dynamic>)];
+  }
+
+  /// Every script trigger of the solution's layouts and layout objects, with
+  /// what keeps each one from running (#26). Owners and administrators only.
+  Future<List<ScriptTriggerModel>> listScriptTriggers() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/schemas/script-triggers'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>? ?? const {};
+    return [
+      for (final item in body['triggers'] as List? ?? const [])
+        ScriptTriggerModel.fromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  /// Switches the triggers [ids] on or off, all of them or none: the server
+  /// refuses (409) to enable one that cannot run, and changes nothing then.
+  Future<ScriptTriggerUpdate> setScriptTriggersEnabled(List<String> ids, {required bool enabled}) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/schemas/script-triggers'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'ids': ids, 'enabled': enabled}),
+    );
+    _checkResponse(response);
+    return ScriptTriggerUpdate.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   /// Saves a new file reference; [database] empty leaves it unmapped.

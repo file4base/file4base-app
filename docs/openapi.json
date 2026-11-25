@@ -605,6 +605,111 @@
         ]
       }
     },
+    "/api/v1/schemas/script-triggers": {
+      "get": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "List Script Triggers",
+        "description": "Every script trigger of every layout and layout object, with the problems that keep it from running and their remedy. Requires admin (owner or admin role).",
+        "responses": {
+          "200": {
+            "description": "Script triggers, by layout name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "triggers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ScriptTrigger"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Schemas & DDL"
+        ],
+        "summary": "Enable or Disable Script Triggers",
+        "description": "Enables or disables the triggers named, all or none, in one transaction; every layout changed gets a new version, so open clients read it again. Enabling a trigger with a problem refuses the whole batch. Requires admin (owner or admin role) and an unlocked design.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids",
+                  "enabled"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Triggers switched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updated": {
+                      "type": "integer"
+                    },
+                    "layouts": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Script Trigger Not Found"
+          },
+          "409": {
+            "description": "Script Trigger Cannot Be Enabled"
+          },
+          "422": {
+            "description": "ids and enabled are required"
+          }
+        }
+      }
+    },
     "/api/v1/data/{table}": {
       "get": {
         "tags": [
@@ -7877,6 +7982,91 @@
             }
           }
         ]
+      },
+      "ScriptTriggerProblem": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "missing_script",
+              "unresolved_script",
+              "unbound_parameter",
+              "find_mode_only",
+              "unsupported_event",
+              "object_missing",
+              "event_taken"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "remedy": {
+            "type": "string"
+          }
+        }
+      },
+      "ScriptTrigger": {
+        "type": "object",
+        "description": "A script trigger of a layout or of one of its objects (#26). A trigger imported from FileMaker arrives disabled and marked quarantined_by_migration.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "layout_id": {
+            "type": "string"
+          },
+          "layout_name": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "layout",
+              "object"
+            ]
+          },
+          "object_id": {
+            "type": "string",
+            "description": "The layout object the trigger is set on, when it was migrated."
+          },
+          "object_label": {
+            "type": "string"
+          },
+          "object_type": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string",
+            "example": "OnLayoutEnter"
+          },
+          "script_id": {
+            "type": "string",
+            "description": "The script it runs, when it exists in the solution."
+          },
+          "script_name": {
+            "type": "string"
+          },
+          "parameter": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "quarantined_by_migration": {
+            "type": "boolean"
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScriptTriggerProblem"
+            }
+          },
+          "can_enable": {
+            "type": "boolean",
+            "description": "Disabled, and nothing keeps it from running once enabled."
+          }
+        }
       }
     },
     "securitySchemes": {
