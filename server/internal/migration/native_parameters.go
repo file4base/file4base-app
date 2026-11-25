@@ -30,7 +30,7 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 			expression := calculationText(child)
 			out["expression"] = expression
 			switch canonical {
-			case "Set Field", "Insert Calculated Result", "Replace Field Contents":
+			case "Set Field", "Insert Calculated Result", "Replace Field Contents", "Set Next Serial Value":
 				out["value"] = expression
 				out["value_is_calculation"] = true
 			case "Set Field By Name":

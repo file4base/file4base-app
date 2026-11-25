@@ -200,6 +200,15 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		fmpTableID, fmpFieldID                       int
 	}
 	var pendingCalcs []pendingHTMLCalc
+	// Auto-enter options too: a calculated value may call a custom function.
+	type pendingHTMLAutoEnter struct {
+		table                          int
+		column                         string
+		sqlName, rawTableName, rawName string
+		list                           []string
+		known                          map[string]string
+	}
+	var pendingAutoEnter []pendingHTMLAutoEnter
 	fieldNamesByTable := map[string]*fieldNameMap{}
 	fieldOrder := map[string]int{} // column id -> its place among the table's fields
 
@@ -256,6 +265,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			colName    string
 			rawType    string
 			rawOptions string
+			autoEnter  []string
 			reps       int
 			unstored   bool
 		}
@@ -306,6 +316,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				colName:    cName,
 				rawType:    fRawType,
 				rawOptions: fRawOpts,
+				autoEnter:  htmlAutoEnterItems(cells[2][1]),
 				reps:       htmlRepetitions(cleanHTMLText(cells[2][1])),
 				unstored:   htmlUnstored(fRawType, cleanHTMLText(cells[2][1])),
 			})
@@ -346,6 +357,10 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				col, items = convertHTMLField(sqlName, rawTableName, rf.rawName, rf.colName, rf.rawType, rf.rawOptions, knownSameTableCols, formulaBinding{})
 				for _, it := range items {
 					addReportItem(report, it)
+				}
+				if rf.autoEnter != nil {
+					pendingAutoEnter = append(pendingAutoEnter, pendingHTMLAutoEnter{table: len(bundle.Tables), column: col.ID,
+						sqlName: sqlName, rawTableName: rawTableName, rawName: rf.rawName, list: rf.autoEnter, known: knownSameTableCols})
 				}
 			}
 			if rf.fmpFieldID > 0 {
@@ -501,6 +516,16 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		}
 		if col.FieldType != "CALCULATION" {
 			reordered[pc.table] = true
+		}
+	}
+	for _, pa := range pendingAutoEnter {
+		columns := bundle.Tables[pa.table].Columns
+		for i := range columns {
+			if columns[i].ID == pa.column {
+				for _, it := range convertHTMLAutoEnter(pa.sqlName, pa.rawTableName, pa.rawName, &columns[i], pa.list, pa.known, functions) {
+					addReportItem(report, it)
+				}
+			}
 		}
 	}
 	// A calculation stored as a plain column goes back among the other
@@ -1136,6 +1161,13 @@ func extractHTMLFormula(rawOptions, tableSQL, rawTableName string, knownSameTabl
 	if idx := strings.Index(formula, "Storage Options:"); idx >= 0 {
 		formula = strings.TrimSpace(formula[:idx])
 	}
+	return htmlFormulaNames(formula, tableSQL, rawTableName, knownSameTableCols)
+}
+
+// htmlFormulaNames is a formula of an HTML report with its own table's
+// Table::Field references written as the imported columns, and its
+// pilcrows as line breaks.
+func htmlFormulaNames(formula, tableSQL, rawTableName string, knownSameTableCols map[string]string) string {
 	formula = strings.ReplaceAll(formula, "¶", "\n")
 
 	type colPair struct {
