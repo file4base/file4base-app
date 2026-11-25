@@ -614,4 +614,27 @@ void main() {
         reason: "the customers table has a company column, but the field is the company record's");
     expect(find.text('<company>'), findsNWidgets(2));
   });
+
+  testWidgets('a button in a portal row is drawn on each row and says it does not run yet', (tester) async {
+    final base = _layoutWithPortal();
+    final layout = base.copyWith(objects: [
+      ...base.objects,
+      const LayoutObjectModel(
+        id: 'btn_in_portal',
+        type: 'button',
+        x: 300,
+        y: 165,
+        width: 60,
+        height: 20,
+        text: 'Open',
+        action: ButtonActionModel(type: 'perform_script', scriptName: 'Open Customer'),
+      ),
+    ]);
+    await _pump(tester, layout: layout);
+
+    expect(find.text('Open'), findsNWidgets(2), reason: 'once per related record');
+    await tester.tap(find.text('Open').first);
+    await tester.pumpAndSettle();
+    expect(find.text('A button in a portal row does not run yet.'), findsOneWidget);
+  });
 }

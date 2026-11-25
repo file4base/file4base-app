@@ -1233,6 +1233,28 @@ class _PortalViewState extends State<PortalView> {
         ),
       );
     }
+    if (content.type == 'button' || content.type == 'popover_button') {
+      // Drawn as on the layout. What it runs would need the row's record
+      // as the current one, which a script does not have here yet.
+      final fill = parseLayoutColor(content.style.fillColor);
+      final line = parseLayoutColor(content.style.borderColor);
+      return InkWell(
+        onTap: () => _report('A button in a portal row does not run yet.'),
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: fill,
+            border: line == null || content.style.borderWidth <= 0
+                ? null
+                : Border.all(color: line, width: content.style.borderWidth),
+            borderRadius: BorderRadius.circular(content.style.cornerRadius),
+          ),
+          child: content.text.isEmpty
+              ? null
+              : Text(content.text, overflow: TextOverflow.ellipsis, style: layoutTextStyle(content.style)),
+        ),
+      );
+    }
     return buildDrawnLayoutObject(content) ?? const SizedBox.shrink();
   }
 
