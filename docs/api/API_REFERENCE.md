@@ -12,6 +12,8 @@ Base URL (Default): `http://localhost:8080`
 - `traceparent` *(optional)*: W3C standard trace context (`00-{trace_id}-{span_id}-01`). Injected automatically by the Web client and desktop clients.
 - `tracestate` *(optional)*: W3C vendor state for distributed tracing.
 - `X-Trace-ID` *(optional)*: Trace identifier alias.
+- `X-File4Base-Entry: script` *(optional, record writes)*: the write is a script step's, not data entry (a script may set a field whose auto-enter options prohibit modification).
+- `X-File4Base-Validation: override` *(optional, record writes)*: the person was told the values break validation rules that allow it (*Allow user to override during data entry*) and keeps them; the rules that do not allow it still apply.
 
 ### Response Headers
 - `traceparent`: W3C trace context matching the active span.
@@ -586,6 +588,17 @@ CALCULATION fields are filled in by their formula and are not writable: a value 
 
 The fields' validation rules (`validation_rules`, set in the Fields dialog) are enforced on `POST` (every ruled field) and `PUT` (the fields being changed): not empty, unique, existing value, strict type (`Numeric Only`, `Date`, `4-Digit Year`, `Time of Day`, `Text Only`), range and maximum length, with the custom message when one is set. A broken rule answers `422 Unprocessable Entity` naming the field and the rule in `invalid_params`, and nothing is written. Unique rules are backed by a unique index on PostgreSQL, so concurrent duplicates cannot both succeed; a unique rule cannot be enabled while records already share a value. Data import applies the rules whose timing is "Always", not those for "Only during data entry"; malformed rules are rejected with `422` when saved.
 
+*Validated by calculation* (`calculation_enabled`, `calculation`, `calculation_context`) is a formula that must be true, read in the context occurrence with `Self` the field's value and the record as it is about to be saved; it may call the solution's custom functions. It is checked when the field is modified (a new record's field when it is not empty), or on every save with `calculation_always: true` (FileMaker's *Validate only if field has been modified* turned off). A formula that does not parse, or reads a field the table does not have, is refused with `422` when the rule is saved. A rule set with `allow_override: true` answers with `"overridable": true` in `invalid_params`; the client asks the person, and the same write sent again with `X-File4Base-Validation: override` is saved. Such a rule set is not backed by a unique index, and a migrated *not empty* rule that allows override does not make its column `NOT NULL`.
+
+```json
+{
+  "title": "Validation Failed",
+  "status": 422,
+  "detail": "The code has three characters",
+  "invalid_params": [{"name": "code", "reason": "calculation", "overridable": true}]
+}
+```
+
 The fields' **auto-enter options** enter their values on `POST` and `PUT` (stamps, serial numbers, data, calculated and looked-up values); a value the request gives wins. A data-entry write that changes a field whose options prohibit modification answers `422 Prohibited Modification`; a script step sends the header `X-File4Base-Entry: script`, which may set it and decides nothing about privileges. See [docs/specs/auto_enter_options.md](../specs/auto_enter_options.md).
 
 #### Request Body
@@ -843,6 +856,25 @@ read access to the table, nothing more.
   "result_type": "Number"
 }
 ```
+
+A script step's formula the client cannot evaluate itself (a custom function,
+a related field, any function its own evaluator does not have) comes here
+with the script's state, in one request per evaluation:
+
+```json
+{
+  "expression": "Let ( $total = Doubled ( $n ) ; $total + 1 )",
+  "record_id": "a1b2…",
+  "variables": {"$n": "6", "$$mode": "draft"},
+  "get": {"ScriptParameter": "go", "LayoutName": "Orders", "FoundCount": "12"}
+}
+```
+
+`variables` are the script's `$` and `$$` variables by name, as text; a
+plain decimal (`12`, `-0.5`) reads as a number, anything else (`007`) as
+text. `get` answers the `Get ( … )` functions only the client knows, by
+selector. Each result then has `variables`: the ones the formula set with
+`Let`, by lower-case name, as text, for the script to keep.
 
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
@@ -1263,6 +1295,50 @@ A layout's field object says which control it uses and which list fills it:
 ```
 
 `control_style` is `edit_box`, `drop_down_list`, `pop_up_menu`, `checkbox_set` or `radio_button_set`. Everything but `edit_box` needs a value list; without one the field is drawn as an edit box. A `checkbox_set` keeps the chosen values in the field as a newline-separated list.
+
+### Custom functions
+
+*File > Manage > Custom Functions* (see [Custom Functions](../specs/custom_functions.md)). Every signed-in user reads the list, for the calculation editor; a function whose `access` is `full_access` is listed for full access (owner, admin) only. The rest is design: full access, and the design not locked.
+
+| Method | Path | |
+| --- | --- | --- |
+| `GET` | `/api/v1/custom-functions` | `{"custom_functions": [CustomFunction]}`, in name order |
+| `POST` | `/api/v1/custom-functions` | create; `201` with the function |
+| `GET` | `/api/v1/custom-functions/{id}` | one |
+| `PUT` | `/api/v1/custom-functions/{id}` | change; `?force=true` saves a change that breaks formulas |
+| `DELETE` | `/api/v1/custom-functions/{id}` | `204`; `?force=true` deletes one formulas call |
+| `GET` | `/api/v1/custom-functions/{id}/usages` | `{"usages": [Usage]}`: the formulas that call it |
+| `POST` | `/api/v1/formulas/check` | syntax check of a formula being written (any signed-in user) |
+
+```json
+{"id": "…", "name": "Doubled", "parameters": ["n"], "formula": "n * 2", "access": "all"}
+```
+
+A name is refused (`422 Invalid Custom Function`) when it is empty, a built-in function's, or another function's (whatever the case); so is a formula that does not parse, calls a function with the wrong number of arguments, or calls itself before any condition could stop it (recursion through `If`, `Case`, `Choose` or the right side of `and`/`or` is allowed, as in FileMaker), and a new name that formulas already read as a field.
+
+**Renaming rewrites the formulas that call it**, as FileMaker does (it refers to custom functions by id): calculation fields, auto-enter calculations, validation formulas, the other custom functions, script steps (their calculation parameters) and layout buttons and triggers (script parameters and step parameters). Only the calls are rewritten; text and comments stay as written. A formula in which the new name would capture a field it reads as a plain word is refused (quote the field as `${name}`). A change of parameters that would break a formula calling it, and deleting a function formulas call, answer `409 Conflict` with those formulas; `?force=true` goes ahead, and the formulas no longer read until they are fixed.
+
+```json
+{
+  "title": "Custom Function In Use",
+  "status": 409,
+  "detail": "3 formulas call Doubled",
+  "usages": [
+    {"kind": "calculation", "id": "…", "name": "orders::total"},
+    {"kind": "script_step", "id": "…", "name": "Totals", "detail": "step 2"}
+  ]
+}
+```
+
+`kind` is `calculation`, `auto_enter`, `validation`, `custom_function`, `script_step` or `layout`.
+
+#### `POST /api/v1/formulas/check`
+
+```json
+{"formula": "Doubled ( 1 ; 2 )", "table": "orders", "function": "Margin", "parameters": ["price"]}
+```
+
+Answers `200` with `{"valid": false, "message": "…", "position": 0}`, or `{"valid": true, "fields": ["…"], "unknown_fields": ["…"]}`: `unknown_fields` are the fields `table` does not have. `function` and `parameters` check a custom function's own formula: it reads its parameters and may call itself.
 
 ---
 

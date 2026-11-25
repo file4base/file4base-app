@@ -286,8 +286,10 @@ one that calls it back, and a formula reads, for its dependencies, what the
 functions it calls read. A function whose formula does not read, or named
 like a built-in function, is left out, with every function that calls it; a
 custom function never replaces a built-in one. Calling one with another
-number of arguments than it takes is an error naming it. Solution files carry them, and the
-FileMaker migration imports them; there is no editor for them yet.
+number of arguments than it takes is an error naming it. Solution files carry them, the
+FileMaker migration imports them, and *File > Manage > Custom Functions*
+edits them; script steps call them through the server (see
+[Custom Functions](custom_functions.md)).
 `TODAY()`, `NOW()`, `COALESCE` and `CONCAT` remain for formulas written in
 File4Base before.
 
