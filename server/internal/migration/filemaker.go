@@ -3298,7 +3298,7 @@ func coerceSourceValue(valStr, fieldType string) (interface{}, error) {
 		}
 		for _, layout := range []string{"15:04:05", "15:04"} {
 			if at, err := time.Parse(layout, trimmed); err == nil {
-				return at.Format(time.RFC3339), nil
+				return timeOfDay(at), nil
 			}
 		}
 		return nil, errors.New("is not a date and time")

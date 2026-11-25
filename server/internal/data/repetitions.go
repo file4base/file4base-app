@@ -161,7 +161,8 @@ func decodeRepetitions(fields fieldSet, key string, raw interface{}, record map[
 
 // packRepetitions is the record as its statement writes it: the "field[n]"
 // keys of each repeating field are gathered into its companion column, under
-// repetitionsKey. The record itself is not changed.
+// repetitionsKey, and a date or timestamp given as text is bound as the value
+// every engine stores (dbal.TemporalValue). The record itself is not changed.
 //
 // An update changes only the repetitions it names, so for a record that
 // exists (id not empty) the others are read from it first, through q.
@@ -174,7 +175,7 @@ func packRepetitions(
 	for key, value := range record {
 		base, n, ok := repetition.Split(key)
 		if !ok || fields.isInternal(base) {
-			out[key] = value
+			out[key] = dbal.TemporalValue(fields[key], value)
 			continue
 		}
 		if written[base] == nil {

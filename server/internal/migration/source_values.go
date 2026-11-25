@@ -198,13 +198,20 @@ func interpretSourceValue(text, kind string, loc *sourceLocale, dateOrder data.D
 		trimmed := strings.TrimSpace(text)
 		for _, layout := range []string{"15:04:05", "15:04"} {
 			if at, err := time.Parse(layout, trimmed); err == nil {
-				return at.Format(time.RFC3339), "", nil
+				return timeOfDay(at), "", nil
 			}
 		}
 		return nil, text, nil
 	}
 	value, err := coerceSourceValue(text, kind)
 	return value, "", err
+}
+
+// timeOfDay writes a time of day read on its own, which Go places on 1
+// January of year 0, as a timestamp on 1 January 0001: where the calculation
+// engine and FileMaker place one, and a day every engine stores.
+func timeOfDay(at time.Time) string {
+	return time.Date(1, time.January, 1, at.Hour(), at.Minute(), at.Second(), 0, time.UTC).Format(time.RFC3339)
 }
 
 // countSourceTexts counts the values of migrated rows kept with their
