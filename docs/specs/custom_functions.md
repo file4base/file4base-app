@@ -65,6 +65,20 @@ A formula that fails stops the script with a message naming the step and
 the formula: `Script "Totals" stopped at step 4: Set Field: the formula
 "Tripled ( 2 )" could not be evaluated: …`.
 
+On a new record not committed yet, the request carries the record's field
+values (`values`), since the server has no stored record to read; the
+stored calculations and the unstored ones the formula reads are computed
+from them.
+
+*Replace Field Contents* evaluates its calculation for each record of the
+found set with that record current: the client's evaluator when it can,
+otherwise one request per record. A failure stops the replace, naming the
+record and the server's reason; the records before it stay replaced.
+
+A parameter a step says is not a calculation (`value_is_calculation`
+false, as in a *Set Field* of literal text) is text: it is not evaluated,
+not listed as a use of a function, and not rewritten by a rename.
+
 ## 3. Manage Custom Functions
 
 *File > Manage > Custom Functions…* (and *Server Tools > Manage*) lists the
@@ -107,6 +121,23 @@ before any condition could stop it (outside a branch of `If`, `Case`,
 `Choose` or the right side of `and`/`or`) is refused, since it would never
 end.
 
+A function may read fields of the record it is evaluated in. A change that
+makes calculation fields read each other in a ring through it (a function
+reading `total` while `total`'s formula calls the function) is refused, as
+is a calculation field written into such a ring: no record of the table
+could be computed.
+
+The rewrite reads the formulas, then writes them in one transaction, each
+row locked and compared with what was read first: when someone saved one
+of them in between, nothing is written and the change answers `412`; saving
+it again reads them as they are now.
+
+**Stored results are not recomputed** when a function's formula changes,
+as in FileMaker: a stored calculation field calling it keeps the results it
+had until its records are saved again, or its own formula is saved (which
+recomputes the table). Unstored calculations, and every other use, read the
+new formula at once.
+
 ## 4. Validation by calculation
 
 A field's *Validated by calculation* rule is a formula that must be true,
@@ -132,4 +163,10 @@ with `<Calculated enable="True">` or `validateCalculation="True"` and its
 are, and reads `type="Always"`/*Only during data entry* and *Allow user to
 override*. A disabled validation formula is not migrated. Restoring a
 solution bundle restores its records as they were saved: validation by
-calculation is not applied to them.
+calculation is not applied to them, nor is any rule that allows override
+(a value the person chose to keep, a duplicate under a *unique* rule
+included, is restored as it is).
+
+The formula reads the record as the write makes it: the unstored
+calculations it reads are computed from the new values, not taken from
+the stored record.

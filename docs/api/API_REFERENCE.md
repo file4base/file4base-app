@@ -874,7 +874,11 @@ with the script's state, in one request per evaluation:
 plain decimal (`12`, `-0.5`) reads as a number, anything else (`007`) as
 text. `get` answers the `Get ( … )` functions only the client knows, by
 selector. Each result then has `variables`: the ones the formula set with
-`Let`, by lower-case name, as text, for the script to keep.
+`Let`, by lower-case name, as text, for the script to keep. `values` are the
+fields of a record being edited and not committed yet, by name: they are
+read in place of the stored ones (calculation fields and unknown names are
+ignored), and the stored calculations and the unstored ones the formula
+reads are computed from them.
 
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
@@ -1316,7 +1320,7 @@ A layout's field object says which control it uses and which list fills it:
 
 A name is refused (`422 Invalid Custom Function`) when it is empty, a built-in function's, or another function's (whatever the case); so is a formula that does not parse, calls a function with the wrong number of arguments, or calls itself before any condition could stop it (recursion through `If`, `Case`, `Choose` or the right side of `and`/`or` is allowed, as in FileMaker), and a new name that formulas already read as a field.
 
-**Renaming rewrites the formulas that call it**, as FileMaker does (it refers to custom functions by id): calculation fields, auto-enter calculations, validation formulas, the other custom functions, script steps (their calculation parameters) and layout buttons and triggers (script parameters and step parameters). Only the calls are rewritten; text and comments stay as written. A formula in which the new name would capture a field it reads as a plain word is refused (quote the field as `${name}`). A change of parameters that would break a formula calling it, and deleting a function formulas call, answer `409 Conflict` with those formulas; `?force=true` goes ahead, and the formulas no longer read until they are fixed.
+**Renaming rewrites the formulas that call it**, as FileMaker does (it refers to custom functions by id): calculation fields, auto-enter calculations, validation formulas, the other custom functions, script steps (their calculation parameters) and layout buttons and triggers (script parameters and step parameters). Only the calls are rewritten; text and comments stay as written. A formula in which the new name would capture a field it reads as a plain word is refused (quote the field as `${name}`). A change of parameters that would break a formula calling it, and deleting a function formulas call, answer `409 Conflict` with those formulas; `?force=true` goes ahead, and the formulas no longer read until they are fixed. A change under which calculation fields would read each other in a ring through the function is refused (`422`). When a formula the rename rewrites was saved by someone else in the meantime, nothing is written and the answer is `412 Changed Meanwhile`: save again.
 
 ```json
 {
