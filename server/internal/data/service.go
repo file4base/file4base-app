@@ -837,21 +837,7 @@ func buildFindClauses(
 				continue
 			}
 
-			// If operator is empty or not parsed, parse it with ParseFile4BaseFindCriteria
-			if (crit.Operator == "" || crit.Operator == "LIKE") && crit.Value != nil {
-				strVal := strings.TrimSpace(fmt.Sprintf("%v", crit.Value))
-				// If user entered explicit operator or wildcard inside string
-				if strings.HasPrefix(strVal, "=") || strings.HasPrefix(strVal, "!") ||
-					strings.HasPrefix(strVal, ">") || strings.HasPrefix(strVal, "<") ||
-					strings.Contains(strVal, "...") || strings.Contains(strVal, "*") ||
-					strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
-					strings.Contains(strVal, "//") {
-					parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
-					parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
-					crit = parsed
-				}
-			}
-
+			crit = normalizeCriterion(crit)
 			if crit.isRelated() {
 				clause, err := relatedCriterionClause(dialect, tableName, crit, related, &idx, &values)
 				if err != nil {
@@ -879,6 +865,27 @@ func buildFindClauses(
 	}
 
 	return buildFindWhere(includeClauses, omitClauses), values, nil
+}
+
+// normalizeCriterion reads a criterion whose operator is not given, or that
+// is a LIKE typed with an operator or wildcard in its value, as Find mode
+// reads what is typed in a field (ParseFile4BaseFindCriteria).
+func normalizeCriterion(crit FindCriterion) FindCriterion {
+	if (crit.Operator != "" && crit.Operator != "LIKE") || crit.Value == nil {
+		return crit
+	}
+	strVal := strings.TrimSpace(fmt.Sprintf("%v", crit.Value))
+	// If user entered explicit operator or wildcard inside string
+	if strings.HasPrefix(strVal, "=") || strings.HasPrefix(strVal, "!") ||
+		strings.HasPrefix(strVal, ">") || strings.HasPrefix(strVal, "<") ||
+		strings.Contains(strVal, "...") || strings.Contains(strVal, "*") ||
+		strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
+		strings.Contains(strVal, "//") {
+		parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
+		parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
+		return parsed
+	}
+	return crit
 }
 
 // ExecuteFind performs a File4Base Find Mode multi-request query

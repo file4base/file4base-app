@@ -898,7 +898,7 @@
           "Data Operations"
         ],
         "summary": "Execute Find Mode Search",
-        "description": "Executes a Find query supporting wildcards (*), single characters (@/?), comparisons (>, <, >=, <=), exact (=), strict (==), negation (! / !=), ranges (...), today's date (//), and empty/non-empty search.",
+        "description": "Executes a Find query supporting wildcards (*), single characters (@/?), comparisons (>, <, >=, <=), exact (=), strict (==), negation (! / !=), ranges (...), today's date (//), and empty/non-empty search. A criterion on a related field of another solution's table (an external occurrence, #107) is run in that solution as the account the session group holds there; the records searched are then filtered by what they must hold to be related to a match.",
         "parameters": [
           {
             "name": "table",
@@ -946,6 +946,12 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
           }
         }
       }
@@ -4169,6 +4175,12 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
           }
         },
         "parameters": [
@@ -6031,6 +6043,9 @@
           "404": {
             "description": "Table occurrence not found"
           },
+          "422": {
+            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
+          },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
           }
@@ -6076,6 +6091,9 @@
           },
           "404": {
             "description": "Table occurrence not found"
+          },
+          "422": {
+            "description": "Find Too Broad: a criterion on a related field of another solution's table matches records holding more than 10,000 match values there (#107); narrow it."
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
@@ -7162,7 +7180,7 @@
         }
       },
       "ExternalUnavailable": {
-        "description": "The request reads records through an occurrence of another solution's table, which cannot be read from here yet (#107). Never answered from a local table.",
+        "description": "The request needs records of another solution's table, through an external occurrence (#107), and that solution cannot be read as the account the session group holds there, or the operation is not done across solutions yet. Never answered from a local table.",
         "content": {
           "application/problem+json": {
             "schema": {

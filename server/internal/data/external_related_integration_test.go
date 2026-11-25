@@ -148,16 +148,15 @@ func TestExternalRelated_ReadsTheOtherSolutionWithoutJoinOrN1(t *testing.T) {
 	assert.Equal(t, few, many, "a batch of %d records takes as many statements as one of 3", len(ids))
 	assert.Less(t, many, int64(len(ids)), "fewer statements than records")
 
-	// A calculation reading the other solution is evaluated empty until
-	// calculations cross solutions, as a formula that fails is; the record
-	// is still read.
+	// A calculation reads the other solution through the same relationship,
+	// both criteria included.
 	_, err = ordersSchema.AddColumn(ctx, ordersTable, schema.ColumnMetadata{Name: "customer_names", DisplayName: "customer_names",
 		FieldType: dbal.FieldTypeCalculation, IsNullable: true,
 		CalculationFormula: unstoredCalcJSON("List ( order_customers::full_name )", "Text")})
 	require.NoError(t, err)
 	row, err := ordersData.GetRow(ctx, "orders", ids[0])
 	require.NoError(t, err)
-	assert.Empty(t, row["customer_names"])
+	assert.Equal(t, "Ada", row["customer_names"])
 
 	// The other solution's records are read there: none of them is in Orders.
 	_, err = data.NewService(orders).ListRows(ctx, "customers", data.QueryOptions{})

@@ -63,9 +63,16 @@ without its own record being written.
 - Only what is read is computed: a related field, and the unstored fields it
   reads. Each record's unstored field is computed once per request; chains
   are followed up to 32 levels.
-- Each request loads the relationship graph once and queries each
-  relationship once per match value. Related reads of a list are not yet
-  batched into one query per page.
+- Each request loads the relationship graph once. Before the records of a
+  page are computed, what their formulas read is read ahead for all of them:
+  each relationship of each path in one statement for the whole page (a
+  branch per match value, in chunks of 500), then, the same way, what the
+  calculations of the records reached read in their turn. A page therefore
+  takes a fixed number of statements, however many records it shows.
+- An occurrence of **another solution's table** (#107) is read the same way,
+  in that solution, as the account the session holds there; that solution's
+  own unstored calculations are computed there. See
+  [relationships_and_portals.md](relationships_and_portals.md#occurrences-of-another-solutions-table).
 
 Saving checks that a **stored** calculation reads no related field ("make it
 unstored") and no unstored calculation, since what it stores would go stale;

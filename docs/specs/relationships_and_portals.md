@@ -235,6 +235,22 @@ It becomes an `EXISTS` over the related table joined on the match fields, so:
   Companies cannot search Customers through it either; the request answers
   `403`.
 
+**Through an occurrence of another solution's table** the related table is in
+another database, which an `EXISTS` cannot reach. The criterion is run there
+instead, through that solution's data service as the account the session
+holds in it, and finds what this solution's records must hold to be related
+to a record it matches; the records searched are then filtered with that
+here. No statement joins the two databases, and the result is the one the
+same find on a local copy of the table gives: every find operator, every
+relationship operator, several criteria and the empty-match-field rule. What
+is carried back depends on the relationship's criteria other than `×`: for one
+`<`, `≤`, `>` or `≥`, the least or greatest match value found; for one `≠`, up
+to two distinct values; for none, whether anything matched; otherwise the
+distinct match values themselves, at most 10,000 in all (a find matching more
+answers `422 Find Too Broad`: narrow it). Not signed in to that solution, no
+access to the table, or a field it no longer has answers `424
+external_unavailable` as reads do.
+
 A related field takes a criterion unless its **allow find entry** option is
 off, in which case Find mode says the field takes none. Saved finds hold
 related criteria too, keyed by the relationship (see
@@ -304,6 +320,16 @@ could not link is signed in to with `POST /api/v1/auth/link`.
   is the id. When no field, or more than one, has it, the read answers `424`
   with `schema_mismatch`.
 - **Value lists** of a field of the other table offer that solution's values.
+- **Unstored calculations** read it like any related table:
+  `Occurrence::Field`, `Count`, `Sum`, `List` and the other aggregates, along
+  a path that may cross both solutions. The other solution's own unstored
+  calculations are computed there, with its graph, and may read this one
+  back; a ring of formulas across the two stops as a local one does. A page
+  of records reads each relationship once for all its records (see
+  [calculation_formulas.md](calculation_formulas.md)). When that solution
+  cannot be read the field is empty, as for a formula that fails, and the
+  record is read all the same; a table the account there may not read is
+  `<No Access>`, as a local one is.
 - **A layout on an external occurrence** browses that solution's records
   through `/api/v1/occurrences/{occurrence}/records`, with the fields read
   from its catalog (`/api/v1/occurrences/{occurrence}/table`). Relationships
@@ -323,9 +349,8 @@ Not done across solutions yet, refused with `424` and `reason` `missing`:
 writing their records (a portal or a layout on one is read-only, its record
 commands disabled), creating a related record there, a cascading delete that
 reaches one (checked over the whole cascade before anything is deleted, so
-nothing is), and a find or saved find on a related field through one, or
-from a record of one. An unstored calculation reading through an external
-occurrence evaluates empty. A layout's default occurrence is always local. A
+nothing is), and a find on a related field from a record of one (a layout
+on an external occurrence). A layout's default occurrence is always local. A
 field object of an external occurrence placed directly on a local layout keeps
 its occurrence and is shown as unavailable, never bound to a local field of
 the same name.
@@ -342,6 +367,7 @@ the same name.
   each per relationship, acting left to right as above. FileMaker has them
   separately for each side.
 - **Portals of portals**, and relationships followed through more than one hop.
-- **Writing another solution's records**, cascades and finds across
-  solutions, calculations reading another solution, and the second-field and
-  related options of a value list on an external occurrence come later.
+- **Writing another solution's records**, cascades across solutions, a find
+  through a relationship from a record of another solution, and the
+  second-field and related options of a value list on an external occurrence
+  come later.

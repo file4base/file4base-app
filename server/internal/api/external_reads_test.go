@@ -276,8 +276,8 @@ func TestAPI_ExternalReadsAsTheLinkedAccount(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	// Writing, cascading and finding across solutions are not done yet: they
-	// are refused, and nothing of Orders is written instead.
+	// Writing and cascading across solutions are not done yet: they are
+	// refused, and nothing of Orders is written instead.
 	t.Run("writes stay refused", func(t *testing.T) {
 		var any []map[string]interface{}
 		rec := h.do(http.MethodGet, "/api/v1/occurrences/"+p.ext+"/records", token, nil, &any)
@@ -292,10 +292,6 @@ func TestAPI_ExternalReadsAsTheLinkedAccount(t *testing.T) {
 			rec := h.do(c.method, c.target, token, map[string]string{"full_name": "Eve"}, nil)
 			assertUnavailable(t, rec.Result(), p.peer, "missing")
 		}
-		rec = h.do(http.MethodPost, "/api/v1/data/orders/find", token, map[string]interface{}{
-			"requests": []map[string]interface{}{{"criteria": []map[string]string{{"field_name": "full_name", "operator": "=", "value": "Ada", "relationship_id": p.relationship}}}},
-		}, nil)
-		assertUnavailable(t, rec.Result(), p.peer, "missing")
 	})
 
 	t.Run("no access in the other solution", func(t *testing.T) {
