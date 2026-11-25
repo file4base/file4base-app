@@ -688,6 +688,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-File4Base-Entry",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "script"
+              ]
+            },
+            "description": "Marks the write as a script step's: it may set a field whose auto-enter options prohibit modification during data entry. It decides nothing about privileges."
           }
         ],
         "requestBody": {
@@ -716,8 +728,12 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "A validation rule is broken, or a data-entry write changes a field whose auto-enter options prohibit modification (Prohibited Modification)"
           }
-        }
+        },
+        "description": "The fields' auto-enter options enter their values (docs/specs/auto_enter_options.md); a value the request gives wins."
       }
     },
     "/api/v1/data/{table}/{id}": {
@@ -787,6 +803,18 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "X-File4Base-Entry",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "script"
+              ]
+            },
+            "description": "Marks the write as a script step's: it may set a field whose auto-enter options prohibit modification during data entry. It decides nothing about privileges."
           }
         ],
         "requestBody": {
@@ -808,8 +836,12 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "A validation rule is broken, or a data-entry write changes a field whose auto-enter options prohibit modification (Prohibited Modification)"
           }
-        }
+        },
+        "description": "The fields' auto-enter options enter their values (docs/specs/auto_enter_options.md); a value the request gives wins."
       },
       "delete": {
         "tags": [
@@ -4290,7 +4322,8 @@
               }
             }
           }
-        }
+        },
+        "description": "options.perform_auto_enter (default false) performs the fields' auto-enter options while importing, as FileMaker's Perform auto-enter options while importing."
       }
     },
     "/api/v1/data/{table}/import/preview": {
@@ -6380,6 +6413,278 @@
         }
       }
     },
+    "/api/v1/occurrences/{occurrence}/records/{id}/duplicate": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Duplicate Record (table occurrence)",
+        "description": "Creates a copy of the record, as FileMaker's Duplicate Record: every stored field is copied, and the auto-enter options enter new values, except a looked-up value and a calculated value with Do not replace, which are copied. Needs the create privilege. See docs/specs/auto_enter_options.md. On another solution's occurrence it runs there, as the account the session is signed in with in that solution, with that solution's serial numbers and stamps.",
+        "responses": {
+          "201": {
+            "description": "The new record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Record not found"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records/serials/{field}": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        },
+        {
+          "name": "field",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Get Next Serial Value (table occurrence)",
+        "description": "The value the next record gets in a serial number field: FileMaker's GetNextSerialValue. Needs read access to the table. On another solution's occurrence it runs there, as the account the session is signed in with in that solution, with that solution's serial numbers and stamps.",
+        "responses": {
+          "200": {
+            "description": "The next serial value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "next_value": {
+                      "type": "string",
+                      "description": "The value the next record gets, as text (\"INV0100\", \"42\")."
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "next_value"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not a Serial Number Field"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Set Next Serial Value (table occurrence)",
+        "description": "Sets the value the next record gets in a serial number field: FileMaker's Set Next Serial Value. Needs the edit privilege. On another solution's occurrence it runs there, as the account the session is signed in with in that solution, with that solution's serial numbers and stamps.",
+        "parameters": [
+          {
+            "name": "field",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "next_value": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "next_value"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The next serial value, as set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "next_value": {
+                      "type": "string",
+                      "description": "The value the next record gets, as text (\"INV0100\", \"42\")."
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "next_value"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A next value the field cannot take"
+          },
+          "422": {
+            "description": "Not a Serial Number Field"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records/relookup": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        }
+      ],
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Relookup Field Contents (table occurrence)",
+        "description": "Copies again the looked-up values of the given records whose lookups start from the match field, as FileMaker's Relookup Field Contents. The records it changes are modified, and answered as they are now, so a client updates its found set in place. Needs the edit privilege; at most 10000 records. On another solution's occurrence it runs there, as the account the session is signed in with in that solution, with that solution's serial numbers and stamps.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "description": "The match field the lookups start from."
+                  },
+                  "record_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 10000
+                  }
+                },
+                "required": [
+                  "field",
+                  "record_ids"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "How many records changed, and each of them as it is now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updated": {
+                      "type": "integer"
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No looked-up value starts from the field"
+          },
+          "413": {
+            "description": "Too many records"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
     "/api/v1/occurrences/{occurrence}/table": {
       "parameters": [
         {
@@ -6431,6 +6736,283 @@
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Duplicate Record",
+        "description": "Creates a copy of the record, as FileMaker's Duplicate Record: every stored field is copied, and the auto-enter options enter new values, except a looked-up value and a calculated value with Do not replace, which are copied. Needs the create privilege. See docs/specs/auto_enter_options.md.",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The new record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Record not found"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/serials/{field}": {
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Get Next Serial Value",
+        "description": "The value the next record gets in a serial number field: FileMaker's GetNextSerialValue. Needs read access to the table.",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The next serial value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "next_value": {
+                      "type": "string",
+                      "description": "The value the next record gets, as text (\"INV0100\", \"42\")."
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "next_value"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Not a Serial Number Field"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Set Next Serial Value",
+        "description": "Sets the value the next record gets in a serial number field: FileMaker's Set Next Serial Value. Needs the edit privilege.",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "next_value": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "number"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "next_value"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The next serial value, as set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "next_value": {
+                      "type": "string",
+                      "description": "The value the next record gets, as text (\"INV0100\", \"42\")."
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "next_value"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A next value the field cannot take"
+          },
+          "422": {
+            "description": "Not a Serial Number Field"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/relookup": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Relookup Field Contents",
+        "description": "Copies again the looked-up values of the given records whose lookups start from the match field, as FileMaker's Relookup Field Contents. The records it changes are modified, and answered as they are now, so a client updates its found set in place. Needs the edit privilege; at most 10000 records.",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string",
+                    "description": "The match field the lookups start from."
+                  },
+                  "record_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 10000
+                  }
+                },
+                "required": [
+                  "field",
+                  "record_ids"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "How many records changed, and each of them as it is now",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updated": {
+                      "type": "integer"
+                    },
+                    "records": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No looked-up value starts from the field"
+          },
+          "413": {
+            "description": "Too many records"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           }
         }
       }

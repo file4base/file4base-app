@@ -54,6 +54,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onDeveloperUtilities,
     this.onNewRecord,
     this.onDuplicateRecord,
+    this.onRelookupFieldContents,
     this.onDeleteRecord,
     this.onSortRecords,
     this.onUnsortRecords,
@@ -139,6 +140,10 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onPageSetup;
   final VoidCallback? onNewRecord;
   final VoidCallback? onDuplicateRecord;
+
+  /// Records > Relookup Field Contents, from the active field as the match
+  /// field. Null disables the command.
+  final VoidCallback? onRelookupFieldContents;
   final VoidCallback? onDeleteRecord;
   final VoidCallback? onSortRecords;
   final VoidCallback? onUnsortRecords;
@@ -1531,8 +1536,9 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.equal, meta: true),
           child: const Text('Replace Field Contents...'),
         ),
-        const MenuItemButton(
-          child: Text('Relookup Field Contents'),
+        MenuItemButton(
+          onPressed: onRelookupFieldContents,
+          child: const Text('Relookup Field Contents'),
         ),
       ],
       child: const Text('Records', style: TextStyle(fontSize: 13)),

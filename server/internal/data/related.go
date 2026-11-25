@@ -1078,7 +1078,9 @@ func (s *Service) CreateRelatedRowToward(
 		values[t.TargetColumn] = key
 	}
 
-	inserted, err := q.dst.InsertRow(ctx, target.TableName, values)
+	// The match fields are the relationship's to give, even ones whose
+	// options prohibit modification during data entry.
+	inserted, err := q.dst.InsertRow(exemptFromEntry(ctx, targetColumns(q.terms)...), target.TableName, values)
 	if err != nil {
 		return nil, wrapSide(target, err)
 	}

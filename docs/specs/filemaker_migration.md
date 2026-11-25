@@ -68,6 +68,22 @@ A solution's custom functions (*File > Manage > Custom Functions*) are read from
 
 `ExecuteSQL` is not implemented: File4Base calculations do not run SQL queries. A French DDR writes the built-in functions inside a custom function in French, as it does in every formula; those are not translated yet.
 
+### Auto-enter options
+
+A field's auto-enter options are read from Save as XML (the `type` attribute and each option's `enable`), from the XML DDR and the clipboard (the `constant`, `calculation`, `lookup` and `allowEditing` flags, the stamp in `value`, `<Serial nextValue increment generate>`), and from the English HTML DDR's *Auto-Enter* list. They are kept in the column's `default_value` ([Auto-Enter Field Options](auto_enter_options.md)) and reported once per field: `preserved` lists what was kept (*Auto-enter options: serial number on creation, next value 1001, increment 1; …*), and each option that could not be is `unsupported`, with the reason, plus a `manual_action_required` step:
+
+| Option | Kept | Dropped, with the reason |
+| --- | --- | --- |
+| Creation / modification stamps | Date, Time, Timestamp, Name, Account Name | A stamp the field's type cannot hold (a name in a number field). |
+| Serial number | Next value, increment, on creation / on commit | A serial in a field that is neither text nor number, a number field whose next value is not a whole number, a next value with no digit. |
+| Data | The constant | — |
+| Calculated value | The formula bound to the imported names, as calculations are (below), its context, *Do not replace* and *Do not evaluate if all referenced fields are empty*; it may call the solution's custom functions | A formula that cannot be bound (a field or an occurrence no relationship reaches, a custom function that could not be migrated), a container field. The HTML DDR keeps only formulas reading plain fields of their own table and custom functions. |
+| Looked-up value | The starting and source occurrences, the field, *Don't copy contents if empty* and the no-match option. The source occurrence may be several relationships away from the starting one. When the source names no starting occurrence, or one that was not migrated, the lookup starts from an occurrence of the field's table a path leads from. | A source occurrence no path of relationships reaches from where the lookup starts (the report names both), a field it does not have. The HTML DDR does not keep lookups. |
+| Value from last visited record | Kept for the dialog | Not entered: always reported. |
+| Prohibit modification | Kept | — |
+
+A migration's records are written as they are: no option enters a value into them, and the next serial value is the source's.
+
 ### Field names that had to change, and the formulas that read them (`#111`)
 
 An imported field does not always keep its source name: `sanitizeIdentifier` strips what a SQL identifier cannot carry, so `_code` becomes `code`, and two source names that normalize alike are told apart as `code` and `code_2` (`#89`). A calculation written against the source names would then read a column the table does not have.

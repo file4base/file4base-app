@@ -68,6 +68,13 @@ type ImportOptions struct {
 	AddUnmatched bool `json:"add_unmatched"`
 
 	DateOrder DateOrder `json:"date_order"`
+
+	// PerformAutoEnter applies the fields' auto-enter options, as
+	// FileMaker's "Perform auto-enter options while importing": the values
+	// they enter replace the imported ones, except a calculated value that
+	// does not replace an imported value. Off, the imported values are
+	// written as they are (see docs/specs/auto_enter_options.md).
+	PerformAutoEnter bool `json:"perform_auto_enter"`
 }
 
 // ImportReport says what an import did.
@@ -320,6 +327,18 @@ func (s *Service) ImportRecords(
 		}
 	}
 
+	var ae *autoEnter
+	if opts.PerformAutoEnter {
+		if ae, err = s.loadAutoEnter(ctx, tableName, fields); err != nil {
+			return nil, err
+		}
+		if !ae.active() {
+			ae = nil
+		} else {
+			ae.withCalculations(calculations)
+		}
+	}
+
 	dialect := s.driver.Dialect()
 	db := s.driver.DB()
 	report := &ImportReport{Rows: len(source.Rows), Fields: written}
@@ -382,6 +401,15 @@ func (s *Service) ImportRecords(
 				return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 			}
 			if id != "" {
+				if ae != nil {
+					current, err := storedRow(ctx, tx, dialect, tableName, id, fields)
+					if err != nil {
+						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+					}
+					if err := ae.enterModified(ctx, autoMode{overwrite: true, tx: tx}, record, current); err != nil {
+						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+					}
+				}
 				if err := applyCalculationsForUpdate(
 					ctx, tx, dialect, tableName, id, fields, calculations, record,
 				); err != nil {
@@ -418,6 +446,11 @@ func (s *Service) ImportRecords(
 		// first: a container result refers to the record it is in.
 		id := uuid.NewString()
 		record["id"] = id
+		if ae != nil {
+			if err := ae.enterNew(ctx, autoMode{overwrite: true, tx: tx}, record); err != nil {
+				return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+			}
+		}
 		if err := applyCalculationsTo(calculations, record); err != nil {
 			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
@@ -465,24 +498,14 @@ func applyCalculationsForUpdate(
 		return nil
 	}
 
-	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s LIMIT 1",
-		selectList(dialect, fields), dialect.QuoteIdentifier(tableName),
-		dialect.QuoteIdentifier("id"), dialect.Placeholder(1))
-	rows, err := tx.QueryContext(ctx, query, id)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	stored, err := rowsToMaps(rows, fields)
+	stored, err := storedRow(ctx, tx, dialect, tableName, id, fields)
 	if err != nil {
 		return err
 	}
 
 	merged := make(map[string]interface{}, len(fields)+len(record))
-	if len(stored) > 0 {
-		for field, value := range stored[0] {
-			merged[field] = value
-		}
+	for field, value := range stored {
+		merged[field] = value
 	}
 	for field, value := range record {
 		merged[field] = value
@@ -505,6 +528,27 @@ func applyCalculationsForUpdate(
 		}
 	}
 	return nil
+}
+
+// storedRow reads a record as the transaction sees it: its stored columns,
+// with no unstored calculation computed. A record that is not there is an
+// empty one.
+func storedRow(
+	ctx context.Context, tx execer, dialect dbal.Dialect, tableName, id string, fields fieldSet,
+) (map[string]interface{}, error) {
+	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s LIMIT 1",
+		selectList(dialect, fields), dialect.QuoteIdentifier(tableName),
+		dialect.QuoteIdentifier("id"), dialect.Placeholder(1))
+	rows, err := tx.QueryContext(ctx, query, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	stored, err := rowsToMaps(rows, fields)
+	if err != nil || len(stored) == 0 {
+		return map[string]interface{}{}, err
+	}
+	return stored[0], nil
 }
 
 // findMatchingRecord returns the id of the record whose match fields hold the
