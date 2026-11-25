@@ -729,6 +729,17 @@ related criterion. The caller must have access to the related table as well:
 `POST /api/v1/data/{table}/find` and `/summary` answer `403 Forbidden` when they
 do not, and `400 Unknown Field` when the related table has no such field.
 
+When the related side is an occurrence of **another solution's table** (§ 18)
+the criterion is run in that solution, as the account the session holds
+there, and the records searched are filtered here with the match values it
+found; no query joins the two databases, and the records found are those a
+related criterion on a local table holding the same records finds. Not signed
+in, no access there, or a field that solution does not have answers `424
+external_unavailable`. For a relationship whose one criterion (other than `×`)
+is `<`, `≤`, `>` or `≥` only the bound is carried back; otherwise at most
+10,000 match values are, for the whole find, and a find whose criteria match
+related records that hold more in all answers `422 Find Too Broad`.
+
 ### `POST /api/v1/data/{table}/evaluate`
 
 Evaluates expressions against a record with the engine that fills the
@@ -2563,9 +2574,11 @@ A solution reads the records of another solution's table **as the account its se
 Through an external occurrence:
 - **related fields and portals** (`GET /api/v1/data/{table}/{id}/related`, `POST /api/v1/data/{table}/related`) read the other solution's records, the match values being read in this one; every criterion of the relationship applies, as for a local one;
 - a **value list** of one of its fields offers that solution's values;
-- a **layout** on it browses its records with the routes below.
+- a **layout** on it browses its records with the routes below;
+- an **unstored calculation** reads its fields like those of any related table (`Occurrence::Field`, `Count`, `Sum`, `List`…), the other solution's own unstored calculations being computed there; the field is empty when that solution cannot be read, and `<No Access>` (in `POST /evaluate`) when the account there may not read the table, and the record is read all the same;
+- a **find** on one of its fields as a related field finds the records of this solution related to the records it matches there (§ Criteria on a related field).
 
-What cannot be read answers `424 external_unavailable` (§ Errors) with the reason. An unstored calculation reading through an external occurrence evaluates empty. A find through a relationship from or into one, and a calculation reading across solutions, are not done yet: `424` with `reason: "missing"`.
+What cannot be read answers `424 external_unavailable` (§ Errors) with the reason. A find through a relationship from one of its records is not done yet: `424` with `reason: "missing"`.
 
 ### Writing records of another solution
 

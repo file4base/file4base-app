@@ -317,10 +317,10 @@ func wrapSide(side RelationSide, err error) error {
 	return side.External.Wrap(err)
 }
 
-// externalRelationshipSelect resolves a relationship with a side, or both,
-// on an occurrence of another solution's table: such a side has no local
-// table or column, but the table and field names the catalog keeps for it.
-const externalRelationshipSelect = `SELECT r.id, r.name, r.operator, r.allow_creation, r.cascade_delete, r.sort_related,
+// externalRelationshipFrom resolves relationships with a side, or both, on
+// an occurrence of another solution's table: such a side has no local table
+// or column, but the table and field names the catalog keeps for it.
+const externalRelationshipFrom = `SELECT r.id, r.name, r.operator, r.allow_creation, r.cascade_delete, r.sort_related,
 		lo.id, lo.name, lo.base_table_id, COALESCE(lt.name, lo.external_table, ''), COALESCE(lc.name, r.left_column_name, ''),
 		COALESCE(lf.name, ''), COALESCE(lf.database_name, ''),
 		ro.id, ro.name, ro.base_table_id, COALESCE(rt.name, ro.external_table, ''), COALESCE(rc.name, r.right_column_name, ''),
@@ -333,7 +333,9 @@ const externalRelationshipSelect = `SELECT r.id, r.name, r.operator, r.allow_cre
 	JOIN sys_table_occurrences ro ON ro.id = r.right_occurrence_id
 	LEFT JOIN sys_tables rt ON rt.id = ro.base_table_id
 	LEFT JOIN sys_columns rc ON rc.id = r.right_column_id
-	LEFT JOIN sys_file_references rf ON rf.id = ro.file_reference_id
+	LEFT JOIN sys_file_references rf ON rf.id = ro.file_reference_id`
+
+const externalRelationshipSelect = externalRelationshipFrom + `
 	WHERE r.id = `
 
 // externalRelationship resolves a relationship the local statement left
@@ -341,18 +343,58 @@ const externalRelationshipSelect = `SELECT r.id, r.name, r.operator, r.allow_cre
 // external, or when a local side no longer resolves, which is a relationship
 // that is not found, as before.
 func (s *Service) externalRelationship(ctx context.Context, relationshipID string) *Relationship {
+	rel, err := scanExternalRelationship(s.driver.DB().QueryRowContext(ctx,
+		externalRelationshipSelect+s.driver.Dialect().Placeholder(1), relationshipID))
+	if err != nil {
+		// Not found, or a catalog without the external columns, which has
+		// no external occurrence.
+		return nil
+	}
+	return rel
+}
+
+// externalRelationships resolves every relationship with a side on an
+// external occurrence, each as externalRelationship does, criteria
+// included: what Relationships leaves out.
+func (s *Service) externalRelationships(ctx context.Context) ([]*Relationship, error) {
+	rows, err := s.driver.DB().QueryContext(ctx, externalRelationshipFrom+`
+	WHERE lo.base_table_id IS NULL OR ro.base_table_id IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading the relationships to other solutions: %w", err)
+	}
+	defer rows.Close()
+	var out []*Relationship
+	for rows.Next() {
+		rel, err := scanExternalRelationship(rows)
+		if err != nil {
+			return nil, err
+		}
+		if rel != nil {
+			out = append(out, rel)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachPredicates(ctx, out, ""); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// scanExternalRelationship reads a row of externalRelationshipFrom. It is
+// nil when no side is external, or when a local side no longer resolves.
+func scanExternalRelationship(row interface{ Scan(...any) error }) (*Relationship, error) {
 	var rel Relationship
 	var sortRelated, leftBase, rightBase sql.NullString
 	var leftRef, leftDB, rightRef, rightDB string
-	err := s.driver.DB().QueryRowContext(ctx, externalRelationshipSelect+s.driver.Dialect().Placeholder(1), relationshipID).Scan(
+	err := row.Scan(
 		&rel.ID, &rel.Name, &rel.Operator, &rel.AllowCreation, &rel.CascadeDelete, &sortRelated,
 		&rel.Left.OccurrenceID, &rel.Left.OccurrenceName, &leftBase, &rel.Left.TableName, &rel.Left.Column, &leftRef, &leftDB,
 		&rel.Right.OccurrenceID, &rel.Right.OccurrenceName, &rightBase, &rel.Right.TableName, &rel.Right.Column, &rightRef, &rightDB,
 	)
 	if err != nil {
-		// Not found, or a catalog without the external columns, which has
-		// no external occurrence.
-		return nil
+		return nil, err
 	}
 	rel.SortRelated = sortRelated.String
 	external := false
@@ -363,7 +405,7 @@ func (s *Service) externalRelationship(ctx context.Context, relationshipID strin
 	}{{&rel.Left, leftBase, leftRef, leftDB}, {&rel.Right, rightBase, rightRef, rightDB}} {
 		if end.base.Valid {
 			if end.side.TableName == "" || end.side.Column == "" {
-				return nil
+				return nil, nil
 			}
 			continue
 		}
@@ -373,9 +415,9 @@ func (s *Service) externalRelationship(ctx context.Context, relationshipID strin
 		}
 	}
 	if !external {
-		return nil
+		return nil, nil
 	}
-	return &rel
+	return &rel, nil
 }
 
 // External is the first side of the relationship that is an external

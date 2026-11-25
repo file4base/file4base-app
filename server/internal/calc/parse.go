@@ -1,6 +1,7 @@
 package calc
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -59,6 +60,124 @@ func (e *Expr) RelatedFields() []Reference {
 		return out[i].Field < out[j].Field
 	})
 	return out
+}
+
+// RelatedUse is how a formula reads a related field.
+type RelatedUse int
+
+const (
+	// UseFirst reads the first related record: Occurrence::Field.
+	UseFirst RelatedUse = iota
+	// UseTotals reads an aggregate of every related record that its totals
+	// answer: Sum, Count, Average, Min or Max of one related field.
+	UseTotals
+	// UseAll reads every related record: List.
+	UseAll
+	// UseLast reads the last related record whose field holds a value: Last.
+	UseLast
+	// UseNth reads the Nth related record: GetNthRecord ( Field ; N ), N
+	// being 0 when it is not a number written in the formula.
+	UseNth
+)
+
+// RelatedRead is one way a formula reads a Table::Field reference.
+type RelatedRead struct {
+	Reference
+	Use RelatedUse
+	// Function is the aggregate a UseTotals read is for, in upper case.
+	Function string
+	// N is the record a UseNth read is for, 0 when known only once computed.
+	N int
+}
+
+// RelatedReads lists how the formula reads each Table::Field reference, so
+// what it reads can be fetched ahead, no further than it needs.
+func (e *Expr) RelatedReads() []RelatedRead {
+	seen := map[RelatedRead]struct{}{}
+	add := func(f fieldNode, use RelatedUse, function string, n int) {
+		seen[RelatedRead{Reference: Reference{Table: f.table, Field: f.name, Missing: f.missing},
+			Use: use, Function: function, N: n}] = struct{}{}
+	}
+	var rec func(n node)
+	rec = func(n node) {
+		if n == nil {
+			return
+		}
+		switch t := n.(type) {
+		case fieldNode:
+			if t.table != "" {
+				add(t, UseFirst, "", 0)
+			}
+		case callNode:
+			if use, ok := wholeUse(t); ok {
+				f := t.args[0].(fieldNode)
+				function, n := "", 0
+				switch use {
+				case UseTotals:
+					function = t.name
+				case UseNth:
+					if num, ok := t.args[1].(numberNode); ok && num.value.IsInteger() && num.value.IsPositive() &&
+						num.value.LessThanOrEqual(decimal.NewFromInt(math.MaxInt32)) {
+						n = int(num.value.IntPart())
+					}
+				}
+				add(f, use, function, n)
+				for _, a := range t.args[1:] {
+					rec(a)
+				}
+				return
+			}
+		}
+		for _, child := range children(n) {
+			rec(child)
+		}
+	}
+	rec(e.root)
+	out := make([]RelatedRead, 0, len(seen))
+	for r := range seen {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Table != b.Table {
+			return a.Table < b.Table
+		}
+		if a.Field != b.Field {
+			return a.Field < b.Field
+		}
+		if a.Use != b.Use {
+			return a.Use < b.Use
+		}
+		if a.Function != b.Function {
+			return a.Function < b.Function
+		}
+		return a.N < b.N
+	})
+	return out
+}
+
+// wholeUse is how a call reads its first argument when that is a related
+// field it reads across the related records, as aggregateArgs, Last and
+// GetNthRecord do.
+func wholeUse(c callNode) (RelatedUse, bool) {
+	if len(c.args) == 0 {
+		return 0, false
+	}
+	f, ok := c.args[0].(fieldNode)
+	if !ok || f.table == "" || f.repetition != nil {
+		return 0, false
+	}
+	switch {
+	case len(c.args) == 1 && (c.name == "SUM" || c.name == "COUNT" || c.name == "AVERAGE" || c.name == "MIN" || c.name == "MAX"):
+		return UseTotals, true
+	case len(c.args) == 1 && c.name == "LIST":
+		return UseAll, true
+	case len(c.args) == 1 && c.name == "LAST":
+		return UseLast, true
+	case len(c.args) == 2 && c.name == "GETNTHRECORD":
+		return UseNth, true
+	}
+	return 0, false
 }
 
 // Functions lists the built-in and custom functions the formula calls, and
@@ -125,40 +244,46 @@ func (e *Expr) walk(visit func(node)) {
 			return
 		}
 		visit(n)
-		switch t := n.(type) {
-		case unaryNode:
-			rec(t.operand)
-		case binaryNode:
-			rec(t.left)
-			rec(t.right)
-		case callNode:
-			for _, a := range t.args {
-				rec(a)
-			}
-		case letNode:
-			for _, b := range t.bindings {
-				rec(b.value)
-			}
-			rec(t.body)
-		case fieldNode:
-			rec(t.repetition)
-		case variableNode:
-			rec(t.repetition)
-		case pairNode:
-			rec(t.search)
-			rec(t.replace)
-		case whileNode:
-			for _, b := range t.initial {
-				rec(b.value)
-			}
-			rec(t.condition)
-			for _, b := range t.logic {
-				rec(b.value)
-			}
-			rec(t.result)
+		for _, child := range children(n) {
+			rec(child)
 		}
 	}
 	rec(e.root)
+}
+
+// children are the nodes a node is made of.
+func children(n node) []node {
+	switch t := n.(type) {
+	case unaryNode:
+		return []node{t.operand}
+	case binaryNode:
+		return []node{t.left, t.right}
+	case callNode:
+		return t.args
+	case letNode:
+		out := make([]node, 0, len(t.bindings)+1)
+		for _, b := range t.bindings {
+			out = append(out, b.value)
+		}
+		return append(out, t.body)
+	case fieldNode:
+		return []node{t.repetition}
+	case variableNode:
+		return []node{t.repetition}
+	case pairNode:
+		return []node{t.search, t.replace}
+	case whileNode:
+		out := make([]node, 0, len(t.initial)+len(t.logic)+2)
+		for _, b := range t.initial {
+			out = append(out, b.value)
+		}
+		out = append(out, t.condition)
+		for _, b := range t.logic {
+			out = append(out, b.value)
+		}
+		return append(out, t.result)
+	}
+	return nil
 }
 
 type node interface{ pos() int }

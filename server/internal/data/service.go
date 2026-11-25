@@ -770,6 +770,15 @@ func criterionClause(
 	}
 }
 
+// findClauses is what a find adds to a statement on the table searched: the
+// common table expressions it reads, to put before the statement, the WHERE
+// clause that defines the found set, and the values their placeholders take,
+// in the order they appear.
+type findClauses struct {
+	with, where string
+	values      []interface{}
+}
+
 // buildFindClauses turns the find requests into the WHERE clause that defines
 // the found set, and the values its placeholders take.
 //
@@ -783,67 +792,84 @@ func criterionClause(
 func buildFindClauses(
 	dialect dbal.Dialect, fields fieldSet, tableName string, requests []FindRequest,
 	related map[string]relatedFindTarget,
-) (string, []interface{}, error) {
+) (findClauses, error) {
 	// Requests that match are unioned; requests marked Omit subtract from what
 	// they found. (OR-ing an omitting request in, as this used to do, made
 	// "2011 except March" mean "2011 OR not March", which is almost every
 	// record.)
 	var includeClauses, omitClauses []string
-	var values []interface{}
+	var out findClauses
 	idx := 1
 
-	for _, req := range requests {
-		if len(req.Criteria) == 0 {
-			continue
-		}
-		var andClauses []string
-		for _, crit := range req.Criteria {
-			if crit.FieldName == "" {
+	// What other solutions found comes first, bound once however many
+	// requests read it.
+	out.with = externalKeySets(dialect, fields, requests, related, &idx, &out.values)
+
+	// The included requests are written before the omitted ones, whatever
+	// their order, and their values are taken in that order: a placeholder
+	// that is not numbered (MariaDB) takes the next value.
+	for _, omit := range []bool{false, true} {
+		for _, req := range requests {
+			if req.Omit != omit || len(req.Criteria) == 0 {
 				continue
 			}
-
-			// If operator is empty or not parsed, parse it with ParseFile4BaseFindCriteria
-			if (crit.Operator == "" || crit.Operator == "LIKE") && crit.Value != nil {
-				strVal := strings.TrimSpace(fmt.Sprintf("%v", crit.Value))
-				// If user entered explicit operator or wildcard inside string
-				if strings.HasPrefix(strVal, "=") || strings.HasPrefix(strVal, "!") ||
-					strings.HasPrefix(strVal, ">") || strings.HasPrefix(strVal, "<") ||
-					strings.Contains(strVal, "...") || strings.Contains(strVal, "*") ||
-					strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
-					strings.Contains(strVal, "//") {
-					parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
-					parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
-					crit = parsed
+			var andClauses []string
+			for _, crit := range req.Criteria {
+				if crit.FieldName == "" {
+					continue
 				}
-			}
 
-			if crit.isRelated() {
-				clause, err := relatedCriterionClause(dialect, tableName, crit, related, &idx, &values)
-				if err != nil {
-					return "", nil, err
+				crit = normalizeCriterion(crit)
+				if crit.isRelated() {
+					clause, err := relatedCriterionClause(dialect, tableName, crit, related, &idx, &out.values)
+					if err != nil {
+						return findClauses{}, err
+					}
+					andClauses = append(andClauses, clause)
+					continue
 				}
-				andClauses = append(andClauses, clause)
-				continue
+
+				if err := checkField(fields, tableName, crit.FieldName); err != nil {
+					return findClauses{}, err
+				}
+				andClauses = append(andClauses, criterionClause(
+					dialect, dialect.QuoteIdentifier(crit.FieldName), crit, &idx, &out.values))
 			}
 
-			if err := checkField(fields, tableName, crit.FieldName); err != nil {
-				return "", nil, err
-			}
-			andClauses = append(andClauses, criterionClause(
-				dialect, dialect.QuoteIdentifier(crit.FieldName), crit, &idx, &values))
-		}
-
-		if len(andClauses) > 0 {
-			joined := fmt.Sprintf("(%s)", strings.Join(andClauses, " AND "))
-			if req.Omit {
-				omitClauses = append(omitClauses, joined)
-			} else {
-				includeClauses = append(includeClauses, joined)
+			if len(andClauses) > 0 {
+				joined := fmt.Sprintf("(%s)", strings.Join(andClauses, " AND "))
+				if req.Omit {
+					omitClauses = append(omitClauses, joined)
+				} else {
+					includeClauses = append(includeClauses, joined)
+				}
 			}
 		}
 	}
 
-	return buildFindWhere(includeClauses, omitClauses), values, nil
+	out.where = buildFindWhere(includeClauses, omitClauses)
+	return out, nil
+}
+
+// normalizeCriterion reads a criterion whose operator is not given, or that
+// is a LIKE typed with an operator or wildcard in its value, as Find mode
+// reads what is typed in a field (ParseFile4BaseFindCriteria).
+func normalizeCriterion(crit FindCriterion) FindCriterion {
+	if (crit.Operator != "" && crit.Operator != "LIKE") || crit.Value == nil {
+		return crit
+	}
+	strVal := strings.TrimSpace(fmt.Sprintf("%v", crit.Value))
+	// If user entered explicit operator or wildcard inside string
+	if strings.HasPrefix(strVal, "=") || strings.HasPrefix(strVal, "!") ||
+		strings.HasPrefix(strVal, ">") || strings.HasPrefix(strVal, "<") ||
+		strings.Contains(strVal, "...") || strings.Contains(strVal, "*") ||
+		strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
+		strings.Contains(strVal, "//") {
+		parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
+		parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
+		return parsed
+	}
+	return crit
 }
 
 // ExecuteFind performs a File4Base Find Mode multi-request query
@@ -868,7 +894,7 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	if err := s.refuseUnstoredCriteria(ctx, tableName, requests, related); err != nil {
 		return nil, err
 	}
-	whereClause, values, err := buildFindClauses(dialect, fields, tableName, requests, related)
+	find, err := buildFindClauses(dialect, fields, tableName, requests, related)
 	if err != nil {
 		return nil, err
 	}
@@ -886,17 +912,18 @@ func (s *Service) ExecuteFind(ctx context.Context, tableName string, requests []
 	}
 
 	sqlQuery := fmt.Sprintf(
-		"SELECT %s FROM %s %s %s LIMIT %d OFFSET %d",
+		"%sSELECT %s FROM %s %s %s LIMIT %d OFFSET %d",
+		find.with,
 		selectList(dialect, fields),
 		dialect.QuoteIdentifier(tableName),
-		whereClause,
+		find.where,
 		orderClause,
 		limit,
 		opts.Offset,
 	)
 
 	db := s.driver.DB()
-	rows, err := db.QueryContext(ctx, sqlQuery, values...)
+	rows, err := db.QueryContext(ctx, sqlQuery, find.values...)
 	if err != nil {
 		return nil, fmt.Errorf("find query failed: %w", err)
 	}

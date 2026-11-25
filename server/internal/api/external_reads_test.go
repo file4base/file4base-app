@@ -277,8 +277,7 @@ func TestAPI_ExternalReadsAsTheLinkedAccount(t *testing.T) {
 	})
 
 	// A read-only account in Peer reads there and writes nothing: every write
-	// is refused with what to do about it. A find through a related field of
-	// another solution is not done yet.
+	// is refused with what to do about it.
 	t.Run("read-only refuses writes", func(t *testing.T) {
 		var any []map[string]interface{}
 		rec := h.do(http.MethodGet, "/api/v1/occurrences/"+p.ext+"/records", token, nil, &any)
@@ -296,10 +295,6 @@ func TestAPI_ExternalReadsAsTheLinkedAccount(t *testing.T) {
 			assert.Contains(t, rec.Body.String(), `\"Peer\"`, c.method)
 			assert.Contains(t, rec.Body.String(), "ask an administrator", c.method)
 		}
-		rec = h.do(http.MethodPost, "/api/v1/data/orders/find", token, map[string]interface{}{
-			"requests": []map[string]interface{}{{"criteria": []map[string]string{{"field_name": "full_name", "operator": "=", "value": "Ada", "relationship_id": p.relationship}}}},
-		}, nil)
-		assertUnavailable(t, rec.Result(), p.peer, "missing")
 	})
 
 	t.Run("no access in the other solution", func(t *testing.T) {

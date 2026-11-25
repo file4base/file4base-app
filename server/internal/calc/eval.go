@@ -89,6 +89,33 @@ type Repeating interface {
 	MaxRepetitions(field string) int
 }
 
+// Bounded is a Context that reads related records no further than a formula
+// needs: the first record for Occurrence::Field, one record for Last and
+// GetNthRecord, and an aggregate's totals where the records are, without
+// reading them. Without it, every related record is read with Related.
+type Bounded interface {
+	// RelatedFirst is Related limited to the first related record.
+	RelatedFirst(table, field string) ([]any, error)
+	// RelatedNth is Related limited to the nth related record (n ≥ 1), or,
+	// for n < 0, to the last whose field holds a value: at most one value.
+	// ok is false when it cannot, and the values are then read with Related.
+	RelatedNth(table, field string, n int) (values []any, ok bool, err error)
+	// RelatedTotals totals field across every related record for function
+	// (SUM, COUNT, AVERAGE, MIN or MAX). ok is false when it cannot, and the
+	// values are then read with Related.
+	RelatedTotals(table, field, function string) (totals RelatedTotals, ok bool, err error)
+}
+
+// RelatedTotals is what an aggregate of a related field needs of the related
+// records: how many there are, how many hold a value in the field, and the
+// sum, least and greatest of those values, as Related gives a value.
+type RelatedTotals struct {
+	Records  int64
+	Values   int64
+	Sum      any
+	Min, Max any
+}
+
 // RecordContext evaluates against one record, with no related records, no
 // variables and no session. It is what calculation fields have on the server.
 //
@@ -500,7 +527,11 @@ func (ev *evaluator) readRepetition(t fieldNode, rep int) (value, error) {
 			// related records.
 			name += "[" + strconv.Itoa(rep) + "]"
 		}
-		values, err := ev.ctx.Related(t.table, name)
+		read := ev.ctx.Related
+		if b, ok := ev.ctx.(Bounded); ok {
+			read = b.RelatedFirst
+		}
+		values, err := read(t.table, name)
 		if err != nil {
 			return empty, ev.contextError(t.at, t.table+"::"+name, err)
 		}
@@ -545,6 +576,41 @@ func (ev *evaluator) repetitionValues(t fieldNode) ([]value, bool, error) {
 		out = append(out, v)
 	}
 	return out, true, nil
+}
+
+// relatedTotals totals the related field an aggregate of a single argument
+// reads, where its records are, when the Context can.
+func (ev *evaluator) relatedTotals(c callNode) (RelatedTotals, bool, error) {
+	b, ok := ev.ctx.(Bounded)
+	if !ok || len(c.args) != 1 {
+		return RelatedTotals{}, false, nil
+	}
+	f, ok := c.args[0].(fieldNode)
+	if !ok || f.table == "" || f.repetition != nil || f.missing {
+		return RelatedTotals{}, false, nil
+	}
+	totals, ok, err := b.RelatedTotals(f.table, f.name, c.name)
+	if err != nil {
+		return totals, false, ev.contextError(f.at, f.table+"::"+f.name, err)
+	}
+	return totals, ok, nil
+}
+
+// relatedNth reads the one related value Last (n < 0) or GetNthRecord (n)
+// gives, when the Context can.
+func (ev *evaluator) relatedNth(f fieldNode, n int) (value, bool, error) {
+	b, ok := ev.ctx.(Bounded)
+	if !ok || f.table == "" || f.missing {
+		return empty, false, nil
+	}
+	values, ok, err := b.RelatedNth(f.table, f.name, n)
+	if err != nil {
+		return empty, false, ev.contextError(f.at, f.table+"::"+f.name, err)
+	}
+	if !ok || len(values) == 0 {
+		return empty, ok, nil
+	}
+	return fromStored(values[0]), true, nil
 }
 
 // relatedValues reads every value of a reference, for an aggregate.

@@ -63,9 +63,31 @@ without its own record being written.
 - Only what is read is computed: a related field, and the unstored fields it
   reads. Each record's unstored field is computed once per request; chains
   are followed up to 32 levels.
-- Each request loads the relationship graph once and queries each
-  relationship once per match value. Related reads of a list are not yet
-  batched into one query per page.
+- Each request loads the relationship graph once. Before the records of a
+  page are computed, what their formulas read is read ahead for all of them:
+  each relationship of each path in one statement for the whole page (a
+  branch per match value, in chunks of 500), then, the same way, what the
+  calculations of the records reached read in their turn. A page therefore
+  takes a fixed number of statements, however many records it shows.
+- A formula reads no more related records than it needs, and only the
+  fields it uses: `Occurrence::Field` reads the first related record in the
+  relationship's sort; `Count`, `Sum`, `Average`, `Min` and `Max` of a stored
+  field of the records one relationship away are totalled by the database,
+  without carrying the records back; `Last` and `GetNthRecord` read the one
+  record they give, the last holding a value or the nth, when the
+  relationship sorts its records (then by id, so that records sorting alike
+  keep one order) and they are one relationship away; `List` and the other
+  reads of every value take at most 10,000 related records of one record. A
+  formula reading more fails (the field is empty) rather than loading them
+  all. A relationship that does not sort has no record order to count from,
+  so its `Last` and `GetNthRecord` read every record, within that limit. A
+  `GetNthRecord` whose number is computed for each record reads every
+  record ahead for the page, or, for a record with more related records
+  than that, its one record in a statement of its own.
+- An occurrence of **another solution's table** (#107) is read the same way,
+  in that solution, as the account the session holds there; that solution's
+  own unstored calculations are computed there. See
+  [relationships_and_portals.md](relationships_and_portals.md#occurrences-of-another-solutions-table).
 
 Saving checks that a **stored** calculation reads no related field ("make it
 unstored") and no unstored calculation, since what it stores would go stale;
@@ -120,7 +142,8 @@ A formula sees a container field as the file it holds, never its bytes:
 
 A calculation whose result type is **Container** answers a container. Its
 column stores where the file is (`{"table", "record", "field"}`, the field
-being `field[n]` for a repetition), not a copy of it, stored or unstored; a
+being `field[n]` for a repetition, and `database` for a record of another
+solution's table, read there as the session's account), not a copy of it, stored or unstored; a
 read returns the file the reference names, as base64 with its metadata under
 `__container_meta`, exactly as a container field reads, and an export writes
 it the same way. The reference follows the field: a record whose file changes

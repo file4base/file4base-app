@@ -1020,6 +1020,9 @@ type relatedFindTarget struct {
 	Terms        []matchTerm // the related table's field op the searched table's
 	Fields       fieldSet
 	Relationship string // name, for error messages
+	// External is set when the related table is another solution's: each
+	// criterion on it is run there first (see externalFind).
+	External *externalFind
 }
 
 // resolveFindRelations resolves every relationship the criteria reach
@@ -1042,8 +1045,11 @@ func (s *Service) resolveFindRelations(
 			if err != nil {
 				return nil, err
 			}
-			if external := rel.External(); external != nil {
-				return nil, external.Unsupported("a find on a field of a related record")
+			if rel.External() != nil {
+				if targets[key], err = s.externalFindTarget(ctx, tableName, rel, crit); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			source, target, err := rel.Sides(tableName, strings.TrimSpace(crit.Occurrence))
 			if err != nil {
@@ -1064,6 +1070,9 @@ func (s *Service) resolveFindRelations(
 				Relationship: rel.Name,
 			}
 		}
+	}
+	if err := findInOtherSolutions(ctx, requests, targets); err != nil {
+		return nil, err
 	}
 	return targets, nil
 }
@@ -1092,6 +1101,9 @@ func relatedCriterionClause(
 	target, ok := targets[relatedFindKey(crit)]
 	if !ok {
 		return "", fmt.Errorf("%w: %s", ErrRelationshipNotFound, crit.RelationshipID)
+	}
+	if target.External != nil {
+		return target.External.clause(dialect, tableName, target, crit, idx, values)
 	}
 	if err := checkField(target.Fields, target.TableName, crit.FieldName); err != nil {
 		return "", err
