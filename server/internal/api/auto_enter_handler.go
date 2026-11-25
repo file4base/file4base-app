@@ -109,6 +109,13 @@ type RelookupBody struct {
 	RecordIDs []string `json:"record_ids"`
 }
 
+// RelookupResult is what a relookup changed: how many records, and each of
+// them as it is now, so a client updates its found set in place.
+type RelookupResult struct {
+	Updated int                      `json:"updated"`
+	Records []map[string]interface{} `json:"records"`
+}
+
 // RelookupRows copies again the looked-up values of the found set:
 // FileMaker's Relookup Field Contents. It needs the edit privilege.
 func (h *DataHandler) RelookupRows(w http.ResponseWriter, r *http.Request) {
@@ -128,11 +135,11 @@ func (h *DataHandler) RelookupRows(w http.ResponseWriter, r *http.Request) {
 			"a relookup takes at most 10000 records at a time")
 		return
 	}
-	updated, err := svc.Relookup(r.Context(), table, body.Field, body.RecordIDs)
+	changed, err := svc.Relookup(r.Context(), table, body.Field, body.RecordIDs)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Relookup Error", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]int{"updated": updated})
+	_ = json.NewEncoder(w).Encode(RelookupResult{Updated: len(changed), Records: changed})
 }

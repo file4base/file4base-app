@@ -316,3 +316,73 @@ func TestAutoEnterMigration_RecipeHTMLReport(t *testing.T) {
 		t.Fatalf("the auto-enter calculation reading a related occurrence must be reported\n%s", dumpReport(res))
 	}
 }
+
+// A lookup may copy from an occurrence a path of several relationships leads
+// to, starting from an occurrence of the field's table other than the one
+// named like it: Visits (an unrelated anchor) and Visit Entry, related to
+// Visit Sites, related to Site Regions.
+const multiHopLookupXML = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="1" name="Visits"/><BaseTable id="2" name="Sites"/><BaseTable id="3" name="Regions"/></BaseTableCatalog>
+ <FieldsForTables>
+ <FieldCatalog><BaseTableReference id="1" name="Visits"/><ObjectList>
+  <Field id="1" name="Site Code" datatype="Text" fieldtype="Normal"/>
+  <Field id="2" name="Region Name" datatype="Text" fieldtype="Normal"><AutoEnter type="Looked_up"><Looked_up enable="True"><TableOccurrenceReference id="2" name="Visit Entry"/><FieldReference id="2" name="Name"><TableOccurrenceReference id="4" name="Site Regions"/></FieldReference></Looked_up></AutoEnter></Field>
+  <Field id="3" name="Region Unnamed" datatype="Text" fieldtype="Normal"><AutoEnter type="Looked_up"><Looked_up enable="True"><FieldReference id="2" name="Name"><TableOccurrenceReference id="4" name="Site Regions"/></FieldReference></Looked_up></AutoEnter></Field>
+  <Field id="4" name="Region Anchor" datatype="Text" fieldtype="Normal"><AutoEnter type="Looked_up"><Looked_up enable="True"><TableOccurrenceReference id="1" name="Visits"/><FieldReference id="2" name="Name"><TableOccurrenceReference id="4" name="Site Regions"/></FieldReference></Looked_up></AutoEnter></Field>
+ </ObjectList></FieldCatalog>
+ <FieldCatalog><BaseTableReference id="2" name="Sites"/><ObjectList>
+  <Field id="1" name="Code" datatype="Text" fieldtype="Normal"/>
+  <Field id="2" name="Region Code" datatype="Text" fieldtype="Normal"/>
+ </ObjectList></FieldCatalog>
+ <FieldCatalog><BaseTableReference id="3" name="Regions"/><ObjectList>
+  <Field id="1" name="Code" datatype="Text" fieldtype="Normal"/>
+  <Field id="2" name="Name" datatype="Text" fieldtype="Normal"/>
+ </ObjectList></FieldCatalog>
+ </FieldsForTables>
+ <TableOccurrenceCatalog>
+  <TableOccurrence id="1" name="Visits"><BaseTableSourceReference><BaseTableReference id="1" name="Visits"/></BaseTableSourceReference></TableOccurrence>
+  <TableOccurrence id="2" name="Visit Entry"><BaseTableSourceReference><BaseTableReference id="1" name="Visits"/></BaseTableSourceReference></TableOccurrence>
+  <TableOccurrence id="3" name="Visit Sites"><BaseTableSourceReference><BaseTableReference id="2" name="Sites"/></BaseTableSourceReference></TableOccurrence>
+  <TableOccurrence id="4" name="Site Regions"><BaseTableSourceReference><BaseTableReference id="3" name="Regions"/></BaseTableSourceReference></TableOccurrence>
+ </TableOccurrenceCatalog>
+ <RelationshipCatalog>
+ <Relationship id="1">
+  <LeftTable cascadeCreate="False" cascadeDelete="False"><TableOccurrenceReference id="2" name="Visit Entry"/></LeftTable>
+  <RightTable cascadeCreate="False" cascadeDelete="False"><TableOccurrenceReference id="3" name="Visit Sites"/></RightTable>
+  <JoinPredicateList><JoinPredicate type="Equal">
+   <LeftField><FieldReference id="1" name="Site Code"><TableOccurrenceReference id="2" name="Visit Entry"/></FieldReference></LeftField>
+   <RightField><FieldReference id="1" name="Code"><TableOccurrenceReference id="3" name="Visit Sites"/></FieldReference></RightField>
+  </JoinPredicate></JoinPredicateList>
+ </Relationship>
+ <Relationship id="2">
+  <LeftTable cascadeCreate="False" cascadeDelete="False"><TableOccurrenceReference id="3" name="Visit Sites"/></LeftTable>
+  <RightTable cascadeCreate="False" cascadeDelete="False"><TableOccurrenceReference id="4" name="Site Regions"/></RightTable>
+  <JoinPredicateList><JoinPredicate type="Equal">
+   <LeftField><FieldReference id="2" name="Region Code"><TableOccurrenceReference id="3" name="Visit Sites"/></FieldReference></LeftField>
+   <RightField><FieldReference id="1" name="Code"><TableOccurrenceReference id="4" name="Site Regions"/></FieldReference></RightField>
+  </JoinPredicate></JoinPredicateList>
+ </Relationship>
+ </RelationshipCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+
+func TestAutoEnterMigration_MultiHopLookup(t *testing.T) {
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: multiHopLookupXML})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert: %v", err)
+	}
+	report := dumpReport(res)
+	o, _ := autoEnterOf(t, res, "visits", "Region Name")
+	if !o.LookedUpEnabled || o.LookedUpOccurrence != "Site Regions" || o.LookedUpContext != "Visit Entry" {
+		t.Fatalf("a lookup two relationships away, from its starting occurrence, is kept: %+v\n%s", o, report)
+	}
+	o, _ = autoEnterOf(t, res, "visits", "Region Unnamed")
+	if !o.LookedUpEnabled || o.LookedUpContext != "Visit Entry" {
+		t.Fatalf("without a starting occurrence, one of the table's that leads there is taken: %+v\n%s", o, report)
+	}
+	if o, _ = autoEnterOf(t, res, "visits", "Region Anchor"); o.LookedUpEnabled {
+		t.Fatalf("a lookup starting from an occurrence no path leaves is dropped: %+v", o)
+	}
+	if !reportHas(res, CategoryUnsupported, "visits.Region Anchor", "no relationship leads to Site Regions from Visits", "through other occurrences") {
+		t.Fatalf("the dropped lookup names where it starts:\n%s", report)
+	}
+}

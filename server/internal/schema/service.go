@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/autoenter"
+	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
@@ -73,15 +74,26 @@ func ValidateFieldOptions(options *string) error {
 }
 
 // ValidateFieldOptionsFor is ValidateFieldOptions for a field of fieldType,
-// whose auto-enter options must also be ones such a field can hold.
-func ValidateFieldOptionsFor(fieldType string, options *string) error {
+// whose auto-enter options must also be ones such a field can hold. Its
+// auto-enter calculation may call the custom functions of functions.
+func ValidateFieldOptionsFor(fieldType string, options *string, functions *calc.Library) error {
 	if err := ValidateFieldOptions(options); err != nil {
 		return err
 	}
-	if err := autoenter.Validate(fieldType, options); err != nil {
+	if err := autoenter.ValidateWith(fieldType, options, functions); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
 	}
 	return nil
+}
+
+// autoEnterLibrary is the custom functions an auto-enter calculation in
+// options may call; options without one need none, and are read without
+// reading them.
+func (s *Service) autoEnterLibrary(ctx context.Context, options *string) (*calc.Library, error) {
+	if o, err := autoenter.Parse(options); err != nil || !o.CalculatedEnabled {
+		return nil, nil
+	}
+	return s.library(ctx)
 }
 
 // writeFieldOptions stores a column's options. Options without serial_next
@@ -731,7 +743,11 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	if err := dbal.CheckIdentifier("column", name); err != nil {
 		return nil, err
 	}
-	if err := ValidateFieldOptionsFor(string(col.FieldType), col.DefaultValue); err != nil {
+	functions, err := s.autoEnterLibrary(ctx, col.DefaultValue)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateFieldOptionsFor(string(col.FieldType), col.DefaultValue, functions); err != nil {
 		return nil, err
 	}
 	rules, err := validation.Parse(col.ValidationRules)
@@ -1029,7 +1045,11 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 		if err != nil {
 			return nil, err
 		}
-		if err := ValidateFieldOptionsFor(fieldType, opts.DefaultValue); err != nil {
+		functions, err := s.autoEnterLibrary(ctx, opts.DefaultValue)
+		if err != nil {
+			return nil, err
+		}
+		if err := ValidateFieldOptionsFor(fieldType, opts.DefaultValue, functions); err != nil {
 			return nil, err
 		}
 	}

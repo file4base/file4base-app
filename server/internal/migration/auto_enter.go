@@ -183,12 +183,17 @@ func readAutoEnter(an *xmlNode) autoenter.Options {
 				o.LookedUpOccurrence = firstAttr(ref, "table", "Table")
 			}
 		}
+		// The occurrence the lookup starts from (FileMaker's "Starting with
+		// table"): an occurrence named beside the field it copies. One that
+		// is not of the field's table is not taken (contextOf).
 		if ctx := findFirstChild(lookup, "Context", "context"); ctx != nil {
 			if occ := findFirstChild(ctx, "TableOccurrenceReference"); occ != nil {
 				o.LookedUpContext = firstAttr(occ, "name", "Name")
 			} else {
 				o.LookedUpContext = firstAttr(ctx, "name", "table")
 			}
+		} else if occ := findFirstChild(lookup, "TableOccurrenceReference", "StartingTable"); occ != nil {
+			o.LookedUpContext = firstAttr(occ, "name", "Name")
 		}
 		o.LookedUpDontCopyIfEmpty = isTrueText(firstAttr(lookup, "dontCopyIfEmpty", "dontCopyContentsIfEmpty"))
 		o.LookedUpNoMatch = autoenter.NoMatchDoNotCopy
@@ -378,6 +383,19 @@ func bindFieldAutoEnter(o *autoenter.Options, fieldType, tableName, target strin
 		occ, known := b.occByName[strings.ToLower(o.LookedUpOccurrence)]
 		contextName := o.LookedUpContext
 		from, hasContext := b.contextOf(tableName, contextName)
+		named := hasContext && contextName != "" && strings.EqualFold(from.name, contextName)
+		if known && !named && (!hasContext || !b.reachable(from.id, occ.id)) {
+			// The source names no occurrence of the table to start from, or
+			// one that was not migrated: start from one of the table's
+			// occurrences a path of relationships leads from, as FileMaker
+			// starts from the one the lookup was defined on.
+			for _, candidate := range b.occByTable[tableName] {
+				if b.reachable(candidate.id, occ.id) {
+					from, hasContext, named = candidate, true, true
+					break
+				}
+			}
+		}
 		column := ""
 		switch {
 		case o.LookedUpOccurrence == "" || o.LookedUpField == "":
@@ -390,8 +408,12 @@ func bindFieldAutoEnter(o *autoenter.Options, fieldType, tableName, target strin
 			drop(what, "File4Base does not copy a container",
 				fmt.Sprintf("Copy the container into %s with a script", target))
 		case !hasContext || !b.reachable(from.id, occ.id):
-			drop(what, fmt.Sprintf("no relationship leads to %s from %s", occ.name, tableName),
-				fmt.Sprintf("Relate %s to %s, then set up its lookup in Manage Database", tableName, occ.name))
+			start := tableName
+			if hasContext {
+				start = from.name
+			}
+			drop(what, fmt.Sprintf("no relationship leads to %s from %s, directly or through other occurrences", occ.name, start),
+				fmt.Sprintf("Relate %s to %s, then set up its lookup in Manage Database", start, occ.name))
 		case occ.external:
 			column = externalFieldName(o.LookedUpField)
 		default:
@@ -407,7 +429,7 @@ func bindFieldAutoEnter(o *autoenter.Options, fieldType, tableName, target strin
 			o.LookedUpEnabled, o.LookedUpOccurrence, o.LookedUpField, o.LookedUpContext = false, "", "", ""
 		} else {
 			o.LookedUpOccurrence, o.LookedUpField, o.LookedUpContext = occ.name, column, ""
-			if strings.EqualFold(from.name, contextName) {
+			if named {
 				o.LookedUpContext = from.name
 			}
 			detail := fmt.Sprintf("looked-up value from %s::%s", occ.name, column)

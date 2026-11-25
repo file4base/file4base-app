@@ -221,8 +221,15 @@ func jsonScalarText(raw json.RawMessage) (string, error) {
 
 // Validate checks the options of a column of fieldType ("" when it is not
 // known): a stamp, serial or formula that could never be entered is refused
-// when it is saved rather than failing every new record.
+// when it is saved rather than failing every new record. A formula calling a
+// custom function is read with ValidateWith.
 func Validate(fieldType string, stored *string) error {
+	return ValidateWith(fieldType, stored, nil)
+}
+
+// ValidateWith is Validate, with the solution's custom functions the
+// auto-enter calculation may call.
+func ValidateWith(fieldType string, stored *string, functions *calc.Library) error {
 	o, err := Parse(stored)
 	if err != nil {
 		return err
@@ -267,7 +274,7 @@ func Validate(fieldType string, stored *string) error {
 		if strings.TrimSpace(o.CalculatedFormula) == "" {
 			return fmt.Errorf("%w: a calculated value needs a formula", ErrInvalid)
 		}
-		if _, err := calc.Parse(o.CalculatedFormula); err != nil {
+		if _, err := calc.ParseWith(o.CalculatedFormula, calc.Options{Library: functions}); err != nil {
 			return fmt.Errorf("%w: the auto-enter calculation does not read: %v", ErrInvalid, err)
 		}
 	}

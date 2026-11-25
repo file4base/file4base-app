@@ -89,3 +89,52 @@ func TestAPI_AutoEnterOptions(t *testing.T) {
 	rec = h.do(http.MethodPost, "/api/v1/data/tickets/relookup", token, map[string]interface{}{"field": "subject", "record_ids": []string{id}}, nil)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "no lookup starts from subject: %s", rec.Body.String())
 }
+
+// A record of another solution's table is duplicated, and its serial number
+// read and set, in that solution as the linked account: the serial is that
+// solution's, never copied.
+func TestAPI_AutoEnterOnExternalOccurrence(t *testing.T) {
+	p := newExternalPair(t, api.Options{}, "alice-secret")
+	h := p.h
+	token := p.signIn(t, p.orders, "alice-secret").Token
+	p.setPeerPrivileges(t, true, true, false)
+
+	var tables []schema.TableMetadata
+	rec := h.do(http.MethodGet, "/api/v1/schemas/tables", p.peerOwner, nil, &tables)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	customers := ""
+	for _, tbl := range tables {
+		if tbl.Name == "customers" {
+			customers = tbl.ID
+		}
+	}
+	require.NotEmpty(t, customers)
+	rec = h.do(http.MethodPost, "/api/v1/schemas/tables/"+customers+"/columns", p.peerOwner, map[string]interface{}{
+		"name": "ref", "display_name": "ref", "field_type": "TEXT", "is_nullable": true,
+		"default_value": `{"serial_enabled":true,"serial_next":"R-0040"}`,
+	}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	records := "/api/v1/occurrences/" + p.ext + "/records"
+	ada := fmt.Sprint(p.peerCustomers(t)["Ada"]["id"])
+	var copied map[string]interface{}
+	rec = h.do(http.MethodPost, records+"/"+ada+"/duplicate", token, nil, &copied)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, "Ada", copied["full_name"])
+	assert.Equal(t, "R-0040", copied["ref"], "the other solution enters its own serial")
+	assert.NotEqual(t, ada, fmt.Sprint(copied["id"]))
+
+	var serial api.NextSerialValue
+	rec = h.do(http.MethodGet, records+"/serials/ref", token, nil, &serial)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "R-0041", serial.NextValue)
+	rec = h.do(http.MethodPut, records+"/serials/ref", token, map[string]interface{}{"next_value": "R-0100"}, &serial)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodGet, "/api/v1/data/customers/serials/ref", p.peerOwner, nil, &serial)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "R-0100", serial.NextValue, "set in the other solution")
+
+	p.setPeerPrivileges(t, false, true, false)
+	rec = h.do(http.MethodPost, records+"/"+ada+"/duplicate", token, nil, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, "duplicating needs the other solution's create privilege: %s", rec.Body.String())
+}

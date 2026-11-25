@@ -149,6 +149,8 @@ func (s *Service) loadAutoEnter(ctx context.Context, tableName string, types fie
 
 	a := &autoEnter{s: s, table: tableName, types: types, prohibited: map[string]bool{}, global: map[string]bool{},
 		firstHop: map[string][]string{}}
+	var candidates []*autoField
+	formulas := false
 	for rows.Next() {
 		var id, name, declared, raw string
 		if err := rows.Scan(&id, &name, &declared, &raw); err != nil {
@@ -168,17 +170,38 @@ func (s *Service) loadAutoEnter(ctx context.Context, tableName string, types fie
 		if opts.ProhibitModification {
 			a.prohibited[name] = true
 		}
-		f := &autoField{id: id, name: name, fieldType: types[name], opts: opts}
-		if opts.CalculatedEnabled && strings.TrimSpace(opts.CalculatedFormula) != "" {
-			if expr, err := calc.Parse(opts.CalculatedFormula); err == nil {
+		candidates = append(candidates, &autoField{id: id, name: name, fieldType: types[name], opts: opts})
+		formulas = formulas || (opts.CalculatedEnabled && strings.TrimSpace(opts.CalculatedFormula) != "")
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+
+	// An auto-enter calculation may call the solution's custom functions,
+	// read only for a table that has one.
+	var functions *calc.Library
+	if formulas {
+		if functions, err = LoadLibrary(ctx, s.driver); err != nil {
+			return nil, err
+		}
+	}
+	for _, f := range candidates {
+		if f.opts.CalculatedEnabled && strings.TrimSpace(f.opts.CalculatedFormula) != "" {
+			if expr, err := calc.ParseWith(f.opts.CalculatedFormula, calc.Options{Library: functions}); err == nil {
 				f.expr, f.reads = expr, expr.Fields()
+				// Self is the field itself: a formula reading it reads the
+				// field, and is computed again when the field changes.
+				if slices.Contains(expr.GetSelectors(), "SELF") && !slices.Contains(f.reads, f.name) {
+					f.reads = append(f.reads, f.name)
+				}
 			}
 		}
 		if f.enters() {
 			a.fields = append(a.fields, f)
 		}
 	}
-	return a, rows.Err()
+	return a, nil
 }
 
 // active reports whether the table has an option a write has to apply.
@@ -570,14 +593,37 @@ func (a *autoEnter) evaluate(ctx context.Context, f *autoField, c *change, isNew
 	for name := range view {
 		typed[name] = typedValue(a.table, a.types, view, name, a.s.describeContainer(ctx))
 	}
-	env := &unstoredContext{RecordContext: calc.RecordContext{Record: typed, Repeats: a.types.repeating()},
-		reader: a.relatedReader(), ctx: ctx, table: a.table, occurrence: f.opts.CalculatedContext, row: view}
+	// Self is the field's value: what the record holds or what is typed in
+	// it, and nothing on a new record nobody typed into.
+	var self any
+	if !isNew || c.given[f.name] {
+		self = typed[f.name]
+	}
+	env := &autoEnterContext{unstoredContext: &unstoredContext{
+		RecordContext: calc.RecordContext{Record: typed, Repeats: a.types.repeating()},
+		reader:        a.relatedReader(), ctx: ctx, table: a.table, occurrence: f.opts.CalculatedContext, row: view,
+	}, self: self}
 	answer, err := calc.EvaluateWith(f.expr, env, resultTypeOf(f.fieldType))
 	if err != nil {
 		return nil, false, fmt.Errorf("%w: the auto-enter calculation of %q could not be computed: %s",
 			ErrInvalidValue, f.name, err.Error())
 	}
 	return answer, true, nil
+}
+
+// autoEnterContext is the context of an auto-enter calculation, which
+// knows Self: the field the value is entered into.
+type autoEnterContext struct {
+	*unstoredContext
+	self any
+}
+
+// Get answers Self with the field's value.
+func (c *autoEnterContext) Get(selector string) (any, error) {
+	if selector == "SELF" {
+		return c.self, nil
+	}
+	return c.unstoredContext.Get(selector)
 }
 
 // lookup copies a field's looked-up value from the first related record.
@@ -622,7 +668,8 @@ func (a *autoEnter) lookup(ctx context.Context, f *autoField, row map[string]int
 // nearest reads the looked-up field of the related record whose match field
 // holds the closest value below (lower) or above the record's: "Copy next
 // lower / higher value". It needs a path of one relationship in this
-// solution whose first criterion is =.
+// solution whose first criterion is =; the related record must meet every
+// other criterion of the relationship, as a related record does.
 func (a *autoEnter) nearest(ctx context.Context, f *autoField, row map[string]interface{}, lower bool) (interface{}, bool, error) {
 	o := f.opts
 	path, err := a.path(ctx, o.LookedUpContext, o.LookedUpOccurrence)
@@ -648,18 +695,25 @@ func (a *autoEnter) nearest(ctx context.Context, f *autoField, row map[string]in
 	if _, ok := types[o.LookedUpField]; !ok {
 		return nil, false, nil
 	}
-	if _, ok := types[terms[0].TargetColumn]; !ok {
-		return nil, false, nil
+	for _, t := range terms {
+		if _, ok := types[t.TargetColumn]; !ok && t.Op != cartesian {
+			return nil, false, nil
+		}
 	}
 	dialect := a.s.driver.Dialect()
 	op, order := ">", "ASC"
 	if lower {
 		op, order = "<", "DESC"
 	}
+	others, args := matchCondition(dialect, terms[1:], func(column string) interface{} { return row[column] }, 2)
+	if others == "" {
+		return nil, false, nil // another criterion relates nothing
+	}
 	match := dialect.QuoteIdentifier(terms[0].TargetColumn)
-	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s %s ORDER BY %s %s LIMIT 1",
-		columnSQL(dialect, o.LookedUpField), dialect.QuoteIdentifier(target), match, op, dialect.Placeholder(1), match, order)
-	rows, err := a.s.driver.DB().QueryContext(ctx, q, key)
+	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s AND %s %s %s AND %s ORDER BY %s %s LIMIT 1",
+		columnSQL(dialect, o.LookedUpField), dialect.QuoteIdentifier(target), notEmpty(dialect, match),
+		match, op, dialect.Placeholder(1), others, match, order)
+	rows, err := a.s.driver.DB().QueryContext(ctx, q, append([]interface{}{key}, args...)...)
 	if err != nil {
 		return nil, false, err
 	}
@@ -868,8 +922,16 @@ func nullable(v sql.NullString) *string {
 }
 
 // NextSerialValue is the value the next record gets in a serial number
-// field: FileMaker's GetNextSerialValue.
+// field: FileMaker's GetNextSerialValue. It is ErrNoAccess when the
+// account may not read the table.
 func (s *Service) NextSerialValue(ctx context.Context, tableName, field string) (string, error) {
+	return s.nextSerialValue(ctx, s.newRelatedReader(), tableName, field)
+}
+
+func (s *Service) nextSerialValue(ctx context.Context, reader *relatedReader, tableName, field string) (string, error) {
+	if err := reader.checkRead(ctx, tableName); err != nil {
+		return "", err
+	}
 	col, err := s.serialColumn(ctx, s.driver.DB(), tableName, field, false)
 	if err != nil {
 		return "", err
@@ -902,7 +964,13 @@ func (s *Service) SetNextSerialValue(ctx context.Context, tableName, field, next
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidValue, err)
 	}
-	if err := autoenter.Validate(col.fieldType, &updated); err != nil {
+	var functions *calc.Library
+	if opts.CalculatedEnabled {
+		if functions, err = LoadLibrary(ctx, s.driver); err != nil {
+			return "", err
+		}
+	}
+	if err := autoenter.ValidateWith(col.fieldType, &updated, functions); err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidValue, err)
 	}
 	dialect := s.driver.Dialect()
@@ -916,7 +984,8 @@ func (s *Service) SetNextSerialValue(ctx context.Context, tableName, field, next
 // NextSerialValue implements calc.Serials: GetNextSerialValue in the
 // formulas computed with related records. A field of another table is named
 // Table::Field, by its table or one of its occurrences. A field with no
-// serial number answers empty.
+// serial number answers empty; a table the account may not read is an
+// error, as reading its fields is.
 func (c *unstoredContext) NextSerialValue(field string) (string, error) {
 	table, name := c.table, field
 	if t, f, ok := strings.Cut(field, "::"); ok {
@@ -927,7 +996,7 @@ func (c *unstoredContext) NextSerialValue(field string) (string, error) {
 			}
 		}
 	}
-	next, err := c.reader.s.NextSerialValue(c.ctx, table, name)
+	next, err := c.reader.s.nextSerialValue(c.ctx, c.reader, table, name)
 	if errors.Is(err, ErrNotSerial) {
 		return "", nil
 	}
@@ -1008,22 +1077,22 @@ func (s *Service) DuplicateRow(ctx context.Context, tableName, id string) (map[s
 
 // Relookup copies again the looked-up values of records whose lookups start
 // from matchField, as FileMaker's Relookup Field Contents does for a found
-// set. The records it changes are modified. It returns how many it changed.
-func (s *Service) Relookup(ctx context.Context, tableName, matchField string, ids []string) (int, error) {
+// set. The records it changes are modified. It returns them, as they are now.
+func (s *Service) Relookup(ctx context.Context, tableName, matchField string, ids []string) ([]map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := checkField(fields, tableName, matchField); err != nil {
-		return 0, err
+		return nil, err
 	}
 	ae, err := s.loadAutoEnter(ctx, tableName, fields)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	calculations, err := s.tableCalculations(ctx, tableName)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	ae.withCalculations(calculations)
 	var lookups []*autoField
@@ -1034,9 +1103,9 @@ func (s *Service) Relookup(ctx context.Context, tableName, matchField string, id
 		}
 	}
 	if len(lookups) == 0 {
-		return 0, fmt.Errorf("%w: no looked-up value of %s starts from the match field %s", ErrInvalidValue, tableName, matchField)
+		return nil, fmt.Errorf("%w: no looked-up value of %s starts from the match field %s", ErrInvalidValue, tableName, matchField)
 	}
-	changed := 0
+	changed := []map[string]interface{}{}
 	for _, id := range ids {
 		row, err := s.GetRow(ctx, tableName, id)
 		if err != nil {
@@ -1056,10 +1125,11 @@ func (s *Service) Relookup(ctx context.Context, tableName, matchField string, id
 		if len(updates) == 0 {
 			continue
 		}
-		if _, err := s.updateRow(ctx, tableName, id, updates, autoMode{}); err != nil {
+		updated, err := s.updateRow(ctx, tableName, id, updates, autoMode{})
+		if err != nil {
 			return changed, err
 		}
-		changed++
+		changed = append(changed, updated)
 	}
 	return changed, nil
 }

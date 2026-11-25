@@ -31,6 +31,11 @@ type autoFixture struct {
 	ordersID    string
 	productsOcc string // the products occurrence name
 	columns     map[string]string
+	// productsID, relationship and codes (each table's code column, by
+	// table name) let a test add a criterion to the relationship.
+	productsID   string
+	relationship string
+	codes        map[string]string
 }
 
 type autoColumn struct {
@@ -72,7 +77,7 @@ func newAutoFixture(t *testing.T, ctx context.Context, driver dbal.DatabaseDrive
 		require.NoError(t, err)
 		keys[name] = col.ID
 	}
-	f.ordersID = ids[f.orders]
+	f.ordersID, f.productsID, f.codes = ids[f.orders], ids[f.products], keys
 	for _, c := range []autoColumn{
 		{name: "price", fieldType: dbal.FieldTypeNumber},
 		{name: "label", fieldType: dbal.FieldTypeText},
@@ -100,6 +105,7 @@ func newAutoFixture(t *testing.T, ctx context.Context, driver dbal.DatabaseDrive
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = f.schemaSvc.DeleteRelationship(context.Background(), rel.ID) })
+	f.relationship = rel.ID
 
 	for _, c := range columns {
 		meta := schema.ColumnMetadata{Name: c.name, DisplayName: c.name, FieldType: c.fieldType, IsNullable: true, DefaultValue: options(c.options)}
@@ -478,13 +484,189 @@ func TestAutoEnter_LookedUpValue(t *testing.T) {
 		_, err := f.dataSvc.UpdateRow(ctx, f.products, fmt.Sprint(productID(t, ctx, f, "F")), map[string]interface{}{"price": 65})
 		require.NoError(t, err)
 		assert.Equal(t, "60", number(f.get(t, ctx, row["id"])["plain"]))
-		n, err := f.dataSvc.Relookup(ctx, f.orders, "code", []string{fmt.Sprint(row["id"])})
+		changed, err := f.dataSvc.Relookup(ctx, f.orders, "code", []string{fmt.Sprint(row["id"])})
 		require.NoError(t, err)
-		assert.Equal(t, 1, n)
+		require.Len(t, changed, 1)
+		assert.Equal(t, "65", number(changed[0]["plain"]), "the record as it is now")
 		assert.Equal(t, "65", number(f.get(t, ctx, row["id"])["plain"]))
 		_, err = f.dataSvc.Relookup(ctx, f.orders, "label", []string{fmt.Sprint(row["id"])})
 		require.ErrorIs(t, err, data.ErrInvalidValue)
 	})
+}
+
+// Copy next lower / higher value takes the nearest record among those
+// meeting every other criterion of the relationship, not the nearest of the
+// whole table.
+func TestAutoEnter_NearestMeetsEveryCriterion(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	f := newAutoFixture(t, ctx, driver,
+		autoColumn{name: "region", fieldType: dbal.FieldTypeText},
+		autoColumn{name: "lower", fieldType: dbal.FieldTypeNumber},
+		autoColumn{name: "higher", fieldType: dbal.FieldTypeNumber},
+	)
+	region, err := f.schemaSvc.AddColumn(ctx, f.productsID, schema.ColumnMetadata{Name: "region", DisplayName: "region", FieldType: dbal.FieldTypeText, IsNullable: true})
+	require.NoError(t, err)
+	_, err = f.schemaSvc.UpdateRelationship(ctx, f.relationship, schema.UpdateRelationshipInput{Predicates: []schema.RelationshipPredicate{
+		{LeftColumnID: f.codes[f.orders], Operator: "=", RightColumnID: f.codes[f.products]},
+		{LeftColumnID: f.columns["region"], Operator: "=", RightColumnID: region.ID},
+	}})
+	require.NoError(t, err)
+	for field, option := range map[string]string{"lower": "copy_next_lower", "higher": "copy_next_higher"} {
+		f.setOptions(t, ctx, field, map[string]any{"looked_up_enabled": true, "looked_up_occurrence": f.productsOcc,
+			"looked_up_field": "price", "looked_up_no_match": option})
+	}
+	for _, p := range []struct {
+		code, region string
+		price        int
+	}{{"B", "north", 20}, {"C", "north", 30}, {"D", "south", 40}, {"F", "north", 60}} {
+		_, err := f.dataSvc.InsertRow(ctx, f.products, map[string]interface{}{"code": p.code, "region": p.region, "price": p.price})
+		require.NoError(t, err)
+	}
+
+	row := f.insert(t, ctx, map[string]interface{}{"code": "E", "region": "north"})
+	assert.Equal(t, "30", number(row["lower"]), "D is lower but in another region")
+	assert.Equal(t, "60", number(row["higher"]))
+	row = f.insert(t, ctx, map[string]interface{}{"code": "E", "region": "south"})
+	assert.Equal(t, "40", number(row["lower"]))
+	assert.Equal(t, "", text(row["higher"]), "no south record is higher")
+	row = f.insert(t, ctx, map[string]interface{}{"code": "E"})
+	assert.Equal(t, "", text(row["lower"]), "an empty match field relates nothing")
+}
+
+// A lookup copies from the first record a path of two relationships leads
+// to: orders -> products (code) -> regions (label = code).
+func TestAutoEnter_MultiHopLookup(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	f := newAutoFixture(t, ctx, driver, autoColumn{name: "region_name", fieldType: dbal.FieldTypeText})
+	regions := fmt.Sprintf("ae_regions_%d", uniqueTestStamp())
+	tbl, err := f.schemaSvc.CreateTable(ctx, regions, regions)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.schemaSvc.DeleteTable(context.Background(), tbl.ID) })
+	code, err := f.schemaSvc.AddColumn(ctx, tbl.ID, schema.ColumnMetadata{Name: "code", DisplayName: "code", FieldType: dbal.FieldTypeText, IsNullable: true})
+	require.NoError(t, err)
+	_, err = f.schemaSvc.AddColumn(ctx, tbl.ID, schema.ColumnMetadata{Name: "name", DisplayName: "name", FieldType: dbal.FieldTypeText, IsNullable: true})
+	require.NoError(t, err)
+	tables, err := f.schemaSvc.ListTables(ctx)
+	require.NoError(t, err)
+	label := ""
+	for _, table := range tables {
+		for _, c := range table.Columns {
+			if table.ID == f.productsID && c.Name == "label" {
+				label = c.ID
+			}
+		}
+	}
+	require.NotEmpty(t, label)
+	occurrences, err := f.schemaSvc.ListTableOccurrences(ctx)
+	require.NoError(t, err)
+	occ := map[string]string{}
+	regionsOcc := ""
+	for _, o := range occurrences {
+		occ[o.BaseTableID] = o.ID
+		if o.BaseTableID == tbl.ID {
+			regionsOcc = o.Name
+		}
+	}
+	rel, err := f.schemaSvc.CreateRelationship(ctx, schema.CreateRelationshipInput{
+		Name:             regions + "_rel",
+		LeftOccurrenceID: occ[f.productsID], LeftColumnID: label,
+		RightOccurrenceID: occ[tbl.ID], RightColumnID: code.ID, Operator: "=",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = f.schemaSvc.DeleteRelationship(context.Background(), rel.ID) })
+	f.setOptions(t, ctx, "region_name", map[string]any{"looked_up_enabled": true, "looked_up_occurrence": regionsOcc, "looked_up_field": "name"})
+
+	f.product(t, ctx, "P1", 10, "N")
+	_, err = f.dataSvc.InsertRow(ctx, regions, map[string]interface{}{"code": "N", "name": "North"})
+	require.NoError(t, err)
+	row := f.insert(t, ctx, map[string]interface{}{"code": "P1"})
+	assert.Equal(t, "North", text(row["region_name"]))
+	got := f.update(t, ctx, row["id"], map[string]interface{}{"code": "P9"})
+	assert.Equal(t, "North", text(got["region_name"]), "no related record: the value is kept, as FileMaker does")
+}
+
+// Self is the field's own value in its auto-enter calculation, empty on a
+// new record nobody typed into; and the calculation may call a custom
+// function of the solution.
+func TestAutoEnter_SelfAndCustomFunctions(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	calcOpt := func(formula string) map[string]any {
+		return map[string]any{"calculated_enabled": true, "calculated_formula": formula}
+	}
+	f := newAutoFixture(t, ctx, driver,
+		autoColumn{name: "first", fieldType: dbal.FieldTypeText},
+		autoColumn{name: "self_upper", fieldType: dbal.FieldTypeText, options: calcOpt(`Upper ( Self )`)},
+		autoColumn{name: "seen", fieldType: dbal.FieldTypeText, options: calcOpt(`If ( IsEmpty ( Self ) ; "new" ; Self & "+" )`)},
+		autoColumn{name: "shout", fieldType: dbal.FieldTypeText},
+	)
+
+	row := f.insert(t, ctx, map[string]interface{}{"self_upper": "mixed"})
+	assert.Equal(t, "MIXED", text(row["self_upper"]))
+	assert.Equal(t, "new", text(row["seen"]), "Self is empty on a new record")
+	got := f.update(t, ctx, row["id"], map[string]interface{}{"self_upper": "again", "seen": "x"})
+	assert.Equal(t, "AGAIN", text(got["self_upper"]))
+	assert.Equal(t, "x+", text(got["seen"]), "Self is what is typed")
+	got = f.update(t, ctx, row["id"], map[string]interface{}{"first": "unrelated"})
+	assert.Equal(t, "x+", text(got["seen"]), "a change to another field does not compute it again")
+
+	stamp := uniqueTestStamp()
+	shout := fmt.Sprintf("Shout_%d", stamp)
+	_, err := f.schemaSvc.UpdateColumn(ctx, f.ordersID, f.columns["shout"], schema.UpdateColumnOptions{
+		DisplayName: "shout", DefaultValue: options(calcOpt(shout + ` ( first )`)), UpdateDefaultValue: true,
+	})
+	require.ErrorIs(t, err, schema.ErrInvalidFieldOptions, "a function the solution does not have")
+	d := driver.Dialect()
+	_, err = driver.DB().ExecContext(ctx, `INSERT INTO `+data.CustomFunctionsTable+` (id, name, parameters, formula, access, created_at, updated_at) VALUES (`+
+		d.Placeholder(1)+`, `+d.Placeholder(2)+`, `+d.Placeholder(3)+`, `+d.Placeholder(4)+`, 'all', `+d.Placeholder(5)+`, `+d.Placeholder(6)+`)`,
+		fmt.Sprintf("ae-cf-%d", stamp), shout, `["t"]`, `Upper ( t ) & "!"`, time.Now().UTC(), time.Now().UTC())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = driver.DB().ExecContext(context.Background(), `DELETE FROM `+data.CustomFunctionsTable+` WHERE name = `+d.Placeholder(1), shout)
+	})
+	f.setOptions(t, ctx, "shout", calcOpt(shout+` ( first )`))
+	row = f.insert(t, ctx, map[string]interface{}{"first": "hey"})
+	assert.Equal(t, "HEY!", text(row["shout"]))
+}
+
+// GetNextSerialValue reads a serial only in a table the account may read.
+func TestAutoEnter_NextSerialValueNeedsReadAccess(t *testing.T) {
+	driver, ctx := relatedTestDriver(t)
+	if driver == nil {
+		return
+	}
+	f := newAutoFixture(t, ctx, driver,
+		autoColumn{name: "num", fieldType: dbal.FieldTypeNumber, options: map[string]any{"serial_enabled": true, "serial_next": 5}},
+	)
+	_, err := f.schemaSvc.AddColumn(ctx, f.productsID, schema.ColumnMetadata{Name: "num", DisplayName: "num", FieldType: dbal.FieldTypeNumber,
+		IsNullable: true, DefaultValue: options(map[string]any{"serial_enabled": true, "serial_next": 70})})
+	require.NoError(t, err)
+	restricted := data.NewService(driver).WithReadAccess(func(_ context.Context, table string) (bool, error) {
+		return table != f.products, nil
+	})
+	next, err := restricted.NextSerialValue(ctx, f.orders, "num")
+	require.NoError(t, err)
+	assert.Equal(t, "5", next)
+	_, err = restricted.NextSerialValue(ctx, f.products, "num")
+	require.ErrorIs(t, err, data.ErrNoAccess)
+
+	f.columns["code"] = f.codes[f.orders]
+	f.setOptions(t, ctx, "code", map[string]any{"calculated_enabled": true,
+		"calculated_formula": fmt.Sprintf(`GetNextSerialValue ( "x" ; "%s::num" )`, f.productsOcc)})
+	_, err = restricted.InsertRow(ctx, f.orders, map[string]interface{}{})
+	require.Error(t, err, "the formula does not read a table the account may not")
+	assert.Contains(t, err.Error(), data.ErrNoAccess.Error())
+	row, err := f.dataSvc.InsertRow(ctx, f.orders, map[string]interface{}{})
+	require.NoError(t, err)
+	assert.Equal(t, "70", text(row["code"]))
 }
 
 func productID(t *testing.T, ctx context.Context, f *autoFixture, code string) any {
