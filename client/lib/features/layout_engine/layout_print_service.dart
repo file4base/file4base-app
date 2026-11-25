@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/features/layout_engine/script_files.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:pdf/pdf.dart';
@@ -33,15 +34,9 @@ class LayoutPrintService {
   /// Adds [sheet] (captured at [pixelRatio]) to [doc], scaled to the page
   /// width and split over as many pages as its height needs.
   static Future<void> addSheet(pw.Document doc, ui.Image sheet, PageSetupModel setup) async {
-    final format = pageFormat(setup);
-    // Source pixels that fit on one page once the image is scaled to the page width.
-    final pxPerPage = (format.height * sheet.width / format.width).floor();
-    for (var top = 0; top < sheet.height; top += pxPerPage) {
-      final sliceHeight = (sheet.height - top).clamp(1, pxPerPage);
-      // Ignore a sliver at the bottom (rounding of the sheet height).
-      if (top > 0 && sliceHeight < 4 * pixelRatio) break;
-      final png = await _slicePng(sheet, top, sliceHeight);
-      final image = pw.MemoryImage(png);
+    for (final page in await slicePages(sheet, setup)) {
+      final format = PdfPageFormat(page.width, page.height, marginAll: 0);
+      final image = pw.MemoryImage(page.png);
       doc.addPage(pw.Page(
         pageFormat: format,
         margin: pw.EdgeInsets.zero,
@@ -51,6 +46,22 @@ class LayoutPrintService {
         ),
       ));
     }
+  }
+
+  /// [sheet] (captured at [pixelRatio]) cut into pages of the Page Setup
+  /// paper: the pages Save Records as PDF writes and appends to (#133).
+  static Future<List<PdfSheetPage>> slicePages(ui.Image sheet, PageSetupModel setup) async {
+    final format = pageFormat(setup);
+    // Source pixels that fit on one page once the image is scaled to the page width.
+    final pxPerPage = (format.height * sheet.width / format.width).floor();
+    final pages = <PdfSheetPage>[];
+    for (var top = 0; top < sheet.height; top += pxPerPage) {
+      final sliceHeight = (sheet.height - top).clamp(1, pxPerPage);
+      // Ignore a sliver at the bottom (rounding of the sheet height).
+      if (top > 0 && sliceHeight < 4 * pixelRatio) break;
+      pages.add(PdfSheetPage(width: format.width, height: format.height, png: await _slicePng(sheet, top, sliceHeight)));
+    }
+    return pages;
   }
 
   static Future<Uint8List> _slicePng(ui.Image source, int top, int height) async {

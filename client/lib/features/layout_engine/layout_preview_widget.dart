@@ -13,6 +13,7 @@ import 'package:file4base_client/features/layout_engine/layout_print_service.dar
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_blueprint.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/script_files.dart';
 import 'package:flutter/material.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -29,6 +30,7 @@ class LayoutPreviewWidget extends StatefulWidget {
     this.isKioskMode = false,
     this.kioskAutoReturnSeconds = 10,
     this.onReturnToBrowse,
+    this.records,
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -50,6 +52,11 @@ class LayoutPreviewWidget extends StatefulWidget {
   final bool isKioskMode;
   final int kioskAutoReturnSeconds;
   final VoidCallback? onReturnToBrowse;
+
+  /// The records to draw, already read: Save Records as PDF draws the
+  /// current record or the found set the window holds (#133). Null reads
+  /// them from [findRequests].
+  final List<Map<String, dynamic>>? records;
 
   @override
   State<LayoutPreviewWidget> createState() => LayoutPreviewWidgetState();
@@ -208,7 +215,10 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       // so it reads as one group after another rather than interleaved.
       final found = widget.findRequests.isNotEmpty;
       final everyRecord = _isReport || _isLabels;
-      final rows = everyRecord
+      final given = widget.records;
+      final rows = given != null
+          ? List<Map<String, dynamic>>.from(given)
+          : everyRecord
           ? (found
               ? await widget.apiClient.executeFindAll(widget.table.name, widget.findRequests)
               : await widget.apiClient.listAllRows(widget.table.name))
@@ -285,6 +295,32 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     } catch (_) {
       // The sheet still draws; the figures are simply blank.
     }
+  }
+
+  /// The pages of every record this preview holds, or of its report or its
+  /// sheets of labels, cut to the Page Setup paper (#133).
+  Future<List<PdfSheetPage>> captureSheets() async {
+    final pages = <PdfSheetPage>[];
+    Future<void> grab() async {
+      await WidgetsBinding.instance.endOfFrame;
+      final sheet = await LayoutPrintService.capture(_sheetKey);
+      pages.addAll(await LayoutPrintService.slicePages(sheet, widget.pageSetup));
+      sheet.dispose();
+    }
+
+    if (_isLabels) {
+      for (var page = 0; page < _labelPages.length; page++) {
+        if (mounted) setState(() => _labelPage = page);
+        await grab();
+      }
+      return pages;
+    }
+    final indexes = _isReport || _records.isEmpty ? [0] : List<int>.generate(_records.length, (i) => i);
+    for (final i in indexes) {
+      if (mounted && i != _currentRecordIndex) setState(() => _currentRecordIndex = i);
+      await grab();
+    }
+    return pages;
   }
 
   /// Prints (or saves as PDF) the previewed sheet: the current record, or

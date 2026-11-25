@@ -295,7 +295,7 @@ func changeEventFor(r *http.Request, occurrenceTable string) (realtime.Event, bo
 	schemaPrefixes := []string{
 		"/api/v1/schemas", "/api/v1/layouts", "/api/v1/tables", "/api/v1/relationships",
 		"/api/v1/occurrences", "/api/v1/value-lists", "/api/v1/scripts", "/api/v1/menu-sets",
-		"/api/v1/data-sources", "/api/v1/saved-finds",
+		"/api/v1/data-sources", "/api/v1/saved-finds", "/api/v1/custom-functions",
 	}
 	for _, p := range schemaPrefixes {
 		if strings.HasPrefix(lower, p) {

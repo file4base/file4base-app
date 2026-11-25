@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:file4base_client/features/about/about_dialog.dart';
+import 'package:file4base_client/features/server_tools/mail_profiles_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -17,6 +18,7 @@ enum ServerToolSection {
   auditLogs,
   maintenance,
   notifications,
+  mail,
 }
 
 /// A solution-management action (an item of the "Manage" menu) made available
@@ -321,6 +323,10 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
             _maintenanceInfo = data;
             _loading = false;
           });
+        case ServerToolSection.mail:
+          // The panel reads its own profiles.
+          if (!mounted) return;
+          setState(() => _loading = false);
         case ServerToolSection.notifications:
           final cfg = await widget.apiClient.getServerNotifications();
           if (!mounted) return;
@@ -685,6 +691,7 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
       (ServerToolSection.auditLogs, Icons.policy_outlined, 'Audit & Security Logs', 'Auth, MFA & admin trail'),
       (ServerToolSection.maintenance, Icons.build_circle_outlined, 'Database Maintenance', 'VACUUM ANALYZE & catalog'),
       (ServerToolSection.notifications, Icons.notifications_active_outlined, 'Alerts, SMTP & Webhooks', 'Server alert channels'),
+      (ServerToolSection.mail, Icons.outgoing_mail, 'Send Mail (SMTP)', 'SMTP profiles of scripts'),
     ].where((item) => _maySee(item.$1)).toList();
 
     final serverWideNote = _serverAdmin
@@ -910,6 +917,8 @@ class _ServerToolsDialogState extends State<ServerToolsDialog> {
         return _buildMaintenanceView();
       case ServerToolSection.notifications:
         return _buildNotificationsView();
+      case ServerToolSection.mail:
+        return MailProfilesPanel(apiClient: widget.apiClient);
     }
   }
 

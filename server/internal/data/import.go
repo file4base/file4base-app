@@ -360,7 +360,8 @@ func (s *Service) ImportRecords(
 	if err != nil {
 		return nil, err
 	}
-	checker := &validation.Checker{Dialect: dialect, DB: tx, Table: tableName, Fields: rules}
+	checker := &validation.Checker{Dialect: dialect, DB: tx, Table: tableName, Fields: rules,
+		Calculate: s.validationCalculator(tableName)}
 
 	for i := range source.Rows {
 		rowNumber := i + 1

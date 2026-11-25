@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 
 import 'package:file4base_client/core/models/page_setup_model.dart';
 import 'package:file4base_client/features/layout_engine/layout_print_service.dart';
+import 'package:file4base_client/features/layout_engine/script_files.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -49,6 +50,21 @@ void main() {
       final img = await LayoutPrintService.capture(key);
       expect(img.width, (100 * LayoutPrintService.pixelRatio).round());
       expect(img.height, (50 * LayoutPrintService.pixelRatio).round());
+    });
+  });
+
+  testWidgets('Save Records as PDF assembles the sliced pages of each sheet into one PDF (#133)', (tester) async {
+    await tester.runAsync(() async {
+      final pages = [
+        ...await LayoutPrintService.slicePages(await _image(595, 842), a4),
+        ...await LayoutPrintService.slicePages(await _image(595, 842 * 2), a4),
+      ];
+      expect(pages, hasLength(3));
+      expect(pages.first.width, closeTo(a4.totalWidthPt, 0.01));
+      final bytes = await assemblePdf(pages, title: 'Invoices');
+      final text = String.fromCharCodes(bytes);
+      expect(text.startsWith('%PDF-'), isTrue);
+      expect(RegExp(r'/Type\s*/Page[^s]').allMatches(text), hasLength(3));
     });
   });
 }

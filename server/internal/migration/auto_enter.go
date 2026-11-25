@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/autoenter"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/validation"
 )
 
 // Auto-enter field options (docs/specs/auto_enter_options.md).
@@ -578,4 +580,54 @@ func convertHTMLAutoEnter(tableSQL, rawTableName, rawFieldName string, col *sche
 		col.DefaultValue = &stored
 	}
 	return items
+}
+
+// bindTableValidation binds the validation formulas of a converted table's
+// fields to the imported names, as their calculations are, and reports each:
+// kept, or dropped and why. A field whose only rule was the formula has no
+// rules left when it is dropped.
+func bindTableValidation(table *schema.BundleTable, b formulaBinding) []ReportItem {
+	var items []ReportItem
+	for i := range table.Columns {
+		col := &table.Columns[i]
+		rules, err := validation.Parse(col.ValidationRules)
+		if err != nil || rules == nil || !rules.CalculationEnabled {
+			continue
+		}
+		source, target := table.Name+"."+col.DisplayName, table.Name+"."+col.Name
+		formula := rules.Calculation
+		fb := b.bind(table.Name, formula, rules.CalculationContext, target)
+		if fb.why != "" {
+			rules.CalculationEnabled, rules.Calculation, rules.CalculationContext = false, "", ""
+			items = append(items,
+				ReportItem{Category: CategoryUnsupported, Domain: "field", SourceName: source, TargetName: target,
+					Detail: readableFieldRefs(fmt.Sprintf("Validation by calculation %q was not migrated: it %s", formula, fb.why))},
+				ReportItem{Category: CategoryManualActionRequired, Domain: "field", SourceName: source, TargetName: target,
+					Detail: readableFieldRefs(strings.Replace(fb.action, "the calculation of", "the validation formula of", 1))})
+		} else {
+			rules.Calculation, rules.CalculationContext = fb.rewritten, fb.context
+			detail := fmt.Sprintf("Validation by calculation %q", formula)
+			if fb.rewritten != formula {
+				detail = fmt.Sprintf("Validation by calculation %q, bound to the imported fields as %q", formula, fb.rewritten)
+			}
+			items = append(items, ReportItem{Category: CategoryPreserved, Domain: "field", SourceName: source, TargetName: target,
+				Detail: readableFieldRefs(detail)})
+		}
+		if !rules.CalculationEnabled && !hasOtherRules(rules) {
+			col.ValidationRules = nil
+			continue
+		}
+		encoded, err := json.Marshal(rules)
+		if err != nil {
+			continue
+		}
+		stored := string(encoded)
+		col.ValidationRules = &stored
+	}
+	return items
+}
+
+// hasOtherRules reports whether rules enforce anything besides a formula.
+func hasOtherRules(r *validation.Rules) bool {
+	return r.NotEmpty || r.Unique || r.ExistingValue || r.StrictTypeEnabled || r.RangeEnabled || r.MaxLengthEnabled
 }

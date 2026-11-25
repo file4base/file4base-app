@@ -1,7 +1,15 @@
+import 'dart:async';
+
+import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/theme/theme_provider.dart';
+import 'package:file4base_client/main.dart' show apiClientProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+/// Specify Calculation: the formula editor of every calculation — fields,
+/// scripts, validation, custom functions. Its function list has the
+/// solution's custom functions, and OK has the server check the formula
+/// first, with the same rules a formula is saved with.
 class CalculationBuilderDialog extends ConsumerStatefulWidget {
 
   const CalculationBuilderDialog({
@@ -10,11 +18,23 @@ class CalculationBuilderDialog extends ConsumerStatefulWidget {
     this.contextTable,
     this.availableTables = const [],
     this.fieldsByTable = const {},
+    this.functionName,
+    this.functionParameters,
+    this.checkTable,
   });
   final String initialFormula;
   final String? contextTable;
   final List<String> availableTables;
   final Map<String, List<String>> fieldsByTable;
+
+  /// The custom function whose formula this is, when it is one: it may call
+  /// itself, and reads [functionParameters] rather than fields.
+  final String? functionName;
+  final List<String>? functionParameters;
+
+  /// The table whose fields the formula reads, for the check to name the
+  /// ones it does not have.
+  final String? checkTable;
 
   static Future<String?> show(
     BuildContext context, {
@@ -22,6 +42,9 @@ class CalculationBuilderDialog extends ConsumerStatefulWidget {
     String? contextTable,
     List<String> availableTables = const [],
     Map<String, List<String>> fieldsByTable = const {},
+    String? functionName,
+    List<String>? functionParameters,
+    String? checkTable,
   }) {
     return showDialog<String>(
       context: context,
@@ -31,6 +54,9 @@ class CalculationBuilderDialog extends ConsumerStatefulWidget {
         contextTable: contextTable,
         availableTables: availableTables,
         fieldsByTable: fieldsByTable,
+        functionName: functionName,
+        functionParameters: functionParameters,
+        checkTable: checkTable,
       ),
     );
   }
@@ -46,6 +72,15 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
   String _fieldSearch = '';
   String _functionSearch = '';
   String _functionCategory = 'All';
+
+  /// The solution's custom functions, read from the server.
+  List<CustomFunctionModel> _customFunctions = const [];
+
+  /// What the last check said; null before any.
+  FormulaCheckModel? _check;
+  bool _checking = false;
+
+  static const customCategory = 'Custom Functions';
 
   static const List<String> _operators = [
     '+', '-', '*', '/', '^', '&',
@@ -92,6 +127,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
     super.initState();
     _formulaController = TextEditingController(text: widget.initialFormula);
     _formulaFocusNode = FocusNode();
+    unawaited(_loadCustomFunctions());
 
     if (widget.contextTable != null && widget.contextTable!.isNotEmpty) {
       _selectedTable = widget.contextTable!;
@@ -105,6 +141,88 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
     _formulaController.dispose();
     _formulaFocusNode.dispose();
     super.dispose();
+  }
+
+  ApiClient? get _client {
+    try {
+      return ref.read(apiClientProvider);
+    } on Object catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _loadCustomFunctions() async {
+    final client = _client;
+    if (client == null) return;
+    try {
+      final list = await client.listCustomFunctions();
+      if (mounted) setState(() => _customFunctions = list);
+    } on Object catch (_) {
+      // The editor works without them; the check still knows them.
+    }
+  }
+
+  /// The functions of a category; the custom functions are a category of
+  /// their own, as in FileMaker's function list.
+  Map<String, List<Map<String, String>>> get _categories => {
+        ..._functionsByCategory,
+        if (_customFunctions.isNotEmpty)
+          customCategory: [
+            for (final fn in _customFunctions)
+              {
+                'name': fn.name,
+                'syntax': fn.signature,
+                'desc': fn.fullAccessOnly ? 'Custom function (full access only)' : 'Custom function',
+              },
+          ],
+      };
+
+  /// Has the server check the formula, as it is saved: a syntax error, an
+  /// unknown function or a wrong number of arguments. Returns whether it is
+  /// valid; a server that cannot be asked does not hold the editor up.
+  Future<bool> _checkFormula() async {
+    final client = _client;
+    final formula = _formulaController.text;
+    if (client == null || formula.trim().isEmpty) return true;
+    setState(() => _checking = true);
+    try {
+      final check = await client.checkFormula(
+        formula,
+        table: widget.checkTable,
+        function: widget.functionName,
+        parameters: widget.functionParameters,
+      );
+      if (!mounted) return check.valid;
+      setState(() => _check = check);
+      final pos = check.position;
+      if (!check.valid && pos != null && pos >= 0 && pos <= formula.length) {
+        _formulaController.selection = TextSelection.collapsed(offset: pos);
+        _formulaFocusNode.requestFocus();
+      }
+      return check.valid;
+    } on Object catch (_) {
+      return true;
+    } finally {
+      if (mounted) setState(() => _checking = false);
+    }
+  }
+
+  Future<void> _ok() async {
+    if (!await _checkFormula()) return;
+    if (mounted) Navigator.of(context).pop(_formulaController.text);
+  }
+
+  String get _checkText {
+    final check = _check;
+    if (check == null) return 'Double-click fields or functions to insert them into the formula.';
+    if (!check.valid) {
+      final at = check.position == null ? '' : ' (at character ${check.position! + 1})';
+      return '${check.message}$at';
+    }
+    if (check.unknownFields.isNotEmpty) {
+      return 'The formula is valid, but this table has no field ${check.unknownFields.join(', ')}.';
+    }
+    return 'The formula is valid.';
   }
 
   void _insertAtCursor(String text) {
@@ -124,19 +242,19 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
   }
 
   List<String> _getFilteredFields() {
-    final fields = widget.fieldsByTable[_selectedTable] ?? [];
+    final params = widget.functionParameters;
+    final fields = params ?? widget.fieldsByTable[_selectedTable] ?? [];
     if (_fieldSearch.isEmpty) return fields;
     return fields.where((f) => f.toLowerCase().contains(_fieldSearch.toLowerCase())).toList();
   }
 
   List<Map<String, String>> _getFilteredFunctions() {
     var list = <Map<String, String>>[];
+    final categories = _categories;
     if (_functionCategory == 'All') {
-      for (final cat in _functionsByCategory.values) {
-        list.addAll(cat);
-      }
+      categories.values.forEach(list.addAll);
     } else {
-      list = _functionsByCategory[_functionCategory] ?? [];
+      list = categories[_functionCategory] ?? [];
     }
 
     if (_functionSearch.isNotEmpty) {
@@ -239,8 +357,9 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Table occurrence', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
+                              Text(widget.functionParameters != null ? 'Parameters' : 'Table occurrence', style: TextStyle(color: theme.textSecondary, fontSize: 11, fontWeight: FontWeight.bold)),
                               const SizedBox(height: 6),
+                              if (widget.functionParameters == null)
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 10),
                                 decoration: BoxDecoration(
@@ -290,6 +409,10 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                             children: _getFilteredFields().map((field) {
                               return InkWell(
                                 onTap: () {
+                                  if (widget.functionParameters != null) {
+                                    _insertAtCursor(field);
+                                    return;
+                                  }
                                   final tablePrefix = _selectedTable.isNotEmpty ? '$_selectedTable::' : '';
                                   _insertAtCursor('$tablePrefix$field');
                                 },
@@ -432,7 +555,7 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                                     dropdownColor: theme.surface,
                                     value: _functionCategory,
                                     style: TextStyle(color: theme.textPrimary, fontSize: 12),
-                                    items: ['All', ..._functionsByCategory.keys].map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                                    items: ['All', ..._categories.keys].map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
                                     onChanged: (val) {
                                       if (val != null) setState(() => _functionCategory = val);
                                     },
@@ -514,14 +637,33 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: theme.textSecondary, size: 16),
+                  Icon(
+                    _check == null || _check!.valid ? Icons.info_outline : Icons.error_outline,
+                    color: _check == null || _check!.valid ? theme.textSecondary : Colors.red,
+                    size: 16,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Double-click fields or functions to insert them into the formula.',
-                      style: TextStyle(color: theme.textSecondary, fontSize: 11),
+                      _checkText,
+                      key: const Key('calculationCheckMessage'),
+                      style: TextStyle(
+                        color: _check == null || _check!.valid ? theme.textSecondary : Colors.red,
+                        fontSize: 11,
+                      ),
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
+                  ),
+                  const SizedBox(width: 12),
+                  OutlinedButton(
+                    key: const Key('calculationCheck'),
+                    onPressed: _checking ? null : _checkFormula,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: theme.textSecondary,
+                      side: BorderSide(color: theme.border),
+                    ),
+                    child: const Text('Check'),
                   ),
                   const SizedBox(width: 12),
                   OutlinedButton(
@@ -534,9 +676,8 @@ class _CalculationBuilderDialogState extends ConsumerState<CalculationBuilderDia
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton(
-                    onPressed: () {
-                      Navigator.of(context).pop(_formulaController.text);
-                    },
+                    key: const Key('calculationOk'),
+                    onPressed: _checking ? null : _ok,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: theme.primaryAccent,
                       foregroundColor: theme.isDark ? const Color(0xFF0B1120) : Colors.white,

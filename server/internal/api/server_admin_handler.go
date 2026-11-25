@@ -29,6 +29,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/localca"
+	"github.com/file4base/file4base-app/server/internal/mail"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/go-chi/chi/v5"
@@ -150,6 +151,10 @@ type ServerAdminHandler struct {
 	controlStore *control.Store
 	startTime    time.Time
 	backupsDir   string
+	// mailSender talks to the SMTP servers of the Send Mail profiles, and
+	// mailLimiter counts what each account sends through them (#133).
+	mailSender  *mail.Sender
+	mailLimiter mailLimiter
 	// tlsStore holds the persisted local CA and the leaf it signed: the very
 	// certificate the HTTPS listener serves, this panel reports, and the
 	// export endpoint hands out.
@@ -294,6 +299,7 @@ func NewServerAdminHandler(dbMgr *dbal.MultiDatabaseManager, sessions *auth.Stor
 		dbMgr:          dbMgr,
 		sessions:       sessions,
 		controlStore:   controlStore,
+		mailSender:     &mail.Sender{},
 		startTime:      now,
 		backupsDir:     backupsDir,
 		tlsStore:       localca.New(localca.DefaultDir()),
@@ -534,6 +540,7 @@ func (h *ServerAdminHandler) RegisterRoutes(r chi.Router) {
 			h.registerServerWideRoutes(r)
 		})
 	})
+	h.registerMailRoutes(r)
 }
 
 func (h *ServerAdminHandler) registerServerWideRoutes(r chi.Router) {
@@ -562,6 +569,8 @@ func (h *ServerAdminHandler) registerServerWideRoutes(r chi.Router) {
 
 		r.Get("/audit-logs", h.ListAuditLogs)
 		r.Delete("/audit-logs", h.ClearAuditLogs)
+
+		h.registerMailAdminRoutes(r)
 
 		r.Get("/notifications", h.GetNotifications)
 		r.Put("/notifications", h.UpdateNotifications)

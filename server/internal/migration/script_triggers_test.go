@@ -43,6 +43,9 @@ const triggerFixture = `<?xml version="1.0" encoding="UTF-8"?>
               </ScriptReference>
             </ScriptTrigger>
             <ScriptTrigger id="5" action="OnObjectExit" browseMode="True"></ScriptTrigger>
+            <ScriptTrigger id="6" action="OnObjectKeystroke" browseMode="True" findMode="True">
+              <ScriptReference id="1" name="Greet"/>
+            </ScriptTrigger>
           </ScriptTriggers>
         </LayoutObject>
         <ScriptTriggers membercount="3">
@@ -58,6 +61,9 @@ const triggerFixture = `<?xml version="1.0" encoding="UTF-8"?>
           </ScriptTrigger>
           <ScriptTrigger id="3" action="OnRecordLoad" browseMode="True">
             <ScriptReference id="99" name="Gone"/>
+          </ScriptTrigger>
+          <ScriptTrigger id="7" action="OnRecordCommit" findMode="True">
+            <ScriptReference id="1" name="Greet"/>
           </ScriptTrigger>
         </ScriptTriggers>
       </Layout>
@@ -100,8 +106,8 @@ func TestScriptTriggers_KeptDisabledAndBound(t *testing.T) {
 		scriptIDs[sc.Name] = append(scriptIDs[sc.Name], sc.ID)
 	}
 	list, _ := def[schema.LayoutScriptTriggersKey].([]interface{})
-	if len(list) != 5 {
-		t.Fatalf("expected 5 stored triggers, got %d: %v", len(list), list)
+	if len(list) != 7 {
+		t.Fatalf("expected 7 stored triggers, got %d: %v", len(list), list)
 	}
 	byEvent := map[string]map[string]interface{}{}
 	for _, raw := range list {
@@ -140,6 +146,18 @@ func TestScriptTriggers_KeptDisabledAndBound(t *testing.T) {
 	if object["type"] != "Edit Box" || object["field"] != "Plants::Height" {
 		t.Fatalf("the object a trigger is set on is described: %v", save)
 	}
+	if save["object_id"] == nil || save["object_id"] == "" {
+		t.Fatalf("the trigger points at the migrated field object: %v", save)
+	}
+	if _, ok := save["modes"]; ok {
+		t.Fatalf("a Browse mode trigger carries no modes: %v", save)
+	}
+	if modes, _ := byEvent["OnObjectKeystroke"]["modes"].([]interface{}); len(modes) != 2 || modes[0] != "browse" || modes[1] != "find" {
+		t.Fatalf("browseMode and findMode are both read: %v", byEvent["OnObjectKeystroke"])
+	}
+	if modes, _ := byEvent["OnRecordCommit"]["modes"].([]interface{}); len(modes) != 1 || modes[0] != "find" {
+		t.Fatalf("a trigger with findMode only runs in Find mode only: %v", byEvent["OnRecordCommit"])
+	}
 	if _, ok := byEvent["OnObjectExit"]["script_name"]; ok {
 		t.Fatalf("a trigger whose script was deleted names none: %v", byEvent["OnObjectExit"])
 	}
@@ -155,14 +173,15 @@ func TestScriptTriggers_KeptDisabledAndBound(t *testing.T) {
 			}
 		}
 	}
+	// OnObjectSave, OnObjectExit and OnRecordLoad are events File4Base
+	// runs, so only OnObjectKeystroke is reported as one it does not.
 	expect := []string{
-		"5 script trigger(s) were imported disabled (3 on layouts, 2 on layout objects)",
+		"7 script trigger(s) were imported disabled (4 on layouts, 3 on layout objects)",
 		`The script "Gone" this trigger runs was not found`,
 		`The script parameter "Elsewhere::Nothing"`,
 		"1 script trigger(s) name no script",
-		"1 OnObjectExit trigger(s) kept, disabled",
-		"1 OnObjectSave trigger(s) kept, disabled",
-		"1 OnRecordLoad trigger(s) kept, disabled",
+		"FileMaker runs this trigger in Find mode only, and File4Base runs OnRecordCommit triggers in Browse mode",
+		"1 OnObjectKeystroke trigger(s) kept, disabled",
 		`1 file script trigger(s) were not imported (OnFirstWindowOpen -> "Greet")`,
 	}
 	if len(triggers) != len(expect) {
@@ -254,6 +273,46 @@ func TestScriptTriggers_OtherFileAndAmbiguousName(t *testing.T) {
 	for _, want := range []string{`"Greet" this trigger runs is in another FileMaker file (Seed Bank)`, `2 imported scripts are named "Water"`} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing %q in %s", want, joined)
+		}
+	}
+}
+
+// A trigger of an event File4Base runs, set on an object the migration did
+// not bring over, is reported as such rather than as an event it does not
+// run; a trigger whose mode checkboxes are all cleared never ran in
+// FileMaker and is reported too.
+func TestScriptTriggers_ObjectNotMigratedAndNoMode(t *testing.T) {
+	doc := strings.Replace(triggerFixture, `        <ScriptTriggers membercount="3">`, `        <LayoutObject id="8" type="Button" name="Go">
+          <ScriptTriggers membercount="1">
+            <ScriptTrigger id="8" action="OnObjectEnter" browseMode="True">
+              <ScriptReference id="1" name="Greet"/>
+            </ScriptTrigger>
+          </ScriptTriggers>
+        </LayoutObject>
+        <ScriptTriggers membercount="3">`, 1)
+	doc = strings.Replace(doc, `<ScriptTrigger id="2" action="OnLayoutExit" browseMode="True">`, `<ScriptTrigger id="2" action="OnLayoutExit" browseMode="False">`, 1)
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var details []string
+	for _, it := range res.Report.ManualActionRequired {
+		if it.Domain == "trigger" {
+			details = append(details, it.Detail)
+		}
+	}
+	all := strings.Join(details, "\n")
+	for _, want := range []string{
+		"1 object script trigger(s) (1 OnObjectEnter) are set on layout objects that were not migrated",
+		"FileMaker runs this trigger in no mode",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("missing %q in:\n%s", want, all)
+		}
+	}
+	for _, it := range res.Report.Unsupported {
+		if strings.Contains(it.Detail, "OnObjectEnter") {
+			t.Errorf("OnObjectEnter is an event File4Base runs: %s", it.Detail)
 		}
 	}
 }

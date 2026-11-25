@@ -783,6 +783,14 @@ class ButtonActionModel {
   /// FileMaker runs the trigger in Find mode only.
   bool get findModeOnly => extra['modes'] is List && (extra['modes'] as List).length == 1 && (extra['modes'] as List).first == 'find';
 
+  /// The modes FileMaker runs the trigger in (`browse`, `find`), or null
+  /// for Browse mode only, which a trigger without the key means.
+  List<String>? get modes =>
+      extra['modes'] is List ? [for (final m in extra['modes'] as List) '$m'.toLowerCase()] : null;
+
+  /// Whether the trigger runs in [mode] (`browse` or `find`).
+  bool runsInMode(String mode) => (modes ?? const ['browse']).contains(mode);
+
   /// This action, switched on or off. Switching a trigger on means it has
   /// been reviewed, so it is no longer marked as held back by a migration.
   ButtonActionModel withEnabled({required bool on, String? event}) => ButtonActionModel(
@@ -1447,9 +1455,10 @@ class LayoutDefinitionModel {
   final ButtonActionModel? onLayoutEnter;
   final ButtonActionModel? onLayoutExit;
 
-  /// Every other trigger of the layout and of its objects: those switched
-  /// off, those of events File4Base does not run, and those set on an object
-  /// (#26). None of them runs. A migrated trigger arrives here, off.
+  /// Every other trigger of the layout and of its objects (#26): the record
+  /// and mode triggers of the layout and the triggers of its fields, which
+  /// run when they say `enabled: true` ([runningTrigger]), and those of
+  /// events File4Base does not run. A migrated trigger arrives here, off.
   final List<ButtonActionModel> scriptTriggers;
 
   /// The OnLayoutEnter trigger to run, unless it is switched off.
@@ -1466,15 +1475,42 @@ class LayoutDefinitionModel {
   List<ButtonActionModel> triggersOfObject(String objectId) =>
       scriptTriggers.where((t) => t.objectId == objectId).toList();
 
-  /// Why the stored [trigger] cannot be switched on here, or null when it
-  /// can: File4Base runs OnLayoutEnter and OnLayoutExit set on the layout, in
-  /// Browse mode, of a script that exists, one per event.
-  String? whyTriggerCannotRun(ButtonActionModel trigger, {Set<String>? scriptIds}) {
-    if (trigger.objectId != null || trigger.sourceObject != null) {
-      return 'File4Base does not run triggers set on layout objects (${trigger.event}) yet.';
+  /// The enabled trigger of the list for [event] on the layout, or on the
+  /// object [objectId], to run in [mode] (`browse` or `find`), if any. A
+  /// list entry runs only when it says `enabled: true`.
+  ButtonActionModel? runningTrigger(String event, {String? objectId, String mode = 'browse'}) {
+    final e = event.toLowerCase();
+    for (final t in scriptTriggers) {
+      if (t.extra['enabled'] != true || t.event.toLowerCase() != e || t.objectId != objectId) continue;
+      if (objectId == null && t.sourceObject != null) continue;
+      if (!t.isPerformScript || !t.runsInMode(mode)) continue;
+      if (mode == 'find' && !_findModeEvents.contains(e)) continue;
+      return t;
     }
-    final slot = _slotOf(trigger.event);
-    if (slot == null) return 'File4Base does not run ${trigger.event.isEmpty ? 'this event' : trigger.event} triggers yet.';
+    return null;
+  }
+
+  static const _findModeEvents = {'onobjectenter', 'onobjectexit', 'onobjectmodify', 'onmodeenter', 'onmodeexit'};
+  static const _listEvents = {'onrecordload', 'onrecordcommit', 'onrecordrevert', 'onmodeenter', 'onmodeexit'};
+  static const _objectEvents = {'onobjectenter', 'onobjectexit', 'onobjectmodify', 'onobjectvalidate', 'onobjectsave'};
+
+  /// Why the stored [trigger] cannot be switched on here, or null when it
+  /// can: File4Base runs OnLayoutEnter, OnLayoutExit and the record and mode
+  /// events set on the layout, and the OnObject… events of a field object
+  /// (#26), of a script that exists, one per event of the layout or object.
+  String? whyTriggerCannotRun(ButtonActionModel trigger, {Set<String>? scriptIds}) {
+    final event = trigger.event.toLowerCase();
+    final onObject = trigger.objectId != null || trigger.sourceObject != null;
+    final slot = onObject ? null : _slotOf(trigger.event);
+    final label = trigger.event.isEmpty ? 'this event' : trigger.event;
+    if (onObject) {
+      if (!_objectEvents.contains(event)) return 'File4Base does not run $label triggers set on layout objects yet.';
+      final object = trigger.objectId == null ? null : objects.where((o) => o.id == trigger.objectId).firstOrNull;
+      if (object == null) return 'The object it was set on is not on this layout.';
+      if (object.type != 'field') return 'File4Base runs object triggers on fields; this one is set on a ${object.type}.';
+    } else if (slot == null && !_listEvents.contains(event)) {
+      return 'File4Base does not run $label triggers yet.';
+    }
     if (trigger.scriptId == null && (trigger.scriptName ?? '').isEmpty) return 'The trigger runs no script.';
     final otherFile = trigger.extra['file_reference'] as String?;
     if (otherFile != null && otherFile.isNotEmpty) {
@@ -1484,9 +1520,26 @@ class LayoutDefinitionModel {
       return 'The script "${trigger.scriptName ?? trigger.scriptId}" is not in this solution.';
     }
     if (trigger.parameterProblem != null) return 'The script parameter ${trigger.parameterProblem}.';
-    if (trigger.findModeOnly) return 'FileMaker runs this trigger in Find mode only.';
-    final current = slot == 'on_layout_enter' ? onLayoutEnter : onLayoutExit;
-    if (current != null) return 'The layout already runs "${current.scriptName ?? ''}" on ${trigger.event}.';
+    final modes = trigger.modes;
+    if (modes != null && !modes.contains('browse')) {
+      if (modes.isEmpty) return 'FileMaker runs this trigger in no mode.';
+      if (!_findModeEvents.contains(event)) return 'FileMaker runs this trigger in Find mode only.';
+    }
+    if (slot != null) {
+      final current = slot == 'on_layout_enter' ? onLayoutEnter : onLayoutExit;
+      if (current != null) return 'The layout already runs "${current.scriptName ?? ''}" on ${trigger.event}.';
+      return null;
+    }
+    final other = scriptTriggers
+        .where((t) =>
+            t.triggerId != trigger.triggerId &&
+            t.extra['enabled'] == true &&
+            t.objectId == trigger.objectId &&
+            t.event.toLowerCase() == event)
+        .firstOrNull;
+    if (other != null) {
+      return '${onObject ? 'The object' : 'The layout'} already runs "${other.scriptName ?? ''}" on ${trigger.event}.';
+    }
     return null;
   }
 
@@ -1496,18 +1549,22 @@ class LayoutDefinitionModel {
         _ => null,
       };
 
-  /// This layout with the stored trigger [triggerId] switched on, which moves
-  /// it into the OnLayoutEnter / OnLayoutExit slot. Call it only when
+  /// This layout with the stored trigger [triggerId] switched on: an
+  /// OnLayoutEnter / OnLayoutExit trigger of the layout moves into its slot,
+  /// any other is switched where it is. Call it only when
   /// [whyTriggerCannotRun] says nothing.
   LayoutDefinitionModel enableStoredTrigger(String triggerId) {
     final trigger = scriptTriggers.where((t) => t.triggerId == triggerId).firstOrNull;
     if (trigger == null) return this;
     final on = trigger.withEnabled(on: true);
     final rest = scriptTriggers.where((t) => t.triggerId != triggerId).toList();
-    return switch (_slotOf(trigger.event)) {
+    final slot = trigger.objectId == null && trigger.sourceObject == null ? _slotOf(trigger.event) : null;
+    return switch (slot) {
       'on_layout_enter' => copyWith(onLayoutEnter: on, scriptTriggers: rest),
       'on_layout_exit' => copyWith(onLayoutExit: on, scriptTriggers: rest),
-      _ => this,
+      _ => copyWith(scriptTriggers: [
+          for (final t in scriptTriggers) t.triggerId == triggerId ? on : t,
+        ]),
     };
   }
 

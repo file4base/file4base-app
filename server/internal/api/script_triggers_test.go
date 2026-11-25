@@ -134,4 +134,33 @@ func TestAPI_ScriptTriggerReview(t *testing.T) {
 	assert.Equal(t, script.ID, def.OnLayoutEnter.ScriptID, "an enabled trigger is where a client runs it")
 	assert.True(t, def.OnLayoutEnter.Enabled)
 	require.Len(t, def.ScriptTriggers, 1, "the object trigger stays stored")
+
+	// An object trigger set in Layout mode is stored, on, in the list: an
+	// owner's to set, never a user's, and enabled where it is.
+	var onField map[string]interface{}
+	require.NoError(t, json.Unmarshal(stored.Definition, &onField))
+	onField["objects"] = []interface{}{map[string]interface{}{"id": "f1", "type": "field", "field_binding": map[string]interface{}{"field_name": "height"}}}
+	onField["script_triggers"] = append(onField["script_triggers"].([]interface{}), map[string]interface{}{
+		"id": "t-exit-f1", "event": "OnObjectExit", "type": "perform_script", "script_id": script.ID,
+		"script_name": "Greet", "object_id": "f1", "enabled": true,
+	})
+	rec = h.do(http.MethodPut, "/api/v1/schemas/layouts/"+layout.ID, user, map[string]interface{}{"name": "Plant Card", "definition": onField}, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodPut, "/api/v1/schemas/layouts/"+layout.ID, owner, map[string]interface{}{"name": "Plant Card", "definition": onField}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodGet, "/api/v1/schemas/script-triggers", owner, nil, &listed)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var exit schema.ScriptTrigger
+	for _, tr := range listed.Triggers {
+		if tr.ID == "t-exit-f1" {
+			exit = tr
+		}
+	}
+	assert.True(t, exit.Enabled)
+	assert.Equal(t, "object", exit.Scope)
+	assert.Equal(t, "height", exit.ObjectLabel)
+	assert.Empty(t, exit.Problems)
+	rec = h.do(http.MethodPut, "/api/v1/schemas/script-triggers", owner, map[string]interface{}{"ids": []string{"t-exit-f1"}, "enabled": false}, &update)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, update.Updated)
 }

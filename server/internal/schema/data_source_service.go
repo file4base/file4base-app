@@ -62,13 +62,22 @@ func (d DataSource) Connection() extsource.Connection {
 	}
 }
 
+// DataSourcePasswordEnvPrefix starts the name of every environment variable a
+// data source may read its password from. A database owner registers data
+// sources, and the server sends the password to the host the source names, so
+// without the prefix an owner could have the server send any of its own
+// secrets (DATABASE_URL, a signing key, ...) to a host of theirs.
+const DataSourcePasswordEnvPrefix = "FILE4BASE_DATASOURCE_"
+
 // Password resolves the password for a read: the one given with the request,
-// otherwise the environment variable the source names.
+// otherwise the environment variable the source names. A variable without
+// DataSourcePasswordEnvPrefix is never read, whether the source was stored
+// before the prefix was required or came in a solution file.
 func (d DataSource) Password(given string) string {
 	if given != "" {
 		return given
 	}
-	if env := strings.TrimSpace(d.PasswordEnv); env != "" {
+	if env := strings.TrimSpace(d.PasswordEnv); env != "" && strings.HasPrefix(env, DataSourcePasswordEnvPrefix) {
 		return os.Getenv(env)
 	}
 	return ""
@@ -139,6 +148,10 @@ func checkDataSource(in DataSourceInput) (DataSourceInput, error) {
 	if in.PasswordEnv != "" && !environmentName(in.PasswordEnv) {
 		return in, fmt.Errorf("%w: %q is not the name of an environment variable",
 			ErrInvalidDataSource, in.PasswordEnv)
+	}
+	if in.PasswordEnv != "" && !strings.HasPrefix(in.PasswordEnv, DataSourcePasswordEnvPrefix) {
+		return in, fmt.Errorf("%w: the password variable must start with %s, so a data source cannot read another server secret",
+			ErrInvalidDataSource, DataSourcePasswordEnvPrefix)
 	}
 	return in, nil
 }

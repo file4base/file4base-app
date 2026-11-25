@@ -10,6 +10,7 @@
 import 'dart:async';
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/layout_engine/script_trigger_runtime.dart';
 import 'package:flutter/material.dart';
 
 /// What the developer asked for on closing the review: to open a trigger's
@@ -185,7 +186,8 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
         title: Text('Enable $count Script Trigger${count == 1 ? '' : 's'}'),
         content: Text(
           'Enable $count trigger${count == 1 ? '' : 's'}? From now on, ${count == 1 ? 'its script runs' : 'their scripts run'} '
-          'on user actions — when a layout is shown or left in Browse mode — for everyone using this solution.\n\n'
+          'on user actions — a layout shown or left, a record loaded, committed or reverted, a mode entered or left, '
+          'a field entered, changed, validated, saved or left — for everyone using this solution.\n\n'
           'Review the scripts first: they were written for FileMaker. Triggers with a problem stay disabled.',
         ),
         actions: [
@@ -629,7 +631,7 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
             if (!t.hasProblem)
               Text(
                 t.enabled
-                    ? 'Enabled: its script runs in Browse mode ${t.event == 'OnLayoutExit' ? 'when the layout is left for another one' : 'when the layout is shown'}.'
+                    ? 'Enabled: its script runs ${describeTriggerEvent(t.event)}.'
                     : 'Nothing keeps this trigger from running once enabled.'
                         '${t.quarantinedByMigration ? ' It was imported from FileMaker and has not been reviewed yet.' : ''}',
                 style: const TextStyle(fontSize: 12),

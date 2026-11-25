@@ -11,7 +11,9 @@ import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/script_trigger_runtime.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 /// What the far side of a relationship is, resolved from the catalog the
 /// client already holds.
@@ -750,6 +752,100 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   }
 }
 
+/// The active row of a portal of the layout in hand, which Go to Portal Row
+/// moves, a click on a row sets and Get(ActivePortalRowNumber) reads. The
+/// window that shows the portal holds it, one per portal object, and the
+/// portal's view fills it in: the rows it shows, and how to put the focus in
+/// one of their fields, write one or delete one.
+class PortalRowController extends ChangeNotifier {
+  PortalRowController(this.object);
+
+  /// The portal object.
+  final LayoutObjectModel object;
+
+  List<Map<String, dynamic>> _rows = const [];
+  int _active = 0;
+  RelatedTarget? _target;
+  String? _parentId;
+  Completer<void> _loaded = Completer<void>();
+
+  /// The related records the portal shows, its first row first (past the
+  /// rows its "initial row" skips).
+  List<Map<String, dynamic>> get rows => _rows;
+
+  /// The occurrence, table and relationship the rows come from, once known.
+  RelatedTarget? get target => _target;
+
+  /// The record in hand the rows are related to.
+  String? get parentId => _parentId;
+
+  /// The active row, 1-based; 0 when none is.
+  int get activeRow => _active;
+
+  /// The related record of the active row.
+  Map<String, dynamic>? get activeRecord => _active > 0 && _active <= _rows.length ? _rows[_active - 1] : null;
+
+  /// Makes row [row] the active one (0: none).
+  void activate(int row) {
+    final n = row < 0 || row > _rows.length ? 0 : row;
+    if (n == _active) return;
+    _active = n;
+    notifyListeners();
+  }
+
+  /// Completes once the portal has read the rows of the record in hand, or
+  /// after [timeout] when it is not on screen to read them.
+  Future<void> whenLoaded({Duration timeout = const Duration(seconds: 5)}) =>
+      _loaded.future.timeout(timeout, onTimeout: () {});
+
+  /// Called by the view: the portal is reading its rows again.
+  void loading() {
+    if (_loaded.isCompleted) _loaded = Completer<void>();
+  }
+
+  /// Called by the view with the rows it shows. The active row stays the
+  /// same record's while it is still in the portal.
+  void showRows(List<Map<String, dynamic>> rows, {RelatedTarget? target, String? parentId}) {
+    final activeId = activeRecord?['id']?.toString();
+    final sameParent = parentId == _parentId;
+    _rows = rows;
+    _target = target;
+    _parentId = parentId;
+    if (_active > 0) {
+      final at = sameParent && activeId != null ? rows.indexWhere((r) => r['id']?.toString() == activeId) : -1;
+      _active = at + 1;
+    }
+    if (!_loaded.isCompleted) _loaded.complete();
+    notifyListeners();
+  }
+
+  /// Puts the focus in the field object [objectId] of row [row], scrolled
+  /// into view; answers the box, or null when the row shows no such field
+  /// that takes entry. Set by the view.
+  Future<TriggerBox?> Function(int row, String objectId)? focusCell;
+
+  /// The objects of the portal's rows that take entry, in tab order.
+  List<LayoutObjectModel> Function()? enterableFields;
+
+  /// Writes [values] into the related record [rowId]. Set by the view.
+  Future<Map<String, dynamic>> Function(String rowId, Map<String, dynamic> values, {bool script})? writeRow;
+
+  /// Deletes the related record [rowId], after asking when [confirm];
+  /// answers FileMaker's error code. Set by the view.
+  Future<int> Function(String rowId, {required bool confirm})? deleteRow;
+
+  /// Set by the window: told when the user makes a row active, and when a
+  /// field box of a row gains or loses the focus.
+  VoidCallback? onActivated;
+  void Function(TriggerBox box, bool focused)? onCellFocus;
+
+  /// Set by the window: whether the field object's value is validated and
+  /// saved by its triggers when it is left, rather than as it is typed; and
+  /// told when the user changes a field box's content.
+  bool Function(LayoutObjectModel content)? guarded;
+  void Function(LayoutObjectModel content)? onCellModified;
+}
+
 /// A portal: one row per related record, with the layout objects drawn inside
 /// the portal repeated against each of them.
 class PortalView extends StatefulWidget {
@@ -758,8 +854,13 @@ class PortalView extends StatefulWidget {
     required this.object, required this.contents, required this.related, required this.isDark, super.key,
     this.onChanged,
     this.refreshGeneration = 0,
+    this.rowController,
   });
   final LayoutObjectModel object;
+
+  /// The active row of the portal, held by the window (#26). In a list
+  /// row it is the portal of that row's record.
+  final PortalRowController? rowController;
 
   /// The objects drawn inside the portal, in layout coordinates. Each row
   /// redraws them against its own record.
@@ -782,6 +883,8 @@ class PortalView extends StatefulWidget {
 
 class _PortalViewState extends State<PortalView> {
   final Map<String, TextEditingController> _controllers = {};
+  final Map<String, FocusNode> _focusNodes = {};
+  final ScrollController _scroll = ScrollController();
   final Map<String, Timer?> _debounce = {};
   final Map<String, bool> _saving = {};
 
@@ -815,8 +918,44 @@ class _PortalViewState extends State<PortalView> {
   void initState() {
     super.initState();
     _access.addListener(_reload);
+    _attachController(widget.rowController);
     unawaited(_load());
   }
+
+  void _attachController(PortalRowController? controller) {
+    if (controller == null) return;
+    controller
+      ..focusCell = _focusCell
+      ..enterableFields = _enterableFields
+      ..writeRow = _writeRow
+      ..deleteRow = _deleteRowCode
+      ..addListener(_rowsChanged);
+  }
+
+  void _detachController(PortalRowController? controller) {
+    if (controller == null) return;
+    controller.removeListener(_rowsChanged);
+    if (controller.focusCell == _focusCell) {
+      controller
+        ..focusCell = null
+        ..enterableFields = null
+        ..writeRow = null
+        ..deleteRow = null;
+    }
+  }
+
+  void _rowsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The rows shown, past those the "initial row" skips.
+  List<Map<String, dynamic>> get _visibleRows {
+    final skip = (_config.initialRow - 1).clamp(0, _rows.length);
+    return _rows.skip(skip).toList();
+  }
+
+  void _publishRows() => widget.rowController
+      ?.showRows(_visibleRows, target: _target, parentId: widget.related.recordId);
 
   void _reload() => unawaited(_load());
 
@@ -830,11 +969,23 @@ class _PortalViewState extends State<PortalView> {
         old.object.portalConfig.toString() != widget.object.portalConfig.toString()) {
       unawaited(_load());
     }
+    if (old.rowController != widget.rowController) {
+      _detachController(old.rowController);
+      _attachController(widget.rowController);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _publishRows();
+      });
+    }
   }
 
   @override
   void dispose() {
+    _detachController(widget.rowController);
     _access.removeListener(_reload);
+    for (final f in _focusNodes.values) {
+      f.dispose();
+    }
+    _scroll.dispose();
     for (final t in _debounce.values) {
       t?.cancel();
     }
@@ -856,9 +1007,11 @@ class _PortalViewState extends State<PortalView> {
     final target = _target;
     if (recordId == null || target == null) {
       if (mounted) setState(() => _rows = const []);
+      _publishRows();
       return;
     }
 
+    widget.rowController?.loading();
     setState(() {
       _loading = true;
       _error = null;
@@ -879,6 +1032,7 @@ class _PortalViewState extends State<PortalView> {
         _loading = false;
       });
       _syncControllers();
+      _publishRows();
     } catch (e) {
       if (stale()) return;
       final problem = ExternalUnavailable.of(e);
@@ -888,6 +1042,7 @@ class _PortalViewState extends State<PortalView> {
         _problem = problem;
         _error = problem == null ? e.toString() : null;
       });
+      _publishRows();
       if (problem != null) _access.askOnce(context, problem);
     }
   }
@@ -955,27 +1110,154 @@ class _PortalViewState extends State<PortalView> {
         final existing = _controllers[key];
         if (existing == null) {
           _controllers[key] = TextEditingController(text: text);
-        } else if (existing.text != text && _debounce[key] == null) {
+        } else if (existing.text != text && _debounce[key] == null && !(_focusNodes[key]?.hasFocus ?? false)) {
           // Do not pull the text out from under somebody still typing.
           existing.text = text;
         }
+        _focusNodes.putIfAbsent(key, FocusNode.new);
       }
     }
     for (final key in _controllers.keys.toList()) {
       if (!live.contains(key)) {
         _debounce.remove(key)?.cancel();
         _controllers.remove(key)?.dispose();
+        _focusNodes.remove(key)?.dispose();
         _saving.remove(key);
       }
     }
+  }
+
+  /// The field objects of the rows a user can type into, in the order of
+  /// the layout (left to right, top to bottom).
+  List<LayoutObjectModel> _enterableFields() {
+    final target = _target;
+    if (target == null || !_privileges.edit) return const [];
+    final fields = [
+      for (final o in widget.contents)
+        if (o.type == 'field' && o.fieldBinding != null)
+          if (_column(target, o.fieldBinding!.fieldName) case final col?)
+            if (!col.isPrimaryKey && !isComputedColumn(col)) o,
+    ]..sort((a, b) => a.y != b.y ? a.y.compareTo(b.y) : a.x.compareTo(b.x));
+    return fields;
+  }
+
+  /// Go to Portal Row: brings row [row] into view and puts the focus in its
+  /// box of [objectId].
+  Future<TriggerBox?> _focusCell(int row, String objectId) async {
+    final target = _target;
+    final visible = _visibleRows;
+    if (target == null || row < 1 || row > visible.length) return null;
+    final content = widget.contents.where((o) => o.id == objectId).firstOrNull;
+    final field = content?.fieldBinding?.fieldName;
+    if (content == null || field == null) return null;
+    final rowId = visible[row - 1]['id']?.toString() ?? '';
+    final key = _cellKey(rowId, field);
+    final node = _focusNodes[key];
+    if (node == null) return null;
+    if (node.context == null && _scroll.hasClients) {
+      // The row is not built: bring it into view first.
+      final rowHeight = _config.effectiveRowHeight(widget.object.height);
+      _scroll.jumpTo(((row - 1) * rowHeight).clamp(0.0, _scroll.position.maxScrollExtent));
+      SchedulerBinding.instance.scheduleFrame();
+      await SchedulerBinding.instance.endOfFrame;
+    }
+    if (!mounted || node.context == null) return null;
+    final box = _cellBox(content, rowId, row, field);
+    node.requestFocus();
+    return box;
+  }
+
+  /// A field box of a portal row, as the window's script triggers see it.
+  TriggerBox _cellBox(LayoutObjectModel content, String rowId, int rowNumber, String field) {
+    final key = _cellKey(rowId, field);
+    return TriggerBox(
+      object: content,
+      key: field,
+      portal: widget.object,
+      rowNumber: rowNumber,
+      rowId: rowId,
+      modified: () {
+        final target = _target;
+        final controller = _controllers[key];
+        final row = _rows.where((r) => r['id']?.toString() == rowId).firstOrNull;
+        final col = target == null ? null : _column(target, field);
+        if (controller == null || row == null || col == null) return false;
+        return controller.text != widget.related.formatValue(col, row[col.name]);
+      },
+      save: () async {
+        final controller = _controllers[key];
+        if (controller == null) return true;
+        _debounce.remove(key)?.cancel();
+        return _saveCell(rowId, field, controller.text);
+      },
+      focus: () => _focusNodes[key]?.requestFocus(),
+      hasFocus: () => _focusNodes[key]?.hasFocus ?? false,
+    );
+  }
+
+  Future<Map<String, dynamic>> _writeRow(String rowId, Map<String, dynamic> values, {bool script = false}) async {
+    final target = _target;
+    if (target == null) throw StateError('The portal shows no related records.');
+    final updated =
+        await _write(() => widget.related.clientFor(target).updateRow(target.table.name, rowId, values, script: script));
+    if (mounted) {
+      setState(() {
+        final i = _rows.indexWhere((r) => r['id']?.toString() == rowId);
+        if (i >= 0) {
+          final rows = List<Map<String, dynamic>>.from(_rows);
+          rows[i] = updated;
+          _rows = rows;
+        }
+      });
+      // The boxes of the fields written show what was written, even the
+      // one being typed in.
+      for (final field in values.keys) {
+        final col = _column(target, field);
+        final controller = _controllers[_cellKey(rowId, col?.name ?? field)];
+        if (col != null && controller != null) controller.text = widget.related.formatValue(col, updated[col.name]);
+      }
+      _syncControllers();
+      _publishRows();
+    }
+    return updated;
+  }
+
+  /// Delete Portal Row: the related record [rowId], after asking when
+  /// [confirm]. 0 once deleted, 1 when the user cancelled, 101 when it could
+  /// not be.
+  Future<int> _deleteRowCode(String rowId, {required bool confirm}) async {
+    if (!_privileges.delete) return 200;
+    if (confirm) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Delete Portal Row'),
+          content: const Text('Permanently delete this related record?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return 1;
+    }
+    return await _deleteRow(rowId) ? 0 : 101;
   }
 
   ColumnModel? _column(RelatedTarget target, String field) => (_externalTable ?? target.table).columns
       .where((c) => c.name.toLowerCase() == field.toLowerCase())
       .firstOrNull;
 
-  void _onCellChanged(String rowId, String field, String value) {
+  void _onCellChanged(LayoutObjectModel content, String rowId, String field, String value) {
     final key = _cellKey(rowId, field);
+    final controller = widget.rowController;
+    controller?.onCellModified?.call(content);
+    // A field whose triggers validate and save it is saved when it is left.
+    if (controller?.guarded?.call(content) ?? false) return;
     _debounce[key]?.cancel();
     _debounce[key] = Timer(const Duration(milliseconds: 600), () {
       _debounce[key] = null;
@@ -983,14 +1265,15 @@ class _PortalViewState extends State<PortalView> {
     });
   }
 
-  Future<void> _saveCell(String rowId, String field, String value) async {
+  /// Saves one cell; false when it could not be saved.
+  Future<bool> _saveCell(String rowId, String field, String value) async {
     final target = _target;
-    if (target == null) return;
+    if (target == null) return true;
     final key = _cellKey(rowId, field);
     setState(() => _saving[key] = true);
     try {
       final updated = await _write(() => widget.related.clientFor(target).updateRow(target.table.name, rowId, {field: value}));
-      if (!mounted) return;
+      if (!mounted) return true;
       setState(() {
         _saving.remove(key);
         final i = _rows.indexWhere((r) => r['id']?.toString() == rowId);
@@ -1002,10 +1285,13 @@ class _PortalViewState extends State<PortalView> {
       });
       // A calculation of the related record may have changed with it.
       _syncControllers();
+      _publishRows();
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       setState(() => _saving[key] = false);
       _report('The related record could not be saved: $e');
+      return false;
     }
   }
 
@@ -1038,17 +1324,19 @@ class _PortalViewState extends State<PortalView> {
     }
   }
 
-  Future<void> _deleteRow(String rowId) async {
+  Future<bool> _deleteRow(String rowId) async {
     final target = _target;
-    if (target == null) return;
+    if (target == null) return false;
     try {
       await _write(() => widget.related.clientFor(target).deleteRow(target.table.name, rowId));
-      if (!mounted) return;
+      if (!mounted) return true;
       await _load();
       widget.onChanged?.call();
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       _report('The related record could not be deleted: $e');
+      return false;
     }
   }
 
@@ -1115,12 +1403,11 @@ class _PortalViewState extends State<PortalView> {
   Widget _rowList(RelatedTarget target) {
     final rowHeight = _config.effectiveRowHeight(widget.object.height);
     // "Initial row" starts the portal past the first related record.
-    final skip = (_config.initialRow - 1).clamp(0, _rows.length);
-    final visible = _rows.skip(skip).toList();
+    final visible = _visibleRows;
 
     final children = <Widget>[
       for (final (i, row) in visible.indexed)
-        _row(target, row, rowHeight, striped: i.isOdd),
+        _row(target, row, rowHeight, striped: i.isOdd, number: i + 1),
     ];
     // The empty last row is offered only where the relationship allows
     // creating the records it would create: on the side the portal shows.
@@ -1138,6 +1425,7 @@ class _PortalViewState extends State<PortalView> {
     }
 
     final list = ListView(
+      controller: _scroll,
       primary: false,
       padding: EdgeInsets.zero,
       children: children,
@@ -1147,13 +1435,17 @@ class _PortalViewState extends State<PortalView> {
   }
 
   Widget _row(RelatedTarget target, Map<String, dynamic> row, double rowHeight,
-      {required bool striped}) {
+      {required bool striped, required int number}) {
     final rowId = row['id']?.toString() ?? '';
-    return Container(
+    final controller = widget.rowController;
+    final active = controller != null && controller.activeRow == number;
+    final container = Container(
       key: ValueKey('portal-row-$rowId'),
       height: rowHeight,
       decoration: BoxDecoration(
-        color: striped
+        color: active
+            ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.12)
+            : striped
             ? (widget.isDark ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.02))
             : null,
         border: Border(
@@ -1171,7 +1463,7 @@ class _PortalViewState extends State<PortalView> {
               top: content.y - widget.object.y,
               width: content.width,
               height: content.height,
-              child: _cell(target, content, rowId, row),
+              child: _cell(target, content, rowId, row, number),
             ),
           if (_config.allowDeletion && _privileges.delete && rowId.isNotEmpty)
             Positioned(
@@ -1191,12 +1483,22 @@ class _PortalViewState extends State<PortalView> {
         ],
       ),
     );
+    if (controller == null) return container;
+    // A click anywhere in the row makes it the active one (#26).
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) {
+        controller.activate(number);
+        controller.onActivated?.call();
+      },
+      child: container,
+    );
   }
 
   /// A cell of a portal row: a field of the related record, or any other
   /// object drawn inside the portal, which repeats unchanged.
   Widget _cell(RelatedTarget target, LayoutObjectModel content, String rowId,
-      Map<String, dynamic> row) {
+      Map<String, dynamic> row, int number) {
     if (content.type != 'field') {
       return _staticContent(content);
     }
@@ -1234,10 +1536,14 @@ class _PortalViewState extends State<PortalView> {
     final key = _cellKey(rowId, field);
     final controller = _controllers[key] ?? TextEditingController(text: text);
     _controllers[key] = controller;
+    final focusNode = _focusNodes.putIfAbsent(key, FocusNode.new);
+    final rows = widget.rowController;
+    final guarded = rows?.guarded?.call(content) ?? false;
 
-    return TextField(
+    final textField = TextField(
       key: ValueKey('portal-cell-$rowId-$field'),
       controller: controller,
+      focusNode: focusNode,
       style: TextStyle(fontSize: content.style.fontSize > 0 ? content.style.fontSize : 12),
       textAlign: _textAlign(content.style.textAlign),
       decoration: InputDecoration(
@@ -1253,12 +1559,24 @@ class _PortalViewState extends State<PortalView> {
                 ? const Icon(Icons.error_outline, size: 13, color: Colors.red)
                 : null,
       ),
-      onChanged: (v) => _onCellChanged(rowId, field, v),
+      onChanged: (v) => _onCellChanged(content, rowId, field, v),
       onEditingComplete: () {
         _debounce[key]?.cancel();
         _debounce[key] = null;
+        // A field its triggers validate and save is saved as it is left.
+        if (guarded) {
+          focusNode.unfocus();
+          return;
+        }
         unawaited(_saveCell(rowId, field, controller.text));
       },
+    );
+    if (rows == null) return textField;
+    return Focus(
+      canRequestFocus: false,
+      skipTraversal: true,
+      onFocusChange: (focused) => rows.onCellFocus?.call(_cellBox(content, rowId, number, field), focused),
+      child: textField,
     );
   }
 

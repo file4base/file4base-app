@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/layout_engine/script_files.dart';
 import 'package:file4base_client/features/layout_engine/script_runtime_state.dart';
 import 'package:http/http.dart' as http;
 
+export 'package:file4base_client/features/layout_engine/script_files.dart';
 export 'package:file4base_client/features/layout_engine/script_runtime_state.dart';
 
 /// Steps a button can run directly (single step action), with their labels.
@@ -101,10 +106,42 @@ abstract class CalculationContextHost {
   /// its table occurrence and its table — lower-cased.
   Set<String> get actionOwnOccurrenceNames;
 
-  /// [expression] evaluated by the server against the record in hand, related
-  /// fields read through the relationships, as a calculation field is. Null
-  /// when it cannot be: no record, or an expression that does not evaluate.
-  Future<String?> actionEvaluateCalculation(String expression);
+  /// [expression] evaluated by the server, with the solution's custom
+  /// functions, against the record in hand when there is one, related fields
+  /// read through the relationships, as a calculation field is: a script
+  /// step's formula the runner cannot evaluate itself. [variables] are the
+  /// script's `$` and `$$` variables, [get] the answers of the Get functions
+  /// only the client knows. Null when the window has no table to evaluate it
+  /// in.
+  Future<EvaluationModel?> actionEvaluateInScript(
+    String expression, {
+    Map<String, String> variables = const {},
+    Map<String, Object?> get = const {},
+  });
+}
+
+/// A field of another table occurrence than the window's (`Occurrence::Field`).
+/// FileMaker writes it in a related record, never in the field of the same
+/// name of the record in hand. Implemented by the data browser.
+abstract class RelatedFieldHost {
+  /// Whether [occurrence] is the occurrence the window's layout shows.
+  Future<bool> actionIsOwnOccurrence(String occurrence);
+
+  /// What [field] of [occurrence] holds in the related record a step would
+  /// write (see [actionSetRelatedField]): empty when there is none, null
+  /// when the field cannot be read.
+  Future<String?> actionRelatedFieldText(String occurrence, String field);
+
+  /// Writes [value] into [field] of [occurrence], another occurrence than
+  /// the window's: in the active portal row when it is a row of that
+  /// occurrence, otherwise in the first related record through the
+  /// relationship, in the relationship's sort order; with none, in a record
+  /// created through the relationship when it allows creation. Returns
+  /// FileMaker's error code: 0 when written, 101 when there is no related
+  /// record and none may be created, 102 when there is no such field, 103
+  /// when no relationship leads to [occurrence], 201 for a field that cannot
+  /// be modified.
+  Future<int> actionSetRelatedField(String occurrence, String field, String value);
 }
 
 /// Script steps of the auto-enter options: Set Next Serial Value and
@@ -120,6 +157,35 @@ abstract class AutoEnterActionHost {
   /// reloads the records. Returns a FileMaker error code: 0 when it ran, 1
   /// when the user cancelled.
   Future<int> actionRelookupFieldContents(String field, {bool dialog = false});
+}
+
+/// Script steps that make a document or hand one over (#133): Save Records
+/// as PDF, and the compose window of Send Mail. Implemented by the data
+/// browser; a host without it makes Save Records as PDF fail with error 3.
+abstract class DocumentActionHost {
+  /// The pages of the layout in hand for [records]: `current` (the record
+  /// in hand), `browsed` (every record of the found set) or `blank` (the
+  /// layout with no data). An empty list when there is no record to draw;
+  /// null when the layout cannot be drawn.
+  Future<List<PdfSheetPage>?> actionRenderRecordsPdf(String records);
+
+  /// Makes each record of the found set the current one in turn, in order,
+  /// and calls [visit] with its 1-based position and the found count; stops
+  /// when [visit] answers false. The current record is the same afterwards.
+  /// Answers false when the found set could not be read.
+  Future<bool> actionForEachFoundRecord(Future<bool> Function(int position, int count) visit);
+
+  /// Shows File4Base's compose window for [mail], sent as [from] with the
+  /// files [attachments] (their names). Answers the message as the user
+  /// left it, or null when they cancelled.
+  Future<OutgoingMail?> actionComposeMail(OutgoingMail mail, {required String from, List<String> attachments = const []});
+
+  /// Opens a document a script saved: in its application on the desktop, as
+  /// a download in the browser.
+  Future<void> actionOpenDocument(String path, String nativePath, Uint8List bytes);
+
+  /// Tells the user something without stopping the script.
+  Future<void> actionNotify(String message);
 }
 
 /// Outcome of running a button action. [message] explains why a script
@@ -231,9 +297,18 @@ class LayoutActionRunner {
     this.peerTokenProvider,
     this.windowSolution,
     this.solutionName,
-  });
+    ScriptFileStore? files,
+  }) : files = files ?? ScriptFileStore.instance;
   final ApiClient apiClient;
   final LayoutActionHost host;
+
+  /// The folders a script reads and writes files in (#133).
+  final ScriptFileStore files;
+
+  /// Whether this solution sends mail through SMTP, read once (#133).
+  Future<MailStatus>? _mailStatus;
+
+  Future<MailStatus> _loadMailStatus() => _mailStatus ??= apiClient.mailStatus().catchError((Object _) => const MailStatus());
 
   /// The solution this runner's scripts belong to, when it is not the one on
   /// screen (#107). It names the solution in messages; null means "this
@@ -366,6 +441,69 @@ class LayoutActionRunner {
   ExtendedLayoutActionHost? get _extHost => host is ExtendedLayoutActionHost ? host as ExtendedLayoutActionHost : null;
   AutoEnterActionHost? get _autoEnterHost => host is AutoEnterActionHost ? host as AutoEnterActionHost : null;
 
+  RelatedFieldHost? get _relatedHost => host is RelatedFieldHost ? host as RelatedFieldHost : null;
+
+  /// The field a step names: `Occurrence::Field`, or a bare name with the
+  /// occurrence [table] (the step's `field_table`) gives. The occurrence is
+  /// kept: a field of another occurrence is a related field, not the field
+  /// of the same name of the record in hand.
+  static ({String occurrence, String field}) fieldTarget(String raw, [String table = '']) {
+    final text = raw.trim();
+    final cut = text.indexOf('::');
+    if (cut < 0) return (occurrence: table.trim(), field: text);
+    return (occurrence: text.substring(0, cut).trim(), field: text.substring(cut + 2).trim());
+  }
+
+  static String _qualified(({String occurrence, String field}) target) =>
+      target.occurrence.isEmpty ? target.field : '${target.occurrence}::${target.field}';
+
+  /// Whether [occurrence] is the window's own; a host that cannot tell
+  /// writes no field of a named occurrence.
+  Future<bool> _isOwnOccurrence(String occurrence) async {
+    if (occurrence.trim().isEmpty) return true;
+    final related = _relatedHost;
+    if (related != null) return related.actionIsOwnOccurrence(occurrence);
+    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+    return context != null && context.actionOwnOccurrenceNames.contains(occurrence.trim().toLowerCase());
+  }
+
+  /// Writes [value] into [target], in the record in hand or, for a field of
+  /// another occurrence, in the related record FileMaker writes. Returns
+  /// FileMaker's error code.
+  Future<int> _writeField(({String occurrence, String field}) target, String value) async {
+    if (!await _isOwnOccurrence(target.occurrence)) {
+      final related = _relatedHost;
+      if (related == null) return 102;
+      return related.actionSetRelatedField(target.occurrence, target.field, value);
+    }
+    return await host.actionSetField(target.field, value) ? 0 : 102;
+  }
+
+  /// What [target] holds where [_writeField] would write it; null when it
+  /// cannot be read.
+  Future<String?> _readField(({String occurrence, String field}) target) async {
+    if (!await _isOwnOccurrence(target.occurrence)) {
+      return _relatedHost?.actionRelatedFieldText(target.occurrence, target.field);
+    }
+    final token = '{{${target.field}}}';
+    final value = host.actionResolveText(token);
+    return value == token ? null : value;
+  }
+
+  /// Why [step] wrote nothing into [target], for FileMaker's error [code].
+  static String _writeRefusal(String step, ({String occurrence, String field}) target, int code) {
+    final name = _qualified(target);
+    return switch (code) {
+      101 => '$step: there is no related record of ${target.occurrence} to write "$name" into, '
+          'and the relationship does not allow creating one. Nothing was written.',
+      103 => '$step: no relationship leads from this layout to ${target.occurrence}, so '
+          '"$name" cannot be written. Nothing was written.',
+      201 => '$step: "$name" cannot be modified. Nothing was written.',
+      _ when target.occurrence.isEmpty => 'Field "${target.field}" is not in this table.',
+      _ => '$step: "$name" is not a field this window can write. Nothing was written.',
+    };
+  }
+
   Future<LayoutActionResult> run(ButtonActionModel action) async {
     if (action.isPerformScript) {
       if (action.scriptId == null && (action.scriptName == null || action.scriptName!.isEmpty)) {
@@ -379,7 +517,14 @@ class LayoutActionRunner {
     }
     final step = action.stepType;
     if (step == null) return const LayoutActionResult.stopped('This button has no step selected.');
-    return runStep(step, action.params, depth: 0);
+    final vars = <String, String>{};
+    final failure = await prepareStepFormulas(step, action.params, vars);
+    if (failure != null) return LayoutActionResult.stopped(failure);
+    try {
+      return await runStep(step, action.params, depth: 0, localVars: vars);
+    } finally {
+      _serverAnswers.clear();
+    }
   }
 
   Future<LayoutActionResult> _performScript({
@@ -416,9 +561,13 @@ class LayoutActionRunner {
       parameter: parameter,
       session: session ?? ScriptSessionState(),
     );
+    final triggers = host is ScriptTriggerHost ? host as ScriptTriggerHost : null;
     while (!execution.atEnd) {
       final sequence = execution.currentSequence;
+      final mark = triggers?.actionTriggerMark();
       final outcome = await execution.advance();
+      // The script triggers a step set off run before the next step (#26).
+      if (mark != null) await triggers!.actionSettleTriggers(mark);
       switch (outcome.kind) {
         case StepOutcomeKind.stopped:
           return LayoutActionResult.stopped(
@@ -497,11 +646,17 @@ class LayoutActionRunner {
       return null;
     }
 
-    String normalizeFieldTarget(String rawField) {
-      final trimmed = rawField.trim();
-      final fieldPart = trimmed.contains('::') ? trimmed.split('::').last.trim() : trimmed;
-      return fieldPart.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), '');
+    ({String occurrence, String field}) normalizeFieldTarget(String rawField) {
+      final target = fieldTarget(rawField);
+      return (
+        occurrence: target.occurrence,
+        field: target.field.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), ''),
+      );
     }
+
+    // The field a step names, with its occurrence.
+    ({String occurrence, String field}) stepField([String key = 'field']) =>
+        fieldTarget(params[key]?.toString() ?? '', params['field_table']?.toString() ?? '');
 
     switch (norm) {
       case 'comment':
@@ -627,7 +782,7 @@ class LayoutActionRunner {
         }
         final exitAfterLast = boolParam('exit_after_last');
         if (ext != null) {
-          final outcome = await ext.actionGoToPortalRow(target);
+          final outcome = await ext.actionGoToPortalRow(target, select: boolParam('select'));
           session.lastError = outcome.errorCode;
           if (outcome.atBoundary && exitAfterLast) {
             return const LayoutActionResult.exitLoop();
@@ -706,7 +861,8 @@ class LayoutActionRunner {
         final findReqs = mapListParam('find_requests');
         if (ext != null) {
           final found = await ext.actionPerformFindEx(requests: findReqs, restore: restore);
-          session.lastError = found == 0 ? 401 : 0;
+          // A negative count: OnModeExit kept the window in Find mode.
+          session.lastError = found < 0 ? 20 : (found == 0 ? 401 : 0);
         } else {
           session.lastError = 0;
           await host.actionPerformFind();
@@ -902,10 +1058,7 @@ class LayoutActionRunner {
           );
         }
       case 'save_records_as_pdf':
-        // No PDF is written yet: reporting success would let the steps after
-        // it attach or send a file that does not exist.
-        return failOrCapture(3, _migrationNote(params,
-            'Save Records as PDF produces no PDF in File4Base yet (error 3, command unavailable).'));
+        return _runSaveRecordsAsPdf(params, vars, context, failOrCapture, boolParam, currentLayoutName());
       case 'save_records_as_excel':
         session.lastError = 0;
         if (ext != null) {
@@ -1006,17 +1159,16 @@ class LayoutActionRunner {
         session.ensureCurrentWindow(layout).layoutName = layout;
         session.lastError = 0;
       case 'set_field':
-        final field = params['field']?.toString() ?? '';
-        if (field.isEmpty) return failOrCapture(102, 'Set Field has no field selected.');
+        final target = stepField();
+        if (target.field.isEmpty) return failOrCapture(102, 'Set Field has no field selected.');
         final value = params['value_is_calculation'] == true
             ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
             : p('value');
         if (value == null) {
           return const LayoutActionResult.stopped('Set Field calculation is not supported in this context.');
         }
-        if (!await host.actionSetField(field, value)) {
-          return failOrCapture(102, 'Field "$field" is not in this table.');
-        }
+        final written = await _writeField(target, value);
+        if (written != 0) return failOrCapture(written, _writeRefusal('Set Field', target, written));
         session.lastError = 0;
       case 'set_field_by_name':
         final rawTargetField = params['target_field']?.toString() ?? params['field']?.toString() ?? '';
@@ -1026,23 +1178,28 @@ class LayoutActionRunner {
         if (resolvedTarget == null || resolvedTarget.trim().isEmpty) {
           return failOrCapture(102, 'Set Field By Name could not resolve target field "$rawTargetField".');
         }
-        final colName = normalizeFieldTarget(resolvedTarget);
+        final target = normalizeFieldTarget(resolvedTarget);
         final value = params['value_is_calculation'] == true
             ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
             : (resolveValue(params['value']?.toString() ?? '', vars, callContext: context) ?? p('value'));
         if (value == null) {
           return const LayoutActionResult.stopped('Set Field By Name calculation is not supported in this context.');
         }
-        if (!await host.actionSetField(colName, value)) {
-          return failOrCapture(102, 'Field "$resolvedTarget" ($colName) is not in this table.');
+        final written = await _writeField(target, value);
+        if (written != 0) {
+          return failOrCapture(
+              written,
+              target.occurrence.isEmpty && written == 102
+                  ? 'Field "$resolvedTarget" (${target.field}) is not in this table.'
+                  : _writeRefusal('Set Field By Name', target, written));
         }
         session.lastError = 0;
       case 'insert_calculated_result':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isEmpty) {
+        if (target.field.isEmpty) {
           return failOrCapture(102, 'Insert Calculated Result has no target or active field.');
         }
         final calcVal = resolveValue((params['value'] ?? params['expression'])?.toString() ?? '', vars, callContext: context);
@@ -1052,14 +1209,13 @@ class LayoutActionRunner {
         final selectAll = boolParam('select', defaultValue: true);
         var finalVal = calcVal;
         if (!selectAll) {
-          final existing = host.actionResolveText('{{$field}}');
-          if (existing != '{{$field}}') {
+          final existing = await _readField(target);
+          if (existing != null) {
             finalVal = '$existing$calcVal';
           }
         }
-        if (!await host.actionSetField(field, finalVal)) {
-          return failOrCapture(102, 'Field "$field" is not in this table.');
-        }
+        final written = await _writeField(target, finalVal);
+        if (written != 0) return failOrCapture(written, _writeRefusal('Insert Calculated Result', target, written));
         session.lastError = 0;
       case 'insert_current_date':
         final now = DateTime.now();
@@ -1079,7 +1235,8 @@ class LayoutActionRunner {
           break;
         }
         if (!hasWindow) return windowless();
-        var field = textParam('field');
+        final named = fieldTarget(textParam('field'), textParam('field_table'));
+        var field = named.field;
         if (field.isEmpty) {
           // Only a step that names no target at all writes the active field;
           // one whose target could not be read fails rather than writing
@@ -1095,7 +1252,10 @@ class LayoutActionRunner {
         if (field.isEmpty) {
           return failOrCapture(102, 'Insert Current Date has no target or active field.');
         }
-        final table = textParam('field_table');
+        final table = named.occurrence;
+        // Placing the occurrence first lets the window read the type of a
+        // related field from its own table.
+        final ownField = await _isOwnOccurrence(table);
         final fieldType = ext?.actionFieldType(field, table: table.isEmpty ? null : table)?.toUpperCase();
         if (fieldType != null && const {'CALCULATION', 'SUMMARY', 'CONTAINER'}.contains(fieldType)) {
           return failOrCapture(201, 'Insert Current Date cannot write the date into "$field", a '
@@ -1105,6 +1265,20 @@ class LayoutActionRunner {
         // gets it at midnight. Elsewhere Select entire contents decides.
         final value = fieldType == 'TIMESTAMP' ? '$today 00:00:00' : today;
         final replaceAll = selectAll || fieldType == 'DATE' || fieldType == 'TIMESTAMP';
+        // A field of another occurrence is written in the related record.
+        Future<LayoutActionResult> insertRelated() async {
+          final target = (occurrence: table, field: field);
+          var text = value;
+          if (!replaceAll) {
+            final existing = await _readField(target);
+            if (existing != null) text = '$existing$value';
+          }
+          final written = await _writeField(target, text);
+          if (written != 0) return failOrCapture(written, _writeRefusal('Insert Current Date', target, written));
+          session.lastError = 0;
+          return const LayoutActionResult.ok();
+        }
+        if (!ownField) return insertRelated();
         if (ext != null) {
           final outcome = await ext.actionInsertIntoField(
               field: field, text: value, replaceAll: replaceAll, table: table.isEmpty ? null : table);
@@ -1114,17 +1288,12 @@ class LayoutActionRunner {
             case FieldInsertOutcome.noSuchField:
               return failOrCapture(102, 'Field "$field" is not in this table.');
             case FieldInsertOutcome.relatedField:
-              return failOrCapture(102, 'Insert Current Date writes "$table::$field", a field of '
-                  'another table occurrence than this layout\'s, which a script cannot write yet. '
-                  'Nothing was written.');
+              return insertRelated();
           }
           session.lastError = 0;
           break;
         }
-        if (table.isNotEmpty) {
-          return failOrCapture(102, 'Insert Current Date writes "$table::$field", which this window '
-              'cannot write. Nothing was written.');
-        }
+        if (table.isNotEmpty) return insertRelated();
         var plain = value;
         if (!replaceAll) {
           final token = '{{$field}}';
@@ -1193,7 +1362,7 @@ class LayoutActionRunner {
           failOrCapture: failOrCapture,
         );
       case 'set_next_serial_value':
-        final field = params['field']?.toString().trim() ?? '';
+        final field = _qualified(stepField());
         if (field.isEmpty) return failOrCapture(102, 'Set Next Serial Value has no field selected.');
         final value = params['value_is_calculation'] == true
             ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
@@ -1209,7 +1378,7 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'relookup_field_contents':
-        var field = params['field']?.toString().trim() ?? '';
+        var field = _qualified(stepField());
         if (field.isEmpty) {
           field = ext?.actionActiveFieldName ?? session.activeField;
         }
@@ -1225,15 +1394,13 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'copy':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
         var copied = '';
-        if (field.isNotEmpty) {
-          final token = '{{$field}}';
-          final val = host.actionResolveText(token);
-          copied = val == token ? '' : val;
+        if (target.field.isNotEmpty) {
+          copied = await _readField(target) ?? '';
         }
         session.clipboard = copied;
         if (ext != null) {
@@ -1241,40 +1408,39 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'cut':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isNotEmpty) {
-          final token = '{{$field}}';
-          final val = host.actionResolveText(token);
-          session.clipboard = val == token ? '' : val;
+        if (target.field.isNotEmpty) {
+          session.clipboard = await _readField(target) ?? '';
           if (ext != null) await ext.actionCopyToClipboard(session.clipboard);
-          await host.actionSetField(field, '');
+          final written = await _writeField(target, '');
+          if (written != 0 && target.occurrence.isNotEmpty) {
+            return failOrCapture(written, _writeRefusal('Cut', target, written));
+          }
         }
         session.lastError = 0;
       case 'paste':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isEmpty) {
+        if (target.field.isEmpty) {
           return failOrCapture(102, 'Paste has no target or active field.');
         }
         final clip = (ext != null ? await ext.actionReadFromClipboard() : null) ?? session.clipboard;
-        if (!await host.actionSetField(field, clip)) {
-          return failOrCapture(102, 'Field "$field" is not in this table.');
-        }
+        final written = await _writeField(target, clip);
+        if (written != 0) return failOrCapture(written, _writeRefusal('Paste', target, written));
         session.lastError = 0;
       case 'clear':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isNotEmpty) {
-          if (!await host.actionSetField(field, '')) {
-            return failOrCapture(102, 'Field "$field" is not in this table.');
-          }
+        if (target.field.isNotEmpty) {
+          final written = await _writeField(target, '');
+          if (written != 0) return failOrCapture(written, _writeRefusal('Clear', target, written));
         }
         session.lastError = 0;
       case 'export_field_contents':
@@ -1291,7 +1457,15 @@ class LayoutActionRunner {
         session.lastError = 0;
       case 'insert_picture':
       case 'insert_file':
-        var field = params['field']?.toString().trim() ?? '';
+        final named = stepField();
+        if (!await _isOwnOccurrence(named.occurrence)) {
+          // A file goes into the record in hand only; a related container
+          // field is not written instead of the field of the same name here.
+          return failOrCapture(102, '${norm == 'insert_picture' ? 'Insert Picture' : 'Insert File'} writes '
+              '"${_qualified(named)}", a field of another table occurrence, which File4Base cannot insert a '
+              'file into yet. Nothing was written.');
+        }
+        var field = named.field;
         if (field.isEmpty) {
           field = ext?.actionActiveFieldName ?? session.activeField;
         }
@@ -1311,7 +1485,7 @@ class LayoutActionRunner {
           return failOrCapture(1631, 'Insert from URL has no URL.');
         }
         final targetVar = params['target']?.toString().trim() ?? '';
-        final targetField = params['field']?.toString().trim() ?? '';
+        final targetField = stepField();
         if (!hasWindow && targetVar.isEmpty) {
           return LayoutActionResult.stopped(
               'Step "$stepType" targeting a field acts on a window, and this script has no window here.');
@@ -1343,56 +1517,13 @@ class LayoutActionRunner {
         }
         if (targetVar.startsWith(r'$')) {
           _setVariable(targetVar, fetched, vars);
-        } else if (targetField.isNotEmpty) {
-          if (!await host.actionSetField(targetField, fetched)) {
-            return failOrCapture(102, 'Field "$targetField" is not in this table.');
-          }
+        } else if (targetField.field.isNotEmpty) {
+          final written = await _writeField(targetField, fetched);
+          if (written != 0) return failOrCapture(written, _writeRefusal('Insert from URL', targetField, written));
         }
         session.lastError = 0;
       case 'send_mail':
-        // A draft opened in the user's e-mail client is the only way a
-        // File4Base script sends mail: an SMTP send, one mail per record, a
-        // collected address list or an attachment would be lost silently.
-        final unsupported = _sendMailRefusal(params);
-        if (unsupported != null) return failOrCapture(3, unsupported);
-        String? evalMailParam(String key) {
-          final raw = params[key]?.toString() ?? '';
-          if (raw.isEmpty) return '';
-          final value = resolveValue(raw, vars, callContext: context);
-          if (value != null) return value;
-          // A calculation that cannot be evaluated is never sent as its own
-          // text; a literal is still written as it stands.
-          return params['${key}_is_calculation'] == true ? null : _resolveParamsText(raw, vars);
-        }
-        final mailParts = <String, String>{};
-        for (final key in const ['to', 'cc', 'bcc', 'subject', 'message']) {
-          final value = evalMailParam(key);
-          if (value == null) {
-            return LayoutActionResult.stopped('Send Mail cannot evaluate its $key: ${params[key]}');
-          }
-          mailParts[key] = value;
-        }
-        final to = mailParts['to']!;
-        final cc = mailParts['cc']!;
-        final bcc = mailParts['bcc']!;
-        final subject = mailParts['subject']!;
-        final message = mailParts['message']!;
-        if (ext != null) {
-          await ext.actionSendMail(to: to, cc: cc, bcc: bcc, subject: subject, message: message);
-        } else if (to.isNotEmpty) {
-          final uri = Uri(
-            scheme: 'mailto',
-            path: to,
-            queryParameters: <String, String>{
-              if (cc.isNotEmpty) 'cc': cc,
-              if (bcc.isNotEmpty) 'bcc': bcc,
-              if (subject.isNotEmpty) 'subject': subject,
-              if (message.isNotEmpty) 'body': message,
-            },
-          );
-          await host.actionOpenUrl(uri.toString());
-        }
-        session.lastError = 0;
+        return _runSendMail(params, vars, context, failOrCapture);
       case 'show_dialog':
         final title = params['title_is_calculation'] == true
             ? resolveValue(params['title']?.toString() ?? '', vars, callContext: context)
@@ -1412,21 +1543,27 @@ class LayoutActionRunner {
                 : _resolveParamsText(b['label']?.toString() ?? 'OK', vars);
             return <String, dynamic>{'label': lbl, 'commit': b['commit'] != false};
           }).toList();
-          final resolvedInputs = rawInputs?.map((inp) {
-            final lbl = inp['label_is_calculation'] == true
-                ? (resolveValue(inp['label']?.toString() ?? '', vars, callContext: context) ?? '')
-                : _resolveParamsText(inp['label']?.toString() ?? '', vars);
-            final fieldKey = inp['field']?.toString() ?? '';
-            final current = fieldKey.startsWith(r'$')
-                ? (_lookupVariable(fieldKey, vars) ?? '')
-                : (host.actionResolveText('{{$fieldKey}}') == '{{$fieldKey}}' ? '' : host.actionResolveText('{{$fieldKey}}'));
-            return <String, dynamic>{
-              'field': fieldKey,
-              'label': lbl,
-              'value': current,
-              'password': inp['password'] == true,
-            };
-          }).toList();
+          List<Map<String, dynamic>>? resolvedInputs;
+          if (rawInputs != null) {
+            resolvedInputs = [];
+            for (final inp in rawInputs) {
+              final lbl = inp['label_is_calculation'] == true
+                  ? (resolveValue(inp['label']?.toString() ?? '', vars, callContext: context) ?? '')
+                  : _resolveParamsText(inp['label']?.toString() ?? '', vars);
+              final raw = inp['field']?.toString() ?? '';
+              // A field input is keyed by its occurrence too, so what is typed
+              // goes back into that field: a related one into the related record.
+              final target = raw.startsWith(r'$') ? (occurrence: '', field: raw) : fieldTarget(raw, inp['field_table']?.toString() ?? '');
+              final fieldKey = _qualified(target);
+              final current = raw.startsWith(r'$') ? (_lookupVariable(raw, vars) ?? '') : (await _readField(target) ?? '');
+              resolvedInputs.add(<String, dynamic>{
+                'field': fieldKey,
+                'label': lbl,
+                'value': current,
+                'password': inp['password'] == true,
+              });
+            }
+          }
           final dialogResult = await ext.actionShowDialogEx(
             title: title,
             message: message,
@@ -1447,7 +1584,7 @@ class LayoutActionRunner {
               if (entry.key.startsWith(r'$')) {
                 _setVariable(entry.key, entry.value, vars);
               } else if (entry.key.isNotEmpty) {
-                await host.actionSetField(entry.key, entry.value);
+                await _writeField(fieldTarget(entry.key), entry.value);
               }
             }
           }
@@ -1650,6 +1787,7 @@ class LayoutActionRunner {
     final external = LayoutActionRunner(
       apiClient: apiClient.forPeerSession(token),
       host: _WindowlessHost(host),
+      files: files,
       // Reaching back to the calling solution — a transfer in the called
       // script whose far end is the caller, say — uses the session the user is
       // already working in there. Any third solution is asked for as usual.
@@ -1672,21 +1810,328 @@ class LayoutActionRunner {
     return note.isEmpty ? fallback : note;
   }
 
-  /// Why a Send Mail step cannot run as a draft in the e-mail client, or
-  /// null when it can.
-  static String? _sendMailRefusal(Map<String, dynamic> params) {
-    final reasons = <String>[
-      if (params['send_via'] == 'smtp')
-        "it sends through an SMTP server, and File4Base scripts send mail only by opening a draft in the user's e-mail client",
-      if (params['one_email_per_record'] == true) 'it sends one e-mail per record of the found set',
-      for (final key in const ['to', 'cc', 'bcc'])
-        if (params['collect_$key'] == true)
-          'it collects the ${key.toUpperCase()} addresses across the found set',
-      if (params['attachments'] is List && (params['attachments'] as List).isNotEmpty)
-        'it attaches files, which a draft opened in the e-mail client cannot carry',
-    ];
-    if (reasons.isEmpty) return null;
-    return 'Send Mail cannot run as written: ${reasons.join('; ')}.';
+  /// The value of a Send Mail option: a calculation evaluated, a literal as
+  /// written. Null for a calculation that cannot be evaluated — never sent
+  /// as its own text.
+  String? _mailValue(Map<String, dynamic> params, String key, Map<String, String> vars, ScriptCallContext context) {
+    final raw = params[key]?.toString() ?? '';
+    if (raw.isEmpty) return '';
+    final value = resolveValue(raw, vars, callContext: context);
+    if (value != null) return value;
+    return params['${key}_is_calculation'] == true ? null : _resolveParamsText(raw, vars);
+  }
+
+  /// A path list of a step: a `$variable` entry stands for the variable's
+  /// value, any other entry for itself.
+  String _pathText(String raw, Map<String, String> vars, ScriptCallContext context) {
+    final lines = <String>[];
+    for (final line in raw.split(RegExp('[\r\n\u00b6]'))) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      lines.add(t.startsWith(r'$') ? (_lookupVariable(t, vars, callContext: context) ?? '') : t);
+    }
+    return lines.join('\n');
+  }
+
+  static const _pathModel = 'a File4Base script reads and writes files only in its temporary folder, '
+      'Get ( TemporaryPath ), and its documents folder, Get ( DocumentsPath ) (also Get ( DesktopPath ))';
+
+  /// Save Records as PDF (#133): the layout in hand, for the current record
+  /// or the found set, drawn as Print draws it and written at the step's
+  /// path, appended to a PDF saved earlier in this run when asked.
+  Future<LayoutActionResult> _runSaveRecordsAsPdf(
+    Map<String, dynamic> params,
+    Map<String, String> vars,
+    ScriptCallContext context,
+    LayoutActionResult Function(int code, String message) failOrCapture,
+    bool Function(String key, {bool defaultValue}) boolParam,
+    String layoutName,
+  ) async {
+    final session = context.session;
+    final docs = host is DocumentActionHost ? host as DocumentActionHost : null;
+    if (params['save_to'] == 'variable') {
+      return failOrCapture(3, _migrationNote(params, 'Save Records as PDF cannot save into a variable (error 3).'));
+    }
+    if (params['pdf_security'] == true) {
+      // Never an unprotected PDF where the script asked for a protected one.
+      return failOrCapture(3, _migrationNote(params,
+          'Save Records as PDF cannot protect a PDF with a password, and does not write it unprotected (error 3).'));
+    }
+    if (docs == null) {
+      return failOrCapture(3, 'Save Records as PDF needs a window to draw the records in (error 3).');
+    }
+    final paths = params['paths'] is List ? (params['paths'] as List).join('\n') : params['path']?.toString() ?? '';
+    var text = _pathText(paths, vars, context);
+    if (text.trim().isEmpty) {
+      final name = (layoutName.isEmpty ? 'Untitled' : layoutName).replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+      text = '${files.documentsPath}$name.pdf';
+    }
+    final path = files.resolve(text);
+    if (path == null) {
+      return failOrCapture(800, 'Save Records as PDF cannot create "$text" (error 800): $_pathModel.');
+    }
+    final records = switch (params['records']?.toString()) {
+      'current' => 'current',
+      'blank' => 'blank',
+      _ => 'browsed',
+    };
+    final drawn = await docs.actionRenderRecordsPdf(records);
+    if (drawn == null) return failOrCapture(3, 'Save Records as PDF could not draw the layout (error 3).');
+    if (drawn.isEmpty) return failOrCapture(401, 'Save Records as PDF has no record to save (error 401).');
+    var pages = drawn;
+    if (boolParam('append')) {
+      final earlier = files.savedPdfPages[path];
+      if (earlier != null) {
+        pages = [...earlier, ...drawn];
+      } else if (await files.read(path) != null) {
+        return failOrCapture(3, 'Save Records as PDF can append only to a PDF saved by a script during this run '
+            'of File4Base, and "$path" was not (error 3).');
+      }
+    }
+    final Uint8List bytes;
+    try {
+      bytes = await assemblePdf(pages, title: layoutName);
+      await files.write(path, bytes);
+    } on Object catch (e) {
+      return failOrCapture(800, 'Save Records as PDF could not write "$path" (error 800): $e');
+    }
+    files.savedPdfPages[path] = pages;
+    session.lastError = 0;
+    if (boolParam('auto_open')) {
+      await docs.actionOpenDocument(path, files.nativePath(path), bytes);
+    }
+    if (boolParam('create_email')) {
+      // FileMaker opens a new e-mail with the PDF attached for the user to
+      // address: Send Mail with its dialog, and the file.
+      return _runSendMail(const {'dialog': true}, vars, context, failOrCapture, attachedPaths: [path]);
+    }
+    return const LayoutActionResult.ok();
+  }
+
+  /// Send Mail (#133).
+  ///
+  /// With its dialog and via the e-mail client, the step opens a draft in
+  /// the user's e-mail client, as FileMaker does. Everything a draft cannot
+  /// do goes through the SMTP profile a server administrator set for the
+  /// solution (or the server): a step sent via the SMTP server, one e-mail
+  /// per record, attachments (with the dialog: in File4Base's compose
+  /// window), and — a deliberate deviation — a step via the e-mail client
+  /// without dialog, which FileMaker sends without asking. Without a
+  /// profile, what an e-mail client can do still opens a draft (the user is
+  /// told which files to attach); the rest fails with error 1506.
+  Future<LayoutActionResult> _runSendMail(
+    Map<String, dynamic> params,
+    Map<String, String> vars,
+    ScriptCallContext context,
+    LayoutActionResult Function(int code, String message) failOrCapture, {
+    List<String>? attachedPaths,
+  }) async {
+    final session = context.session;
+    final docs = host is DocumentActionHost ? host as DocumentActionHost : null;
+    final smtpStep = params['send_via'] == 'smtp';
+    final dialog = params['dialog'] is bool ? params['dialog'] as bool : true;
+    final perRecord = params['one_email_per_record'] == true;
+    final collected = [for (final k in const ['to', 'cc', 'bcc']) if (params['collect_$k'] == true) k];
+
+    ({OutgoingMail? mail, String? failed}) evaluate() {
+      final parts = <String, String>{};
+      for (final key in const ['to', 'cc', 'bcc', 'subject', 'message']) {
+        final value = _mailValue(params, key, vars, context);
+        if (value == null) return (mail: null, failed: key);
+        parts[key] = value;
+      }
+      return (
+        mail: OutgoingMail(
+          to: parts['to']!, cc: parts['cc']!, bcc: parts['bcc']!,
+          subject: parts['subject']!, message: parts['message']!,
+        ),
+        failed: null,
+      );
+    }
+
+    LayoutActionResult unevaluated(String key) =>
+        LayoutActionResult.stopped('Send Mail cannot evaluate its $key: ${params[key]}');
+
+    // The files, before anything is sent or opened.
+    final rawAttachments = attachedPaths ??
+        [for (final e in (params['attachments'] is List ? params['attachments'] as List : const [])) e.toString()];
+    final paths = <String>[];
+    for (final raw in rawAttachments) {
+      final text = attachedPaths != null ? raw : _pathText(raw, vars, context);
+      final path = text.trim().isEmpty ? null : files.resolve(text);
+      if (path == null) {
+        return failOrCapture(100, 'Send Mail cannot attach "${text.isEmpty ? raw : text}" (error 100): $_pathModel.');
+      }
+      paths.add(path);
+    }
+    String fileName(String path) => path.substring(path.lastIndexOf('/') + 1);
+
+    var messages = <OutgoingMail>[];
+    if (perRecord || collected.isNotEmpty) {
+      if (docs == null) {
+        return failOrCapture(3, 'Send Mail goes through the records of the found set only in a window (error 3).');
+      }
+    }
+    if (perRecord) {
+      String? failed;
+      final read = await docs!.actionForEachFoundRecord((position, count) async {
+        final r = evaluate();
+        if (r.mail == null) {
+          failed = r.failed;
+          return false;
+        }
+        if (r.mail!.hasRecipient) messages.add(r.mail!);
+        return true;
+      });
+      if (failed != null) return unevaluated(failed!);
+      if (!read) return failOrCapture(1506, 'Send Mail could not read the records of the found set (error 1506).');
+    } else {
+      final r = evaluate();
+      if (r.mail == null) return unevaluated(r.failed!);
+      var mail = r.mail!;
+      if (collected.isNotEmpty) {
+        final gathered = {for (final k in collected) k: <String>[]};
+        String? failed;
+        final read = await docs!.actionForEachFoundRecord((position, count) async {
+          for (final k in collected) {
+            final value = _mailValue(params, k, vars, context);
+            if (value == null) {
+              failed = k;
+              return false;
+            }
+            for (final address in value.split(RegExp('[;,\r\n]'))) {
+              final a = address.trim();
+              if (a.isNotEmpty && !gathered[k]!.contains(a)) gathered[k]!.add(a);
+            }
+          }
+          return true;
+        });
+        if (failed != null) return unevaluated(failed!);
+        if (!read) return failOrCapture(1506, 'Send Mail could not read the records of the found set (error 1506).');
+        mail = OutgoingMail(
+          to: collected.contains('to') ? gathered['to']!.join('; ') : mail.to,
+          cc: collected.contains('cc') ? gathered['cc']!.join('; ') : mail.cc,
+          bcc: collected.contains('bcc') ? gathered['bcc']!.join('; ') : mail.bcc,
+          subject: mail.subject,
+          message: mail.message,
+        );
+      }
+      messages.add(mail);
+    }
+
+    // A draft in the user's e-mail client, which the user sends: what a
+    // dialog leads to when File4Base cannot show its own.
+    Future<LayoutActionResult> draft() async {
+      await _openMailDraft(messages.first);
+      if (paths.isNotEmpty) {
+        final list = paths.map((p) => files.nativePath(p)).join(', ');
+        final notice = 'An e-mail draft cannot carry attachments: attach ${paths.length == 1 ? 'this file' : 'these files'} '
+            'to the draft yourself: $list';
+        if (docs != null) {
+          await docs.actionNotify(notice);
+        } else {
+          await host.actionShowDialog('Send Mail', notice);
+        }
+      }
+      session.lastError = 0;
+      return const LayoutActionResult.ok();
+    }
+
+    // With its dialog, the user sees every message before it leaves. With
+    // no window to show the compose window in, one message becomes a draft;
+    // several cannot be shown, and none is sent.
+    if (dialog && docs == null) {
+      if (messages.length > 1 || perRecord) {
+        return failOrCapture(1, 'Send Mail shows each message before sending it, and there is no window '
+            'to show them in: nothing was sent (error 1).');
+      }
+      return draft();
+    }
+
+    final needsSmtp = smtpStep || perRecord || !dialog || paths.isNotEmpty;
+    final status = needsSmtp ? await _loadMailStatus() : const MailStatus();
+    if (!status.configured) {
+      if (smtpStep || perRecord) {
+        return failOrCapture(1506, 'Send Mail sends through SMTP, and no SMTP profile serves this solution: '
+            'a server administrator sets one in Server Tools (error 1506).');
+      }
+      // Via the e-mail client: a draft the user sends, as with a dialog.
+      return draft();
+    }
+
+    final fromName = _mailValue(params, 'smtp_from_name', vars, context);
+    final from = _mailValue(params, 'smtp_from', vars, context);
+    final replyTo = _mailValue(params, 'smtp_reply_to', vars, context);
+    if (fromName == null) return unevaluated('smtp_from_name');
+    if (from == null) return unevaluated('smtp_from');
+    if (replyTo == null) return unevaluated('smtp_reply_to');
+
+    if (dialog && docs != null) {
+      // Each message in the compose window, one per record in turn; a
+      // cancel sends none of them.
+      final edited = <OutgoingMail>[];
+      for (final m in messages) {
+        final e = await docs.actionComposeMail(m, from: status.fromLabel, attachments: [for (final p in paths) fileName(p)]);
+        if (e == null) {
+          session.lastError = 1; // the user cancelled
+          return const LayoutActionResult.ok();
+        }
+        edited.add(e);
+      }
+      messages = edited;
+    }
+    messages = messages.where((m) => m.hasRecipient).toList();
+    if (messages.isEmpty) {
+      return failOrCapture(1506, 'Send Mail has no recipient to send to (error 1506).');
+    }
+    final attachments = <MailAttachment>[];
+    for (final path in paths) {
+      final bytes = await files.read(path);
+      if (bytes == null) return failOrCapture(100, 'Send Mail cannot attach "$path": there is no such file (error 100).');
+      attachments.add(MailAttachment(name: fileName(path), bytes: bytes));
+    }
+    var sent = 0;
+    try {
+      for (var i = 0; i < messages.length; i += status.maxBatch) {
+        final end = i + status.maxBatch < messages.length ? i + status.maxBatch : messages.length;
+        sent += await apiClient.sendMail(
+          messages: messages.sublist(i, end),
+          attachments: attachments,
+          fromName: fromName,
+          from: from,
+          replyTo: replyTo,
+        );
+      }
+    } on ApiException catch (e) {
+      final raw = e.raw['filemaker_error'];
+      final code = raw is int && raw > 0 ? raw : 1506;
+      final before = sent + (e.raw['sent'] is int ? e.raw['sent'] as int : 0);
+      return failOrCapture(code, 'Send Mail: ${e.detail}${before > 0 ? ' ($before sent)' : ''} (error $code).');
+    } on Object catch (e) {
+      return failOrCapture(1506, 'Send Mail could not reach the server: $e (error 1506).');
+    }
+    session.lastError = 0;
+    return const LayoutActionResult.ok();
+  }
+
+  /// Opens [mail] as a draft in the user's e-mail client.
+  Future<void> _openMailDraft(OutgoingMail mail) async {
+    final ext = _extHost;
+    if (ext != null) {
+      await ext.actionSendMail(to: mail.to, cc: mail.cc, bcc: mail.bcc, subject: mail.subject, message: mail.message);
+    } else if (mail.to.isNotEmpty) {
+      final uri = Uri(
+        scheme: 'mailto',
+        path: mail.to,
+        queryParameters: <String, String>{
+          if (mail.cc.isNotEmpty) 'cc': mail.cc,
+          if (mail.bcc.isNotEmpty) 'bcc': mail.bcc,
+          if (mail.subject.isNotEmpty) 'subject': mail.subject,
+          if (mail.message.isNotEmpty) 'body': mail.message,
+        },
+      );
+      await host.actionOpenUrl(uri.toString());
+    }
   }
 
   /// Replace Field Contents over the whole found set. A calculation, or a
@@ -1707,7 +2152,9 @@ class LayoutActionRunner {
     final session = context.session;
     final rawExpression = params['value'] ?? params['expression'];
     final expression = rawExpression?.toString() ?? '';
-    String? Function(int position, int count)? valueFor;
+    FutureOr<String?> Function(int position, int count)? valueFor;
+    // Why the server could not evaluate the calculation, when it was asked.
+    var serverError = '';
     if (replaceType == 'serial_numbers') {
       final initial = resolveValue(params['serial_initial']?.toString() ?? '', vars, callContext: context);
       var serial = num.tryParse(initial?.trim() ?? '');
@@ -1735,7 +2182,30 @@ class LayoutActionRunner {
       if (expression.trim().isEmpty) {
         return failOrCapture(3, 'Replace Field Contents has no calculation.');
       }
-      valueFor = (position, count) => resolveValue(expression, vars, callContext: context);
+      // Each record is the current one while its value is worked out: here
+      // when this runner can, otherwise by the server in that record's
+      // context, as every other step's formula.
+      valueFor = (position, count) async {
+        final local = resolveValue(expression, vars, callContext: context);
+        if (local != null) return local;
+        try {
+          final evaluation = await _evaluateOnServer(expression, vars, callContext: context);
+          if (evaluation == null) return null;
+          if (evaluation.error.isNotEmpty) {
+            serverError = evaluation.error;
+            return null;
+          }
+          if (evaluation.unknownFields.isNotEmpty) {
+            serverError = 'it reads fields this table does not have: ${evaluation.unknownFields.join(', ')}';
+            return null;
+          }
+          _mergeVariables(evaluation.variables, vars);
+          return evaluation.text;
+        } on Object catch (e) {
+          serverError = '$e';
+          return null;
+        }
+      };
     }
     final outcome = await ext.actionReplaceFieldContents(
       field: field,
@@ -1748,9 +2218,10 @@ class LayoutActionRunner {
           "occurrence than this layout's, which it cannot write yet. Nothing was written.");
     }
     if (outcome.unevaluatedAt > 0) {
+      final why = serverError.isEmpty ? '' : ': $serverError';
       return LayoutActionResult.stopped(
           'Replace Field Contents cannot evaluate "$expression" for record ${outcome.unevaluatedAt} of '
-          '${outcome.count}; ${_recordsReplaced(outcome.replaced)}.');
+          '${outcome.count}$why; ${_recordsReplaced(outcome.replaced)}.');
     }
     if (outcome.errorCode != 0) {
       final where = outcome.count > 0 ? ' at record ${outcome.replaced + 1} of ${outcome.count}' : '';
@@ -1978,21 +2449,156 @@ class LayoutActionRunner {
   }
 
   /// A script parameter's value: evaluated here when it can be, otherwise —
-  /// a related field, a function — by the server in the record's context,
-  /// as a calculation field is. Null when neither can evaluate it. A
-  /// parameter reading a variable is evaluated here only, as the server does
-  /// not have the script's variables.
+  /// a related field, a custom function, any other function — by the server
+  /// in the record's context, with the script's variables. Null when neither
+  /// can evaluate it.
   Future<String?> evaluateParameter(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) async {
     final local = resolveValue(raw, localVars, callContext: callContext);
     if (local != null) return local;
-    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
-    if (context == null || raw.contains(r'$')) return null;
     try {
-      return await context.actionEvaluateCalculation(raw);
+      final evaluation = await _evaluateOnServer(raw, localVars, callContext: callContext);
+      if (evaluation != null && evaluation.error.isEmpty && evaluation.unknownFields.isEmpty) {
+        _mergeVariables(evaluation.variables, localVars);
+        return evaluation.text;
+      }
     } on Object catch (_) {
-      return null;
+      // Not evaluable: the caller says so.
+    }
+    return null;
+  }
+
+  /// Answers of the server, by formula text, to the formulas of the step
+  /// being run that this runner cannot evaluate itself. [prepareStepFormulas]
+  /// fills it before the step runs; it is cleared once the step has run.
+  final Map<String, String> _serverAnswers = <String, String>{};
+
+  /// The Get functions only the client can answer, sent with a formula the
+  /// server evaluates for a script.
+  static const _clientGetSelectors = <String>[
+    'ScriptParameter',
+    'ScriptResult',
+    'ScriptName',
+    'LastError',
+    'LastMessageChoice',
+    'LayoutName',
+    'WindowName',
+    'ActiveFieldName',
+    'ActiveLayoutObjectName',
+    'FoundCount',
+    'RecordNumber',
+    'TotalRecordCount',
+    'AccountName',
+  ];
+
+  /// [formula] evaluated by the server with the script's variables and the
+  /// client's Get answers, in one request. Null when the host has no table
+  /// to evaluate it in.
+  Future<EvaluationModel?> _evaluateOnServer(
+    String formula,
+    Map<String, String> localVars, {
+    ScriptCallContext? callContext,
+  }) async {
+    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+    if (context == null || formula.trim().isEmpty) return null;
+    final variables = <String, String>{
+      for (final e in globalVariables.entries)
+        if (!e.key.contains('[')) e.key: e.value,
+      for (final e in localVars.entries)
+        if (!e.key.contains('[')) e.key: e.value,
+    };
+    final get = <String, Object?>{
+      for (final selector in _clientGetSelectors)
+        selector: resolveValue('Get ( $selector )', localVars, callContext: callContext) ?? '',
+    };
+    return context.actionEvaluateInScript(formula, variables: variables, get: get);
+  }
+
+  /// Keeps the variables a formula the server evaluated set with Let.
+  void _mergeVariables(Map<String, String> variables, Map<String, String> localVars) {
+    for (final e in variables.entries) {
+      _setVariable(e.key, e.value, localVars);
     }
   }
+
+  /// The formulas of a step: the ones its options say are calculations,
+  /// and the ones that are always calculations for that step.
+  List<({String formula, bool condition})> stepFormulas(String stepType, Map<String, dynamic> params) {
+    final norm = normalizeStepType(stepType);
+    final out = <({String formula, bool condition})>[];
+    void add(Object? raw, {bool condition = false}) {
+      final formula = raw?.toString().trim() ?? '';
+      if (formula.isNotEmpty && !out.any((f) => f.formula == formula && f.condition == condition)) {
+        out.add((formula: formula, condition: condition));
+      }
+    }
+
+    switch (norm) {
+      case 'if':
+      case 'else_if':
+      case 'exit_loop_if':
+        add(extractCondition(params), condition: true);
+      case 'exit_script':
+        add(params['result'] ?? params['expression']);
+      case 'set_variable':
+        final name = (params['name'] ?? params['variable'])?.toString().trim() ?? '';
+        if (name.isNotEmpty) add(params['value'] ?? params['calc'] ?? params['formula'] ?? params['text']);
+      case 'insert_calculated_result':
+        add(params['value'] ?? params['expression']);
+      case 'go_to_layout':
+        add(params['layout_calculation'] ?? params['expression']);
+      case 'replace_field_contents':
+        // Evaluated for each record of the found set, with that record in
+        // hand (see _replaceFoundSet), not once before the step.
+        return out;
+    }
+    add(params['record_calculation']);
+    for (final key in params.keys) {
+      if (key.endsWith('_is_calculation') && params[key] == true) {
+        add(params[key.substring(0, key.length - '_is_calculation'.length)]);
+      }
+    }
+    return out;
+  }
+
+  /// Has the server evaluate the formulas of the step about to run that
+  /// this runner cannot, each in one request with the script's variables,
+  /// so the step finds their values. Returns why the step must stop — the
+  /// step and the formula named — or null.
+  Future<String?> prepareStepFormulas(
+    String stepType,
+    Map<String, dynamic> params,
+    Map<String, String> localVars, {
+    ScriptCallContext? callContext,
+  }) async {
+    _serverAnswers.clear();
+    if (host is! CalculationContextHost) return null;
+    for (final f in stepFormulas(stepType, params)) {
+      final local = f.condition
+          ? evaluateCondition(f.formula, localVars, callContext: callContext) != null
+          : resolveValue(f.formula, localVars, callContext: callContext) != null;
+      if (local) continue;
+      EvaluationModel? evaluation;
+      try {
+        evaluation = await _evaluateOnServer(f.formula, localVars, callContext: callContext);
+      } on Object catch (e) {
+        return '$stepType: the formula "${f.formula}" could not be evaluated: $e';
+      }
+      if (evaluation == null) return null;
+      if (evaluation.error.isNotEmpty) {
+        return '$stepType: the formula "${f.formula}" could not be evaluated: ${evaluation.error}';
+      }
+      if (evaluation.unknownFields.isNotEmpty) {
+        return '$stepType: the formula "${f.formula}" reads fields this table does not have: '
+            '${evaluation.unknownFields.join(', ')}';
+      }
+      _mergeVariables(evaluation.variables, localVars);
+      _serverAnswers[f.formula] = evaluation.text;
+    }
+    return null;
+  }
+
+  /// Forgets the answers of the step that just ran.
+  void clearStepFormulas() => _serverAnswers.clear();
 
   String _resolveExpressionValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) =>
       resolveValue(raw, localVars, callContext: callContext) ?? '';
@@ -2009,6 +2615,8 @@ class LayoutActionRunner {
   String? resolveValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     final expr = raw.trim();
     if (expr.isEmpty) return '';
+    final answer = _serverAnswers[expr];
+    if (answer != null) return answer;
     if (expr.startsWith('(') && expr.endsWith(')') && _hasMatchingOuterParens(expr)) {
       return resolveValue(expr.substring(1, expr.length - 1), localVars, callContext: callContext);
     }
@@ -2060,6 +2668,10 @@ class LayoutActionRunner {
           return ext?.actionActiveFieldName ?? session.activeField;
         case 'activelayoutobjectname':
           return session.activeObject;
+        case 'activeportalrownumber':
+          return host is PortalRowHost ? (host as PortalRowHost).actionActivePortalRowNumber.toString() : '0';
+        case 'activefieldtablename':
+          return host is PortalRowHost ? (host as PortalRowHost).actionActiveFieldTableName : '';
         case 'foundcount':
           return (ext?.actionFoundCount ?? 0).toString();
         case 'recordnumber':
@@ -2069,11 +2681,20 @@ class LayoutActionRunner {
         case 'accountname':
           final acc = host.actionResolveText('{{AccountName}}');
           return acc == '{{AccountName}}' ? '' : acc;
+        // The folders a script may write in (#133): see ScriptFileStore.
+        case 'temporarypath':
+          return files.temporaryPath;
+        case 'documentspath':
+        case 'desktoppath':
+          return files.documentsPath;
       }
     }
 
     // A numeric literal is its own value, not the name of a field.
     if (num.tryParse(expr) != null) return expr;
+    // FileMaker's Boolean constants, as in `Exit Script [Result: False]`.
+    if (expr.toLowerCase() == 'true') return '1';
+    if (expr.toLowerCase() == 'false') return '0';
 
     if (expr.startsWith(r'$')) {
       return _lookupVariable(expr, localVars, callContext: callContext) ?? '';
@@ -2234,6 +2855,13 @@ class LayoutActionRunner {
   bool? evaluateCondition(String rawExpr, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     var expr = rawExpr.trim();
     if (expr.isEmpty) return true;
+    final answer = _serverAnswers[expr];
+    if (answer != null) {
+      // A condition is true when it comes to a number other than zero, as
+      // in FileMaker.
+      final n = num.tryParse(answer.trim());
+      return n != null && n != 0;
+    }
     while (expr.startsWith('(') && expr.endsWith(')')) {
       expr = expr.substring(1, expr.length - 1).trim();
     }
@@ -2423,7 +3051,8 @@ class ScriptExecution {
           final parentActive = isExecuting;
           var taken = false;
           if (parentActive) {
-            final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext);
+            final (failure, condition) = await _condition(step);
+            if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
             if (condition == null) {
               return StepOutcome(StepOutcomeKind.stopped,
                   'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -2438,7 +3067,8 @@ class ScriptExecution {
             if (!top.parentActive || top.branchTaken) {
               top.active = false;
             } else {
-              final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext);
+              final (failure, condition) = await _condition(step);
+              if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
               if (condition == null) {
                 return StepOutcome(StepOutcomeKind.stopped,
                     'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -2488,8 +3118,8 @@ class ScriptExecution {
             return const StepOutcome(StepOutcomeKind.stopped,
                 'Exit Loop If is not inside a Loop');
           }
-          final condition = runner.evaluateCondition(
-              runner.extractCondition(step.params), localVars, callContext: callContext);
+          final (failure, condition) = await _condition(step);
+          if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
           if (condition == null) {
             return StepOutcome(StepOutcomeKind.stopped,
                 'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -2520,6 +3150,33 @@ class ScriptExecution {
     }
 
     if (norm == 'halt_script') return const StepOutcome(StepOutcomeKind.halted);
+    // The formulas the runner cannot evaluate itself are evaluated by the
+    // server, with the solution's custom functions, before the step runs.
+    final failure = await runner.prepareStepFormulas(step.stepType, step.params, localVars, callContext: callContext);
+    if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
+    try {
+      return await _runPrepared(step, norm);
+    } finally {
+      runner.clearStepFormulas();
+    }
+  }
+
+  /// The condition of an If, Else If or Exit Loop If step, evaluated here or
+  /// by the server: why the step must stop, or the condition (null when it
+  /// cannot be evaluated).
+  Future<(String?, bool?)> _condition(ScriptStepModel step) async {
+    final failure = await runner.prepareStepFormulas(step.stepType, step.params, localVars, callContext: callContext);
+    if (failure != null) return (failure, null);
+    try {
+      return (null, runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext));
+    } finally {
+      runner.clearStepFormulas();
+    }
+  }
+
+  /// Runs a step whose formulas [LayoutActionRunner.prepareStepFormulas]
+  /// has prepared.
+  Future<StepOutcome> _runPrepared(ScriptStepModel step, String norm) async {
     if (norm == 'exit_script') {
       if (step.params.containsKey('result') || step.params.containsKey('expression')) {
         final expression = (step.params['result'] ?? step.params['expression'])?.toString() ?? '';

@@ -356,7 +356,7 @@ void main() {
       'objects': <dynamic>[],
       'script_triggers': [
         {'id': 'm1', 'event': 'OnLayoutEnter', 'type': 'perform_script', 'script_id': 's1', 'script_name': 'Greet', 'enabled': false, 'quarantined_by_migration': true},
-        {'id': 'm2', 'event': 'OnRecordLoad', 'type': 'perform_script', 'script_id': 's1', 'script_name': 'Greet', 'enabled': false, 'quarantined_by_migration': true},
+        {'id': 'm2', 'event': 'OnLayoutKeystroke', 'type': 'perform_script', 'script_id': 's1', 'script_name': 'Greet', 'enabled': false, 'quarantined_by_migration': true},
       ],
     };
     final api = _ScriptsApi(definition);
@@ -382,7 +382,7 @@ void main() {
     final load = find.byKey(const ValueKey('trigger-switch-stored-m2'));
     await tester.ensureVisible(enter);
     expect(tester.widget<Switch>(enter).value, isFalse);
-    expect(tester.widget<Switch>(load).onChanged, isNull, reason: 'File4Base does not run OnRecordLoad');
+    expect(tester.widget<Switch>(load).onChanged, isNull, reason: 'File4Base does not run OnLayoutKeystroke');
     expect(find.textContaining('Disabled by migration'), findsNWidgets(2));
 
     await tester.tap(enter);
@@ -401,6 +401,24 @@ void main() {
     await tester.ensureVisible(review);
     await tester.tap(review);
     expect(reviewed, 'l-card');
+  });
+
+  test("a layout whose last stored trigger was removed is saved with an empty list", () {
+    final layout = LayoutDefinitionModel.fromJson({
+      'id': 'l-card',
+      'name': 'Plant Card',
+      'objects': <dynamic>[],
+      'script_triggers': [
+        {'id': 'o1', 'event': 'OnRecordLoad', 'type': 'perform_script', 'script_id': 's1', 'enabled': true},
+      ],
+    });
+    final removed = layout.copyWith(scriptTriggers: const []);
+    final saved = layoutDefinitionJson(removed, hadStoredTriggers: true);
+    expect(saved.containsKey('script_triggers'), isTrue, reason: 'a definition without the list keeps the stored ones');
+    expect(saved['script_triggers'], isEmpty);
+    expect(layoutDefinitionJson(removed, hadStoredTriggers: false).containsKey('script_triggers'), isFalse,
+        reason: 'a layout that never had any says nothing');
+    expect(layoutDefinitionJson(layout, hadStoredTriggers: true)['script_triggers'], hasLength(1));
   });
 
   testWidgets('a user who is not an owner or an administrator cannot switch a trigger in Layout Setup', (tester) async {
@@ -518,7 +536,8 @@ void main() {
       expect(layout.triggersOfObject('o1').map((t) => t.triggerId), ['m2']);
       expect(layout.whyTriggerCannotRun(layout.scriptTriggers.first, scriptIds: {'s1'}), isNull);
       expect(layout.whyTriggerCannotRun(layout.scriptTriggers.first, scriptIds: {'other'}), contains('not in this solution'));
-      expect(layout.whyTriggerCannotRun(layout.scriptTriggers.last), contains('layout objects'));
+      expect(layout.whyTriggerCannotRun(layout.scriptTriggers.last), contains('not on this layout'),
+          reason: 'its object o1 is not on the layout');
 
       final on = layout.enableStoredTrigger('m1');
       expect(on.activeOnLayoutEnter?.scriptId, 's1');

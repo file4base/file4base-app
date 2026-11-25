@@ -8,6 +8,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/crypto"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/mail"
 	"github.com/file4base/file4base-app/server/internal/realtime"
 	"github.com/go-chi/chi/v5"
 )
@@ -64,6 +65,9 @@ type Options struct {
 	// FileMaker migration uploads. See SolutionHandlerOptions.
 	MaxMigrationUploadBytes int64
 	MigrationUploadDir      string
+	// MailSender talks to the SMTP servers of Send Mail (#133); nil uses
+	// the default one. Tests point it at an in-process server.
+	MailSender *mail.Sender
 }
 
 // Mount registers every domain route of the API on r.
@@ -106,6 +110,9 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	serverAdminHandler := NewServerAdminHandler(dbMgr, sessions, controlStore, opts.Version)
 	serverAdminHandler.ConfigureAccess(opts.AdminDatabase, opts.BackupsDir)
 	serverAdminHandler.ConfigureTLS(opts.TLSDir)
+	if opts.MailSender != nil {
+		serverAdminHandler.mailSender = opts.MailSender
+	}
 
 	hub := opts.Hub
 	if hub == nil {

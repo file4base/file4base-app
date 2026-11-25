@@ -59,7 +59,7 @@ class _Api extends ApiClient {
   Future<List<TableModel>> listTables() async => [_table];
 
   @override
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data, {bool script = false}) async {
+  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data, {bool script = false, bool overrideValidation = false}) async {
     updates.add({'id': id, ...data});
     stored[id]!.addAll(data);
     return Map<String, dynamic>.of(stored[id]!);

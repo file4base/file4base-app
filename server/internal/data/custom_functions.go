@@ -2,9 +2,12 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -45,7 +48,70 @@ func ReadCustomFunctions(ctx context.Context, driver dbal.DatabaseDriver) ([]cal
 // call. A function whose formula cannot be read is left out of it, so the
 // formulas that do not call it still work; one that does is reported as
 // calling a function that does not exist.
+//
+// The library is read and compiled once per solution database and kept:
+// every formula a request evaluates, and every request, reuses it. A change
+// to the custom functions through this server replaces it at once
+// (InvalidateLibrary); one written to the database by anything else is seen
+// within libraryTTL.
 func LoadLibrary(ctx context.Context, driver dbal.DatabaseDriver) (*calc.Library, error) {
+	db := driver.DB()
+	libraries.mu.Lock()
+	entry := libraries.byDB[db]
+	if entry == nil {
+		entry = &libraryEntry{}
+		libraries.byDB[db] = entry
+	}
+	if entry.ready && time.Since(entry.loaded) < libraryTTL {
+		lib := entry.lib
+		libraries.mu.Unlock()
+		return lib, nil
+	}
+	generation := entry.generation
+	libraries.mu.Unlock()
+
+	lib, err := loadLibrary(ctx, driver)
+	if err != nil {
+		return nil, err
+	}
+	libraries.mu.Lock()
+	// A change made while this one was read wins: the library read before
+	// it is not kept.
+	if entry.generation == generation {
+		entry.lib, entry.loaded, entry.ready = lib, time.Now(), true
+	}
+	libraries.mu.Unlock()
+	return lib, nil
+}
+
+// InvalidateLibrary drops the library kept for a solution database, after its
+// custom functions changed: the next formula reads them again.
+func InvalidateLibrary(driver dbal.DatabaseDriver) {
+	libraries.mu.Lock()
+	defer libraries.mu.Unlock()
+	if entry := libraries.byDB[driver.DB()]; entry != nil {
+		entry.generation++
+		entry.lib, entry.ready = nil, false
+	}
+}
+
+// libraryTTL bounds how long a library is kept without being read again,
+// for custom functions changed other than through this server.
+const libraryTTL = time.Minute
+
+type libraryEntry struct {
+	lib        *calc.Library
+	loaded     time.Time
+	ready      bool
+	generation uint64
+}
+
+var libraries = struct {
+	mu   sync.Mutex
+	byDB map[*sql.DB]*libraryEntry
+}{byDB: map[*sql.DB]*libraryEntry{}}
+
+func loadLibrary(ctx context.Context, driver dbal.DatabaseDriver) (*calc.Library, error) {
 	defs, err := ReadCustomFunctions(ctx, driver)
 	if err != nil || len(defs) == 0 {
 		return nil, err

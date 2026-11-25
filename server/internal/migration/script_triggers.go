@@ -2,6 +2,7 @@ package migration
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -38,8 +39,9 @@ type sourceTrigger struct {
 	// scriptID is that file's, never one of this file's scripts.
 	fileReference string
 	parameter     string
-	// findOnly is set when FileMaker runs the trigger in Find mode only.
-	findOnly bool
+	// modes are the FileMaker modes the trigger runs in, when the document
+	// says: nil means Browse mode, FileMaker's own default.
+	modes []string
 	// object is the layout object the trigger is set on; nil for the layout.
 	object *sourceTriggerObject
 }
@@ -94,9 +96,7 @@ func readTrigger(t *xmlNode, obj *xmlNode) sourceTrigger {
 			st.parameter = firstAttr(t, "parameter", "param")
 		}
 	}
-	if strings.EqualFold(firstAttr(t, "browseMode"), "false") {
-		st.findOnly = true
-	}
+	st.modes = triggerModes(t)
 	if obj != nil {
 		o := &sourceTriggerObject{node: obj, typ: firstAttr(obj, "type", "Type"), name: firstAttr(obj, "name", "Name")}
 		if f := findFirstChild(obj, "Field", "field", "FieldObj"); f != nil {
@@ -117,6 +117,29 @@ func readTrigger(t *xmlNode, obj *xmlNode) sourceTrigger {
 		st.object = o
 	}
 	return st
+}
+
+// triggerModes reads the modes a trigger runs in from its browseMode and
+// findMode attributes, which a Database Design Report writes only when they
+// are on. A trigger with neither attribute runs in Browse mode, FileMaker's
+// default; nil stands for that, and for a trigger set for Browse mode only.
+func triggerModes(t *xmlNode) []string {
+	browse, hasBrowse := xmlAttrBool(t, "browseMode")
+	find, hasFind := xmlAttrBool(t, "findMode")
+	if !hasBrowse && !hasFind {
+		return nil
+	}
+	modes := []string{}
+	if browse {
+		modes = append(modes, "browse")
+	}
+	if find {
+		modes = append(modes, "find")
+	}
+	if len(modes) == 1 && modes[0] == "browse" {
+		return nil
+	}
+	return modes
 }
 
 // readFileTriggers collects the file's own triggers (OnFirstWindowOpen,
@@ -174,8 +197,12 @@ func layoutTriggerEntries(triggers []sourceTrigger, objectIDs map[*xmlNode]strin
 		if st.parameter != "" {
 			entry["parameter"] = st.parameter
 		}
-		if st.findOnly {
-			entry["modes"] = []interface{}{"find"}
+		if st.modes != nil {
+			modes := make([]interface{}, 0, len(st.modes))
+			for _, m := range st.modes {
+				modes = append(modes, m)
+			}
+			entry["modes"] = modes
 		}
 		if o := st.object; o != nil {
 			object := map[string]interface{}{}
@@ -278,9 +305,11 @@ func (x scriptIndex) resolve(entry map[string]interface{}) (id string, matches i
 // bindLayoutTriggers binds the triggers of every converted layout to the
 // imported scripts and fields, and reports them: one summary for the
 // solution, one item per trigger that cannot be enabled as it stands
-// (script not found, parameter not bindable, Find mode only), one item per
+// (script not found, parameter not bindable, Find mode only, no mode), one item per
 // event File4Base does not run and one for the triggers FileMaker itself
-// kept without a script, each with the number of triggers concerned.
+// kept without a script, each with the number of triggers concerned, and one
+// for the triggers of an event File4Base runs set on an object it did not
+// migrate.
 func bindLayoutTriggers(bundle *schema.SolutionBundle, scripts scriptIndex, b formulaBinding, solution string) []ReportItem {
 	tableByOccurrence := map[string]string{}
 	tableByID := map[string]string{}
@@ -294,6 +323,9 @@ func bindLayoutTriggers(bundle *schema.SolutionBundle, scripts scriptIndex, b fo
 	var items []ReportItem
 	total, onObjects, scriptless := 0, 0, 0
 	unsupported := map[string]int{}
+	// Triggers of an event File4Base runs, set on an object it did not
+	// migrate, by event.
+	objectless := map[string]int{}
 	for li := range bundle.Layouts {
 		layout := &bundle.Layouts[li]
 		list, _ := layout.Definition[schema.LayoutScriptTriggersKey].([]interface{})
@@ -354,13 +386,24 @@ func bindLayoutTriggers(bundle *schema.SolutionBundle, scripts scriptIndex, b fo
 				}
 			}
 
-			if modes, _ := entry["modes"].([]interface{}); len(modes) == 1 && modes[0] == "find" {
-				items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger",
-					SourceName: where, TargetName: layout.Name,
-					Detail: "FileMaker runs this trigger in Find mode only, and File4Base runs triggers in Browse mode. It is kept, disabled, and cannot be enabled"})
+			runs := schema.TriggerEventRuns(event, onObject)
+			if modes, isList := entry["modes"].([]interface{}); isList && !slices.Contains(modes, interface{}("browse")) {
+				switch {
+				case len(modes) == 0:
+					items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger",
+						SourceName: where, TargetName: layout.Name,
+						Detail: "FileMaker runs this trigger in no mode (its mode checkboxes are cleared), so it never runs there. It is kept, disabled, and cannot be enabled"})
+				case runs && !schema.TriggerEventRunsInFind(event):
+					items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger",
+						SourceName: where, TargetName: layout.Name,
+						Detail: fmt.Sprintf("FileMaker runs this trigger in Find mode only, and File4Base runs %s triggers in Browse mode. It is kept, disabled, and cannot be enabled", event)})
+				}
 			}
-			if onObject || !schema.LayoutTriggerEventRuns(event) {
+			switch {
+			case !runs:
 				unsupported[event]++
+			case onObject && entry["object_id"] == nil:
+				objectless[event]++
 			}
 		}
 	}
@@ -377,6 +420,16 @@ func bindLayoutTriggers(bundle *schema.SolutionBundle, scripts scriptIndex, b fo
 		}
 		items = append(items, ReportItem{Category: CategoryUnsupported, Domain: "trigger", SourceName: label,
 			Detail: fmt.Sprintf("%d %s trigger(s) kept, disabled: File4Base does not run this event yet, so they cannot be enabled. They are listed in File > Manage > Script Triggers", unsupported[e], label)})
+	}
+	if len(objectless) > 0 {
+		total, parts := 0, []string{}
+		for _, e := range slices.Sorted(maps.Keys(objectless)) {
+			total += objectless[e]
+			parts = append(parts, fmt.Sprintf("%d %s", objectless[e], e))
+		}
+		items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger", SourceName: solution,
+			Detail: fmt.Sprintf("%d object script trigger(s) (%s) are set on layout objects that were not migrated. "+
+				"They are kept, disabled, and cannot be enabled until they are set again on an object of the layout in Layout mode", total, strings.Join(parts, ", "))})
 	}
 	if scriptless > 0 {
 		items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger", SourceName: solution,

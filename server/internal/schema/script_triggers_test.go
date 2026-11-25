@@ -41,7 +41,7 @@ func TestScriptTriggers_ReviewEnableAndDisable(t *testing.T) {
 	t.Cleanup(func() { _ = svc.DeleteScript(context.Background(), script.ID) })
 
 	ids := map[string]string{}
-	for _, k := range []string{"enter", "exit", "load", "object", "missing", "param"} {
+	for _, k := range []string{"enter", "exit", "load", "object", "missing", "param", "keys", "button", "findonly", "save2"} {
 		ids[k] = fmt.Sprintf("trg-%s-%d", k, stamp)
 	}
 	quarantined := func(id, event string, extra map[string]interface{}) map[string]interface{} {
@@ -54,7 +54,8 @@ func TestScriptTriggers_ReviewEnableAndDisable(t *testing.T) {
 	}
 	def := map[string]interface{}{
 		"objects": []interface{}{map[string]interface{}{"id": "obj-1", "type": "field",
-			"field_binding": map[string]interface{}{"field_name": "status"}}},
+			"field_binding": map[string]interface{}{"field_name": "status"}},
+			map[string]interface{}{"id": "obj-2", "type": "button", "text": "Go"}},
 		"script_triggers": []interface{}{
 			quarantined(ids["enter"], "OnLayoutEnter", map[string]interface{}{"parameter": `"hello"`}),
 			quarantined(ids["exit"], "OnLayoutExit", nil),
@@ -62,6 +63,10 @@ func TestScriptTriggers_ReviewEnableAndDisable(t *testing.T) {
 			quarantined(ids["object"], "OnObjectSave", map[string]interface{}{"object_id": "obj-1"}),
 			quarantined(ids["missing"], "OnLayoutExit", map[string]interface{}{"script_name": "No Such Script"}),
 			quarantined(ids["param"], "OnLayoutExit", map[string]interface{}{"parameter_problem": `reads "Gone::field", which the imported tables do not have`}),
+			quarantined(ids["keys"], "OnLayoutKeystroke", nil),
+			quarantined(ids["button"], "OnObjectEnter", map[string]interface{}{"object_id": "obj-2"}),
+			quarantined(ids["findonly"], "OnRecordCommit", map[string]interface{}{"modes": []interface{}{"find"}}),
+			quarantined(ids["save2"], "OnObjectSave", map[string]interface{}{"object_id": "obj-1"}),
 		},
 	}
 	raw, err := json.Marshal(def)
@@ -85,7 +90,7 @@ func TestScriptTriggers_ReviewEnableAndDisable(t *testing.T) {
 		return out
 	}
 	got := listed()
-	require.Len(t, got, 6)
+	require.Len(t, got, 10)
 	enter := got[ids["enter"]]
 	assert.False(t, enter.Enabled)
 	assert.True(t, enter.QuarantinedByMigration)
@@ -101,16 +106,22 @@ func TestScriptTriggers_ReviewEnableAndDisable(t *testing.T) {
 		}
 		return out
 	}
-	assert.Equal(t, []string{schema.TriggerProblemUnsupportedEvent}, codes(got[ids["load"]]))
+	// Record, mode and field object events run, so nothing keeps these off.
+	assert.Empty(t, codes(got[ids["load"]]))
+	assert.True(t, got[ids["load"]].CanEnable)
 	assert.Equal(t, "object", got[ids["object"]].Scope)
 	assert.Equal(t, "obj-1", got[ids["object"]].ObjectID)
 	assert.Equal(t, "status", got[ids["object"]].ObjectLabel)
-	assert.Equal(t, []string{schema.TriggerProblemUnsupportedEvent}, codes(got[ids["object"]]))
+	assert.Empty(t, codes(got[ids["object"]]))
+	assert.True(t, got[ids["object"]].CanEnable)
 	assert.Equal(t, []string{schema.TriggerProblemUnresolvedScript}, codes(got[ids["missing"]]))
 	assert.Equal(t, []string{schema.TriggerProblemParameter}, codes(got[ids["param"]]))
+	assert.Equal(t, []string{schema.TriggerProblemUnsupportedEvent}, codes(got[ids["keys"]]))
+	assert.Equal(t, []string{schema.TriggerProblemObjectType}, codes(got[ids["button"]]), "object triggers run on fields")
+	assert.Equal(t, []string{schema.TriggerProblemFindOnly}, codes(got[ids["findonly"]]))
 
 	// One trigger that cannot run refuses the whole batch.
-	_, err = svc.SetScriptTriggersEnabled(ctx, []string{ids["enter"], ids["load"]}, true)
+	_, err = svc.SetScriptTriggersEnabled(ctx, []string{ids["enter"], ids["keys"]}, true)
 	require.ErrorIs(t, err, schema.ErrScriptTriggerCannotEnable)
 	_, err = svc.SetScriptTriggersEnabled(ctx, []string{ids["enter"], "no-such-trigger"}, true)
 	require.ErrorIs(t, err, schema.ErrScriptTriggerNotFound)
@@ -136,12 +147,43 @@ func TestScriptTriggers_ReviewEnableAndDisable(t *testing.T) {
 	assert.Equal(t, true, slot["enabled"])
 	assert.Equal(t, `"hello"`, slot["parameter"])
 	assert.NotContains(t, slot, "quarantined_by_migration", "reviewed")
-	assert.Len(t, after["script_triggers"], 4)
+	assert.Len(t, after["script_triggers"], 8)
 
 	got = listed()
 	assert.True(t, got[ids["enter"]].Enabled)
 	assert.False(t, got[ids["enter"]].QuarantinedByMigration)
 	assert.Contains(t, codes(got[ids["param"]]), schema.TriggerProblemSlotTaken, "OnLayoutExit is taken now")
+
+	// A record or object trigger is switched where it is, in the list; one
+	// script runs per event of an object, so a second one cannot be enabled
+	// with it, nor after it.
+	_, err = svc.SetScriptTriggersEnabled(ctx, []string{ids["object"], ids["save2"]}, true)
+	require.ErrorIs(t, err, schema.ErrScriptTriggerCannotEnable)
+	_, err = svc.SetScriptTriggersEnabled(ctx, []string{ids["load"], ids["object"]}, true)
+	require.NoError(t, err)
+	stored, err = svc.GetLayout(ctx, layout.ID)
+	require.NoError(t, err)
+	after = nil
+	require.NoError(t, json.Unmarshal(stored.Definition, &after))
+	inList := map[string]map[string]interface{}{}
+	for _, raw := range after["script_triggers"].([]interface{}) {
+		e := raw.(map[string]interface{})
+		inList[e["id"].(string)] = e
+	}
+	require.Contains(t, inList, ids["load"])
+	assert.Equal(t, true, inList[ids["load"]]["enabled"])
+	assert.NotContains(t, inList[ids["load"]], "quarantined_by_migration")
+	assert.Equal(t, true, inList[ids["object"]]["enabled"])
+	assert.Equal(t, "obj-1", inList[ids["object"]]["object_id"])
+	got = listed()
+	assert.True(t, got[ids["object"]].Enabled)
+	assert.Contains(t, codes(got[ids["save2"]]), schema.TriggerProblemSlotTaken)
+	assert.False(t, got[ids["save2"]].CanEnable)
+	_, err = svc.SetScriptTriggersEnabled(ctx, []string{ids["object"]}, false)
+	require.NoError(t, err)
+	got = listed()
+	assert.False(t, got[ids["object"]].Enabled)
+	assert.True(t, got[ids["save2"]].CanEnable, "the event is free again")
 
 	// Disabling moves it back into the list, under the same id.
 	_, err = svc.SetScriptTriggersEnabled(ctx, []string{ids["enter"]}, false)
@@ -298,4 +340,12 @@ func TestGuardScriptTriggerEdits(t *testing.T) {
 	kept, err := schema.GuardScriptTriggerEdits(json.RawMessage(stored), json.RawMessage(`{"objects":[]}`), false)
 	require.NoError(t, err)
 	assert.Contains(t, string(kept), `"m1"`)
+
+	// An empty list removes the last trigger, for an administrator only.
+	cleared, err := schema.GuardScriptTriggerEdits(json.RawMessage(stored), json.RawMessage(`{"objects":[],"script_triggers":[]}`), true)
+	require.NoError(t, err)
+	assert.NotContains(t, string(cleared), `"m1"`)
+	assert.Contains(t, string(cleared), `"script_triggers":[]`)
+	_, err = schema.GuardScriptTriggerEdits(json.RawMessage(stored), json.RawMessage(`{"objects":[],"script_triggers":[]}`), false)
+	assert.ErrorIs(t, err, schema.ErrScriptTriggersAdminOnly)
 }

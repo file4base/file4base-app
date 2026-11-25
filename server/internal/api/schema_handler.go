@@ -172,6 +172,8 @@ func (h *SchemaHandler) RegisterRoutes(r chi.Router) {
 		valueLists("")(r)
 	})
 
+	h.registerCustomFunctionRoutes(r)
+
 	// Top-level aliases kept for backwards compatibility
 	r.Route("/api/v1/occurrences", func(r chi.Router) {
 		r.Use(RequireSession)

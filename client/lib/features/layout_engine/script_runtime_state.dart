@@ -2,6 +2,8 @@
 /// `ScriptExecution`, and `ScriptDebugSession` (#133).
 library;
 
+import 'dart:async';
+
 /// Outcome of navigating records or portal rows, so `Go to Record/Request/Page`
 /// and `Go to Portal Row` can report boundary conditions (`Exit after last`)
 /// and FileMaker error code 101 deterministically.
@@ -241,6 +243,8 @@ abstract class ExtendedLayoutActionHost {
   Future<GoToRecordOutcome> actionGoToRecordEx(String target);
   Future<bool> actionGoToLayoutByNumber(int layoutNumber);
   Future<void> actionEnterFindModeEx({List<Map<String, dynamic>>? requests, bool restore = false});
+  /// The number of records found; -1 when OnModeExit kept the window in
+  /// Find mode, and nothing was found.
   Future<int> actionPerformFindEx({List<Map<String, dynamic>>? requests, bool restore = false});
   Future<void> actionSortRecords({List<Map<String, dynamic>>? sortOrder, bool restore = false, bool dialog = true});
   Future<void> actionUnsortRecords();
@@ -258,7 +262,11 @@ abstract class ExtendedLayoutActionHost {
     bool showOnlyRelated = true,
     bool newWindow = false,
   });
-  Future<GoToRecordOutcome> actionGoToPortalRow(String target);
+  /// Go to Portal Row: makes a row of the active portal (or of the first
+  /// portal of the layout) the active one, keeping the active field when it
+  /// is in that portal; [select] selects the whole row instead. Error 101
+  /// past either end, [GoToRecordOutcome.atBoundary] set.
+  Future<GoToRecordOutcome> actionGoToPortalRow(String target, {bool select = false});
   /// Deletes the active portal row only, never the parent record; returns
   /// the FileMaker error code (0 when a row was deleted).
   Future<int> actionDeletePortalRow({required bool confirm});
@@ -275,7 +283,7 @@ abstract class ExtendedLayoutActionHost {
   Future<ReplaceOutcome> actionReplaceFieldContents({
     required String field,
     String? table,
-    String? Function(int position, int count)? valueFor,
+    FutureOr<String?> Function(int position, int count)? valueFor,
   });
   Future<ScriptDialogResult> actionShowDialogEx({
     required String title,
@@ -333,4 +341,71 @@ abstract class ExtendedLayoutActionHost {
   int get actionFoundCount;
   int get actionCurrentRecordNumber;
   int get actionTotalRecordCount;
+}
+
+/// The active row of a portal on the layout: the related record a script
+/// step acts on when it names a field of the portal's table occurrence, as
+/// FileMaker's Set Field does (it writes the active portal row of a portal
+/// of that occurrence, and the first related record otherwise).
+class ActivePortalRow {
+  const ActivePortalRow({
+    required this.portalObjectId,
+    required this.portalName,
+    required this.occurrence,
+    required this.table,
+    required this.rowNumber,
+    required this.recordId,
+    required this.record,
+    this.write,
+  });
+
+  /// The id of the portal object on the layout, and its object name.
+  final String portalObjectId;
+  final String portalName;
+
+  /// The table occurrence the portal shows, and its base table.
+  final String occurrence;
+  final String table;
+
+  /// 1-based number of the row in the portal, as Get(ActivePortalRowNumber)
+  /// answers it.
+  final int rowNumber;
+
+  /// The id of the related record of the row, and its values as read.
+  final String recordId;
+  final Map<String, dynamic> record;
+
+  /// Writes [values] (field name -> value) into the row's related record,
+  /// through the session of the solution it belongs to, and shows the
+  /// portal again with what was written. Completes with the record as the
+  /// server has it; throws as the write does. [script] marks a script's
+  /// write, which may set a field that prohibits modification.
+  final Future<Map<String, dynamic>> Function(Map<String, dynamic> values, {bool script})? write;
+}
+
+/// A host whose layout has portals with an active row (Go to Portal Row, a
+/// click on a row, a field of a row entered).
+abstract class PortalRowHost {
+  /// The active portal row, or null when no portal row is active. With
+  /// [occurrence], only the active row of a portal that shows that table
+  /// occurrence (named as in `Occurrence::Field`, compared without case).
+  ActivePortalRow? actionActivePortalRow({String? occurrence});
+
+  /// Get(ActivePortalRowNumber): the active row of the active portal, or 0.
+  int get actionActivePortalRowNumber;
+
+  /// Get(ActiveFieldTableName): the table occurrence of the active field,
+  /// or empty when no field is active.
+  String get actionActiveFieldTableName;
+}
+
+/// A host that runs script triggers (#26): the action runner lets the
+/// triggers a script step set off finish before the script's next step, as
+/// FileMaker runs them before carrying on.
+abstract class ScriptTriggerHost {
+  /// A mark to [actionSettleTriggers] from.
+  int actionTriggerMark();
+
+  /// Waits for the triggers started since [since].
+  Future<void> actionSettleTriggers(int since);
 }
