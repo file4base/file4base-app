@@ -129,12 +129,14 @@ func emitChangeEvents(hub *realtime.Hub) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			changed := &changedTable{}
+			r = r.WithContext(context.WithValue(r.Context(), changedTableKey{}, changed))
 			next.ServeHTTP(rec, r)
 
 			if rec.status < 200 || rec.status >= 300 {
 				return
 			}
-			ev, ok := changeEventFor(r)
+			ev, ok := changeEventFor(r, changed.name)
 			if !ok {
 				return
 			}
@@ -174,7 +176,21 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 // changeEventFor decides whether a request changed data or schema, and names
 // the affected resource, from its method and path. Read-only POSTs (find,
 // summary, import preview) and non-content routes produce no event.
-func changeEventFor(r *http.Request) (realtime.Event, bool) {
+// changedTable is the table a record route of an occurrence wrote to, which
+// its path does not name: the route sets it once it resolved the occurrence.
+type changedTable struct{ name string }
+
+type changedTableKey struct{}
+
+// noteChangedTable records the table a request writes to, for its change
+// event.
+func noteChangedTable(ctx context.Context, table string) {
+	if changed, ok := ctx.Value(changedTableKey{}).(*changedTable); ok {
+		changed.name = table
+	}
+}
+
+func changeEventFor(r *http.Request, occurrenceTable string) (realtime.Event, bool) {
 	switch r.Method {
 	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 	default:
@@ -192,11 +208,25 @@ func changeEventFor(r *http.Request) (realtime.Event, bool) {
 		table := rest
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
 			table = rest[:i]
+			// A batch of related records is read with a POST.
+			if strings.EqualFold(rest[i:], "/related") {
+				return realtime.Event{}, false
+			}
 		}
 		if table == "" {
 			return realtime.Event{}, false
 		}
 		return realtime.Event{Type: "data", Resource: table}, true
+	}
+
+	// Record routes of an occurrence: /api/v1/occurrences/{o}/records[/...].
+	// Only a write sets the table it changed; a find, a summary or a batch of
+	// related records is a read.
+	if strings.HasPrefix(lower, "/api/v1/occurrences/") && strings.Contains(lower, "/records") {
+		if occurrenceTable == "" {
+			return realtime.Event{}, false
+		}
+		return realtime.Event{Type: "data", Resource: occurrenceTable}, true
 	}
 
 	// Schema / solution routes: a design change. Reload layouts and tables.

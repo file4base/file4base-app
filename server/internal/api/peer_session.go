@@ -1,10 +1,15 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
@@ -72,4 +77,89 @@ func resolvePeerSession(
 	}
 
 	return transferEnd{database: sess.Database, driver: driver, session: sess}, true
+}
+
+// groupPeers opens the other solutions of a request's session group (#107)
+// for the reads that go through external table occurrences. Each solution
+// is read as the account the group holds there, with that account's
+// privileges: a session of this solution never reads another one, whatever
+// role it holds. What it opens is kept for the request only.
+type groupPeers struct {
+	sessions *auth.Store
+	dbMgr    *dbal.MultiDatabaseManager
+	group    string
+
+	mu   sync.Mutex
+	ends map[string]*peerEnd
+}
+
+// peerEnd is the session a group holds in a solution and that solution's
+// driver.
+type peerEnd struct {
+	driver  dbal.DatabaseDriver
+	session auth.Session
+}
+
+func newGroupPeers(sessions *auth.Store, dbMgr *dbal.MultiDatabaseManager, group string) *groupPeers {
+	return &groupPeers{sessions: sessions, dbMgr: dbMgr, group: group, ends: map[string]*peerEnd{}}
+}
+
+// end is the group's session in a solution, checked as every authenticated
+// request checks its own: a member whose account changed since it signed in
+// is revoked and reads as not signed in.
+func (p *groupPeers) end(ctx context.Context, database string) (*peerEnd, error) {
+	// Names are matched exactly: on PostgreSQL "Sales" and "sales" are two
+	// solutions.
+	key := database
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if end, ok := p.ends[key]; ok {
+		return end, nil
+	}
+	unavailable := func(reason string) error {
+		return &data.ExternalUnavailableError{Database: database, Reason: reason}
+	}
+	if p.sessions == nil || p.dbMgr == nil {
+		return nil, unavailable(data.ExternalMissing)
+	}
+	sess, ok := p.sessions.Member(p.group, database)
+	if !ok {
+		return nil, unavailable(data.ExternalNotSignedIn)
+	}
+	driver, err := p.dbMgr.DriverFor(ctx, sess.Database)
+	if err != nil {
+		return nil, unavailable(data.ExternalMissing)
+	}
+	stamp, err := schema.NewService(driver).CurrentAccountStamp(ctx, sess.UserID)
+	if err != nil && !errors.Is(err, schema.ErrAccountNotFound) {
+		return nil, fmt.Errorf("the account signed in to %s could not be checked: %w", database, err)
+	}
+	if err != nil || stamp != sess.Stamp {
+		p.sessions.Unlink(p.group, sess.Database)
+		return nil, unavailable(data.ExternalNotSignedIn)
+	}
+	end := &peerEnd{driver: driver, session: sess}
+	p.ends[key] = end
+	return end, nil
+}
+
+// Data implements data.Peers.
+func (p *groupPeers) Data(ctx context.Context, database string) (*data.Service, error) {
+	end, err := p.end(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	return dataServiceAs(end.driver, end.session), nil
+}
+
+type peersKey struct{}
+
+func withPeers(ctx context.Context, peers *groupPeers) context.Context {
+	return context.WithValue(ctx, peersKey{}, peers)
+}
+
+// peersOf is the request's session group, set by AuthMiddleware.
+func peersOf(r *http.Request) *groupPeers {
+	peers, _ := r.Context().Value(peersKey{}).(*groupPeers)
+	return peers
 }

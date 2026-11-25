@@ -284,21 +284,51 @@ place of a base table: ids differ between databases.
   `mismatch`, with the reason. Neither request reads a record.
 - A file reference that occurrences go through cannot be deleted (`409`).
 
-**Records are not read across solutions yet.** Related records and portals
-through an external occurrence, a value list of one of its fields, and a
-cascading delete that reaches one (checked over the whole cascade before
-anything is deleted, so nothing is) are refused with `424 Failed Dependency`,
-problem type
+**Reading another solution's records.** The records of an external
+occurrence are read in the solution its reference is mapped to, as the
+account the session holds there (see
+[security_model.md](security_model.md#session-groups-reading-another-solution)):
+signing in links the solutions read with the same credentials, and one it
+could not link is signed in to with `POST /api/v1/auth/link`.
+
+- **Related fields and portals** follow this solution's relationship: the
+  match values are read here, the related records there, with every criterion,
+  the operator's direction and multi-key matching as for a local relationship.
+  No statement joins the two databases. A list reads the related records of
+  all its rows at once (`POST /api/v1/data/{table}/related`): one statement
+  for the match values and one for the related records, however many rows;
+  a portal on each row of a list shows that row's related records, read the
+  same way.
+- A **marker** (`#<id>`) in a predicate or a value list is read as the field
+  binding resolved it to: the one field of that table whose `source_field_id`
+  is the id. When no field, or more than one, has it, the read answers `424`
+  with `schema_mismatch`.
+- **Value lists** of a field of the other table offer that solution's values.
+- **A layout on an external occurrence** browses that solution's records
+  through `/api/v1/occurrences/{occurrence}/records`, with the fields read
+  from its catalog (`/api/v1/occurrences/{occurrence}/table`). Relationships
+  followed from those records are this solution's.
+
+What cannot be read is refused with `424 Failed Dependency`, problem type
 `https://file4base.org/errors/external-unavailable`, `code`
-`external_unavailable`, the `reference` and `database` to fix, and `reason`
-`missing`. Nothing through an external occurrence is answered from a table of
-this solution with the same name: a find or a saved find on one of its fields
-is refused too. An unstored calculation reading through one evaluates to empty. A
-layout's default occurrence is always local. A migrated layout on an external
-occurrence opens with a placeholder naming the file reference, bound to no
-local table and with record commands disabled; a field object of an external
-occurrence on a local layout keeps its occurrence and is shown as
-unavailable, never bound to a local field of the same name.
+`external_unavailable`, the `reference` and `database` to fix, and a
+`reason`: `not_signed_in` (the client then asks for an account of that
+solution with the usual sign-in dialog, titled *Open <solution> (used by
+<this one>)*), `no_access`, `schema_mismatch` (the table or a field is no
+longer there: verify the reference) or `missing` (unmapped, unbound, not
+installed, or not done across solutions yet). Nothing through an external
+occurrence is ever answered from a table of this solution with the same name.
+
+Not done across solutions yet, refused with `424` and `reason` `missing`:
+writing their records (a portal or a layout on one is read-only, its record
+commands disabled), creating a related record there, a cascading delete that
+reaches one (checked over the whole cascade before anything is deleted, so
+nothing is), and a find or saved find on a related field through one, or
+from a record of one. An unstored calculation reading through an external
+occurrence evaluates empty. A layout's default occurrence is always local. A
+field object of an external occurrence placed directly on a local layout keeps
+its occurrence and is shown as unavailable, never bound to a local field of
+the same name.
 
 ## What is not here yet
 
@@ -312,6 +342,6 @@ unavailable, never bound to a local field of the same name.
   each per relationship, acting left to right as above. FileMaker has them
   separately for each side.
 - **Portals of portals**, and relationships followed through more than one hop.
-- **Records of another solution.** External occurrences are stored, bound and
-  verified, but reading their records, layouts and portals on them, and the
-  second-field and related options of a value list on one come later.
+- **Writing another solution's records**, cascades and finds across
+  solutions, calculations reading another solution, and the second-field and
+  related options of a value list on an external occurrence come later.

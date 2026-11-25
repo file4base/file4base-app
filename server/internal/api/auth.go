@@ -107,6 +107,9 @@ func (m *AuthMiddleware) attach(w http.ResponseWriter, r *http.Request) (*http.R
 	ctx := auth.WithSession(r.Context(), sess)
 	ctx = auth.WithToken(ctx, token)
 	ctx = dbal.WithDriver(ctx, driver)
+	// The solutions the session's group is signed in to, for reads through
+	// external table occurrences (#107).
+	ctx = withPeers(ctx, newGroupPeers(m.sessions, m.dbMgr, sess.Group))
 	return r.WithContext(ctx), true, false
 }
 

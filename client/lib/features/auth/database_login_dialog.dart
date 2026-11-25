@@ -11,9 +11,34 @@ class DatabaseLoginDialog extends StatefulWidget {
   const DatabaseLoginDialog({
     required this.apiClient, super.key,
     this.onServerUrlChanged,
+    this.linkDatabase,
+    this.usedBy = '',
   });
   final ApiClient apiClient;
   final ValueChanged<String>? onServerUrlChanged;
+
+  /// The solution to sign in to for the session [apiClient] holds, when the
+  /// dialog opens a solution that one reads through its external
+  /// occurrences (#107) rather than signing in.
+  final String? linkDatabase;
+
+  /// The solution that reads [linkDatabase], named in the title.
+  final String usedBy;
+
+  /// Asks for an account of [database], a solution [usedBy] reads, and signs
+  /// the session in to it. True once it is signed in.
+  static Future<bool> showLink(
+    BuildContext context,
+    ApiClient apiClient, {
+    required String database,
+    required String usedBy,
+  }) async {
+    final linked = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => DatabaseLoginDialog(apiClient: apiClient, linkDatabase: database, usedBy: usedBy),
+    );
+    return linked ?? false;
+  }
 
   static Future<AuthResult?> show(
     BuildContext context,
@@ -48,9 +73,18 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   bool _mfaRequired = false;
   String? _errorMessage;
 
+  bool get _linking => widget.linkDatabase != null;
+
   @override
   void initState() {
     super.initState();
+    if (_linking) {
+      _apiUrlController = TextEditingController(text: widget.apiClient.baseUrl);
+      _usernameController.clear();
+      _selectedDatabase = widget.linkDatabase;
+      _isLoadingDatabases = false;
+      return;
+    }
     final initialUrl = widget.apiClient.baseUrl.trim().isNotEmpty
         ? widget.apiClient.baseUrl.trim()
         : 'http://127.0.0.1:8080';
@@ -204,7 +238,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
   }
 
   Future<void> _handleLogin() async {
-    _applyApiUrlIfChanged();
+    if (!_linking) _applyApiUrlIfChanged();
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -222,6 +256,17 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
           _isLoggingIn = false;
           _errorMessage = 'No databases are available. Select the "+" button to create a database.';
         });
+        return;
+      }
+
+      if (_linking) {
+        await widget.apiClient.linkSolution(
+          database: database,
+          username: username,
+          password: password,
+          totpCode: totpCode.isNotEmpty ? totpCode : null,
+        );
+        if (mounted) Navigator.of(context).pop(true);
         return;
       }
 
@@ -298,17 +343,21 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                     child: const Icon(Icons.storage, color: Color(0xFF1E88E5), size: 24),
                   ),
                   const SizedBox(width: 14),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'File4Base Connect & Login',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          _linking
+                              ? 'Open ${widget.linkDatabase} (used by ${widget.usedBy})'
+                              : 'File4Base Connect & Login',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                         Text(
-                          'Select Database or Load Solution from Disk',
-                          style: TextStyle(fontSize: 11, color: Colors.grey),
+                          _linking
+                              ? 'Sign in with an account of ${widget.linkDatabase}'
+                              : 'Select Database or Load Solution from Disk',
+                          style: const TextStyle(fontSize: 11, color: Colors.grey),
                         ),
                       ],
                     ),
@@ -368,6 +417,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                         ),
                       ),
 
+                    if (!_linking) ...[
                     // API Server Selector
                     const Text(
                       'API SERVER CONNECTION',
@@ -453,6 +503,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                     ),
 
                     const SizedBox(height: 16),
+                    ],
                     const Text(
                       'USER CREDENTIALS',
                       style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey, letterSpacing: 0.5),
@@ -524,14 +575,17 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                         color: Colors.blue.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Row(
+                      child: Row(
                         children: [
-                          Icon(Icons.info_outline, size: 16, color: Color(0xFF1E88E5)),
-                          SizedBox(width: 8),
+                          const Icon(Icons.info_outline, size: 16, color: Color(0xFF1E88E5)),
+                          const SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Use the database password to sign in if there are no other users. A password is always required.',
-                              style: TextStyle(fontSize: 11, color: Colors.grey),
+                              _linking
+                                  ? '${widget.usedBy} shows records of ${widget.linkDatabase}. '
+                                      'They are read with this account and its privileges there.'
+                                  : 'Use the database password to sign in if there are no other users. A password is always required.',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
                             ),
                           ),
                         ],
@@ -555,7 +609,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                             ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                             : const Icon(Icons.login, size: 20),
                         label: Text(
-                          _isLoggingIn ? 'Authenticating...' : 'Connect & Sign In',
+                          _isLoggingIn ? 'Authenticating...' : (_linking ? 'Sign In' : 'Connect & Sign In'),
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                       ),
@@ -566,7 +620,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
                     // Secondary Actions: Load from disk + Cancel
                     Row(
                       children: [
-                        Expanded(
+                        if (_linking) const Spacer() else Expanded(
                           child: OutlinedButton.icon(
                             onPressed: _isLoggingIn ? null : _handleLoadFromDisk,
                             style: OutlinedButton.styleFrom(

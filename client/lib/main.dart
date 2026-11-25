@@ -17,6 +17,7 @@ import 'package:file4base_client/features/auth/database_login_dialog.dart';
 import 'package:file4base_client/features/connection/server_connection_dialog.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/export_records_dialog.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/data_browser/external_layout.dart';
 import 'package:file4base_client/features/data_browser/saved_finds_dialog.dart';
 import 'package:file4base_client/features/data_io/import_records_dialog.dart';
@@ -3239,11 +3240,72 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final client = ref.read(apiClientProvider);
+    // The browser of this solution's table, or of another solution's for a
+    // layout on an external occurrence: shown there, never typed into.
+    Widget browser(TableModel table, ApiClient client, {TableOccurrenceModel? external}) {
+      return DataBrowserWidget(
+        key: _dataBrowserKey,
+        table: table,
+        apiClient: client,
+        layout: _activeLayout,
+        // The fields of the layout's own occurrence are read; those of other
+        // external occurrences still say why they are not.
+        externalOccurrences: externalOccurrenceKeys([
+          for (final o in _occurrences)
+            if (o.id != external?.id) o,
+        ]),
+        externalDatabase: external?.external?.database,
+        mode: mode,
+        onModeChanged: _changeMode,
+        onTableModified: _loadTables,
+        currentUserName: _currentUser?.username,
+        showPageMargins: !_isKioskRuntimeActive && _isPageMarginsVisible,
+        showTextRuler: !_isKioskRuntimeActive && _isTextRulerVisible,
+        pageSetup: _pageSetup,
+        onFocusedFieldChanged: () {
+          if (mounted) setState(() {});
+        },
+        onObjectStyleChanged: _applyBrowseObjectStyle,
+        onGoToLayout: (name) {
+          final match = _serverLayouts
+              .where((l) => l.name.toLowerCase() == name.toLowerCase() || l.id == name)
+              .firstOrNull;
+          if (match != null) _selectLayout(match);
+          return match != null;
+        },
+        onReLogin: _startAuthSequence,
+        onCloseFile: _handleSignOut,
+        onExitApplication: _handleQuit,
+        onAdjustWindow: _handleAdjustWindow,
+        onGoHome: _navigateToKioskHomeLayout,
+        onFoundSetChanged: (requests) => _foundSetRequests = requests,
+        onRecordChanged: (idx, total) {
+          if (mounted) {
+            setState(() {
+              _currentRecordIndex = idx;
+              _totalRecords = total;
+            });
+          }
+        },
+      );
+    }
+
+    // A layout on another solution's table browses that solution's records,
+    // read there as the account this session holds in it (#107). They are
+    // shown, not written from here yet: record commands stay disabled.
+    ExternalAccess.of(client).solutionName = _activeSolutionName;
     final external = _externalLayoutOccurrence;
     if (external != null) {
-      return ExternalLayoutPlaceholder(
+      if (mode == OperationalMode.layout) {
+        return ExternalLayoutPlaceholder(layoutName: _activeLayout?.name ?? '', occurrence: external);
+      }
+      return ExternalLayoutView(
+        key: ValueKey('external-layout-${external.id}'),
         layoutName: _activeLayout?.name ?? '',
         occurrence: external,
+        apiClient: client,
+        builder: (context, table, occurrenceClient) => browser(table, occurrenceClient, external: external),
       );
     }
 
@@ -3251,50 +3313,10 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       return _buildWelcomeScreen(context, mode);
     }
 
-    final client = ref.read(apiClientProvider);
-
     switch (mode) {
       case OperationalMode.browse:
       case OperationalMode.find:
-        return DataBrowserWidget(
-          key: _dataBrowserKey,
-          table: _selectedTable!,
-          apiClient: client,
-          layout: _activeLayout,
-          externalOccurrences: externalOccurrenceKeys(_occurrences),
-          mode: mode,
-          onModeChanged: _changeMode,
-          onTableModified: _loadTables,
-          currentUserName: _currentUser?.username,
-          showPageMargins: !_isKioskRuntimeActive && _isPageMarginsVisible,
-          showTextRuler: !_isKioskRuntimeActive && _isTextRulerVisible,
-          pageSetup: _pageSetup,
-          onFocusedFieldChanged: () {
-            if (mounted) setState(() {});
-          },
-          onObjectStyleChanged: _applyBrowseObjectStyle,
-          onGoToLayout: (name) {
-            final match = _serverLayouts
-                .where((l) => l.name.toLowerCase() == name.toLowerCase() || l.id == name)
-                .firstOrNull;
-            if (match != null) _selectLayout(match);
-            return match != null;
-          },
-          onReLogin: _startAuthSequence,
-          onCloseFile: _handleSignOut,
-          onExitApplication: _handleQuit,
-          onAdjustWindow: _handleAdjustWindow,
-          onGoHome: _navigateToKioskHomeLayout,
-          onFoundSetChanged: (requests) => _foundSetRequests = requests,
-          onRecordChanged: (idx, total) {
-            if (mounted) {
-              setState(() {
-                _currentRecordIndex = idx;
-                _totalRecords = total;
-              });
-            }
-          },
-        );
+        return browser(_selectedTable!, client);
       case OperationalMode.layout:
         return LayoutDesignerWidget(
           key: _layoutDesignerKey,

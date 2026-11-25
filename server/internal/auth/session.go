@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"sync"
 	"time"
 )
@@ -49,6 +50,15 @@ type Session struct {
 	// active state changed, account deleted), even for a session created
 	// after a revocation by a sign-in that was already in flight.
 	Stamp string
+	// Group identifies the session group (#107): the sign-in that opened it
+	// and the sessions linked to it in the solutions that one reads through
+	// external table occurrences. Each linked session is an ordinary
+	// session of its own account in its own solution; revoking the sign-in
+	// that started the group revokes all of them.
+	Group string
+	// Linked marks a session opened in a solution of another session's
+	// group, rather than by a sign-in of its own.
+	Linked bool
 }
 
 // IsOwner reports whether the session belongs to a database owner.
@@ -90,13 +100,21 @@ func digest(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Create registers a new session and returns its bearer token.
-func (s *Store) Create(userID, username, role, database, stamp string, superOwner bool) (string, Session, error) {
+func newToken() (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+// Create registers a new session and returns its bearer token. The session
+// starts a session group of its own.
+func (s *Store) Create(userID, username, role, database, stamp string, superOwner bool) (string, Session, error) {
+	token, err := newToken()
+	if err != nil {
 		return "", Session{}, err
 	}
-	token := hex.EncodeToString(raw)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,7 +122,14 @@ func (s *Store) Create(userID, username, role, database, stamp string, superOwne
 	now := s.now()
 	s.pruneLocked(now)
 
-	sess := &Session{
+	sess := s.newSessionLocked(now, userID, username, role, database, stamp, superOwner)
+	sess.Group = digest(token)
+	s.sessions[digest(token)] = sess
+	return token, *sess, nil
+}
+
+func (s *Store) newSessionLocked(now time.Time, userID, username, role, database, stamp string, superOwner bool) *Session {
+	return &Session{
 		UserID:        userID,
 		Username:      username,
 		Role:          role,
@@ -116,8 +141,134 @@ func (s *Store) Create(userID, username, role, database, stamp string, superOwne
 		ExpiresAt:     now.Add(s.ttl),
 		RequestsCount: 1,
 	}
+}
+
+// ErrGroupClosed is returned when a session is linked to a group whose
+// sign-in is no longer valid.
+var ErrGroupClosed = errors.New("the session that started this group is no longer valid")
+
+// ErrLinkToRoot is returned when a session is linked in the solution the
+// group's own sign-in is bound to: that session already covers it.
+var ErrLinkToRoot = errors.New("the group is already signed in to this solution")
+
+// Link opens a session of an account of another solution in a session group
+// (#107), replacing the one the group held there, and returns its bearer
+// token. The session has the expiry rules of any other and is revoked with
+// the sign-in that started the group.
+func (s *Store) Link(group, userID, username, role, database, stamp string, superOwner bool) (string, Session, error) {
+	token, err := newToken()
+	if err != nil {
+		return "", Session{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := s.now()
+	s.pruneLocked(now)
+
+	root, ok := s.sessions[group]
+	if !ok || root.Group != group {
+		return "", Session{}, ErrGroupClosed
+	}
+	if root.Database == database {
+		return "", Session{}, ErrLinkToRoot
+	}
+	for key, sess := range s.sessions {
+		if sess.Linked && sess.Group == group && sess.Database == database {
+			delete(s.sessions, key)
+		}
+	}
+	sess := s.newSessionLocked(now, userID, username, role, database, stamp, superOwner)
+	sess.Group, sess.Linked = group, true
 	s.sessions[digest(token)] = sess
 	return token, *sess, nil
+}
+
+// Member returns the session a group holds in a solution — the group's own
+// sign-in when it is bound to that solution, which is how a cycle of
+// solutions reading each other resolves — and extends its idle lifetime as
+// using it directly would. An expired session is dropped, never renewed.
+func (s *Store) Member(group, database string) (Session, bool) {
+	if group == "" {
+		return Session{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := s.now()
+	for key, sess := range s.sessions {
+		if sess.Group != group || sess.Database != database || (!sess.Linked && key != group) {
+			continue
+		}
+		if !now.Before(sess.ExpiresAt) {
+			s.deleteLocked(key)
+			return Session{}, false
+		}
+		sess.LastSeenAt = now
+		sess.ExpiresAt = now.Add(s.ttl)
+		return *sess, true
+	}
+	return Session{}, false
+}
+
+// Members returns the sessions linked to a group, the sign-in that started
+// it excluded.
+func (s *Store) Members(group string) []Session {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pruneLocked(s.now())
+	var out []Session
+	for _, sess := range s.sessions {
+		if sess.Linked && sess.Group == group {
+			out = append(out, *sess)
+		}
+	}
+	return out
+}
+
+// Root returns the sign-in that started a group, without extending it.
+func (s *Store) Root(group string) (Session, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[group]
+	if !ok || sess.Linked || !s.now().Before(sess.ExpiresAt) {
+		return Session{}, false
+	}
+	return *sess, true
+}
+
+// Unlink revokes the session a group holds in a solution. The group's own
+// sign-in is not unlinked: it is revoked by signing out.
+func (s *Store) Unlink(group, database string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	found := false
+	for key, sess := range s.sessions {
+		if sess.Linked && sess.Group == group && sess.Database == database {
+			delete(s.sessions, key)
+			found = true
+		}
+	}
+	return found
+}
+
+// deleteLocked removes a session, and with the sign-in that started a group
+// every session linked to it.
+func (s *Store) deleteLocked(key string) {
+	sess, ok := s.sessions[key]
+	if !ok {
+		return
+	}
+	delete(s.sessions, key)
+	if sess.Linked || sess.Group != key {
+		return
+	}
+	for other, member := range s.sessions {
+		if member.Linked && member.Group == key {
+			delete(s.sessions, other)
+		}
+	}
 }
 
 // TouchMeta records client origin metadata (IP, web container hostname, user-agent)
@@ -145,7 +296,9 @@ func (s *Store) TouchMeta(token, clientIP, webContainer, userAgent string) {
 	}
 }
 
-// Get returns the session for a token and extends its idle lifetime.
+// Get returns the session for a token and extends its idle lifetime. A
+// linked session lives no longer than the sign-in of its group: once that
+// one has expired or been revoked, the linked token is refused and dropped.
 func (s *Store) Get(token string) (Session, bool) {
 	if token == "" {
 		return Session{}, false
@@ -161,8 +314,15 @@ func (s *Store) Get(token string) (Session, bool) {
 	}
 	now := s.now()
 	if !now.Before(sess.ExpiresAt) {
-		delete(s.sessions, key)
+		s.deleteLocked(key)
 		return Session{}, false
+	}
+	if sess.Linked {
+		if root, ok := s.sessions[sess.Group]; !ok || !now.Before(root.ExpiresAt) {
+			s.deleteLocked(sess.Group)
+			s.deleteLocked(key)
+			return Session{}, false
+		}
 	}
 	sess.LastSeenAt = now
 	sess.ExpiresAt = now.Add(s.ttl)
@@ -182,14 +342,15 @@ func (s *Store) Restamp(token, stamp string) {
 	}
 }
 
-// Revoke invalidates a single token.
+// Revoke invalidates a single token, and every session linked to it when it
+// started a session group.
 func (s *Store) Revoke(token string) {
 	if token == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.sessions, digest(token))
+	s.deleteLocked(digest(token))
 }
 
 // RevokeUser invalidates every session of a user in a database, optionally
@@ -204,7 +365,7 @@ func (s *Store) RevokeUser(database, userID, exceptToken string) {
 	defer s.mu.Unlock()
 	for key, sess := range s.sessions {
 		if key != keep && sess.Database == database && sess.UserID == userID {
-			delete(s.sessions, key)
+			s.deleteLocked(key)
 		}
 	}
 }
@@ -215,7 +376,7 @@ func (s *Store) RevokeDatabase(database string) {
 	defer s.mu.Unlock()
 	for key, sess := range s.sessions {
 		if sess.Database == database {
-			delete(s.sessions, key)
+			s.deleteLocked(key)
 		}
 	}
 }
@@ -283,7 +444,7 @@ func (s *Store) RevokeByID(sessionID string) bool {
 	defer s.mu.Unlock()
 	for key := range s.sessions {
 		if key == sessionID || (len(sessionID) >= 8 && len(key) >= len(sessionID) && key[:len(sessionID)] == sessionID) {
-			delete(s.sessions, key)
+			s.deleteLocked(key)
 			return true
 		}
 	}
@@ -301,6 +462,12 @@ func (s *Store) Len() int {
 func (s *Store) pruneLocked(now time.Time) {
 	for key, sess := range s.sessions {
 		if !now.Before(sess.ExpiresAt) {
+			s.deleteLocked(key)
+		}
+	}
+	// A session linked to a group whose sign-in is gone goes with it.
+	for key, sess := range s.sessions {
+		if sess.Linked && s.sessions[sess.Group] == nil {
 			delete(s.sessions, key)
 		}
 	}

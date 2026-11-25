@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/data_browser/external_layout.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/data_browser/report_view.dart';
@@ -42,6 +43,7 @@ class DataBrowserWidget extends StatefulWidget {
     this.onAdjustWindow,
     this.onGoHome,
     this.externalOccurrences = const {},
+    this.externalDatabase,
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -78,6 +80,12 @@ class DataBrowserWidget extends StatefulWidget {
   /// (#107). A field object of one of them is shown as unavailable, never
   /// bound to a local column of the same name.
   final Set<String> externalOccurrences;
+
+  /// The solution [table] is in when the layout is on an occurrence of
+  /// another solution's table (#107): its records are read there, through
+  /// [apiClient], and relationships are followed from them. Null for a table
+  /// of this solution.
+  final String? externalDatabase;
 
   /// What [obj] shows when it is a field of an external occurrence, else null.
   String? externalFieldNoticeOf(LayoutObjectModel obj) =>
@@ -127,6 +135,10 @@ class FindRequestDraft {
 }
 
 class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost, ExtendedLayoutActionHost {
+  /// Records of another solution are shown, not created or deleted from
+  /// here yet (#107).
+  bool get _readOnly => widget.externalDatabase != null;
+
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
   String? _error;
@@ -630,6 +642,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       occurrencesById: _occurrences,
       tablesById: _tablesById,
       formatValue: fieldText,
+      fromDatabase: widget.externalDatabase,
     );
   }
 
@@ -680,6 +693,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// The lists that offer more entries than the server gave.
   final Set<String> _truncatedValueLists = {};
 
+  /// Why a list taken from another solution's table (#107) offers nothing:
+  /// that solution cannot be read, most often because the session is not
+  /// signed in to it yet. The field offers to sign in.
+  final Map<String, ExternalUnavailable> _valueListProblems = {};
+
+  /// The external occurrences of this session: signing in to a solution
+  /// there resolves again the lists that could not read it.
+  late final ExternalAccess _externalAccess = ExternalAccess.of(widget.apiClient);
+
+  void _onExternalSignedIn() {
+    for (final id in _valueListProblems.keys.toList()) {
+      final list = _valueLists[id];
+      if (list != null) unawaited(_resolveValueList(list));
+    }
+  }
+
+  /// Keeps why [list] could not be read from another solution, and asks
+  /// once to sign in to it. Returns false for any other failure.
+  bool _valueListUnavailable(ValueListModel list, Object error) {
+    final problem = ExternalUnavailable.of(error);
+    if (problem == null || !mounted) return false;
+    setState(() => _valueListProblems[list.id] = problem);
+    _externalAccess.askOnce(context, problem);
+    return true;
+  }
+
   /// For a list of related values: the record its entries are for, and the
   /// latest request, so an answer that arrives late never replaces a newer one.
   final Map<String, String?> _relatedValueListRecords = {};
@@ -725,22 +764,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         final offer =
             await widget.apiClient.valueListItems(list.id, table: widget.table.name, recordId: recordId);
         if (mounted && _relatedValueListRequests[list.id] == request) _applyValueListOffer(list.id, offer);
-      } catch (_) {
+      } catch (e) {
         // The control keeps what it offered: at least the stored value.
+        _valueListUnavailable(list, e);
       }
       return;
     }
     try {
       final offer = await widget.apiClient.valueListItems(list.id);
       if (mounted) _applyValueListOffer(list.id, offer);
-    } catch (_) {
-      if (mounted) setState(() => _valueListItems[list.id] = const []);
+    } catch (e) {
+      if (!_valueListUnavailable(list, e) && mounted) setState(() => _valueListItems[list.id] = const []);
     }
   }
 
   void _applyValueListOffer(String id, ValueListOffer offer) {
     setState(() {
       _valueListItems[id] = offer.items;
+      _valueListProblems.remove(id);
       offer.truncated ? _truncatedValueLists.add(id) : _truncatedValueLists.remove(id);
     });
   }
@@ -761,6 +802,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final items = _valueListItems[id];
     if (items == null || (items.isEmpty && !(_valueLists[id]?.isRelated ?? false))) return null;
     return items;
+  }
+
+  /// The icon of a field whose value list [problem] keeps from reading another
+  /// solution: a sign-in when the session is only not signed in to it.
+  Widget _valueListProblemIcon(ExternalUnavailable problem) {
+    if (!problem.isNotSignedIn) {
+      return Tooltip(
+        message: problem.message,
+        child: const Icon(Icons.warning_amber, size: 14, color: Colors.amber),
+      );
+    }
+    return IconButton(
+      key: const ValueKey('value-list-sign-in'),
+      icon: const Icon(Icons.login, size: 14, color: Colors.amber),
+      tooltip: 'Sign in to ${problem.database}…',
+      visualDensity: VisualDensity.compact,
+      onPressed: () => unawaited(_externalAccess.signIn(context, problem)),
+    );
   }
 
   /// What an entry shows: its second field only, or its value with the second
@@ -1241,6 +1300,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   void initState() {
     super.initState();
     _initFindControllers();
+    _externalAccess.addListener(_onExternalSignedIn);
     unawaited(_loadValueLists());
     if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
     unawaited(_fetchRecords().then((_) {
@@ -1363,6 +1423,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   void dispose() {
+    _externalAccess.removeListener(_onExternalSignedIn);
     HardwareKeyboard.instance.removeHandler(_handleRecordShortcut);
     _recordNumberCtrl.dispose();
     _recordNumberFocus.dispose();
@@ -1381,7 +1442,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     super.dispose();
   }
 
-  Future<void> _fetchRecords({bool preserveCurrent = false, bool loadAll = false}) async {
+  Future<void> _fetchRecords({bool preserveCurrent = false, bool loadAll = false, bool retried = false}) async {
     final keepId = preserveCurrent && _records.isNotEmpty
         ? _records[_currentIndex]['id']?.toString()
         : null;
@@ -1422,14 +1483,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         if (!keepFoundSet) widget.onFoundSetChanged?.call(const []);
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
+      if (!mounted) return;
+      final problem = ExternalUnavailable.of(e);
+      setState(() { _error = problem?.message ?? e.toString(); _isLoading = false; });
+      // Another solution's records (#107) the session is not signed in to
+      // yet: sign in to it, then read them again, once.
+      if (problem != null && problem.isNotSignedIn && !retried &&
+          await _externalAccess.signIn(context, problem) && mounted) {
+        await _fetchRecords(preserveCurrent: preserveCurrent, loadAll: loadAll, retried: true);
+      }
     }
   }
 
   /// New Record: an empty record shown at the end of the found set. It is
   /// created on the server when committed (see [_commitDraft]).
   Future<void> _createNewRecord() async {
-    if (!await _saveCurrentRecord() || !mounted) return;
+    if (_readOnly || !await _saveCurrentRecord() || !mounted) return;
     setState(() {
       _records.add(<String, dynamic>{_draftKey: true});
       _currentIndex = _records.length - 1;
@@ -1439,7 +1508,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   Future<void> _deleteCurrentRecord() async {
-    if (_records.isEmpty) return;
+    if (_readOnly || _records.isEmpty) return;
     for (final t in _fieldDebounceTimers.values) {
       t?.cancel();
     }
@@ -1947,12 +2016,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('New'),
                 style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-                onPressed: _createNewRecord,
+                onPressed: _readOnly ? null : _createNewRecord,
               ),
               const SizedBox(width: 6),
-              _barButton(Icons.copy, 'Duplicate', hasRecords ? actionDuplicateRecord : null),
+              _barButton(Icons.copy, 'Duplicate', hasRecords && !_readOnly ? actionDuplicateRecord : null),
               _barButton(Icons.delete_outline, 'Delete',
-                  hasRecords ? () => actionDeleteRecord(confirm: true) : null,
+                  hasRecords && !_readOnly ? () => actionDeleteRecord(confirm: true) : null,
                   color: Colors.red.shade700),
               const SizedBox(width: 10),
               _barButton(Icons.search, 'Find', () => _requestMode(OperationalMode.find)),
@@ -2217,13 +2286,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     );
   }
 
+  /// The objects drawn inside each portal of [layout], by portal id, and the
+  /// ids of all of them. They belong to the portal's rows, where each row
+  /// redraws them against its own related record (#36), and are not drawn a
+  /// second time on the layout itself.
+  (Map<String, List<LayoutObjectModel>>, Set<String>) _portalContents(LayoutDefinitionModel layout) {
+    final portals = layout.objects.where((o) => o.type == 'portal').toList();
+    final contents = <String, List<LayoutObjectModel>>{
+      for (final portal in portals)
+        portal.id: layout.objects.where((o) => o.type != 'portal' && portal.contains(o)).toList(),
+    };
+    return (contents, {for (final objects in contents.values) for (final o in objects) o.id});
+  }
+
   Widget _buildCustomLayoutListView(LayoutDefinitionModel layout) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final theme = Theme.of(context);
     final headerPart = layout.parts.where((p) => p.type == LayoutPartType.header).firstOrNull;
     final headerHeight = headerPart?.height ?? 0.0;
-    final headerObjects = layout.objects.where((o) => o.y < headerHeight).toList();
-    final bodyObjects = layout.objects.where((o) => o.y >= headerHeight).toList();
+    final (portalContents, insidePortal) = _portalContents(layout);
+    final shown = layout.objects.where((o) => !insidePortal.contains(o.id));
+    final headerObjects = shown.where((o) => o.y < headerHeight).toList();
+    final bodyObjects = shown.where((o) => o.y >= headerHeight).toList();
 
     var maxBodyBottom = headerHeight + 48.0;
     for (final o in bodyObjects) {
@@ -2268,7 +2352,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                           top: obj.y,
                           width: obj.width,
                           height: obj.height,
-                          child: _buildLayoutObject(obj, _currentRecord, isDark, false),
+                          child: _buildLayoutObject(obj, _currentRecord, isDark, false,
+                              portalContents: portalContents[obj.id] ?? const []),
                         ),
                     ],
                   ),
@@ -2302,7 +2387,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             top: obj.y - headerHeight,
                             width: obj.width,
                             height: obj.height,
-                            child: _buildListRowObject(obj, rec, i, isDark),
+                            child: _buildListRowObject(obj, rec, i, isDark,
+                                portalContents: portalContents[obj.id] ?? const []),
                           ),
                         Positioned(
                           right: 2,
@@ -2332,12 +2418,27 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     LayoutObjectModel obj,
     Map<String, dynamic> rec,
     int recordIndex,
-    bool isDark,
-  ) {
+    bool isDark, {
+    List<LayoutObjectModel> portalContents = const [],
+  }) {
     if (obj.type == 'field') {
       final external = widget.externalFieldNoticeOf(obj);
       if (external != null) {
         return relatedNotice(external, isDark: isDark, radius: obj.style.cornerRadius);
+      }
+      // A field of a related record, read with those of the other rows in
+      // one request.
+      if (obj.fieldBinding?.isRelated ?? false) {
+        final related = _relatedContext?.forRecord(rec['id']?.toString(), batched: true);
+        if (related == null) {
+          return relatedNotice('<${obj.fieldBinding!.qualifiedName}>', isDark: isDark, radius: obj.style.cornerRadius);
+        }
+        return RelatedFieldView(
+          key: ValueKey('related-${obj.id}-${related.recordId}'),
+          object: obj,
+          related: related,
+          isDark: isDark,
+        );
       }
       final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
       final col = widget.table.columns
@@ -2375,6 +2476,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           recordIndex == _currentIndex &&
           !col.isPrimaryKey &&
           !_isComputed(col.name) &&
+          !_readOnly &&
           (obj.fieldBinding?.allowBrowseEntry ?? true)) {
         final ctrl = _fieldControllers[col.name];
         final fn = _fieldFocusNodes[col.name];
@@ -2469,7 +2571,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         child: Text(btnText, overflow: TextOverflow.ellipsis),
       );
     }
-    return _buildLayoutObject(obj, rec, isDark, false);
+    // A portal of a row shows that row's related records, read with those
+    // of the other rows in one request.
+    return _buildLayoutObject(obj, rec, isDark, false, portalContents: portalContents, listRow: true);
   }
 
   /// The found set drawn through the layout's parts (#32).
@@ -2590,7 +2694,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             ),
                           ),
                           ...cols.map((c) {
-                            final computed = _isComputed(c.name);
+                            final computed = _isComputed(c.name) || _readOnly;
                             if (selected && !computed) {
                               final ctrl = _fieldControllers[c.name];
                               final fn = _fieldFocusNodes[c.name];
@@ -2692,7 +2796,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           FilledButton.icon(
             icon: const Icon(Icons.add),
             label: const Text('Create First Record'),
-            onPressed: _createNewRecord,
+            onPressed: _readOnly ? null : _createNewRecord,
           ),
         ],
       ),
@@ -2729,18 +2833,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       for (final (i, o) in sortLayoutTabStops(layout.objects.where((o) => o.isTabStop)).indexed) o.id: i + 1,
     };
 
-    // The objects drawn inside a portal belong to its rows, where each row
-    // redraws them against its own related record (#36). They are not drawn a
-    // second time on the layout itself.
-    final portals = layout.objects.where((o) => o.type == 'portal').toList();
-    final portalContents = <String, List<LayoutObjectModel>>{
-      for (final portal in portals)
-        portal.id: layout.objects.where((o) => o.type != 'portal' && portal.contains(o)).toList(),
-    };
-    final insidePortal = {
-      for (final contents in portalContents.values)
-        for (final o in contents) o.id,
-    };
+    final (portalContents, insidePortal) = _portalContents(layout);
     final topLevel = layout.objects.where((o) => !insidePortal.contains(o.id)).toList();
 
     return LayoutEntryTransition(
@@ -2862,7 +2955,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         ),
                         icon: const Icon(Icons.add, size: 14),
                         label: const Text('Create First Record', style: TextStyle(fontSize: 11)),
-                        onPressed: _createNewRecord,
+                        onPressed: _readOnly ? null : _createNewRecord,
                       )
                     else if (!isFindMode)
                       Container(
@@ -2964,7 +3057,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   Widget _buildLayoutObject(
       LayoutObjectModel obj, Map<String, dynamic> record, bool isDark, bool isFindMode,
-      {List<LayoutObjectModel> portalContents = const []}) {
+      {List<LayoutObjectModel> portalContents = const [], bool listRow = false}) {
     switch (obj.type) {
       case 'label':
         final resolvedText = applyLayoutTextCase(
@@ -3122,7 +3215,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 ),
                 decoration: InputDecoration(
                   isDense: true,
-                  hintText: 'Click to create record & enter data...',
+                  hintText: _readOnly ? null : 'Click to create record & enter data...',
                   hintStyle: TextStyle(fontSize: 10.5, fontStyle: FontStyle.italic, color: Colors.grey.shade400),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   fillColor: obj.style.fillColor != null ? _parseColor(obj.style.fillColor!) : null,
@@ -3273,7 +3366,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           return relatedNotice('A portal shows nothing in Find mode', isDark: isDark,
               radius: obj.style.cornerRadius);
         }
-        final related = _relatedContext;
+        // In a list, each row's portal shows the related records of that
+        // row's record, not of the record in hand.
+        final related =
+            listRow ? _relatedContext?.forRecord(record['id']?.toString(), batched: true) : _relatedContext;
         if (related == null) {
           return relatedNotice(
             obj.portal.isBound
@@ -3284,7 +3380,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           );
         }
         return PortalView(
-          key: ValueKey('portal-${obj.id}'),
+          key: ValueKey(listRow ? 'portal-${obj.id}-${related.recordId}' : 'portal-${obj.id}'),
           object: obj,
           contents: portalContents,
           related: related,
@@ -3345,7 +3441,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final ctrl = _fieldControllers[key];
     final fn = _fieldFocusNodes[key];
     final saving = _fieldSaving[key];
-    final computed = _isComputed(col.name);
+    // Shown like a calculation: read, not typed into.
+    final computed = _isComputed(col.name) || _readOnly;
 
     // A field bound to a value list is filled from a control rather than
     // typed into (#31).
@@ -3363,6 +3460,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         },
       );
     }
+
+    // A list of another solution that cannot be read leaves an edit box,
+    // which says why and offers to sign in to that solution.
+    final listProblem = computed ? null : _valueListProblems[obj.fieldBinding!.valueListId];
 
     final rawVal = record[key] ?? ctrl?.text;
     final effStyle = obj.style.effectiveForValue(rawVal);
@@ -3423,7 +3524,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                   )
                 : saving == false
                     ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
-                    : null,
+                    : listProblem != null
+                        ? _valueListProblemIcon(listProblem)
+                        : null,
       ),
       onChanged: computed ? null : (v) => _onFieldChanged(key, v),
       onEditingComplete: computed
@@ -3735,7 +3838,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionDuplicateRecord() async {
-    if (_records.isEmpty) return;
+    if (_readOnly || _records.isEmpty) return;
     if (!await _saveCurrentRecord()) return;
     final source = _records[_currentIndex];
     final copy = <String, dynamic>{
@@ -3761,7 +3864,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionDeleteRecord({required bool confirm}) async {
-    if (_records.isEmpty) return;
+    if (_readOnly || _records.isEmpty) return;
     if (confirm) {
       final ok = await showDialog<bool>(
         context: context,

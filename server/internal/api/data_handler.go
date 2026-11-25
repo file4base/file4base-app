@@ -47,6 +47,7 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireCapability(schema.CapabilityBulkImport)).Post("/import/preview", h.PreviewImport)
 		r.With(RequireCapability(schema.CapabilityBulkImport)).Post("/import", h.ImportRows)
 		r.With(RequireCapability(schema.CapabilityBulkExport)).Post("/export", h.ExportRows)
+		r.Post("/related", h.ListRelatedRowsBatch)
 		r.Get("/{id}", h.GetRow)
 		r.Get("/{id}/related", h.ListRelatedRows)
 		r.Post("/{id}/related", h.CreateRelatedRow)
@@ -109,10 +110,21 @@ func (h *DataHandler) authorizeAction(w http.ResponseWriter, r *http.Request, ta
 
 // callerDataService is the data service of a request's database, reading
 // related records as the caller: a calculation or a value list that reads a
-// table they may not read gets <No Access>, not its data.
+// table they may not read gets <No Access>, not its data. A read through an
+// occurrence of another solution's table goes to that solution, as the
+// account the caller's session group holds there (#107).
 func callerDataService(r *http.Request) *data.Service {
 	driver, _ := dbal.DriverFromContext(r.Context())
-	sess := currentSession(r)
+	svc := dataServiceAs(driver, currentSession(r))
+	if peers := peersOf(r); peers != nil {
+		svc.WithPeers(peers)
+	}
+	return svc
+}
+
+// dataServiceAs is the data service of a solution reading as one of its
+// sessions, with that session's access.
+func dataServiceAs(driver dbal.DatabaseDriver, sess auth.Session) *data.Service {
 	dataSvc := data.NewService(driver)
 	if !sess.IsAdmin() {
 		schemaSvc, userID := schema.NewService(driver), sess.UserID
@@ -152,7 +164,7 @@ type EvaluateExpressionBody struct {
 // It only reads: evaluating a formula is all the engine can do, and the
 // caller needs no more than read access to the table.
 func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
 		return
@@ -272,7 +284,7 @@ func parseSortOrder(values []string) []data.SortField {
 }
 
 func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
 		return
@@ -308,7 +320,7 @@ func (h *DataHandler) ListRows(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DataHandler) InsertRow(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	svc, ok := h.authorizeAction(w, r, table, true, "create")
 	if !ok {
 		return
@@ -332,7 +344,7 @@ func (h *DataHandler) InsertRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DataHandler) GetRow(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	id := chi.URLParam(r, "id")
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
@@ -358,7 +370,7 @@ func (h *DataHandler) GetRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	id := chi.URLParam(r, "id")
 	svc, ok := h.authorizeAction(w, r, table, true, "edit")
 	if !ok {
@@ -390,7 +402,7 @@ func (h *DataHandler) UpdateRow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DataHandler) DeleteRow(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	id := chi.URLParam(r, "id")
 	svc, ok := h.authorizeAction(w, r, table, true, "delete")
 	if !ok {
@@ -411,7 +423,7 @@ type FindRequestBody struct {
 }
 
 func (h *DataHandler) FindRows(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
 		return
@@ -575,7 +587,7 @@ func parseSource(body ImportBody) (*dataio.Table, error) {
 // first rows, so the import dialog can show what is about to be brought in
 // and match the columns to the fields.
 func (h *DataHandler) PreviewImport(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	// Previewing writes nothing, but it reads a file into a table the caller
 	// must be allowed to write to, so it asks for write access.
 	if _, ok := h.authorize(w, r, table, true); !ok {
@@ -611,7 +623,7 @@ func (h *DataHandler) PreviewImport(w http.ResponseWriter, r *http.Request) {
 // It is one transaction: the first row that cannot be read or stored takes the
 // whole file with it, and the answer says which row it was.
 func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, true)
 	if !ok {
 		return
@@ -665,7 +677,7 @@ type ExportBody struct {
 // The body takes the same find requests a find does, so what is exported is
 // what was found.
 func (h *DataHandler) ExportRows(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
 		return
@@ -730,7 +742,7 @@ func (h *DataHandler) ExportRows(w http.ResponseWriter, r *http.Request) {
 // them, so a report totals the records the find returned. An empty `requests`
 // summarizes every record of the table.
 func (h *DataHandler) SummarizeRows(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
 		return
@@ -766,13 +778,16 @@ func (h *DataHandler) SummarizeRows(w http.ResponseWriter, r *http.Request) {
 // unless the relationship joins a table to itself, where there is no other
 // side to infer.
 func (h *DataHandler) ListRelatedRows(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
-	id := chi.URLParam(r, "id")
+	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
 		return
 	}
+	h.listRelated(w, r, svc, data.LocalOrigin(table))
+}
 
+// listRelated answers the records related to the record {id} of from.
+func (h *DataHandler) listRelated(w http.ResponseWriter, r *http.Request, svc *data.Service, from data.Origin) {
 	relationship := r.URL.Query().Get("relationship")
 	if strings.TrimSpace(relationship) == "" {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Missing Relationship",
@@ -782,14 +797,14 @@ func (h *DataHandler) ListRelatedRows(w http.ResponseWriter, r *http.Request) {
 	occurrence := r.URL.Query().Get("occurrence")
 
 	// The caller needs access to the table the records come from as well.
-	if !h.authorizeRelated(w, r, svc, table, relationship, occurrence, false) {
+	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, false) {
 		return
 	}
 
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 
-	rows, err := svc.RelatedRows(r.Context(), table, id, relationship, occurrence, data.QueryOptions{
+	rows, err := svc.RelatedRowsFrom(r.Context(), from, chi.URLParam(r, "id"), relationship, occurrence, data.QueryOptions{
 		Limit:  limit,
 		Offset: offset,
 		Sort:   parseSortOrder(r.URL.Query()["sort"]),
@@ -803,6 +818,61 @@ func (h *DataHandler) ListRelatedRows(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(rows)
 }
 
+// RelatedBatchBody asks for the records related to several records at once.
+type RelatedBatchBody struct {
+	Relationship string           `json:"relationship"`
+	Occurrence   string           `json:"occurrence"`
+	RecordIDs    []string         `json:"record_ids"`
+	Limit        int              `json:"limit"`
+	Offset       int              `json:"offset"`
+	Sort         []data.SortField `json:"sort,omitempty"`
+}
+
+// ListRelatedRowsBatch returns, for each record named, the records related
+// to it: what a list of records each showing a related field or a portal
+// reads, in one request and without a statement per record.
+//
+//	POST /api/v1/data/{table}/related
+//
+// The answer is {"records": {"<record id>": [related records]}}, every record
+// asked for included. Each record gets what GET .../{id}/related gives it.
+func (h *DataHandler) ListRelatedRowsBatch(w http.ResponseWriter, r *http.Request) {
+	table := requestTable(r)
+	svc, ok := h.authorize(w, r, table, false)
+	if !ok {
+		return
+	}
+	h.listRelatedBatch(w, r, svc, data.LocalOrigin(table))
+}
+
+func (h *DataHandler) listRelatedBatch(w http.ResponseWriter, r *http.Request, svc *data.Service, from data.Origin) {
+	var body RelatedBatchBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if strings.TrimSpace(body.Relationship) == "" {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Missing Relationship",
+			"the relationship to follow must be given as \"relationship\"")
+		return
+	}
+	if len(body.RecordIDs) > data.MaxRelatedBatch {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Batch Too Large", data.ErrBatchTooLarge.Error())
+		return
+	}
+	if !h.authorizeRelatedFrom(w, r, svc, from, body.Relationship, body.Occurrence, false) {
+		return
+	}
+	records, err := svc.RelatedRowsBatch(r.Context(), from, body.RecordIDs, body.Relationship, body.Occurrence,
+		data.QueryOptions{Limit: body.Limit, Offset: body.Offset, Sort: body.Sort})
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"records": records})
+}
+
 // CreateRelatedRow creates a record in a related table and fills its match
 // field, which is what typing into the last row of a portal does.
 //
@@ -810,7 +880,7 @@ func (h *DataHandler) ListRelatedRows(w http.ResponseWriter, r *http.Request) {
 //
 // It is refused with 403 unless the relationship allows creation.
 func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
-	table := chi.URLParam(r, "table")
+	table := requestTable(r)
 	id := chi.URLParam(r, "id")
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
@@ -855,6 +925,9 @@ func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
 func (h *DataHandler) authorizeFindRelations(
 	w http.ResponseWriter, r *http.Request, svc *data.Service, table string, requests []data.FindRequest,
 ) bool {
+	if refuseRelatedCriteria(w, r, requests) {
+		return false
+	}
 	seen := map[string]struct{}{}
 	for _, req := range requests {
 		for _, crit := range req.Criteria {
@@ -882,15 +955,28 @@ func (h *DataHandler) authorizeRelated(
 	w http.ResponseWriter, r *http.Request, svc *data.Service,
 	table, relationship, occurrence string, write bool,
 ) bool {
+	return h.authorizeRelatedFrom(w, r, svc, data.LocalOrigin(table), relationship, occurrence, write)
+}
+
+func (h *DataHandler) authorizeRelatedFrom(
+	w http.ResponseWriter, r *http.Request, svc *data.Service,
+	from data.Origin, relationship, occurrence string, write bool,
+) bool {
 	rel, err := svc.Relationship(r.Context(), relationship)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
 		return false
 	}
-	_, target, err := rel.Sides(table, occurrence)
+	_, target, err := rel.SidesFrom(from, occurrence)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
 		return false
+	}
+	if target.External != nil {
+		// The records are another solution's, read as the account the
+		// session group holds there: the data service checks that
+		// account's access, never this one's (#107).
+		return true
 	}
 	_, ok := h.authorize(w, r, target.TableName, write)
 	return ok

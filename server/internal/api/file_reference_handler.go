@@ -196,6 +196,14 @@ func (h *FileReferenceHandler) Bind(w http.ResponseWriter, r *http.Request) {
 		writeFileReferenceError(w, r, fmt.Errorf("%w: name the solution to bind %q to", schema.ErrInvalidFileReference, ref.Name))
 		return
 	}
+	// The reference keeps the name of the database as it is, so that every
+	// read through it goes to that solution and no other that only differs
+	// in case.
+	if h.dbMgr != nil {
+		if canonical, exists, err := h.dbMgr.LookupDatabase(r.Context(), database); err == nil && exists {
+			database = canonical
+		}
+	}
 	peer, ok := h.peerCatalog(w, r, in.PeerToken, database, ref.Name)
 	if !ok {
 		return
@@ -261,6 +269,11 @@ func (h *FileReferenceHandler) peerCatalog(w http.ResponseWriter, r *http.Reques
 		unavailableWhy: "this server cannot authorize a session of another solution",
 	})
 	if !ok {
+		return nil, false
+	}
+	if end.session.Database != database {
+		writeForbidden(w, r, "the peer_token is a session of another solution; the solution of the file reference "+
+			reference+" is "+database)
 		return nil, false
 	}
 	if end.session.Role != auth.RoleOwner && end.session.Role != auth.RoleAdmin {

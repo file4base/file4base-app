@@ -7,6 +7,7 @@
 import 'dart:async';
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/layout_engine/layout_object_visuals.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:flutter/material.dart';
@@ -22,9 +23,15 @@ class RelatedTarget {
   });
   final RelationshipModel relationship;
 
-  /// The occurrence whose records are read, and the table behind it.
+  /// The occurrence whose records are read, and the table behind it. For an
+  /// occurrence of another solution's table (#107) the table only has its
+  /// name until its fields are read from that solution.
   final TableOccurrenceModel occurrence;
   final TableModel table;
+
+  /// Whether the records are another solution's: they are read there, and
+  /// not written from here yet.
+  bool get isExternal => occurrence.isExternal;
 }
 
 /// Every occurrence reachable from [fromTable] by following one relationship,
@@ -69,11 +76,21 @@ class RelatedContext {
     required this.occurrencesById,
     required this.tablesById,
     required this.formatValue,
+    this.fromDatabase,
+    this.batched = false,
   });
   final ApiClient apiClient;
 
   /// Physical name of the table the layout is on.
   final String fromTable;
+
+  /// The solution [fromTable] is in when the layout is on an occurrence of
+  /// another solution's table (#107), null when it is this solution's.
+  final String? fromDatabase;
+
+  /// Whether the record is one of a list: its related field is read with
+  /// those of the other records shown, in one request (no N+1).
+  final bool batched;
 
   /// The record in hand, or null when the found set is empty.
   final String? recordId;
@@ -86,8 +103,48 @@ class RelatedContext {
   /// already knows how to work out.
   final String Function(ColumnModel column, Object? raw) formatValue;
 
-  TableModel? _tableOfOccurrence(TableOccurrenceModel occurrence) =>
-      tablesById[occurrence.baseTableId];
+  TableModel? _tableOfOccurrence(TableOccurrenceModel occurrence) {
+    final external = occurrence.external;
+    if (external == null) return tablesById[occurrence.baseTableId];
+    // Named as it is in the other solution, so it is never taken for a
+    // table of this one with the same name.
+    return TableModel(id: occurrence.id, name: external.table, displayName: occurrence.name);
+  }
+
+  /// Whether [occurrence], whose table is [table], is an occurrence of the
+  /// table the layout is on.
+  bool _isFrom(TableOccurrenceModel occurrence, TableModel table) =>
+      table.name == fromTable &&
+      (occurrence.isExternal ? occurrence.external!.database == fromDatabase : fromDatabase == null);
+
+  RelatedContext forRecord(String? recordId, {bool batched = false}) => RelatedContext(
+        apiClient: apiClient,
+        fromTable: fromTable,
+        fromDatabase: fromDatabase,
+        recordId: recordId,
+        relationshipsById: relationshipsById,
+        occurrencesById: occurrencesById,
+        tablesById: tablesById,
+        formatValue: formatValue,
+        batched: batched,
+      );
+
+  /// The related records of the record in hand that [target] shows, at most
+  /// [limit].
+  Future<List<Map<String, dynamic>>> rows(RelatedTarget target, {List<String>? sort, int limit = 100}) {
+    final recordId = this.recordId!;
+    if (batched) {
+      return RelatedBatcher.of(apiClient).rows(fromTable, recordId, target, sort: sort, limit: limit);
+    }
+    return apiClient.listRelatedRows(
+      fromTable,
+      recordId,
+      relationshipId: target.relationship.id,
+      occurrence: target.occurrence.id,
+      sort: sort,
+      limit: limit,
+    );
+  }
 
   /// Resolves which side of [relationshipId] a layout object reads, the same
   /// way the server does: [occurrence] names the side wanted, and without it
@@ -106,23 +163,23 @@ class RelatedContext {
       final rightTable = _tableOfOccurrence(right);
       if (leftTable == null || rightTable == null) return null;
 
+      final fromLeft = _isFrom(left, leftTable);
+      final fromRight = _isFrom(right, rightTable);
       bool wantsRight;
       if (occurrence != null && occurrence.isNotEmpty) {
-        if ((occurrence == right.id || occurrence.toLowerCase() == right.name.toLowerCase()) &&
-            leftTable.name == fromTable) {
+        if ((occurrence == right.id || occurrence.toLowerCase() == right.name.toLowerCase()) && fromLeft) {
           wantsRight = true;
-        } else if ((occurrence == left.id || occurrence.toLowerCase() == left.name.toLowerCase()) &&
-            rightTable.name == fromTable) {
+        } else if ((occurrence == left.id || occurrence.toLowerCase() == left.name.toLowerCase()) && fromRight) {
           wantsRight = false;
         } else {
           return null;
         }
-      } else if (leftTable.name == fromTable && rightTable.name == fromTable) {
+      } else if (fromLeft && fromRight) {
         // A self-join: which end is wanted is not something to guess.
         return null;
-      } else if (leftTable.name == fromTable) {
+      } else if (fromLeft) {
         wantsRight = true;
-      } else if (rightTable.name == fromTable) {
+      } else if (fromRight) {
         wantsRight = false;
       } else {
         return null;
@@ -152,6 +209,63 @@ class RelatedContext {
     return null;
   }
 }
+
+/// Reads the related records of every record of a list in one request per
+/// relationship, order and page size (#107): each related field or portal of
+/// a row asks for its record, and the asks made while a list is drawn go
+/// together.
+class RelatedBatcher {
+  RelatedBatcher._(this.apiClient);
+
+  factory RelatedBatcher.of(ApiClient apiClient) => _byClient[apiClient] ??= RelatedBatcher._(apiClient);
+  static final Expando<RelatedBatcher> _byClient = Expando();
+
+  final ApiClient apiClient;
+  final Map<_BatchKey, Map<String, Completer<List<Map<String, dynamic>>>>> _pending = {};
+
+  /// At most [limit] related records of [recordId] that [target] shows, in
+  /// the order [sort] gives (the relationship's own when empty).
+  Future<List<Map<String, dynamic>>> rows(String table, String recordId, RelatedTarget target,
+      {List<String>? sort, int limit = 100}) {
+    if (_pending.isEmpty) scheduleMicrotask(() => unawaited(_flush()));
+    final key = (
+      table: table,
+      relationship: target.relationship.id,
+      occurrence: target.occurrence.id,
+      sort: (sort ?? const []).join(','),
+      limit: limit,
+    );
+    final waiting = _pending.putIfAbsent(key, () => {});
+    return waiting.putIfAbsent(recordId, Completer.new).future;
+  }
+
+  Future<void> _flush() async {
+    final batches = Map.of(_pending);
+    _pending.clear();
+    for (final MapEntry(:key, value: waiting) in batches.entries) {
+      final ids = waiting.keys.toList();
+      for (var start = 0; start < ids.length; start += ApiClient.maxRelatedBatch) {
+        final chunk = ids.sublist(start, (start + ApiClient.maxRelatedBatch).clamp(0, ids.length));
+        try {
+          final rows = await apiClient.listRelatedRowsBatch(key.table, chunk,
+              relationshipId: key.relationship,
+              occurrence: key.occurrence,
+              sort: key.sort.isEmpty ? null : [key.sort],
+              limit: key.limit);
+          for (final id in chunk) {
+            waiting[id]!.complete(rows[id] ?? const []);
+          }
+        } catch (e, st) {
+          for (final id in chunk) {
+            waiting[id]!.completeError(e, st);
+          }
+        }
+      }
+    }
+  }
+}
+
+typedef _BatchKey = ({String table, String relationship, String occurrence, String sort, int limit});
 
 /// A calculation or summary field is filled in by the database, so it is shown
 /// rather than typed into.
@@ -202,11 +316,27 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   bool _loading = false;
   bool _failed = false;
 
+  /// The fields of another solution's table, once read (#107), and why that
+  /// solution could not be read.
+  TableModel? _externalTable;
+  ExternalUnavailable? _problem;
+
+  ExternalAccess get _access => ExternalAccess.of(widget.related.apiClient);
+
   @override
   void initState() {
     super.initState();
+    _access.addListener(_reload);
     unawaited(_load());
   }
+
+  @override
+  void dispose() {
+    _access.removeListener(_reload);
+    super.dispose();
+  }
+
+  void _reload() => unawaited(_load());
 
   @override
   void didUpdateWidget(RelatedFieldView old) {
@@ -233,27 +363,26 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     setState(() {
       _loading = true;
       _failed = false;
+      _problem = null;
     });
     try {
-      final rows = await widget.related.apiClient.listRelatedRows(
-        widget.related.fromTable,
-        recordId,
-        relationshipId: target.relationship.id,
-        occurrence: target.occurrence.id,
-        limit: 1,
-      );
+      if (target.isExternal) _externalTable = await _access.table(target.occurrence);
+      final rows = await widget.related.rows(target, limit: 1);
       if (!mounted) return;
       setState(() {
         _row = rows.isEmpty ? null : rows.first;
         _loading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      final problem = ExternalUnavailable.of(e);
       setState(() {
         _row = null;
         _loading = false;
-        _failed = true;
+        _failed = problem == null;
+        _problem = problem;
       });
+      if (problem != null) _access.askOnce(context, problem);
     }
   }
 
@@ -267,7 +396,15 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
       return relatedNotice('<${binding.qualifiedName}>',
           isDark: widget.isDark, radius: obj.style.cornerRadius);
     }
-    final col = target.table.columns
+    final problem = _problem;
+    if (problem != null) {
+      return ExternalProblemNotice(problem: problem, access: _access, compact: true);
+    }
+    if (target.isExternal && _externalTable == null) {
+      return relatedNotice(_loading ? '…' : '<${binding.qualifiedName}>',
+          isDark: widget.isDark, radius: obj.style.cornerRadius);
+    }
+    final col = (_externalTable ?? target.table).columns
         .where((c) => c.name.toLowerCase() == binding.fieldName.toLowerCase())
         .firstOrNull;
     if (col == null) {
@@ -317,8 +454,11 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
             Tooltip(
               message: _failed
                   ? 'The related record could not be read'
-                  : 'From ${target.occurrence.name} through "${target.relationship.name}" — '
-                      'shown here, edited in a portal',
+                  : target.isExternal
+                      ? 'From ${target.occurrence.name}, in ${target.occurrence.external!.database}, '
+                          'through "${target.relationship.name}"'
+                      : 'From ${target.occurrence.name} through "${target.relationship.name}" — '
+                          'shown here, edited in a portal',
               child: Icon(
                 _failed ? Icons.error_outline : Icons.link,
                 size: 13,
@@ -370,6 +510,13 @@ class _PortalViewState extends State<PortalView> {
   bool _loading = false;
   String? _error;
 
+  /// The fields of another solution's table, once read (#107), and why that
+  /// solution could not be read. Its records are shown, not written.
+  TableModel? _externalTable;
+  ExternalUnavailable? _problem;
+
+  ExternalAccess get _access => ExternalAccess.of(widget.related.apiClient);
+
   /// The row being typed into before it exists: a related record is created
   /// only once something has been entered.
   bool _creating = false;
@@ -383,8 +530,11 @@ class _PortalViewState extends State<PortalView> {
   @override
   void initState() {
     super.initState();
+    _access.addListener(_reload);
     unawaited(_load());
   }
+
+  void _reload() => unawaited(_load());
 
   @override
   void didUpdateWidget(PortalView old) {
@@ -398,6 +548,7 @@ class _PortalViewState extends State<PortalView> {
 
   @override
   void dispose() {
+    _access.removeListener(_reload);
     for (final t in _debounce.values) {
       t?.cancel();
     }
@@ -422,16 +573,11 @@ class _PortalViewState extends State<PortalView> {
     setState(() {
       _loading = true;
       _error = null;
+      _problem = null;
     });
     try {
-      final rows = await widget.related.apiClient.listRelatedRows(
-        widget.related.fromTable,
-        recordId,
-        relationshipId: target.relationship.id,
-        occurrence: target.occurrence.id,
-        sort: _config.sortFields,
-        limit: ApiClient.maxPageSize,
-      );
+      if (target.isExternal) _externalTable = await _access.table(target.occurrence);
+      final rows = await widget.related.rows(target, sort: _config.sortFields, limit: ApiClient.maxPageSize);
       if (!mounted) return;
       setState(() {
         _rows = rows;
@@ -440,13 +586,20 @@ class _PortalViewState extends State<PortalView> {
       _syncControllers();
     } catch (e) {
       if (!mounted) return;
+      final problem = ExternalUnavailable.of(e);
       setState(() {
         _rows = const [];
         _loading = false;
-        _error = e.toString();
+        _problem = problem;
+        _error = problem == null ? e.toString() : null;
       });
+      if (problem != null) _access.askOnce(context, problem);
     }
   }
+
+  /// Whether the portal's records can be changed from here: another
+  /// solution's cannot yet.
+  bool get _writable => !(_target?.isExternal ?? false);
 
   String _cellKey(String rowId, String field) => '$rowId\u0000$field';
 
@@ -485,7 +638,7 @@ class _PortalViewState extends State<PortalView> {
     }
   }
 
-  ColumnModel? _column(RelatedTarget target, String field) => target.table.columns
+  ColumnModel? _column(RelatedTarget target, String field) => (_externalTable ?? target.table).columns
       .where((c) => c.name.toLowerCase() == field.toLowerCase())
       .firstOrNull;
 
@@ -594,6 +747,8 @@ class _PortalViewState extends State<PortalView> {
       );
     } else if (widget.related.recordId == null) {
       body = _message('No record in hand');
+    } else if (_problem != null) {
+      body = ExternalProblemNotice(problem: _problem!, access: _access);
     } else if (_error != null) {
       body = relatedNotice('Portal: $_error', isDark: widget.isDark);
     } else {
@@ -633,7 +788,7 @@ class _PortalViewState extends State<PortalView> {
       for (final (i, row) in visible.indexed)
         _row(target, row, rowHeight, striped: i.isOdd),
     ];
-    if (_config.allowCreation) {
+    if (_config.allowCreation && _writable) {
       children.add(_newRow(target, rowHeight));
     }
 
@@ -682,7 +837,7 @@ class _PortalViewState extends State<PortalView> {
               height: content.height,
               child: _cell(target, content, rowId, row),
             ),
-          if (_config.allowDeletion && rowId.isNotEmpty)
+          if (_config.allowDeletion && _writable && rowId.isNotEmpty)
             Positioned(
               right: 2,
               top: 0,
@@ -717,7 +872,7 @@ class _PortalViewState extends State<PortalView> {
     }
 
     final text = widget.related.formatValue(col, row[col.name]);
-    if (col.isPrimaryKey || isComputedColumn(col)) {
+    if (col.isPrimaryKey || isComputedColumn(col) || !_writable) {
       return Container(
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.symmetric(horizontal: 6),

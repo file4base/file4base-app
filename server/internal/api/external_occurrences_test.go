@@ -14,8 +14,9 @@ import (
 )
 
 // An occurrence of another solution's table is created, bound and verified
-// with a session of that solution, and every read through it is refused with
-// 424 external_unavailable, never answered from a table of this solution
+// with a session of that solution. A session signed in before the bind is
+// not signed in to that solution: every read through it is refused with 424
+// external_unavailable, never answered from a table of this solution
 // (#107).
 func TestAPI_ExternalOccurrencesBindVerifyAndRefuseReads(t *testing.T) {
 	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
@@ -139,14 +140,14 @@ func TestAPI_ExternalOccurrencesBindVerifyAndRefuseReads(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, schema.ExternalBound, report.Occurrences[0].Status)
 
-	// A read through it is refused, and says which reference to fix.
+	// A read through it is refused, and says which reference to sign in to.
 	var order map[string]interface{}
 	require.Equal(t, http.StatusCreated, h.do(http.MethodPost, "/api/v1/data/orders", owner, map[string]interface{}{"customer_code": "C-1"}, &order).Code)
 	rec = h.do(http.MethodGet, fmt.Sprintf("/api/v1/data/orders/%v/related?relationship=%s", order["id"], rel.ID), owner, nil, nil)
-	assertExternalUnavailable(t, rec, peer)
+	assertExternalUnavailable(t, rec, peer, "not_signed_in")
 
 	rec = h.do(http.MethodGet, "/api/v1/value-lists/"+list.ID+"/values", owner, nil, nil)
-	assertExternalUnavailable(t, rec, peer)
+	assertExternalUnavailable(t, rec, peer, "not_signed_in")
 
 	rec = h.do(http.MethodDelete, "/api/v1/file-references/"+ref.ID, owner, nil, nil)
 	assert.Equal(t, http.StatusConflict, rec.Code, "occurrences still go through the reference")
@@ -154,7 +155,7 @@ func TestAPI_ExternalOccurrencesBindVerifyAndRefuseReads(t *testing.T) {
 
 func assertExternalUnavailable(t *testing.T, rec interface {
 	Result() *http.Response
-}, database string) {
+}, database, reason string) {
 	t.Helper()
 	res := rec.Result()
 	defer res.Body.Close()
@@ -174,7 +175,7 @@ func assertExternalUnavailable(t *testing.T, rec interface {
 	assert.Equal(t, "external_unavailable", problem.Code)
 	assert.Equal(t, "Peer", problem.Reference)
 	assert.Equal(t, database, problem.Database)
-	assert.Equal(t, "missing", problem.Reason)
+	assert.Equal(t, reason, problem.Reason)
 }
 
 // The preflight of a file with an external occurrence names the installed
