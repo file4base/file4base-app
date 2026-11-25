@@ -503,9 +503,13 @@ class LayoutActionRunner {
       parameter: parameter,
       session: session ?? ScriptSessionState(),
     );
+    final triggers = host is ScriptTriggerHost ? host as ScriptTriggerHost : null;
     while (!execution.atEnd) {
       final sequence = execution.currentSequence;
+      final mark = triggers?.actionTriggerMark();
       final outcome = await execution.advance();
+      // The script triggers a step set off run before the next step (#26).
+      if (mark != null) await triggers!.actionSettleTriggers(mark);
       switch (outcome.kind) {
         case StepOutcomeKind.stopped:
           return LayoutActionResult.stopped(
@@ -720,7 +724,7 @@ class LayoutActionRunner {
         }
         final exitAfterLast = boolParam('exit_after_last');
         if (ext != null) {
-          final outcome = await ext.actionGoToPortalRow(target);
+          final outcome = await ext.actionGoToPortalRow(target, select: boolParam('select'));
           session.lastError = outcome.errorCode;
           if (outcome.atBoundary && exitAfterLast) {
             return const LayoutActionResult.exitLoop();
@@ -799,7 +803,8 @@ class LayoutActionRunner {
         final findReqs = mapListParam('find_requests');
         if (ext != null) {
           final found = await ext.actionPerformFindEx(requests: findReqs, restore: restore);
-          session.lastError = found == 0 ? 401 : 0;
+          // A negative count: OnModeExit kept the window in Find mode.
+          session.lastError = found < 0 ? 20 : (found == 0 ? 401 : 0);
         } else {
           session.lastError = 0;
           await host.actionPerformFind();
@@ -2179,6 +2184,10 @@ class LayoutActionRunner {
           return ext?.actionActiveFieldName ?? session.activeField;
         case 'activelayoutobjectname':
           return session.activeObject;
+        case 'activeportalrownumber':
+          return host is PortalRowHost ? (host as PortalRowHost).actionActivePortalRowNumber.toString() : '0';
+        case 'activefieldtablename':
+          return host is PortalRowHost ? (host as PortalRowHost).actionActiveFieldTableName : '';
         case 'foundcount':
           return (ext?.actionFoundCount ?? 0).toString();
         case 'recordnumber':
@@ -2193,6 +2202,9 @@ class LayoutActionRunner {
 
     // A numeric literal is its own value, not the name of a field.
     if (num.tryParse(expr) != null) return expr;
+    // FileMaker's Boolean constants, as in `Exit Script [Result: False]`.
+    if (expr.toLowerCase() == 'true') return '1';
+    if (expr.toLowerCase() == 'false') return '0';
 
     if (expr.startsWith(r'$')) {
       return _lookupVariable(expr, localVars, callContext: callContext) ?? '';

@@ -612,7 +612,7 @@
           "Schemas & DDL"
         ],
         "summary": "List Script Triggers",
-        "description": "Every script trigger of every layout and layout object, with the problems that keep it from running and their remedy. Requires admin (owner or admin role).",
+        "description": "Every script trigger of every layout and layout object, with the problems that keep it from running and their remedy. File4Base runs OnLayoutEnter, OnLayoutExit, OnRecordLoad, OnRecordCommit, OnRecordRevert, OnModeEnter and OnModeExit set on a layout, and OnObjectEnter, OnObjectExit, OnObjectModify, OnObjectValidate and OnObjectSave set on a field, one script per event of a layout or object. Requires admin (owner or admin role).",
         "responses": {
           "200": {
             "description": "Script triggers, by layout name",
@@ -645,7 +645,7 @@
           "Schemas & DDL"
         ],
         "summary": "Enable or Disable Script Triggers",
-        "description": "Enables or disables the triggers named, all or none, in one transaction; every layout changed gets a new version, so open clients read it again. Enabling a trigger with a problem refuses the whole batch. Requires admin (owner or admin role) and an unlocked design.",
+        "description": "Enables or disables the triggers named, all or none, in one transaction; every layout changed gets a new version, so open clients read it again. An OnLayoutEnter or OnLayoutExit trigger moves into its slot when enabled; every other trigger is switched where it is, in the layout's script_triggers list. Enabling a trigger with a problem, or two of the same event on one layout or object, refuses the whole batch. Requires admin (owner or admin role) and an unlocked design.",
         "requestBody": {
           "required": true,
           "content": {
@@ -8008,7 +8008,9 @@
               "unsupported_event",
               "object_missing",
               "event_taken",
-              "duplicate_id"
+              "duplicate_id",
+              "unsupported_object",
+              "no_mode"
             ]
           },
           "message": {

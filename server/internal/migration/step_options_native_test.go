@@ -200,8 +200,10 @@ func TestStepOptionsAreRead(t *testing.T) {
 		if steps[8].Params["target"] != "by_calculation" || steps[8].Params["record_calculation"] != "$row" {
 			t.Fatalf("portal row by calculation = %#v", steps[8].Params)
 		}
+		// File4Base moves to a portal row in Browse mode: the step runs as
+		// written, with no note.
 		for _, step := range steps[7:9] {
-			if note, _ := step.Params["migration_note"].(string); !strings.Contains(note, "not supported in Browse mode yet") {
+			if note, ok := step.Params["migration_note"]; ok {
 				t.Fatalf("note = %q", note)
 			}
 		}

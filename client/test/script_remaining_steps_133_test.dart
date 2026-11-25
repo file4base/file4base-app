@@ -274,7 +274,7 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost, R
   }
 
   @override
-  Future<GoToRecordOutcome> actionGoToPortalRow(String target) async {
+  Future<GoToRecordOutcome> actionGoToPortalRow(String target, {bool select = false}) async {
     log.add('go_to_portal_row:$target');
     if (target.toLowerCase() == 'first') {
       portalIdx = 0;

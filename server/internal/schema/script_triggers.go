@@ -23,18 +23,24 @@ import (
 //   - on_layout_enter and on_layout_exit, the slots a client runs: an action
 //     there runs in Browse mode when the layout is shown or left, unless it
 //     carries "enabled": false;
-//   - "script_triggers", a list of every other trigger: those switched off,
-//     those of events File4Base does not run, and those set on a layout
-//     object (an entry with "object_id", or the FileMaker "object" it was set
-//     on when that object was not migrated).
+//   - "script_triggers", a list of every other trigger: the layout's record
+//     and mode triggers (OnRecordLoad, OnRecordCommit, …), those set on a
+//     layout object (an entry with "object_id", or the FileMaker "object" it
+//     was set on when that object was not migrated), those switched off and
+//     those of events File4Base does not run. A client runs an entry of the
+//     list only when it carries "enabled": true and its event is one it runs
+//     (ListTriggerEventRuns, ObjectTriggerEventRuns), so a client that does
+//     not know the list never runs anything from it.
 //
 // A migrated trigger always arrives in the list, switched off and marked
 // quarantined_by_migration, so a client that does not know the enabled flag
-// still never runs it. Enabling a trigger of an event File4Base runs moves it
-// into its slot; disabling one moves it back into the list. A trigger File4Base
-// could not run as it stands — no script, a parameter that does not read, an
-// event it does not run — cannot be enabled, so "enabled" never says a trigger
-// runs when it does not.
+// still never runs it. Enabling an OnLayoutEnter or OnLayoutExit trigger
+// moves it into its slot, and disabling one moves it back into the list;
+// every other trigger is switched where it is, in the list. A trigger
+// File4Base could not run as it stands — no script, a parameter that does
+// not read, an event it does not run, an object that is not on the layout —
+// cannot be enabled, so "enabled" never says a trigger runs when it does not.
+// One script runs per event of a layout, or of one of its objects.
 
 // LayoutScriptTriggersKey is the layout definition key of the trigger list.
 const LayoutScriptTriggersKey = "script_triggers"
@@ -51,10 +57,67 @@ var LayoutTriggerSlots = []LayoutTriggerSlot{
 	{Key: "on_layout_exit", Event: "OnLayoutExit"},
 }
 
+// ListTriggerEvents are the layout events File4Base runs from the trigger
+// list, in Browse mode: OnRecordLoad after a record becomes the current one,
+// OnRecordCommit before a changed record is committed (a script result of
+// False keeps it uncommitted), OnRecordRevert before it is reverted (False
+// keeps the changes), OnModeEnter after the window enters a mode and
+// OnModeExit before it leaves one (False stays in the mode).
+var ListTriggerEvents = []string{"OnRecordLoad", "OnRecordCommit", "OnRecordRevert", "OnModeEnter", "OnModeExit"}
+
+// ObjectTriggerEvents are the events of a field object's triggers File4Base
+// runs: OnObjectEnter after the field becomes active, OnObjectModify after
+// its content changes, OnObjectValidate before a changed value is validated
+// and saved (False keeps it unsaved, in the active field), OnObjectSave after
+// it is saved (False keeps the field active) and OnObjectExit before the
+// field is left (False keeps it active).
+var ObjectTriggerEvents = []string{"OnObjectEnter", "OnObjectExit", "OnObjectModify", "OnObjectValidate", "OnObjectSave"}
+
+// findModeTriggerEvents are the events File4Base runs in Find mode as well,
+// for a trigger FileMaker runs there.
+var findModeTriggerEvents = []string{"OnObjectEnter", "OnObjectExit", "OnObjectModify", "OnModeEnter", "OnModeExit"}
+
 // LayoutTriggerEventRuns reports whether File4Base runs a layout trigger of
 // the given FileMaker event.
 func LayoutTriggerEventRuns(event string) bool {
-	return slotForEvent(event) != nil
+	return slotForEvent(event) != nil || ListTriggerEventRuns(event)
+}
+
+// ListTriggerEventRuns reports whether File4Base runs a layout trigger of
+// the event from the trigger list, where it is switched in place.
+func ListTriggerEventRuns(event string) bool {
+	return containsFold(ListTriggerEvents, event)
+}
+
+// ObjectTriggerEventRuns reports whether File4Base runs a trigger of the
+// event set on a field object.
+func ObjectTriggerEventRuns(event string) bool {
+	return containsFold(ObjectTriggerEvents, event)
+}
+
+// TriggerEventRuns reports whether File4Base runs a trigger of the event,
+// set on a layout object or on the layout itself.
+func TriggerEventRuns(event string, onObject bool) bool {
+	if onObject {
+		return ObjectTriggerEventRuns(event)
+	}
+	return LayoutTriggerEventRuns(event)
+}
+
+// TriggerEventRunsInFind reports whether File4Base runs triggers of the
+// event in Find mode as well, for a trigger FileMaker runs there.
+func TriggerEventRunsInFind(event string) bool {
+	return containsFold(findModeTriggerEvents, event)
+}
+
+func containsFold(list []string, value string) bool {
+	value = strings.TrimSpace(value)
+	for _, v := range list {
+		if strings.EqualFold(v, value) {
+			return true
+		}
+	}
+	return false
 }
 
 func slotForEvent(event string) *LayoutTriggerSlot {
@@ -111,7 +174,20 @@ const (
 	TriggerProblemAmbiguousScript  = "ambiguous_script"
 	TriggerProblemExternalScript   = "script_in_other_file"
 	TriggerProblemDuplicateID      = "duplicate_id"
+	TriggerProblemObjectType       = "unsupported_object"
+	TriggerProblemNoMode           = "no_mode"
 )
+
+// triggerRunsInBrowse reports whether a trigger's FileMaker modes include
+// Browse mode.
+func triggerRunsInBrowse(modes []interface{}) bool {
+	for _, m := range modes {
+		if strings.EqualFold(asString(m), "browse") {
+			return true
+		}
+	}
+	return false
+}
 
 var (
 	// ErrScriptTriggerNotFound is returned when an id names no trigger.
@@ -313,7 +389,7 @@ func (s *Service) SetScriptTriggersEnabled(ctx context.Context, ids []string, en
 				refused = append(refused, fmt.Sprintf("%s (%s): %s", t.trigger.LayoutName, t.trigger.Event, t.trigger.Problems[0].Message))
 				continue
 			}
-			key := t.layout.id + "\x00" + strings.ToLower(t.trigger.Event)
+			key := t.layout.id + "\x00" + eventKey(t.trigger.ObjectID, t.trigger.Event)
 			if other, taken := claimed[key]; taken {
 				refused = append(refused, fmt.Sprintf("%s (%s): the trigger %s of the same event is enabled too; only one script runs per event", t.trigger.LayoutName, t.trigger.Event, other))
 				continue
@@ -445,6 +521,15 @@ func locateTriggers(l *layoutDefinition, scripts scriptNames) []*located {
 		out = append(out, &located{trigger: t, entry: entry, slot: slot, layout: l})
 	}
 	list, _ := l.def[LayoutScriptTriggersKey].([]interface{})
+	// The list's triggers that run, by object and event: one script runs
+	// per event of the layout, or of one of its objects.
+	running := map[string]string{}
+	for _, raw := range list {
+		if entry := asMap(raw); entry != nil && entry["enabled"] == true {
+			_, name := scripts.resolve(asString(entry["script_id"]), asString(entry["script_name"]))
+			running[eventKey(asString(entry["object_id"]), asString(entry["event"]))] = firstNonBlank(name, asString(entry["script_name"]))
+		}
+	}
 	for i, raw := range list {
 		entry, ok := raw.(map[string]interface{})
 		if !ok {
@@ -455,11 +540,21 @@ func locateTriggers(l *layoutDefinition, scripts scriptNames) []*located {
 			id = fmt.Sprintf("%s:%s:%d", l.id, LayoutScriptTriggersKey, i)
 		}
 		t := describeTrigger(l, id, asString(entry["event"]), entry, entry["enabled"] == true, objects, scripts)
-		if t.Scope == "layout" && !t.Enabled && slotForEvent(t.Event) != nil {
-			if other, taken := slotScripts[strings.ToLower(slotForEvent(t.Event).Event)]; taken {
+		if !t.Enabled {
+			other, taken := "", false
+			if t.Scope == "layout" && slotForEvent(t.Event) != nil {
+				other, taken = slotScripts[strings.ToLower(slotForEvent(t.Event).Event)]
+			} else {
+				other, taken = running[eventKey(t.ObjectID, t.Event)]
+			}
+			if taken {
+				where := "This layout"
+				if t.Scope == "object" {
+					where = "This object"
+				}
 				t.Problems = append(t.Problems, ScriptTriggerProblem{
 					Code:    TriggerProblemSlotTaken,
-					Message: fmt.Sprintf("This layout already runs the script %q on %s, and only one script runs per event.", other, t.Event),
+					Message: fmt.Sprintf("%s already runs the script %q on %s, and only one script runs per event.", where, other, t.Event),
 					Remedy:  "Disable the other trigger first, or leave this one disabled.",
 				})
 				t.CanEnable = false
@@ -468,6 +563,12 @@ func locateTriggers(l *layoutDefinition, scripts scriptNames) []*located {
 		out = append(out, &located{trigger: t, entry: entry, layout: l})
 	}
 	return out
+}
+
+// eventKey names an event of a layout (objectID empty) or of one of its
+// objects: one script runs per key.
+func eventKey(objectID, event string) string {
+	return objectID + "\x00" + strings.ToLower(strings.TrimSpace(event))
 }
 
 // describeTrigger reads one stored trigger and says what keeps it from
@@ -539,32 +640,49 @@ func describeTrigger(l *layoutDefinition, id, event string, entry map[string]int
 			Remedy:  "Correct the parameter in FileMaker and migrate again, or set the trigger again in Layout Setup.",
 		})
 	}
-	if modes, _ := entry["modes"].([]interface{}); len(modes) == 1 && asString(modes[0]) == "find" {
-		t.Problems = append(t.Problems, ScriptTriggerProblem{
-			Code:    TriggerProblemFindOnly,
-			Message: "FileMaker runs this trigger in Find mode only; File4Base runs triggers in Browse mode, where it would run when FileMaker does not.",
-			Remedy:  "Leave it disabled, or add a script step that checks the mode and set the trigger again in Layout Setup.",
-		})
-	}
-	switch {
-	case t.Scope == "object":
-		t.Problems = append(t.Problems, ScriptTriggerProblem{
-			Code:    TriggerProblemUnsupportedEvent,
-			Message: fmt.Sprintf("File4Base does not run triggers set on layout objects (%s) yet. The trigger is kept so it is not lost.", event),
-			Remedy:  "Leave it disabled. Use a button, or an OnLayoutEnter / OnLayoutExit trigger, for what must run now.",
-		})
-		if t.ObjectID == "" {
+	onObject := t.Scope == "object"
+	if modes, isList := entry["modes"].([]interface{}); isList && !triggerRunsInBrowse(modes) {
+		switch {
+		case len(modes) == 0:
 			t.Problems = append(t.Problems, ScriptTriggerProblem{
-				Code:    TriggerProblemObjectMissing,
-				Message: fmt.Sprintf("The object it was set on (%s) is not on the File4Base layout.", t.ObjectLabel),
-				Remedy:  "Add the object to the layout in Layout mode if you need it.",
+				Code:    TriggerProblemNoMode,
+				Message: "FileMaker runs this trigger in no mode: its mode checkboxes are all cleared, which is how FileMaker switches a trigger off.",
+				Remedy:  "Leave it disabled, or set it again in Layout mode if it should run.",
+			})
+		case TriggerEventRuns(event, onObject) && !TriggerEventRunsInFind(event):
+			t.Problems = append(t.Problems, ScriptTriggerProblem{
+				Code:    TriggerProblemFindOnly,
+				Message: fmt.Sprintf("FileMaker runs this trigger in Find mode only; File4Base runs %s triggers in Browse mode, where it would run when FileMaker does not.", event),
+				Remedy:  "Leave it disabled, or add a script step that checks the mode and set the trigger again in Layout mode.",
 			})
 		}
-	case slotForEvent(event) == nil:
+	}
+	switch {
+	case onObject && !ObjectTriggerEventRuns(event):
 		t.Problems = append(t.Problems, ScriptTriggerProblem{
-			Code:    TriggerProblemUnsupportedEvent,
-			Message: fmt.Sprintf("File4Base does not run %s triggers yet; it runs OnLayoutEnter and OnLayoutExit. The trigger is kept so it is not lost.", firstNonBlank(event, "this event's")),
-			Remedy:  "Leave it disabled, or run its script from OnLayoutEnter or a button instead.",
+			Code: TriggerProblemUnsupportedEvent,
+			Message: fmt.Sprintf("File4Base does not run %s triggers set on layout objects yet; it runs %s on fields. The trigger is kept so it is not lost.",
+				firstNonBlank(event, "this event's"), strings.Join(ObjectTriggerEvents, ", ")),
+			Remedy: "Leave it disabled. Use a button, or another trigger of the field, for what must run now.",
+		})
+	case onObject && t.ObjectID == "":
+		t.Problems = append(t.Problems, ScriptTriggerProblem{
+			Code:    TriggerProblemObjectMissing,
+			Message: fmt.Sprintf("The object it was set on (%s) is not on the File4Base layout.", t.ObjectLabel),
+			Remedy:  "Add the object to the layout in Layout mode, and set the trigger on it there.",
+		})
+	case onObject && !strings.EqualFold(t.ObjectType, "field"):
+		t.Problems = append(t.Problems, ScriptTriggerProblem{
+			Code:    TriggerProblemObjectType,
+			Message: fmt.Sprintf("File4Base runs object triggers on fields; this one is set on a %s.", firstNonBlank(t.ObjectType, "layout object")),
+			Remedy:  "Leave it disabled, or set the trigger on a field of the layout instead.",
+		})
+	case !onObject && !LayoutTriggerEventRuns(event):
+		t.Problems = append(t.Problems, ScriptTriggerProblem{
+			Code: TriggerProblemUnsupportedEvent,
+			Message: fmt.Sprintf("File4Base does not run %s triggers yet; it runs OnLayoutEnter, OnLayoutExit, %s. The trigger is kept so it is not lost.",
+				firstNonBlank(event, "this event's"), strings.Join(ListTriggerEvents, ", ")),
+			Remedy: "Leave it disabled, or run its script from another trigger or a button instead.",
 		})
 	}
 	t.CanEnable = !t.Enabled && len(t.Problems) == 0

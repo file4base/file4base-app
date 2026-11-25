@@ -1464,6 +1464,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         return;
       }
     }
+    // The layout's OnModeExit trigger, or its active field's triggers, may
+    // keep the window in the mode it is in (#26).
+    final browser = _dataBrowserKey.currentState;
+    if (browser != null && currentMode != OperationalMode.layout && !await browser.confirmModeExit(newMode)) return;
+    if (!mounted) return;
     ref.read(operationalModeProvider.notifier).setMode(newMode);
   }
 
