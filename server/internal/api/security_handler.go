@@ -201,6 +201,8 @@ func (h *SecurityHandler) RegisterPublicRoutes(r chi.Router) {
 func (h *SecurityHandler) RegisterRoutes(r chi.Router) {
 	r.With(RequireSession).Post("/api/v1/auth/logout", h.Logout)
 	r.With(RequireSession).Get("/api/v1/auth/session", h.CurrentSession)
+	r.With(RequireSession).Post("/api/v1/auth/link", h.Link)
+	r.With(RequireSession).Delete("/api/v1/auth/link/{database}", h.Unlink)
 
 	r.Route("/api/v1/security", func(r chi.Router) {
 		r.Use(RequireSession)
@@ -348,6 +350,12 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"capabilities": capabilities,
 		"expires_at":   sess.ExpiresAt.UTC().Format(time.RFC3339),
 	}
+	// The solutions this one reads are signed in to with the same
+	// credentials where they are accepted (#107). One that is not stays for
+	// the user to open; it never fails this sign-in.
+	if linked := h.linkDependencies(r, sess.Group, dbName, svc, req.Username, req.Password); len(linked) > 0 {
+		resp["linked"] = linked
+	}
 	if h.controlStore != nil {
 		if proj, err := h.controlStore.GetProject(r.Context(), dbName); err == nil && proj != nil {
 			if proj.Name != "" {
@@ -367,7 +375,8 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// Logout revokes the caller's session.
+// Logout revokes the caller's session, and with the sign-in that started a
+// session group every session linked to it.
 func (h *SecurityHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	h.sessions.Revoke(auth.TokenFromContext(r.Context()))
 	w.WriteHeader(http.StatusNoContent)
@@ -407,6 +416,7 @@ func (h *SecurityHandler) CurrentSession(w http.ResponseWriter, r *http.Request)
 			TablePermissions: tablePerms,
 		},
 		"expires_at": sess.ExpiresAt.UTC().Format(time.RFC3339),
+		"linked":     h.linkedSolutions(sess.Group),
 	})
 }
 

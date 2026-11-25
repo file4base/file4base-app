@@ -7,8 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // A layout or a layout field of an occurrence of another solution's table
-// (#107) is never bound to a local table or column: its records cannot be read
-// from here yet.
+// (#107) is never bound to a local table or column: its records are read in
+// that solution, and until they can be the layout says why.
 
 const _local = TableOccurrenceModel(id: 'o-contacts', baseTableId: 't1', name: 'Contacts', xPos: 0, yPos: 0);
 
@@ -58,13 +58,13 @@ void main() {
     expect(externalOccurrenceOfLayout(_layoutOn('o-unknown'), occurrences), isNull);
   });
 
-  testWidgets('the placeholder names the file reference and says the data is not available yet', (tester) async {
+  testWidgets('the placeholder names the file reference and how to map it', (tester) async {
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(body: ExternalLayoutPlaceholder(layoutName: 'Remote List', occurrence: _external())),
     ));
     expect(find.textContaining('Layout "Remote List" shows "Remote Occ"'), findsOneWidget);
     expect(find.textContaining('file reference "Catalog" is not mapped'), findsOneWidget);
-    expect(find.textContaining('not available yet'), findsOneWidget);
+    expect(find.textContaining('Map it in Manage File References'), findsOneWidget);
     expect(find.textContaining('record commands are disabled'), findsOneWidget);
 
     await tester.pumpWidget(MaterialApp(

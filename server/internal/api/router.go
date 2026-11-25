@@ -136,6 +136,7 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 		r.Use(emitChangeEvents(hub))
 		schemaHandler.RegisterRoutes(r)
 		dataHandler.RegisterRoutes(r)
+		dataHandler.RegisterOccurrenceRoutes(r)
 		transferHandler.RegisterRoutes(r)
 		NewFileReferenceHandler(dbMgr, sessions).RegisterRoutes(r)
 		securityHandler.RegisterRoutes(r)

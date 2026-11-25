@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -731,4 +732,40 @@ func nullable(v string) interface{} {
 		return nil
 	}
 	return v
+}
+
+// ExternalDependency is a solution this one reads through its external
+// occurrences (#107), with the file references mapped to it.
+type ExternalDependency struct {
+	Database   string   `json:"database"`
+	References []string `json:"references"`
+}
+
+// ExternalDependencies lists the solutions the external occurrences of this
+// one are mapped to, by database name. An occurrence whose reference is not
+// mapped depends on nothing yet.
+func (s *Service) ExternalDependencies(ctx context.Context) ([]ExternalDependency, error) {
+	occurrences, err := s.ListTableOccurrences(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var deps []ExternalDependency
+	index := map[string]int{}
+	for _, o := range occurrences {
+		if o.External == nil || strings.TrimSpace(o.External.Database) == "" {
+			continue
+		}
+		key := strings.ToLower(o.External.Database)
+		i, seen := index[key]
+		if !seen {
+			i = len(deps)
+			index[key] = i
+			deps = append(deps, ExternalDependency{Database: o.External.Database})
+		}
+		if !slices.Contains(deps[i].References, o.External.FileReference) {
+			deps[i].References = append(deps[i].References, o.External.FileReference)
+		}
+	}
+	slices.SortFunc(deps, func(a, b ExternalDependency) int { return strings.Compare(a.Database, b.Database) })
+	return deps, nil
 }

@@ -549,16 +549,16 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 		}
 		return items, false, nil
 	}
+	if reader == nil {
+		reader = data.NewService(s.driver)
+	}
 	if list.SourceTableID == nil || list.SourceColumnID == nil {
-		return nil, false, s.externalValueListError(ctx, list)
+		return s.externalValueListItems(ctx, list, reader)
 	}
 
 	src, err := s.valueListSource(ctx, list)
 	if err != nil {
 		return nil, false, err
-	}
-	if reader == nil {
-		reader = data.NewService(s.driver)
 	}
 	order := entryOrder{bySecond: list.SortBy == ValueListSortSecond, secondOnly: list.ShowSecondOnly && src.second != ""}
 	if list.RelatedOccurrenceID != nil {
@@ -576,20 +576,32 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 	return items, truncated || more, nil
 }
 
-// externalValueListError is why a list taken from a field of another
-// solution's table offers nothing: those records cannot be read from here
-// yet (#107). Nothing of this solution is offered in their place.
-func (s *Service) externalValueListError(ctx context.Context, list *ValueList) error {
-	e := &data.ExternalUnavailableError{Reason: data.ExternalMissing}
+// externalValueListItems reads a list taken from a field of another
+// solution's table (#107) in that solution, as the account the caller's
+// session group holds there: its values, each once, in value order. When
+// that solution cannot be read the list offers nothing of this one in their
+// place: the error says why.
+func (s *Service) externalValueListItems(ctx context.Context, list *ValueList, reader *data.Service) ([]ValueListItem, bool, error) {
+	target := data.ExternalTarget{}
 	if list.SourceOccurrenceID != nil {
 		if occ, err := s.GetTableOccurrence(ctx, *list.SourceOccurrenceID); err == nil {
-			e.Occurrence = occ.Name
+			target.Occurrence = occ.Name
 			if occ.External != nil {
-				e.Reference, e.Database = occ.External.FileReference, occ.External.Database
+				target.Reference, target.Database, target.Table = occ.External.FileReference, occ.External.Database, occ.External.Table
 			}
 		}
 	}
-	return e
+	peer, err := reader.Open(ctx, target)
+	if err != nil {
+		return nil, false, err
+	}
+	src := fieldSource{table: target.Table, first: list.SourceColumnName}
+	items, truncated, err := distinctFieldItems(ctx, src, entryOrder{}, peer)
+	if err != nil {
+		return nil, false, target.Wrap(err)
+	}
+	items, more := entryOrder{}.entries(items)
+	return items, truncated || more, nil
 }
 
 // SplitCustomValues turns the stored text into values: one per line, blank

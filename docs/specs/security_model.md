@@ -105,6 +105,36 @@ Other properties the server keeps:
 - A database always keeps one active owner: the last one cannot be demoted,
   deactivated or deleted.
 
+## Session groups (reading another solution)
+
+A solution whose external occurrences read another solution's table (`#107`,
+see [relationships_and_portals.md](relationships_and_portals.md#occurrences-of-another-solutions-table))
+reads it **as an account of that solution**, never as its own: a role or a
+privilege never crosses from one solution to another.
+
+- **Linking at sign-in.** Signing in to a solution tries the same username and
+  password in each solution it reads, and in those they read, each once,
+  following a solution only once it is signed in to (so the design of one the
+  user cannot open is not read), cycles included, at most 16. Every attempt
+  counts against the lockout of the account it is made on, exactly as a
+  sign-in there does, so one solution's sign-in cannot be used to guess
+  another's passwords; an account with MFA is never linked without its code.
+  A failed link never fails the sign-in.
+- **Explicit sign-in.** `POST /api/v1/auth/link` signs in to a solution the
+  group reads with an account of that solution, under the same lockout, and
+  replaces the account the group held there. It is refused for a solution no
+  external occurrence of the group is mapped to.
+- **Membership is the server's.** The linked sessions belong to the group of
+  the session that signed in, kept in the server's session store; the client
+  holds no credentials for them. Each linked session is checked against its
+  own account's stamp: a change to that account signs it out of the group, and
+  reads then answer `not_signed_in`. Signing out of the group's session, or its
+  revocation, ends every session linked to it.
+- **What is read.** Each read of another solution runs with that solution's
+  session and access checks, the table access of the account there included,
+  so an account without access gets `424` with `no_access`, never the
+  records.
+
 ## Super-owners
 
 Server-wide administration is an *account* privilege, not a database role. An

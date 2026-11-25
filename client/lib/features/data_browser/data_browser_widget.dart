@@ -42,6 +42,7 @@ class DataBrowserWidget extends StatefulWidget {
     this.onAdjustWindow,
     this.onGoHome,
     this.externalOccurrences = const {},
+    this.externalDatabase,
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -78,6 +79,12 @@ class DataBrowserWidget extends StatefulWidget {
   /// (#107). A field object of one of them is shown as unavailable, never
   /// bound to a local column of the same name.
   final Set<String> externalOccurrences;
+
+  /// The solution [table] is in when the layout is on an occurrence of
+  /// another solution's table (#107): its records are read there, through
+  /// [apiClient], and relationships are followed from them. Null for a table
+  /// of this solution.
+  final String? externalDatabase;
 
   /// What [obj] shows when it is a field of an external occurrence, else null.
   String? externalFieldNoticeOf(LayoutObjectModel obj) =>
@@ -127,6 +134,10 @@ class FindRequestDraft {
 }
 
 class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost, ExtendedLayoutActionHost {
+  /// Records of another solution are shown, not created or deleted from
+  /// here yet (#107).
+  bool get _readOnly => widget.externalDatabase != null;
+
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
   String? _error;
@@ -630,6 +641,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       occurrencesById: _occurrences,
       tablesById: _tablesById,
       formatValue: fieldText,
+      fromDatabase: widget.externalDatabase,
     );
   }
 
@@ -1429,7 +1441,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// New Record: an empty record shown at the end of the found set. It is
   /// created on the server when committed (see [_commitDraft]).
   Future<void> _createNewRecord() async {
-    if (!await _saveCurrentRecord() || !mounted) return;
+    if (_readOnly || !await _saveCurrentRecord() || !mounted) return;
     setState(() {
       _records.add(<String, dynamic>{_draftKey: true});
       _currentIndex = _records.length - 1;
@@ -1439,7 +1451,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   Future<void> _deleteCurrentRecord() async {
-    if (_records.isEmpty) return;
+    if (_readOnly || _records.isEmpty) return;
     for (final t in _fieldDebounceTimers.values) {
       t?.cancel();
     }
@@ -1947,12 +1959,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('New'),
                 style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-                onPressed: _createNewRecord,
+                onPressed: _readOnly ? null : _createNewRecord,
               ),
               const SizedBox(width: 6),
-              _barButton(Icons.copy, 'Duplicate', hasRecords ? actionDuplicateRecord : null),
+              _barButton(Icons.copy, 'Duplicate', hasRecords && !_readOnly ? actionDuplicateRecord : null),
               _barButton(Icons.delete_outline, 'Delete',
-                  hasRecords ? () => actionDeleteRecord(confirm: true) : null,
+                  hasRecords && !_readOnly ? () => actionDeleteRecord(confirm: true) : null,
                   color: Colors.red.shade700),
               const SizedBox(width: 10),
               _barButton(Icons.search, 'Find', () => _requestMode(OperationalMode.find)),
@@ -2339,6 +2351,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       if (external != null) {
         return relatedNotice(external, isDark: isDark, radius: obj.style.cornerRadius);
       }
+      // A field of a related record, read with those of the other rows in
+      // one request.
+      if (obj.fieldBinding?.isRelated ?? false) {
+        final related = _relatedContext?.forRecord(rec['id']?.toString(), batched: true);
+        if (related == null) {
+          return relatedNotice('<${obj.fieldBinding!.qualifiedName}>', isDark: isDark, radius: obj.style.cornerRadius);
+        }
+        return RelatedFieldView(
+          key: ValueKey('related-${obj.id}-${related.recordId}'),
+          object: obj,
+          related: related,
+          isDark: isDark,
+        );
+      }
       final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
       final col = widget.table.columns
           .where((c) => c.name.toLowerCase() == fieldName.toLowerCase())
@@ -2375,6 +2401,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           recordIndex == _currentIndex &&
           !col.isPrimaryKey &&
           !_isComputed(col.name) &&
+          !_readOnly &&
           (obj.fieldBinding?.allowBrowseEntry ?? true)) {
         final ctrl = _fieldControllers[col.name];
         final fn = _fieldFocusNodes[col.name];
@@ -2590,7 +2617,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             ),
                           ),
                           ...cols.map((c) {
-                            final computed = _isComputed(c.name);
+                            final computed = _isComputed(c.name) || _readOnly;
                             if (selected && !computed) {
                               final ctrl = _fieldControllers[c.name];
                               final fn = _fieldFocusNodes[c.name];
@@ -2692,7 +2719,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           FilledButton.icon(
             icon: const Icon(Icons.add),
             label: const Text('Create First Record'),
-            onPressed: _createNewRecord,
+            onPressed: _readOnly ? null : _createNewRecord,
           ),
         ],
       ),
@@ -2862,7 +2889,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         ),
                         icon: const Icon(Icons.add, size: 14),
                         label: const Text('Create First Record', style: TextStyle(fontSize: 11)),
-                        onPressed: _createNewRecord,
+                        onPressed: _readOnly ? null : _createNewRecord,
                       )
                     else if (!isFindMode)
                       Container(
@@ -3122,7 +3149,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 ),
                 decoration: InputDecoration(
                   isDense: true,
-                  hintText: 'Click to create record & enter data...',
+                  hintText: _readOnly ? null : 'Click to create record & enter data...',
                   hintStyle: TextStyle(fontSize: 10.5, fontStyle: FontStyle.italic, color: Colors.grey.shade400),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   fillColor: obj.style.fillColor != null ? _parseColor(obj.style.fillColor!) : null,
@@ -3345,7 +3372,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final ctrl = _fieldControllers[key];
     final fn = _fieldFocusNodes[key];
     final saving = _fieldSaving[key];
-    final computed = _isComputed(col.name);
+    // Shown like a calculation: read, not typed into.
+    final computed = _isComputed(col.name) || _readOnly;
 
     // A field bound to a value list is filled from a control rather than
     // typed into (#31).
@@ -3735,7 +3763,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionDuplicateRecord() async {
-    if (_records.isEmpty) return;
+    if (_readOnly || _records.isEmpty) return;
     if (!await _saveCurrentRecord()) return;
     final source = _records[_currentIndex];
     final copy = <String, dynamic>{
@@ -3761,7 +3789,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionDeleteRecord({required bool confirm}) async {
-    if (_records.isEmpty) return;
+    if (_readOnly || _records.isEmpty) return;
     if (confirm) {
       final ok = await showDialog<bool>(
         context: context,

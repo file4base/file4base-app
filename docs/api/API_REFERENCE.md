@@ -35,7 +35,7 @@ When an error occurs (HTTP 4xx or 5xx), the response body is encoded as `applica
 ```
 
 #### `424 Failed Dependency`: `external_unavailable`
-A request that reads records through an occurrence of **another solution's table** (§ 18, external occurrences) is refused, never answered from a table of this solution:
+A request that reads records through an occurrence of **another solution's table** (§ 18, external occurrences) that cannot be read there, or does what is not done across solutions yet, is refused, never answered from a table of this solution:
 ```json
 {
   "type": "https://file4base.org/errors/external-unavailable",
@@ -49,7 +49,14 @@ A request that reads records through an occurrence of **another solution's table
   "reason": "missing"
 }
 ```
-`reference` is the file reference to fix, `database` the solution it is mapped to (empty while unmapped). `reason` is `missing` while records of another solution cannot be read from here.
+`reference` is the file reference to fix, `database` the solution it is mapped to (empty while unmapped). `reason` says what to do:
+
+| `reason` | Meaning | Remedy |
+|---|---|---|
+| `not_signed_in` | The session is not signed in to that solution. | Sign in to it: `POST /api/v1/auth/link` (§ 7). |
+| `no_access` | The account the session holds there may not read that table. | Grant it read access in that solution. |
+| `schema_mismatch` | The table, or a field read through the occurrence, is no longer in that solution. | Verify or bind the reference again (§ 18). |
+| `missing` | The reference is unmapped, the occurrence unbound, the solution not installed, or the request needs what is not done across solutions yet: writing their records, a cascading delete reaching them, a find on a related field from one of their records. `detail` says which. | Map or bind the reference (§ 18); otherwise, not yet available. |
 
 ---
 
@@ -1021,6 +1028,24 @@ The created record, as `POST /api/v1/data/{table}` returns it.
 
 ---
 
+### `POST /api/v1/data/{table}/related`
+
+The related records of several records of `{table}` in one request: what a list showing a related field or a portal on every row reads, instead of a request per row. Each record gets exactly what `GET /api/v1/data/{table}/{id}/related` gives it, and the server reads them in a fixed number of statements, however many records are asked for.
+```json
+{ "relationship": "rel-1", "occurrence": "occ-customers", "record_ids": ["co-1", "co-2"], "limit": 1 }
+```
+`occurrence`, `limit` and `offset` as for the single read; at most 100 `record_ids` (`422 Batch Too Large`). The same access is needed.
+
+#### Response `200 OK`
+Every record asked for has an entry, empty when nothing is related to it or it does not exist:
+```json
+{ "records": { "co-1": [{"id": "cu-1", "last_name": "Soto"}], "co-2": [] } }
+```
+
+The related side may be an occurrence of another solution's table (§ 18): its records are then read there, as the account the session holds in that solution, and never by a query joining the two databases. Creating a related record there answers `424`.
+
+---
+
 ### Value lists
 
 A **value list** is a named set of values a field can be filled from. It decides what a field *offers*; it does not restrict what may be stored — that is the `existing_value` validation rule, so the two choices stay separate.
@@ -1371,6 +1396,16 @@ Signing in never initializes a database or creates accounts.
 
 `capabilities` lists the extended privileges the account's role holds (#39), so a client can say what the account may do before trying it. The server enforces them on every request regardless.
 
+When the solution's external occurrences read other solutions (§ 18), the sign-in also tries the **same credentials** in each of them, and in the ones those read in turn, each once (cycles included, at most 16). Each attempt counts against that account's own lockout there, and none can fail the sign-in. The response then lists them in `linked`:
+```json
+"linked": [
+  { "database": "customers_db", "references": ["Customers"], "status": "linked",
+    "username": "alice", "token": "…", "expires_at": "2026-10-06T20:00:00Z" },
+  { "database": "stock_db", "references": ["Stock"], "status": "refused" }
+]
+```
+`status` is `linked` (an account with those credentials exists there: the session group now reads that solution as that account, with its privileges), `refused` (no such account, or another password), `mfa_required` (that account needs its own code), `throttled` (its lockout is active) or `missing` (the solution is not on this server). For anything but `linked`, sign in to it with `POST /api/v1/auth/link`. `token` is the linked session's own bearer token, which works on that solution directly. A solution is followed only once it is linked: the design of one the user cannot sign in to is not read.
+
 #### Errors
 - `401 Unauthorized`: invalid username or password, deactivated account, or the database has no File4Base catalog.
 - `404 Not Found`: the database does not exist.
@@ -1379,7 +1414,29 @@ Signing in never initializes a database or creates accounts.
 ---
 
 ### `POST /api/v1/auth/logout`
-Revokes the session of the bearer token. Response `204 No Content`.
+Revokes the session of the bearer token, and with the session a sign-in opened every session linked to it (`linked`, `POST /api/v1/auth/link`). Response `204 No Content`.
+
+---
+
+### `POST /api/v1/auth/link`
+Signs the session in to a solution its external occurrences read (§ 18), with an account **of that solution**: what a client asks for when a read answers `424` with `reason: "not_signed_in"`, or when the sign-in could not link it. The session group then reads that solution as that account, replacing the account it held there. Nothing of the signed-in account carries over: its role and privileges in the other solution are its own.
+```json
+{ "database": "customers_db", "username": "alice", "password": "…", "totp_code": "123456" }
+```
+`totp_code` is needed when that account has MFA. The attempt counts against that account's lockout, as `POST /api/v1/auth/login` does.
+
+#### Response `200 OK`
+One entry of `linked`, with `status: "linked"`, `username`, `token` and `expires_at`.
+
+#### Errors
+- `401 Unauthorized`: wrong credentials, or `"mfa_required": true` when the code is missing or wrong.
+- `404 Not A Dependency`: no external occurrence of the session group's solutions is mapped to `database`; `404 Database Not Found`: it is not on this server.
+- `409 Conflict`: `database` is the session's own solution, or the group was signed out.
+- `422 Unprocessable Entity`: `database` or `username` missing.
+- `429 Too Many Requests`: that account's lockout is active (`Retry-After`).
+
+### `DELETE /api/v1/auth/link/{database}`
+Signs the session group out of a linked solution. `204 No Content`; `404 Not Linked`.
 
 ---
 
@@ -1398,9 +1455,13 @@ Returns the user, role, layout permissions, extended privileges and database of 
     "is_active": true,
     "permissions": []
   },
+  "linked": [
+    { "database": "customers_db", "status": "linked", "username": "alice", "expires_at": "2026-10-06T20:00:00Z" }
+  ],
   "expires_at": "2026-10-06T20:00:00Z"
 }
 ```
+`linked` lists the solutions the session group is signed in to besides its own (§ 18), without their tokens.
 
 ---
 
@@ -2469,6 +2530,32 @@ A table without one of the ids is a `mismatch` naming the id, and so is a table 
 
 ### `POST /api/v1/file-references/{idOrName}/verify`
 *Requires `admin` or `owner` role* (`403 Forbidden` otherwise: the report names layouts and fields of both solutions). The same report, without writing anything. Body `{ "peer_token": "…" }`; an unmapped reference needs none (every occurrence is `unbound`).
+
+### Reading records of another solution
+
+A solution reads the records of another solution's table **as the account its session holds there**, with that account's privileges in that solution, never with its own. The sign-in links the solutions it reads with the same credentials, and `POST /api/v1/auth/link` signs in to one that it could not (§ 7); the session and the ones linked to it are a **session group**, signed out together. A linked session whose account changed since (disabled, password or role changed) is signed out of the group, and the next read says `not_signed_in`.
+
+Through an external occurrence:
+- **related fields and portals** (`GET /api/v1/data/{table}/{id}/related`, `POST /api/v1/data/{table}/related`) read the other solution's records, the match values being read in this one; every criterion of the relationship applies, as for a local one;
+- a **value list** of one of its fields offers that solution's values;
+- a **layout** on it browses its records with the routes below.
+
+What cannot be read answers `424 external_unavailable` (§ Errors) with the reason. An unstored calculation reading through an external occurrence evaluates empty. Writing records of another solution, a cascading delete reaching them, a find through a relationship from or into one, and a calculation reading across solutions are not done yet: `424` with `reason: "missing"`.
+
+### `/api/v1/occurrences/{occurrence}/records`
+
+The records of a table occurrence, by id or name: those of a table of this solution as `/api/v1/data/{table}` gives them, those of another solution's table read there. The routes mirror the data API:
+
+| Method and path | As | Another solution's table |
+|---|---|---|
+| `GET /`, `POST /find`, `POST /summary`, `GET /{id}` | `GET /api/v1/data/{table}`, `/find`, `/summary`, `/{id}` | Read as the group's account there. A find on a related field: `424`. |
+| `POST /`, `PUT /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes | `424` (`missing`). |
+| `GET /{id}/related`, `POST /related` | the related reads | Follow this solution's relationships from that record. |
+
+An unknown occurrence answers `404 Table Occurrence Not Found`.
+
+### `GET /api/v1/occurrences/{occurrence}/table`
+The occurrence's table, with its fields, as `GET /api/v1/schemas/tables` gives one, read from the solution the table is in: what a client lays out and formats another solution's records with. `424` as above, with `reason: "schema_mismatch"` when the other solution no longer has the table; `404 Table Not Found` for an occurrence of this solution whose table is gone.
 
 ### Restoring a solution bundle
 

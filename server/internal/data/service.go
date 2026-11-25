@@ -123,6 +123,9 @@ type Service struct {
 	// canRead, when set, says whether the caller may read a table a
 	// calculation reaches through relationships (see WithReadAccess).
 	canRead func(ctx context.Context, tableName string) (bool, error)
+	// peers, when set, opens the other solutions external occurrences read
+	// from (see WithPeers).
+	peers Peers
 }
 
 func NewService(driver dbal.DatabaseDriver) *Service {

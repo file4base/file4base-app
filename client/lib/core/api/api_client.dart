@@ -75,6 +75,65 @@ class ApiException implements Exception {
   }
 }
 
+/// Why the records of another solution's table could not be read through an
+/// external occurrence (#107): the server's 424 `external_unavailable`.
+class ExternalUnavailable {
+  const ExternalUnavailable({
+    required this.reason,
+    this.reference = '',
+    this.database = '',
+    this.detail = '',
+  });
+
+  /// The 424 of an external occurrence, or null for any other error.
+  static ExternalUnavailable? of(Object error) {
+    if (error is! ApiException || error.statusCode != 424 || error.raw['code'] != 'external_unavailable') {
+      return null;
+    }
+    return ExternalUnavailable(
+      reason: error.raw['reason'] as String? ?? missing,
+      reference: error.raw['reference'] as String? ?? '',
+      database: error.raw['database'] as String? ?? '',
+      detail: error.detail,
+    );
+  }
+
+  /// The reasons the server gives.
+  static const missing = 'missing';
+  static const notSignedIn = 'not_signed_in';
+  static const noAccess = 'no_access';
+  static const schemaMismatch = 'schema_mismatch';
+
+  final String reason;
+
+  /// The file reference and the solution it is mapped to.
+  final String reference;
+  final String database;
+  final String detail;
+
+  bool get isNotSignedIn => reason == notSignedIn;
+
+  /// What is wrong and what to do about it, in a sentence a user can act on.
+  String get message {
+    final source = reference.isEmpty ? 'another solution' : '"$reference"';
+    final solution = database.isEmpty ? source : '"$database" (through $source)';
+    switch (reason) {
+      case notSignedIn:
+        return 'Not signed in to $solution. Sign in to it to show these records.';
+      case noAccess:
+        return 'Your account in $solution may not read these records. Ask its administrator for access.';
+      case schemaMismatch:
+        return 'The table or a field read through $source is no longer in $solution. '
+            'Verify the file reference in Manage File References.';
+      default:
+        if (database.isEmpty) {
+          return 'The file reference $source is not mapped to a solution. Map it in Manage File References.';
+        }
+        return detail.isNotEmpty ? detail : 'The solution $solution is not available on this server.';
+    }
+  }
+}
+
 /// W3C TraceContext implementation (W3C Recommendation / OpenTelemetry compliant)
 class TraceContext {
 
@@ -1588,6 +1647,26 @@ class ApiClient {
   /// A client that speaks to another solution on a session opened there.
   ApiClient forPeerSession(String token) => ApiClient._peer(baseUrl, _httpClient, token);
 
+  /// A client whose record calls read the records of a table occurrence
+  /// (#107): `/api/v1/occurrences/{occurrence}/records` in place of
+  /// `/api/v1/data/{table}`. For an occurrence of another solution's table
+  /// the server reads them there, as the account this session is signed in
+  /// with in that solution. It is this session: a 401 signs out as any
+  /// other request does.
+  ApiClient forOccurrence(String occurrenceId) =>
+      ApiClient._peer(baseUrl, _httpClient, _authToken ?? '')
+        .._occurrence = occurrenceId
+        ..onUnauthorized = onUnauthorized;
+
+  /// The occurrence whose records this client's record calls read, or null
+  /// for the data API's tables.
+  String? _occurrence;
+
+  /// Where the record calls on [table] go.
+  String _records(String table) => _occurrence == null
+      ? '$baseUrl/api/v1/data/$table'
+      : '$baseUrl/api/v1/occurrences/${Uri.encodeComponent(_occurrence!)}/records';
+
   String baseUrl;
   late final _EncryptedHttpClient _httpClient;
 
@@ -1858,7 +1937,7 @@ class ApiClient {
   /// is given.
   Future<List<Map<String, dynamic>>> listRows(String table,
       {int limit = 100, int offset = 0, String? sortBy, bool sortAsc = true, List<String>? sort}) async {
-    final uri = Uri.parse('$baseUrl/api/v1/data/$table').replace(queryParameters: {
+    final uri = Uri.parse(_records(table)).replace(queryParameters: {
       'limit': limit.toString(),
       'offset': offset.toString(),
       'sort_by': ?sortBy,
@@ -1891,7 +1970,7 @@ class ApiClient {
   /// One row of [table], read again from the server.
   Future<Map<String, dynamic>> getRow(String table, String id) async {
     final response = await _httpClient.get(
-      Uri.parse('$baseUrl/api/v1/data/$table/$id'),
+      Uri.parse('${_records(table)}/$id'),
       headers: _headers(),
     );
     _checkResponse(response);
@@ -1900,7 +1979,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record) async {
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/data/$table'),
+      Uri.parse(_records(table)),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode(record),
     );
@@ -1910,7 +1989,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> updates) async {
     final response = await _httpClient.put(
-      Uri.parse('$baseUrl/api/v1/data/$table/$id'),
+      Uri.parse('${_records(table)}/$id'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode(updates),
     );
@@ -1920,7 +1999,7 @@ class ApiClient {
 
   Future<void> deleteRow(String table, String id) async {
     final response = await _httpClient.delete(
-      Uri.parse('$baseUrl/api/v1/data/$table/$id'),
+      Uri.parse('${_records(table)}/$id'),
       headers: _headers(),
     );
     _checkResponse(response);
@@ -1934,7 +2013,7 @@ class ApiClient {
     String? sortBy,
   }) async {
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/data/$table/find'),
+      Uri.parse('${_records(table)}/find'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'requests': requests,
@@ -2149,7 +2228,7 @@ class ApiClient {
     List<String> groupBy = const [],
   }) async {
     final response = await _httpClient.post(
-      Uri.parse('$baseUrl/api/v1/data/$table/summary'),
+      Uri.parse('${_records(table)}/summary'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
         'requests': requests,
@@ -2177,7 +2256,7 @@ class ApiClient {
     int limit = 100,
     int offset = 0,
   }) async {
-    final uri = Uri.parse('$baseUrl/api/v1/data/$table/$id/related').replace(queryParameters: {
+    final uri = Uri.parse('${_records(table)}/$id/related').replace(queryParameters: {
       'relationship': relationshipId,
       if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
       'limit': limit.toString(),
@@ -2203,7 +2282,7 @@ class ApiClient {
     String? occurrence,
     Map<String, dynamic> values = const {},
   }) async {
-    final uri = Uri.parse('$baseUrl/api/v1/data/$table/$id/related').replace(queryParameters: {
+    final uri = Uri.parse('${_records(table)}/$id/related').replace(queryParameters: {
       'relationship': relationshipId,
       if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
     });
@@ -2215,6 +2294,72 @@ class ApiClient {
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  /// Most records [listRelatedRowsBatch] reads at once.
+  static const maxRelatedBatch = 100;
+
+  /// [listRelatedRows] for several records of [table] in one request: what a
+  /// list showing a related field needs, without a request per record. Every
+  /// record asked for has an entry, empty when nothing is related to it.
+  Future<Map<String, List<Map<String, dynamic>>>> listRelatedRowsBatch(
+    String table,
+    List<String> ids, {
+    required String relationshipId,
+    String? occurrence,
+    int limit = 100,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('${_records(table)}/related'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'relationship': relationshipId,
+        if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+        'record_ids': ids,
+        'limit': limit,
+      }),
+    );
+    _checkResponse(response);
+    final records = (jsonDecode(response.body) as Map<String, dynamic>)['records'] as Map<String, dynamic>? ?? {};
+    return {
+      for (final e in records.entries)
+        e.key: [for (final row in e.value as List<dynamic>) Map<String, dynamic>.from(row as Map)],
+    };
+  }
+
+  /// The table of an occurrence, with its fields, read from the solution the
+  /// table is in: for an occurrence of another solution's table, the one this
+  /// solution's catalog does not hold (#107).
+  Future<TableModel> getOccurrenceTable(String occurrenceId) async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/occurrences/${Uri.encodeComponent(occurrenceId)}/table'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return TableModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Signs this session in to [database], a solution its external
+  /// occurrences read (#107), with an account of that solution. The session
+  /// then reads that solution as that account.
+  Future<void> linkSolution({
+    required String database,
+    required String username,
+    required String password,
+    String? totpCode,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/auth/link'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'database': database,
+        'username': username,
+        'password': password,
+        if (totpCode != null && totpCode.trim().isNotEmpty) 'totp_code': totpCode.trim(),
+      }),
+    );
+    // A refused password is about the other solution, not this session.
+    _checkResponse(response, isSignIn: true);
   }
 
   Future<List<TableOccurrenceModel>> listOccurrences() async {

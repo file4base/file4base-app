@@ -124,3 +124,130 @@ func TestStore_KeepsAndRestampsTheAccountStamp(t *testing.T) {
 	}
 	store.Restamp("unknown-token", "x") // no effect, no panic
 }
+
+func TestStore_SessionGroups(t *testing.T) {
+	store := NewStore(10 * time.Minute)
+	current := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return current }
+
+	root, survey, err := store.Create("u1", "alice", RoleUser, "survey", "s1", false)
+	require.NoError(t, err)
+	require.NotEmpty(t, survey.Group)
+	assert.False(t, survey.Linked)
+
+	hrToken, hr, err := store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h-stamp", false)
+	require.NoError(t, err)
+	assert.Equal(t, survey.Group, hr.Group)
+	assert.True(t, hr.Linked)
+	assert.Equal(t, "hr", hr.Database)
+
+	// A linked session is an ordinary session of its own solution.
+	got, ok := store.Get(hrToken)
+	require.True(t, ok)
+	assert.Equal(t, "h1", got.UserID)
+
+	member, ok := store.Member(survey.Group, "HR")
+	require.True(t, ok, "solutions are matched as their names are")
+	assert.Equal(t, "h1", member.UserID)
+
+	// A cycle back to the group's own solution resolves to its sign-in.
+	self, ok := store.Member(survey.Group, "survey")
+	require.True(t, ok)
+	assert.Equal(t, "u1", self.UserID)
+	_, ok = store.Member(survey.Group, "codes")
+	assert.False(t, ok)
+	_, ok = store.Member("", "hr")
+	assert.False(t, ok)
+
+	_, _, err = store.Link(survey.Group, "u9", "alice", RoleUser, "Survey", "x", false)
+	assert.ErrorIs(t, err, ErrLinkToRoot)
+
+	// Linking again replaces the group's session there.
+	again, _, err := store.Link(survey.Group, "h2", "bob", RoleUser, "hr", "h-stamp", false)
+	require.NoError(t, err)
+	_, ok = store.Get(hrToken)
+	assert.False(t, ok)
+	members := store.Members(survey.Group)
+	require.Len(t, members, 1)
+	assert.Equal(t, "h2", members[0].UserID)
+
+	assert.True(t, store.Unlink(survey.Group, "hr"))
+	assert.False(t, store.Unlink(survey.Group, "hr"))
+	_, ok = store.Get(again)
+	assert.False(t, ok)
+	_, ok = store.Get(root)
+	assert.True(t, ok, "unlinking leaves the sign-in")
+
+	// Signing out of the solution that started the group revokes the group.
+	hrToken, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h-stamp", false)
+	require.NoError(t, err)
+	store.Revoke(root)
+	_, ok = store.Get(hrToken)
+	assert.False(t, ok)
+	_, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h-stamp", false)
+	assert.ErrorIs(t, err, ErrGroupClosed)
+	assert.Zero(t, store.Len())
+}
+
+func TestStore_LinkedSessionsExpireAndAreRevokedLikeOthers(t *testing.T) {
+	store := NewStore(10 * time.Minute)
+	current := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return current }
+
+	root, survey, err := store.Create("u1", "alice", RoleUser, "survey", "s1", false)
+	require.NoError(t, err)
+	_, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h", false)
+	require.NoError(t, err)
+
+	// Using the member through the group keeps it alive...
+	current = current.Add(9 * time.Minute)
+	_, ok := store.Get(root)
+	require.True(t, ok)
+	_, ok = store.Member(survey.Group, "hr")
+	require.True(t, ok)
+	// ...and an idle member expires on its own, and is never renewed.
+	current = current.Add(9 * time.Minute)
+	_, ok = store.Get(root)
+	require.True(t, ok)
+	current = current.Add(2 * time.Minute)
+	_, ok = store.Get(root)
+	require.True(t, ok)
+	_, ok = store.Member(survey.Group, "hr")
+	assert.False(t, ok, "an expired member reads as not signed in")
+	_, ok = store.Member(survey.Group, "hr")
+	assert.False(t, ok)
+
+	// Revoking an account in the linked solution revokes that member only.
+	_, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h", false)
+	require.NoError(t, err)
+	store.RevokeUser("hr", "h1", "")
+	_, ok = store.Member(survey.Group, "hr")
+	assert.False(t, ok)
+	_, ok = store.Get(root)
+	assert.True(t, ok)
+
+	// Revoking the sign-in's account, or letting it expire, takes the group.
+	_, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h", false)
+	require.NoError(t, err)
+	store.RevokeUser("survey", "u1", "")
+	assert.Zero(t, store.Len())
+
+	root, survey, err = store.Create("u1", "alice", RoleUser, "survey", "s1", false)
+	require.NoError(t, err)
+	_, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h", false)
+	require.NoError(t, err)
+	current = current.Add(9 * time.Minute)
+	_, ok = store.Member(survey.Group, "hr")
+	require.True(t, ok)
+	current = current.Add(2 * time.Minute)
+	assert.Zero(t, store.Len(), "a member goes once the sign-in it is linked to expired")
+	_, ok = store.Get(root)
+	assert.False(t, ok)
+
+	_, survey, err = store.Create("u1", "alice", RoleUser, "survey", "s1", false)
+	require.NoError(t, err)
+	_, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h", false)
+	require.NoError(t, err)
+	store.RevokeDatabase("survey")
+	assert.Zero(t, store.Len())
+}

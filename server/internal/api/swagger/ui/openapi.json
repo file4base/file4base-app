@@ -1003,7 +1003,8 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           }
-        }
+        },
+        "description": "Revokes the session, and every session linked to it."
       }
     },
     "/api/v1/auth/session": {
@@ -1014,7 +1015,7 @@
         "summary": "Current session (user, role, database, permissions)",
         "responses": {
           "200": {
-            "description": "Session details"
+            "description": "Session details, with `linked`: the solutions the session group is signed in to besides its own (without tokens)"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -4079,6 +4080,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
           }
         },
         "parameters": [
@@ -5801,6 +5805,552 @@
           }
         }
       }
+    },
+    "/api/v1/auth/link": {
+      "post": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Sign the session in to a solution its external occurrences read",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Linked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedSolution"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong credentials, or mfa_required"
+          },
+          "404": {
+            "description": "Not a dependency of this session, or not on this server"
+          },
+          "409": {
+            "description": "The session's own solution, or the group was signed out"
+          },
+          "422": {
+            "description": "database or username missing"
+          },
+          "429": {
+            "description": "That account's lockout is active"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/link/{database}": {
+      "delete": {
+        "tags": [
+          "Security & Users"
+        ],
+        "summary": "Sign the session group out of a linked solution",
+        "parameters": [
+          {
+            "name": "database",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Signed out of it"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "Not linked"
+          }
+        }
+      }
+    },
+    "/api/v1/data/{table}/related": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "List the related records of several records",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelatedBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Every record asked for, with its related records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelatedBatchResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "More than 100 records"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        }
+      ],
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "List records of a table occurrence",
+        "responses": {
+          "200": {
+            "description": "List records of a table occurrence"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Create a record (424 for another solution)",
+        "responses": {
+          "201": {
+            "description": "Create a record (424 for another solution)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records/find": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        }
+      ],
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Find records of a table occurrence",
+        "responses": {
+          "200": {
+            "description": "Find records of a table occurrence"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records/summary": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        }
+      ],
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Summarize records of a table occurrence",
+        "responses": {
+          "200": {
+            "description": "Summarize records of a table occurrence"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records/related": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        }
+      ],
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "List the related records of several records of a table occurrence",
+        "responses": {
+          "200": {
+            "description": "List the related records of several records of a table occurrence"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RelatedBatchRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records/{id}": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Get a record of a table occurrence",
+        "responses": {
+          "200": {
+            "description": "Get a record of a table occurrence"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Update a record (424 for another solution)",
+        "responses": {
+          "200": {
+            "description": "Update a record (424 for another solution)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Delete a record (424 for another solution)",
+        "responses": {
+          "204": {
+            "description": "Delete a record (424 for another solution)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/records/{id}/related": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        },
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "List related records of a record of a table occurrence",
+        "responses": {
+          "200": {
+            "description": "List related records of a record of a table occurrence"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Create a related record (424 for another solution)",
+        "responses": {
+          "201": {
+            "description": "Create a related record (424 for another solution)"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/occurrences/{occurrence}/table": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name."
+        }
+      ],
+      "get": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "The occurrence's table and fields, read from the solution it is in",
+        "responses": {
+          "200": {
+            "description": "The occurrence's table and fields, read from the solution it is in"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6158,6 +6708,13 @@
           "expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "linked": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedSolution"
+            },
+            "description": "The solutions the sign-in tried the same credentials in; omitted when the solution reads none."
           }
         }
       },
@@ -6351,8 +6908,12 @@
               "reason": {
                 "type": "string",
                 "enum": [
-                  "missing"
-                ]
+                  "missing",
+                  "not_signed_in",
+                  "no_access",
+                  "schema_mismatch"
+                ],
+                "description": "not_signed_in: sign in to that solution (POST /api/v1/auth/link). no_access: the account held there may not read the table. schema_mismatch: the table or a field is no longer there. missing: the reference is unmapped or unbound, the solution is not installed, or the operation is not done across solutions yet."
               }
             }
           }
@@ -6447,6 +7008,109 @@
             "items": {
               "$ref": "#/components/schemas/ExternalOccurrenceStatus"
             }
+          }
+        }
+      },
+      "LinkedSolution": {
+        "type": "object",
+        "description": "A solution the session group reads through its external occurrences, and whether it is signed in to it.",
+        "properties": {
+          "database": {
+            "type": "string"
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The file references mapped to it."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "linked",
+              "refused",
+              "mfa_required",
+              "throttled",
+              "missing"
+            ]
+          },
+          "username": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "description": "Bearer token of the linked session; given only when it is linked."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "LinkRequest": {
+        "type": "object",
+        "required": [
+          "database",
+          "username",
+          "password"
+        ],
+        "properties": {
+          "database": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "totp_code": {
+            "type": "string"
+          }
+        }
+      },
+      "RelatedBatchRequest": {
+        "type": "object",
+        "required": [
+          "relationship",
+          "record_ids"
+        ],
+        "properties": {
+          "relationship": {
+            "type": "string"
+          },
+          "occurrence": {
+            "type": "string"
+          },
+          "record_ids": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          }
+        }
+      },
+      "RelatedBatchResponse": {
+        "type": "object",
+        "properties": {
+          "records": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "description": "The related records of each record asked for, by record id."
           }
         }
       }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -45,11 +46,16 @@ const cartesian = "×"
 
 // RelationSide is one end of a relationship, resolved from the occurrence and
 // column ids the catalog stores to the physical table and column a query needs.
+//
+// The side of an occurrence of another solution's table (#107) has External
+// set: TableName and Column are then that solution's names, and its records
+// are read there, never from a table of this solution.
 type RelationSide struct {
-	OccurrenceID   string `json:"occurrence_id"`
-	OccurrenceName string `json:"occurrence_name"`
-	TableName      string `json:"table_name"`
-	Column         string `json:"column"`
+	OccurrenceID   string          `json:"occurrence_id"`
+	OccurrenceName string          `json:"occurrence_name"`
+	TableName      string          `json:"table_name"`
+	Column         string          `json:"column"`
+	External       *ExternalTarget `json:"external,omitempty"`
 }
 
 // Relationship is a catalog relationship with both of its sides resolved.
@@ -217,17 +223,26 @@ func notEmpty(dialect dbal.Dialect, column string) string {
 // when a relationship joins a table to itself. Without it the other table is
 // taken as the target.
 func (r *Relationship) Sides(fromTable, targetOccurrence string) (source, target RelationSide, err error) {
+	return r.SidesFrom(LocalOrigin(fromTable), targetOccurrence)
+}
+
+// SidesFrom is Sides for a record of any table, of this solution or of
+// another one an external occurrence names. A side of another solution's
+// table never matches a table of this solution of the same name.
+func (r *Relationship) SidesFrom(from Origin, targetOccurrence string) (source, target RelationSide, err error) {
+	fromTable, key := from.Table, from.key()
+	leftIs, rightIs := r.Left.origin().key() == key, r.Right.origin().key() == key
 	switch {
 	case targetOccurrence == "":
 		switch {
-		case r.Left.TableName == fromTable && r.Right.TableName == fromTable:
+		case leftIs && rightIs:
 			// A self-join: which end is wanted is not something to guess.
 			return source, target, fmt.Errorf(
 				"%w: relationship %s joins %s to itself, so the occurrence to read must be named",
 				ErrRelationshipNotFound, r.Name, fromTable)
-		case r.Left.TableName == fromTable:
+		case leftIs:
 			source, target = r.Left, r.Right
-		case r.Right.TableName == fromTable:
+		case rightIs:
 			source, target = r.Right, r.Left
 		default:
 			return source, target, fmt.Errorf("%w: relationship %s does not reach %s",
@@ -242,7 +257,7 @@ func (r *Relationship) Sides(fromTable, targetOccurrence string) (source, target
 			ErrRelationshipNotFound, r.Name, targetOccurrence)
 	}
 
-	if source.TableName != fromTable {
+	if source.origin().key() != key {
 		return source, target, fmt.Errorf("%w: the other side of relationship %s is %s, not %s",
 			ErrRelationshipNotFound, r.Name, source.TableName, fromTable)
 	}
@@ -274,12 +289,13 @@ func (s *Service) Relationship(ctx context.Context, id string) (*Relationship, e
 	rel, err := scanRelationship(s.driver.DB().QueryRowContext(ctx, relationshipQuery+dialect.Placeholder(1), id))
 	if errors.Is(err, sql.ErrNoRows) {
 		// The statement resolves local sides only. A relationship to an
-		// occurrence of another solution's table is refused by name, never
-		// read against a table of this one.
-		if external := s.externalSide(ctx, id); external != nil {
-			return nil, external
+		// occurrence of another solution's table is resolved to that
+		// solution's names, never to a table of this one.
+		rel = s.externalRelationship(ctx, id)
+		if rel == nil {
+			return nil, fmt.Errorf("%w: %s", ErrRelationshipNotFound, id)
 		}
-		return nil, fmt.Errorf("%w: %s", ErrRelationshipNotFound, id)
+		err = nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed resolving relationship %s: %w", id, err)
@@ -503,6 +519,68 @@ func (s *Service) matchValues(ctx context.Context, tableName string, columns []s
 	return values, nil
 }
 
+// matchValuesOf is matchValues for several records at once, read in one
+// statement, by record id. A record that is not there has no entry.
+func (s *Service) matchValuesOf(ctx context.Context, tableName string, columns []string, ids []string) (map[string]map[string]interface{}, error) {
+	fields, err := s.tableFields(ctx, tableName)
+	if err != nil {
+		return nil, err
+	}
+	dialect := s.driver.Dialect()
+	list := []string{dialect.QuoteIdentifier("id")}
+	for _, column := range columns {
+		if err := checkField(fields, tableName, column); err != nil {
+			return nil, err
+		}
+		list = append(list, dialect.QuoteIdentifier(column))
+	}
+	marks := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		marks[i], args[i] = dialect.Placeholder(i+1), id
+	}
+	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s IN (%s)",
+		strings.Join(list, ", "),
+		dialect.QuoteIdentifier(tableName),
+		dialect.QuoteIdentifier("id"),
+		strings.Join(marks, ", "),
+	)
+	rows, err := s.driver.DB().QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading the match fields of %s: %w", tableName, err)
+	}
+	defer rows.Close()
+	out := make(map[string]map[string]interface{}, len(ids))
+	for rows.Next() {
+		raw := make([]interface{}, len(list))
+		ptrs := make([]interface{}, len(list))
+		for i := range raw {
+			ptrs[i] = &raw[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return nil, err
+		}
+		values := make(map[string]interface{}, len(columns))
+		for i, column := range columns {
+			// As in matchValues: text the driver hands back as bytes is a string.
+			if b, ok := raw[i+1].([]byte); ok {
+				values[column] = string(b)
+			} else {
+				values[column] = raw[i+1]
+			}
+		}
+		out[fmt.Sprint(textOf(raw[0]))] = values
+	}
+	return out, rows.Err()
+}
+
+func textOf(v interface{}) interface{} {
+	if b, ok := v.([]byte); ok {
+		return string(b)
+	}
+	return v
+}
+
 // emptyMatchValue reports whether a match value matches nothing. An empty key
 // relates to no record, the same way Find mode treats an empty field.
 func emptyMatchValue(v interface{}) bool {
@@ -528,82 +606,253 @@ func (s *Service) RelatedRows(
 	fromTable, recordID, relationshipID, targetOccurrence string,
 	opts QueryOptions,
 ) ([]map[string]interface{}, error) {
+	return s.RelatedRowsFrom(ctx, LocalOrigin(fromTable), recordID, relationshipID, targetOccurrence, opts)
+}
+
+// RelatedRowsFrom is RelatedRows for a record of any table, of this
+// solution or of another one (#107).
+//
+// The relationship is always this solution's. A side on an occurrence of
+// another solution's table is read in that solution, as the account the
+// caller's session group holds there: the match values are read where the
+// record in hand is, and the related records are then looked up where they
+// are with those values. No statement joins two solutions.
+func (s *Service) RelatedRowsFrom(
+	ctx context.Context, from Origin, recordID, relationshipID, targetOccurrence string, opts QueryOptions,
+) ([]map[string]interface{}, error) {
+	q, err := s.relatedQuery(ctx, from, relationshipID, targetOccurrence, opts)
+	if err != nil {
+		return nil, err
+	}
+	values, err := q.src.matchValues(ctx, q.source.TableName, sourceColumns(q.terms), recordID)
+	if err != nil {
+		return nil, wrapSide(q.source, err)
+	}
+	match, keys := matchCondition(q.dst.driver.Dialect(), q.terms, func(c string) interface{} { return values[c] }, 1)
+	if match == "" {
+		return []map[string]interface{}{}, nil
+	}
+	sqlText := q.page(match, q.limit, q.offset)
+	rows, err := q.dst.driver.DB().QueryContext(ctx, sqlText, keys...)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading records related to %s.%s: %w", from.Table, recordID, err)
+	}
+	defer rows.Close()
+	related, err := q.dst.readRows(ctx, q.target.TableName, rows, q.fields)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.attach(ctx, related); err != nil {
+		return nil, err
+	}
+	return related, nil
+}
+
+// relatedQuery is everything reading one relationship from one side needs,
+// resolved once: the sides, their criteria, the services each side is read
+// with, the target's fields and order, and the page.
+type relatedQuery struct {
+	rel            *Relationship
+	source, target RelationSide
+	terms          []matchTerm
+	src, dst       *Service
+	fields         fieldSet
+	order          string
+	limit, offset  int
+}
+
+func (s *Service) relatedQuery(
+	ctx context.Context, from Origin, relationshipID, targetOccurrence string, opts QueryOptions,
+) (*relatedQuery, error) {
 	rel, err := s.Relationship(ctx, relationshipID)
 	if err != nil {
 		return nil, err
 	}
-	source, target, err := rel.Sides(fromTable, targetOccurrence)
-	if err != nil {
+	q := &relatedQuery{rel: rel}
+	if q.source, q.target, err = rel.SidesFrom(from, targetOccurrence); err != nil {
 		return nil, err
 	}
-	terms, err := rel.matchTerms(source)
-	if err != nil {
+	if q.terms, err = rel.matchTerms(q.source); err != nil {
 		return nil, err
 	}
-	targetFields, err := s.tableFields(ctx, target.TableName)
-	if err != nil {
+	if q.src, err = s.sideService(ctx, q.source); err != nil {
 		return nil, err
 	}
-	for _, t := range terms {
-		if err := checkField(targetFields, target.TableName, t.TargetColumn); err != nil {
-			return nil, err
+	if q.dst, err = s.sideService(ctx, q.target); err != nil {
+		return nil, err
+	}
+	if q.fields, err = q.dst.tableFields(ctx, q.target.TableName); err != nil {
+		return nil, wrapSide(q.target, err)
+	}
+	for _, t := range q.terms {
+		if err := checkField(q.fields, q.target.TableName, t.TargetColumn); err != nil {
+			return nil, wrapSide(q.target, err)
 		}
 	}
+	if q.order, err = q.dst.orderBy(ctx, q.fields, q.target.TableName,
+		relatedSortOrder(rel, q.target, q.fields, opts)); err != nil {
+		return nil, wrapSide(q.target, err)
+	}
+	q.limit, q.offset = opts.Limit, opts.Offset
+	if q.limit <= 0 {
+		q.limit = 100
+	} else if q.limit > MaxPageSize {
+		q.limit = MaxPageSize
+	}
+	if q.offset < 0 {
+		q.offset = 0
+	}
+	return q, nil
+}
 
-	values, err := s.matchValues(ctx, source.TableName, sourceColumns(terms), recordID)
-	if err != nil {
-		return nil, err
-	}
-	dialect := s.driver.Dialect()
-	match, keys := matchCondition(dialect, terms, func(c string) interface{} { return values[c] }, 1)
-	if match == "" {
-		return []map[string]interface{}{}, nil
-	}
-	orderClause, err := s.orderBy(ctx, targetFields, target.TableName,
-		relatedSortOrder(rel, target, targetFields, opts))
-	if err != nil {
-		return nil, err
-	}
-
-	limit := opts.Limit
-	if limit <= 0 {
-		limit = 100
-	} else if limit > MaxPageSize {
-		limit = MaxPageSize
-	}
-	offset := opts.Offset
-	if offset < 0 {
-		offset = 0
-	}
-
-	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s %s LIMIT %d OFFSET %d",
-		selectList(dialect, targetFields),
-		dialect.QuoteIdentifier(target.TableName),
+// page is the statement reading one page of the related records that meet
+// match.
+func (q *relatedQuery) page(match string, limit, offset int) string {
+	dialect := q.dst.driver.Dialect()
+	return fmt.Sprintf("SELECT %s FROM %s WHERE %s %s LIMIT %d OFFSET %d",
+		selectList(dialect, q.fields),
+		dialect.QuoteIdentifier(q.target.TableName),
 		match,
-		orderClause,
+		q.order,
 		limit,
 		offset,
 	)
+}
 
-	rows, err := s.driver.DB().QueryContext(ctx, q, keys...)
+// attach adds what the data API shows with related records: the original
+// text of a value the way the record itself shows it (#124), and container
+// metadata.
+func (q *relatedQuery) attach(ctx context.Context, related []map[string]interface{}) error {
+	if err := q.dst.AttachSourceText(ctx, q.target.TableName, related); err != nil {
+		return err
+	}
+	return q.dst.AttachContainerMeta(ctx, q.target.TableName, related)
+}
+
+// MaxRelatedBatch is the most records whose related records one batched
+// read returns.
+const MaxRelatedBatch = 100
+
+// ErrBatchTooLarge is returned for a batched related read of more records
+// than MaxRelatedBatch.
+var ErrBatchTooLarge = fmt.Errorf("at most %d records are read in one batch", MaxRelatedBatch)
+
+// RelatedRowsBatch is RelatedRowsFrom for several records at once: what a
+// list of records showing a related field or a portal needs, read without a
+// statement per record (no N+1). The match values of every record are read
+// in one statement where the records are, and the related records of all of
+// them in one statement where those are: one branch per distinct set of
+// match values, each with the criteria, order and page a single record's
+// read has, so a record gets exactly what RelatedRowsFrom gives it. Every
+// record asked for has an entry; one that matches nothing, or is not there,
+// has none.
+func (s *Service) RelatedRowsBatch(
+	ctx context.Context, from Origin, recordIDs []string, relationshipID, targetOccurrence string, opts QueryOptions,
+) (map[string][]map[string]interface{}, error) {
+	if len(recordIDs) > MaxRelatedBatch {
+		return nil, ErrBatchTooLarge
+	}
+	out := make(map[string][]map[string]interface{}, len(recordIDs))
+	for _, id := range recordIDs {
+		out[id] = []map[string]interface{}{}
+	}
+	if len(recordIDs) == 0 {
+		return out, nil
+	}
+	q, err := s.relatedQuery(ctx, from, relationshipID, targetOccurrence, opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed reading records related to %s.%s: %w", fromTable, recordID, err)
+		return nil, err
+	}
+	values, err := q.src.matchValuesOf(ctx, q.source.TableName, sourceColumns(q.terms), recordIDs)
+	if err != nil {
+		return nil, wrapSide(q.source, err)
+	}
+
+	// Records holding the same match values share a branch.
+	dialect := q.dst.driver.Dialect()
+	var branches []string
+	var args []interface{}
+	byValues := map[string]int{}
+	recordsOf := map[int][]string{}
+	for _, id := range recordIDs {
+		record, ok := values[id]
+		if !ok {
+			continue
+		}
+		signature := matchSignature(q.terms, record)
+		branch, seen := byValues[signature]
+		if !seen {
+			match, keys := matchCondition(dialect, q.terms, func(c string) interface{} { return record[c] }, len(args)+1)
+			if match == "" {
+				continue
+			}
+			branch = len(branches)
+			byValues[signature] = branch
+			args = append(args, keys...)
+			page := q.page(match, q.limit, q.offset)
+			branches = append(branches, "("+strings.Replace(page, "SELECT ", fmt.Sprintf("SELECT %d AS %s, ", branch, batchBranch), 1)+")")
+		}
+		recordsOf[branch] = append(recordsOf[branch], id)
+	}
+	if len(branches) == 0 {
+		return out, nil
+	}
+	order := "ORDER BY " + batchBranch
+	if rest, ok := strings.CutPrefix(q.order, "ORDER BY "); ok {
+		order += ", " + rest
+	}
+	sqlText := fmt.Sprintf("SELECT * FROM (%s) f4b_batch %s", strings.Join(branches, " UNION ALL "), order)
+	rows, err := q.dst.driver.DB().QueryContext(ctx, sqlText, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading the records related to %d records of %s: %w", len(recordIDs), from.Table, err)
 	}
 	defer rows.Close()
-
-	related, err := s.readRows(ctx, target.TableName, rows, targetFields)
+	related, err := q.dst.readRows(ctx, q.target.TableName, rows, q.fields)
 	if err != nil {
 		return nil, err
 	}
-	// Related records are read for the data API (portals), which shows the
-	// original text of a value the way the record itself does (#124).
-	if err := s.AttachSourceText(ctx, target.TableName, related); err != nil {
+	if err := q.attach(ctx, related); err != nil {
 		return nil, err
 	}
-	if err := s.AttachContainerMeta(ctx, target.TableName, related); err != nil {
-		return nil, err
+	for _, row := range related {
+		branch := branchOf(row[batchBranch])
+		delete(row, batchBranch)
+		for _, id := range recordsOf[branch] {
+			out[id] = append(out[id], row)
+		}
 	}
-	return related, nil
+	return out, nil
+}
+
+// batchBranch is the column a batched related read numbers its branches in.
+const batchBranch = "f4b_branch"
+
+func branchOf(v interface{}) int {
+	switch n := v.(type) {
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case int:
+		return n
+	case []byte:
+		i, _ := strconv.Atoi(string(n))
+		return i
+	case string:
+		i, _ := strconv.Atoi(n)
+		return i
+	}
+	return -1
+}
+
+// matchSignature identifies the match values a record holds, so records
+// holding the same ones are read once.
+func matchSignature(terms []matchTerm, record map[string]interface{}) string {
+	var b strings.Builder
+	for _, column := range sourceColumns(terms) {
+		fmt.Fprintf(&b, "%T:%v\x00", record[column], record[column])
+	}
+	return b.String()
 }
 
 // CreateRelatedRow creates a record on the other side of a relationship and
@@ -624,6 +873,9 @@ func (s *Service) CreateRelatedRow(
 	source, target, err := rel.Sides(fromTable, targetOccurrence)
 	if err != nil {
 		return nil, err
+	}
+	if external := rel.External(); external != nil {
+		return nil, external.Unsupported("creating a related record")
 	}
 	if !rel.AllowCreation {
 		return nil, fmt.Errorf("%w: %s", ErrCreationNotAllowed, rel.Name)
@@ -713,12 +965,12 @@ func (s *Service) checkCascadePlan(ctx context.Context, tableName string) error 
 		}
 		for _, relID := range relationships {
 			rel, err := s.Relationship(ctx, relID)
-			if errors.Is(err, ErrExternalUnavailable) {
-				return err
-			}
 			if err != nil {
 				// Anything else is met, and answered, by the delete itself.
 				continue
+			}
+			if external := rel.External(); external != nil {
+				return external.Unsupported("a cascading delete")
 			}
 			if next := rel.Right.TableName; next != "" && !visited[next] {
 				visited[next] = true
@@ -744,6 +996,9 @@ func (s *Service) cascadeDelete(ctx context.Context, tableName, id string, seen 
 		rel, err := s.Relationship(ctx, relID)
 		if err != nil {
 			return err
+		}
+		if external := rel.External(); external != nil {
+			return external.Unsupported("a cascading delete")
 		}
 		// Every child goes, not the first page of them: read a page, delete
 		// it, and read again until the relationship matches nothing.
@@ -813,6 +1068,9 @@ func (s *Service) resolveFindRelations(
 			rel, err := s.Relationship(ctx, strings.TrimSpace(crit.RelationshipID))
 			if err != nil {
 				return nil, err
+			}
+			if external := rel.External(); external != nil {
+				return nil, external.Unsupported("a find on a field of a related record")
 			}
 			source, target, err := rel.Sides(tableName, strings.TrimSpace(crit.Occurrence))
 			if err != nil {

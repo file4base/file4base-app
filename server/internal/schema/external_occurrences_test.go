@@ -187,9 +187,17 @@ func TestExternalOccurrences_BindVerifyAndRefuseReads(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, schema.ExternalBound, report.Occurrences[0].Status)
 
-	// No record is read through it, and nothing local is read instead.
+	// The relationship names the table in the other solution.
 	reader := data.NewService(orders.driver)
-	_, err = reader.Relationship(ctx, rel.ID)
+	resolved, err := reader.Relationship(ctx, rel.ID)
+	require.NoError(t, err)
+	target := resolved.External()
+	require.NotNil(t, target)
+	assert.Equal(t, data.ExternalTarget{Occurrence: "Order Customers", Reference: "Peer", Database: peer.name, Table: "customers"}, *target)
+
+	// Without a session group, no record is read through it, and nothing
+	// local is read instead.
+	_, _, err = orders.svc.ValueListItems(ctx, list.ID, nil, reader)
 	require.ErrorIs(t, err, data.ErrExternalUnavailable)
 	var unavailable *data.ExternalUnavailableError
 	require.ErrorAs(t, err, &unavailable)
@@ -198,8 +206,20 @@ func TestExternalOccurrences_BindVerifyAndRefuseReads(t *testing.T) {
 	assert.Equal(t, peer.name, unavailable.Database)
 	assert.Equal(t, data.ExternalMissing, unavailable.Reason)
 
+	// Signed in to this solution only, the list says so.
+	reader.WithPeers(staticPeers{})
 	_, _, err = orders.svc.ValueListItems(ctx, list.ID, nil, reader)
-	require.ErrorIs(t, err, data.ErrExternalUnavailable)
+	require.ErrorAs(t, err, &unavailable)
+	assert.Equal(t, data.ExternalNotSignedIn, unavailable.Reason)
+
+	// With a session there, the list offers the values of the other solution's field.
+	_, err = data.NewService(peer.driver).InsertRow(ctx, "customers", map[string]interface{}{"code": "C-1", "full_name": "Ada"})
+	require.NoError(t, err)
+	reader.WithPeers(staticPeers{peer.name: data.NewService(peer.driver)})
+	items, _, err := orders.svc.ValueListItems(ctx, list.ID, nil, reader)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, "Ada", items[0].Value)
 
 	// The reference cannot go while occurrences go through it.
 	require.ErrorIs(t, orders.svc.DeleteFileReference(ctx, ref.ID), schema.ErrFileReferenceInUse)
@@ -628,4 +648,14 @@ func TestExternalOccurrences_AbsentFromALocalSolutionFile(t *testing.T) {
 	}
 	require.NotNil(t, columns)
 	assert.NotContains(t, columns, "source_field_id")
+}
+
+// staticPeers opens the solutions it holds, as the services given.
+type staticPeers map[string]*data.Service
+
+func (p staticPeers) Data(_ context.Context, database string) (*data.Service, error) {
+	if svc, ok := p[database]; ok {
+		return svc, nil
+	}
+	return nil, &data.ExternalUnavailableError{Database: database, Reason: data.ExternalNotSignedIn}
 }
