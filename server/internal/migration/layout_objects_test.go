@@ -357,9 +357,28 @@ func TestNativeLayoutPartsAndGeometry(t *testing.T) {
 	if media["mime_type"] != "image/png" || media["fit"] != "fill" || !strings.HasPrefix(media["data"].(string), "iVBOR") {
 		t.Fatalf("picture: %v", media)
 	}
-	// The front tab (default="1") is shown; the other is left out.
-	if len(byType["rounded_rect"]) != 1 || len(byType["oval"]) != 0 {
-		t.Fatalf("front panel: %v", byType)
+	// The tab control is kept beneath its panels, with its labels and the
+	// tab in front (default="1"); every panel's objects say which panel
+	// they sit on.
+	tabs := byType["tab_control"]
+	if len(tabs) != 1 || tabs[0]["default_panel"] != 1.0 || fmt.Sprint(tabs[0]["tabs"]) != "[One Two]" ||
+		tabs[0]["x"] != 420.0 || tabs[0]["height"] != 120.0 {
+		t.Fatalf("tab control: %v", tabs)
+	}
+	panelOf := func(o map[string]interface{}) string {
+		p, _ := o["panel"].(map[string]interface{})
+		return fmt.Sprint(p["control"] == tabs[0]["id"], " ", p["index"])
+	}
+	if len(byType["oval"]) != 1 || panelOf(byType["oval"][0]) != "true 0" ||
+		len(byType["rounded_rect"]) != 1 || panelOf(byType["rounded_rect"][0]) != "true 1" {
+		t.Fatalf("panels: %v / %v", byType["oval"], byType["rounded_rect"])
+	}
+	order := map[string]int{}
+	for i, o := range def["objects"].([]interface{}) {
+		order[o.(map[string]interface{})["type"].(string)] = i
+	}
+	if order["tab_control"] > order["oval"] {
+		t.Fatal("a tab control is drawn beneath its panels")
 	}
 	// A button with no label, icon or action is kept as an empty button.
 	if len(byType["button"]) != 1 || byType["button"][0]["action"] != nil {
@@ -395,8 +414,10 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 	}
 	check("Edit Box", 4, 4)
 	check("Text", 1, 1)
-	check("Oval", 1, 0)
+	check("Oval", 1, 1)
 	check("Rounded Rectangle", 1, 1)
+	check("Tab Control", 1, 1)
+	check("Panel", 2, 2)
 	check("Button", 1, 1)
 	check("Group", 1, 1)
 	if got.Report.Counts.RejectedCount != 0 {
@@ -409,10 +430,9 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 		}
 		switch it.Category {
 		case CategoryUnsupported:
+			// Every object of the fixture is migrated now.
 			unsupported++
-			if strings.Contains(it.Detail, "button") || !strings.Contains(it.Detail, "front panel") {
-				t.Fatalf("unsupported detail: %s", it.Detail)
-			}
+			t.Fatalf("unsupported detail: %s", it.Detail)
 		case CategoryManualActionRequired:
 			review++
 			if !strings.Contains(it.Detail, "1 field of an occurrence no relationship joins") ||
@@ -421,8 +441,8 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 			}
 		}
 	}
-	if unsupported != 1 || review != 1 {
-		t.Fatalf("one item of each per layout: %d unsupported, %d review", unsupported, review)
+	if unsupported != 0 || review != 1 {
+		t.Fatalf("one review item per layout: %d unsupported, %d review", unsupported, review)
 	}
 }
 

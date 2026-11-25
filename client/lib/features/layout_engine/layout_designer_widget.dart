@@ -116,6 +116,9 @@ class LayoutDesignerWidget extends StatefulWidget {
 }
 
 class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
+  /// The panel shown of each tab or slide control, by control id.
+  final Map<String, int> _designerPanels = {};
+
   /// Extra hit-testable margin around each object for its resize handles.
   static const double _handlePad = 8.0;
 
@@ -1498,8 +1501,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   void _onCanvasPanUpdate(DragUpdateDetails d) {
     if (_marqueeStart != null) {
       final rect = Rect.fromPoints(_marqueeStart!, d.localPosition);
+      final off = objectsOffPanel(_layout.objects, selected: _designerPanels);
       final hit = _layout.objects
-          .where((o) => rect.overlaps(Rect.fromLTWH(o.x, o.y, o.width, o.height)))
+          .where((o) => !off.contains(o.id) && rect.overlaps(Rect.fromLTWH(o.x, o.y, o.width, o.height)))
           .map((o) => o.id);
       _setSelection({..._marqueeBase, ...hit});
       setState(() => _marqueeRect = rect);
@@ -3236,7 +3240,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                                 pageSetup: widget.pageSetup,
                               ),
                             // Layout Objects
-                            ..._layout.objects.map((obj) => _buildCanvasObject(context, obj)),
+                            // A tab or slide control shows the objects of the
+                            // panel brought in front.
+                            ...() {
+                              final off = objectsOffPanel(_layout.objects, selected: _designerPanels);
+                              return _layout.objects
+                                  .where((o) => !off.contains(o.id))
+                                  .map((obj) => _buildCanvasObject(context, obj));
+                            }(),
                             if (_marqueeRect != null)
                               Positioned.fromRect(
                                 rect: _marqueeRect!,
@@ -4295,6 +4306,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             VerticalDivider(width: 1),
             Expanded(child: Center(child: Text('Segment 3', style: TextStyle(fontSize: 11)))),
           ],
+        );
+
+      case 'tab_control' || 'slide_control' when obj.tabs.isNotEmpty:
+        return LayoutPanelControlView(
+          obj: obj,
+          selected: _designerPanels[obj.id] ?? obj.defaultPanel,
+          onSelect: (i) => setState(() => _designerPanels[obj.id] = i),
         );
 
       case 'tab_control':

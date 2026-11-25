@@ -172,9 +172,6 @@ var pendingObjectKinds = map[string]string{
 	"PopoverPanel":    "popover",
 	"Web Viewer":      "web viewer",
 	"Chart":           "chart",
-	"Tab Control":     "tab control",
-	"Slide Control":   "slide control",
-	"Panel":           "panel",
 	"Group":           "group",
 	"External Object": "external object",
 }
@@ -192,7 +189,6 @@ type nativeLayout struct {
 	objectIDs      map[*xmlNode]string
 
 	pending      map[string]int // FileMaker kinds left out, by readable name
-	frontPanels  int            // tab and slide controls shown by their front panel only
 	hideUnbound  int
 	unreachable  int
 	alongPath    int
@@ -362,7 +358,7 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 		l.ctx.count(kind).Migrated++
 		return
 	case "Tab Control", "Slide Control":
-		l.convertFrontPanel(obj, kind)
+		l.panelControl(obj, kind)
 		return
 	case "Grouped Button":
 		l.groupedButton(obj)
@@ -403,22 +399,22 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 	}
 }
 
-// convertFrontPanel keeps the objects of the panel a tab or slide control
-// shows first. File4Base has no tab panels yet, so the other panels are
-// left out rather than drawn on top of each other.
-func (l *nativeLayout) convertFrontPanel(obj *xmlNode, kind string) {
+// panelControl converts a tab or slide control: the control itself, drawn
+// beneath its panels, with its tab labels and the panel in front when the
+// layout opens, then the objects of every panel, each saying which panel of
+// which control it sits on, so only the panel in front is shown.
+func (l *nativeLayout) panelControl(obj *xmlNode, kind string) {
 	holder := findFirstChild(obj, "TabControl", "SlideControl")
-	if holder == nil {
-		return
-	}
-	list := findFirstChild(holder, "ObjectList")
-	if list == nil {
+	base := l.baseObject(obj)
+	if holder == nil || base == nil {
 		return
 	}
 	var panels []*xmlNode
-	for _, p := range list.Children {
-		if p.Name == "LayoutObject" && firstAttr(p, "type") == "Panel" {
-			panels = append(panels, p)
+	if list := findFirstChild(holder, "ObjectList"); list != nil {
+		for _, p := range list.Children {
+			if p.Name == "LayoutObject" && firstAttr(p, "type") == "Panel" {
+				panels = append(panels, p)
+			}
 		}
 	}
 	if len(panels) == 0 {
@@ -428,13 +424,49 @@ func (l *nativeLayout) convertFrontPanel(obj *xmlNode, kind string) {
 	if front < 0 || front >= len(panels) {
 		front = 0
 	}
-	if inner := findFirstChild(panels[front], "TabPanel", "SlidePanel"); inner != nil {
-		if objects := findFirstChild(inner, "ObjectList"); objects != nil {
-			l.convertList(objects)
+	id := l.objectID(obj)
+	base["id"] = id
+	class := "tab_control"
+	if kind == "Slide Control" {
+		base["type"] = "slide_control"
+		class = "slide_control"
+	} else {
+		base["type"] = "tab_control"
+		if h, err := strconv.ParseFloat(firstAttr(holder, "height"), 64); err == nil && h > 0 {
+			base["tab_height"] = h
 		}
 	}
-	l.frontPanels++
-	l.pending[pendingObjectKinds[kind]]++
+	base["style"] = l.style(obj, []string{class}, true)
+	base["default_panel"] = front
+	tabs := make([]interface{}, len(panels))
+	l.objects = append(l.objects, base)
+	l.ctx.count(kind).Migrated++
+	for i, p := range panels {
+		inner := findFirstChild(p, "TabPanel", "SlidePanel")
+		label := ""
+		if inner != nil {
+			if c := findFirstChild(inner, "Calculation"); c != nil {
+				label, _ = calcLiteral(calculationText(c))
+			}
+		}
+		if label == "" && kind == "Tab Control" {
+			label = fmt.Sprintf("Tab %d", i+1)
+		}
+		tabs[i] = label
+		start := len(l.objects)
+		if inner != nil {
+			if objects := findFirstChild(inner, "ObjectList"); objects != nil {
+				l.convertList(objects)
+			}
+		}
+		for _, o := range l.objects[start:] {
+			if _, nested := o["panel"]; !nested {
+				o["panel"] = map[string]interface{}{"control": id, "index": i}
+			}
+		}
+		l.ctx.count("Panel").Migrated++
+	}
+	base["tabs"] = tabs
 }
 
 // baseObject reads what every object has: its box, name, tooltip and hide
@@ -951,9 +983,6 @@ func (l *nativeLayout) report() []ReportItem {
 			parts = append(parts, plural(l.pending[k], k))
 		}
 		detail := "Layout objects not migrated yet: " + strings.Join(parts, ", ")
-		if l.frontPanels > 0 {
-			detail += "; a tab or slide control shows the objects of its front panel only, without the control itself"
-		}
 		items = append(items, ReportItem{Category: CategoryUnsupported, Domain: "layout", SourceName: l.name, TargetName: l.name, Detail: detail})
 	}
 	var review []string

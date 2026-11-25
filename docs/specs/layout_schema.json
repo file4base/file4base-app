@@ -218,6 +218,30 @@
           "default": false,
           "description": "Whether hide_when applies in Find mode too, as FileMaker's Apply in Find mode. Find mode currently shows every object."
         },
+        "tabs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "tab_control and slide_control: the label of each panel, in order (a slide control's are empty)."
+        },
+        "default_panel": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "tab_control and slide_control: the panel in front when the layout opens."
+        },
+        "tab_height": {
+          "type": "number",
+          "description": "tab_control: the height of its row of tabs."
+        },
+        "panel": {
+          "type": "object",
+          "required": ["control", "index"],
+          "description": "The tab or slide control this object sits on a panel of, by id, and which panel: the object is shown only while that panel is in front.",
+          "properties": {
+            "control": { "type": "string" },
+            "index": { "type": "integer", "minimum": 0 }
+          }
+        },
         "is_locked": { "type": "boolean" },
         "tab_order": {
           "type": "integer",

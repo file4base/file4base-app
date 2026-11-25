@@ -1009,6 +1009,11 @@ class LayoutObjectModel { // picture / document shown inside the object
     this.media,
     this.hideWhen,
     this.hideInFind = false,
+    this.tabs = const [],
+    this.defaultPanel = 0,
+    this.tabHeight,
+    this.panelControl,
+    this.panelIndex = 0,
   });
 
   factory LayoutObjectModel.fromJson(Map<String, dynamic> json) {
@@ -1045,6 +1050,11 @@ class LayoutObjectModel { // picture / document shown inside the object
           : null,
       hideWhen: json['hide_when'] as String?,
       hideInFind: json['hide_in_find'] as bool? ?? false,
+      tabs: json['tabs'] is List ? [for (final t in json['tabs'] as List) t?.toString() ?? ''] : const [],
+      defaultPanel: (json['default_panel'] as num?)?.toInt() ?? 0,
+      tabHeight: (json['tab_height'] as num?)?.toDouble(),
+      panelControl: json['panel'] is Map ? (json['panel'] as Map)['control']?.toString() : null,
+      panelIndex: json['panel'] is Map ? ((json['panel'] as Map)['index'] as num?)?.toInt() ?? 0 : 0,
     );
   }
   final String id;
@@ -1074,6 +1084,25 @@ class LayoutObjectModel { // picture / document shown inside the object
 
   /// Whether [hideWhen] applies in Find mode too.
   final bool hideInFind;
+
+  /// For a `tab_control` or `slide_control`, the label of each panel, in
+  /// order (a slide control's are empty).
+  final List<String> tabs;
+
+  /// For a tab or slide control, the panel in front when the layout opens.
+  final int defaultPanel;
+
+  /// For a tab control, the height of its row of tabs.
+  final double? tabHeight;
+
+  /// The id of the tab or slide control this object sits on a panel of, and
+  /// which panel ([panelIndex]): the object is shown only while that panel
+  /// is in front.
+  final String? panelControl;
+  final int panelIndex;
+
+  /// Tab and slide controls, which show one panel of objects at a time.
+  bool get isPanelControl => type == 'tab_control' || type == 'slide_control';
 
   /// Objects that take keyboard focus in Browse mode and so have a tab order.
   bool get isTabStop => type == 'field' || type == 'button' || type == 'popover_button';
@@ -1123,6 +1152,10 @@ class LayoutObjectModel { // picture / document shown inside the object
         if (media != null) 'media': media!.toJson(),
         if (hideWhen != null) 'hide_when': hideWhen,
         if (hideInFind) 'hide_in_find': true,
+        if (tabs.isNotEmpty) 'tabs': tabs,
+        if (isPanelControl) 'default_panel': defaultPanel,
+        if (tabHeight != null) 'tab_height': tabHeight,
+        if (panelControl != null) 'panel': {'control': panelControl, 'index': panelIndex},
       };
 
   /// Copies the object. The `clear*` flags remove an optional value, which a
@@ -1153,6 +1186,8 @@ class LayoutObjectModel { // picture / document shown inside the object
     String? hideWhen,
     bool clearHideWhen = false,
     bool? hideInFind,
+    List<String>? tabs,
+    int? defaultPanel,
   }) {
     return LayoutObjectModel(
       id: id ?? this.id,
@@ -1175,8 +1210,42 @@ class LayoutObjectModel { // picture / document shown inside the object
       media: clearMedia ? null : (media ?? this.media),
       hideWhen: clearHideWhen ? null : (hideWhen ?? this.hideWhen),
       hideInFind: hideInFind ?? this.hideInFind,
+      tabs: tabs ?? this.tabs,
+      defaultPanel: defaultPanel ?? this.defaultPanel,
+      tabHeight: tabHeight,
+      panelControl: panelControl,
+      panelIndex: panelIndex,
     );
   }
+}
+
+/// The ids of [objects] that sit on a panel of a tab or slide control that
+/// is not in front, or on a control that is itself not shown: [selected]
+/// gives the panel chosen for a control, by control id, and a control not
+/// in it shows its default panel. [hidden] are objects hidden by their
+/// condition, whose panels' objects are hidden with them.
+Set<String> objectsOffPanel(
+  Iterable<LayoutObjectModel> objects, {
+  Map<String, int> selected = const {},
+  Set<String> hidden = const {},
+}) {
+  final byId = {for (final o in objects) o.id: o};
+  final off = <String>{};
+  for (final o in byId.values) {
+    var current = o;
+    final seen = <String>{};
+    while (current.panelControl != null && seen.add(current.id)) {
+      final control = byId[current.panelControl];
+      if (control == null) break;
+      if (hidden.contains(control.id) ||
+          (selected[control.id] ?? control.defaultPanel) != current.panelIndex) {
+        off.add(o.id);
+        break;
+      }
+      current = control;
+    }
+  }
+  return off;
 }
 
 /// Effects played when a layout is shown in Browse mode.

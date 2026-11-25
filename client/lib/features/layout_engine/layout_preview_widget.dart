@@ -657,6 +657,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         ? math.max(widget.layout.height, maxObjY)
         : math.max(maxObjY, 300.0) + 40.0;
     final canvasWidth = widget.layout.width;
+    final offPanel = objectsOffPanel(widget.layout.objects);
 
     // A layout wider than the printable width is scaled down to fit the sheet
     // (fit to page width), so nothing is cut off on screen or on paper.
@@ -676,7 +677,9 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
           clipBehavior: Clip.none,
           children: [
             Positioned.fill(child: LayoutBackgroundView(layout: widget.layout)),
-            ...widget.layout.objects.map((obj) {
+            // A tab or slide control prints the panel in front when the
+            // layout opens.
+            ...widget.layout.objects.where((o) => !offPanel.contains(o.id)).map((obj) {
               return Positioned(
                 left: obj.x,
                 top: obj.y,
@@ -800,6 +803,10 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
             overflow: TextOverflow.ellipsis,
           ),
         );
+
+      case 'tab_control':
+      case 'slide_control':
+        return LayoutPanelControlView(obj: obj, selected: obj.defaultPanel);
 
       case 'portal':
         return Container(

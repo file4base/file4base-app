@@ -502,6 +502,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// its count changes.
   final Map<String, int> _portalRefreshes = {};
 
+  /// The panel brought in front of each tab or slide control, by control
+  /// id; a control not in it shows its default panel.
+  final Map<String, int> _selectedPanels = {};
+
   /// The objects hidden by their "Hide object when" calculation, by layout,
   /// record, the record's values and how fresh the answer is; and the last
   /// answer for each layout and record, shown while it is evaluated again.
@@ -552,9 +556,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   }
 
   /// [objects] of [layout] less those hidden on [record].
+  /// Objects on a panel not in front are left out too, and so is what sits
+  /// on the panels of a control that is hidden.
   List<LayoutObjectModel> _shownOn(LayoutDefinitionModel layout, Map<String, dynamic> record, List<LayoutObjectModel> objects) {
     final hidden = _hiddenOn(layout, record);
-    return hidden.isEmpty ? objects : [for (final o in objects) if (!hidden.contains(o.id)) o];
+    final off = objectsOffPanel(layout.objects, selected: _selectedPanels, hidden: hidden);
+    return hidden.isEmpty && off.isEmpty
+        ? objects
+        : [for (final o in objects) if (!hidden.contains(o.id) && !off.contains(o.id)) o];
   }
 
   /// Evaluates what is queued: for each layout, every condition against
@@ -2574,7 +2583,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final portals = layout.objects.where((o) => o.type == 'portal').toList();
     final contents = <String, List<LayoutObjectModel>>{
       for (final portal in portals)
-        portal.id: layout.objects.where((o) => o.type != 'portal' && portal.contains(o)).toList(),
+        portal.id: layout.objects
+            .where((o) =>
+                o.type != 'portal' &&
+                portal.contains(o) &&
+                // An object of another panel only overlaps the portal.
+                o.panelControl == portal.panelControl &&
+                o.panelIndex == portal.panelIndex)
+            .toList(),
     };
     return (contents, {for (final objects in contents.values) for (final o in objects) o.id});
   }
@@ -2594,7 +2610,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     }
     final bodyFill = bodyIndex < 0 ? null : parseLayoutColor(layout.parts[bodyIndex].fillColor);
     final (portalContents, insidePortal) = _portalContents(layout);
-    final shown = layout.objects.where((o) => !insidePortal.contains(o.id));
+    final offPanel = objectsOffPanel(layout.objects, selected: _selectedPanels);
+    final shown = layout.objects.where((o) => !insidePortal.contains(o.id) && !offPanel.contains(o.id));
     final headerObjects = shown.where((o) => o.y < headerHeight).toList();
     final bodyEnd = bodyHeight > 0 ? headerHeight + bodyHeight : double.infinity;
     final bodyObjects = shown.where((o) => o.y >= headerHeight && o.y < bodyEnd).toList();
@@ -3172,7 +3189,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
     final (portalContents, insidePortal) = _portalContents(layout);
     final hidden = isFindMode ? const <String>{} : _hiddenOn(layout, record);
-    final topLevel = layout.objects.where((o) => !insidePortal.contains(o.id) && !hidden.contains(o.id)).toList();
+    final off = objectsOffPanel(layout.objects, selected: _selectedPanels, hidden: hidden);
+    final topLevel = layout.objects
+        .where((o) => !insidePortal.contains(o.id) && !hidden.contains(o.id) && !off.contains(o.id))
+        .toList();
 
     return LayoutEntryTransition(
       key: ValueKey('layout-entry-${layout.id}'),
@@ -3719,6 +3739,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ),
           clipBehavior: Clip.antiAlias,
           child: _buildChart(obj, isDark),
+        );
+
+      case 'tab_control':
+      case 'slide_control':
+        return LayoutPanelControlView(
+          obj: obj,
+          selected: _selectedPanels[obj.id] ?? obj.defaultPanel,
+          onSelect: (i) => setState(() => _selectedPanels[obj.id] = i),
         );
 
       case 'portal':
