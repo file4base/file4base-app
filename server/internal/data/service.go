@@ -215,7 +215,8 @@ func (s *Service) checker(ctx context.Context, tableName string) (*validation.Ch
 	if err != nil {
 		return nil, err
 	}
-	return &validation.Checker{Dialect: s.driver.Dialect(), DB: s.driver.DB(), Table: tableName, Fields: fields}, nil
+	return &validation.Checker{Dialect: s.driver.Dialect(), DB: s.driver.DB(), Table: tableName, Fields: fields,
+		Calculate: s.validationCalculator(tableName), Override: validationOverride(ctx)}, nil
 }
 
 // decodeContainerValues turns the base64 text of CONTAINER fields into the

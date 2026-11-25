@@ -66,7 +66,7 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 			if allowAny || listed {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH")
-				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, X-Database-Name, X-File4Base-Encrypted, X-File4Base-Entry, Accept-Encryption, traceparent, tracestate, X-Trace-ID")
+				w.Header().Set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, X-CSRF-Token, X-Requested-With, X-Database-Name, X-File4Base-Encrypted, X-File4Base-Entry, X-File4Base-Validation, Accept-Encryption, traceparent, tracestate, X-Trace-ID")
 				w.Header().Set("Access-Control-Expose-Headers", "Link, Content-Length, Content-Disposition, X-File4Base-Encrypted, X-Original-Content-Type, traceparent, X-Trace-ID, Deprecation, Sunset")
 				w.Header().Set("Access-Control-Max-Age", "300")
 			}

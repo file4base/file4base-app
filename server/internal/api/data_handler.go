@@ -226,6 +226,15 @@ type EvaluateExpressionBody struct {
 	// ResultType is how to read the answer: Text, Number, Date, Timestamp or
 	// Boolean. Text when it is left out.
 	ResultType string `json:"result_type"`
+
+	// Variables are a script's $ and $$ variables, by name ("$total"), for
+	// a script step evaluating a formula. The variables an expression sets
+	// with Let come back in its result.
+	Variables map[string]any `json:"variables,omitempty"`
+
+	// Get answers the Get functions only the client knows, by selector
+	// ("ScriptParameter", "LayoutName", …).
+	Get map[string]any `json:"get,omitempty"`
 }
 
 // EvaluateExpression computes expressions against a record with the engine
@@ -265,7 +274,8 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 
 	results := make([]map[string]interface{}, 0, len(expressions))
 	for _, expression := range expressions {
-		evaluation, err := svc.EvaluateExpression(r.Context(), table, body.RecordID, expression, body.ResultType)
+		evaluation, err := svc.EvaluateExpressionIn(r.Context(), table, body.RecordID, expression, body.ResultType,
+			data.EvaluationEnv{Variables: body.Variables, Get: body.Get})
 		if err != nil {
 			// A record that is not there, or a table that is not reachable,
 			// is about the request rather than about one expression.
@@ -279,7 +289,7 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 			})
 			continue
 		}
-		results = append(results, map[string]interface{}{
+		result := map[string]interface{}{
 			"expression":     evaluation.Expression,
 			"value":          evaluation.Value,
 			"text":           evaluation.Text,
@@ -287,7 +297,11 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 			"fields":         evaluation.Fields,
 			"unknown_fields": evaluation.UnknownFields,
 			"record_id":      evaluation.RecordID,
-		})
+		}
+		if len(evaluation.Variables) > 0 {
+			result["variables"] = evaluation.Variables
+		}
+		results = append(results, result)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -344,7 +358,7 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 	case errors.Is(err, validation.ErrValidation):
 		var ve *validation.Error
 		errors.As(err, &ve)
-		telemetry.WriteValidationProblem(w, r, ve.Message, []telemetry.InvalidParam{{Name: ve.Field, Reason: ve.Rule}})
+		telemetry.WriteValidationProblem(w, r, ve.Message, []telemetry.InvalidParam{{Name: ve.Field, Reason: ve.Rule, Overridable: ve.Overridable}})
 	case errors.Is(err, data.ErrInvalidValue):
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Value", err.Error())
 	default:

@@ -816,6 +816,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		for _, it := range bindTableAutoEnter(&bundle.Tables[i], binding) {
 			addReportItem(report, it)
 		}
+		for _, it := range bindTableValidation(&bundle.Tables[i], binding) {
+			addReportItem(report, it)
+		}
 	}
 
 	// 4. Extract Value Lists. Only now is it known which calculations are
@@ -1039,7 +1042,7 @@ func convertFieldNode(tableSQL, rawFieldName, colName string, fn *xmlNode) (sche
 			if err == nil {
 				stored := string(encoded)
 				col.ValidationRules = &stored
-				if rules.NotEmpty {
+				if rules.NotEmpty && !rules.AllowOverride {
 					col.IsNullable = false
 				}
 			}
@@ -1254,40 +1257,63 @@ func convertFieldValidation(tableSQL, rawFieldName, colName string, vn *xmlNode)
 	}
 	// FileMaker validates during data entry unless the field is set to
 	// validate always, which is the same distinction File4Base draws.
-	if nestedFlag(vn, "AlwaysValidate", "alwaysValidate", "alwaysValidateCalculation") {
+	if nestedFlag(vn, "AlwaysValidate", "alwaysValidate", "alwaysValidateCalculation") ||
+		strings.EqualFold(firstAttr(vn, "type"), "Always") {
 		rules.Timing = "always"
 	} else {
 		rules.Timing = "entry"
 	}
+	// "Allow user to override during data entry".
+	rules.AllowOverride = strings.EqualFold(firstAttr(vn, "allowOverride"), "True")
 
-	for _, unsupported := range []struct {
-		element string
-		attr    string
-		what    string
-	}{
-		{"ValidateCalculation", "validateCalculation", "a validation formula"},
-		{"ValueList", "valuelist", "membership of a value list"},
-	} {
-		if nestedFlag(vn, unsupported.element, unsupported.attr) {
-			items = append(items,
-				ReportItem{
-					Category:   CategoryUnsupported,
-					Domain:     "field",
-					SourceName: source,
-					TargetName: target,
-					Detail:     fmt.Sprintf("Validation by %s is not enforced by File4Base and was not migrated", unsupported.what),
-				},
-				ReportItem{
-					Category:   CategoryManualActionRequired,
-					Domain:     "field",
-					SourceName: source,
-					TargetName: target,
-					Detail:     fmt.Sprintf("Re-create the validation by %s on %s, or enforce it in a script", unsupported.what, target),
-				})
-		}
+	// Validated by calculation: kept as the source wrote it, and bound to
+	// the imported names with the other formulas (bindTableValidation).
+	formulaFlag := nestedFlag(vn, "ValidateCalculation", "validateCalculation")
+	if formula, context, ok := validationFormula(vn); ok {
+		rules.CalculationEnabled = true
+		rules.Calculation = formula
+		rules.CalculationContext = context
+	} else if formulaFlag {
+		items = append(items,
+			ReportItem{
+				Category:   CategoryUnsupported,
+				Domain:     "field",
+				SourceName: source,
+				TargetName: target,
+				Detail:     "Validation by a validation formula was not migrated: the source does not include the formula",
+			},
+			ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "field",
+				SourceName: source,
+				TargetName: target,
+				Detail:     fmt.Sprintf("Re-create the validation by calculation on %s in Manage Database", target),
+			})
+	}
+
+	if nestedFlag(vn, "ValueList", "valuelist") {
+		items = append(items,
+			ReportItem{
+				Category:   CategoryUnsupported,
+				Domain:     "field",
+				SourceName: source,
+				TargetName: target,
+				Detail:     "Validation by membership of a value list is not enforced by File4Base and was not migrated",
+			},
+			ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "field",
+				SourceName: source,
+				TargetName: target,
+				Detail:     fmt.Sprintf("Re-create the validation by membership of a value list on %s, or enforce it in a script", target),
+			})
 	}
 
 	if len(kept) == 0 {
+		if rules.CalculationEnabled {
+			// Reported once the formula is bound.
+			return rules, items
+		}
 		// A custom message with nothing to enforce is no rule at all.
 		return nil, items
 	}
@@ -1299,6 +1325,34 @@ func convertFieldValidation(tableSQL, rawFieldName, colName string, vn *xmlNode)
 		Detail:     fmt.Sprintf("Validation migrated (%s)", strings.Join(kept, ", ")),
 	})
 	return rules, items
+}
+
+// validationFormula is the formula of a field's validation by calculation
+// and the occurrence it is evaluated from, when the validation has one that
+// is switched on: <Calculated enable="True"><Calculation> in a Save a Copy as
+// XML, or a <Calculation> next to validateCalculation="True".
+func validationFormula(vn *xmlNode) (formula, context string, ok bool) {
+	calcNode := (*xmlNode)(nil)
+	if calculated := findFirstChild(vn, "Calculated", "calculated"); calculated != nil {
+		if !strings.EqualFold(firstAttr(calculated, "enable", "enabled"), "True") {
+			return "", "", false
+		}
+		calcNode = findFirstChild(calculated, "Calculation", "calculation")
+	} else if nestedFlag(vn, "ValidateCalculation", "validateCalculation") {
+		calcNode = findFirstChild(vn, "Calculation", "calculation")
+	}
+	if calcNode == nil {
+		return "", "", false
+	}
+	formula = formulaText(markNamelessFieldReferences(calcNode, calculationText(calcNode)))
+	if formula == "" {
+		return "", "", false
+	}
+	context = firstAttr(calcNode, "table")
+	if occ := findFirstChild(calcNode, "TableOccurrenceReference"); occ != nil {
+		context = firstAttr(occ, "name")
+	}
+	return formula, context, true
 }
 
 func strictTypeFromDDR(raw string) string {
