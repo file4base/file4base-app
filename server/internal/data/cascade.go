@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/containermeta"
+	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/sourcetext"
 )
 
@@ -30,7 +31,9 @@ import (
 //  2. Execute. The records of each other solution are deleted in one
 //     transaction of that solution, the solution deepest in the chain first;
 //     then those of this solution, the record itself among them, in one
-//     transaction of this one.
+//     transaction of this one. A related record is deleted only if its match
+//     fields still hold the key of a record the plan deletes: one moved to
+//     another record since the plan was made is kept.
 //
 // No statement joins two solutions, and there is no two-phase commit: when
 // this solution's transaction fails after another solution's committed, the
@@ -55,7 +58,8 @@ type PartialDeleteError struct {
 
 func (e *PartialDeleteError) Error() string {
 	return fmt.Sprintf("%s: the related records in %s are deleted, but the records of %s could not be: %v; "+
-		"they are still there, without those related records: delete them again once the cause is fixed",
+		"they are still there, without those related records: delete them again once the cause is fixed; "+
+		"the re-run may leave records reachable only through the committed part",
 		ErrPartialDelete, strings.Join(e.Committed, ", "), e.Database, e.cause)
 }
 
@@ -76,6 +80,9 @@ type deletePlan struct {
 	solutions map[string]*plannedSolution
 	order     []string
 	seen      map[string]struct{}
+	// keys are the parent keys already looked up, by solution, relationship
+	// and side, so the related records of one key are read once per delete.
+	keys map[string]struct{}
 }
 
 // plannedSolution is what a delete removes from one solution, and the
@@ -88,6 +95,20 @@ type plannedSolution struct {
 	via    *ExternalTarget
 	tables []string
 	ids    map[string][]string
+	// steps are how the related records were found, in the order they were:
+	// the statement each is deleted with checks they still match.
+	steps []cascadeStep
+}
+
+// cascadeStep is related records of one table found by one statement: the
+// condition that statement matched them with, on the keys of the records
+// being deleted, and their ids.
+type cascadeStep struct {
+	table string
+	// condition is numbered from the first placeholder, args its values.
+	condition string
+	args      []interface{}
+	ids       []string
 }
 
 // recordKey identifies a record across solutions, so a cascade that points
@@ -135,10 +156,14 @@ func (s *Service) planDelete(ctx context.Context, tableName, id string) (*delete
 	if _, err := s.tableFields(ctx, tableName); err != nil {
 		return nil, err
 	}
-	if err := s.recordExists(ctx, tableName, id); err != nil {
+	// The record's id as stored: an engine comparing ids without regard to
+	// case finds it by a variant, which would match nothing in the plan.
+	id, err := s.storedID(ctx, tableName, id)
+	if err != nil {
 		return nil, err
 	}
-	p := &deletePlan{root: s, table: tableName, id: id, solutions: map[string]*plannedSolution{}, seen: map[string]struct{}{}}
+	p := &deletePlan{root: s, table: tableName, id: id, solutions: map[string]*plannedSolution{},
+		seen: map[string]struct{}{}, keys: map[string]struct{}{}}
 	root := p.solution(s.database, s, nil)
 	p.add(root, tableName, id)
 
@@ -201,7 +226,14 @@ func (p *deletePlan) children(ctx context.Context, lv level) ([]level, error) {
 			}
 			return nil, err
 		}
-		ids, err := q.relatedIDs(ctx, lv.ids)
+		scope := lv.sol.name + "\x00" + rel.ID + "\x00" + q.target.OccurrenceID + "\x00"
+		ids, steps, err := q.relatedIDs(ctx, lv.ids, func(signature string) bool {
+			if _, done := p.keys[scope+signature]; done {
+				return false
+			}
+			p.keys[scope+signature] = struct{}{}
+			return true
+		})
 		if err != nil {
 			return nil, wrapSide(q.target, err)
 		}
@@ -212,6 +244,7 @@ func (p *deletePlan) children(ctx context.Context, lv level) ([]level, error) {
 		if ext := q.target.External; ext != nil {
 			sol = p.solution(ext.Database, q.dst, ext)
 		}
+		sol.steps = append(sol.steps, steps...)
 		var fresh []string
 		for _, id := range ids {
 			if p.add(sol, q.target.TableName, id) {
@@ -226,13 +259,15 @@ func (p *deletePlan) children(ctx context.Context, lv level) ([]level, error) {
 }
 
 // relatedIDs are the ids of every record related to one of parents: all of
-// them, not a page. The match values of the parents are read where they
-// are, and the related records looked up where those are, in one statement
-// per batch of parents and of match values.
-func (q *relatedQuery) relatedIDs(ctx context.Context, parents []string) ([]string, error) {
+// them, not a page, with the statements that found them. The match values of
+// the parents are read where they are, and the related records looked up
+// where those are, in one statement per batch of parents and of match values.
+// A key fresh says was looked up already, by this delete, is not again.
+func (q *relatedQuery) relatedIDs(ctx context.Context, parents []string, fresh func(signature string) bool) ([]string, []cascadeStep, error) {
 	columns := sourceColumns(q.terms)
 	dialect := q.dst.driver.Dialect()
 	var out []string
+	var steps []cascadeStep
 	found := map[string]struct{}{}
 	var conditions []string
 	var args []interface{}
@@ -240,8 +275,9 @@ func (q *relatedQuery) relatedIDs(ctx context.Context, parents []string) ([]stri
 		if len(conditions) == 0 {
 			return nil
 		}
+		step := cascadeStep{table: q.target.TableName, condition: strings.Join(conditions, " OR "), args: args}
 		query := fmt.Sprintf("SELECT %s FROM %s WHERE %s",
-			dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier(q.target.TableName), strings.Join(conditions, " OR "))
+			dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier(q.target.TableName), step.condition)
 		rows, err := q.dst.driver.DB().QueryContext(ctx, query, args...)
 		if err != nil {
 			return fmt.Errorf("failed reading the records of %s related to the records being deleted: %w", q.target.TableName, err)
@@ -253,31 +289,32 @@ func (q *relatedQuery) relatedIDs(ctx context.Context, parents []string) ([]stri
 				return err
 			}
 			id := fmt.Sprint(textOf(raw))
+			step.ids = append(step.ids, id)
 			if _, dup := found[id]; !dup {
 				found[id] = struct{}{}
 				out = append(out, id)
 			}
 		}
 		conditions, args = nil, nil
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(step.ids) > 0 {
+			steps = append(steps, step)
+		}
+		return nil
 	}
 	for start := 0; start < len(parents); start += cascadeBatch {
 		batch := parents[start:min(start+cascadeBatch, len(parents))]
 		values, err := q.src.matchValuesOf(ctx, q.source.TableName, columns, batch)
 		if err != nil {
-			return nil, wrapSide(q.source, err)
+			return nil, nil, wrapSide(q.source, err)
 		}
-		signatures := map[string]struct{}{}
 		for _, id := range batch {
 			record, ok := values[id]
-			if !ok {
+			if !ok || !fresh(matchSignature(q.terms, record)) {
 				continue
 			}
-			signature := matchSignature(q.terms, record)
-			if _, done := signatures[signature]; done {
-				continue
-			}
-			signatures[signature] = struct{}{}
 			match, keys := matchCondition(dialect, q.terms, func(c string) interface{} { return record[c] }, len(args)+1)
 			if match == "" {
 				continue
@@ -286,31 +323,31 @@ func (q *relatedQuery) relatedIDs(ctx context.Context, parents []string) ([]stri
 			args = append(args, keys...)
 			if len(args) >= cascadeBatch || len(conditions) >= cascadeBatch {
 				if err := flush(); err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 			}
 		}
 		if err := flush(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return out, nil
+	return out, steps, nil
 }
 
-// recordExists is nil when the table has a record with that id.
-func (s *Service) recordExists(ctx context.Context, tableName, id string) error {
+// storedID is the id of the table's record with that id, as stored.
+func (s *Service) storedID(ctx context.Context, tableName, id string) (string, error) {
 	dialect := s.driver.Dialect()
-	q := fmt.Sprintf("SELECT 1 FROM %s WHERE %s = %s",
-		dialect.QuoteIdentifier(tableName), dialect.QuoteIdentifier("id"), dialect.Placeholder(1))
-	var one int
-	err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&one)
+	q := fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s",
+		dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier(tableName), dialect.QuoteIdentifier("id"), dialect.Placeholder(1))
+	var raw interface{}
+	err := s.driver.DB().QueryRowContext(ctx, q, id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: %s", ErrRecordNotFound, id)
+		return "", fmt.Errorf("%w: %s", ErrRecordNotFound, id)
 	}
 	if err != nil {
-		return fmt.Errorf("failed reading %s: %w", tableName, err)
+		return "", fmt.Errorf("failed reading %s: %w", tableName, err)
 	}
-	return nil
+	return fmt.Sprint(textOf(raw)), nil
 }
 
 // execute deletes what the plan found: the other solutions' records first,
@@ -359,7 +396,9 @@ func (p *deletePlan) execute(ctx context.Context) error {
 
 // deleteAll deletes the planned records of one solution in one transaction.
 // The record named by table and id must still be there; a related record
-// another session deleted since the plan was made is simply gone already.
+// another session deleted since the plan was made is simply gone already, and
+// one whose match fields no longer hold the key of a record being deleted is
+// kept, with its original texts and container metadata.
 func (sol *plannedSolution) deleteAll(ctx context.Context, table, id string) error {
 	db, dialect := sol.svc.driver.DB(), sol.svc.driver.Dialect()
 	// A failed statement aborts a PostgreSQL transaction: the tables the
@@ -388,32 +427,75 @@ func (sol *plannedSolution) deleteAll(ctx context.Context, table, id string) err
 			return fmt.Errorf("%w: %s", ErrRecordNotFound, id)
 		}
 	}
-	for _, t := range sol.tables {
-		ids := sol.ids[t]
+	// Each related record is deleted by the condition it was found with, so
+	// it goes only while it still matches.
+	for _, step := range sol.steps {
+		ids := step.ids
+		if step.table == table {
+			ids = slices.DeleteFunc(slices.Clone(ids), func(rid string) bool { return rid == id })
+		}
 		for start := 0; start < len(ids); start += cascadeBatch {
 			batch := ids[start:min(start+cascadeBatch, len(ids))]
-			if t == table {
-				batch = slices.DeleteFunc(slices.Clone(batch), func(rid string) bool { return rid == id })
-			}
-			if len(batch) == 0 {
-				continue
-			}
-			marks := make([]string, len(batch))
-			args := make([]interface{}, len(batch))
-			for i, rid := range batch {
-				marks[i], args[i] = dialect.Placeholder(i+1), rid
-			}
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE %s IN (%s)",
-				dialect.QuoteIdentifier(t), dialect.QuoteIdentifier("id"), strings.Join(marks, ", ")), args...); err != nil {
-				return fmt.Errorf("failed deleting from %s: %w", t, err)
+			marks, args := idMarks(dialect, batch, len(step.args)+1)
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE (%s) AND %s IN (%s)",
+				dialect.QuoteIdentifier(step.table), step.condition, dialect.QuoteIdentifier("id"), marks),
+				append(slices.Clone(step.args), args...)...); err != nil {
+				return fmt.Errorf("failed deleting from %s: %w", step.table, err)
 			}
 		}
-		if err := sourcetext.DeleteRecords(ctx, tx, dialect, t, ids); err != nil {
+	}
+	for _, t := range sol.tables {
+		gone, err := deletedOf(ctx, tx, dialect, t, sol.ids[t])
+		if err != nil {
 			return err
 		}
-		if err := containermeta.DeleteRecords(ctx, tx, dialect, t, ids); err != nil {
+		if err := sourcetext.DeleteRecords(ctx, tx, dialect, t, gone); err != nil {
+			return err
+		}
+		if err := containermeta.DeleteRecords(ctx, tx, dialect, t, gone); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// idMarks are the placeholders of ids, numbered from first, and their values.
+func idMarks(dialect dbal.Dialect, ids []string, first int) (string, []interface{}) {
+	marks := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, rid := range ids {
+		marks[i], args[i] = dialect.Placeholder(first+i), rid
+	}
+	return strings.Join(marks, ", "), args
+}
+
+// deletedOf are those of ids the table no longer has.
+func deletedOf(ctx context.Context, tx *sql.Tx, dialect dbal.Dialect, table string, ids []string) ([]string, error) {
+	kept := map[string]struct{}{}
+	for start := 0; start < len(ids); start += cascadeBatch {
+		batch := ids[start:min(start+cascadeBatch, len(ids))]
+		marks, args := idMarks(dialect, batch, 1)
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf("SELECT %s FROM %s WHERE %s IN (%s)",
+			dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier(table), dialect.QuoteIdentifier("id"), marks), args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed reading %s: %w", table, err)
+		}
+		for rows.Next() {
+			var raw interface{}
+			if err := rows.Scan(&raw); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			kept[fmt.Sprint(textOf(raw))] = struct{}{}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(ids), func(rid string) bool {
+		_, ok := kept[rid]
+		return ok
+	}), nil
 }

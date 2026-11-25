@@ -9,6 +9,7 @@ import 'package:file4base_client/features/auth/database_login_dialog.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/data_browser/external_layout.dart';
+import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/main.dart' show OperationalMode;
 import 'package:flutter/material.dart';
@@ -451,6 +452,47 @@ void main() {
     expect(_button(tester, 'New').onPressed, isNotNull);
     expect(_button(tester, 'Delete').onPressed, isNull,
         reason: 'the account there may not delete');
+  });
+
+  testWidgets("Delete Portal Row on another solution's layout deletes no record, the parent least of all",
+      (tester) async {
+    final server = _Server()..privileges = const {'read': true, 'create': true, 'edit': true, 'delete': true};
+    final layout = LayoutDefinitionModel(
+      id: 'l-customers',
+      name: 'Customers',
+      tableOccurrence: 'Customers',
+      objects: [_object('name', 'field', 10, field: const FieldBindingModel(fieldName: 'full_name', tableOccurrence: 'Customers'))],
+    );
+    final browser = GlobalKey<DataBrowserWidgetState>();
+    late ApiClient client;
+    await _pump(
+      tester,
+      ExternalLayoutView(
+        layoutName: 'Customers',
+        occurrence: TableOccurrenceModel.fromJson(_occurrences[1]),
+        apiClient: server.client(),
+        builder: (context, table, api) => DataBrowserWidget(
+          key: browser,
+          table: table,
+          apiClient: client = api,
+          mode: OperationalMode.browse,
+          layout: layout,
+          externalDatabase: 'peer_db',
+          privileges: table.privileges,
+        ),
+      ),
+    );
+    expect(find.text('Ada Lovelace'), findsOneWidget);
+
+    final call = ScriptCallContext(session: ScriptSessionState());
+    await LayoutActionRunner(apiClient: client, host: browser.currentState!)
+        .runStep('delete_portal_row', const {'dialog': false}, depth: 0, callContext: call);
+    await tester.pumpAndSettle();
+
+    expect(server.writes, isEmpty, reason: 'the current record is the parent, never the portal row');
+    expect(server.requests.where((r) => r.startsWith('DELETE')), isEmpty);
+    expect(call.session.lastError, 101, reason: 'no portal row is active');
+    expect(find.text('Ada Lovelace'), findsOneWidget);
   });
 
   testWidgets("a layout on another solution's table says why it cannot read it", (tester) async {

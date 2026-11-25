@@ -63,11 +63,12 @@ func (s *Service) WithDatabase(name string) *Service {
 }
 
 // WithWriteAccess makes the service ask, before it deletes or creates the
-// records of another solution on behalf of a request of this one, whether the
-// caller may (#107): canWrite answers nil, or a *PermissionError. Without it
-// every write is allowed, which is what an administrator and the server's own
-// work get. A table of this solution is authorized by the API before the
-// service is called, as before.
+// records of another solution on behalf of a request of this one, and before
+// it creates a related record in any table, whether the caller may (#107):
+// canWrite answers nil, or a *PermissionError. Without it every write is
+// allowed, which is what an administrator and the server's own work get. The
+// other writes to a table of this solution are authorized by the API before
+// the service is called, as before.
 func (s *Service) WithWriteAccess(canWrite func(ctx context.Context, tableName, action string) error) *Service {
 	s.canWrite = canWrite
 	return s

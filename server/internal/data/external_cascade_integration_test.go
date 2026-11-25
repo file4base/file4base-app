@@ -2,9 +2,11 @@ package data_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -228,4 +230,74 @@ func TestExternalCascade_PlansThenDeletesEachSolutionInOneTransaction(t *testing
 		assert.Equal(t, []string{"other"}, p.values(t, p.orders, "lines", "label"))
 		assert.Equal(t, []string{"Ada South", "Bob"}, p.values(t, p.peer, "customers", "full_name"))
 	})
+}
+
+// A related record moved to another record between the plan and the delete is
+// kept: each is deleted only while it still matches a record being deleted.
+func TestExternalCascade_KeepsWhatMovedSinceThePlan(t *testing.T) {
+	p := newCascadePair(t)
+	p.insert(t, p.peer, "customers", map[string]interface{}{"code": "C-1", "region": "north", "full_name": "Ada"})
+	p.insert(t, p.peer, "customers", map[string]interface{}{"code": "C-1", "region": "north", "full_name": "Ada Again"})
+	order := p.insert(t, p.orders, "orders", map[string]interface{}{"customer_code": "C-1", "region": "north"})
+	p.insert(t, p.orders, "orders", map[string]interface{}{"customer_code": "C-2", "region": "north"})
+	p.insert(t, p.orders, "lines", map[string]interface{}{"order_code": "C-1", "label": "first"})
+	moved := p.insert(t, p.orders, "lines", map[string]interface{}{"order_code": "C-1", "label": "second"})
+	customers, err := p.peer.ListRows(p.ctx, "customers", data.QueryOptions{})
+	require.NoError(t, err)
+	var away string
+	for _, c := range customers {
+		if c["full_name"] == "Ada Again" {
+			away = fmt.Sprint(c["id"])
+		}
+	}
+
+	// Each solution's records move just before that solution's first delete,
+	// after the plan read them.
+	var peerMoved, ordersMoved atomic.Bool
+	p.failPB(func(q string) bool {
+		if deletesFrom("customers")(q) && peerMoved.CompareAndSwap(false, true) {
+			_, err := p.peer.UpdateRow(p.ctx, "customers", away, map[string]interface{}{"region": "south"})
+			require.NoError(t, err)
+		}
+		return false
+	})
+	defer p.failPB(nil)
+	p.failOrders(func(q string) bool {
+		if deletesFrom("orders")(q) && ordersMoved.CompareAndSwap(false, true) {
+			_, err := p.orders.UpdateRow(p.ctx, "lines", moved, map[string]interface{}{"order_code": "C-2"})
+			require.NoError(t, err)
+		}
+		return false
+	})
+	defer p.failOrders(nil)
+
+	require.NoError(t, p.orders.DeleteRow(p.ctx, "orders", order))
+	require.True(t, peerMoved.Load())
+	require.True(t, ordersMoved.Load())
+	assert.Equal(t, []string{"C-2"}, p.values(t, p.orders, "orders", "customer_code"))
+	assert.Equal(t, []string{"second"}, p.values(t, p.orders, "lines", "label"), "the line now another order's is kept")
+	assert.Equal(t, []string{"Ada Again"}, p.values(t, p.peer, "customers", "full_name"), "the customer now in another region is kept")
+}
+
+// A record named by a variant of its id that the engine finds, comparing ids
+// without regard to case, takes its related records with it.
+func TestExternalCascade_RecordNamedByACaseVariantOfItsID(t *testing.T) {
+	p := newCascadePair(t)
+	p.insert(t, p.peer, "customers", map[string]interface{}{"code": "C-1", "region": "north", "full_name": "Ada"})
+	order := p.insert(t, p.orders, "orders", map[string]interface{}{"customer_code": "C-1", "region": "north"})
+	p.insert(t, p.orders, "lines", map[string]interface{}{"order_code": "C-1", "label": "first"})
+	variant := strings.ToUpper(order)
+	if variant == order {
+		variant = strings.ToLower(order)
+	}
+	require.NotEqual(t, order, variant, "the ids have letters")
+
+	err := p.orders.DeleteRow(p.ctx, "orders", variant)
+	if errors.Is(err, data.ErrRecordNotFound) {
+		t.Skip("this engine compares ids with their case")
+	}
+	require.NoError(t, err)
+	assert.Empty(t, p.values(t, p.orders, "orders", "customer_code"))
+	assert.Empty(t, p.values(t, p.orders, "lines", "label"))
+	assert.Empty(t, p.values(t, p.peer, "customers", "full_name"))
 }

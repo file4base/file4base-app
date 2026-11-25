@@ -4307,10 +4307,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     return const GoToRecordOutcome(moved: false, atBoundary: true, errorCode: 101);
   }
 
+  /// Deletes nothing: this browser has no active portal row (Go to Portal Row
+  /// is not supported), and the current record is the portal's parent, so
+  /// deleting it here would delete the parent and cascade. Portal rows are
+  /// deleted from their own delete control, through the portal target's
+  /// client. Returns FileMaker's 101 (record is missing).
   @override
-  Future<void> actionDeletePortalRow({required bool confirm}) async {
-    await actionDeleteRecord(confirm: confirm);
-  }
+  Future<int> actionDeletePortalRow({required bool confirm}) async => 101;
 
   @override
   Future<bool> actionReplaceFieldContents({

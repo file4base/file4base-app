@@ -185,6 +185,14 @@ func TestAPI_ExternalWritesAsTheLinkedAccount(t *testing.T) {
 		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 		assert.Equal(t, "C-2", row["code"])
 
+		// Allow-creation is on the customers' side: a customer creates no order.
+		labels := p.orderLabels(t)
+		rec = h.do(http.MethodPost, occRecord+ada+"/related?relationship="+p.relationship, token,
+			map[string]string{"label": "Backwards"}, nil)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "create the record from")
+		assert.Equal(t, labels, p.orderLabels(t))
+
 		// An empty key relates to nothing, so there is nothing to create.
 		rec = h.do(http.MethodPost, "/api/v1/data/orders/"+p.orderIDs["empty"]+"/related?relationship="+p.relationship,
 			token, map[string]string{"full_name": "Nobody"}, nil)

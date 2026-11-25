@@ -871,7 +871,7 @@ func (h *DataHandler) listRelated(w http.ResponseWriter, r *http.Request, svc *d
 	occurrence := r.URL.Query().Get("occurrence")
 
 	// The caller needs access to the table the records come from as well.
-	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, false) {
+	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, false, "") {
 		return
 	}
 
@@ -934,7 +934,7 @@ func (h *DataHandler) listRelatedBatch(w http.ResponseWriter, r *http.Request, s
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Batch Too Large", data.ErrBatchTooLarge.Error())
 		return
 	}
-	if !h.authorizeRelatedFrom(w, r, svc, from, body.Relationship, body.Occurrence, false) {
+	if !h.authorizeRelatedFrom(w, r, svc, from, body.Relationship, body.Occurrence, false, "") {
 		return
 	}
 	records, err := svc.RelatedRowsBatch(r.Context(), from, body.RecordIDs, body.Relationship, body.Occurrence,
@@ -974,9 +974,9 @@ func (h *DataHandler) createRelated(w http.ResponseWriter, r *http.Request, svc 
 	}
 	occurrence := r.URL.Query().Get("occurrence")
 
-	// The record is written to the related table, so that is where write
-	// access has to hold.
-	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, true) {
+	// The record is created in the related table, so that is where the
+	// create privilege has to hold.
+	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, true, data.ActionCreate) {
 		return
 	}
 
@@ -1034,12 +1034,12 @@ func (h *DataHandler) authorizeRelated(
 	w http.ResponseWriter, r *http.Request, svc *data.Service,
 	table, relationship, occurrence string, write bool,
 ) bool {
-	return h.authorizeRelatedFrom(w, r, svc, data.LocalOrigin(table), relationship, occurrence, write)
+	return h.authorizeRelatedFrom(w, r, svc, data.LocalOrigin(table), relationship, occurrence, write, "")
 }
 
 func (h *DataHandler) authorizeRelatedFrom(
 	w http.ResponseWriter, r *http.Request, svc *data.Service,
-	from data.Origin, relationship, occurrence string, write bool,
+	from data.Origin, relationship, occurrence string, write bool, action string,
 ) bool {
 	rel, err := svc.Relationship(r.Context(), relationship)
 	if err != nil {
@@ -1057,7 +1057,7 @@ func (h *DataHandler) authorizeRelatedFrom(
 		// that account's access, never this one's (#107).
 		return true
 	}
-	_, ok := h.authorize(w, r, target.TableName, write)
+	_, ok := h.authorizeAction(w, r, target.TableName, write, action)
 	return ok
 }
 

@@ -345,6 +345,32 @@ func TestCreateRelatedRow(t *testing.T) {
 			f.relationship, f.customersOccurrence, map[string]interface{}{"last_name": "Orphan"})
 		assert.ErrorIs(t, err, data.ErrNoMatchValue)
 	})
+
+	t.Run("a record of the right side creates nothing on the left", func(t *testing.T) {
+		_, err := f.dataSvc.CreateRelatedRow(ctx, f.customers, fmt.Sprint(created["id"]),
+			f.relationship, f.companiesOccurrence, map[string]interface{}{"company_address": "Backwards"})
+		require.ErrorIs(t, err, data.ErrCreationNotAllowed)
+		assert.ErrorContains(t, err, "create the record from")
+		companies, err := f.dataSvc.ListRows(ctx, f.companies, data.QueryOptions{})
+		require.NoError(t, err)
+		assert.Len(t, companies, 2, "no company was created")
+	})
+
+	t.Run("an account that may edit the related table but not create there creates nothing", func(t *testing.T) {
+		svc := data.NewService(driver).WithWriteAccess(func(_ context.Context, table, action string) error {
+			if action == data.ActionCreate {
+				return &data.PermissionError{Account: "editor", Table: table, Action: action}
+			}
+			return nil
+		})
+		_, err := svc.CreateRelatedRow(ctx, f.companies, company["id"].(string),
+			f.relationship, f.customersOccurrence, map[string]interface{}{"last_name": "Refused"})
+		require.ErrorIs(t, err, data.ErrNoPermission)
+		rows, err := f.dataSvc.RelatedRows(ctx, f.companies, company["id"].(string),
+			f.relationship, f.customersOccurrence, data.QueryOptions{})
+		require.NoError(t, err)
+		assert.Len(t, rows, 2, "only the two created above")
+	})
 }
 
 // "Delete related records in this table when a record is deleted in the other

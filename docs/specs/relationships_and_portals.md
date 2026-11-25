@@ -22,7 +22,7 @@ options a side to act on:
 
 | Option | Means |
 | --- | --- |
-| Allow creation | A record may be created on the **right** side through this relationship. |
+| Allow creation | A record may be created on the **right** side through this relationship, from a **left** record, by an account with the create privilege on the right table; never on the left side from a right record. |
 | Delete related records | Deleting a **left** record deletes the **right** records that match it. |
 | Sort related records | The order the **right** side's records come back in. |
 
@@ -358,7 +358,10 @@ never this session's.
   another's committed, the request answers `500` with `code`
   `partial_delete`, `partial: true` and the solutions whose records are
   already gone (`committed`). Deleting the record again once the cause is
-  fixed finishes the cascade.
+  fixed finishes the cascade, but the re-run may leave records reachable only
+  through the committed part, whose parents are already gone. Each related
+  record is deleted only while its match fields still hold the key of a
+  record being deleted: one moved to another record after the plan is kept.
 - Other solutions' clients are told of the change, as for a write made there.
 
 Not done across solutions yet, refused with `424` and `reason` `missing`: a

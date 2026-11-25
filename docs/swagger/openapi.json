@@ -7290,7 +7290,7 @@
         }
       },
       "PartialDelete": {
-        "description": "A cascading delete deleted related records in another solution, in a transaction of its own, then failed in this one, whose records are still there (#107). Deleting again once the cause is fixed finishes it.",
+        "description": "A cascading delete deleted related records in another solution, in a transaction of its own, then failed in this one, whose records are still there (#107). Deleting again once the cause is fixed finishes it, but the re-run may leave records reachable only through the committed part.",
         "content": {
           "application/problem+json": {
             "schema": {

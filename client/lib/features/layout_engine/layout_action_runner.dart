@@ -541,12 +541,10 @@ class LayoutActionRunner {
           await host.actionDeleteRecord(confirm: boolParam('dialog', defaultValue: true));
         }
       case 'delete_portal_row':
-        session.lastError = 0;
-        if (ext != null) {
-          await ext.actionDeletePortalRow(confirm: boolParam('dialog', defaultValue: true));
-        } else {
-          await host.actionDeleteRecord(confirm: boolParam('dialog', defaultValue: true));
-        }
+        // Never fall back to Delete Record: the current record is the
+        // portal's parent, and deleting it would cascade.
+        session.lastError =
+            ext == null ? 101 : await ext.actionDeletePortalRow(confirm: boolParam('dialog', defaultValue: true));
       case 'commit_records':
         session.lastError = 0;
         if (ext != null) {

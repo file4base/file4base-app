@@ -75,7 +75,7 @@ A cascading delete that reached another solution deletes that solution's records
   "database": "orders_db"
 }
 ```
-`committed` are the solutions whose related records are deleted, `database` the one whose records are still there, without them. Deleting the record again once the cause is fixed finishes the cascade.
+`committed` are the solutions whose related records are deleted, `database` the one whose records are still there, without them. Deleting the record again once the cause is fixed finishes the cascade, but the re-run may leave records reachable only through the committed part: those records' parents are already gone, so the re-run no longer finds them.
 
 ---
 
@@ -464,7 +464,7 @@ A relationship is drawn from a **left** side to a **right** side, and File4Base 
 
 | Option | Acts |
 | --- | --- |
-| `allow_creation` | `POST /api/v1/data/{table}/{id}/related` creates a record on the right side, with every right-hand match field set from the left record. Without it, or when a criterion is not `=`, that request answers `403 Creation Not Allowed`. |
+| `allow_creation` | `POST /api/v1/data/{table}/{id}/related` creates a record on the right side, with every right-hand match field set from the left record; never on the left side from a right record. Without it, or when a criterion is not `=`, that request answers `403 Creation Not Allowed`. |
 | `cascade_delete` | `DELETE /api/v1/data/{table}/{id}` on a left-side record also deletes the right-side records that match it, down the whole chain. |
 | `sort_related` | The order the right side's records come back in when the caller asks for none. `asc` / `desc` mean the right field of the first criterion in that direction; anything else is read as a sort order (`last_name,-fee_paid`). Reading the relationship the other way round ignores it, since the fields it names are the right side's, and a field the side being read does not have is dropped rather than refused. |
 
@@ -572,7 +572,7 @@ Updates an existing record by primary key ID.
 ### `DELETE /api/v1/data/{table}/{id}`
 Deletes a record by primary key ID.
 
-Every relationship of the table whose `cascade_delete` is set and whose **left** side this table is takes its matching records with it, and so on down the chain; a ring of such relationships deletes each record once rather than recursing forever. This is schema-defined integrity, so it applies whatever access level the caller has on the related table. The whole cascade is worked out first and then deleted in one transaction: every record goes, or none does.
+Every relationship of the table whose `cascade_delete` is set and whose **left** side this table is takes its matching records with it, and so on down the chain; a ring of such relationships deletes each record once rather than recursing forever. This is schema-defined integrity, so it applies whatever access level the caller has on the related table. The whole cascade is worked out first and then deleted in one transaction: every record goes, or none does. Each related record is deleted only if its match fields still hold the key of a record being deleted: one moved to another record between the two steps is kept.
 
 A cascade that reaches another solution's table through an external occurrence (§ 18) follows that solution's own cascading relationships too, and is refused before anything is deleted when the account held there may not delete one of the tables it reaches there (`403`) or that solution cannot be reached (`424`). See `partial_delete` (§ Errors) for a failure after another solution's part was deleted.
 
@@ -1040,10 +1040,10 @@ Creates a record on the other side of a relationship and fills its match field f
 
 The match field belongs to the relationship: a value sent for it in the body is **overwritten** with the parent's, so a request cannot aim the new record at a different parent.
 
-The caller needs read access to `{table}` and write access to the related table. When the related table is another solution's (an external occurrence, § 18), the match values are read here and the record is created there as the account the session holds in that solution, which must be allowed to create records there (`403` otherwise, `424` when it cannot be reached).
+The caller needs read access to `{table}` and the create privilege on the related table (`403` otherwise, for a table of this solution as for another's). When the related table is another solution's (an external occurrence, § 18), the match values are read here and the record is created there as the account the session holds in that solution, which must be allowed to create records there (`403` otherwise, `424` when it cannot be reached).
 
 #### Errors
-- `403 Creation Not Allowed` — the relationship's `allow_creation` is off, or it matches with something other than `=`, in which case there is no single value to put in the new record's match field.
+- `403 Creation Not Allowed` — the relationship's `allow_creation` is off; `{table}` is its right side, not its left (allow-creation creates records of the right side from a record of the left, never the reverse); or it matches with something other than `=`, in which case there is no single value to put in the new record's match field.
 - `422 No Match Value` — the parent's match field is empty, so a new record would have nothing to be matched by.
 - `404 Relationship Not Found` — as above.
 

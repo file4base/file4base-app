@@ -915,6 +915,14 @@ func (s *Service) CreateRelatedRowFrom(
 	if !rel.AllowCreation {
 		return nil, fmt.Errorf("%w: %s", ErrCreationNotAllowed, rel.Name)
 	}
+	// Allow-creation is set on the right side, as FileMaker's on the side
+	// it acts on: a record of the left side creates there, never the reverse.
+	if target.OccurrenceID != rel.Right.OccurrenceID || source.OccurrenceID != rel.Left.OccurrenceID {
+		return nil, fmt.Errorf("%w: relationship %s creates records of %s from a record of %s, not of %s from %s: "+
+			"create the record from %s, or draw the relationship from %s to %s",
+			ErrCreationNotAllowed, rel.Name, rel.Right.OccurrenceName, rel.Left.OccurrenceName,
+			target.OccurrenceName, source.OccurrenceName, rel.Left.OccurrenceName, source.OccurrenceName, target.OccurrenceName)
+	}
 	terms, err := rel.matchTerms(source)
 	if err != nil {
 		return nil, err
@@ -929,10 +937,11 @@ func (s *Service) CreateRelatedRowFrom(
 	if err != nil {
 		return nil, err
 	}
-	if target.External != nil {
-		if err := q.dst.checkWrite(ctx, target.TableName, ActionCreate); err != nil {
-			return nil, wrapSide(target, err)
-		}
+	// The record is created where the related table is, by the account the
+	// caller writes there with: this solution's, or the one the session group
+	// holds in another (#107).
+	if err := q.dst.checkWrite(ctx, target.TableName, ActionCreate); err != nil {
+		return nil, wrapSide(target, err)
 	}
 
 	keys, err := q.src.matchValues(ctx, source.TableName, sourceColumns(q.terms), recordID)
