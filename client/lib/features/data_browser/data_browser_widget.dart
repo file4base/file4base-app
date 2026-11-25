@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/core/widgets/validation_override.dart';
 import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/data_browser/external_layout.dart';
 import 'package:file4base_client/features/data_browser/mail_compose_dialog.dart';
@@ -170,6 +171,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// Runs a write, signing in to the solution of an external occurrence and
   /// trying once more when the session is not signed in to it (#107).
   Future<T> _write<T>(Future<T> Function() call) => _externalAccess.retryingSignIn(context, call);
+
+  /// A record write: one of data entry asks the person whether to keep
+  /// values breaking a validation rule that allows it, and sends it again
+  /// with the override if they do; a script step's is refused as it is.
+  Future<T> _entryWrite<T>(
+    Future<T> Function({required bool overrideValidation}) call, {
+    required bool script,
+  }) {
+    if (script) return _write(() => call(overrideValidation: false));
+    return writeAllowingOverride(context, ({required overrideValidation}) => _write(() => call(overrideValidation: overrideValidation)));
+  }
 
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
@@ -1284,7 +1296,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     _records[_currentIndex][colName] = valueToSave;
     if (mounted) setState(() => _fieldSaving[colName] = true);
     try {
-      await _write(() => widget.apiClient.updateRow(widget.table.name, id, {colName: valueToSave}, script: script));
+      await _entryWrite(
+        script: script,
+        ({required overrideValidation}) => widget.apiClient.updateRow(
+          widget.table.name,
+          id,
+          {colName: valueToSave},
+          script: script,
+          overrideValidation: overrideValidation,
+        ),
+      );
       // The field now holds what was typed; the server dropped its original
       // text, and so does the record in hand.
       final texts = record[sourceTextKey];
@@ -1416,7 +1437,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     };
     try {
       final script = _scriptSetDrafts.contains(draft);
-      final created = await _write(() => widget.apiClient.insertRow(widget.table.name, values, script: script));
+      final created = await _entryWrite(
+        script: script,
+        ({required overrideValidation}) => widget.apiClient.insertRow(
+          widget.table.name,
+          values,
+          script: script,
+          overrideValidation: overrideValidation,
+        ),
+      );
       _scriptSetDrafts.remove(draft);
       // Committing a new record loads no other record.
       _loadedRecordKey = created['id']?.toString();
@@ -4512,17 +4541,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       };
 
   @override
-  Future<String?> actionEvaluateCalculation(String expression) async {
-    final recordId = _currentRecord['id']?.toString() ?? '';
-    if (recordId.isEmpty || expression.trim().isEmpty) return null;
+  Future<EvaluationModel?> actionEvaluateInScript(
+    String expression, {
+    Map<String, String> variables = const {},
+    Map<String, Object?> get = const {},
+  }) async {
+    final recordId = _records.isEmpty ? '' : (_currentRecord['id']?.toString() ?? '');
     final results = await widget.apiClient.evaluateExpressions(
       widget.table.name,
       expressions: [expression],
-      recordId: recordId,
+      recordId: recordId.isEmpty ? null : recordId,
+      variables: variables,
+      get: get,
     );
-    final result = results.firstOrNull;
-    if (result == null || result.error.isNotEmpty || result.unknownFields.isNotEmpty) return null;
-    return result.text;
+    return results.firstOrNull;
   }
 
   /// What a field's value looks like inside merge text.

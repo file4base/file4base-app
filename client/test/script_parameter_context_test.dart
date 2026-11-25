@@ -33,9 +33,15 @@ class _ContextHost extends _Host implements CalculationContextHost {
   Set<String> get actionOwnOccurrenceNames => {'plants'};
 
   @override
-  Future<String?> actionEvaluateCalculation(String expression) async {
+  Future<EvaluationModel?> actionEvaluateInScript(
+    String expression, {
+    Map<String, String> variables = const {},
+    Map<String, Object?> get = const {},
+  }) async {
     evaluated.add(expression);
-    return expression.trim() == 'Supplier::name' ? 'related' : null;
+    return expression.trim() == 'Supplier::name'
+        ? EvaluationModel(expression: expression, text: 'related')
+        : EvaluationModel(expression: expression, error: 'Elsewhere::name is not a field of Plants');
   }
 }
 

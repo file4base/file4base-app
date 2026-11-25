@@ -56,7 +56,7 @@ class _Api extends ApiClient {
 
   @override
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data,
-      {bool script = false}) async {
+      {bool script = false, bool overrideValidation = false}) async {
     if (id == rejectId) {
       throw ApiException(statusCode: 422, title: 'Validation Failed', detail: 'code must be unique');
     }

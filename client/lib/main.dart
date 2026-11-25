@@ -36,6 +36,7 @@ import 'package:file4base_client/features/preferences/preferences_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_database_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_file_references_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_script_triggers_dialog.dart';
+import 'package:file4base_client/features/schema_manager/manage_custom_functions_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_value_lists_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
@@ -484,6 +485,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         subtitle: 'Reusable value lists',
         icon: Icons.list_alt_outlined,
         onSelected: () => unawaited(ManageValueListsDialog.show(context)),
+      ),
+      ServerToolsManagementAction(
+        label: 'Custom Functions',
+        subtitle: 'Reusable formulas',
+        icon: Icons.functions,
+        onSelected: () => unawaited(ManageCustomFunctionsDialog.show(context)),
       ),
       ServerToolsManagementAction(
         label: 'File References',
@@ -2529,6 +2536,9 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onManageValueLists: _currentUser == null
                       ? null
                       : () => ManageValueListsDialog.show(context),
+                  onManageCustomFunctions: _currentUser == null
+                      ? null
+                      : () => ManageCustomFunctionsDialog.show(context),
                   onManageFileReferences: _currentUser == null ? null : _handleManageFileReferences,
                   onManageScriptTriggers: _currentUser == null ? null : _handleManageScriptTriggers,
                   onPerformFind: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.performFind(),

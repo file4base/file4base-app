@@ -105,10 +105,18 @@ abstract class CalculationContextHost {
   /// its table occurrence and its table — lower-cased.
   Set<String> get actionOwnOccurrenceNames;
 
-  /// [expression] evaluated by the server against the record in hand, related
-  /// fields read through the relationships, as a calculation field is. Null
-  /// when it cannot be: no record, or an expression that does not evaluate.
-  Future<String?> actionEvaluateCalculation(String expression);
+  /// [expression] evaluated by the server, with the solution's custom
+  /// functions, against the record in hand when there is one, related fields
+  /// read through the relationships, as a calculation field is: a script
+  /// step's formula the runner cannot evaluate itself. [variables] are the
+  /// script's `$` and `$$` variables, [get] the answers of the Get functions
+  /// only the client knows. Null when the window has no table to evaluate it
+  /// in.
+  Future<EvaluationModel?> actionEvaluateInScript(
+    String expression, {
+    Map<String, String> variables = const {},
+    Map<String, Object?> get = const {},
+  });
 }
 
 /// A field of another table occurrence than the window's (`Occurrence::Field`).
@@ -508,7 +516,14 @@ class LayoutActionRunner {
     }
     final step = action.stepType;
     if (step == null) return const LayoutActionResult.stopped('This button has no step selected.');
-    return runStep(step, action.params, depth: 0);
+    final vars = <String, String>{};
+    final failure = await prepareStepFormulas(step, action.params, vars);
+    if (failure != null) return LayoutActionResult.stopped(failure);
+    try {
+      return await runStep(step, action.params, depth: 0, localVars: vars);
+    } finally {
+      _serverAnswers.clear();
+    }
   }
 
   Future<LayoutActionResult> _performScript({
@@ -2407,21 +2422,156 @@ class LayoutActionRunner {
   }
 
   /// A script parameter's value: evaluated here when it can be, otherwise —
-  /// a related field, a function — by the server in the record's context,
-  /// as a calculation field is. Null when neither can evaluate it. A
-  /// parameter reading a variable is evaluated here only, as the server does
-  /// not have the script's variables.
+  /// a related field, a custom function, any other function — by the server
+  /// in the record's context, with the script's variables. Null when neither
+  /// can evaluate it.
   Future<String?> evaluateParameter(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) async {
     final local = resolveValue(raw, localVars, callContext: callContext);
     if (local != null) return local;
-    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
-    if (context == null || raw.contains(r'$')) return null;
     try {
-      return await context.actionEvaluateCalculation(raw);
+      final evaluation = await _evaluateOnServer(raw, localVars, callContext: callContext);
+      if (evaluation != null && evaluation.error.isEmpty && evaluation.unknownFields.isEmpty) {
+        _mergeVariables(evaluation.variables, localVars);
+        return evaluation.text;
+      }
     } on Object catch (_) {
-      return null;
+      // Not evaluable: the caller says so.
+    }
+    return null;
+  }
+
+  /// Answers of the server, by formula text, to the formulas of the step
+  /// being run that this runner cannot evaluate itself. [prepareStepFormulas]
+  /// fills it before the step runs; it is cleared once the step has run.
+  final Map<String, String> _serverAnswers = <String, String>{};
+
+  /// The Get functions only the client can answer, sent with a formula the
+  /// server evaluates for a script.
+  static const _clientGetSelectors = <String>[
+    'ScriptParameter',
+    'ScriptResult',
+    'ScriptName',
+    'LastError',
+    'LastMessageChoice',
+    'LayoutName',
+    'WindowName',
+    'ActiveFieldName',
+    'ActiveLayoutObjectName',
+    'FoundCount',
+    'RecordNumber',
+    'TotalRecordCount',
+    'AccountName',
+  ];
+
+  /// [formula] evaluated by the server with the script's variables and the
+  /// client's Get answers, in one request. Null when the host has no table
+  /// to evaluate it in.
+  Future<EvaluationModel?> _evaluateOnServer(
+    String formula,
+    Map<String, String> localVars, {
+    ScriptCallContext? callContext,
+  }) async {
+    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+    if (context == null || formula.trim().isEmpty) return null;
+    final variables = <String, String>{
+      for (final e in globalVariables.entries)
+        if (!e.key.contains('[')) e.key: e.value,
+      for (final e in localVars.entries)
+        if (!e.key.contains('[')) e.key: e.value,
+    };
+    final get = <String, Object?>{
+      for (final selector in _clientGetSelectors)
+        selector: resolveValue('Get ( $selector )', localVars, callContext: callContext) ?? '',
+    };
+    return context.actionEvaluateInScript(formula, variables: variables, get: get);
+  }
+
+  /// Keeps the variables a formula the server evaluated set with Let.
+  void _mergeVariables(Map<String, String> variables, Map<String, String> localVars) {
+    for (final e in variables.entries) {
+      _setVariable(e.key, e.value, localVars);
     }
   }
+
+  /// The formulas of a step: the ones its options say are calculations,
+  /// and the ones that are always calculations for that step.
+  List<({String formula, bool condition})> stepFormulas(String stepType, Map<String, dynamic> params) {
+    final norm = normalizeStepType(stepType);
+    final out = <({String formula, bool condition})>[];
+    void add(Object? raw, {bool condition = false}) {
+      final formula = raw?.toString().trim() ?? '';
+      if (formula.isNotEmpty && !out.any((f) => f.formula == formula && f.condition == condition)) {
+        out.add((formula: formula, condition: condition));
+      }
+    }
+
+    switch (norm) {
+      case 'if':
+      case 'else_if':
+      case 'exit_loop_if':
+        add(extractCondition(params), condition: true);
+      case 'exit_script':
+        add(params['result'] ?? params['expression']);
+      case 'set_variable':
+        final name = (params['name'] ?? params['variable'])?.toString().trim() ?? '';
+        if (name.isNotEmpty) add(params['value'] ?? params['calc'] ?? params['formula'] ?? params['text']);
+      case 'insert_calculated_result':
+        add(params['value'] ?? params['expression']);
+      case 'go_to_layout':
+        add(params['layout_calculation'] ?? params['expression']);
+      case 'replace_field_contents':
+        // Evaluated for each record of the found set, with that record in
+        // hand: the runner's own evaluator only.
+        return out;
+    }
+    add(params['record_calculation']);
+    for (final key in params.keys) {
+      if (key.endsWith('_is_calculation') && params[key] == true) {
+        add(params[key.substring(0, key.length - '_is_calculation'.length)]);
+      }
+    }
+    return out;
+  }
+
+  /// Has the server evaluate the formulas of the step about to run that
+  /// this runner cannot, each in one request with the script's variables,
+  /// so the step finds their values. Returns why the step must stop — the
+  /// step and the formula named — or null.
+  Future<String?> prepareStepFormulas(
+    String stepType,
+    Map<String, dynamic> params,
+    Map<String, String> localVars, {
+    ScriptCallContext? callContext,
+  }) async {
+    _serverAnswers.clear();
+    if (host is! CalculationContextHost) return null;
+    for (final f in stepFormulas(stepType, params)) {
+      final local = f.condition
+          ? evaluateCondition(f.formula, localVars, callContext: callContext) != null
+          : resolveValue(f.formula, localVars, callContext: callContext) != null;
+      if (local) continue;
+      EvaluationModel? evaluation;
+      try {
+        evaluation = await _evaluateOnServer(f.formula, localVars, callContext: callContext);
+      } on Object catch (e) {
+        return '$stepType: the formula "${f.formula}" could not be evaluated: $e';
+      }
+      if (evaluation == null) return null;
+      if (evaluation.error.isNotEmpty) {
+        return '$stepType: the formula "${f.formula}" could not be evaluated: ${evaluation.error}';
+      }
+      if (evaluation.unknownFields.isNotEmpty) {
+        return '$stepType: the formula "${f.formula}" reads fields this table does not have: '
+            '${evaluation.unknownFields.join(', ')}';
+      }
+      _mergeVariables(evaluation.variables, localVars);
+      _serverAnswers[f.formula] = evaluation.text;
+    }
+    return null;
+  }
+
+  /// Forgets the answers of the step that just ran.
+  void clearStepFormulas() => _serverAnswers.clear();
 
   String _resolveExpressionValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) =>
       resolveValue(raw, localVars, callContext: callContext) ?? '';
@@ -2438,6 +2588,8 @@ class LayoutActionRunner {
   String? resolveValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     final expr = raw.trim();
     if (expr.isEmpty) return '';
+    final answer = _serverAnswers[expr];
+    if (answer != null) return answer;
     if (expr.startsWith('(') && expr.endsWith(')') && _hasMatchingOuterParens(expr)) {
       return resolveValue(expr.substring(1, expr.length - 1), localVars, callContext: callContext);
     }
@@ -2676,6 +2828,13 @@ class LayoutActionRunner {
   bool? evaluateCondition(String rawExpr, Map<String, String> localVars, {ScriptCallContext? callContext}) {
     var expr = rawExpr.trim();
     if (expr.isEmpty) return true;
+    final answer = _serverAnswers[expr];
+    if (answer != null) {
+      // A condition is true when it comes to a number other than zero, as
+      // in FileMaker.
+      final n = num.tryParse(answer.trim());
+      return n != null && n != 0;
+    }
     while (expr.startsWith('(') && expr.endsWith(')')) {
       expr = expr.substring(1, expr.length - 1).trim();
     }
@@ -2865,7 +3024,8 @@ class ScriptExecution {
           final parentActive = isExecuting;
           var taken = false;
           if (parentActive) {
-            final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext);
+            final (failure, condition) = await _condition(step);
+            if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
             if (condition == null) {
               return StepOutcome(StepOutcomeKind.stopped,
                   'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -2880,7 +3040,8 @@ class ScriptExecution {
             if (!top.parentActive || top.branchTaken) {
               top.active = false;
             } else {
-              final condition = runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext);
+              final (failure, condition) = await _condition(step);
+              if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
               if (condition == null) {
                 return StepOutcome(StepOutcomeKind.stopped,
                     'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -2930,8 +3091,8 @@ class ScriptExecution {
             return const StepOutcome(StepOutcomeKind.stopped,
                 'Exit Loop If is not inside a Loop');
           }
-          final condition = runner.evaluateCondition(
-              runner.extractCondition(step.params), localVars, callContext: callContext);
+          final (failure, condition) = await _condition(step);
+          if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
           if (condition == null) {
             return StepOutcome(StepOutcomeKind.stopped,
                 'the condition ${_describeCondition(step.params)} is not one File4Base can evaluate');
@@ -2962,6 +3123,33 @@ class ScriptExecution {
     }
 
     if (norm == 'halt_script') return const StepOutcome(StepOutcomeKind.halted);
+    // The formulas the runner cannot evaluate itself are evaluated by the
+    // server, with the solution's custom functions, before the step runs.
+    final failure = await runner.prepareStepFormulas(step.stepType, step.params, localVars, callContext: callContext);
+    if (failure != null) return StepOutcome(StepOutcomeKind.stopped, failure);
+    try {
+      return await _runPrepared(step, norm);
+    } finally {
+      runner.clearStepFormulas();
+    }
+  }
+
+  /// The condition of an If, Else If or Exit Loop If step, evaluated here or
+  /// by the server: why the step must stop, or the condition (null when it
+  /// cannot be evaluated).
+  Future<(String?, bool?)> _condition(ScriptStepModel step) async {
+    final failure = await runner.prepareStepFormulas(step.stepType, step.params, localVars, callContext: callContext);
+    if (failure != null) return (failure, null);
+    try {
+      return (null, runner.evaluateCondition(runner.extractCondition(step.params), localVars, callContext: callContext));
+    } finally {
+      runner.clearStepFormulas();
+    }
+  }
+
+  /// Runs a step whose formulas [LayoutActionRunner.prepareStepFormulas]
+  /// has prepared.
+  Future<StepOutcome> _runPrepared(ScriptStepModel step, String norm) async {
     if (norm == 'exit_script') {
       if (step.params.containsKey('result') || step.params.containsKey('expression')) {
         final expression = (step.params['result'] ?? step.params['expression'])?.toString() ?? '';
