@@ -168,16 +168,10 @@ func WriteHTML(report *Report) ([]byte, error) {
 	} else {
 		b.WriteString(`<table><thead><tr><th>Name</th><th>Join</th><th>Options</th></tr></thead><tbody>` + "\n")
 		for _, rel := range report.Relationships {
-			options := []string{}
-			if rel.AllowCreation {
-				options = append(options, "records can be created through it")
-			}
-			if rel.CascadeDelete {
-				options = append(options, "deletes cascade")
-			}
-			if rel.SortRelated != "" {
-				options = append(options, "related records sorted by "+code(rel.SortRelated))
-			}
+			// Each side's options act on that side, as in FileMaker.
+			options := append(
+				sideOptions(rel.Left, rel.Right, rel.LeftAllowCreation, rel.LeftCascadeDelete, rel.LeftSortRelated),
+				sideOptions(rel.Right, rel.Left, rel.AllowCreation, rel.CascadeDelete, rel.SortRelated)...)
 			if len(options) == 0 {
 				options = append(options, "—")
 			}
@@ -523,3 +517,19 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
        background: #f2f5f8; padding: 0 .2rem; border-radius: 3px; overflow-wrap: anywhere; }
 @media print { body { margin: 0; max-width: none; } h2 { page-break-after: avoid; } table { page-break-inside: avoid; } }
 `
+
+// sideOptions describes the options set on one side of a relationship, side,
+// whose other side is other: each acts on the records of side.
+func sideOptions(side, other string, allowCreation, cascadeDelete bool, sortRelated string) []string {
+	var options []string
+	if allowCreation {
+		options = append(options, fmt.Sprintf("records of %s can be created from %s", esc(side), esc(other)))
+	}
+	if cascadeDelete {
+		options = append(options, fmt.Sprintf("deleting a record of %s deletes its records of %s", esc(other), esc(side)))
+	}
+	if sortRelated != "" {
+		options = append(options, fmt.Sprintf("records of %s sorted by %s", esc(side), code(sortRelated)))
+	}
+	return options
+}

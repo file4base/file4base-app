@@ -148,7 +148,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Sites::Code'), findsOneWidget);
-    await tester.tap(find.byType(CheckboxListTile).first);
+    await tester.tap(find.byKey(const ValueKey('relationship-right-allow-creation')));
     await tester.pump();
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();

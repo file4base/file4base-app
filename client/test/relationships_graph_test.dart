@@ -54,6 +54,9 @@ class MockApiClient extends ApiClient {
     bool allowCreation = false,
     bool cascadeDelete = false,
     String? sortRelated,
+    bool leftAllowCreation = false,
+    bool leftCascadeDelete = false,
+    String? leftSortRelated,
     List<RelationshipPredicateModel>? predicates,
   }) async {
     return RelationshipModel(
@@ -67,6 +70,9 @@ class MockApiClient extends ApiClient {
       allowCreation: allowCreation,
       cascadeDelete: cascadeDelete,
       sortRelated: sortRelated,
+      leftAllowCreation: leftAllowCreation,
+      leftCascadeDelete: leftCascadeDelete,
+      leftSortRelated: leftSortRelated,
       predicates: predicates,
     );
   }
@@ -79,6 +85,9 @@ class MockApiClient extends ApiClient {
     bool? allowCreation,
     bool? cascadeDelete,
     String? sortRelated,
+    bool? leftAllowCreation,
+    bool? leftCascadeDelete,
+    String? leftSortRelated,
     List<RelationshipPredicateModel>? predicates,
   }) async {
     return RelationshipModel(
@@ -92,6 +101,9 @@ class MockApiClient extends ApiClient {
       allowCreation: allowCreation ?? false,
       cascadeDelete: cascadeDelete ?? false,
       sortRelated: sortRelated,
+      leftAllowCreation: leftAllowCreation ?? false,
+      leftCascadeDelete: leftCascadeDelete ?? false,
+      leftSortRelated: leftSortRelated,
       predicates: predicates,
     );
   }
@@ -305,21 +317,23 @@ void main() {
       expect(find.text('CLIENTES'), findsWidgets);
       expect(find.text('clientes_FACTURAS'), findsWidgets);
       expect(find.text('='), findsWidgets);
-      // The options act on one named side, not on an unspecified "this
-      // table" in a dialog that shows two (#36).
+      // Each side's options name the side they act on, not an unspecified
+      // "this table" in a dialog that shows two (#36).
       expect(
-        find.text('Allow records to be created in "clientes_FACTURAS" through this relationship'),
+        find.text('Allow creation of records in "clientes_FACTURAS" via this relationship'),
         findsOneWidget,
       );
       expect(
-        find.text(
-            'Delete the matching records in "clientes_FACTURAS" when a record is deleted in "CLIENTES"'),
+        find.text('Delete related records in "clientes_FACTURAS" when a record is deleted in "CLIENTES"'),
         findsOneWidget,
       );
+      expect(find.text('Sort records of "clientes_FACTURAS"'), findsOneWidget);
+      expect(find.text('Allow creation of records in "CLIENTES" via this relationship'), findsOneWidget);
       expect(
-        find.text('Sort the related records of "clientes_FACTURAS" by their match field'),
+        find.text('Delete related records in "CLIENTES" when a record is deleted in "clientes_FACTURAS"'),
         findsOneWidget,
       );
+      expect(find.text('Sort records of "CLIENTES"'), findsOneWidget);
     });
   });
 

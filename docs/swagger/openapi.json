@@ -6658,11 +6658,31 @@
           },
           "allow_creation": {
             "type": "boolean",
-            "default": false
+            "default": false,
+            "description": "The right side's \"Allow creation of records in this table via this relationship\": a record of the left occurrence may create records of the right one through it."
           },
           "cascade_delete": {
             "type": "boolean",
-            "default": false
+            "default": false,
+            "description": "The right side's \"Delete related records in this table when a record is deleted in the other table\": deleting a record of the left occurrence's table deletes its related records of the right one."
+          },
+          "sort_related": {
+            "type": "string",
+            "description": "The right side's \"Sort records\": the order its records are read in from a record of the left side, as field names of the right table separated by commas, each prefixed with - to sort descending (\"asc\" and \"desc\" sort by the match field). An empty string clears it; a portal's own sort wins."
+          },
+          "left_allow_creation": {
+            "type": "boolean",
+            "default": false,
+            "description": "The left side's allow-creation: a record of the right occurrence may create records of the left one through it."
+          },
+          "left_cascade_delete": {
+            "type": "boolean",
+            "default": false,
+            "description": "The left side's cascade delete: deleting a record of the right occurrence's table deletes its related records of the left one."
+          },
+          "left_sort_related": {
+            "type": "string",
+            "description": "The left side's \"Sort records\": the order its records are read in from a record of the right side, as for sort_related."
           },
           "predicates": {
             "type": "array",
@@ -7166,6 +7186,14 @@
           },
           "occurrence": {
             "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "left",
+              "right"
+            ],
+            "description": "The end of the relationship whose records are wanted, which a relationship joining an occurrence to itself needs for its left end."
           },
           "record_ids": {
             "type": "array",

@@ -321,6 +321,7 @@ func wrapSide(side RelationSide, err error) error {
 // an occurrence of another solution's table: such a side has no local table
 // or column, but the table and field names the catalog keeps for it.
 const externalRelationshipFrom = `SELECT r.id, r.name, r.operator, r.allow_creation, r.cascade_delete, r.sort_related,
+		r.left_allow_creation, r.left_cascade_delete, r.left_sort_related,
 		lo.id, lo.name, lo.base_table_id, COALESCE(lt.name, lo.external_table, ''), COALESCE(lc.name, r.left_column_name, ''),
 		COALESCE(lf.name, ''), COALESCE(lf.database_name, ''),
 		ro.id, ro.name, ro.base_table_id, COALESCE(rt.name, ro.external_table, ''), COALESCE(rc.name, r.right_column_name, ''),
@@ -386,10 +387,12 @@ func (s *Service) externalRelationships(ctx context.Context) ([]*Relationship, e
 // nil when no side is external, or when a local side no longer resolves.
 func scanExternalRelationship(row interface{ Scan(...any) error }) (*Relationship, error) {
 	var rel Relationship
-	var sortRelated, leftBase, rightBase sql.NullString
+	var sortRelated, leftSortRelated, leftBase, rightBase sql.NullString
+	var leftAllowCreation, leftCascadeDelete sql.NullBool
 	var leftRef, leftDB, rightRef, rightDB string
 	err := row.Scan(
 		&rel.ID, &rel.Name, &rel.Operator, &rel.AllowCreation, &rel.CascadeDelete, &sortRelated,
+		&leftAllowCreation, &leftCascadeDelete, &leftSortRelated,
 		&rel.Left.OccurrenceID, &rel.Left.OccurrenceName, &leftBase, &rel.Left.TableName, &rel.Left.Column, &leftRef, &leftDB,
 		&rel.Right.OccurrenceID, &rel.Right.OccurrenceName, &rightBase, &rel.Right.TableName, &rel.Right.Column, &rightRef, &rightDB,
 	)
@@ -397,6 +400,8 @@ func scanExternalRelationship(row interface{ Scan(...any) error }) (*Relationshi
 		return nil, err
 	}
 	rel.SortRelated = sortRelated.String
+	rel.LeftAllowCreation, rel.LeftCascadeDelete, rel.LeftSortRelated =
+		leftAllowCreation.Bool, leftCascadeDelete.Bool, leftSortRelated.String
 	external := false
 	for _, end := range []struct {
 		side          *RelationSide
@@ -417,6 +422,7 @@ func scanExternalRelationship(row interface{ Scan(...any) error }) (*Relationshi
 	if !external {
 		return nil, nil
 	}
+	rel.setEnds()
 	return &rel, nil
 }
 

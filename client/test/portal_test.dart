@@ -85,6 +85,7 @@ class _RelatedApi extends ApiClient {
   Future<List<Map<String, dynamic>>> listRelatedRows(String table, String id,
       {required String relationshipId,
       String? occurrence,
+      String? side,
       List<String>? sort,
       int limit = 100,
       int offset = 0}) async {
@@ -96,6 +97,7 @@ class _RelatedApi extends ApiClient {
   Future<Map<String, dynamic>> createRelatedRow(String table, String id,
       {required String relationshipId,
       String? occurrence,
+      String? side,
       Map<String, dynamic> values = const {}}) async {
     created.add(Map.of(values));
     final row = {'id': 'new-row', 'company': 'Nordic Vault', ...values};

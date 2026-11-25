@@ -16,8 +16,11 @@ import (
 // A cascading delete (#36), across solutions (#107).
 //
 // Deleting a record deletes the records related to it through every
-// relationship of its table whose "Delete related records" option is on,
-// down the whole chain, each solution following its own relationships: a
+// relationship of its table whose other side has "Delete related records in
+// this table when a record is deleted in the other table" on — the option is
+// set per side, on the side whose records go, so a relationship cascades in
+// either direction, or both — down the whole chain, each solution following
+// its own relationships: a
 // record of another solution reached through an external occurrence is
 // deleted with the cascades of that solution's graph.
 //
@@ -205,28 +208,35 @@ func (s *Service) planDelete(ctx context.Context, tableName, id string) (*delete
 // the plan. It returns the new records, a level per table.
 func (p *deletePlan) children(ctx context.Context, lv level) ([]level, error) {
 	svc := lv.sol.svc
-	relationships, err := svc.cascadingRelationships(ctx, lv.table)
+	links, err := svc.cascadingRelationships(ctx, lv.table)
 	if err != nil {
 		return nil, err
 	}
 	var out []level
-	for _, relID := range relationships {
-		rel, err := svc.Relationship(ctx, relID)
+	for _, link := range links {
+		rel, err := svc.Relationship(ctx, link.relationship)
 		if err != nil {
 			return nil, err
 		}
-		q, err := svc.relatedQueryOf(ctx, rel, LocalOrigin(lv.table), rel.Right.OccurrenceID, QueryOptions{})
+		// The side whose option is on is the one whose records go, named by
+		// its end: a relationship joining an occurrence to itself has the
+		// same occurrence at both. No sort is applied or checked.
+		side, end := rel.Right, EndRight
+		if link.toLeft {
+			side, end = rel.Left, EndLeft
+		}
+		q, err := svc.relatedQueryOf(ctx, rel, LocalOrigin(lv.table), "", end)
 		if err != nil {
 			// A relationship pointing at a table of this solution that is no
 			// longer a user table must not make a record undeletable. One
 			// into another solution that cannot be read refuses the delete:
 			// its records cannot be known to be gone.
-			if rel.Right.External == nil && (errors.Is(err, ErrTableNotFound) || errors.Is(err, ErrUnknownField)) {
+			if side.External == nil && (errors.Is(err, ErrTableNotFound) || errors.Is(err, ErrUnknownField)) {
 				continue
 			}
 			return nil, err
 		}
-		scope := lv.sol.name + "\x00" + rel.ID + "\x00" + q.target.OccurrenceID + "\x00"
+		scope := lv.sol.name + "\x00" + rel.ID + "\x00" + string(end) + "\x00"
 		ids, steps, err := q.relatedIDs(ctx, lv.ids, func(signature string) bool {
 			if _, done := p.keys[scope+signature]; done {
 				return false

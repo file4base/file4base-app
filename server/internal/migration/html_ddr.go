@@ -455,67 +455,129 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 	for _, rm := range relAnchorRe.FindAllStringSubmatch(detailsBlock, -1) {
 		relName := cleanHTMLText(rm[1])
 		relTableHTML := rm[2]
-		var leftOcc, leftField, rightOcc, rightField string
-		allowCreate := false
-		cascadeDelete := false
+		var leftOcc, rightOcc string
+		// Each "Field" row is a criterion: the left field, the operator in
+		// the middle cell and the right field. A row with no title right
+		// after one is the next criterion of the same relationship.
+		var criteria []htmlCriterion
+		inCriteria := false
+		// The report gives each side's options in that side's column, as
+		// FileMaker sets them: the second cell is the left table's, the
+		// fourth the right table's, each acting on the records of its own
+		// table. They are never merged: a left table's "delete related
+		// records in this table" read as the right table's would delete a
+		// parent with its child.
+		var left, right struct {
+			create, purge bool
+			sort          string // raw cell, read once the tables are known
+		}
+		// A report that lists the options without saying whose they are
+		// (a "Create" or "Delete" row of three cells) leaves the side to
+		// guess.
+		unsidedCreate, unsidedDelete := false, false
+		var unreadable []string
 
 		for _, tr := range reHTMLTableRow.FindAllStringSubmatch(relTableHTML, -1) {
 			cells := reHTMLTableCell.FindAllStringSubmatch(tr[1], -1)
 			if len(cells) >= 4 {
 				rowTitle := strings.ToLower(cleanHTMLText(cells[0][1]))
 				c1 := cleanHTMLText(cells[1][1])
+				c2 := cleanHTMLText(cells[2][1])
 				c3 := cleanHTMLText(cells[3][1])
+				isCriterion := rowTitle == "field" || (rowTitle == "" && inCriteria && (c1 != "" || c3 != ""))
+				inCriteria = isCriterion
 				switch {
+				case isCriterion:
+					criteria = append(criteria, htmlCriterion{leftField: c1, op: c2, rightField: c3})
 				case rowTitle == "table occurrence":
 					leftOcc = c1
 					rightOcc = c3
-				case rowTitle == "field":
-					leftField = c1
-					rightField = c3
 				case strings.Contains(rowTitle, "allow creation"):
-					if strings.EqualFold(c1, "On") || strings.EqualFold(c1, "Yes") || strings.EqualFold(c3, "On") || strings.EqualFold(c3, "Yes") {
-						allowCreate = true
-					}
+					left.create, right.create = htmlOptionOn(c1), htmlOptionOn(c3)
 				case strings.Contains(rowTitle, "delete related"):
-					if strings.EqualFold(c1, "On") || strings.EqualFold(c1, "Yes") || strings.EqualFold(c3, "On") || strings.EqualFold(c3, "Yes") {
-						cascadeDelete = true
-					}
+					left.purge, right.purge = htmlOptionOn(c1), htmlOptionOn(c3)
+				case strings.HasPrefix(rowTitle, "sort records"):
+					left.sort, right.sort = cells[1][1], cells[3][1]
 				}
 			} else if len(cells) >= 3 {
 				c1 := cleanHTMLText(cells[1][1])
 				c2 := cleanHTMLText(cells[2][1])
-				if strings.Contains(c2, "::") && strings.Contains(c2, "=") {
-					parts := strings.SplitN(c2, "=", 2)
-					if len(parts) == 2 {
-						leftOcc, leftField = splitQualifiedField(parts[0])
-						rightOcc, rightField = splitQualifiedField(parts[1])
-					}
+				if m := matchHTMLPredicate(c2); m != nil {
+					var c htmlCriterion
+					leftOcc, c.leftField = splitQualifiedField(m[1])
+					c.op = m[2]
+					rightOcc, c.rightField = splitQualifiedField(m[3])
+					criteria = append(criteria, c)
+				} else if strings.Count(c2, "::") >= 2 {
+					// Two fields with no operator this reader can tell
+					// apart: refused rather than read as =.
+					unreadable = append(unreadable, c2)
 				}
 				if strings.EqualFold(c1, "Create") && strings.EqualFold(c2, "Yes") {
-					allowCreate = true
+					unsidedCreate = true
 				}
 				if strings.EqualFold(c1, "Delete") && strings.EqualFold(c2, "Yes") {
-					cascadeDelete = true
+					unsidedDelete = true
 				}
 			}
 		}
-		if leftOcc == "" || rightOcc == "" || leftField == "" || rightField == "" {
+		if len(unreadable) > 0 {
+			addReportItem(report, ReportItem{
+				Category:   CategoryRejected,
+				Domain:     "relationship",
+				SourceName: relName,
+				Detail:     fmt.Sprintf("Unsupported join operator (%s)", strings.Join(unreadable, ", ")),
+			})
 			continue
 		}
+		if leftOcc == "" || rightOcc == "" || len(criteria) == 0 {
+			continue
+		}
+		// Allowing creation on the side drawn second is what such a report
+		// has always been read as, and it creates nothing by itself. A
+		// delete is not guessed: on the wrong side it deletes the other way.
+		right.create = right.create || unsidedCreate
 
 		leftOccID := occIDByName[strings.ToLower(leftOcc)]
 		rightOccID := occIDByName[strings.ToLower(rightOcc)]
 		leftTbl := occTableByName[strings.ToLower(leftOcc)]
 		rightTbl := occTableByName[strings.ToLower(rightOcc)]
-		leftColID := colIDByTableCol[leftTbl+"."+sanitizeIdentifier(leftField)]
-		rightColID := colIDByTableCol[rightTbl+"."+sanitizeIdentifier(rightField)]
-
-		if leftOccID == "" || rightOccID == "" || leftColID == "" || rightColID == "" {
+		// Every criterion is kept, with its own operator: a relationship
+		// missing one, or read with = in place of an operator that is not
+		// known, would relate (and cascade deletes to) records the source
+		// never related, so it is refused whole instead.
+		var predicates []schema.BundlePredicate
+		var described, unresolved, unsupported []string
+		for _, c := range criteria {
+			op, known := normalizeRelOperator(c.op)
+			if !known || strings.TrimSpace(c.op) == "" {
+				unsupported = append(unsupported, fmt.Sprintf("%s::%s %q %s::%s", leftOcc, c.leftField, c.op, rightOcc, c.rightField))
+				continue
+			}
+			text := fmt.Sprintf("%s.%s %s %s.%s", leftOcc, c.leftField, op, rightOcc, c.rightField)
+			leftColID := colIDByTableCol[leftTbl+"."+sanitizeIdentifier(c.leftField)]
+			rightColID := colIDByTableCol[rightTbl+"."+sanitizeIdentifier(c.rightField)]
+			if leftOccID == "" || rightOccID == "" || leftColID == "" || rightColID == "" {
+				unresolved = append(unresolved, text)
+				continue
+			}
+			described = append(described, text)
+			predicates = append(predicates, schema.BundlePredicate{LeftColumnID: leftColID, Operator: op, RightColumnID: rightColID})
+		}
+		if len(unsupported) > 0 || len(unresolved) > 0 {
+			var reasons []string
+			if len(unsupported) > 0 {
+				reasons = append(reasons, fmt.Sprintf("Unsupported join operator in %d of its %d criteria (%s)",
+					len(unsupported), len(criteria), strings.Join(unsupported, ", ")))
+			}
+			if len(unresolved) > 0 {
+				reasons = append(reasons, fmt.Sprintf("Unresolvable join endpoints (%s)", strings.Join(unresolved, ", ")))
+			}
 			addReportItem(report, ReportItem{
 				Category:   CategoryRejected,
 				Domain:     "relationship",
 				SourceName: relName,
-				Detail:     fmt.Sprintf("Unresolvable join endpoints (%s::%s = %s::%s)", leftOcc, leftField, rightOcc, rightField),
+				Detail:     strings.Join(reasons, "; "),
 			})
 			continue
 		}
@@ -530,24 +592,66 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		if _, exists := relIDByOccurrence[rLow]; !exists {
 			relIDByOccurrence[rLow] = relID
 		}
-		bundle.Relationships = append(bundle.Relationships, schema.BundleRelationship{
+		rel := schema.BundleRelationship{
 			ID:                relID,
 			Name:              relName,
 			LeftOccurrenceID:  leftOccID,
-			LeftColumnID:      leftColID,
 			RightOccurrenceID: rightOccID,
-			RightColumnID:     rightColID,
-			Operator:          "=",
-			AllowCreation:     allowCreate,
-			CascadeDelete:     cascadeDelete,
-		})
+			AllowCreation:     right.create,
+			CascadeDelete:     right.purge,
+			LeftAllowCreation: left.create,
+			LeftCascadeDelete: left.purge,
+		}
+		rel.WithPredicates(predicates)
+		var notes []ReportItem
+		for _, side := range []struct {
+			occurrence, table, cell string
+			sort                    *string
+		}{
+			{leftOcc, leftTbl, left.sort, &rel.LeftSortRelated},
+			{rightOcc, rightTbl, right.sort, &rel.SortRelated},
+		} {
+			table := side.table
+			spec, dropped := htmlSideSort(side.cell, side.occurrence, func(field string) string {
+				name := sanitizeIdentifier(field)
+				if colIDByTableCol[table+"."+name] == "" {
+					return ""
+				}
+				return name
+			})
+			*side.sort = spec
+			if len(dropped) > 0 {
+				notes = append(notes, ReportItem{
+					Category:   CategoryTranslated,
+					Domain:     "relationship",
+					SourceName: relName,
+					TargetName: relName,
+					Detail:     fmt.Sprintf("Sort records of %s: %s", side.occurrence, strings.Join(dropped, "; ")),
+				})
+			}
+		}
+		if unsidedDelete {
+			notes = append(notes, ReportItem{
+				Category:   CategoryManualActionRequired,
+				Domain:     "relationship",
+				SourceName: relName,
+				TargetName: relName,
+				Detail: fmt.Sprintf("The report deletes related records through this relationship without saying on which side; "+
+					"no delete cascades through it until \"Delete related records\" is turned on for %s or %s in Edit Relationship",
+					leftOcc, rightOcc),
+			})
+		}
+		bundle.Relationships = append(bundle.Relationships, rel)
 		addReportItem(report, ReportItem{
 			Category:   CategoryPreserved,
 			Domain:     "relationship",
 			SourceName: relName,
 			TargetName: relName,
-			Detail:     fmt.Sprintf("%s.%s = %s.%s", leftOcc, leftField, rightOcc, rightField),
+			Detail:     strings.Join(described, " AND ") + relationshipOptionsDetail(leftOcc, rightOcc, &rel),
 		})
+		for _, item := range notes {
+			addReportItem(report, item)
+		}
 	}
 	report.Counts.Relationships = len(bundle.Relationships)
 
@@ -2164,6 +2268,48 @@ func sectionBetween(s, startMarker, endMarker string) string {
 	return rest
 }
 
+// htmlOptionOn reads a relationship option cell of an HTML report.
+func htmlOptionOn(cell string) bool {
+	return strings.EqualFold(cell, "On") || strings.EqualFold(cell, "Yes")
+}
+
+// reHTMLSortLevel is one field of a "Sort records" cell: its name, then the
+// list of its options, which says the order.
+var reHTMLSortLevel = regexp.MustCompile(`(?is)Field:\s*(.*?)</p>\s*<ul>(.*?)</ul>`)
+
+// htmlSideSort reads the "Sort records" cell of one side of a relationship in
+// an HTML report — "On", then each field with its order — as a sort order of
+// the side's fields, like relationshipSideSort does for an XML document.
+func htmlSideSort(cell, occurrence string, column func(field string) string) (string, []string) {
+	if !strings.HasPrefix(strings.ToLower(cleanHTMLText(cell)), "on") {
+		return "", nil
+	}
+	var levels, notes []string
+	for _, m := range reHTMLSortLevel.FindAllStringSubmatch(cell, -1) {
+		field := cleanHTMLText(m[1])
+		if owner, name, qualified := strings.Cut(field, "::"); qualified {
+			if !strings.EqualFold(strings.TrimSpace(owner), occurrence) {
+				notes = append(notes, fmt.Sprintf("%s is a field of another occurrence, which is not kept", field))
+				continue
+			}
+			field = strings.TrimSpace(name)
+		}
+		name := column(field)
+		if name == "" {
+			notes = append(notes, fmt.Sprintf("%s is not a migrated field of %s, which is not kept", field, occurrence))
+			continue
+		}
+		switch options := strings.ToLower(cleanHTMLText(m[2])); {
+		case strings.Contains(options, "descending"):
+			name = "-" + name
+		case strings.Contains(options, "custom") || strings.Contains(options, "value list"):
+			notes = append(notes, fmt.Sprintf("%s is sorted by a value list in FileMaker, and ascending here", field))
+		}
+		levels = append(levels, name)
+	}
+	return strings.Join(levels, ","), notes
+}
+
 func cleanHTMLText(raw string) string {
 	// Strip inline tags without inserting spaces so `<em>recipes</em>::Yield` stays `recipes::Yield`
 	noInline := reHTMLInlineTags.ReplaceAllString(raw, "")
@@ -2206,6 +2352,30 @@ func parseWidthHeight(bounds string) (float64, float64) {
 		h, _ = strconv.ParseFloat(m[1], 64)
 	}
 	return w, h
+}
+
+// htmlCriterion is one match criterion of a relationship as an HTML report
+// writes it: a field of each side and the operator between them.
+type htmlCriterion struct {
+	leftField, op, rightField string
+}
+
+// reHTMLPredicate reads the criterion a report of three cells writes as one
+// text, "Occurrence::Field <operator> Occurrence::Field". The operator is
+// whatever stands between the two qualified fields, read as FileMaker writes
+// it, and refused when it is not one of its operators.
+var (
+	reHTMLPredicate       = regexp.MustCompile(`^\s*([^:]+::.+?)\s+(\S+)\s+([^:\s][^:]*::.+?)\s*$`)
+	reHTMLPredicateSigned = regexp.MustCompile(`^\s*([^:]+::.+?)\s*(<>|!=|<=|>=|==|[=≠<>≤≥×])\s*([^:]+::.+?)\s*$`)
+)
+
+// matchHTMLPredicate splits a criterion written as one text into its left
+// field, operator and right field, or returns nil.
+func matchHTMLPredicate(text string) []string {
+	if m := reHTMLPredicate.FindStringSubmatch(text); m != nil {
+		return m
+	}
+	return reHTMLPredicateSigned.FindStringSubmatch(text)
 }
 
 func splitQualifiedField(s string) (string, string) {

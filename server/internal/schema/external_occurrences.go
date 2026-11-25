@@ -83,7 +83,8 @@ func (s *Service) ensureExternalCatalog(ctx context.Context) error {
 }
 
 // ensureExternalOccurrenceColumns brings an existing catalog to the external
-// occurrence shape. It is idempotent and reads before it writes: a column is
+// occurrence shape, and gives its relationships the options of their left
+// side (relationshipSideColumns). It is idempotent and reads before it writes: a column is
 // added only when missing, and a NOT NULL constraint is dropped only while
 // it is there, so a catalog already upgraded is only read. A system table
 // that does not exist yet is left alone: it is created in the new shape.
@@ -122,7 +123,7 @@ func (s *Service) ensureExternalOccurrenceColumns(ctx context.Context) error {
 		return err
 	}
 
-	for _, c := range externalOccurrenceColumns {
+	for _, c := range slices.Concat(externalOccurrenceColumns, relationshipSideColumns) {
 		if !tables[c.table] || columns[c.table+"."+c.column] {
 			continue
 		}
