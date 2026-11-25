@@ -935,3 +935,60 @@ func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
 		t.Fatalf("review: %s", review)
 	}
 }
+
+func TestNativeLayoutPopoversOpenOverTheLayout(t *testing.T) {
+	popover := `<LayoutObject type="Popover Button">
+                <UUID>00000000-0000-0000-0000-000000000060</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+                <PopoverButton>
+                  <Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label>
+                  <LayoutObject type="PopoverPanel">
+                    <UUID>00000000-0000-0000-0000-000000000061</UUID>
+                    <Bounds top="100" left="300" bottom="200" right="500"/>
+                    <ObjectList>
+                      <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000062</UUID><Bounds top="110" left="310" bottom="130" right="400"/>
+                        <Text><StyledText><Data><![CDATA[Inside]]></Data></StyledText></Text>
+                      </LayoutObject>
+                    </ObjectList>
+                  </LayoutObject>
+                </PopoverButton>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, popover, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	objects := def["objects"].([]interface{})
+	var button map[string]interface{}
+	for _, raw := range objects {
+		if o := raw.(map[string]interface{}); o["type"] == "popover_button" {
+			button = o
+		}
+	}
+	if button == nil || button["text"] != "More" || button["default_panel"] != -1.0 || button["action"] != nil {
+		t.Fatalf("popover button: %v", button)
+	}
+	// The panel's background and objects come last, on the popover's panel.
+	n := len(objects)
+	back, inside := objects[n-2].(map[string]interface{}), objects[n-1].(map[string]interface{})
+	for _, o := range []map[string]interface{}{back, inside} {
+		p, _ := o["panel"].(map[string]interface{})
+		if p == nil || p["control"] != button["id"] || p["index"] != 0.0 {
+			t.Fatalf("popover object: %v", o)
+		}
+	}
+	if back["type"] != "rect" || back["x"] != 300.0 || inside["text"] != "Inside" {
+		t.Fatalf("popover panel: %v / %v", back, inside)
+	}
+	if c := got.Report.Counts.LayoutObjects["Popover Button"]; c.Source != 1 || c.Migrated != 1 {
+		t.Fatalf("popover counts: %+v", c)
+	}
+}

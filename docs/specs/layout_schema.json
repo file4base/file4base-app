@@ -227,7 +227,7 @@
           "type": "integer",
           "minimum": 0,
           "default": 0,
-          "description": "tab_control and slide_control: the panel in front when the layout opens."
+          "description": "tab_control and slide_control: the panel in front when the layout opens. popover_button: -1, its popover (the objects on its panel 0) closed until the button is clicked."
         },
         "tab_height": {
           "type": "number",

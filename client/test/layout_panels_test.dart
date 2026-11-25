@@ -108,4 +108,42 @@ void main() {
     expect(find.text('On the details tab'), findsNothing);
     expect(find.text('Second slide'), findsNothing, reason: 'a control on a panel not in front is not shown, nor its panels');
   });
+
+  testWidgets('a popover button opens its popover over the layout, and closes it', (tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    final layout = LayoutDefinitionModel.fromJson({
+      'id': 'p',
+      'name': 'P',
+      'table_occurrence': 'notes',
+      'objects': [
+        {'id': 'pop', 'type': 'popover_button', 'x': 20, 'y': 20, 'width': 100, 'height': 24, 'text': 'More', 'default_panel': -1},
+        {
+          'id': 'back',
+          'type': 'rect',
+          'x': 200,
+          'y': 20,
+          'width': 200,
+          'height': 100,
+          'panel': {'control': 'pop', 'index': 0},
+        },
+        _label('in', 'Inside the popover', 'pop', 0),
+      ],
+    });
+    expect(LayoutDefinitionModel.fromJson(layout.toJson()).objects.first.defaultPanel, -1,
+        reason: 'a popover stays closed when the layout is saved again');
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: DataBrowserWidget(table: _table, apiClient: _Api(), mode: OperationalMode.browse, layout: layout)),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Inside the popover'), findsNothing);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    expect(find.text('Inside the popover'), findsOneWidget);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    expect(find.text('Inside the popover'), findsNothing);
+  });
 }

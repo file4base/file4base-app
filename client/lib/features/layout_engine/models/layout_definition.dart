@@ -1106,7 +1106,9 @@ class LayoutObjectModel { // picture / document shown inside the object
   /// order (a slide control's are empty).
   final List<String> tabs;
 
-  /// For a tab or slide control, the panel in front when the layout opens.
+  /// For a tab or slide control, the panel in front when the layout opens;
+  /// for a popover button, -1: its popover, the objects on its panel 0, is
+  /// closed until the button is clicked.
   final int defaultPanel;
 
   /// For a tab control, the height of its row of tabs.
@@ -1170,7 +1172,7 @@ class LayoutObjectModel { // picture / document shown inside the object
         if (hideWhen != null) 'hide_when': hideWhen,
         if (hideInFind) 'hide_in_find': true,
         if (tabs.isNotEmpty) 'tabs': tabs,
-        if (isPanelControl) 'default_panel': defaultPanel,
+        if (isPanelControl || defaultPanel != 0) 'default_panel': defaultPanel,
         if (tabHeight != null) 'tab_height': tabHeight,
         if (panelControl != null) 'panel': {'control': panelControl, 'index': panelIndex},
       };

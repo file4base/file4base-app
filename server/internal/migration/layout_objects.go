@@ -194,12 +194,13 @@ type nativeLayout struct {
 	alongPath    int
 	missingField int
 	noImage      int
-	buttonsUnrun int // buttons whose single step File4Base does not run
-	buttonIcons  int // icons dropped from buttons that have a label
-	portalsFar   int // portals of an occurrence several relationships away, left out
-	portalFilter int // portal filters that could not be bound, the portal kept empty
-	portalSort   int // portal sort fields of another occurrence, left out of the sort
-	formatsLeft  int // conditional formats not kept
+	buttonsUnrun int             // buttons whose single step File4Base does not run
+	buttonIcons  int             // icons dropped from buttons that have a label
+	portalsFar   int             // portals of an occurrence several relationships away, left out
+	portalFilter int             // portal filters that could not be bound, the portal kept empty
+	portalSort   int             // portal sort fields of another occurrence, left out of the sort
+	formatsLeft  int             // conditional formats not kept
+	popovers     map[string]bool // ids of the popover buttons, whose panels open over the layout
 	vectorImage  int
 	mergeKept    int
 }
@@ -273,6 +274,18 @@ func convertNativeLayout(ln *xmlNode, ctx *layoutObjectContext, def map[string]i
 	}
 	if l.objects == nil {
 		l.objects = []map[string]interface{}{}
+	}
+	// A popover opens over everything else: its objects are drawn last.
+	if len(l.popovers) > 0 {
+		var under, over []map[string]interface{}
+		for _, o := range l.objects {
+			if p, _ := o["panel"].(map[string]interface{}); p != nil && l.popovers[fmt.Sprint(p["control"])] {
+				over = append(over, o)
+			} else {
+				under = append(under, o)
+			}
+		}
+		l.objects = append(under, over...)
 	}
 	def["objects"] = l.objects
 	return l.report()
@@ -372,6 +385,9 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 		return
 	case "Portal":
 		l.portal(obj)
+		return
+	case "Popover Button":
+		l.popover(obj)
 		return
 	}
 
@@ -1314,6 +1330,63 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	l.ctx.count("Portal").Migrated++
 	if list := findFirstChild(p, "ObjectList"); list != nil {
 		l.convertList(list)
+	}
+}
+
+// popover converts a popover button: the button, then its panel's
+// background and objects, each saying it is on the button's only panel,
+// closed when the layout opens (default_panel -1), so a click on the button
+// shows them and another hides them.
+func (l *nativeLayout) popover(obj *xmlNode) {
+	holder := findFirstChild(obj, "PopoverButton")
+	base := l.baseObject(obj)
+	if holder == nil || base == nil {
+		return
+	}
+	l.button(obj, holder, base)
+	delete(base, "action")
+	base["type"] = "popover_button"
+	base["default_panel"] = -1
+	id := l.objectID(obj)
+	base["id"] = id
+	l.objects = append(l.objects, base)
+	l.ctx.count("Popover Button").Migrated++
+	if l.popovers == nil {
+		l.popovers = map[string]bool{}
+	}
+	l.popovers[id] = true
+	var panel *xmlNode
+	for _, c := range holder.Children {
+		if c.Name == "LayoutObject" && firstAttr(c, "type") == "PopoverPanel" {
+			panel = c
+		}
+	}
+	if panel == nil {
+		return
+	}
+	start := len(l.objects)
+	if back := l.baseObject(panel); back != nil {
+		back["type"] = "rect"
+		style := l.style(panel, []string{"popover"}, false)
+		if _, filled := style["fill_color"]; !filled {
+			style["fill_color"] = "#FFFFFF"
+		}
+		if w, _ := style["border_width"].(float64); w <= 0 {
+			style["border_width"] = 1.0
+			style["border_color"] = "#BDBDBD"
+		}
+		back["style"] = style
+		back["id"] = l.objectID(panel)
+		l.objects = append(l.objects, back)
+		l.ctx.count("PopoverPanel").Migrated++
+	}
+	if list := findFirstChild(panel, "ObjectList"); list != nil {
+		l.convertList(list)
+	}
+	for _, o := range l.objects[start:] {
+		if _, nested := o["panel"]; !nested {
+			o["panel"] = map[string]interface{}{"control": id, "index": 0}
+		}
 	}
 }
 

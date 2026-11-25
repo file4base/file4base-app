@@ -4242,6 +4242,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// Runs the button's assigned action. Buttons from older layouts without an
   /// action keep the previous behaviour, guessed from their label.
   Future<void> _handleLayoutButtonClick(LayoutObjectModel obj, String label) async {
+    if (obj.type == 'popover_button' && (widget.layout?.objects.any((o) => o.panelControl == obj.id) ?? false)) {
+      // A popover button opens its popover, and closes it.
+      setState(() => _selectedPanels[obj.id] = (_selectedPanels[obj.id] ?? obj.defaultPanel) == 0 ? -1 : 0);
+      return;
+    }
     final action = obj.action;
     if (action == null) {
       _handleLegacyButtonLabel(label);
