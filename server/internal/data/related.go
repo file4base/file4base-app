@@ -1128,7 +1128,9 @@ func (s *Service) CreateRelatedRowToward(
 		values[t.TargetColumn] = key
 	}
 
-	inserted, err := q.dst.InsertRow(ctx, target.TableName, values)
+	// The match fields are the relationship's to give, even ones whose
+	// options prohibit modification during data entry.
+	inserted, err := q.dst.InsertRow(exemptFromEntry(ctx, targetColumns(q.terms)...), target.TableName, values)
 	if err != nil {
 		return nil, wrapSide(target, err)
 	}
@@ -1237,7 +1239,7 @@ func (s *Service) resolveFindRelations(
 				}
 				continue
 			}
-			source, target, err := rel.Sides(tableName, strings.TrimSpace(crit.Occurrence))
+			source, target, err := crit.sides(rel, tableName)
 			if err != nil {
 				return nil, err
 			}
@@ -1266,7 +1268,18 @@ func (s *Service) resolveFindRelations(
 // relatedFindKey identifies a resolved relationship: the same relationship
 // read from the same side resolves once.
 func relatedFindKey(crit FindCriterion) string {
-	return strings.TrimSpace(crit.RelationshipID) + "\x00" + strings.TrimSpace(crit.Occurrence)
+	return strings.TrimSpace(crit.RelationshipID) + "\x00" + strings.TrimSpace(crit.Occurrence) + "\x00" +
+		strings.ToLower(strings.TrimSpace(crit.Side))
+}
+
+// sides are the sides of rel a criterion on a related field of tableName
+// reads: toward its occurrence, or the end it names (Side).
+func (crit FindCriterion) sides(rel *Relationship, tableName string) (source, target RelationSide, err error) {
+	end, err := ParseRelationEnd(crit.Side)
+	if err != nil {
+		return source, target, fmt.Errorf("%w: %v", ErrInvalidValue, err)
+	}
+	return rel.SidesToward(LocalOrigin(tableName), strings.TrimSpace(crit.Occurrence), end)
 }
 
 // relatedCriterionClause turns a criterion on a related field into a
@@ -1310,7 +1323,11 @@ func relatedCriterionClause(
 		// The related record's match field must hold something too.
 		joins = append(joins, notEmpty(dialect, child.sql), keysMeet(dialect, child, t.Op, parent))
 	}
-	inner := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName), crit, idx, values)
+	inner, err := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName),
+		target.Fields[crit.FieldName], crit, idx, values)
+	if err != nil {
+		return "", err
+	}
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s)",
 		dialect.QuoteIdentifier(target.TableName), alias, strings.Join(append(joins, inner), " AND "))
 

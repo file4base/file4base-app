@@ -333,7 +333,8 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 					updates[key] = answer
 				}
 			}
-			if _, err := s.UpdateRow(ctx, tableName, id, updates); err != nil {
+			// A recalculation is no modification: it enters no auto-enter value.
+			if _, err := s.updateRow(ctx, tableName, id, updates, autoMode{off: true}); err != nil {
 				return written, err
 			}
 			written++

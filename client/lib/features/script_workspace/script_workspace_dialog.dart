@@ -12,14 +12,20 @@ class ScriptWorkspaceDialog extends ConsumerStatefulWidget {
   const ScriptWorkspaceDialog({
     required this.apiClient, super.key,
     this.databaseName,
+    this.initialScriptId,
   });
   final ApiClient apiClient;
   final String? databaseName;
+
+  /// The script to open first (from Manage Script Triggers), instead of the
+  /// first one of the list.
+  final String? initialScriptId;
 
   static Future<void> show(
     BuildContext context,
     ApiClient apiClient, {
     String? databaseName,
+    String? initialScriptId,
   }) {
     return showDialog(
       context: context,
@@ -27,6 +33,7 @@ class ScriptWorkspaceDialog extends ConsumerStatefulWidget {
       builder: (ctx) => ScriptWorkspaceDialog(
         apiClient: apiClient,
         databaseName: databaseName,
+        initialScriptId: initialScriptId,
       ),
     );
   }
@@ -88,9 +95,10 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
         _isLoading = false;
 
         if (_scripts.isNotEmpty) {
-          _openScriptIds.add(_scripts.first.id);
-          _activeScriptId = _scripts.first.id;
-          if (_scripts.first.steps.isNotEmpty) {
+          final first = _scripts.firstWhere((s) => s.id == widget.initialScriptId, orElse: () => _scripts.first);
+          _openScriptIds.add(first.id);
+          _activeScriptId = first.id;
+          if (first.steps.isNotEmpty) {
             _selectedStepIdx = 0;
           }
         }
@@ -1432,6 +1440,7 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
         );
 
       case 'set_field':
+      case 'set_next_serial_value':
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1652,6 +1661,51 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
           ],
         );
 
+      case 'relookup_field_contents':
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.tune, color: theme.recordsColor, size: 16),
+                const SizedBox(width: 6),
+                Text('Parameters: ${step.displayName}', style: TextStyle(color: theme.textPrimary, fontSize: 12, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Text('Match field: ', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+                SizedBox(
+                  width: 200,
+                  height: 30,
+                  child: TextFormField(
+                    key: ValueKey('${step.id}-field'),
+                    initialValue: step.params['field']?.toString() ?? '',
+                    style: TextStyle(color: theme.fieldsColor, fontSize: 12, fontFamily: 'monospace'),
+                    decoration: InputDecoration(
+                      hintText: 'Table::Field (empty: active field)',
+                      hintStyle: TextStyle(color: theme.textSecondary, fontSize: 11),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      filled: true,
+                      fillColor: theme.surfaceContainer,
+                      border: OutlineInputBorder(borderSide: BorderSide(color: theme.border)),
+                    ),
+                    onChanged: (v) => _updateStepParam('field', v),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Checkbox(
+                  key: ValueKey('${step.id}-with-dialog'),
+                  value: step.params['no_dialog'] == false,
+                  onChanged: (v) => _updateStepParam('no_dialog', v != true),
+                ),
+                Text('With dialog', style: TextStyle(color: theme.textSecondary, fontSize: 11)),
+              ],
+            ),
+          ],
+        );
+
       default:
         final catColor = step.getCategoryColor(theme);
         return Column(
@@ -1665,10 +1719,29 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              'This step requires no additional parameters or runs with its default options.',
-              style: TextStyle(color: theme.textSecondary, fontSize: 12),
-            ),
+            if (step.migrationNote.isNotEmpty)
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber_outlined, color: theme.warningColor, size: 14),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: SelectableText(
+                          step.migrationNote,
+                          style: TextStyle(color: theme.textPrimary, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Text(
+                'This step requires no additional parameters or runs with its default options.',
+                style: TextStyle(color: theme.textSecondary, fontSize: 12),
+              ),
           ],
         );
     }

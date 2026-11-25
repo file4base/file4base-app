@@ -30,7 +30,7 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 			expression := calculationText(child)
 			out["expression"] = expression
 			switch canonical {
-			case "Set Field", "Insert Calculated Result", "Replace Field Contents":
+			case "Set Field", "Insert Calculated Result", "Replace Field Contents", "Set Next Serial Value":
 				out["value"] = expression
 				out["value_is_calculation"] = true
 			case "Set Field By Name":
@@ -166,7 +166,16 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 			if canonical == "Perform Script" {
 				ref := findFirstChild(child, "ScriptReference")
 				if ref == nil {
-					unknown = append(unknown, "Parameter.List")
+					// FileMaker writes "<unknown>" and no script reference
+					// for a script it cannot name: one that was deleted, or
+					// one of another file that was not open as the design
+					// was saved, which it then names by its file only.
+					if external := findFirstChild(child, "DataSourceReference"); external != nil {
+						out["file_reference"] = firstAttr(external, "name", "Name")
+						out["script_unresolved"] = true
+					} else {
+						out["script_missing"] = true
+					}
 					continue
 				}
 				out["script_name"] = firstAttr(ref, "name", "Name")
@@ -189,9 +198,7 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 					out["state"] = listName
 				}
 			case "Replace Field Contents":
-				if listName != "" {
-					out["replace_type"] = listName
-				}
+				unknown = append(unknown, decodeReplaceOptions(child, out)...)
 			default:
 				if listName != "" {
 					out["option"] = firstAttr(child, "name", "value")
@@ -251,7 +258,98 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 				unknown = append(unknown, "Parameter.DataSourceReference")
 				continue
 			}
+			if canonical == "Import Records" {
+				decodeImportSource(child, out)
+				continue
+			}
 			out["file_reference"] = firstAttr(child, "name", "Name")
+		case "ImportField":
+			if child == nil || canonical != "Import Records" {
+				unknown = append(unknown, "Parameter.ImportField")
+				continue
+			}
+			unknown = append(unknown, decodeImportField(child, out)...)
+		case "Email":
+			send := findFirstChild(parameter, "Send")
+			if send == nil || canonical != "Send Mail" {
+				unknown = append(unknown, "Parameter.Email")
+				continue
+			}
+			unknown = append(unknown, decodeSendMail(send, out)...)
+			// The With dialog flag and the attachments sit beside <Send>.
+			for _, ch := range parameter.Children {
+				switch ch.Name {
+				case "Boolean":
+					if strings.EqualFold(firstAttr(ch, "type"), "With dialog") {
+						if v, ok := xmlAttrBool(ch, "value"); ok {
+							out["dialog"] = v
+						}
+					} else {
+						unknown = append(unknown, "Parameter.Email.Boolean")
+					}
+				case "UniversalPathList":
+					if paths := universalPaths(ch); len(paths) > 0 {
+						out["attachments"] = paths
+					}
+				case "Send":
+				default:
+					unknown = append(unknown, "Parameter.Email."+ch.Name)
+				}
+			}
+		case "SaveResult":
+			// Save Records as PDF / Excel: where the document goes.
+			list := findFirstChild(parameter, "List")
+			if list == nil {
+				unknown = append(unknown, "Parameter.SaveResult")
+				continue
+			}
+			switch strings.ToLower(firstAttr(list, "name")) {
+			case "file":
+				out["save_to"] = "file"
+			case "variable":
+				out["save_to"] = "variable"
+			default:
+				unknown = append(unknown, "Parameter.SaveResult")
+			}
+		case "Portal":
+			// Go to Portal Row: <List name="Last"> or <List name="By
+			// Calculation…"> with its <Calculation> and With dialog.
+			list := findFirstChild(parameter, "List")
+			if list == nil {
+				unknown = append(unknown, "Parameter.Portal")
+				continue
+			}
+			decodeRowPageLocation(list, out)
+			for _, flag := range list.Children {
+				if flag.Name != "Boolean" {
+					continue
+				}
+				switch strings.ToLower(firstAttr(flag, "type")) {
+				case "with dialog":
+					if v, ok := xmlAttrBool(flag, "value"); ok {
+						out["dialog"] = v
+					}
+				case "exit after last":
+					if v, ok := xmlAttrBool(flag, "value"); ok {
+						out["exit_after_last"] = v
+					}
+				}
+			}
+		case "replace":
+			list := findFirstChild(parameter, "List")
+			if list == nil || canonical != "Replace Field Contents" {
+				unknown = append(unknown, "Parameter.replace")
+				continue
+			}
+			unknown = append(unknown, decodeReplaceOptions(list, out)...)
+		case "Field1", "Field2", "Field3":
+			if canonical != "Show Custom Dialog" {
+				unknown = append(unknown, "Parameter."+kind)
+				continue
+			}
+			if entry := decodeDialogInputParameter(parameter); len(entry) > 0 {
+				inputFields = append(inputFields, entry)
+			}
 		case "Parameter":
 			if child == nil || canonical != "Perform Script" {
 				unknown = append(unknown, "Parameter.Parameter")
@@ -279,15 +377,27 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 				unknown = append(unknown, "Parameter."+kind)
 			}
 		case "Button1", "Button2", "Button3", "Button":
+			// FileMaker writes the label in the parameter's value and whether
+			// the button commits the input fields in a Commit Boolean:
+			// <Parameter type="Button2" value="Cancel"><Boolean type="Commit" value="False"/>.
 			label := ""
 			isCalc := false
 			if calc := findFirstChild(parameter, "Calculation"); calc != nil {
 				label = calculationText(calc)
 				isCalc = true
+			} else if v := firstAttr(parameter, "value"); v != "" {
+				label = v
 			} else if child != nil {
 				label = firstAttr(child, "value", "name")
 			}
 			commit := true
+			for _, ch := range parameter.Children {
+				if ch.Name == "Boolean" && strings.EqualFold(firstAttr(ch, "type"), "Commit") {
+					if c, ok := xmlAttrBool(ch, "value"); ok {
+						commit = c
+					}
+				}
+			}
 			if c, ok := xmlAttrBool(child, "CommitState", "commit"); ok {
 				commit = c
 			}
@@ -378,9 +488,23 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 		case "UniversalPathList", "Import", "Export", "FieldMap":
 			if child != nil {
 				if kind == "UniversalPathList" {
-					out["path"] = strings.TrimSpace(child.Text)
-					if out["path"] == "" {
+					paths := universalPaths(child)
+					switch {
+					case canonical == "Send Mail":
+						out["attachments"] = paths
+					case len(paths) > 0:
+						out["path"] = paths[0]
+						if len(paths) > 1 {
+							out["paths"] = paths
+						}
+					default:
 						out["path"] = decodeNodeValue(child)
+					}
+					if v, ok := xmlAttrBool(child, "CreateMail"); ok {
+						out["create_email"] = v
+					}
+					if v, ok := xmlAttrBool(child, "AutoOpen", "AutomaticallyOpen"); ok {
+						out["auto_open"] = v
 					}
 				} else {
 					out[strings.ToLower(kind)+"_options"] = decodeNodeValue(child)
@@ -427,10 +551,30 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 		case "Options":
 			if child != nil {
 				out["options"] = decodeNodeValue(child)
+				if canonical == "Save Records as PDF" || canonical == "Save Records as Excel" {
+					switch strings.ToLower(firstAttr(child, "type")) {
+					case "records being browsed":
+						out["records"] = "browsed"
+					case "current record":
+						out["records"] = "current"
+					case "":
+					default:
+						out["records"] = "blank"
+					}
+				}
 			}
 		default:
 			unknown = append(unknown, "Parameter."+kind)
 		}
+	}
+	// FileMaker shows only the buttons that have a label; the empty ones
+	// after the last labelled button are not there at all.
+	for len(buttons) > 1 {
+		last := buttons[len(buttons)-1]
+		if label, _ := last["label"].(string); label != "" {
+			break
+		}
+		buttons = buttons[:len(buttons)-1]
 	}
 	if len(buttons) > 0 {
 		out["buttons"] = buttons

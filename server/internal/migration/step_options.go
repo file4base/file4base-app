@@ -77,28 +77,52 @@ func decodeRowPageLocation(n *xmlNode, params map[string]interface{}) {
 	if n == nil {
 		return
 	}
-	raw := strings.TrimSpace(firstAttr(n, "value", "Value", "name"))
-	switch strings.ToLower(raw) {
-	case "first":
-		params["target"] = "first"
-	case "previous", "prev":
-		params["target"] = "previous"
-	case "next":
-		params["target"] = "next"
-	case "last":
-		params["target"] = "last"
-	case "bycalculation", "calculation", "by calculation":
-		params["target"] = "by_calculation"
-	default:
-		if raw != "" {
-			params["target"] = strings.ToLower(raw)
+	// A DDR writes the target as a word in value (<RowPageLocation
+	// value="Next"/>); Save a Copy as XML writes the word in name and a code
+	// in value (<List name="Next" value="4"/>). The word is read first, so a
+	// code is never taken for a record number.
+	target := ""
+	for _, raw := range []string{firstAttr(n, "name", "Name"), firstAttr(n, "value", "Value")} {
+		if target = rowPageTarget(raw); target != "" {
+			break
 		}
+	}
+	if target == "" && n.Name == "List" {
+		target = map[string]string{"1": "first", "2": "last", "3": "previous", "4": "next", "5": "by_calculation"}[firstAttr(n, "value")]
+	}
+	if target == "" {
+		if raw := strings.TrimSpace(firstAttr(n, "value", "Value", "name")); raw != "" {
+			target = strings.ToLower(raw)
+		}
+	}
+	if target != "" {
+		params["target"] = target
 	}
 	if calc := findFirstChild(n, "Calculation", "calculation"); calc != nil {
 		if expr := calculationText(calc); expr != "" {
 			params["record_calculation"] = expr
 		}
 	}
+}
+
+// rowPageTarget reads a Go to Record/Request/Page or Go to Portal Row target
+// word, with or without FileMaker's trailing ellipsis ("By Calculation…").
+func rowPageTarget(raw string) string {
+	word := strings.ToLower(strings.TrimSpace(raw))
+	word = strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(word, "…"), "..."))
+	switch word {
+	case "first":
+		return "first"
+	case "previous", "prev":
+		return "previous"
+	case "next":
+		return "next"
+	case "last":
+		return "last"
+	case "bycalculation", "calculation", "by calculation":
+		return "by_calculation"
+	}
+	return ""
 }
 
 // decodeFindRequests parses DDR XML <Query> / <FindRequestList> and native

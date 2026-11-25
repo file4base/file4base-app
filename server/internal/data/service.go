@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -33,9 +32,12 @@ type FindCriterion struct {
 	// RelationshipID searches a field of a *related* record instead of the
 	// record's own (#46): the criterion then finds the records that have a
 	// related record matching it. Occurrence names the side to read when the
-	// relationship joins a table to itself.
+	// relationship joins a table to itself; Side ("left" or "right") names
+	// the end when it joins an occurrence to itself, where the occurrence
+	// alone names the right end (as `side` does for related reads).
 	RelationshipID string `json:"relationship_id,omitempty"`
 	Occurrence     string `json:"occurrence,omitempty"`
+	Side           string `json:"side,omitempty"`
 }
 
 // isRelated reports whether the criterion searches a related record.
@@ -136,6 +138,8 @@ type Service struct {
 	// canWrite, when set, says whether the caller may create, edit or
 	// delete the records of a table (see WithWriteAccess).
 	canWrite func(ctx context.Context, tableName, action string) error
+	// account is the account the service writes as (see WithAccount).
+	account string
 }
 
 func NewService(driver dbal.DatabaseDriver) *Service {
@@ -214,37 +218,6 @@ func (s *Service) checker(ctx context.Context, tableName string) (*validation.Ch
 	return &validation.Checker{Dialect: s.driver.Dialect(), DB: s.driver.DB(), Table: tableName, Fields: fields}, nil
 }
 
-// autoEnterConstants returns the constant auto-enter value of each field of
-// the table whose options (sys_columns.default_value) enable one.
-func (s *Service) autoEnterConstants(ctx context.Context, tableName string) (map[string]interface{}, error) {
-	q := `SELECT c.name, c.default_value FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = $1 AND c.default_value IS NOT NULL`
-	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `SELECT c.name, c.default_value FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id WHERE t.name = ? AND c.default_value IS NOT NULL`
-	}
-	rows, err := s.driver.DB().QueryContext(ctx, q, tableName)
-	if err != nil {
-		return nil, fmt.Errorf("failed reading field options of %s: %w", tableName, err)
-	}
-	defer rows.Close()
-
-	constants := make(map[string]interface{})
-	for rows.Next() {
-		var name, raw string
-		if err := rows.Scan(&name, &raw); err != nil {
-			return nil, err
-		}
-		var opts struct {
-			DataEnabled bool    `json:"data_enabled"`
-			DataValue   *string `json:"data_value"`
-		}
-		// Options that are not a JSON object (legacy values) enable nothing.
-		if json.Unmarshal([]byte(raw), &opts) == nil && opts.DataEnabled && opts.DataValue != nil && *opts.DataValue != "" {
-			constants[name] = *opts.DataValue
-		}
-	}
-	return constants, rows.Err()
-}
-
 // decodeContainerValues turns the base64 text of CONTAINER fields into the
 // bytes to store. JSON has no binary type, so the data API exchanges
 // CONTAINER values as standard base64 (see rowsToMaps).
@@ -297,8 +270,14 @@ func checkField(fields fieldSet, tableName, fieldName string) error {
 	return nil
 }
 
-// InsertRow dynamically inserts a record into any table
+// InsertRow dynamically inserts a record into any table. The auto-enter
+// options of its fields apply (see autoenter.go); a write made with a
+// context marked by AsScript is a script's, not data entry.
 func (s *Service) InsertRow(ctx context.Context, tableName string, record map[string]interface{}) (map[string]interface{}, error) {
+	return s.insertRow(ctx, tableName, record, writeMode(ctx))
+}
+
+func (s *Service) insertRow(ctx context.Context, tableName string, record map[string]interface{}, mode autoMode) (map[string]interface{}, error) {
 	if record == nil {
 		record = make(map[string]interface{})
 	}
@@ -314,17 +293,12 @@ func (s *Service) InsertRow(ctx context.Context, tableName string, record map[st
 	if err := normalizeRepetitionKeys(fields, tableName, record); err != nil {
 		return nil, err
 	}
+	normalizeTemporalValues(fields, record)
 
-	// Auto-enter constant values (Fields dialog: "Data") for fields the
-	// caller did not supply. An explicit value, even empty, wins.
-	constants, err := s.autoEnterConstants(ctx, tableName)
-	if err != nil {
+	// The auto-enter options (Fields dialog) enter what the caller did not
+	// give: a value given wins.
+	if err := s.applyAutoEnter(ctx, tableName, fields, mode, record, ""); err != nil {
 		return nil, err
-	}
-	for col, val := range constants {
-		if _, given := record[col]; !given {
-			record[col] = val
-		}
 	}
 	if err := decodeContainerValues(fields, tableName, record); err != nil {
 		return nil, err
@@ -423,8 +397,13 @@ func (s *Service) GetRow(ctx context.Context, tableName string, id string) (map[
 	return results[0], nil
 }
 
-// UpdateRow dynamically updates a row by id
+// UpdateRow dynamically updates a row by id. The auto-enter options of its
+// fields apply, as for InsertRow.
 func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}) (map[string]interface{}, error) {
+	return s.updateRow(ctx, tableName, id, updates, writeMode(ctx))
+}
+
+func (s *Service) updateRow(ctx context.Context, tableName string, id string, updates map[string]interface{}, mode autoMode) (map[string]interface{}, error) {
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
@@ -434,6 +413,7 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	if err := normalizeRepetitionKeys(fields, tableName, updates); err != nil {
 		return nil, err
 	}
+	normalizeTemporalValues(fields, updates)
 	// Protect the primary key from alteration, also when it is sent as its
 	// first repetition, "id[1]", which the line above makes "id".
 	delete(updates, "id")
@@ -446,6 +426,11 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	}
 	if len(updates) == 0 {
 		return s.GetRow(ctx, tableName, id)
+	}
+	// Modification stamps, and the calculated and looked-up values the
+	// change reaches (see autoenter.go).
+	if err := s.applyAutoEnter(ctx, tableName, fields, mode, updates, id); err != nil {
+		return nil, err
 	}
 	if err := decodeContainerValues(fields, tableName, updates); err != nil {
 		return nil, err
@@ -702,18 +687,29 @@ func buildFindWhere(include, omit []string) string {
 }
 
 // criterionClause renders one criterion against an already-quoted column
-// expression, appending the values its placeholders take. colIdent is the
-// record's own column, or a related table's column when the criterion reaches
-// through a relationship (#46), so both read the same operators.
+// expression of fieldType, appending the values its placeholders take.
+// colIdent is the record's own column, or a related table's column when the
+// criterion reaches through a relationship (#46), so both read the same
+// operators. A date or a timestamp is compared as one (see temporal_find.go).
 func criterionClause(
-	dialect dbal.Dialect, colIdent string, crit FindCriterion, idx *int, values *[]interface{},
-) string {
+	dialect dbal.Dialect, colIdent string, fieldType dbal.AgnosticFieldType,
+	crit FindCriterion, idx *int, values *[]interface{},
+) (string, error) {
 	place := func() string {
 		p := dialect.Placeholder(*idx)
 		*idx++
 		return p
 	}
+	if clause, ok, err := temporalCriterionClause(dialect, colIdent, fieldType, crit, place, values); err != nil || ok {
+		return clause, err
+	}
+	return textCriterionClause(dialect, colIdent, crit, place, values), nil
+}
 
+// textCriterionClause renders a criterion that compares text, or numbers.
+func textCriterionClause(
+	dialect dbal.Dialect, colIdent string, crit FindCriterion, place func() string, values *[]interface{},
+) string {
 	switch crit.Operator {
 	case "IS_EMPTY":
 		return fmt.Sprintf("(%s IS NULL OR %s = '')", colIdent, dialect.CastToText(colIdent))
@@ -836,8 +832,12 @@ func buildFindClauses(
 				if err := checkField(fields, tableName, crit.FieldName); err != nil {
 					return findClauses{}, err
 				}
-				andClauses = append(andClauses, criterionClause(
-					dialect, dialect.QuoteIdentifier(crit.FieldName), crit, &idx, &out.values))
+				clause, err := criterionClause(dialect, dialect.QuoteIdentifier(crit.FieldName),
+					fields[crit.FieldName], crit, &idx, &out.values)
+				if err != nil {
+					return findClauses{}, err
+				}
+				andClauses = append(andClauses, clause)
 			}
 
 			if len(andClauses) > 0 {
@@ -870,7 +870,7 @@ func normalizeCriterion(crit FindCriterion) FindCriterion {
 		strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
 		strings.Contains(strVal, "//") {
 		parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
-		parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
+		parsed.RelationshipID, parsed.Occurrence, parsed.Side = crit.RelationshipID, crit.Occurrence, crit.Side
 		return parsed
 	}
 	return crit

@@ -113,7 +113,7 @@ func kindOf(active []matchTerm) matchKind {
 // externalFindTarget resolves a relationship from tableName, a table of this
 // solution, to another solution's table, opening that solution.
 func (s *Service) externalFindTarget(ctx context.Context, tableName string, rel *Relationship, crit FindCriterion) (relatedFindTarget, error) {
-	source, target, err := rel.Sides(tableName, strings.TrimSpace(crit.Occurrence))
+	source, target, err := crit.sides(rel, tableName)
 	if err != nil {
 		return relatedFindTarget{}, err
 	}
@@ -226,7 +226,11 @@ func (f *externalFind) run(ctx context.Context, target relatedFindTarget, crit F
 	}
 	idx := 1
 	var values []interface{}
-	where = append(where, criterionClause(dialect, quoted+"."+dialect.QuoteIdentifier(field), crit, &idx, &values))
+	clause, err := criterionClause(dialect, quoted+"."+dialect.QuoteIdentifier(field), target.Fields[field], crit, &idx, &values)
+	if err != nil {
+		return externalMatch{}, err
+	}
+	where = append(where, clause)
 	from := fmt.Sprintf("FROM %s %s WHERE %s", quoted, strings.Join(joins, " "), strings.Join(where, " AND "))
 
 	m := externalMatch{kind: kindOf(active)}

@@ -26,6 +26,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onManageThemes,
     this.onManageValueLists,
     this.onManageFileReferences,
+    this.onManageScriptTriggers,
     this.onNewDatabase,
     this.onOpenSolution,
     this.onSave,
@@ -54,6 +55,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onDeveloperUtilities,
     this.onNewRecord,
     this.onDuplicateRecord,
+    this.onRelookupFieldContents,
     this.onDeleteRecord,
     this.onSortRecords,
     this.onUnsortRecords,
@@ -126,6 +128,10 @@ class File4BaseMenuBar extends StatelessWidget {
   /// File > Manage > File References (#107): the other solutions this one
   /// reads tables from and performs scripts in.
   final VoidCallback? onManageFileReferences;
+
+  /// File > Manage > Script Triggers (#26): every trigger of the solution's
+  /// layouts, to review and enable those imported disabled by a migration.
+  final VoidCallback? onManageScriptTriggers;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
   final VoidCallback? onNewDatabase;
@@ -139,6 +145,10 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onPageSetup;
   final VoidCallback? onNewRecord;
   final VoidCallback? onDuplicateRecord;
+
+  /// Records > Relookup Field Contents, from the active field as the match
+  /// field. Null disables the command.
+  final VoidCallback? onRelookupFieldContents;
   final VoidCallback? onDeleteRecord;
   final VoidCallback? onSortRecords;
   final VoidCallback? onUnsortRecords;
@@ -669,6 +679,10 @@ class File4BaseMenuBar extends StatelessWidget {
             MenuItemButton(
               onPressed: onManageScripts ?? onScriptWorkspace ?? () => _showRoadmapDialog(context, 'Manage Scripts', 'Roadmap Phase 7', 'Automated workflows and calculation scripts.'),
               child: const Text('Scripts...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageScriptTriggers,
+              child: const Text('Script Triggers...'),
             ),
             MenuItemButton(
               onPressed: onManageThemes ?? () => _showRoadmapDialog(context, 'Themes', 'Roadmap Phase 5', 'Visual styling themes, typography rules, and CSS presets.'),
@@ -1531,8 +1545,9 @@ class File4BaseMenuBar extends StatelessWidget {
           shortcut: const SingleActivator(LogicalKeyboardKey.equal, meta: true),
           child: const Text('Replace Field Contents...'),
         ),
-        const MenuItemButton(
-          child: Text('Relookup Field Contents'),
+        MenuItemButton(
+          onPressed: onRelookupFieldContents,
+          child: const Text('Relookup Field Contents'),
         ),
       ],
       child: const Text('Records', style: TextStyle(fontSize: 13)),
@@ -1859,6 +1874,11 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: onManageScripts ?? onScriptWorkspace,
               leadingIcon: const Icon(Icons.code, size: 18),
               child: const Text('Scripts...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageScriptTriggers,
+              leadingIcon: const Icon(Icons.bolt, size: 18),
+              child: const Text('Script Triggers...'),
             ),
           ],
           child: const Text('Manage'),

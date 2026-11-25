@@ -296,14 +296,39 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
     return 0;
   }
 
+  /// Position of the record whose write the server rejects (0: none), and
+  /// the FileMaker error it reports.
+  int rejectWriteAt = 0;
+  int rejectWriteError = 504;
+
   @override
-  Future<bool> actionReplaceFieldContents({required String field, required String replaceType, String? value}) async {
-    for (final rec in records) {
-      if (!rec.containsKey(field)) return false;
-      rec[field] = value ?? '';
+  Future<ReplaceOutcome> actionReplaceFieldContents({
+    required String field,
+    String? table,
+    String? Function(int position, int count)? valueFor,
+  }) async {
+    if (table != null && relatedOccurrences.contains(table)) return const ReplaceOutcome(relatedField: true);
+    if (records.isEmpty || !currentRecord.containsKey(field)) {
+      return const ReplaceOutcome(errorCode: 102, detail: 'no such field');
     }
-    log.add('replace_field_contents:$field=$value');
-    return true;
+    final start = recordIdx;
+    final contents = currentRecord[field] ?? '';
+    final count = records.length;
+    try {
+      for (var i = 0; i < count; i++) {
+        recordIdx = i;
+        final value = valueFor == null ? contents : valueFor(i + 1, count);
+        if (value == null) return ReplaceOutcome(count: count, replaced: i, unevaluatedAt: i + 1);
+        if (i + 1 == rejectWriteAt) {
+          return ReplaceOutcome(errorCode: rejectWriteError, detail: 'rejected', count: count, replaced: i);
+        }
+        records[i][field] = value;
+      }
+    } finally {
+      recordIdx = start;
+    }
+    log.add('replace_field_contents:$field');
+    return ReplaceOutcome(count: count, replaced: count);
   }
 
   @override
@@ -611,7 +636,7 @@ void main() {
           _step(12, 'Insert from URL', {'url': '"https://example.invalid/data"', 'target': r'$$fetched'}),
           _step(13, 'Print Setup', {'print_settings': {'orientation': 'landscape'}}),
           _step(14, 'Print', {'dialog': false}),
-          _step(15, 'Save Records as PDF', {'path': 'out.pdf', 'dialog': false}),
+          _step(15, 'Save Records as Excel', {'path': 'out.xlsx', 'dialog': false}),
           _step(16, 'Export Field Contents', {'field': 'name', 'path': 'name.txt'}),
           _step(17, 'Insert Picture', {'field': 'name', 'path': 'pic.png'}),
           _step(18, 'Insert File', {'field': 'name', 'path': 'doc.pdf'}),
@@ -640,12 +665,12 @@ void main() {
       'copy:Alpha',
       'set_field:status=Alpha',
       'go_to_object:ObjTitle',
-      'replace_field_contents:status=replaced',
+      'replace_field_contents:status',
       'omit_record',
       'show_omitted_only',
       'insert_from_url:https://example.invalid/data',
       'print:dialog=false',
-      'save_pdf:out.pdf:append=false',
+      'save_pdf:out.xlsx:append=false',
       'export_field:name:name.txt',
       'insert_picture:name:pic.png',
       'insert_file:name:doc.pdf',
@@ -898,5 +923,240 @@ void main() {
     final stopped = await runner.runStep('Open File', {'file_reference': 'Archive'}, depth: 0);
     expect(stopped.completed, isFalse);
     expect(stopped.message, contains('not signed in'));
+  });
+
+  group('FileMaker step options read at conversion', () {
+    test('Replace Field Contents with a calculation evaluates it for each record', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': ''},
+        {'name': 'Beta', 'status': ''},
+        {'name': 'Gamma', 'status': ''},
+      ])
+        ..recordIdx = 1;
+      final runner = _runner(host, const {});
+      final res = await runner.runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'calculation',
+        'value': 'name & "-done"',
+        'value_is_calculation': true,
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.records.map((r) => r['status']), ['Alpha-done', 'Beta-done', 'Gamma-done']);
+      expect(host.recordIdx, 1, reason: 'the current record is the same one afterwards');
+    });
+
+    test('Replace Field Contents with serial numbers counts from the initial value', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': ''},
+        {'name': 'Beta', 'status': ''},
+      ]);
+      final res = await _runner(host, const {}).runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'serial_numbers',
+        'serial_initial': '10',
+        'serial_increment': '5',
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.records.map((r) => r['status']), ['10', '15']);
+    });
+
+    test('Replace Field Contents with dialog writes nothing when cancelled', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': 'keep'},
+      ])
+        ..nextDialogButton = 2;
+      final runner = _runner(host, const {});
+      final session = ScriptSessionState();
+      final res = await runner.runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'calculation',
+        'value': '"new"',
+        'dialog': true,
+      }, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(res.completed, isTrue);
+      expect(session.lastError, 1);
+      expect(host.records[0]['status'], 'keep');
+    });
+
+    test('Replace Field Contents with dialog closed without a button is a cancel, not Replace', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': 'keep'},
+      ])
+        ..nextDialogButton = ScriptDialogResult.dismissed;
+      final session = ScriptSessionState();
+      final res = await _runner(host, const {}).runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'calculation',
+        'value': '"new"',
+        'dialog': true,
+      }, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(res.completed, isTrue);
+      expect(session.lastError, 1);
+      expect(host.records[0]['status'], 'keep');
+    });
+
+    test('Replace Field Contents of a related field writes nothing, not the same-named local field', () async {
+      for (final params in <Map<String, dynamic>>[
+        {'field': 'status', 'field_table': 'Payments'},
+        {'field': 'Payments::status'},
+      ]) {
+        final host = _FullExtendedHost(records: [
+          {'name': 'Alpha', 'status': 'keep'},
+        ])
+          ..relatedOccurrences = {'Payments'};
+        final session = ScriptSessionState();
+        final res = await _runner(host, const {}).runStep('Replace Field Contents', {
+          ...params,
+          'replace_type': 'calculation',
+          'value': '"new"',
+        }, depth: 0, callContext: ScriptCallContext(session: session));
+        expect(res.completed, isFalse, reason: '$params');
+        expect(res.message, contains('Payments::status'));
+        expect(res.message, contains('Nothing was written'));
+        expect(session.lastError, 102);
+        expect(host.records[0]['status'], 'keep', reason: '$params');
+      }
+    });
+
+    test('Replace Field Contents stops at a write the server rejects and reports its error', () async {
+      List<Map<String, String>> records() => [
+            {'name': 'Alpha', 'status': ''},
+            {'name': 'Beta', 'status': ''},
+            {'name': 'Gamma', 'status': ''},
+          ];
+      final host = _FullExtendedHost(records: records())..rejectWriteAt = 2;
+      final session = ScriptSessionState();
+      final res = await _runner(host, const {}).runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'calculation',
+        'value': 'name',
+      }, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(res.completed, isFalse);
+      expect(res.message, contains('record 2 of 3'));
+      expect(res.message, contains('the record before it was replaced'));
+      expect(session.lastError, 504);
+      expect(host.records.map((r) => r['status']), ['Alpha', '', ''], reason: 'nothing after the rejected record');
+
+      // With error capture on, the script goes on and can test the error.
+      final captured = ScriptSessionState()..errorCapture = true;
+      final again = await _runner(_FullExtendedHost(records: records())..rejectWriteAt = 1, const {})
+          .runStep('Replace Field Contents', {'field': 'status', 'value': '"x"'},
+              depth: 0, callContext: ScriptCallContext(session: captured));
+      expect(again.completed, isTrue);
+      expect(captured.lastError, 504);
+    });
+
+    test('Replace Field Contents with the current contents writes the record in hand to all', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': 'a'},
+        {'name': 'Beta', 'status': 'b'},
+      ])
+        ..recordIdx = 1;
+      final res = await _runner(host, const {}).runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'current_contents',
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.records.map((r) => r['status']), ['b', 'b']);
+    });
+
+    test('Show Custom Dialog commits its input fields only through a committing button', () async {
+      Future<(String?, int)> answer(int button) async {
+        final host = _FullExtendedHost(records: [
+          {'name': 'Alpha', 'status': 'old'},
+        ])
+          ..nextDialogButton = button
+          ..nextDialogInputs = {'status': 'typed'};
+        final session = ScriptSessionState();
+        final res = await _runner(host, const {}).runStep('Show Custom Dialog', {
+          'title': 'Status',
+          'buttons': [
+            {'label': 'OK', 'commit': true},
+            {'label': 'Cancel', 'commit': false},
+          ],
+          'input_fields': [
+            {'field': 'status', 'label': 'Status'},
+          ],
+        }, depth: 0, callContext: ScriptCallContext(session: session));
+        expect(res.completed, isTrue, reason: res.message);
+        return (host.records[0]['status'], session.lastMessageChoice);
+      }
+
+      expect(await answer(1), ('typed', 1));
+      expect(await answer(2), ('old', 2), reason: 'Cancel does not commit');
+      expect(await answer(ScriptDialogResult.dismissed), ('old', 0),
+          reason: 'closing the dialog is no button, and commits nothing');
+    });
+
+    test('Save Records as PDF reports error 3 with its migration note, as no PDF is produced', () async {
+      final host = _FullExtendedHost();
+      final params = {
+        'path': r'$out',
+        'dialog': false,
+        'migration_note': 'Save Records as PDF produces no PDF in File4Base yet',
+      };
+      final stopped = await _runner(host, const {}).runStep('Save Records as PDF', params, depth: 0);
+      expect(stopped.completed, isFalse);
+      expect(stopped.message, contains('produces no PDF'));
+      final session = ScriptSessionState()..errorCapture = true;
+      final captured = await _runner(host, const {})
+          .runStep('Save Records as PDF', params, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(captured.completed, isTrue);
+      expect(session.lastError, 3);
+      expect(host.log.where((l) => l.startsWith('save_pdf')), isEmpty);
+    });
+
+    test('Send Mail refuses what a mail draft cannot carry, and never sends formula text', () async {
+      final host = _FullExtendedHost();
+      final runner = _runner(host, const {});
+      final attached = await runner.runStep('Send Mail', {
+        'to': '"a@example.invalid"',
+        'attachments': [r'$report'],
+      }, depth: 0);
+      expect(attached.completed, isFalse);
+      expect(attached.message, contains('attaches files'));
+      final smtp = await runner.runStep('Send Mail', {'to': '"a@example.invalid"', 'send_via': 'smtp'}, depth: 0);
+      expect(smtp.message, contains('SMTP'));
+      final unreadable = await runner.runStep('Send Mail', {
+        'to': 'NoSuchFunction ( 1 ; 2 )',
+        'to_is_calculation': true,
+      }, depth: 0);
+      expect(unreadable.completed, isFalse);
+      expect(host.log.where((l) => l.startsWith('send_mail')), isEmpty, reason: 'nothing was sent');
+    });
+
+    test('Perform Script of a deleted script fails with 104, and an unnamed one explains why', () async {
+      final host = _FullExtendedHost();
+      final runner = _runner(host, const {});
+      final session = ScriptSessionState()..errorCapture = true;
+      final missing = await runner.runStep('Perform Script', {'script_missing': true}, depth: 0,
+          callContext: ScriptCallContext(session: session));
+      expect(missing.completed, isTrue);
+      expect(session.lastError, 104);
+      final unnamed = await runner.runStep('Perform Script', {
+        'script_unresolved': true,
+        'file_reference': 'Ledger',
+        'migration_note': 'Perform Script calls a script of the file "Ledger" that the document does not name',
+      }, depth: 0);
+      expect(unnamed.completed, isFalse);
+      expect(unnamed.message, contains('does not name'));
+    });
+
+    test('a converted Import Records says what it did and why it needs a transfer', () async {
+      final res = await _runner(_FullExtendedHost(), const {}).runStep('Import Records', {
+        'migration_note': 'imports from the FileMaker file "Ledger" into orders',
+      }, depth: 0);
+      expect(res.completed, isFalse);
+      expect(res.message, contains('converted from FileMaker, imports from the FileMaker file "Ledger"'));
+    });
+
+    test('the script editor shows the migration note', () {
+      final step = ScriptStepModel.fromJson({
+        'id': 'x',
+        'step_type': 'Import Records',
+        'params': {'migration_note': 'needs a transfer'},
+      });
+      expect(step.previewText, '[Needs attention: needs a transfer]');
+    });
   });
 }

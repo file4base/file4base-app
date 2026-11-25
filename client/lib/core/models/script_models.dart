@@ -92,6 +92,7 @@ class ScriptStepModel {
       case 'duplicate_record':
       case 'perform_find':
       case 'show_all_records':
+      case 'relookup_field_contents':
         return 'records';
       case 'if':
       case 'else':
@@ -109,6 +110,7 @@ class ScriptStepModel {
       case 'set_variable':
       case 'set_field':
       case 'clear_field':
+      case 'set_next_serial_value':
         return 'fields';
       case 'perform_rest_api':
       case 'insert_from_url':
@@ -203,6 +205,10 @@ class ScriptStepModel {
         return 'Set Field';
       case 'clear_field':
         return 'Clear Field';
+      case 'set_next_serial_value':
+        return 'Set Next Serial Value';
+      case 'relookup_field_contents':
+        return 'Relookup Field Contents';
       case 'perform_script':
         return 'Perform Script';
       case 'pause_script':
@@ -232,7 +238,14 @@ class ScriptStepModel {
     }
   }
 
+  /// What the FileMaker migration says about a converted step that cannot
+  /// run as written (an Import Records with no transfer yet, a call to a
+  /// deleted script...), or an empty string.
+  String get migrationNote => params['migration_note']?.toString().trim() ?? '';
+
   String get previewText {
+    final note = migrationNote;
+    if (note.isNotEmpty) return '[Needs attention: $note]';
     switch (stepType) {
       case 'go_to_layout':
         return '[${params['layout_name'] ?? 'Original layout'}]';
@@ -255,6 +268,12 @@ class ScriptStepModel {
         return '[$vName = $cExpr]';
       case 'set_field':
         return '[${params['field'] ?? 'Field'}; ${params['value'] ?? ''}]';
+      case 'set_next_serial_value':
+        return '[${params['field'] ?? 'Field'}; ${params['value'] ?? ''}]';
+      case 'relookup_field_contents':
+        final field = params['field']?.toString() ?? '';
+        final dialog = params['no_dialog'] == false ? 'On' : 'Off';
+        return '[With dialog: $dialog${field.isEmpty ? '' : '; $field'}]';
       case 'if':
         return '[${params['condition'] ?? 'Condition'}]';
       case 'exit_loop_if':
@@ -463,6 +482,21 @@ class ScriptCatalogItem {
       label: '+ Show All Records',
       category: 'RECORDS',
       description: 'Restores all records in the table to the found set.',
+    ),
+    ScriptCatalogItem(
+      stepType: 'relookup_field_contents',
+      label: '+ Relookup Field Contents',
+      category: 'RECORDS',
+      description: 'Copies the looked-up values again into the found set, from the named '
+          '(or active) match field.',
+      defaultParams: {'field': '', 'no_dialog': true},
+    ),
+    ScriptCatalogItem(
+      stepType: 'set_next_serial_value',
+      label: '+ Set Next Serial Value',
+      category: 'RECORDS',
+      description: 'Sets the value the next record gets in a serial number field.',
+      defaultParams: {'field': '', 'value': '', 'value_is_calculation': true},
     ),
 
     // Control, Session & Kiosk Exit

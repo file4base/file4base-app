@@ -248,6 +248,8 @@ var supportedScriptSteps = map[string]string{
 	// Fields, editing & containers
 	"set field":                "Set Field",
 	"set field by name":        "Set Field By Name",
+	"set next serial value":    "Set Next Serial Value",
+	"relookup field contents":  "Relookup Field Contents",
 	"insert calculated result": "Insert Calculated Result",
 	"insert current date":      "Insert Current Date",
 	"select all":               "Select All",
@@ -811,6 +813,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		for _, it := range bindTableCalculations(&bundle.Tables[i], binding, colTypeByTableCol) {
 			addReportItem(report, it)
 		}
+		for _, it := range bindTableAutoEnter(&bundle.Tables[i], binding) {
+			addReportItem(report, it)
+		}
 	}
 
 	// 4. Extract Value Lists. Only now is it known which calculations are
@@ -836,7 +841,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	}
 	report.Counts.ValueLists = len(bundle.ValueLists)
 
-	// 5. Extract Layouts (and quarantine any layout triggers)
+	// 5. Extract Layouts (their script triggers are kept, disabled)
 	layoutNodes := catalogDefinitions(root, []string{"LayoutCatalog", "layouts"}, "Layout", "layout")
 	for _, ln := range layoutNodes {
 		lay, items := convertLayoutNode(ln, bundle.TableOccurrences, occIDByName, occTableByName, deletedOccurrences)
@@ -851,6 +856,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 
 	// 6. Extract Scripts & Steps
 	scriptNodes := catalogDefinitions(root, []string{"ScriptCatalog", "scripts"}, "Script", "script")
+	scripts := newScriptIndex()
 	defaultContextTable := ""
 	if len(bundle.Tables) > 0 {
 		defaultContextTable = bundle.Tables[0].Name
@@ -860,15 +866,23 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		if firstAttr(sn, "where") != "" && len(sn.Children) == 0 {
 			continue
 		}
-		sc, items := convertScriptNode(sn, defaultContextTable)
+		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
 		if sc != nil {
 			bundle.Scripts = append(bundle.Scripts, *sc)
+			scripts.add(firstAttr(sn, "id", "ID"), sc)
 		}
 	}
 	report.Counts.Scripts = len(bundle.Scripts)
+	// Only now are the scripts known, which the layouts' triggers run.
+	for _, it := range bindLayoutTriggers(bundle, scripts, binding, report.SolutionName) {
+		addReportItem(report, it)
+	}
+	for _, it := range fileTriggerItem(readFileTriggers(root), report.SolutionName) {
+		addReportItem(report, it)
+	}
 	collectFileReferences(bundle, report)
 	for i := range bundle.FileReferences {
 		// A reference a script names is given its data source's paths.
@@ -1301,66 +1315,6 @@ func strictTypeFromDDR(raw string) string {
 		return "Text Only"
 	}
 	return ""
-}
-
-// convertFieldAutoEnter turns a field's nested <AutoEnter> element into a
-// File4Base default value where it is one, and reports the auto-entry options
-// that need a formula or a script instead (#102).
-func convertFieldAutoEnter(tableSQL, rawFieldName, colName string, an *xmlNode, col *schema.BundleColumn) []ReportItem {
-	if an == nil {
-		return nil
-	}
-	source := tableSQL + "." + rawFieldName
-	target := tableSQL + "." + colName
-	var items []ReportItem
-
-	if value, ok := nestedOption(an, "ConstantData", "constantData", "constant"); ok &&
-		value != "True" && value != "False" {
-		encoded, _ := json.Marshal(map[string]interface{}{"data_enabled": true, "data_value": value})
-		stored := string(encoded)
-		col.DefaultValue = &stored
-		items = append(items, ReportItem{
-			Category:   CategoryPreserved,
-			Domain:     "field",
-			SourceName: source,
-			TargetName: target,
-			Detail:     fmt.Sprintf("Auto-enter constant %q migrated as the field's default value", value),
-		})
-	}
-
-	for _, unsupported := range []struct {
-		element string
-		attr    string
-		what    string
-	}{
-		{"Serial", "serial", "an auto-entered serial number"},
-		{"Calculation", "calculation", "an auto-entered calculation"},
-		{"Lookup", "lookup", "a looked-up value"},
-		{"CreationTimestamp", "creationTimestamp", "the creation date, time or account"},
-		{"ModificationTimestamp", "modificationTimestamp", "the modification date, time or account"},
-	} {
-		present := nestedFlag(an, unsupported.element, unsupported.attr) ||
-			findFirstChild(an, unsupported.element) != nil
-		if !present {
-			continue
-		}
-		items = append(items,
-			ReportItem{
-				Category:   CategoryUnsupported,
-				Domain:     "field",
-				SourceName: source,
-				TargetName: target,
-				Detail:     fmt.Sprintf("Auto-entering %s was not migrated", unsupported.what),
-			},
-			ReportItem{
-				Category:   CategoryManualActionRequired,
-				Domain:     "field",
-				SourceName: source,
-				TargetName: target,
-				Detail:     fmt.Sprintf("Set up %s for %s with a calculation field, a default value or a script", unsupported.what, target),
-			})
-	}
-	return items
 }
 
 func normalizeCalcResultType(rawType string) string {
@@ -2135,6 +2089,10 @@ func convertLayoutNode(
 		}
 	}
 
+	// objectIDs maps the field node of each migrated object to its id, so a
+	// trigger set on that object is attached to it.
+	objectIDs := map[*xmlNode]string{}
+
 	// Check if an explicit File4Base JSON layout definition exists
 	def := map[string]interface{}{
 		"name":         name,
@@ -2212,8 +2170,10 @@ func convertLayoutNode(
 			if n, ok := parseRepetitions(firstAttr(fn, "numOfReps", "repetitions")); ok {
 				binding["repetitions_shown"] = n
 			}
+			objID := uuid.NewString()
+			objectIDs[fn] = objID
 			objs = append(objs, map[string]interface{}{
-				"id":            uuid.NewString(),
+				"id":            objID,
 				"type":          "field",
 				"field_name":    colName,
 				"label":         fName,
@@ -2229,27 +2189,12 @@ func convertLayoutNode(
 		}
 	}
 
-	// Quarantine any layout-level script triggers so imported scripts never auto-execute
-	if _, hasTriggers := def["script_triggers"]; hasTriggers {
-		delete(def, "script_triggers")
-		items = append(items, ReportItem{
-			Category:   CategoryManualActionRequired,
-			Domain:     "trigger",
-			SourceName: name,
-			TargetName: name,
-			Detail:     "Layout script triggers were quarantined (disabled on import); review and re-enable in Layout Setup",
-		})
-	}
-	for _, trigNode := range findNodes(ln, "ScriptTrigger", "Trigger") {
-		trigName := firstAttr(trigNode, "event", "name", "type")
-		scriptRef := firstAttr(trigNode, "script", "scriptName")
-		items = append(items, ReportItem{
-			Category:   CategoryManualActionRequired,
-			Domain:     "trigger",
-			SourceName: fmt.Sprintf("%s (%s -> %s)", name, trigName, scriptRef),
-			TargetName: name,
-			Detail:     "Layout script trigger quarantined on import; review target script before enabling in Layout Setup",
-		})
+	// Script triggers are kept, switched off, until the developer reviews
+	// them: an imported script never runs because a layout was opened.
+	quarantineDefinitionTriggers(def)
+	if triggers := readLayoutTriggers(ln); len(triggers) > 0 {
+		list, _ := def[schema.LayoutScriptTriggersKey].([]interface{})
+		def[schema.LayoutScriptTriggersKey] = append(list, layoutTriggerEntries(triggers, objectIDs)...)
 	}
 
 	items = append(items, ReportItem{
@@ -2280,7 +2225,10 @@ func layoutOccurrenceDetail(occName string, occurrences []schema.BundleOccurrenc
 	return fmt.Sprintf("Layout bound to table occurrence %q", occName)
 }
 
-func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleScript, []ReportItem) {
+// occTableByName maps a lower-cased table occurrence name to the File4Base
+// table it shows, so a step naming an occurrence can say which table it
+// writes.
+func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName map[string]string) (*schema.BundleScript, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(sn, "name", "Name")
 	if name == "" || nativeFolderMarker(sn) || nativeSeparatorMarker(sn) {
@@ -2347,7 +2295,12 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 		}
 
 		if isSupported {
-			if needsTransferDefinition(canonical) {
+			for _, it := range stepOptionItems(canonical, params, occTableByName) {
+				it.SourceName = fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1)
+				it.TargetName = name
+				items = append(items, it)
+			}
+			if _, done := params["migration_note"]; !done && needsTransferDefinition(canonical) {
 				items = append(items, ReportItem{
 					Category:   CategoryManualActionRequired,
 					Domain:     "script",
@@ -2853,7 +2806,7 @@ func decodeStepParams(stNode *xmlNode, canonicalStep string) (map[string]interfa
 	}
 	if calcText != "" {
 		switch canonicalStep {
-		case "Set Field", "Insert Calculated Result", "Replace Field Contents":
+		case "Set Field", "Insert Calculated Result", "Replace Field Contents", "Set Next Serial Value":
 			params["value"] = calcText
 			params["value_is_calculation"] = true
 		case "Set Field By Name":
@@ -3348,12 +3301,12 @@ func coerceSourceValue(valStr, fieldType string) (interface{}, error) {
 			"01/02/2006", "1/2/2006",
 		} {
 			if at, err := time.Parse(layout, trimmed); err == nil {
-				return at.Format(time.RFC3339), nil
+				return at.Format(time.RFC3339Nano), nil
 			}
 		}
 		for _, layout := range []string{"15:04:05", "15:04"} {
 			if at, err := time.Parse(layout, trimmed); err == nil {
-				return at.Format(time.RFC3339), nil
+				return timeOfDay(at), nil
 			}
 		}
 		return nil, errors.New("is not a date and time")

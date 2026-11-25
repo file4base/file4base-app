@@ -1,9 +1,30 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/schema_manager/lookup_options_dialog.dart';
+import 'package:file4base_client/features/script_workspace/calculation_builder_dialog.dart';
 import 'package:file4base_client/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// The values a creation or modification stamp can enter, as in FileMaker.
+const kAutoEnterStampTypes = ['Date', 'Time', 'Timestamp', 'Name', 'Account Name'];
+
+/// Why a serial number's [next] value and [increment] cannot be saved for a
+/// field of [fieldType], or null when they can: the increment is a whole
+/// number of at least 1, the next value has a digit to count with, and a
+/// number field's next value is a whole number. The server checks the same.
+String? serialOptionsError(String next, String increment, {String fieldType = 'TEXT'}) {
+  final step = int.tryParse(increment.trim());
+  if (step == null || step < 1) return 'Increment by a whole number of at least 1.';
+  final value = next.trim();
+  if (!RegExp(r'\d').hasMatch(value)) return 'The next value needs a number to count with.';
+  if (fieldType == 'NUMBER' && !RegExp(r'^-?\d+$').hasMatch(value)) {
+    return 'The next value of a number field is a whole number.';
+  }
+  return null;
+}
 
 /// Why [text] is not a valid maximum number of repetitions, or null when it
 /// is one: a whole number from 1 to [ColumnModel.repetitionsLimit], as in
@@ -64,14 +85,41 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   bool _dataEnabled = false;
   final TextEditingController _dataValueController = TextEditingController();
 
+  /// Whether the next serial value was typed into: only then is it saved,
+  /// so a dialog left open while records are created does not move the
+  /// counter back.
+  bool _serialNextEdited = false;
+  String? _serialError;
+
   bool _calculatedValueEnabled = false;
   final TextEditingController _calculatedValueFormulaController = TextEditingController();
   bool _doNotReplaceExisting = false;
 
+  /// The occurrence of this table the auto-enter formula is evaluated from;
+  /// empty is the default one.
+  String _calculatedContext = '';
+
+  /// Do not evaluate if all referenced fields are empty: on unless the
+  /// options say otherwise, as in FileMaker.
+  bool _calculatedSkipIfEmpty = true;
+
   bool _lookedUpValueEnabled = false;
-  final TextEditingController _lookedUpTargetController = TextEditingController();
+  LookupSpec _lookup = const LookupSpec();
 
   bool _prohibitModification = false;
+
+  /// Why the Auto-Enter options cannot be saved as they are.
+  String? _autoEnterError;
+
+  /// The options as they were read, so keys this dialog does not show are
+  /// saved back unchanged.
+  Map<String, dynamic> _storedOptions = const {};
+
+  // The solution's graph, for the auto-enter formula's context and the
+  // lookup. Empty until loaded, or when it cannot be read.
+  List<TableOccurrenceModel> _occurrences = const [];
+  List<RelationshipModel> _relationships = const [];
+  List<TableModel> _tables = const [];
 
   // --- Validation State ---
   bool _notEmptyEnabled = false;
@@ -126,6 +174,98 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     }
     _tabController = TabController(length: 4, vsync: this, initialIndex: initialIndex);
     _initValuesFromColumn();
+    unawaited(_loadGraph());
+  }
+
+  Future<void> _loadGraph() async {
+    final client = ref.read(apiClientProvider);
+    try {
+      final results = await Future.wait<Object>([
+        client.listOccurrences(),
+        client.listRelationships(),
+        client.listTables(),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _occurrences = results[0] as List<TableOccurrenceModel>;
+        _relationships = results[1] as List<RelationshipModel>;
+        _tables = results[2] as List<TableModel>;
+      });
+    } on Object catch (_) {
+      // Without the graph the formula editor and the lookup offer what they
+      // can; the options already set are kept.
+    }
+  }
+
+  /// The occurrences of this field's table, and the default one's name.
+  List<TableOccurrenceModel> get _ownOccurrences =>
+      _occurrences.where((o) => o.baseTableId == widget.table.id).toList();
+
+  String get _defaultOccurrenceName =>
+      defaultOccurrenceOf(widget.table.id, widget.table.name, _occurrences)?.name ?? widget.table.name;
+
+  /// The fields of an occurrence's table: from the solution's tables, or for
+  /// another solution's table, from the server.
+  Future<List<ColumnModel>> _fieldsOf(TableOccurrenceModel occurrence) async {
+    final local = occurrence.baseTableId == null
+        ? null
+        : _tables.where((t) => t.id == occurrence.baseTableId).firstOrNull ??
+            (occurrence.baseTableId == widget.table.id ? widget.table : null);
+    if (local != null && local.columns.isNotEmpty) return local.columns;
+    final table = await ref.read(apiClientProvider).getOccurrenceTable(occurrence.id);
+    return table.columns;
+  }
+
+  Future<void> _specifyCalculatedValue() async {
+    final fieldsByOccurrence = <String, List<String>>{};
+    for (final o in _occurrences) {
+      final table = _tables.where((t) => t.id == o.baseTableId).firstOrNull ??
+          (o.baseTableId == widget.table.id ? widget.table : null);
+      if (table != null) fieldsByOccurrence[o.name] = [for (final c in table.columns) c.name];
+    }
+    final start = _calculatedContext.isNotEmpty ? _calculatedContext : _defaultOccurrenceName;
+    fieldsByOccurrence.putIfAbsent(start, () => [for (final c in widget.table.columns) c.name]);
+    final formula = await CalculationBuilderDialog.show(
+      context,
+      initialFormula: _calculatedValueFormulaController.text,
+      contextTable: start,
+      availableTables: fieldsByOccurrence.keys.toList(),
+      fieldsByTable: fieldsByOccurrence,
+    );
+    if (!mounted) return;
+    if (formula == null) {
+      // Cancelled with no formula: the option stays off, as in FileMaker.
+      if (_calculatedValueFormulaController.text.trim().isEmpty) {
+        setState(() => _calculatedValueEnabled = false);
+      }
+      return;
+    }
+    setState(() {
+      _calculatedValueFormulaController.text = formula.trim();
+      if (formula.trim().isNotEmpty) _calculatedValueEnabled = true;
+    });
+  }
+
+  Future<void> _specifyLookup() async {
+    final spec = await LookupOptionsDialog.show(
+      context,
+      fieldName: widget.column.displayName,
+      tableId: widget.table.id,
+      tableName: widget.table.name,
+      occurrences: _occurrences,
+      relationships: _relationships,
+      loadFields: _fieldsOf,
+      initial: _lookup,
+    );
+    if (!mounted) return;
+    if (spec == null) {
+      if (!_lookup.isComplete) setState(() => _lookedUpValueEnabled = false);
+      return;
+    }
+    setState(() {
+      _lookup = spec;
+      _lookedUpValueEnabled = true;
+    });
   }
 
   void _initValuesFromColumn() {
@@ -133,6 +273,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     if (widget.column.defaultValue != null && widget.column.defaultValue!.isNotEmpty) {
       try {
         final data = jsonDecode(widget.column.defaultValue!) as Map<String, dynamic>;
+        _storedOptions = data;
         _creationEnabled = data['creation_enabled'] as bool? ?? false;
         _creationType = data['creation_type'] as String? ?? 'Date';
         _modificationEnabled = data['modification_enabled'] as bool? ?? false;
@@ -147,8 +288,10 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         _calculatedValueEnabled = data['calculated_enabled'] as bool? ?? false;
         _calculatedValueFormulaController.text = (data['calculated_formula'] ?? '').toString();
         _doNotReplaceExisting = data['do_not_replace'] as bool? ?? false;
+        _calculatedContext = data['calculated_context']?.toString() ?? '';
+        _calculatedSkipIfEmpty = data['calculated_skip_if_empty'] != false;
         _lookedUpValueEnabled = data['looked_up_enabled'] as bool? ?? false;
-        _lookedUpTargetController.text = (data['looked_up_target'] ?? '').toString();
+        _lookup = LookupSpec.fromOptions(data);
         _prohibitModification = data['prohibit_modification'] as bool? ?? false;
 
         // Storage
@@ -207,17 +350,19 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
           _calculationContext = calc['context'] as String?;
         }
       } catch (_) {
-        _calculationFormulaController.text = widget.column.calculationFormula!;
-      }
-    } else {
-      if (_calculatedValueFormulaController.text.isNotEmpty) {
-        _calculationFormulaController.text = _calculatedValueFormulaController.text;
+        // Older clients also copied the auto-enter formula here; it is not
+        // the field's own formula, and saving drops it.
+        if (widget.column.calculationFormula != _calculatedValueFormulaController.text) {
+          _calculationFormulaController.text = widget.column.calculationFormula!;
+        }
       }
     }
 
     // Fallback summary target column
+    // Only a field the summary can take is offered, so only such a field
+    // may be the one selected: any other has no item and cannot be shown.
     if (_summaryTargetColumn == null && widget.table.columns.isNotEmpty) {
-      final potential = widget.table.columns.where((c) => c.name != widget.column.name && !c.isPrimaryKey);
+      final potential = _summarizableColumns.where((c) => !c.isPrimaryKey);
       if (potential.isNotEmpty) {
         _summaryTargetColumn = potential.first.name;
       }
@@ -231,7 +376,6 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     _serialIncrementController.dispose();
     _dataValueController.dispose();
     _calculatedValueFormulaController.dispose();
-    _lookedUpTargetController.dispose();
     _rangeMinController.dispose();
     _rangeMaxController.dispose();
     _maxLengthController.dispose();
@@ -249,35 +393,20 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
       return;
     }
     final maxRepetitions = int.parse(_repetitionsController.text.trim());
+    final autoEnterProblem = _autoEnterProblem();
+    setState(() {
+      _serialError = autoEnterProblem.$1;
+      _autoEnterError = autoEnterProblem.$2;
+    });
+    if (autoEnterProblem.$1 != null || autoEnterProblem.$2 != null) {
+      _tabController.animateTo(0);
+      return;
+    }
     setState(() => _isSaving = true);
 
     try {
       // 1. Pack Auto-Enter & Storage JSON
-      final autoEnterStorageMap = <String, dynamic>{
-        'creation_enabled': _creationEnabled,
-        'creation_type': _creationType,
-        'modification_enabled': _modificationEnabled,
-        'modification_type': _modificationType,
-        'serial_enabled': _serialEnabled,
-        'serial_generate': _serialGenerate,
-        'serial_next': int.tryParse(_serialNextController.text.trim()) ?? 1,
-        'serial_increment': int.tryParse(_serialIncrementController.text.trim()) ?? 1,
-        'value_last_visited': _valueFromLastVisited,
-        'data_enabled': _dataEnabled,
-        'data_value': _dataValueController.text,
-        'calculated_enabled': _calculatedValueEnabled,
-        'calculated_formula': _calculatedValueFormulaController.text.trim(),
-        'do_not_replace': _doNotReplaceExisting,
-        'looked_up_enabled': _lookedUpValueEnabled,
-        'looked_up_target': _lookedUpTargetController.text.trim(),
-        'prohibit_modification': _prohibitModification,
-        // Storage
-        'storage_global': _useGlobalStorage,
-        'indexing': _indexingOption,
-        'auto_index': _autoIndex,
-        'container_storage': _containerStorage,
-      };
-      final defaultValueJson = jsonEncode(autoEnterStorageMap);
+      final defaultValueJson = jsonEncode(_fieldOptionsToSave());
 
       // 2. Pack Validation JSON
       final validationMap = <String, dynamic>{
@@ -306,14 +435,14 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
           running: _summaryRunningTotal,
         ).toJson());
       } else if (widget.column.fieldType == 'CALCULATION' || _calculationFormulaController.text.isNotEmpty) {
+        // The auto-enter formula is kept with the other auto-enter options,
+        // not here: this is the calculation field's own formula.
         calculationFormulaStr = jsonEncode({
           'formula': _calculationFormulaController.text.trim(),
           'result_type': _calculationResultType,
           if (!_storeCalculationResult) 'stored': false,
           if (_calculationContext != null && _calculationContext!.isNotEmpty) 'context': _calculationContext,
         });
-      } else if (_calculatedValueFormulaController.text.isNotEmpty) {
-        calculationFormulaStr = _calculatedValueFormulaController.text.trim();
       }
 
       final client = ref.read(apiClientProvider);
@@ -352,6 +481,59 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         );
       }
     }
+  }
+
+  /// What stops the Auto-Enter options from being saved: the serial
+  /// number's problem, then any other.
+  (String?, String?) _autoEnterProblem() {
+    final serial = _serialEnabled
+        ? serialOptionsError(_serialNextController.text, _serialIncrementController.text,
+            fieldType: widget.column.fieldType)
+        : null;
+    String? other;
+    if (_calculatedValueEnabled && _calculatedValueFormulaController.text.trim().isEmpty) {
+      other = 'Specify the formula of the calculated value.';
+    } else if (_lookedUpValueEnabled && !_lookup.isComplete) {
+      other = 'Specify the table and the field the looked-up value is copied from.';
+    }
+    return (serial, other);
+  }
+
+  /// The field's options as saved in its `default_value`: the Auto-Enter and
+  /// Storage tabs' keys over the keys read, which are kept. The next serial
+  /// value is sent only when it was edited.
+  Map<String, dynamic> _fieldOptionsToSave() {
+    final options = Map<String, dynamic>.of(_storedOptions)
+      ..remove('serial_next')
+      // Older clients kept the lookup as one text; it is now its own keys.
+      ..remove('looked_up_target')
+      ..addAll({
+        'creation_enabled': _creationEnabled,
+        'creation_type': _creationType,
+        'modification_enabled': _modificationEnabled,
+        'modification_type': _modificationType,
+        'serial_enabled': _serialEnabled,
+        'serial_generate': _serialGenerate,
+        if (_serialNextEdited) 'serial_next': _serialNextController.text.trim(),
+        'serial_increment': int.tryParse(_serialIncrementController.text.trim()) ?? 1,
+        'value_last_visited': _valueFromLastVisited,
+        'data_enabled': _dataEnabled,
+        'data_value': _dataValueController.text,
+        'calculated_enabled': _calculatedValueEnabled,
+        'calculated_formula': _calculatedValueFormulaController.text.trim(),
+        'calculated_context': _calculatedContext,
+        'do_not_replace': _doNotReplaceExisting,
+        'calculated_skip_if_empty': _calculatedSkipIfEmpty,
+        'looked_up_enabled': _lookedUpValueEnabled,
+        ..._lookup.toOptions(),
+        'prohibit_modification': _prohibitModification,
+        // Storage
+        'storage_global': _useGlobalStorage,
+        'indexing': _indexingOption,
+        'auto_index': _autoIndex,
+        'container_storage': _containerStorage,
+      });
+    return options;
   }
 
   @override
@@ -502,7 +684,40 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   // TAB 1: AUTO-ENTER
   // ==========================================
   Widget _buildAutoEnterTab(ThemeData theme, bool isDark) {
-    final creationTypes = ['Date', 'Time', 'Timestamp', 'Name', 'Account Name'];
+    const small = TextStyle(fontSize: 12);
+    const hint = TextStyle(fontSize: 11, color: Colors.grey);
+    final own = _ownOccurrences;
+    final contextNames = {for (final o in own) o.name, if (_calculatedContext.isNotEmpty) _calculatedContext};
+
+    Widget stamp({
+      required String label,
+      required Key checkKey,
+      required Key typeKey,
+      required bool enabled,
+      required String type,
+      required ValueChanged<bool> onEnabled,
+      required ValueChanged<String> onType,
+    }) {
+      return Row(
+        children: [
+          Checkbox(key: checkKey, value: enabled, onChanged: (v) => onEnabled(v ?? false)),
+          SizedBox(width: 90, child: Text(label)),
+          SizedBox(
+            width: 180,
+            height: 32,
+            child: DropdownButton<String>(
+              key: typeKey,
+              isExpanded: true,
+              value: kAutoEnterStampTypes.contains(type) ? type : kAutoEnterStampTypes.first,
+              items: [
+                for (final t in kAutoEnterStampTypes) DropdownMenuItem(value: t, child: Text(t, style: small)),
+              ],
+              onChanged: enabled ? (v) => onType(v ?? type) : null,
+            ),
+          ),
+        ],
+      );
+    }
 
     return SingleChildScrollView(
       child: Column(
@@ -512,56 +727,32 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
             'Automatically enter the following data into this field:',
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
           ),
-          const SizedBox(height: 12),
+          if (_autoEnterError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(_autoEnterError!,
+                  key: const ValueKey('auto-enter-error'),
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.error)),
+            ),
+          const SizedBox(height: 8),
 
-          // Creation
-          Row(
-            children: [
-              Checkbox(
-                value: _creationEnabled,
-                onChanged: (v) => setState(() => _creationEnabled = v ?? false),
-              ),
-              const SizedBox(width: 80, child: Text('Creation')),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 180,
-                height: 32,
-                child: DropdownButtonFormField<String>(
-                  initialValue: _creationType,
-                  decoration: const InputDecoration(
-                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    border: OutlineInputBorder(),
-                  ),
-                  items: creationTypes.map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 12)))).toList(),
-                  onChanged: _creationEnabled ? (v) => setState(() => _creationType = v!) : null,
-                ),
-              ),
-            ],
+          stamp(
+            label: 'Creation',
+            checkKey: const ValueKey('auto-enter-creation'),
+            typeKey: const ValueKey('auto-enter-creation-type'),
+            enabled: _creationEnabled,
+            type: _creationType,
+            onEnabled: (v) => setState(() => _creationEnabled = v),
+            onType: (v) => setState(() => _creationType = v),
           ),
-
-          // Modification
-          Row(
-            children: [
-              Checkbox(
-                value: _modificationEnabled,
-                onChanged: (v) => setState(() => _modificationEnabled = v ?? false),
-              ),
-              const SizedBox(width: 80, child: Text('Modification')),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 180,
-                height: 32,
-                child: DropdownButtonFormField<String>(
-                  initialValue: _modificationType,
-                  decoration: const InputDecoration(
-                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    border: OutlineInputBorder(),
-                  ),
-                  items: creationTypes.map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 12)))).toList(),
-                  onChanged: _modificationEnabled ? (v) => setState(() => _modificationType = v!) : null,
-                ),
-              ),
-            ],
+          stamp(
+            label: 'Modification',
+            checkKey: const ValueKey('auto-enter-modification'),
+            typeKey: const ValueKey('auto-enter-modification-type'),
+            enabled: _modificationEnabled,
+            type: _modificationType,
+            onEnabled: (v) => setState(() => _modificationEnabled = v),
+            onType: (v) => setState(() => _modificationType = v),
           ),
 
           // Serial number
@@ -569,77 +760,98 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Checkbox(
+                key: const ValueKey('auto-enter-serial'),
                 value: _serialEnabled,
-                onChanged: (v) => setState(() => _serialEnabled = v ?? false),
+                onChanged: (v) => setState(() {
+                  _serialEnabled = v ?? false;
+                  if (!_serialEnabled) _serialError = null;
+                }),
               ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Padding(
-                      padding: EdgeInsets.only(top: 8),
-                      child: Text('Serial number'),
-                    ),
+                    const Padding(padding: EdgeInsets.only(top: 8), child: Text('Serial number')),
                     Padding(
-                      padding: const EdgeInsets.only(left: 8.0, top: 4),
-                      child: Row(
-                        children: [
-                          const Text('Generate:', style: TextStyle(fontSize: 12, color: Colors.grey)),
-                          const SizedBox(width: 8),
-                          Radio<String>(
-                            value: 'creation',
-                            groupValue: _serialGenerate,
-                            onChanged: _serialEnabled ? (v) => setState(() => _serialGenerate = v!) : null,
-                          ),
-                          const Text('On creation', style: TextStyle(fontSize: 12)),
-                          const SizedBox(width: 12),
-                          Radio<String>(
-                            value: 'commit',
-                            groupValue: _serialGenerate,
-                            onChanged: _serialEnabled ? (v) => setState(() => _serialGenerate = v!) : null,
-                          ),
-                          const Text('On commit', style: TextStyle(fontSize: 12)),
-                        ],
+                      padding: const EdgeInsets.only(left: 8, top: 4),
+                      child: RadioGroup<String>(
+                        groupValue: _serialGenerate,
+                        onChanged: (v) {
+                          if (_serialEnabled) setState(() => _serialGenerate = v ?? 'creation');
+                        },
+                        child: Row(
+                          children: [
+                            const Text('Generate:', style: hint),
+                            const SizedBox(width: 8),
+                            Radio<String>(
+                              key: const ValueKey('auto-enter-serial-creation'),
+                              value: 'creation',
+                              enabled: _serialEnabled,
+                            ),
+                            const Text('On creation', style: small),
+                            const SizedBox(width: 12),
+                            Radio<String>(
+                              key: const ValueKey('auto-enter-serial-commit'),
+                              value: 'commit',
+                              enabled: _serialEnabled,
+                            ),
+                            const Text('On commit', style: small),
+                          ],
+                        ),
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.only(left: 8.0, top: 4),
+                      padding: const EdgeInsets.only(left: 8, top: 4),
                       child: Row(
                         children: [
-                          const Text('next value', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          const Text('next value', style: hint),
                           const SizedBox(width: 8),
                           SizedBox(
-                            width: 80,
+                            width: 110,
                             height: 30,
                             child: TextField(
+                              key: const ValueKey('auto-enter-serial-next'),
                               controller: _serialNextController,
                               enabled: _serialEnabled,
-                              style: const TextStyle(fontSize: 12),
+                              style: small,
                               decoration: const InputDecoration(
                                 contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 border: OutlineInputBorder(),
                               ),
+                              onChanged: (_) => setState(() {
+                                _serialNextEdited = true;
+                                _serialError = null;
+                              }),
                             ),
                           ),
                           const SizedBox(width: 16),
-                          const Text('increment by', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                          const Text('increment by', style: hint),
                           const SizedBox(width: 8),
                           SizedBox(
                             width: 60,
                             height: 30,
                             child: TextField(
+                              key: const ValueKey('auto-enter-serial-increment'),
                               controller: _serialIncrementController,
                               enabled: _serialEnabled,
-                              style: const TextStyle(fontSize: 12),
+                              style: small,
                               decoration: const InputDecoration(
                                 contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                 border: OutlineInputBorder(),
                               ),
+                              onChanged: (_) => setState(() => _serialError = null),
                             ),
                           ),
                         ],
                       ),
                     ),
+                    if (_serialError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8, top: 4),
+                        child: Text(_serialError!,
+                            key: const ValueKey('auto-enter-serial-error'),
+                            style: TextStyle(fontSize: 11, color: theme.colorScheme.error)),
+                      ),
                   ],
                 ),
               ),
@@ -648,40 +860,44 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
 
           const SizedBox(height: 6),
 
-          // Value from last visited record
+          // Value from last visited record: kept with the field, not entered.
           Row(
             children: [
               Checkbox(
+                key: const ValueKey('auto-enter-last-visited'),
                 value: _valueFromLastVisited,
                 onChanged: (v) => setState(() => _valueFromLastVisited = v ?? false),
               ),
               const Text('Value from last visited record'),
+              const SizedBox(width: 8),
+              const Flexible(
+                child: Text('(kept with the field; File4Base does not enter it)', style: hint),
+              ),
             ],
           ),
 
-          // Data (Default static)
+          // Data
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Checkbox(
+                key: const ValueKey('auto-enter-data'),
                 value: _dataEnabled,
                 onChanged: (v) => setState(() => _dataEnabled = v ?? false),
               ),
-              const Padding(
-                padding: EdgeInsets.only(top: 8.0),
-                child: Text('Data:'),
-              ),
+              const Padding(padding: EdgeInsets.only(top: 8), child: Text('Data:')),
               const SizedBox(width: 12),
               Expanded(
                 child: SizedBox(
                   height: 54,
                   child: TextField(
+                    key: const ValueKey('auto-enter-data-value'),
                     controller: _dataValueController,
                     enabled: _dataEnabled,
                     maxLines: 2,
-                    style: const TextStyle(fontSize: 12),
+                    style: small,
                     decoration: const InputDecoration(
-                      hintText: 'Default text or static value',
+                      hintText: 'A constant value',
                       contentPadding: EdgeInsets.all(8),
                       border: OutlineInputBorder(),
                     ),
@@ -698,8 +914,16 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Checkbox(
+                key: const ValueKey('auto-enter-calculated'),
                 value: _calculatedValueEnabled,
-                onChanged: (v) => setState(() => _calculatedValueEnabled = v ?? false),
+                onChanged: (v) {
+                  final on = v ?? false;
+                  setState(() => _calculatedValueEnabled = on);
+                  // As in FileMaker, turning it on asks for the formula.
+                  if (on && _calculatedValueFormulaController.text.trim().isEmpty) {
+                    unawaited(_specifyCalculatedValue());
+                  }
+                },
               ),
               Expanded(
                 child: Column(
@@ -710,45 +934,76 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                         const Text('Calculated value'),
                         const SizedBox(width: 12),
                         OutlinedButton(
+                          key: const ValueKey('auto-enter-calculated-specify'),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                             visualDensity: VisualDensity.compact,
                           ),
-                          onPressed: _calculatedValueEnabled
-                              ? () {
-                                  _tabController.animateTo(3);
-                                }
-                              : null,
+                          onPressed: _specifyCalculatedValue,
                           child: const Text('Specify...', style: TextStyle(fontSize: 11)),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text('Evaluate from:', style: hint),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: DropdownButton<String>(
+                            key: const ValueKey('auto-enter-calculated-context'),
+                            isExpanded: true,
+                            value: _calculatedContext,
+                            items: [
+                              DropdownMenuItem(
+                                value: '',
+                                child: Text('$_defaultOccurrenceName (default)', style: small),
+                              ),
+                              for (final name in contextNames)
+                                DropdownMenuItem(value: name, child: Text(name, style: small)),
+                            ],
+                            onChanged: _calculatedValueEnabled
+                                ? (v) => setState(() => _calculatedContext = v ?? '')
+                                : null,
+                          ),
                         ),
                       ],
                     ),
                     if (_calculatedValueEnabled)
                       Padding(
-                        padding: const EdgeInsets.only(top: 6.0),
+                        padding: const EdgeInsets.only(top: 6),
                         child: TextField(
+                          key: const ValueKey('auto-enter-calculated-formula'),
                           controller: _calculatedValueFormulaController,
+                          maxLines: 3,
+                          minLines: 1,
                           style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
                           decoration: const InputDecoration(
-                            hintText: 'e.g. UPPER(first_name) || " " || UPPER(last_name)',
+                            hintText: 'e.g. Upper ( first_name ) & " " & Upper ( last_name )',
                             contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                             border: OutlineInputBorder(),
                           ),
                         ),
                       ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4.0),
-                      child: Row(
-                        children: [
-                          Checkbox(
-                            value: _doNotReplaceExisting,
-                            onChanged: _calculatedValueEnabled
-                                ? (v) => setState(() => _doNotReplaceExisting = v ?? false)
-                                : null,
-                          ),
-                          const Text('Do not replace existing value of field (if any)', style: TextStyle(fontSize: 12)),
-                        ],
-                      ),
+                    Row(
+                      children: [
+                        Checkbox(
+                          key: const ValueKey('auto-enter-do-not-replace'),
+                          value: _doNotReplaceExisting,
+                          onChanged: _calculatedValueEnabled
+                              ? (v) => setState(() => _doNotReplaceExisting = v ?? false)
+                              : null,
+                        ),
+                        const Flexible(child: Text('Do not replace existing value of field (if any)', style: small)),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        Checkbox(
+                          key: const ValueKey('auto-enter-skip-if-empty'),
+                          value: _calculatedSkipIfEmpty,
+                          onChanged: _calculatedValueEnabled
+                              ? (v) => setState(() => _calculatedSkipIfEmpty = v ?? true)
+                              : null,
+                        ),
+                        const Flexible(child: Text('Do not evaluate if all referenced fields are empty', style: small)),
+                      ],
                     ),
                   ],
                 ),
@@ -760,34 +1015,53 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
           Row(
             children: [
               Checkbox(
+                key: const ValueKey('auto-enter-looked-up'),
                 value: _lookedUpValueEnabled,
-                onChanged: (v) => setState(() => _lookedUpValueEnabled = v ?? false),
+                onChanged: (v) {
+                  final on = v ?? false;
+                  setState(() => _lookedUpValueEnabled = on);
+                  // As in FileMaker, turning it on asks what to look up.
+                  if (on && !_lookup.isComplete) unawaited(_specifyLookup());
+                },
               ),
               const Text('Looked-up value'),
               const SizedBox(width: 12),
               OutlinedButton(
+                key: const ValueKey('auto-enter-looked-up-specify'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
                   visualDensity: VisualDensity.compact,
                 ),
-                onPressed: _lookedUpValueEnabled ? () {} : null,
+                onPressed: _specifyLookup,
                 child: const Text('Specify...', style: TextStyle(fontSize: 11)),
               ),
+              const SizedBox(width: 12),
+              if (_lookup.isComplete)
+                Flexible(
+                  child: Text(
+                    'from ${_lookup.occurrence}::${_lookup.field}',
+                    key: const ValueKey('auto-enter-looked-up-summary'),
+                    style: small,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
             ],
           ),
 
           const Divider(height: 24),
 
-          // Prohibit modification of value during data entry
           Row(
             children: [
               Checkbox(
+                key: const ValueKey('auto-enter-prohibit'),
                 value: _prohibitModification,
                 onChanged: (v) => setState(() => _prohibitModification = v ?? false),
               ),
-              const Text(
-                'Prohibit modification of value during data entry',
-                style: TextStyle(fontWeight: FontWeight.w500),
+              const Flexible(
+                child: Text(
+                  'Prohibit modification of value during data entry',
+                  style: TextStyle(fontWeight: FontWeight.w500),
+                ),
               ),
             ],
           ),
@@ -1363,7 +1637,9 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 child: SizedBox(
                   height: 32,
                   child: DropdownButtonFormField<String>(
-                    initialValue: _summaryTargetColumn,
+                    initialValue: _summarizableColumns.any((c) => c.name == _summaryTargetColumn)
+                        ? _summaryTargetColumn
+                        : null,
                     decoration: const InputDecoration(
                       contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       border: OutlineInputBorder(),

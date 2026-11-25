@@ -94,6 +94,34 @@ abstract class LayoutActionHost {
   String actionResolveText(String text);
 }
 
+/// Where a calculation is evaluated (#26): the occurrence the window's layout
+/// is based on, and the record in hand. Implemented by the data browser.
+abstract class CalculationContextHost {
+  /// The names a field of this window's own occurrence is qualified with —
+  /// its table occurrence and its table — lower-cased.
+  Set<String> get actionOwnOccurrenceNames;
+
+  /// [expression] evaluated by the server against the record in hand, related
+  /// fields read through the relationships, as a calculation field is. Null
+  /// when it cannot be: no record, or an expression that does not evaluate.
+  Future<String?> actionEvaluateCalculation(String expression);
+}
+
+/// Script steps of the auto-enter options: Set Next Serial Value and
+/// Relookup Field Contents. Implemented by the data browser; a host without
+/// it makes the steps fail with FileMaker's error 3 (command unavailable).
+abstract class AutoEnterActionHost {
+  /// Sets the value the next record gets in the serial number [field] of the
+  /// current table. Returns a FileMaker error code: 0 when it was set.
+  Future<int> actionSetNextSerialValue(String field, String value);
+
+  /// Copies again the looked-up values of the found set whose lookups start
+  /// from the match field [field], after asking when [dialog] is true, and
+  /// reloads the records. Returns a FileMaker error code: 0 when it ran, 1
+  /// when the user cancelled.
+  Future<int> actionRelookupFieldContents(String field, {bool dialog = false});
+}
+
 /// Outcome of running a button action. [message] explains why a script
 /// stopped early (unsupported step, missing script, ...).
 class LayoutActionResult {
@@ -259,6 +287,8 @@ class LayoutActionRunner {
     'set_field_by_name',
     'insert_calculated_result',
     'replace_field_contents',
+    'set_next_serial_value',
+    'relookup_field_contents',
     'copy',
     'paste',
     'cut',
@@ -334,13 +364,14 @@ class LayoutActionRunner {
   final ScriptSessionState _defaultSession = ScriptSessionState();
 
   ExtendedLayoutActionHost? get _extHost => host is ExtendedLayoutActionHost ? host as ExtendedLayoutActionHost : null;
+  AutoEnterActionHost? get _autoEnterHost => host is AutoEnterActionHost ? host as AutoEnterActionHost : null;
 
   Future<LayoutActionResult> run(ButtonActionModel action) async {
     if (action.isPerformScript) {
       if (action.scriptId == null && (action.scriptName == null || action.scriptName!.isEmpty)) {
         return const LayoutActionResult.stopped('This button has no script selected.');
       }
-      final parameter = resolveValue(action.parameter ?? '', <String, String>{});
+      final parameter = await evaluateParameter(action.parameter ?? '', <String, String>{});
       if (parameter == null) {
         return const LayoutActionResult.stopped('Cannot evaluate the script parameter.');
       }
@@ -871,6 +902,10 @@ class LayoutActionRunner {
           );
         }
       case 'save_records_as_pdf':
+        // No PDF is written yet: reporting success would let the steps after
+        // it attach or send a file that does not exist.
+        return failOrCapture(3, _migrationNote(params,
+            'Save Records as PDF produces no PDF in File4Base yet (error 3, command unavailable).'));
       case 'save_records_as_excel':
         session.lastError = 0;
         if (ext != null) {
@@ -1109,29 +1144,84 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'replace_field_contents':
+        // The step's field may be a field of another table occurrence; the
+        // occurrence goes with it to the window, which refuses to write the
+        // layout's own field of the same name instead.
         var field = params['field']?.toString().trim() ?? '';
+        var table = params['field_table']?.toString().trim() ?? '';
+        final qualifier = field.indexOf('::');
+        if (qualifier >= 0) {
+          if (table.isEmpty) table = field.substring(0, qualifier).trim();
+          field = field.substring(qualifier + 2).trim();
+        }
         if (field.isEmpty) {
           field = ext?.actionActiveFieldName ?? session.activeField;
         }
         if (field.isEmpty) {
           return failOrCapture(102, 'Replace Field Contents has no target field.');
         }
+        if (ext == null) {
+          return failOrCapture(3, 'Replace Field Contents needs a window with a found set.');
+        }
         final replaceType = params['replace_type']?.toString().toLowerCase() ?? 'current_contents';
-        String? replacement;
-        if (params.containsKey('value') || params.containsKey('expression')) {
-          final expr = (params['value'] ?? params['expression'])?.toString() ?? '';
-          replacement = resolveValue(expr, vars, callContext: context);
-          if (replacement == null) {
-            return const LayoutActionResult.stopped('Replace Field Contents calculation cannot be evaluated.');
+        if (boolParam('dialog')) {
+          // With dialog, FileMaker asks before it rewrites the found set. Only
+          // Replace goes ahead: Cancel, or closing the dialog, leaves every
+          // record as it was (error 1).
+          final answer = await ext.actionShowDialogEx(
+            title: 'Replace Field Contents',
+            message: 'Permanently replace the contents of the field "$field" in all the records '
+                'of the found set?',
+            buttons: const [
+              {'label': 'Replace', 'commit': true},
+              {'label': 'Cancel', 'commit': false},
+            ],
+          );
+          if (answer.buttonIndex != 1) {
+            session.lastError = 1;
+            return const LayoutActionResult.ok();
           }
         }
-        if (ext != null) {
-          final ok = await ext.actionReplaceFieldContents(field: field, replaceType: replaceType, value: replacement);
-          if (!ok) return failOrCapture(102, 'Field "$field" could not be replaced.');
-        } else if (replacement != null) {
-          if (!await host.actionSetField(field, replacement)) {
-            return failOrCapture(102, 'Field "$field" is not in this table.');
-          }
+        return _replaceFoundSet(
+          ext: ext,
+          field: field,
+          table: table,
+          replaceType: replaceType,
+          params: params,
+          vars: vars,
+          context: context,
+          failOrCapture: failOrCapture,
+        );
+      case 'set_next_serial_value':
+        final field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) return failOrCapture(102, 'Set Next Serial Value has no field selected.');
+        final value = params['value_is_calculation'] == true
+            ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
+            : p('value');
+        if (value == null) {
+          return const LayoutActionResult.stopped('Set Next Serial Value calculation is not supported in this context.');
+        }
+        final serialHost = _autoEnterHost;
+        if (serialHost == null) return failOrCapture(3, 'Set Next Serial Value is not available here.');
+        final code = await serialHost.actionSetNextSerialValue(field, value.trim());
+        if (code != 0) {
+          return failOrCapture(code, 'Set Next Serial Value could not set the next value of "$field".');
+        }
+        session.lastError = 0;
+      case 'relookup_field_contents':
+        var field = params['field']?.toString().trim() ?? '';
+        if (field.isEmpty) {
+          field = ext?.actionActiveFieldName ?? session.activeField;
+        }
+        if (field.isEmpty) {
+          return failOrCapture(102, 'Relookup Field Contents has no match field: name one or go to it first.');
+        }
+        final lookupHost = _autoEnterHost;
+        if (lookupHost == null) return failOrCapture(3, 'Relookup Field Contents is not available here.');
+        final code = await lookupHost.actionRelookupFieldContents(
+            field, dialog: !boolParam('no_dialog', defaultValue: true));
+        if (code != 0) {
+          return failOrCapture(code, 'Relookup Field Contents could not relookup from "$field".');
         }
         session.lastError = 0;
       case 'copy':
@@ -1260,16 +1350,33 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'send_mail':
-        String evalMailParam(String key) {
+        // A draft opened in the user's e-mail client is the only way a
+        // File4Base script sends mail: an SMTP send, one mail per record, a
+        // collected address list or an attachment would be lost silently.
+        final unsupported = _sendMailRefusal(params);
+        if (unsupported != null) return failOrCapture(3, unsupported);
+        String? evalMailParam(String key) {
           final raw = params[key]?.toString() ?? '';
           if (raw.isEmpty) return '';
-          return resolveValue(raw, vars, callContext: context) ?? _resolveParamsText(raw, vars);
+          final value = resolveValue(raw, vars, callContext: context);
+          if (value != null) return value;
+          // A calculation that cannot be evaluated is never sent as its own
+          // text; a literal is still written as it stands.
+          return params['${key}_is_calculation'] == true ? null : _resolveParamsText(raw, vars);
         }
-        final to = evalMailParam('to');
-        final cc = evalMailParam('cc');
-        final bcc = evalMailParam('bcc');
-        final subject = evalMailParam('subject');
-        final message = evalMailParam('message');
+        final mailParts = <String, String>{};
+        for (final key in const ['to', 'cc', 'bcc', 'subject', 'message']) {
+          final value = evalMailParam(key);
+          if (value == null) {
+            return LayoutActionResult.stopped('Send Mail cannot evaluate its $key: ${params[key]}');
+          }
+          mailParts[key] = value;
+        }
+        final to = mailParts['to']!;
+        final cc = mailParts['cc']!;
+        final bcc = mailParts['bcc']!;
+        final subject = mailParts['subject']!;
+        final message = mailParts['message']!;
         if (ext != null) {
           await ext.actionSendMail(to: to, cc: cc, bcc: bcc, subject: subject, message: message);
         } else if (to.isNotEmpty) {
@@ -1328,10 +1435,13 @@ class LayoutActionRunner {
           );
           session.lastMessageChoice = dialogResult.buttonIndex;
           final chosenIdx = dialogResult.buttonIndex - 1;
-          final shouldCommit = resolvedButtons == null ||
-              chosenIdx < 0 ||
-              chosenIdx >= resolvedButtons.length ||
-              resolvedButtons[chosenIdx]['commit'] != false;
+          // A dialog closed without a button commits nothing; neither does a
+          // button that does not commit, such as Cancel.
+          final shouldCommit = dialogResult.buttonIndex != ScriptDialogResult.dismissed &&
+              (resolvedButtons == null ||
+                  chosenIdx < 0 ||
+                  chosenIdx >= resolvedButtons.length ||
+                  resolvedButtons[chosenIdx]['commit'] != false);
           if (shouldCommit) {
             for (final entry in dialogResult.inputValues.entries) {
               if (entry.key.startsWith(r'$')) {
@@ -1366,8 +1476,14 @@ class LayoutActionRunner {
         if (name.isEmpty) {
           name = _extractQuoted(params['expression']?.toString() ?? '');
         }
-        if (name.isEmpty) return const LayoutActionResult.stopped('Perform Script has no script name.');
-        final parameter = resolveValue((params['script_parameter'] ?? params['parameter'])?.toString() ?? '', vars, callContext: context);
+        if (name.isEmpty && params['script_missing'] == true) {
+          // FileMaker skips a call to a deleted script with error 104.
+          return failOrCapture(104, _migrationNote(params, 'Perform Script names a script that no longer exists.'));
+        }
+        if (name.isEmpty) {
+          return LayoutActionResult.stopped(_migrationNote(params, 'Perform Script has no script name.'));
+        }
+        final parameter = await evaluateParameter((params['script_parameter'] ?? params['parameter'])?.toString() ?? '', vars, callContext: context);
         if (parameter == null) {
           return const LayoutActionResult.stopped('Perform Script cannot evaluate its parameter.');
         }
@@ -1549,6 +1665,112 @@ class LayoutActionRunner {
     return external._performScript(name: name, depth: depth, parameter: parameter, session: session);
   }
 
+  /// The explanation the FileMaker migration left on a step that cannot run
+  /// as converted, or [fallback] when there is none.
+  static String _migrationNote(Map<String, dynamic> params, String fallback) {
+    final note = params['migration_note']?.toString().trim() ?? '';
+    return note.isEmpty ? fallback : note;
+  }
+
+  /// Why a Send Mail step cannot run as a draft in the e-mail client, or
+  /// null when it can.
+  static String? _sendMailRefusal(Map<String, dynamic> params) {
+    final reasons = <String>[
+      if (params['send_via'] == 'smtp')
+        "it sends through an SMTP server, and File4Base scripts send mail only by opening a draft in the user's e-mail client",
+      if (params['one_email_per_record'] == true) 'it sends one e-mail per record of the found set',
+      for (final key in const ['to', 'cc', 'bcc'])
+        if (params['collect_$key'] == true)
+          'it collects the ${key.toUpperCase()} addresses across the found set',
+      if (params['attachments'] is List && (params['attachments'] as List).isNotEmpty)
+        'it attaches files, which a draft opened in the e-mail client cannot carry',
+    ];
+    if (reasons.isEmpty) return null;
+    return 'Send Mail cannot run as written: ${reasons.join('; ')}.';
+  }
+
+  /// Replace Field Contents over the whole found set. A calculation, or a
+  /// serial number, is worked out for each record in turn, in found-set
+  /// order: one value written to every record would be wrong for any
+  /// calculation that reads a field. A rejected write stops the replace with
+  /// its error, as FileMaker reports it; the records before it stay replaced.
+  Future<LayoutActionResult> _replaceFoundSet({
+    required ExtendedLayoutActionHost ext,
+    required String field,
+    required String table,
+    required String replaceType,
+    required Map<String, dynamic> params,
+    required Map<String, String> vars,
+    required ScriptCallContext context,
+    required LayoutActionResult Function(int code, String message) failOrCapture,
+  }) async {
+    final session = context.session;
+    final rawExpression = params['value'] ?? params['expression'];
+    final expression = rawExpression?.toString() ?? '';
+    String? Function(int position, int count)? valueFor;
+    if (replaceType == 'serial_numbers') {
+      final initial = resolveValue(params['serial_initial']?.toString() ?? '', vars, callContext: context);
+      var serial = num.tryParse(initial?.trim() ?? '');
+      if (serial == null) {
+        return LayoutActionResult.stopped(
+            'Replace Field Contents numbers the records from an initial value it cannot read: '
+            '${params['serial_initial'] ?? '(none)'}');
+      }
+      num increment = 1;
+      final rawIncrement = params['serial_increment']?.toString() ?? '';
+      if (rawIncrement.trim().isNotEmpty) {
+        final parsed = num.tryParse(resolveValue(rawIncrement, vars, callContext: context)?.trim() ?? '');
+        if (parsed == null) {
+          return LayoutActionResult.stopped(
+              'Replace Field Contents cannot read the serial increment "$rawIncrement".');
+        }
+        increment = parsed;
+      }
+      valueFor = (position, count) {
+        final value = _formatSerial(serial!);
+        serial = serial! + increment;
+        return value;
+      };
+    } else if (replaceType == 'calculation' || rawExpression != null) {
+      if (expression.trim().isEmpty) {
+        return failOrCapture(3, 'Replace Field Contents has no calculation.');
+      }
+      valueFor = (position, count) => resolveValue(expression, vars, callContext: context);
+    }
+    final outcome = await ext.actionReplaceFieldContents(
+      field: field,
+      table: table.isEmpty ? null : table,
+      valueFor: valueFor,
+    );
+    final target = table.isEmpty ? field : '$table::$field';
+    if (outcome.relatedField) {
+      return failOrCapture(102, 'Replace Field Contents writes "$target", a field of another table '
+          "occurrence than this layout's, which it cannot write yet. Nothing was written.");
+    }
+    if (outcome.unevaluatedAt > 0) {
+      return LayoutActionResult.stopped(
+          'Replace Field Contents cannot evaluate "$expression" for record ${outcome.unevaluatedAt} of '
+          '${outcome.count}; ${_recordsReplaced(outcome.replaced)}.');
+    }
+    if (outcome.errorCode != 0) {
+      final where = outcome.count > 0 ? ' at record ${outcome.replaced + 1} of ${outcome.count}' : '';
+      final why = outcome.detail.isEmpty ? '' : ': ${outcome.detail}';
+      return failOrCapture(outcome.errorCode,
+          'Replace Field Contents of "$target" stopped$where$why; ${_recordsReplaced(outcome.replaced)}.');
+    }
+    session.lastError = 0;
+    return const LayoutActionResult.ok();
+  }
+
+  static String _recordsReplaced(int n) => switch (n) {
+        0 => 'no record was replaced',
+        1 => 'the record before it was replaced',
+        _ => 'the $n records before it were replaced',
+      };
+
+  static String _formatSerial(num value) =>
+      value == value.truncate() ? value.truncate().toString() : value.toString();
+
   /// Names of the step parameters that can hold the transfer an
   /// `Import Records` / `Export Records` step runs.
   static const _transferNameKeys = <String>['transfer', 'transfer_name', 'name'];
@@ -1586,6 +1808,11 @@ class LayoutActionRunner {
     }
     if (name.isEmpty) {
       name = _extractQuoted(params['expression']?.toString() ?? '').trim();
+    }
+    final note = params['migration_note']?.toString() ?? '';
+    if (name.isEmpty && note.isNotEmpty) {
+      return LayoutActionResult.stopped('$label has no transfer named in it. This step, converted from '
+          'FileMaker, $note');
     }
     if (name.isEmpty) {
       return LayoutActionResult.stopped(
@@ -1750,6 +1977,23 @@ class LayoutActionRunner {
     return host.actionResolveText(raw);
   }
 
+  /// A script parameter's value: evaluated here when it can be, otherwise —
+  /// a related field, a function — by the server in the record's context,
+  /// as a calculation field is. Null when neither can evaluate it. A
+  /// parameter reading a variable is evaluated here only, as the server does
+  /// not have the script's variables.
+  Future<String?> evaluateParameter(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) async {
+    final local = resolveValue(raw, localVars, callContext: callContext);
+    if (local != null) return local;
+    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+    if (context == null || raw.contains(r'$')) return null;
+    try {
+      return await context.actionEvaluateCalculation(raw);
+    } on Object catch (_) {
+      return null;
+    }
+  }
+
   String _resolveExpressionValue(String raw, Map<String, String> localVars, {ScriptCallContext? callContext}) =>
       resolveValue(raw, localVars, callContext: callContext) ?? '';
 
@@ -1837,7 +2081,14 @@ class LayoutActionRunner {
     if (expr.contains('{{')) {
       return host.actionResolveText(expr);
     }
-    // Qualified or unqualified field reference (e.g. `recipes::URL` or `URL`)
+    // Qualified or unqualified field reference (e.g. `recipes::URL` or `URL`).
+    // A field of another occurrence is a related field: it is not the field
+    // of this record that has the same name, so it is not read here (#26).
+    if (expr.contains('::')) {
+      final occurrence = expr.split('::').first.trim().toLowerCase();
+      final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+      if (context == null || !context.actionOwnOccurrenceNames.contains(occurrence)) return null;
+    }
     final fieldPart = expr.contains('::') ? expr.split('::').last.trim() : expr;
     if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_ ]*$').hasMatch(fieldPart)) {
       return null; // not a field name: an expression File4Base does not evaluate

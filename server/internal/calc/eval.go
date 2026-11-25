@@ -89,6 +89,13 @@ type Repeating interface {
 	MaxRepetitions(field string) int
 }
 
+// Serials is a Context that can read the next serial value of a field, for
+// GetNextSerialValue. field is the name the formula gives, "Table::Field" or
+// a field of the formula's own table.
+type Serials interface {
+	NextSerialValue(field string) (string, error)
+}
+
 // Bounded is a Context that reads related records no further than a formula
 // needs: the first record for Occurrence::Field, one record for Last and
 // GetNthRecord, and an aggregate's totals where the records are, without

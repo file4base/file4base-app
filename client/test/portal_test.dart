@@ -106,7 +106,7 @@ class _RelatedApi extends ApiClient {
   }
 
   @override
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values) async {
+  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values, {bool script = false}) async {
     updates.add((table, id, Map.of(values)));
     final i = children.indexWhere((c) => c['id'] == id);
     if (i >= 0) children[i] = {...children[i], ...values};

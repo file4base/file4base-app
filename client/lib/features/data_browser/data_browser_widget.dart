@@ -141,7 +141,8 @@ class FindRequestDraft {
   bool get isEmpty => values.values.every((v) => v.trim().isEmpty);
 }
 
-class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost, ExtendedLayoutActionHost {
+class DataBrowserWidgetState extends State<DataBrowserWidget>
+    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost, CalculationContextHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -163,6 +164,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   String? _error;
   int _currentIndex = 0;
   bool _isFoundSet = false;
+
+  /// The find requests behind the found set, so that the records of it not
+  /// read yet can be (Replace Field Contents covers them all); null when the
+  /// found set is every record, or [_foundSetInHand].
+  List<Map<String, dynamic>>? _foundSetFind;
+
+  /// The found set is the records in hand and nothing else (Show Omitted
+  /// Only builds it from them).
+  bool _foundSetInHand = false;
+
+  /// Records omitted from the found set since it was found.
+  final Set<String> _omittedIds = <String>{};
   String? _lastFocusedFindField;
   String? _lastFocusedBrowseField;
   String _viewMode = 'form'; // 'form' (layout), 'list' (record list) or 'table' (spreadsheet grid)
@@ -225,6 +238,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   void createNewRecord() => _createNewRecord();
   void duplicateRecord() => actionDuplicateRecord();
+
+  /// Records > Relookup Field Contents: copies the looked-up values again
+  /// into the found set, from the active field as the match field, after
+  /// asking.
+  Future<void> relookupFieldContents() async {
+    final field = activeFieldName;
+    final col = field == null ? null : _columnNamed(field);
+    if (col == null) {
+      _notify('Click into the match field of the lookups to relookup first.');
+      return;
+    }
+    final (code, updated) = await _relookup(col, dialog: true);
+    if (code == 0) {
+      _notify('Relookup Field Contents changed $updated ${updated == 1 ? 'record' : 'records'}.');
+    }
+  }
   void sortRecords() => _showSortDialog();
   void deleteCurrentRecord() => _deleteCurrentRecord();
   void performFind() => _performFind();
@@ -1016,6 +1045,25 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     return col != null && (col.fieldType == 'CALCULATION' || col.fieldType == 'SUMMARY');
   }
 
+  /// Whether a field cannot be typed into in Browse mode: a calculation or a
+  /// summary, or a field whose auto-enter options prohibit modification
+  /// during data entry. A script may still set the latter (Set Field).
+  bool _isEntryLocked(String fieldName) => _isComputed(fieldName) || _prohibitedFields.contains(fieldName);
+
+  /// The fields prohibiting modification, read once per table definition
+  /// rather than for each box drawn.
+  Set<String> get _prohibitedFields {
+    final columns = widget.table.columns;
+    if (!identical(columns, _prohibitedOf)) {
+      _prohibitedOf = columns;
+      _prohibited = {for (final c in columns) if (c.prohibitsModification) c.name};
+    }
+    return _prohibited;
+  }
+
+  List<ColumnModel>? _prohibitedOf;
+  Set<String> _prohibited = const {};
+
   /// What a stored value looks like in a field box. A DATE column comes back
   /// from the API as a full RFC3339 timestamp ("2011-01-15T00:00:00Z"); the
   /// user entered a date and must see and edit a date.
@@ -1154,7 +1202,11 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     );
   }
 
-  Future<void> _saveField(String colName, String newVal) async {
+  /// Writes one field of the current record. [script] marks a script step's
+  /// write (Set Field and the like), which may set a field that prohibits
+  /// modification during data entry; a new record a script set a value in
+  /// is committed as a script's write too.
+  Future<void> _saveField(String colName, String newVal, {bool script = false}) async {
     if (_records.isEmpty) return;
     final column = _columnForKey(colName);
     final current = _records[_currentIndex];
@@ -1178,6 +1230,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     if (record[_draftKey] == true) {
       // A new record is sent as a whole when it is committed
       record[colName] = valueToSave;
+      if (script) _scriptSetDrafts.add(record);
       return;
     }
     final id = record['id']?.toString();
@@ -1186,7 +1239,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     _records[_currentIndex][colName] = valueToSave;
     if (mounted) setState(() => _fieldSaving[colName] = true);
     try {
-      await _write(() => widget.apiClient.updateRow(widget.table.name, id, {colName: valueToSave}));
+      await _write(() => widget.apiClient.updateRow(widget.table.name, id, {colName: valueToSave}, script: script));
       // The field now holds what was typed; the server dropped its original
       // text, and so does the record in hand.
       final texts = record[sourceTextKey];
@@ -1247,6 +1300,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// Marks a new record that exists only here until it is committed.
   static const _draftKey = '__f4b_draft';
 
+  /// The new records a script set a field of: they are committed as a
+  /// script's write, which may set a field prohibiting modification.
+  final Set<Map<String, dynamic>> _scriptSetDrafts = Set.identity();
+
   bool get _onDraft => _records.isNotEmpty && _records[_currentIndex][_draftKey] == true;
 
   /// Commits the current record: pending field edits, or the whole new
@@ -1294,8 +1351,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             ColumnModel.repetitionKey(col.name, n): draft[ColumnModel.repetitionKey(col.name, n)],
     };
     try {
-      final created = await _write(() => widget.apiClient.insertRow(widget.table.name, values));
-      if (mounted) setState(() => _records[_currentIndex] = created);
+      final script = _scriptSetDrafts.contains(draft);
+      final created = await _write(() => widget.apiClient.insertRow(widget.table.name, values, script: script));
+      _scriptSetDrafts.remove(draft);
+      if (mounted) {
+        setState(() {
+          _records[_currentIndex] = created;
+          // The boxes show what the server entered (serial numbers,
+          // stamps, calculated and looked-up values), so a later save does
+          // not write the draft's empty text back over them.
+          _showRecordInFields(created);
+        });
+      }
       return true;
     } catch (e) {
       if (mounted) {
@@ -1304,6 +1371,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         );
       }
       return false;
+    }
+  }
+
+  /// Puts [record]'s values in the field boxes already shown, without
+  /// rebuilding them, so the box being typed in keeps its focus.
+  void _showRecordInFields(Map<String, dynamic> record) {
+    for (final entry in _fieldControllers.entries) {
+      final col = _columnForKey(entry.key);
+      if (col == null || col.isPrimaryKey) continue;
+      _fieldDebounceTimers[entry.key]?.cancel();
+      final text = keyFieldText(col, entry.key, record);
+      if (entry.value.text != text) entry.value.text = text;
     }
   }
 
@@ -1323,7 +1402,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     unawaited(_loadValueLists());
     if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
     unawaited(_fetchRecords().then((_) {
-      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.onLayoutEnter));
+      if (mounted && widget.mode == OperationalMode.browse) unawaited(_runLayoutTrigger(widget.layout?.activeOnLayoutEnter));
     }));
     HardwareKeyboard.instance.addHandler(_handleRecordShortcut);
   }
@@ -1341,9 +1420,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   /// Runs an OnLayoutEnter / OnLayoutExit script. A trigger started while
   /// another one runs (e.g. the script itself goes to another layout) is
-  /// skipped, so layouts that switch to each other cannot loop forever.
+  /// skipped, so layouts that switch to each other cannot loop forever. A
+  /// trigger switched off — as every migrated one arrives — never runs.
   Future<void> _runLayoutTrigger(ButtonActionModel? action) async {
-    if (action == null || _runningLayoutTrigger) return;
+    if (action == null || !action.enabled || _runningLayoutTrigger) return;
     _runningLayoutTrigger = true;
     try {
       final result = await _actionRunner().run(action);
@@ -1389,8 +1469,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         oldWidget.layout?.objects.length != widget.layout?.objects.length ||
         oldWidget.mode != widget.mode;
     if (oldWidget.layout?.id != widget.layout?.id && widget.mode == OperationalMode.browse) {
-      final exit = oldWidget.layout?.onLayoutExit;
-      final enter = widget.layout?.onLayoutEnter;
+      final exit = oldWidget.layout?.activeOnLayoutExit;
+      final enter = widget.layout?.activeOnLayoutEnter;
       if (exit != null || enter != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) async {
           await _runLayoutTrigger(exit);
@@ -1475,11 +1555,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         ? _records[_currentIndex]['id']?.toString()
         : null;
     final keepFoundSet = loadAll && _isFoundSet;
-    final findRequests = keepFoundSet ? _findRequestPayload() : const <Map<String, dynamic>>[];
+    final findRequests =
+        keepFoundSet ? (_foundSetFind ?? _findRequestPayload()) : const <Map<String, dynamic>>[];
     setState(() {
       _isLoading = true;
       _error = null;
       if (!preserveCurrent && !keepFoundSet) _isFoundSet = false;
+      if (!keepFoundSet) {
+        _foundSetFind = null;
+        _foundSetInHand = false;
+        _omittedIds.clear();
+      }
     });
     try {
       // A report covers the whole found set: its totals would not match the
@@ -1494,6 +1580,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       } else {
         rows = await widget.apiClient.listRows(widget.table.name);
       }
+      if (keepFoundSet) rows.removeWhere((r) => _omittedIds.contains(r['id']?.toString()));
       if (mounted) {
         setState(() {
           _records = rows;
@@ -1564,19 +1651,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// controllers and in a saved find's values (#46). An own field is held
   /// under its plain name, so the two cannot collide: a field name is
   /// lower-case letters, digits and underscores, and never contains a colon.
-  static String relatedCriterionKey(String relationshipId, String occurrence, String field) =>
-      'rel:$relationshipId:$occurrence:$field';
+  /// [side] is the end of a relationship joining an occurrence to itself
+  /// ([RelationshipSide]): the same field read from either end is two
+  /// criteria. A key without one, as saved before, reads the right end.
+  static String relatedCriterionKey(String relationshipId, String occurrence, String field, {String? side}) =>
+      'rel:$relationshipId:$occurrence:$field${side == null ? '' : ':$side'}';
 
   /// Reads back what [relatedCriterionKey] wrote, or null for an own field.
-  static ({String relationshipId, String occurrence, String field})? parseRelatedCriterionKey(String key) {
+  static ({String relationshipId, String occurrence, String field, String? side})? parseRelatedCriterionKey(
+      String key) {
     if (!key.startsWith('rel:')) return null;
     final parts = key.split(':');
     if (parts.length < 4) return null;
+    String? side;
+    if (parts.length > 4 && (parts.last == RelationshipSide.left || parts.last == RelationshipSide.right)) {
+      side = parts.removeLast();
+    }
     return (
       relationshipId: parts[1],
       occurrence: parts[2],
       // A field name has no colon, but rejoin anyway rather than lose text.
       field: parts.sublist(3).join(':'),
+      side: side,
     );
   }
 
@@ -1634,6 +1730,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         criteria.last['relationship_id'] = related.relationshipId;
         if (related.occurrence.isNotEmpty) {
           criteria.last['occurrence'] = related.occurrence;
+        }
+        if (related.side != null) {
+          criteria.last['side'] = related.side;
         }
       }
     });
@@ -1702,6 +1801,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           _sortOrder = const [];
           _currentIndex = 0;
           _isFoundSet = true;
+          _foundSetFind = requests;
+          _foundSetInHand = false;
+          _omittedIds.clear();
           _isLoading = false;
         });
         _rebuildFieldControllers();
@@ -2503,7 +2605,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       if (col != null &&
           recordIndex == _currentIndex &&
           !col.isPrimaryKey &&
-          !_isComputed(col.name) &&
+          !_isEntryLocked(col.name) &&
           _entryAllowed &&
           (obj.fieldBinding?.allowBrowseEntry ?? true)) {
         final ctrl = _fieldControllers[col.name];
@@ -2556,7 +2658,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           ? _parseColor(effStyle.fillColor!)
           : (isDark ? const Color(0xFF0D1117) : Colors.white);
       return GestureDetector(
-        onTap: col == null || _isComputed(col.name)
+        onTap: col == null || _isEntryLocked(col.name)
             ? null
             : () => _editFieldOfRecord(recordIndex, col.name),
         child: Container(
@@ -2722,7 +2824,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             ),
                           ),
                           ...cols.map((c) {
-                            final computed = _isComputed(c.name) || !_entryAllowed;
+                            final computed = _isEntryLocked(c.name) || !_entryAllowed;
                             if (selected && !computed) {
                               final ctrl = _fieldControllers[c.name];
                               final fn = _fieldFocusNodes[c.name];
@@ -2894,7 +2996,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                       o.type == 'field' &&
                       widget.externalFieldNoticeOf(o) == null &&
                       (o.fieldBinding?.allowBrowseEntry ?? true) &&
-                      !_isComputed(o.fieldBinding?.fieldName ?? o.text)))
+                      !_isEntryLocked(o.fieldBinding?.fieldName ?? o.text)))
                 Container(
                   width: math.max<double>(canvasWidth, 560.0),
                   margin: const EdgeInsets.only(bottom: 8),
@@ -3137,6 +3239,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
               binding.relationshipId ?? '',
               binding.tableOccurrence ?? '',
               binding.fieldName,
+              side: binding.relationshipSide,
             );
             final controller = _findControllers.putIfAbsent(key, () {
               return TextEditingController(text: _currentFindRequest.values[key] ?? '');
@@ -3470,7 +3573,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final fn = _fieldFocusNodes[key];
     final saving = _fieldSaving[key];
     // Shown like a calculation: read, not typed into.
-    final computed = _isComputed(col.name) || !_entryAllowed;
+    final computed = _isEntryLocked(col.name) || !_entryAllowed;
 
     // A field bound to a value list is filled from a control rather than
     // typed into (#31).
@@ -3855,6 +3958,26 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   @override
   String actionResolveText(String text) => _resolveTextForRecord(text, _currentRecord);
 
+  @override
+  Set<String> get actionOwnOccurrenceNames => {
+        for (final name in [widget.layout?.tableOccurrence, widget.table.name, widget.table.displayName])
+          if (name != null && name.trim().isNotEmpty) name.trim().toLowerCase(),
+      };
+
+  @override
+  Future<String?> actionEvaluateCalculation(String expression) async {
+    final recordId = _currentRecord['id']?.toString() ?? '';
+    if (recordId.isEmpty || expression.trim().isEmpty) return null;
+    final results = await widget.apiClient.evaluateExpressions(
+      widget.table.name,
+      expressions: [expression],
+      recordId: recordId,
+    );
+    final result = results.firstOrNull;
+    if (result == null || result.error.isNotEmpty || result.unknownFields.isNotEmpty) return null;
+    return result.text;
+  }
+
   /// What a field's value looks like inside merge text.
   String _mergeFieldText(String fieldName, Object? value) {
     final col = widget.table.columns.where((c) => c.name == fieldName).firstOrNull;
@@ -3869,18 +3992,22 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     if (!_canCreate || _records.isEmpty) return;
     if (!await _saveCurrentRecord()) return;
     final source = _records[_currentIndex];
-    final copy = <String, dynamic>{
-      for (final col in widget.table.columns)
-        if (!col.isPrimaryKey) col.name: source[col.name],
-    };
+    final sourceId = source['id']?.toString() ?? '';
+    if (sourceId.isEmpty) return;
     try {
-      await _write(() => widget.apiClient.insertRow(widget.table.name, copy));
-      await _fetchRecords();
-      if (_records.isNotEmpty && mounted) {
-        setState(() => _currentIndex = _records.length - 1);
-        _rebuildFieldControllers();
-        widget.onRecordChanged?.call(_currentIndex, _records.length);
-      }
+      // The server copies the record and its auto-enter options enter new
+      // serial numbers and stamps, as FileMaker's Duplicate Record does. A
+      // record of another solution is duplicated there, with its serials.
+      final created = await _write(() => widget.apiClient.duplicateRow(widget.table.name, sourceId));
+      if (!mounted) return;
+      // The copy joins the found set in hand, as the current record.
+      setState(() {
+        _records.add(created);
+        _unsortedRecords.add(created);
+        _currentIndex = _records.length - 1;
+      });
+      _rebuildFieldControllers();
+      widget.onRecordChanged?.call(_currentIndex, _records.length);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -3982,8 +4109,143 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     if (col == null || col.isPrimaryKey || _records.isEmpty) return col != null && !col.isPrimaryKey;
     _fieldDebounceTimers[col.name]?.cancel();
     _fieldControllers[col.name]?.text = value;
-    await _saveField(col.name, value);
+    await _saveField(col.name, value, script: true);
     return true;
+  }
+
+  // ---- AutoEnterActionHost ----
+
+  /// The column a script step or a menu names: `Table::Field` or `Field`, by
+  /// its name or the name shown.
+  ColumnModel? _columnNamed(String field) {
+    final name = (field.contains('::') ? field.split('::').last : field).trim().toLowerCase();
+    if (name.isEmpty) return null;
+    return widget.table.columns.where((c) => c.name.toLowerCase() == name).firstOrNull ??
+        widget.table.columns.where((c) => c.displayName.toLowerCase() == name).firstOrNull;
+  }
+
+  /// FileMaker's error code for a write the server refused.
+  static int _errorCodeOf(Object error) {
+    if (error is! ApiException) return 3;
+    return switch (error.statusCode) {
+      403 => 200,
+      404 => 102,
+      400 || 422 => 509,
+      _ => 3,
+    };
+  }
+
+  void _notify(String message, {bool error = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: error ? Colors.red : null),
+    );
+  }
+
+  @override
+  Future<int> actionSetNextSerialValue(String field, String value) async {
+    // A field named Occurrence::Field is that occurrence's table's, which
+    // may not be the layout's, nor even this solution's.
+    final cut = field.indexOf('::');
+    final occurrence = cut < 0 ? null : field.substring(0, cut).trim();
+    final name = cut < 0 ? field.trim() : field.substring(cut + 2).trim();
+    if (occurrence != null && occurrence.isNotEmpty && _occurrences.isEmpty) await _loadRelationshipGraph();
+    if (!mounted) return 3;
+    if (occurrence == null || !_namesOtherOccurrence(name, occurrence)) {
+      final col = _columnNamed(name);
+      if (col == null) return 102;
+      try {
+        await _write(() => widget.apiClient.setNextSerialValue(widget.table.name, col.name, value));
+        return 0;
+      } on Object catch (e) {
+        return _errorCodeOf(e);
+      }
+    }
+    final key = _occurrenceKey(occurrence);
+    final target = _occurrences.values.where((o) => _occurrenceKey(o.name) == key).firstOrNull;
+    if (target == null) {
+      _notify('Set Next Serial Value: there is no table occurrence "$occurrence".', error: true);
+      return 102;
+    }
+    var fieldName = name;
+    final base = target.baseTableId == null ? null : _tablesById[target.baseTableId];
+    if (target.external == null) {
+      final col = base?.columns
+              .where((c) => c.name.toLowerCase() == name.toLowerCase() || c.displayName.toLowerCase() == name.toLowerCase())
+              .firstOrNull;
+      if (base == null || col == null) {
+        _notify('Set Next Serial Value: $occurrence has no field "$name".', error: true);
+        return 102;
+      }
+      fieldName = col.name;
+    }
+    try {
+      // The occurrence's records route sets it in its table, in the
+      // solution it is in, as the account signed in there.
+      final client = widget.apiClient.forOccurrence(target.id);
+      await _write(() => client.setNextSerialValue(base?.name ?? target.name, fieldName, value));
+      return 0;
+    } on Object catch (e) {
+      _notify('Set Next Serial Value could not set $occurrence::$name: $e', error: true);
+      return _errorCodeOf(e);
+    }
+  }
+
+  @override
+  Future<int> actionRelookupFieldContents(String field, {bool dialog = false}) async {
+    final col = _columnNamed(field);
+    if (col == null) return 102;
+    final (code, _) = await _relookup(col, dialog: dialog);
+    return code;
+  }
+
+  /// Relookup Field Contents from the match field [col] over the found set
+  /// in hand, which keeps it: only its records are sent, and those the server
+  /// changed are shown as they are now. Returns FileMaker's error code and how
+  /// many records the server changed.
+  Future<(int, int)> _relookup(ColumnModel col, {required bool dialog}) async {
+    if (!await _saveCurrentRecord()) return (3, 0);
+    final ids = [
+      for (final r in _records)
+        if (r[_draftKey] != true && (r['id']?.toString() ?? '').isNotEmpty) r['id'].toString(),
+    ];
+    if (ids.isEmpty) return (401, 0);
+    if (dialog) {
+      if (!mounted) return (1, 0);
+      final n = ids.length;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Relookup Field Contents'),
+          content: Text('Relookup $n ${n == 1 ? 'record' : 'records'} using the matching field '
+              '"${col.displayName}"?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('OK')),
+          ],
+        ),
+      );
+      if (ok != true) return (1, 0);
+    }
+    try {
+      final result = await _write(() => widget.apiClient.relookupFieldContents(widget.table.name, col.name, ids));
+      // The found set stays as it is, in its order: the records the server
+      // changed are put in place of what was read of them.
+      if (mounted && result.records.isNotEmpty) {
+        final byId = {for (final r in result.records) r['id']?.toString(): r};
+        List<Map<String, dynamic>> refreshed(List<Map<String, dynamic>> rows) =>
+            [for (final r in rows) byId[r['id']?.toString()] ?? r];
+        setState(() {
+          _records = refreshed(_records);
+          _unsortedRecords = refreshed(_unsortedRecords);
+        });
+        _rebuildFieldControllers();
+      }
+      return (0, result.updated);
+    } on Object catch (e) {
+      if (dialog) _notify('Relookup Field Contents failed: $e', error: true);
+      return (_errorCodeOf(e), 0);
+    }
   }
 
   @override
@@ -4142,6 +4404,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         _records = List<Map<String, dynamic>>.from(results);
         _currentIndex = 0;
         _isFoundSet = true;
+        _foundSetFind = payload;
+        _foundSetInHand = false;
+        _omittedIds.clear();
       });
       _rebuildFieldControllers();
       _requestMode(OperationalMode.browse);
@@ -4186,6 +4451,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
     final removedId = _records[_currentIndex]['id'];
     setState(() {
+      if (removedId != null) _omittedIds.add(removedId.toString());
       _records.removeAt(_currentIndex);
       _unsortedRecords.removeWhere((r) => r['id'] == removedId);
       if (_currentIndex >= _records.length && _records.isNotEmpty) {
@@ -4217,6 +4483,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         _records = List<Map<String, dynamic>>.from(omitted);
         _currentIndex = 0;
         _isFoundSet = true;
+        _foundSetFind = null;
+        _foundSetInHand = true;
+        _omittedIds.clear();
       });
       _rebuildFieldControllers();
       widget.onRecordChanged?.call(_currentIndex, _records.length);
@@ -4325,22 +4594,123 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   Future<int> actionDeletePortalRow({required bool confirm}) async => 101;
 
   @override
-  Future<bool> actionReplaceFieldContents({
+  Future<ReplaceOutcome> actionReplaceFieldContents({
     required String field,
-    required String replaceType,
-    String? value,
+    String? table,
+    String? Function(int position, int count)? valueFor,
   }) async {
+    // A step that names a table occurrence is placed against the graph,
+    // read once if this layout never needed it.
+    if (table != null && table.trim().isNotEmpty && _occurrences.isEmpty) await _loadRelationshipGraph();
+    if (!mounted) return const ReplaceOutcome(errorCode: 3, detail: 'the window is closed');
+    if (_namesOtherOccurrence(field, table)) return const ReplaceOutcome(relatedField: true);
     final col = widget.table.columns.where((c) => c.name.toLowerCase() == field.toLowerCase()).firstOrNull;
-    if (col == null || col.isPrimaryKey) return false;
-    final effective = value ?? (_records.isNotEmpty ? _records[_currentIndex][col.name]?.toString() ?? '' : '');
-    for (final rec in _records) {
-      final id = rec['id']?.toString();
-      if (id == null || id.isEmpty) continue;
-      await _write(() => widget.apiClient.updateRow(widget.table.name, id, {col.name: effective}));
-      rec[col.name] = effective;
+    if (col == null || col.isPrimaryKey) {
+      return ReplaceOutcome(errorCode: 102, detail: 'the field "$field" is not in this table');
     }
-    _rebuildFieldControllers();
+    if (const {'CALCULATION', 'SUMMARY'}.contains(col.fieldType.toUpperCase())) {
+      return ReplaceOutcome(errorCode: 201, detail: 'the field "$field" is a ${col.fieldType.toLowerCase()} field');
+    }
+    // The record in hand is committed first: its contents may be the value,
+    // and a new record must exist before it can be replaced.
+    if (!await _saveCurrentRecord() || !mounted) {
+      return const ReplaceOutcome(errorCode: 509, detail: 'the record in hand could not be committed');
+    }
+    final inHand = _records.isNotEmpty ? _records[_currentIndex] : const <String, dynamic>{};
+    final contents = inHand[col.name]?.toString() ?? '';
+    final startId = inHand['id'];
+    if (!await _readWholeFoundSet()) {
+      return const ReplaceOutcome(errorCode: -1, detail: 'the records of the found set could not be read');
+    }
+    final records = List.of(_records);
+    final count = records.length;
+    var replaced = 0;
+    try {
+      for (var i = 0; i < count; i++) {
+        final rec = records[i];
+        final id = rec['id']?.toString();
+        if (id == null || id.isEmpty) continue;
+        // The record is the current one while its value is worked out.
+        _currentIndex = i;
+        final text = valueFor == null ? contents : valueFor(i + 1, count);
+        if (text == null) return ReplaceOutcome(count: count, replaced: replaced, unevaluatedAt: i + 1);
+        Object? toSave = text;
+        if (col.fieldType == 'DATE' && text.trim().isNotEmpty) {
+          toSave = _normalizeDateInput(text);
+          if (toSave == null) {
+            return ReplaceOutcome(errorCode: 500, detail: '"$text" is not a date', count: count, replaced: replaced);
+          }
+        } else if (col.fieldType == 'DATE') {
+          toSave = null;
+        }
+        try {
+          await _write(() => widget.apiClient.updateRow(widget.table.name, id, {col.name: toSave}, script: true));
+        } on Exception catch (e) {
+          return ReplaceOutcome(
+            errorCode: _fileMakerWriteError(e),
+            detail: e is ApiException ? e.detail : e.toString(),
+            count: count,
+            replaced: replaced,
+          );
+        }
+        rec[col.name] = toSave;
+        final texts = rec[sourceTextKey];
+        if (texts is Map) texts.remove(col.name);
+        replaced++;
+        if (!mounted) return ReplaceOutcome(count: count, replaced: replaced);
+      }
+      return ReplaceOutcome(count: count, replaced: replaced);
+    } finally {
+      if (mounted) {
+        setState(() {
+          final idx = _records.indexWhere((r) => r['id'] == startId);
+          _currentIndex = idx < 0 ? 0 : idx;
+        });
+        _rebuildFieldControllers();
+        widget.onRecordChanged?.call(_currentIndex, _records.length);
+      }
+    }
+  }
+
+  /// Reads the records of the found set that are not in hand yet: the found
+  /// set on screen may be its first page only. The records in hand stay as
+  /// they are, with the rest after them, in the found set's sort order.
+  Future<bool> _readWholeFoundSet() async {
+    if (_isFoundSet && _foundSetInHand) return true;
+    final List<Map<String, dynamic>> rows;
+    try {
+      final find = _isFoundSet ? _foundSetFind : null;
+      if (_isFoundSet && find == null) return true;
+      rows = find != null
+          ? await widget.apiClient.executeFindAll(widget.table.name, find)
+          : await widget.apiClient.listAllRows(widget.table.name);
+    } on Exception {
+      return false;
+    }
+    if (!mounted) return false;
+    final known = {for (final r in _unsortedRecords) r['id']?.toString()};
+    final rest = rows.where((r) {
+      final id = r['id']?.toString();
+      return !known.contains(id) && !_omittedIds.contains(id);
+    }).toList();
+    if (rest.isEmpty) return true;
+    _unsortedRecords = [..._unsortedRecords, ...rest];
+    if (!_isFoundSet) _totalInTable = _unsortedRecords.length;
+    _applySortOrder(_sortOrder);
     return true;
+  }
+
+  /// The FileMaker error a write the server rejected reports.
+  static int _fileMakerWriteError(Object error) {
+    if (error is! ApiException) return -1;
+    final text = '${error.title} ${error.detail}'.toLowerCase();
+    return switch (error.statusCode) {
+      400 || 422 => text.contains('unique') ? 504 : 509,
+      403 => 200,
+      404 => 101,
+      409 || 423 => 301,
+      _ => -1,
+    };
   }
 
   @override
@@ -4350,7 +4720,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     List<Map<String, dynamic>>? buttons,
     List<Map<String, dynamic>>? inputFields,
   }) async {
-    if (!mounted) return const ScriptDialogResult(buttonIndex: 1);
+    if (!mounted) return const ScriptDialogResult(buttonIndex: ScriptDialogResult.dismissed);
     final effectiveButtons = (buttons == null || buttons.isEmpty)
         ? const [<String, dynamic>{'label': 'OK', 'commit': true}]
         : buttons;
@@ -4395,7 +4765,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             if (i == 0)
               FilledButton(
                 onPressed: () => Navigator.of(ctx).pop(1),
-                child: Text(effectiveButtons[i]['label']?.toString() ?? 'OK'),
+                child: Text(switch (effectiveButtons[i]['label']?.toString() ?? '') {
+                  '' => 'OK',
+                  final label => label,
+                }),
               )
             else
               TextButton(
@@ -4411,7 +4784,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     for (final c in controllers.values) {
       c.dispose();
     }
-    return ScriptDialogResult(buttonIndex: choice ?? 1, inputValues: values);
+    // Closing the dialog without a button (Escape, a click outside it) is
+    // not the first button: a script asking "Replace?" must not go ahead.
+    return ScriptDialogResult(buttonIndex: choice ?? ScriptDialogResult.dismissed, inputValues: values);
   }
 
   @override
@@ -4612,7 +4987,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final value = insert(existing, ctrl?.selection, active: _lastFocusedBrowseField == col.name);
     _fieldDebounceTimers[col.name]?.cancel();
     ctrl?.value = value;
-    await _saveField(col.name, value.text);
+    await _saveField(col.name, value.text, script: true);
     return FieldInsertOutcome.written;
   }
 
@@ -4870,6 +5245,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             child: TextField(
                               controller: ctrl,
                               focusNode: fn,
+                              readOnly: _isEntryLocked(col.name),
                               decoration: InputDecoration(
                                 border: const OutlineInputBorder(),
                                 isDense: true,

@@ -1067,7 +1067,12 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		scriptIDs[sc.ID] = created.ID
 	}
 
-	// 5. Layouts
+	// 5. Layouts. Their script triggers get ids of their own here, once, so
+	// a solution imported into another that already has them — or imported
+	// twice — never has two triggers by one id (#26).
+	for _, l := range b.Layouts {
+		renewScriptTriggerIDs(l.Definition)
+	}
 	layoutIDs := map[string]string{}
 	layoutDefs := map[string]string{}
 	for _, l := range b.Layouts {
@@ -2059,6 +2064,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		return nil, fmt.Errorf("failed listing tables: %w", err)
 	}
 	userTables := make(map[string]map[string]dbal.AgnosticFieldType, len(registered))
+	storedTypes := make(map[string]map[string]dbal.AgnosticFieldType, len(registered))
 	// The fields of each table that may carry repetitions, by name: all but
 	// the primary key and summaries, as a field whose maximum was lowered
 	// keeps the repetitions past it.
@@ -2068,8 +2074,11 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			continue
 		}
 		cols := make(map[string]dbal.AgnosticFieldType, len(t.Columns))
+		stored := make(map[string]dbal.AgnosticFieldType, len(t.Columns))
 		for _, c := range t.Columns {
 			cols[c.Name] = c.FieldType
+			// The type it is stored as, a calculation's result's.
+			stored[c.Name] = StorageType(c.FieldType, c.CalculationFormula)
 			if !c.IsPrimaryKey && c.FieldType != dbal.FieldTypeSummary {
 				if repeating[t.Name] == nil {
 					repeating[t.Name] = map[string]ColumnMetadata{}
@@ -2078,6 +2087,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 			}
 		}
 		userTables[t.Name] = cols
+		storedTypes[t.Name] = stored
 	}
 	// Fields that do not repeat now but carry repetitions get their companion
 	// column before the transaction, as a failed statement would abort it.
@@ -2162,7 +2172,8 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 	defer tx.Rollback()
 
 	for _, tableName := range tableNames {
-		cols := userTables[tableName]
+		// The type each column is stored as: a calculation's result's.
+		cols := storedTypes[tableName]
 		// Validation rules whose timing is "always" apply to imports (#15)
 		fields, err := validation.LoadFields(ctx, tx, dialect, tableName)
 		if err != nil {
@@ -2192,6 +2203,9 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 						v = nil
 					}
 				}
+				// A date or timestamp as the file writes it, RFC 3339, is
+				// bound as the value its engine stores.
+				v = dbal.TemporalValue(dialect.Engine(), colType, v)
 				colNames = append(colNames, dialect.QuoteIdentifier(k))
 				placeholders = append(placeholders, dialect.Placeholder(idx))
 				vals = append(vals, v)

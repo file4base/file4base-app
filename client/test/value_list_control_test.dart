@@ -91,7 +91,7 @@ class _ValueListApi extends ApiClient {
       [for (final r in rows) Map<String, dynamic>.from(r)];
 
   @override
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values) async {
+  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values, {bool script = false}) async {
     updates.add(Map.of(values));
     return {'id': id, ...values};
   }

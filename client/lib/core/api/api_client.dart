@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:file4base_client/core/crypto/payload_cipher.dart';
 import 'package:file4base_client/core/models/file_reference_models.dart';
 import 'package:file4base_client/core/models/script_models.dart';
+import 'package:file4base_client/core/models/script_trigger_models.dart';
 import 'package:file4base_client/core/models/transfer_models.dart';
 import 'package:flutter/foundation.dart' show immutable;
 import 'package:http/http.dart' as http;
@@ -13,6 +14,7 @@ import 'package:http/http.dart' as http;
 export '../crypto/payload_cipher.dart';
 export '../models/file_reference_models.dart';
 export '../models/script_models.dart';
+export '../models/script_trigger_models.dart';
 export '../models/transfer_models.dart';
 
 /// RFC 9457 Problem Details Exception
@@ -306,6 +308,24 @@ class ColumnModel {
   final int maxRepetitions;
 
   bool get isRepeating => maxRepetitions > 1;
+
+  /// The field's auto-enter and storage options, kept as a JSON object in
+  /// [defaultValue]; empty when it holds none (or an older plain text).
+  Map<String, dynamic> get fieldOptions {
+    final raw = defaultValue;
+    if (raw == null || raw.isEmpty || !raw.trimLeft().startsWith('{')) return const {};
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? decoded : const {};
+    } on FormatException {
+      return const {};
+    }
+  }
+
+  /// Whether the auto-enter options prohibit modifying the value during data
+  /// entry: Browse mode shows the field read-only, and only a script's write
+  /// may set it.
+  bool get prohibitsModification => fieldOptions['prohibit_modification'] == true;
 
   /// The record key of repetition [n] of the field [name]: the field itself
   /// for the first, `name[n]` for the others.
@@ -2147,24 +2167,105 @@ class ApiClient {
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
-  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record) async {
+  /// The header a script step's write carries: such a write may set a field
+  /// whose auto-enter options prohibit modification during data entry, as a
+  /// FileMaker script may. It is a data-entry rule, not a privilege.
+  static const entryHeader = 'X-File4Base-Entry';
+
+  Map<String, String>? _entry({required bool script}) => script ? const {entryHeader: 'script'} : null;
+
+  /// Creates a record. [script] marks the write as a script step's
+  /// ([entryHeader]); without it, it is data entry.
+  Future<Map<String, dynamic>> insertRow(String table, Map<String, dynamic> record, {bool script = false}) async {
     final response = await _httpClient.post(
       Uri.parse(_records(table)),
-      headers: _headers(contentType: 'application/json'),
+      headers: _headers(extra: _entry(script: script), contentType: 'application/json'),
       body: jsonEncode(record),
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
   }
 
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> updates) async {
+  /// Changes a record. [script] marks the write as a script step's
+  /// ([entryHeader]); without it, it is data entry.
+  Future<Map<String, dynamic>> updateRow(
+    String table,
+    String id,
+    Map<String, dynamic> updates, {
+    bool script = false,
+  }) async {
     final response = await _httpClient.put(
       Uri.parse('${_records(table)}/$id'),
-      headers: _headers(contentType: 'application/json'),
+      headers: _headers(extra: _entry(script: script), contentType: 'application/json'),
       body: jsonEncode(updates),
     );
     _checkResponse(response);
     return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  /// Whether this client's record calls read a table occurrence
+  /// ([forOccurrence]) rather than the data API's tables.
+  bool get readsOccurrence => _occurrence != null;
+
+  /// Duplicates the record [id] of [table], as FileMaker's Duplicate Record:
+  /// the stored fields are copied and the auto-enter options enter new values
+  /// (serial numbers, creation stamps). Returns the new record.
+  ///
+  /// On a client of another solution's occurrence ([forOccurrence]) that
+  /// solution duplicates it, as the account signed in there, with its own
+  /// serial numbers and stamps.
+  Future<Map<String, dynamic>> duplicateRow(String table, String id) async {
+    final response = await _httpClient.post(
+      Uri.parse('${_records(table)}/${Uri.encodeComponent(id)}/duplicate'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    return Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+  }
+
+  String _serialsUrl(String table, String field) => '${_records(table)}/serials/${Uri.encodeComponent(field)}';
+
+  /// The value the next record gets in the serial number [field] of [table]
+  /// (FileMaker's GetNextSerialValue).
+  Future<String> getNextSerialValue(String table, String field) async {
+    final response = await _httpClient.get(Uri.parse(_serialsUrl(table, field)), headers: _headers());
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['next_value']?.toString() ?? '';
+  }
+
+  /// Sets the value the next record gets in the serial number [field] of
+  /// [table] (FileMaker's Set Next Serial Value). Returns the value set.
+  Future<String> setNextSerialValue(String table, String field, String nextValue) async {
+    final response = await _httpClient.put(
+      Uri.parse(_serialsUrl(table, field)),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'next_value': nextValue}),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['next_value']?.toString() ?? nextValue;
+  }
+
+  /// Copies again the looked-up values of the records [recordIds] of
+  /// [table] whose lookups start from the match field [matchField]
+  /// (FileMaker's Relookup Field Contents). Returns how many records changed,
+  /// and each of them as it is now.
+  Future<({int updated, List<Map<String, dynamic>> records})> relookupFieldContents(
+      String table, String matchField, List<String> recordIds) async {
+    final response = await _httpClient.post(
+      Uri.parse('${_records(table)}/relookup'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'field': matchField, 'record_ids': recordIds}),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (
+      updated: (body['updated'] as num?)?.toInt() ?? 0,
+      records: [
+        for (final r in (body['records'] as List?) ?? const []) Map<String, dynamic>.from(r as Map),
+      ],
+    );
   }
 
   Future<void> deleteRow(String table, String id) async {
@@ -3776,6 +3877,33 @@ class ApiClient {
     _checkResponse(response);
     final list = jsonDecode(response.body) as List<dynamic>? ?? const [];
     return [for (final item in list) FileReferenceModel.fromJson(item as Map<String, dynamic>)];
+  }
+
+  /// Every script trigger of the solution's layouts and layout objects, with
+  /// what keeps each one from running (#26). Owners and administrators only.
+  Future<List<ScriptTriggerModel>> listScriptTriggers() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/schemas/script-triggers'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>? ?? const {};
+    return [
+      for (final item in body['triggers'] as List? ?? const [])
+        ScriptTriggerModel.fromJson(item as Map<String, dynamic>),
+    ];
+  }
+
+  /// Switches the triggers [ids] on or off, all of them or none: the server
+  /// refuses (409) to enable one that cannot run, and changes nothing then.
+  Future<ScriptTriggerUpdate> setScriptTriggersEnabled(List<String> ids, {required bool enabled}) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/schemas/script-triggers'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'ids': ids, 'enabled': enabled}),
+    );
+    _checkResponse(response);
+    return ScriptTriggerUpdate.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   /// Saves a new file reference; [database] empty leaves it unmapped.

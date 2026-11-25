@@ -23,6 +23,39 @@ class GoToRecordOutcome {
   final int errorCode;
 }
 
+/// Outcome of `Replace Field Contents` over the found set.
+class ReplaceOutcome {
+  const ReplaceOutcome({
+    this.errorCode = 0,
+    this.detail = '',
+    this.count = 0,
+    this.replaced = 0,
+    this.relatedField = false,
+    this.unevaluatedAt = 0,
+  });
+
+  /// FileMaker error code: 0 when every record was replaced, otherwise the
+  /// error of the record the replace stopped at.
+  final int errorCode;
+
+  /// What went wrong, as the server or the window put it.
+  final String detail;
+
+  /// Records in the whole found set.
+  final int count;
+
+  /// Records written before the replace finished or stopped.
+  final int replaced;
+
+  /// The field belongs to another table occurrence than the layout's, and
+  /// nothing was written.
+  final bool relatedField;
+
+  /// 1-based position of the record whose value could not be worked out,
+  /// where the replace stopped; 0 when there was none.
+  final int unevaluatedAt;
+}
+
 /// Result of a `Show Custom Dialog` step supporting custom buttons and input
 /// fields.
 class ScriptDialogResult {
@@ -31,8 +64,13 @@ class ScriptDialogResult {
     this.inputValues = const <String, String>{},
   });
 
-  /// 1-based index of the button clicked (`Get(LastMessageChoice)`).
+  /// 1-based index of the button clicked (`Get(LastMessageChoice)`), or
+  /// [dismissed] when the dialog was closed without a button: that is never
+  /// the first button, which is usually the one that goes ahead.
   final int buttonIndex;
+
+  /// [buttonIndex] of a dialog closed without choosing a button.
+  static const int dismissed = 0;
 
   /// Values entered into dialog input fields, keyed by field/variable name.
   final Map<String, String> inputValues;
@@ -224,10 +262,20 @@ abstract class ExtendedLayoutActionHost {
   /// Deletes the active portal row only, never the parent record; returns
   /// the FileMaker error code (0 when a row was deleted).
   Future<int> actionDeletePortalRow({required bool confirm});
-  Future<bool> actionReplaceFieldContents({
+  /// Replace Field Contents: writes [field] in every record of the found
+  /// set, including the records not read yet, in found-set order. Each
+  /// record is the current one while [valueFor] works out its value (its
+  /// 1-based position and the found count are given), so a calculation
+  /// reads that record; a null [valueFor] writes the field's contents in the
+  /// record in hand to all of them. [table] is the table occurrence the step
+  /// names: a field of another occurrence than the layout's is refused, never
+  /// written in the layout's table. The replace stops at the first value
+  /// that cannot be worked out and at the first write the server rejects;
+  /// the current record is the same one afterwards.
+  Future<ReplaceOutcome> actionReplaceFieldContents({
     required String field,
-    required String replaceType,
-    String? value,
+    String? table,
+    String? Function(int position, int count)? valueFor,
   });
   Future<ScriptDialogResult> actionShowDialogEx({
     required String title,
