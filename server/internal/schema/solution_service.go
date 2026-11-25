@@ -2190,8 +2190,8 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 					}
 				}
 				// A date or timestamp as the file writes it, RFC 3339, is
-				// bound as the value every engine stores.
-				v = dbal.TemporalValue(colType, v)
+				// bound as the value its engine stores.
+				v = dbal.TemporalValue(dialect.Engine(), colType, v)
 				colNames = append(colNames, dialect.QuoteIdentifier(k))
 				placeholders = append(placeholders, dialect.Placeholder(idx))
 				vals = append(vals, v)

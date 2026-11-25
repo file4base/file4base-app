@@ -3293,7 +3293,7 @@ func coerceSourceValue(valStr, fieldType string) (interface{}, error) {
 			"01/02/2006", "1/2/2006",
 		} {
 			if at, err := time.Parse(layout, trimmed); err == nil {
-				return at.Format(time.RFC3339), nil
+				return at.Format(time.RFC3339Nano), nil
 			}
 		}
 		for _, layout := range []string{"15:04:05", "15:04"} {

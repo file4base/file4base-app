@@ -3,6 +3,7 @@ package data_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,38 +23,7 @@ import (
 // DATE take none of these, and PostgreSQL has no year 0: each value is
 // stored, on both engines, as the instant or the day it names.
 func TestTemporalTextIsStoredOnEveryEngine(t *testing.T) {
-	mgr, err := dbal.NewMultiDatabaseManager(testdb.Engine(), testdb.AdminDSN())
-	if err != nil {
-		t.Skip("database not available:", err)
-	}
-	t.Cleanup(func() { _ = mgr.Close() })
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	t.Cleanup(cancel)
-	if err := mgr.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
-	}
-	name := fmt.Sprintf("f4b_temporal_%d", uniqueTestStamp())
-	require.NoError(t, mgr.CreateDatabase(ctx, name))
-	t.Cleanup(func() { _ = mgr.DropDatabase(context.Background(), name) })
-	driver, err := mgr.DriverFor(ctx, name)
-	require.NoError(t, err)
-	schemaSvc := schema.NewService(driver)
-	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
-
-	tbl, err := schemaSvc.CreateTable(ctx, "visits", "Visits")
-	require.NoError(t, err)
-	add := func(col schema.ColumnMetadata) {
-		col.DisplayName, col.IsNullable = col.Name, true
-		_, err := schemaSvc.AddColumn(ctx, tbl.ID, col)
-		require.NoError(t, err)
-	}
-	formula := `{"formula":"Timestamp ( day ; Time ( 3 ; 4 ; 5 ) )","result_type":"Timestamp"}`
-	add(schema.ColumnMetadata{Name: "day", FieldType: dbal.FieldTypeDate})
-	add(schema.ColumnMetadata{Name: "at", FieldType: dbal.FieldTypeTimestamp})
-	add(schema.ColumnMetadata{Name: "clock", FieldType: dbal.FieldTypeTimestamp})
-	add(schema.ColumnMetadata{Name: "computed", FieldType: dbal.FieldTypeCalculation, CalculationFormula: &formula})
-
-	svc := data.NewService(driver)
+	ctx, schemaSvc, svc, driver := newTemporalSolution(t)
 	instant := func(v interface{}) string {
 		t.Helper()
 		switch at := v.(type) {
@@ -105,6 +75,33 @@ func TestTemporalTextIsStoredOnEveryEngine(t *testing.T) {
 	row = read(id)
 	require.Equal(t, "2026-02-03 02:05:06", instant(row["at"]), "the instant, in UTC")
 	require.Equal(t, "0001-01-01 08:00:00", instant(row["clock"]))
+	// A formula reads the instant that is stored, not the text sent.
+	require.Equal(t, "2", fmt.Sprint(row["hour"]), "Hour ( at ) of the instant in UTC")
+
+	// Every repetition of a timestamp is kept as the field's own column is.
+	_, err = svc.UpdateRow(ctx, "visits", id, map[string]interface{}{
+		"stamps[2]": "0000-01-01T15:30:00Z", "stamps[3]": "2026-01-02T04:04:05.25+01:00",
+	})
+	require.NoError(t, err, "repetitions given as RFC 3339 text")
+	row = read(id)
+	require.Equal(t, "0001-01-01 15:30:00", instant(row["stamps[2]"]), "a time of day in a repetition")
+	require.Equal(t, "2026-01-02 03:04:05", instant(row["stamps[3]"]), "an instant in a repetition, in UTC")
+
+	// Midnight on 1 January 0001, a Time field's midnight, is Go's zero
+	// time, which the MariaDB driver would send as 0000-00-00: it is stored
+	// as the midnight it is, and found as one.
+	midnight, err := svc.InsertRow(ctx, "visits", map[string]interface{}{"name": "midnight", "clock": "0000-01-01T00:00:00Z"})
+	require.NoError(t, err, "a Time field's midnight")
+	var stored string
+	require.NoError(t, driver.DB().QueryRowContext(ctx, fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s",
+		driver.Dialect().CastToText(driver.Dialect().QuoteIdentifier("clock")), driver.Dialect().QuoteIdentifier("visits"),
+		driver.Dialect().QuoteIdentifier("id"), driver.Dialect().Placeholder(1)), midnight["id"]).Scan(&stored))
+	require.True(t, strings.HasPrefix(stored, "0001-01-01 00:00:00"), "stored as %q", stored)
+	found, err := svc.ExecuteFind(ctx, "visits", []data.FindRequest{{Criteria: []data.FindCriterion{
+		{FieldName: "clock", Operator: "=", Value: "00:00"}}}}, data.QueryOptions{})
+	require.NoError(t, err)
+	require.Len(t, found, 1, "midnight is found as midnight")
+	require.Equal(t, "midnight", fmt.Sprint(found[0]["name"]))
 
 	// An import, whose conversion writes RFC 3339.
 	report, err := svc.ImportRecords(ctx, "visits", &dataio.Table{
@@ -119,10 +116,18 @@ func TestTemporalTextIsStoredOnEveryEngine(t *testing.T) {
 	file, err := msgpack.Marshal(schema.DatabaseDataBundle{Format: schema.DataFormat, Version: schema.DataVersion,
 		TablesData: map[string][]map[string]interface{}{"visits": {{
 			"id": "restored", "day": "2026-05-06", "at": "2026-05-06T07:08:09Z", "clock": "0000-01-01T23:59:59Z",
+		}, {
+			// A date the file holds as a time, which msgpack decodes in the
+			// server's zone: west of UTC, the evening before.
+			"id": "restored-day", "day": time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC),
 		}}}})
 	require.NoError(t, err)
+	local := time.Local
+	time.Local = time.FixedZone("UTC-5", -5*3600)
 	_, err = schemaSvc.ImportDatabaseData(ctx, file)
+	time.Local = local
 	require.NoError(t, err, "a data file's timestamps")
+	require.Equal(t, "2026-05-07", day(read("restored-day")["day"]), "a date decoded in a zone west of UTC")
 	row = read("restored")
 	require.Equal(t, "2026-05-06", day(row["day"]))
 	require.Equal(t, "2026-05-06 07:08:09", instant(row["at"]))
@@ -132,4 +137,48 @@ func TestTemporalTextIsStoredOnEveryEngine(t *testing.T) {
 	// as something else.
 	_, err = svc.InsertRow(ctx, "visits", map[string]interface{}{"at": "next Tuesday"})
 	require.Error(t, err)
+}
+
+// newTemporalSolution makes a solution in a database of its own, dropped
+// when the test ends, with a table of every temporal kind: a date, a
+// timestamp, a Time field (a timestamp on 1 January 0001), a repeating
+// timestamp, a calculation whose result is a timestamp and one reading a
+// timestamp, beside a text field naming each record.
+func newTemporalSolution(t *testing.T) (context.Context, *schema.Service, *data.Service, dbal.DatabaseDriver) {
+	t.Helper()
+	mgr, err := dbal.NewMultiDatabaseManager(testdb.Engine(), testdb.AdminDSN())
+	if err != nil {
+		t.Skip("database not available:", err)
+	}
+	t.Cleanup(func() { _ = mgr.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	t.Cleanup(cancel)
+	if err := mgr.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+	}
+	name := fmt.Sprintf("f4b_temporal_%d", uniqueTestStamp())
+	require.NoError(t, mgr.CreateDatabase(ctx, name))
+	t.Cleanup(func() { _ = mgr.DropDatabase(context.Background(), name) })
+	driver, err := mgr.DriverFor(ctx, name)
+	require.NoError(t, err)
+	schemaSvc := schema.NewService(driver)
+	require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
+
+	tbl, err := schemaSvc.CreateTable(ctx, "visits", "Visits")
+	require.NoError(t, err)
+	add := func(col schema.ColumnMetadata) {
+		col.DisplayName, col.IsNullable = col.Name, true
+		_, err := schemaSvc.AddColumn(ctx, tbl.ID, col)
+		require.NoError(t, err)
+	}
+	formula := `{"formula":"If ( IsEmpty ( day ) ; \"\" ; Timestamp ( day ; Time ( 3 ; 4 ; 5 ) ) )","result_type":"Timestamp"}`
+	add(schema.ColumnMetadata{Name: "day", FieldType: dbal.FieldTypeDate})
+	add(schema.ColumnMetadata{Name: "at", FieldType: dbal.FieldTypeTimestamp})
+	add(schema.ColumnMetadata{Name: "clock", FieldType: dbal.FieldTypeTimestamp})
+	add(schema.ColumnMetadata{Name: "computed", FieldType: dbal.FieldTypeCalculation, CalculationFormula: &formula})
+	hour := `{"formula":"If ( IsEmpty ( at ) ; \"\" ; Hour ( at ) )","result_type":"Number"}`
+	add(schema.ColumnMetadata{Name: "hour", FieldType: dbal.FieldTypeCalculation, CalculationFormula: &hour})
+	add(schema.ColumnMetadata{Name: "stamps", FieldType: dbal.FieldTypeTimestamp, MaxRepetitions: 3})
+	add(schema.ColumnMetadata{Name: "name", FieldType: dbal.FieldTypeText})
+	return ctx, schemaSvc, data.NewService(driver), driver
 }

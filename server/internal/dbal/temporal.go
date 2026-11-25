@@ -35,14 +35,15 @@ var dateLayouts = []string{
 	"2006-01-02 15:04:05.999999999",
 }
 
-// TemporalValue is the value to bind for a column of fieldType: a timestamp
-// given as text or time.Time becomes the time.Time in UTC that it names, and
-// a date given as text or time.Time becomes its "2006-01-02" day, which every
-// engine reads. A time of day on 1 January of year 0 is put on 1 January
-// 0001, as the calculation engine and FileMaker place one. Anything else,
-// including text that names no date or time, is returned unchanged, for the
-// database to refuse as it would have.
-func TemporalValue(fieldType AgnosticFieldType, value interface{}) interface{} {
+// NormalizeTemporal is a value of a column of fieldType as every write path
+// hands it on, to a formula and then to the database: a timestamp given as
+// text or time.Time becomes the time.Time in UTC that it names, and a date
+// given as text or time.Time becomes its "2006-01-02" day. A time of day on
+// 1 January of year 0 is put on 1 January 0001, as the calculation engine
+// and FileMaker place one. Anything else, including text that names no date
+// or time, is returned unchanged, for the database to refuse as it would
+// have.
+func NormalizeTemporal(fieldType AgnosticFieldType, value interface{}) interface{} {
 	switch fieldType {
 	case FieldTypeTimestamp:
 		switch v := value.(type) {
@@ -60,8 +61,27 @@ func TemporalValue(fieldType AgnosticFieldType, value interface{}) interface{} {
 				return at.Format("2006-01-02")
 			}
 		case time.Time:
-			return v.Format("2006-01-02")
+			// A time decoded in the server's zone (msgpack does) is still
+			// the day it was in UTC.
+			return v.UTC().Format("2006-01-02")
 		}
+	}
+	return value
+}
+
+// mariaDBTimestamp is the DATETIME(6) literal MariaDB reads as written.
+const mariaDBTimestamp = "2006-01-02 15:04:05.000000"
+
+// TemporalValue is the value to bind for a column of fieldType on engine:
+// the value NormalizeTemporal gives, with a timestamp bound on MariaDB as
+// its UTC DATETIME literal. The MariaDB driver would send a time.Time in the
+// zone of the connection's loc, and sends the zero time, which is midnight
+// on 1 January 0001 (a Time field's midnight), as 0000-00-00. PostgreSQL
+// takes the time.Time, whose zone it keeps whatever the session's.
+func TemporalValue(engine EngineType, fieldType AgnosticFieldType, value interface{}) interface{} {
+	value = NormalizeTemporal(fieldType, value)
+	if at, ok := value.(time.Time); ok && engine == EngineMariaDB {
+		return at.Format(mariaDBTimestamp)
 	}
 	return value
 }

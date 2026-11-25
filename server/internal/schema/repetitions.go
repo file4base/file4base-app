@@ -128,7 +128,8 @@ func packBundleRepetitions(row map[string]interface{}, repeating map[string]Colu
 		if !ok {
 			continue
 		}
-		if _, repeats := repeating[base]; !repeats {
+		c, repeats := repeating[base]
+		if !repeats {
 			continue
 		}
 		delete(row, key)
@@ -141,7 +142,9 @@ func packBundleRepetitions(row map[string]interface{}, repeating map[string]Colu
 		if given[base] == nil {
 			given[base] = map[int]interface{}{}
 		}
-		given[base][n] = v
+		// A date or timestamp in a repetition is kept as one in the
+		// field's own column is (dbal.NormalizeTemporal).
+		given[base][n] = dbal.NormalizeTemporal(StorageType(c.FieldType, c.CalculationFormula), v)
 	}
 	out := make(map[string]interface{}, len(given))
 	for base, values := range given {

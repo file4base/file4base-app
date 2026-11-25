@@ -76,7 +76,7 @@ dialog asks, and the error names the order it tried.
 | Action | |
 | --- | --- |
 | **Add** | Every row becomes a new record. |
-| **Update matching** | The record whose match fields hold the same values is updated. Matching is case-insensitive, as a find is, and an empty key matches nothing. Rows matching no record are added or passed over, as asked. |
+| **Update matching** | The record whose match fields hold the same values is updated. Matching is case-insensitive, as a find is, and an empty key matches nothing. A date or timestamp key matches the day or instant it names, whatever text the file writes it in (`2026-01-02 03:04:05`, `2026-01-02T03:04:05Z`, or with an offset). Rows matching no record are added or passed over, as asked. |
 
 A column with no field is left out. Two columns cannot go to the same field,
 and a column cannot be sent to a **calculation** field, whose formula owns its

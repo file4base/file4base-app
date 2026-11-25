@@ -1261,7 +1261,11 @@ func relatedCriterionClause(
 		// The related record's match field must hold something too.
 		joins = append(joins, notEmpty(dialect, child), fmt.Sprintf("%s %s %s", child, t.Op, parent))
 	}
-	inner := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName), crit, idx, values)
+	inner, err := criterionClause(dialect, alias+"."+dialect.QuoteIdentifier(crit.FieldName),
+		target.Fields[crit.FieldName], crit, idx, values)
+	if err != nil {
+		return "", err
+	}
 	exists := fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s)",
 		dialect.QuoteIdentifier(target.TableName), alias, strings.Join(append(joins, inner), " AND "))
 
