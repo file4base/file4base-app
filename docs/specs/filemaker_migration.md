@@ -84,6 +84,10 @@ A field's auto-enter options are read from Save as XML (the `type` attribute and
 
 A migration's records are written as they are: no option enters a value into them, and the next serial value is the source's.
 
+### Validation by calculation
+
+A field's *Validated by calculation* rule is read from the `<Validation>` element (`<Calculated enable="True">` with its `<Calculation>`, or `validateCalculation="True"`): the formula is bound to the imported names as calculations are, in the field's table occurrence, and may call the solution's custom functions. *Validate data in this field: Always / Only during data entry* (`type="Always"`, or `alwaysValidate`) and *Allow user to override during data entry* (`allowOverride`) are kept with it; a rule set that allows override does not make a *not empty* column `NOT NULL`, and a *unique* rule it holds is not backed by a unique index. A formula that cannot be bound is reported like any calculation that does not read, and the field's other rules still migrate. A disabled validation formula is not migrated. The rule is applied when a record is committed (see [Custom Functions](custom_functions.md#4-validation-by-calculation)), not to the migrated records themselves.
+
 ### Field names that had to change, and the formulas that read them (`#111`)
 
 An imported field does not always keep its source name: `sanitizeIdentifier` strips what a SQL identifier cannot carry, so `_code` becomes `code`, and two source names that normalize alike are told apart as `code` and `code_2` (`#89`). A calculation written against the source names would then read a column the table does not have.

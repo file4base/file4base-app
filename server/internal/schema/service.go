@@ -759,6 +759,9 @@ func (s *Service) addColumn(ctx context.Context, tableID string, col ColumnMetad
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
 	}
+	if err := s.checkValidationFormula(ctx, name, rules); err != nil {
+		return nil, err
+	}
 	if col.MaxRepetitions == 0 {
 		col.MaxRepetitions = 1
 	}
@@ -876,7 +879,9 @@ func (s *Service) syncUniqueIndex(ctx context.Context, db interface {
 	name := validation.UniqueIndexName(table, field)
 	index := dialect.QuoteIdentifier(name)
 	qTable, qField := dialect.QuoteIdentifier(table), dialect.QuoteIdentifier(field)
-	wanted := rules != nil && rules.Unique
+	// A rule the person may override during data entry is checked on each
+	// write only: an index would refuse the value they chose to keep.
+	wanted := rules != nil && rules.Unique && !rules.AllowOverride
 
 	// Text fields treat an empty value as no value; other types only skip NULL.
 	blankIsEmpty := true
@@ -1062,6 +1067,9 @@ func (s *Service) UpdateColumn(ctx context.Context, tableID string, columnID str
 		rules, err := validation.Parse(opts.ValidationRules)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidFieldOptions, err)
+		}
+		if err := s.checkValidationFormula(ctx, opts.DisplayName, rules); err != nil {
+			return nil, err
 		}
 		if err := s.syncUniqueIndexByColumnID(ctx, tableID, columnID, rules); err != nil {
 			return nil, err

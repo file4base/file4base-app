@@ -10,6 +10,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/validation"
 )
 
 // readCalculation takes the formula and its result type out of what was saved.
@@ -436,4 +437,28 @@ func (s *Service) tableNameOf(ctx context.Context, tableID string) (string, erro
 // TableNameByID is the physical table name of a registered table.
 func (s *Service) TableNameByID(ctx context.Context, tableID string) (string, error) {
 	return s.tableNameOf(ctx, tableID)
+}
+
+// checkValidationFormula checks the formula of a validation by calculation
+// before it is saved: it must read, with the solution's custom functions,
+// and not read a table or field deleted in FileMaker.
+func (s *Service) checkValidationFormula(ctx context.Context, fieldName string, rules *validation.Rules) error {
+	if rules == nil || !rules.CalculationEnabled {
+		return nil
+	}
+	lib, err := s.library(ctx)
+	if err != nil {
+		return err
+	}
+	expr, err := calc.ParseWith(rules.Calculation, calc.Options{Library: lib})
+	if err != nil {
+		return fmt.Errorf("%w: the validation formula of %q is not valid: %s", ErrInvalidFieldOptions, fieldName, err.Error())
+	}
+	for _, ref := range expr.RelatedFields() {
+		if ref.Missing {
+			return fmt.Errorf("%w: the validation formula of %q reads %s::%s, a table or field that was deleted in FileMaker",
+				ErrInvalidFieldOptions, fieldName, ref.Table, ref.Field)
+		}
+	}
+	return nil
 }

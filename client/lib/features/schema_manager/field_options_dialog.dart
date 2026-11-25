@@ -141,6 +141,24 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
   bool _customMessageEnabled = false;
   final TextEditingController _customMessageController = TextEditingController();
 
+  /// "Validated by calculation": a formula that must be true, with Self the
+  /// field's value; read in [_calcValidationContext], the occurrence it was
+  /// written from.
+  bool _calcValidationEnabled = false;
+  final TextEditingController _calcValidationController = TextEditingController();
+  String _calcValidationContext = '';
+
+  /// "Validate only if field has been modified", FileMaker's default; off,
+  /// the formula is checked on every save of the record.
+  bool _calcValidationOnlyModified = true;
+
+  /// "Allow user to override during data entry".
+  bool _allowOverride = false;
+
+  /// The rules as stored, so that the ones this dialog does not show are
+  /// saved as they were.
+  Map<String, dynamic> _storedValidation = const {};
+
   // --- Storage State ---
   bool _useGlobalStorage = false;
   String _indexingOption = 'all'; // 'none', 'minimal', 'all'
@@ -246,6 +264,36 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     });
   }
 
+  /// Specify the validation formula, with the calculation editor.
+  Future<void> _specifyValidationCalculation() async {
+    final fieldsByOccurrence = <String, List<String>>{};
+    for (final o in _occurrences) {
+      final table = _tables.where((t) => t.id == o.baseTableId).firstOrNull ??
+          (o.baseTableId == widget.table.id ? widget.table : null);
+      if (table != null) fieldsByOccurrence[o.name] = [for (final c in table.columns) c.name];
+    }
+    final start = _calcValidationContext.isNotEmpty ? _calcValidationContext : _defaultOccurrenceName;
+    fieldsByOccurrence.putIfAbsent(start, () => [for (final c in widget.table.columns) c.name]);
+    final formula = await CalculationBuilderDialog.show(
+      context,
+      initialFormula: _calcValidationController.text,
+      contextTable: start,
+      availableTables: fieldsByOccurrence.keys.toList(),
+      fieldsByTable: fieldsByOccurrence,
+      checkTable: widget.table.name,
+    );
+    if (!mounted) return;
+    if (formula == null) {
+      if (_calcValidationController.text.trim().isEmpty) setState(() => _calcValidationEnabled = false);
+      return;
+    }
+    setState(() {
+      _calcValidationController.text = formula.trim();
+      _calcValidationContext = start;
+      _calcValidationEnabled = formula.trim().isNotEmpty;
+    });
+  }
+
   Future<void> _specifyLookup() async {
     final spec = await LookupOptionsDialog.show(
       context,
@@ -323,6 +371,12 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         _maxLengthController.text = (rules['max_length'] ?? '').toString();
         _customMessageEnabled = rules['custom_message_enabled'] as bool? ?? false;
         _customMessageController.text = (rules['custom_message'] ?? '').toString();
+        _calcValidationEnabled = rules['calculation_enabled'] as bool? ?? false;
+        _calcValidationController.text = (rules['calculation'] ?? '').toString();
+        _calcValidationContext = (rules['calculation_context'] ?? '').toString();
+        _calcValidationOnlyModified = !(rules['calculation_always'] as bool? ?? false);
+        _allowOverride = rules['allow_override'] as bool? ?? false;
+        _storedValidation = rules;
       } catch (_) {
         _customMessageEnabled = true;
         _customMessageController.text = widget.column.validationRules!;
@@ -380,6 +434,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
     _rangeMaxController.dispose();
     _maxLengthController.dispose();
     _customMessageController.dispose();
+    _calcValidationController.dispose();
     _calculationFormulaController.dispose();
     _repetitionsController.dispose();
     super.dispose();
@@ -409,7 +464,9 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
       final defaultValueJson = jsonEncode(_fieldOptionsToSave());
 
       // 2. Pack Validation JSON
+      final calcFormula = _calcValidationController.text.trim();
       final validationMap = <String, dynamic>{
+        ..._storedValidation,
         'not_empty': _notEmptyEnabled,
         'not_empty_timing': _notEmptyTiming,
         'unique': _uniqueValueEnabled,
@@ -423,6 +480,11 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
         'max_length': int.tryParse(_maxLengthController.text.trim()),
         'custom_message_enabled': _customMessageEnabled,
         'custom_message': _customMessageController.text.trim(),
+        'calculation_enabled': _calcValidationEnabled && calcFormula.isNotEmpty,
+        'calculation': calcFormula,
+        'calculation_context': _calcValidationContext,
+        'calculation_always': !_calcValidationOnlyModified,
+        'allow_override': _allowOverride,
       };
       final validationRulesJson = jsonEncode(validationMap);
 
@@ -1144,6 +1206,7 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                 height: 32,
                 child: DropdownButtonFormField<String>(
                   initialValue: _strictDataType,
+                  isExpanded: true,
                   decoration: const InputDecoration(
                     contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     border: OutlineInputBorder(),
@@ -1225,6 +1288,69 @@ class _FieldOptionsDialogState extends ConsumerState<FieldOptionsDialog>
                   ),
                 ),
               ),
+            ],
+          ),
+
+          const SizedBox(height: 6),
+
+          // Validated by calculation
+          Row(
+            children: [
+              Checkbox(
+                key: const Key('validationByCalculation'),
+                value: _calcValidationEnabled,
+                onChanged: (v) {
+                  if ((v ?? false) && _calcValidationController.text.trim().isEmpty) {
+                    unawaited(_specifyValidationCalculation());
+                    return;
+                  }
+                  setState(() => _calcValidationEnabled = v ?? false);
+                },
+              ),
+              const Flexible(child: Text('Validated by calculation')),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                key: const Key('validationSpecifyCalculation'),
+                onPressed: _specifyValidationCalculation,
+                child: const Text('Specify...'),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _calcValidationController.text.replaceAll('\n', ' '),
+                  key: const Key('validationCalculationFormula'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 32),
+            child: Row(
+              children: [
+                Checkbox(
+                  key: const Key('validationOnlyIfModified'),
+                  value: _calcValidationOnlyModified,
+                  onChanged: _calcValidationEnabled
+                      ? (v) => setState(() => _calcValidationOnlyModified = v ?? true)
+                      : null,
+                ),
+                const Flexible(child: Text('Validate only if field has been modified', style: TextStyle(fontSize: 12))),
+              ],
+            ),
+          ),
+
+          // Allow override
+          Row(
+            children: [
+              Checkbox(
+                key: const Key('validationAllowOverride'),
+                value: _allowOverride,
+                onChanged: (v) => setState(() => _allowOverride = v ?? false),
+              ),
+              const Flexible(child: Text('Allow user to override during data entry')),
             ],
           ),
 

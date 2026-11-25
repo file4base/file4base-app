@@ -15,6 +15,17 @@
 //	                    numbers, other values as text, e.g. ISO dates)
 //	max_length          at most that many characters
 //	custom_message      replaces the default error message
+//	calculation         a formula (calculation_enabled) that must come to
+//	                    true, as FileMaker's "Validated by calculation": it
+//	                    reads the record as it is about to be saved, Self
+//	                    being the field's value; it is applied when the
+//	                    field is modified (an empty value too, so the formula
+//	                    decides about it; a new record's empty field is not
+//	                    modified), or on every save with calculation_always
+//	allow_override      during data entry, the person may save the value
+//	                    anyway once told it breaks a rule (FileMaker's
+//	                    "Allow user to override during data entry"); the
+//	                    write is then sent again with the override header
 //
 // not_empty_timing is the timing of the whole rule set: "always" applies the
 // rules to every write, including imports; "entry" applies them to data
@@ -51,6 +62,9 @@ type Error struct {
 	Field   string `json:"field"`
 	Rule    string `json:"rule"`
 	Message string `json:"message"`
+	// Overridable is set when the person entering the value may save it
+	// anyway (the field's allow_override).
+	Overridable bool `json:"overridable,omitempty"`
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -71,6 +85,16 @@ type Rules struct {
 	MaxLength            *int   `json:"max_length"`
 	CustomMessageEnabled bool   `json:"custom_message_enabled"`
 	CustomMessage        string `json:"custom_message"`
+	CalculationEnabled   bool   `json:"calculation_enabled,omitempty"`
+	Calculation          string `json:"calculation,omitempty"`
+	// CalculationContext is the table occurrence the formula reads related
+	// fields from, empty for the table's own.
+	CalculationContext string `json:"calculation_context,omitempty"`
+	// CalculationAlways validates the formula whenever the record is saved,
+	// not only when the field was modified (FileMaker's "Validate only if
+	// field has been modified" switched off).
+	CalculationAlways bool `json:"calculation_always,omitempty"`
+	AllowOverride     bool `json:"allow_override,omitempty"`
 }
 
 // Parse reads validation_rules. Nil, blank or "null" mean no rules.
@@ -84,6 +108,9 @@ func Parse(raw *string) (*Rules, error) {
 	}
 	if r.MaxLengthEnabled && (r.MaxLength == nil || *r.MaxLength < 0) {
 		return nil, fmt.Errorf("%w: max_length must be a non-negative number when max_length_enabled is set", ErrInvalidRules)
+	}
+	if r.CalculationEnabled && strings.TrimSpace(r.Calculation) == "" {
+		return nil, fmt.Errorf("%w: a validation by calculation needs a formula", ErrInvalidRules)
 	}
 	if r.StrictTypeEnabled && !knownStrictType(r.StrictType) {
 		return nil, fmt.Errorf("%w: unknown strict_type %q", ErrInvalidRules, r.StrictType)
@@ -118,12 +145,29 @@ type Querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
+// Calculator evaluates the validation formula of a field against the record
+// as it is about to be saved (values, which may hold only the fields a write
+// changes; recordID is empty for a new record), and reports whether it came
+// to true.
+type Calculator func(ctx context.Context, recordID string, values map[string]interface{}, field Field) (bool, error)
+
 // Checker validates records of one table.
 type Checker struct {
 	Dialect dbal.Dialect
 	DB      Querier
 	Table   string
 	Fields  map[string]Field
+	// Calculate evaluates the validations by calculation; without it they
+	// are not checked.
+	Calculate Calculator
+	// Override is a data entry write the person chose to save although it
+	// breaks rules: the rules of the fields that allow it are skipped.
+	Override bool
+	// Restore is a solution restored from its file: the values were saved
+	// already, and those breaking a rule that allows override may have been
+	// kept by the person who entered them, so those rules are not checked
+	// again.
+	Restore bool
 }
 
 // HasRules reports whether any field of the table has rules.
@@ -141,10 +185,28 @@ func (c *Checker) HasRules() bool {
 // excluded from the unique and existing-value lookups.
 func (c *Checker) Check(ctx context.Context, recordID string, values map[string]interface{}, fields map[string]bool, dataEntry bool) error {
 	for name, f := range c.Fields {
-		if f.Rules == nil || !f.Rules.AppliesTo(dataEntry) || (fields != nil && !fields[name]) {
+		if f.Rules == nil || !f.Rules.AppliesTo(dataEntry) {
 			continue
 		}
-		if err := c.checkField(ctx, recordID, f, values[name]); err != nil {
+		if f.Rules.AllowOverride && (c.Restore || dataEntry && c.Override) {
+			continue
+		}
+		var err error
+		switch {
+		case fields == nil || fields[name]:
+			err = c.checkField(ctx, recordID, f, values, fields == nil)
+		case f.Rules.CalculationAlways:
+			// Not changed by this write, but validated whenever the
+			// record is saved.
+			err = c.checkCalculation(ctx, recordID, f, values)
+		default:
+			continue
+		}
+		var broken *Error
+		if errors.As(err, &broken) {
+			broken.Overridable = dataEntry && f.Rules.AllowOverride
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -158,14 +220,19 @@ func (c *Checker) fail(f Field, rule, message string) error {
 	return &Error{Table: c.Table, Field: f.Name, Rule: rule, Message: message}
 }
 
-func (c *Checker) checkField(ctx context.Context, recordID string, f Field, value interface{}) error {
+func (c *Checker) checkField(ctx context.Context, recordID string, f Field, values map[string]interface{}, created bool) error {
 	r := f.Rules
+	value := values[f.Name]
 	text, empty := asText(value)
 	if empty {
 		if r.NotEmpty {
 			return c.fail(f, "not_empty", fmt.Sprintf("%s requires a value", f.Name))
 		}
-		return nil
+		if created && !r.CalculationAlways {
+			// A new record's field left empty was not modified.
+			return nil
+		}
+		return c.checkCalculation(ctx, recordID, f, values)
 	}
 	if r.StrictTypeEnabled {
 		if !matchesStrictType(r.StrictType, text) {
@@ -194,6 +261,23 @@ func (c *Checker) checkField(ctx context.Context, recordID string, f Field, valu
 		if r.ExistingValue && others == 0 {
 			return c.fail(f, "existing_value", fmt.Sprintf("%s must be a value another record already has", f.Name))
 		}
+	}
+	return c.checkCalculation(ctx, recordID, f, values)
+}
+
+// checkCalculation applies a field's validation by calculation, last, as
+// FileMaker does once the other options pass.
+func (c *Checker) checkCalculation(ctx context.Context, recordID string, f Field, values map[string]interface{}) error {
+	r := f.Rules
+	if !r.CalculationEnabled || strings.TrimSpace(r.Calculation) == "" || c.Calculate == nil {
+		return nil
+	}
+	ok, err := c.Calculate(ctx, recordID, values, f)
+	if err != nil {
+		return fmt.Errorf("the validation formula of %s cannot be computed: %w", f.Name, err)
+	}
+	if !ok {
+		return c.fail(f, "calculation", fmt.Sprintf("%s does not meet its validation formula", f.Name))
 	}
 	return nil
 }

@@ -2179,7 +2179,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		if err != nil {
 			return nil, err
 		}
-		checker := &validation.Checker{Dialect: dialect, DB: tx, Table: tableName, Fields: fields}
+		checker := &validation.Checker{Dialect: dialect, DB: tx, Table: tableName, Fields: fields, Restore: true}
 		for i, row := range bundle.TablesData[tableName] {
 			if id, ok := row["id"]; !ok || id == nil || id == "" {
 				row["id"] = uuid.NewString()

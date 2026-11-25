@@ -26,6 +26,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onScriptWorkspace,
     this.onManageThemes,
     this.onManageValueLists,
+    this.onManageCustomFunctions,
     this.onManageFileReferences,
     this.onManageScriptTriggers,
     this.onPreferences,
@@ -126,6 +127,9 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onScriptWorkspace;
   final VoidCallback? onManageThemes;
   final VoidCallback? onManageValueLists;
+
+  /// File > Manage > Custom Functions: the solution's reusable formulas.
+  final VoidCallback? onManageCustomFunctions;
 
   /// File > Manage > File References (#107): the other solutions this one
   /// reads tables from and performs scripts in.
@@ -670,7 +674,7 @@ class File4BaseMenuBar extends StatelessWidget {
               child: Text(l10n.menuManageValueLists),
             ),
             MenuItemButton(
-              onPressed: () => _showRoadmapDialog(context, 'Custom Functions', 'Roadmap Phase 7', 'Calculation engine reusable functions and recursive formulas.'),
+              onPressed: onManageCustomFunctions,
               child: Text(l10n.menuManageCustomFunctions),
             ),
             MenuItemButton(
@@ -1884,6 +1888,11 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: onManageValueLists,
               leadingIcon: const Icon(Icons.list_alt_outlined, size: 18),
               child: Text(l10n.menuManageValueLists),
+            ),
+            MenuItemButton(
+              onPressed: onManageCustomFunctions,
+              leadingIcon: const Icon(Icons.functions, size: 18),
+              child: Text(l10n.menuManageCustomFunctions),
             ),
             MenuItemButton(
               onPressed: onManageFileReferences,
