@@ -159,6 +159,33 @@ once, and the occurrence because a relationship may join a table **to itself**,
 where there is no "other" table to infer. For every other relationship the
 occurrence may be left out and the other side is taken.
 
+A relationship joining an **occurrence** to itself (`Tasks::code =
+Tasks::parent_code`) has the same occurrence at both ends, so the occurrence
+cannot tell them apart. The object then names its end with
+`relationship_side`, `left` or `right`:
+
+```json
+{
+  "type": "portal",
+  "portal_config": {
+    "relationship_id": "rel-sub",
+    "occurrence": "Tasks",
+    "relationship_side": "left"
+  }
+}
+```
+
+Left out, or anything other than `left`, it is the right end, as before.
+Browse mode sends it as `side` with every list, creation and batch request on
+the portal or field, and it is ignored for a relationship between two
+occurrences. Portal Setup offers the choice (*Left end* / *Right end*) for such
+a relationship only. Choosing another relationship clears it. A related field
+keeps the end it was picked from in the field list, which lists both.
+
+A FileMaker migration never writes it. FileMaker always relates two table
+occurrences, even when they are of the same table, and each is migrated to its
+own occurrence, so the occurrence names the end.
+
 The occurrence is held by **name**, which survives export and import as it is
 (occurrences are matched by name). The relationship is held by **id**, which
 import rewrites to the id it has in the destination.
@@ -186,6 +213,7 @@ Portal Setup holds:
 | Setting | Means |
 | --- | --- |
 | Show related records from | The relationship and occurrence the rows come from. |
+| Show the records at its | For a relationship joining an occurrence to itself only: the end the rows come from (`relationship_side`). |
 | Initial row | The first related record shown, counting from 1. |
 | Rows | How many rows are drawn; the rest are scrolled to. |
 | Sort rows by | `last_name,-fee_paid`. Empty uses the relationship's own "Sort related records". |

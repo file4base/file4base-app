@@ -170,12 +170,14 @@ class RelatedContext {
 
   /// Resolves which side of [relationshipId] a layout object reads, the same
   /// way the server does: [occurrence] names the side wanted, and without it
-  /// the side that is not this layout's table is taken.
+  /// the side that is not this layout's table is taken. A relationship that
+  /// joins an occurrence to itself has it at both ends, so [side] (one of
+  /// [RelationshipSide]) names the end; without it the right end is read.
   ///
   /// Returns null when the relationship, the occurrence or the table behind it
   /// is not in the catalog — a layout pointing at something that has been
   /// deleted must still draw.
-  RelatedTarget? resolve(String? relationshipId, String? occurrence) {
+  RelatedTarget? resolve(String? relationshipId, String? occurrence, {String? side}) {
     RelatedTarget? tryRelationship(RelationshipModel rel) {
       final left = occurrencesById[rel.leftOccurrenceId];
       final right = occurrencesById[rel.rightOccurrenceId];
@@ -187,8 +189,13 @@ class RelatedContext {
 
       final fromLeft = _isFrom(left, leftTable);
       final fromRight = _isFrom(right, rightTable);
+      final selfJoin = left.id == right.id && fromLeft && fromRight;
+      final named = occurrence == null || occurrence.isEmpty ||
+          occurrence == left.id || occurrence.toLowerCase() == left.name.toLowerCase();
       bool wantsRight;
-      if (occurrence != null && occurrence.isNotEmpty) {
+      if (selfJoin && side != null && named) {
+        wantsRight = side != RelationshipSide.left;
+      } else if (occurrence != null && occurrence.isNotEmpty) {
         if ((occurrence == right.id || occurrence.toLowerCase() == right.name.toLowerCase()) && fromLeft) {
           wantsRight = true;
         } else if ((occurrence == left.id || occurrence.toLowerCase() == left.name.toLowerCase()) && fromRight) {
@@ -367,7 +374,8 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   void didUpdateWidget(RelatedFieldView old) {
     super.didUpdateWidget(old);
     if (old.related.recordId != widget.related.recordId ||
-        old.object.fieldBinding?.relationshipId != widget.object.fieldBinding?.relationshipId) {
+        old.object.fieldBinding?.relationshipId != widget.object.fieldBinding?.relationshipId ||
+        old.object.fieldBinding?.relationshipSide != widget.object.fieldBinding?.relationshipSide) {
       unawaited(_load());
     }
   }
@@ -379,7 +387,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
       setState(() => _row = null);
       return;
     }
-    final target = widget.related.resolve(binding.relationshipId, binding.tableOccurrence);
+    final target = widget.related.resolve(binding.relationshipId, binding.tableOccurrence, side: binding.relationshipSide);
     if (target == null) {
       setState(() => _row = null);
       return;
@@ -415,7 +423,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   Widget build(BuildContext context) {
     final obj = widget.object;
     final binding = obj.fieldBinding!;
-    final target = widget.related.resolve(binding.relationshipId, binding.tableOccurrence);
+    final target = widget.related.resolve(binding.relationshipId, binding.tableOccurrence, side: binding.relationshipSide);
 
     if (target == null) {
       return relatedNotice('<${binding.qualifiedName}>',
@@ -586,7 +594,7 @@ class _PortalViewState extends State<PortalView> {
   }
 
   RelatedTarget? get _target =>
-      widget.related.resolve(_config.relationshipId, _config.occurrence);
+      widget.related.resolve(_config.relationshipId, _config.occurrence, side: _config.relationshipSide);
 
   Future<void> _load() async {
     final recordId = widget.related.recordId;
