@@ -5642,6 +5642,10 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     );
   }
 
+  /// [_editCalculation] from the layout's occurrence, for the Format menu's
+  /// conditional formatting dialog.
+  Future<String?> editCalculation(String initial) => _editCalculation(initial);
+
   /// Opens the calculation editor with the fields of every occurrence, from
   /// [occurrence] or the layout's.
   Future<String?> _editCalculation(String initial, {String? occurrence}) {

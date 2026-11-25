@@ -2338,10 +2338,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
   }
 
   Future<void> _openConditionalFormatModal(OperationalMode mode) async {
+    final designer = mode == OperationalMode.layout ? _layoutDesignerKey.currentState : null;
     final next = await FormatDialogs.showConditionalFormattingDialog(
       context,
       initialStyle: _currentActiveStyle(mode),
       targetName: _currentTargetLabel(mode),
+      editFormula: designer?.editCalculation,
     );
     if (next != null && mounted) _applyActiveStyle(mode, next);
   }

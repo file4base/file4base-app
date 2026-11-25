@@ -1629,12 +1629,19 @@ class FormatDialogs {
   }
 
   /// Opens the Conditional Formatting dialog where rules can be added/edited.
+  ///
+  /// With [editFormula], a "formula is true" rule has a button opening the
+  /// calculation editor on its formula; what it gives back replaces it.
   static Future<LayoutObjectStyle?> showConditionalFormattingDialog(
     BuildContext context, {
     required LayoutObjectStyle initialStyle,
     String? targetName,
+    Future<String?> Function(String initial)? editFormula,
   }) {
     var rules = List<ConditionalFormatRule>.from(initialStyle.conditionalRules);
+    // Bumped when the calculation editor replaces a formula, so its field
+    // shows the new text.
+    var formulaEdits = 0;
     return showDialog<LayoutObjectStyle>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1726,15 +1733,32 @@ class FormatDialogs {
                                     if (r.operator != 'is_empty' && r.operator != 'is_not_empty')
                                       Expanded(
                                         child: TextFormField(
+                                          key: ValueKey('conditional-rule-value-$i-$formulaEdits'),
                                           initialValue: r.value,
-                                          decoration: const InputDecoration(
+                                          decoration: InputDecoration(
                                             hintText: '0',
                                             isDense: true,
-                                            border: OutlineInputBorder(),
-                                            contentPadding: EdgeInsets.symmetric(
+                                            border: const OutlineInputBorder(),
+                                            contentPadding: const EdgeInsets.symmetric(
                                               horizontal: 8,
                                               vertical: 6,
                                             ),
+                                            suffixIcon: r.isFormula && editFormula != null
+                                                ? IconButton(
+                                                    key: ValueKey('conditional-rule-calc-$i'),
+                                                    tooltip: 'Specify Calculation',
+                                                    icon: const Icon(Icons.functions, size: 16),
+                                                    visualDensity: VisualDensity.compact,
+                                                    onPressed: () async {
+                                                      final formula = await editFormula(r.value);
+                                                      if (formula == null) return;
+                                                      setModalState(() {
+                                                        rules[i] = rules[i].copyWith(value: formula.trim());
+                                                        formulaEdits++;
+                                                      });
+                                                    },
+                                                  )
+                                                : null,
                                           ),
                                           style: const TextStyle(fontSize: 12),
                                           onChanged: (val) =>
