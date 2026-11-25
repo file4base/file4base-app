@@ -2886,7 +2886,20 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       );
     }
     if (obj.type == 'button') {
-      final btnText = _resolveTextForRecord(obj.text.isEmpty ? 'Button' : obj.text, rec);
+      final btnText = _resolveTextForRecord(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text, rec);
+      if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
+        // A button without a fill (a grouped button, an icon) is a place
+        // to click over what is drawn under it.
+        return InkWell(
+          onTap: () async {
+            unawaited(_goToRecordIndex(recordIndex));
+            await _handleLayoutButtonClick(obj, btnText);
+          },
+          child: btnText.isEmpty
+              ? const SizedBox.expand()
+              : Center(child: Text(btnText, overflow: TextOverflow.ellipsis, style: layoutTextStyle(obj.style))),
+        );
+      }
       return ElevatedButton(
         onPressed: () async {
           unawaited(_goToRecordIndex(recordIndex));
@@ -3634,7 +3647,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
       case 'button':
       case 'popover_button':
-        final btnText = _resolveTextForRecord(obj.text.isEmpty ? 'Button' : obj.text, record);
+        // A button with an action and no label (a grouped button, an icon)
+        // shows nothing of its own.
+        final btnText = _resolveTextForRecord(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text, record);
         final btnBorder = parseLayoutColor(obj.style.borderColor);
         if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
           return InkWell(
@@ -4171,6 +4186,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final action = obj.action;
     if (action == null) {
       _handleLegacyButtonLabel(label);
+      return;
+    }
+    if (!action.enabled) {
+      // A migrated button whose script could not be told is kept off
+      // until one is chosen in Layout mode.
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(action.isPerformScript
+            ? 'This button is switched off: choose its script in Layout mode.'
+            : 'This button is switched off: File4Base does not run its step yet.'),
+        backgroundColor: Colors.orange.shade800,
+      ));
       return;
     }
     final result = await _actionRunner().run(action);

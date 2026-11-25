@@ -361,8 +361,9 @@ func TestNativeLayoutPartsAndGeometry(t *testing.T) {
 	if len(byType["rounded_rect"]) != 1 || len(byType["oval"]) != 0 {
 		t.Fatalf("front panel: %v", byType)
 	}
-	if len(byType["button"]) != 0 {
-		t.Fatalf("buttons are not converted yet")
+	// A button with no label, icon or action is kept as an empty button.
+	if len(byType["button"]) != 1 || byType["button"][0]["action"] != nil {
+		t.Fatalf("buttons: %v", byType["button"])
 	}
 }
 
@@ -396,7 +397,7 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 	check("Text", 1, 1)
 	check("Oval", 1, 0)
 	check("Rounded Rectangle", 1, 1)
-	check("Button", 1, 0)
+	check("Button", 1, 1)
 	check("Group", 1, 1)
 	if got.Report.Counts.RejectedCount != 0 {
 		t.Fatalf("layout objects must never reject a layout: %+v", got.Report.Rejected)
@@ -409,7 +410,7 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 		switch it.Category {
 		case CategoryUnsupported:
 			unsupported++
-			if !strings.Contains(it.Detail, "1 button") || !strings.Contains(it.Detail, "front panel") {
+			if strings.Contains(it.Detail, "button") || !strings.Contains(it.Detail, "front panel") {
 				t.Fatalf("unsupported detail: %s", it.Detail)
 			}
 		case CategoryManualActionRequired:
@@ -633,5 +634,127 @@ func TestNativeLayoutEntryRepetitionAndDates(t *testing.T) {
 		if order == "" && d["date_order"] != nil {
 			t.Fatalf("no date order is made up: %v", d["date_order"])
 		}
+	}
+}
+
+// Buttons, button bars and grouped buttons run what FileMaker's run: a
+// script, bound to the imported scripts by id then by a name only one has,
+// or a single step. One whose script cannot be told is kept switched off.
+func TestNativeLayoutButtonsRunTheirScripts(t *testing.T) {
+	scripts := `<ScriptCatalog>
+      <Script id="5" name="Open Recipe"/>
+      <Script id="6" name="Twice"/>
+      <Script id="7" name="Twice"/>
+    </ScriptCatalog>
+    <LayoutCatalog>`
+	buttons := `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+                <Button>
+                  <Label><Text><StyledText><Data><![CDATA[Open]]></Data></StyledText></Text></Label>
+                  <action><ScriptReference id="5" name="Open Recipe" UUID="x"/><Calculation><Text><![CDATA[Title]]></Text></Calculation><Options>4</Options></action>
+                </Button>
+              </LayoutObject>
+              <LayoutObject type="Button Bar">
+                <UUID>00000000-0000-0000-0000-000000000040</UUID>
+                <Bounds top="260" left="20" bottom="280" right="220"/>
+                <ButtonBar><ObjectList membercount="2">
+                  <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000041</UUID><Bounds top="260" left="20" bottom="280" right="120"/>
+                    <Button><Label><Text><StyledText><Data><![CDATA[Twice]]></Data></StyledText></Text></Label>
+                    <action><ScriptReference id="99" name="Twice" UUID="y"/><Options>4</Options></action></Button>
+                  </LayoutObject>
+                  <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000042</UUID><Bounds top="260" left="120" bottom="280" right="220"/>
+                    <Button><Label><Text><StyledText><Data><![CDATA[Next]]></Data></StyledText></Text></Label>
+                    <action><Step enable="True" id="16" name="Go to Record/Request/Page"><Options>0</Options></Step></action></Button>
+                  </LayoutObject>
+                </ObjectList><Select><id>1</id></Select></ButtonBar>
+              </LayoutObject>
+              <LayoutObject type="Grouped Button">
+                <UUID>00000000-0000-0000-0000-000000000043</UUID>
+                <Bounds top="285" left="20" bottom="300" right="200"/>
+                <GroupedButton><ObjectList membercount="1">
+                  <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000044</UUID><Bounds top="285" left="20" bottom="300" right="200"/>
+                    <Text><StyledText><Data><![CDATA[Gone]]></Data></StyledText></Text>
+                  </LayoutObject>
+                </ObjectList>
+                <action><ScriptReference id="42" name="Deleted Script" UUID="z"/><Options>4</Options></action></GroupedButton>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, "<LayoutCatalog>", scripts, 1)
+	design = strings.Replace(design, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, buttons, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptID := map[string]string{}
+	for _, sc := range got.Bundle.Scripts {
+		scriptID[sc.Name] = sc.ID
+	}
+	if scriptID["Open Recipe"] == "" {
+		t.Fatalf("scripts: %v", scriptID)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var buttonsSeen []map[string]interface{}
+	gonePos, groupPos := -1, -1
+	for i, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		if o["type"] == "button" {
+			buttonsSeen = append(buttonsSeen, o)
+			if o["text"] == "" {
+				groupPos = i
+			}
+		}
+		if o["type"] == "label" && o["text"] == "Gone" {
+			gonePos = i
+		}
+		if strings.Contains(string(encoded), sourceScriptIDKey) {
+			t.Fatalf("the FileMaker script id must not be stored: %s", encoded)
+		}
+	}
+	if len(buttonsSeen) != 4 {
+		t.Fatalf("buttons: %v", buttonsSeen)
+	}
+	action := func(i int) map[string]interface{} { return buttonsSeen[i]["action"].(map[string]interface{}) }
+
+	open := action(0)
+	if buttonsSeen[0]["text"] != "Open" || open["type"] != "perform_script" || open["script_id"] != scriptID["Open Recipe"] ||
+		open["enabled"] == false || open["parameter"] == nil || open["parameter_problem"] != nil {
+		t.Fatalf("script button: %v", buttonsSeen[0])
+	}
+	// Two scripts are named "Twice" and the id is not one of them.
+	if twice := action(1); twice["script_id"] != nil || twice["enabled"] != false {
+		t.Fatalf("ambiguous script button: %v", twice)
+	}
+	if next := action(2); next["type"] != "single_step" || next["step_type"] != "Go to Record/Request/Page" || next["enabled"] == false {
+		t.Fatalf("single step button: %v", next)
+	}
+	// The grouped button is drawn by its members, its click over them.
+	if gone := action(3); gone["enabled"] != false || groupPos < gonePos || gonePos < 0 {
+		t.Fatalf("grouped button: %v (label at %d, button at %d)", buttonsSeen[3], gonePos, groupPos)
+	}
+	counts := got.Report.Counts.LayoutObjects
+	for _, kind := range []string{"Button", "Button Bar", "Grouped Button"} {
+		if c := counts[kind]; c.Migrated == 0 || c.Migrated != c.Source {
+			t.Fatalf("%s: %+v", kind, c)
+		}
+	}
+	if counts["Button"].Migrated != 3 {
+		t.Fatalf("counts: %+v", counts)
+	}
+	reported := false
+	for _, it := range got.Report.ManualActionRequired {
+		if strings.Contains(it.Detail, "Migrated buttons kept switched off") &&
+			strings.Contains(it.Detail, "1 run a script that is not among") && strings.Contains(it.Detail, "1 run a script whose name several") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("report: %+v", got.Report.ManualActionRequired)
 	}
 }

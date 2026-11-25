@@ -771,8 +771,14 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
 
       case 'button':
       case 'popover_button':
-        final btnText = resolveLayoutMergeText(obj.text.isEmpty ? 'Button' : obj.text,
+        final btnText = resolveLayoutMergeText(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text,
             record: record, userName: widget.currentUserName);
+        if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
+          // Drawn by what is under it (a grouped button, an icon).
+          return btnText.isEmpty
+              ? const SizedBox.shrink()
+              : Center(child: Text(btnText, overflow: TextOverflow.ellipsis, style: layoutTextStyle(obj.style)));
+        }
         return Container(
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
