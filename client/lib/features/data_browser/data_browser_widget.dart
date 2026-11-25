@@ -1631,19 +1631,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// controllers and in a saved find's values (#46). An own field is held
   /// under its plain name, so the two cannot collide: a field name is
   /// lower-case letters, digits and underscores, and never contains a colon.
-  static String relatedCriterionKey(String relationshipId, String occurrence, String field) =>
-      'rel:$relationshipId:$occurrence:$field';
+  /// [side] is the end of a relationship joining an occurrence to itself
+  /// ([RelationshipSide]): the same field read from either end is two
+  /// criteria. A key without one, as saved before, reads the right end.
+  static String relatedCriterionKey(String relationshipId, String occurrence, String field, {String? side}) =>
+      'rel:$relationshipId:$occurrence:$field${side == null ? '' : ':$side'}';
 
   /// Reads back what [relatedCriterionKey] wrote, or null for an own field.
-  static ({String relationshipId, String occurrence, String field})? parseRelatedCriterionKey(String key) {
+  static ({String relationshipId, String occurrence, String field, String? side})? parseRelatedCriterionKey(
+      String key) {
     if (!key.startsWith('rel:')) return null;
     final parts = key.split(':');
     if (parts.length < 4) return null;
+    String? side;
+    if (parts.length > 4 && (parts.last == RelationshipSide.left || parts.last == RelationshipSide.right)) {
+      side = parts.removeLast();
+    }
     return (
       relationshipId: parts[1],
       occurrence: parts[2],
       // A field name has no colon, but rejoin anyway rather than lose text.
       field: parts.sublist(3).join(':'),
+      side: side,
     );
   }
 
@@ -1701,6 +1710,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         criteria.last['relationship_id'] = related.relationshipId;
         if (related.occurrence.isNotEmpty) {
           criteria.last['occurrence'] = related.occurrence;
+        }
+        if (related.side != null) {
+          criteria.last['side'] = related.side;
         }
       }
     });
@@ -3204,6 +3216,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
               binding.relationshipId ?? '',
               binding.tableOccurrence ?? '',
               binding.fieldName,
+              side: binding.relationshipSide,
             );
             final controller = _findControllers.putIfAbsent(key, () {
               return TextEditingController(text: _currentFindRequest.values[key] ?? '');

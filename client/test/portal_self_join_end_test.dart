@@ -3,7 +3,10 @@
 // Portal Setup offers the choice for such a relationship only, the layout
 // keeps it, and Browse mode asks the server for that end.
 
+import 'dart:async';
+
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
@@ -99,8 +102,22 @@ PortalConfigModel _portalOf(LayoutDefinitionModel layout) =>
 /// Lets the auto-save debounce fire (it fails silently: no server).
 Future<void> _settleAutoSave(WidgetTester tester) => tester.pump(const Duration(seconds: 2));
 
-RelatedContext _context() => RelatedContext(
-      apiClient: ApiClient(baseUrl: 'http://localhost:1'),
+/// Answers each related read when the test says so, by the end it asked for.
+class _SlowApi extends ApiClient {
+  _SlowApi() : super(baseUrl: 'http://localhost:1');
+
+  final Map<String?, Completer<List<Map<String, dynamic>>>> pending = {};
+
+  @override
+  Future<List<Map<String, dynamic>>> listRelatedRows(String table, String id,
+      {required String relationshipId, String? occurrence, String? side, List<String>? sort, int limit = 100,
+      int offset = 0}) {
+    return (pending[side] = Completer()).future;
+  }
+}
+
+RelatedContext _context([ApiClient? api]) => RelatedContext(
+      apiClient: api ?? ApiClient(baseUrl: 'http://localhost:1'),
       fromTable: 'tasks',
       recordId: 'task-1',
       relationshipsById: const {'rel-sub': _subtasks, 'rel-notes': _taskNotes},
@@ -127,6 +144,28 @@ void main() {
       await tester.tap(find.descendant(of: choice, matching: find.text('Right end')));
       await tester.pumpAndSettle();
       expect(_portalOf(last()!).relationshipSide, 'right');
+      await _settleAutoSave(tester);
+    });
+
+    testWidgets('keeps the end when the same relationship is chosen again', (tester) async {
+      final last = await _pumpDesigner(
+          tester, const PortalConfigModel(relationshipId: 'rel-sub', occurrence: 'Tasks', relationshipSide: 'left'));
+      final dropdown = find.byKey(const ValueKey('inspector-portal-relationship'));
+      await tester.ensureVisible(dropdown);
+      await tester.tap(dropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Tasks  ·  through "Task_Subtasks"').last);
+      await tester.pumpAndSettle();
+      final choice = find.byKey(const ValueKey('portal-relationship-side'));
+      expect(tester.widget<SegmentedButton<String>>(choice).selected, {'left'});
+      expect(last() == null || _portalOf(last()!).relationshipSide == 'left', isTrue,
+          reason: 'choosing the relationship shown changes nothing');
+
+      await tester.tap(dropdown);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Notes  ·  through "Task_Notes"').last);
+      await tester.pumpAndSettle();
+      expect(_portalOf(last()!).relationshipSide, isNull, reason: 'another relationship starts from its default end');
       await _settleAutoSave(tester);
     });
 
@@ -162,7 +201,9 @@ void main() {
 
       expect(related.resolve('rel-sub', null, side: RelationshipSide.left)?.side, 'left',
           reason: 'the end alone is enough');
-      expect(related.resolve('rel-sub', null), isNull, reason: 'without it, which end is wanted is not guessed');
+      final byId = related.resolve('rel-sub', null)!;
+      expect(byId.side, 'right', reason: 'the relationship alone shows the right end, as Portal Setup does');
+      expect(byId.requestSide, 'right');
     });
 
     test('is ignored for a relationship between two occurrences', () {
@@ -183,6 +224,62 @@ void main() {
       const field = FieldBindingModel(
           fieldName: 'code', relationshipId: 'rel-sub', tableOccurrence: 'Tasks', relationshipSide: 'left');
       expect(FieldBindingModel.fromJson(field.toJson()).relationshipSide, 'left');
+    });
+  });
+
+  group('a portal', () {
+    LayoutObjectModel portal(String side) => LayoutObjectModel(
+          id: 'p1', type: 'portal', x: 0, y: 0, width: 300, height: 120,
+          portalConfig: PortalConfigModel(relationshipId: 'rel-sub', occurrence: 'Tasks', relationshipSide: side)
+              .toJson(),
+        );
+    const cell = LayoutObjectModel(
+        id: 'f1', type: 'field', x: 4, y: 4, width: 200, height: 24, fieldBinding: FieldBindingModel(fieldName: 'code'));
+
+    testWidgets('drops the answer to a read it has moved on from', (tester) async {
+      final api = _SlowApi();
+      final related = _context(api);
+      Widget view(String side) => MaterialApp(
+            home: Scaffold(
+              body: PortalView(object: portal(side), contents: const [cell], related: related, isDark: false),
+            ),
+          );
+      await tester.pumpWidget(view('right'));
+      await tester.pump();
+      expect(api.pending.keys, contains('right'));
+
+      // The end changes while the right end's records are still on their way.
+      await tester.pumpWidget(view('left'));
+      await tester.pump();
+      api.pending['left']!.complete([
+        {'id': 'parent', 'code': 'PARENT'},
+      ]);
+      await tester.pump();
+      api.pending['right']!.complete([
+        {'id': 'sub', 'code': 'SUB'},
+      ]);
+      await tester.pumpAndSettle();
+      expect(find.text('PARENT'), findsOneWidget);
+      expect(find.text('SUB'), findsNothing, reason: 'the right end is not what the portal shows any more');
+    });
+  });
+
+  group('Find mode', () {
+    test('keeps a criterion on each end of a self-join apart, and sends the end', () {
+      final left = DataBrowserWidgetState.relatedCriterionKey('rel-sub', 'Tasks', 'code', side: RelationshipSide.left);
+      final right = DataBrowserWidgetState.relatedCriterionKey('rel-sub', 'Tasks', 'code', side: RelationshipSide.right);
+      expect(left, isNot(right));
+      expect(DataBrowserWidgetState.parseRelatedCriterionKey(left)?.side, 'left');
+      expect(DataBrowserWidgetState.parseRelatedCriterionKey(left)?.field, 'code');
+      expect(DataBrowserWidgetState.parseRelatedCriterionKey(DataBrowserWidgetState.relatedCriterionKey('rel-sub', 'Tasks', 'code'))?.side,
+          isNull, reason: 'a key saved before reads the right end, as before');
+
+      final criteria = DataBrowserWidgetState.criteriaFor({left: 'A1', right: 'B2'});
+      expect(criteria, hasLength(2));
+      expect(criteria.map((c) => c['side']), containsAll(['left', 'right']));
+      expect(criteria.every((c) => c['relationship_id'] == 'rel-sub' && c['occurrence'] == 'Tasks'), isTrue);
+      expect(DataBrowserWidgetState.criteriaFor({DataBrowserWidgetState.relatedCriterionKey('rel-notes', 'Notes', 'task_code'): 'x'})
+          .single.containsKey('side'), isFalse);
     });
   });
 }

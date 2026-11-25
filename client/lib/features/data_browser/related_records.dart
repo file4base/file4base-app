@@ -193,7 +193,9 @@ class RelatedContext {
       final named = occurrence == null || occurrence.isEmpty ||
           occurrence == left.id || occurrence.toLowerCase() == left.name.toLowerCase();
       bool wantsRight;
-      if (selfJoin && side != null && named) {
+      if (selfJoin && named) {
+        // Both ends are this occurrence: the end stored, the right one
+        // without, as Portal Setup shows it.
         wantsRight = side != RelationshipSide.left;
       } else if (occurrence != null && occurrence.isNotEmpty) {
         if ((occurrence == right.id || occurrence.toLowerCase() == right.name.toLowerCase()) && fromLeft) {
@@ -348,6 +350,10 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   bool _loading = false;
   bool _failed = false;
 
+  /// Counts the reads started, so the answer to one the field has since
+  /// moved on from (another record, relationship or end) is dropped.
+  int _generation = 0;
+
   /// The fields of another solution's table, once read (#107), and why that
   /// solution could not be read.
   TableModel? _externalTable;
@@ -374,13 +380,18 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   void didUpdateWidget(RelatedFieldView old) {
     super.didUpdateWidget(old);
     if (old.related.recordId != widget.related.recordId ||
+        old.related.fromTable != widget.related.fromTable ||
+        old.object.id != widget.object.id ||
         old.object.fieldBinding?.relationshipId != widget.object.fieldBinding?.relationshipId ||
+        old.object.fieldBinding?.tableOccurrence != widget.object.fieldBinding?.tableOccurrence ||
         old.object.fieldBinding?.relationshipSide != widget.object.fieldBinding?.relationshipSide) {
       unawaited(_load());
     }
   }
 
   Future<void> _load() async {
+    final generation = ++_generation;
+    bool stale() => !mounted || generation != _generation;
     final binding = widget.object.fieldBinding;
     final recordId = widget.related.recordId;
     if (binding == null || recordId == null) {
@@ -399,15 +410,17 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
       _problem = null;
     });
     try {
-      if (target.isExternal) _externalTable = await _access.table(target.occurrence);
+      final table = target.isExternal ? await _access.table(target.occurrence) : null;
+      if (stale()) return;
+      if (table != null) _externalTable = table;
       final rows = await widget.related.rows(target, limit: 1);
-      if (!mounted) return;
+      if (stale()) return;
       setState(() {
         _row = rows.isEmpty ? null : rows.first;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (stale()) return;
       final problem = ExternalUnavailable.of(e);
       setState(() {
         _row = null;
@@ -543,6 +556,10 @@ class _PortalViewState extends State<PortalView> {
   bool _loading = false;
   String? _error;
 
+  /// Counts the reads started, so the answer to one the portal has since
+  /// moved on from (another record, relationship, end or layout) is dropped.
+  int _generation = 0;
+
   /// The fields of another solution's table, once read (#107), with what the
   /// account held there may do with its records, and why that solution could
   /// not be read.
@@ -574,6 +591,8 @@ class _PortalViewState extends State<PortalView> {
   void didUpdateWidget(PortalView old) {
     super.didUpdateWidget(old);
     if (old.related.recordId != widget.related.recordId ||
+        old.related.fromTable != widget.related.fromTable ||
+        old.object.id != widget.object.id ||
         old.refreshGeneration != widget.refreshGeneration ||
         old.object.portalConfig.toString() != widget.object.portalConfig.toString()) {
       unawaited(_load());
@@ -597,6 +616,8 @@ class _PortalViewState extends State<PortalView> {
       widget.related.resolve(_config.relationshipId, _config.occurrence, side: _config.relationshipSide);
 
   Future<void> _load() async {
+    final generation = ++_generation;
+    bool stale() => !mounted || generation != _generation;
     final recordId = widget.related.recordId;
     final target = _target;
     if (recordId == null || target == null) {
@@ -610,16 +631,18 @@ class _PortalViewState extends State<PortalView> {
       _problem = null;
     });
     try {
-      if (target.isExternal) _externalTable = await _access.table(target.occurrence);
+      final table = target.isExternal ? await _access.table(target.occurrence) : null;
+      if (stale()) return;
+      if (table != null) _externalTable = table;
       final rows = await widget.related.rows(target, sort: _config.sortFields, limit: ApiClient.maxPageSize);
-      if (!mounted) return;
+      if (stale()) return;
       setState(() {
         _rows = rows;
         _loading = false;
       });
       _syncControllers();
     } catch (e) {
-      if (!mounted) return;
+      if (stale()) return;
       final problem = ExternalUnavailable.of(e);
       setState(() {
         _rows = const [];

@@ -177,9 +177,12 @@ cannot tell them apart. The object then names its end with
 
 Left out, or anything other than `left`, it is the right end, as before.
 Browse mode sends it as `side` with every list, creation and batch request on
-the portal or field, and it is ignored for a relationship between two
-occurrences. Portal Setup offers the choice (*Left end* / *Right end*) for such
-a relationship only. Choosing another relationship clears it. A related field
+the portal or field, and Find mode with a criterion typed into such a related
+field, so the find searches that end; it is ignored for a relationship between
+two occurrences. A portal or field naming the relationship alone, with no
+occurrence and no end, shows the right end too, as Portal Setup does. Portal Setup offers the choice (*Left end* / *Right end*) for such
+a relationship only. Choosing another relationship clears it; choosing the same
+one again keeps it. A related field
 keeps the end it was picked from in the field list, which lists both.
 
 A FileMaker migration never writes it. FileMaker always relates two table

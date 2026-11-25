@@ -5318,7 +5318,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         onChanged: (key) {
           final picked = targets.where((t) => keyOf(t) == key).firstOrNull;
           if (picked == null) return;
-          // Another relationship starts from its default end.
+          // The one already shown keeps its end; another relationship starts
+          // from its default end.
+          if (target != null && keyOf(target) == key) return;
           edit((c) => c.copyWith(clearRelationship: true).copyWith(
                 relationshipId: picked.relationship.id,
                 occurrence: picked.occurrence.name,

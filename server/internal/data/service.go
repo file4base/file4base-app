@@ -32,9 +32,12 @@ type FindCriterion struct {
 	// RelationshipID searches a field of a *related* record instead of the
 	// record's own (#46): the criterion then finds the records that have a
 	// related record matching it. Occurrence names the side to read when the
-	// relationship joins a table to itself.
+	// relationship joins a table to itself; Side ("left" or "right") names
+	// the end when it joins an occurrence to itself, where the occurrence
+	// alone names the right end (as `side` does for related reads).
 	RelationshipID string `json:"relationship_id,omitempty"`
 	Occurrence     string `json:"occurrence,omitempty"`
+	Side           string `json:"side,omitempty"`
 }
 
 // isRelated reports whether the criterion searches a related record.
@@ -850,7 +853,7 @@ func normalizeCriterion(crit FindCriterion) FindCriterion {
 		strings.Contains(strVal, "@") || strings.Contains(strVal, "?") ||
 		strings.Contains(strVal, "//") {
 		parsed := ParseFile4BaseFindCriteria(crit.FieldName, strVal)
-		parsed.RelationshipID, parsed.Occurrence = crit.RelationshipID, crit.Occurrence
+		parsed.RelationshipID, parsed.Occurrence, parsed.Side = crit.RelationshipID, crit.Occurrence, crit.Side
 		return parsed
 	}
 	return crit
