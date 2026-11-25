@@ -1117,6 +1117,40 @@ class LayoutActionRunner {
           return failOrCapture(102, 'Replace Field Contents has no target field.');
         }
         final replaceType = params['replace_type']?.toString().toLowerCase() ?? 'current_contents';
+        if (boolParam('dialog') && ext != null) {
+          // With dialog, FileMaker asks before it rewrites the found set, and
+          // a cancel leaves every record as it was (error 1).
+          final answer = await ext.actionShowDialogEx(
+            title: 'Replace Field Contents',
+            message: 'Permanently replace the contents of the field "$field" in all '
+                '${ext.actionFoundCount} record(s) of the found set?',
+            buttons: const [
+              {'label': 'Replace', 'commit': true},
+              {'label': 'Cancel', 'commit': false},
+            ],
+          );
+          if (answer.buttonIndex != 1) {
+            session.lastError = 1;
+            return const LayoutActionResult.ok();
+          }
+        }
+        if (replaceType == 'calculation' || replaceType == 'serial_numbers') {
+          // FileMaker evaluates the calculation, or counts the serial, for
+          // each record of the found set in turn; one value written to every
+          // record would be wrong for any calculation that reads a field.
+          if (ext == null) {
+            return failOrCapture(3, 'Replace Field Contents needs a window with a found set.');
+          }
+          return _replacePerRecord(
+            ext: ext,
+            field: field,
+            replaceType: replaceType,
+            params: params,
+            vars: vars,
+            context: context,
+            failOrCapture: failOrCapture,
+          );
+        }
         String? replacement;
         if (params.containsKey('value') || params.containsKey('expression')) {
           final expr = (params['value'] ?? params['expression'])?.toString() ?? '';
@@ -1260,16 +1294,33 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'send_mail':
-        String evalMailParam(String key) {
+        // A draft opened in the user's e-mail client is the only way a
+        // File4Base script sends mail: an SMTP send, one mail per record, a
+        // collected address list or an attachment would be lost silently.
+        final unsupported = _sendMailRefusal(params);
+        if (unsupported != null) return failOrCapture(3, unsupported);
+        String? evalMailParam(String key) {
           final raw = params[key]?.toString() ?? '';
           if (raw.isEmpty) return '';
-          return resolveValue(raw, vars, callContext: context) ?? _resolveParamsText(raw, vars);
+          final value = resolveValue(raw, vars, callContext: context);
+          if (value != null) return value;
+          // A calculation that cannot be evaluated is never sent as its own
+          // text; a literal is still written as it stands.
+          return params['${key}_is_calculation'] == true ? null : _resolveParamsText(raw, vars);
         }
-        final to = evalMailParam('to');
-        final cc = evalMailParam('cc');
-        final bcc = evalMailParam('bcc');
-        final subject = evalMailParam('subject');
-        final message = evalMailParam('message');
+        final mailParts = <String, String>{};
+        for (final key in const ['to', 'cc', 'bcc', 'subject', 'message']) {
+          final value = evalMailParam(key);
+          if (value == null) {
+            return LayoutActionResult.stopped('Send Mail cannot evaluate its $key: ${params[key]}');
+          }
+          mailParts[key] = value;
+        }
+        final to = mailParts['to']!;
+        final cc = mailParts['cc']!;
+        final bcc = mailParts['bcc']!;
+        final subject = mailParts['subject']!;
+        final message = mailParts['message']!;
         if (ext != null) {
           await ext.actionSendMail(to: to, cc: cc, bcc: bcc, subject: subject, message: message);
         } else if (to.isNotEmpty) {
@@ -1366,7 +1417,13 @@ class LayoutActionRunner {
         if (name.isEmpty) {
           name = _extractQuoted(params['expression']?.toString() ?? '');
         }
-        if (name.isEmpty) return const LayoutActionResult.stopped('Perform Script has no script name.');
+        if (name.isEmpty && params['script_missing'] == true) {
+          // FileMaker skips a call to a deleted script with error 104.
+          return failOrCapture(104, _migrationNote(params, 'Perform Script names a script that no longer exists.'));
+        }
+        if (name.isEmpty) {
+          return LayoutActionResult.stopped(_migrationNote(params, 'Perform Script has no script name.'));
+        }
         final parameter = resolveValue((params['script_parameter'] ?? params['parameter'])?.toString() ?? '', vars, callContext: context);
         if (parameter == null) {
           return const LayoutActionResult.stopped('Perform Script cannot evaluate its parameter.');
@@ -1549,6 +1606,101 @@ class LayoutActionRunner {
     return external._performScript(name: name, depth: depth, parameter: parameter, session: session);
   }
 
+  /// The explanation the FileMaker migration left on a step that cannot run
+  /// as converted, or [fallback] when there is none.
+  static String _migrationNote(Map<String, dynamic> params, String fallback) {
+    final note = params['migration_note']?.toString().trim() ?? '';
+    return note.isEmpty ? fallback : note;
+  }
+
+  /// Why a Send Mail step cannot run as a draft in the e-mail client, or
+  /// null when it can.
+  static String? _sendMailRefusal(Map<String, dynamic> params) {
+    final reasons = <String>[
+      if (params['send_via'] == 'smtp')
+        "it sends through an SMTP server, and File4Base scripts send mail only by opening a draft in the user's e-mail client",
+      if (params['one_email_per_record'] == true) 'it sends one e-mail per record of the found set',
+      for (final key in const ['to', 'cc', 'bcc'])
+        if (params['collect_$key'] == true)
+          'it collects the ${key.toUpperCase()} addresses across the found set',
+      if (params['attachments'] is List && (params['attachments'] as List).isNotEmpty)
+        'it attaches files, which a draft opened in the e-mail client cannot carry',
+    ];
+    if (reasons.isEmpty) return null;
+    return 'Send Mail cannot run as written: ${reasons.join('; ')}.';
+  }
+
+  /// Replace Field Contents with a calculation or serial numbers: the value
+  /// is worked out for each record of the found set, in its order, and the
+  /// current record is the same one afterwards, as in FileMaker.
+  Future<LayoutActionResult> _replacePerRecord({
+    required ExtendedLayoutActionHost ext,
+    required String field,
+    required String replaceType,
+    required Map<String, dynamic> params,
+    required Map<String, String> vars,
+    required ScriptCallContext context,
+    required LayoutActionResult Function(int code, String message) failOrCapture,
+  }) async {
+    final session = context.session;
+    final expression = (params['value'] ?? params['expression'])?.toString() ?? '';
+    num? serial;
+    num increment = 1;
+    if (replaceType == 'serial_numbers') {
+      final initial = resolveValue(params['serial_initial']?.toString() ?? '', vars, callContext: context);
+      serial = num.tryParse(initial?.trim() ?? '');
+      if (serial == null) {
+        return LayoutActionResult.stopped(
+            'Replace Field Contents numbers the records from an initial value it cannot read: '
+            '${params['serial_initial'] ?? '(none)'}');
+      }
+      final rawIncrement = params['serial_increment']?.toString() ?? '';
+      if (rawIncrement.trim().isNotEmpty) {
+        final parsed = num.tryParse(resolveValue(rawIncrement, vars, callContext: context)?.trim() ?? '');
+        if (parsed == null) {
+          return LayoutActionResult.stopped(
+              'Replace Field Contents cannot read the serial increment "$rawIncrement".');
+        }
+        increment = parsed;
+      }
+    } else if (expression.trim().isEmpty) {
+      return failOrCapture(3, 'Replace Field Contents has no calculation.');
+    }
+    final count = ext.actionFoundCount;
+    final start = ext.actionCurrentRecordNumber;
+    try {
+      for (var n = 1; n <= count; n++) {
+        final moved = await ext.actionGoToRecordEx('$n');
+        if (!moved.moved && moved.errorCode != 0) {
+          return failOrCapture(moved.errorCode, 'Replace Field Contents could not reach record $n of $count.');
+        }
+        String value;
+        if (serial != null) {
+          value = _formatSerial(serial);
+          serial += increment;
+        } else {
+          final evaluated = resolveValue(expression, vars, callContext: context);
+          if (evaluated == null) {
+            return LayoutActionResult.stopped(
+                'Replace Field Contents cannot evaluate "$expression" for record $n of $count; '
+                'the records before it were replaced.');
+          }
+          value = evaluated;
+        }
+        if (!await host.actionSetField(field, value)) {
+          return failOrCapture(102, 'Field "$field" could not be replaced.');
+        }
+      }
+    } finally {
+      if (start > 0) await ext.actionGoToRecordEx('$start');
+    }
+    session.lastError = 0;
+    return const LayoutActionResult.ok();
+  }
+
+  static String _formatSerial(num value) =>
+      value == value.truncate() ? value.truncate().toString() : value.toString();
+
   /// Names of the step parameters that can hold the transfer an
   /// `Import Records` / `Export Records` step runs.
   static const _transferNameKeys = <String>['transfer', 'transfer_name', 'name'];
@@ -1586,6 +1738,11 @@ class LayoutActionRunner {
     }
     if (name.isEmpty) {
       name = _extractQuoted(params['expression']?.toString() ?? '').trim();
+    }
+    final note = params['migration_note']?.toString() ?? '';
+    if (name.isEmpty && note.isNotEmpty) {
+      return LayoutActionResult.stopped('$label has no transfer named in it. This step, converted from '
+          'FileMaker, $note');
     }
     if (name.isEmpty) {
       return LayoutActionResult.stopped(

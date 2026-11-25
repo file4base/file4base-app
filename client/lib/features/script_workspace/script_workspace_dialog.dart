@@ -1665,10 +1665,29 @@ class _ScriptWorkspaceDialogState extends ConsumerState<ScriptWorkspaceDialog> {
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              'This step requires no additional parameters or runs with its default options.',
-              style: TextStyle(color: theme.textSecondary, fontSize: 12),
-            ),
+            if (step.migrationNote.isNotEmpty)
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.warning_amber_outlined, color: theme.warningColor, size: 14),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: SelectableText(
+                          step.migrationNote,
+                          style: TextStyle(color: theme.textPrimary, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Text(
+                'This step requires no additional parameters or runs with its default options.',
+                style: TextStyle(color: theme.textSecondary, fontSize: 12),
+              ),
           ],
         );
     }

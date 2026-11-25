@@ -899,4 +899,112 @@ void main() {
     expect(stopped.completed, isFalse);
     expect(stopped.message, contains('not signed in'));
   });
+
+  group('FileMaker step options read at conversion', () {
+    test('Replace Field Contents with a calculation evaluates it for each record', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': ''},
+        {'name': 'Beta', 'status': ''},
+        {'name': 'Gamma', 'status': ''},
+      ])
+        ..recordIdx = 1;
+      final runner = _runner(host, const {});
+      final res = await runner.runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'calculation',
+        'value': 'name & "-done"',
+        'value_is_calculation': true,
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.records.map((r) => r['status']), ['Alpha-done', 'Beta-done', 'Gamma-done']);
+      expect(host.recordIdx, 1, reason: 'the current record is the same one afterwards');
+      expect(host.log.where((l) => l.startsWith('replace_field_contents')), isEmpty);
+    });
+
+    test('Replace Field Contents with serial numbers counts from the initial value', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': ''},
+        {'name': 'Beta', 'status': ''},
+      ]);
+      final res = await _runner(host, const {}).runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'serial_numbers',
+        'serial_initial': '10',
+        'serial_increment': '5',
+      }, depth: 0);
+      expect(res.completed, isTrue, reason: res.message);
+      expect(host.records.map((r) => r['status']), ['10', '15']);
+    });
+
+    test('Replace Field Contents with dialog writes nothing when cancelled', () async {
+      final host = _FullExtendedHost(records: [
+        {'name': 'Alpha', 'status': 'keep'},
+      ])
+        ..nextDialogButton = 2;
+      final runner = _runner(host, const {});
+      final session = ScriptSessionState();
+      final res = await runner.runStep('Replace Field Contents', {
+        'field': 'status',
+        'replace_type': 'calculation',
+        'value': '"new"',
+        'dialog': true,
+      }, depth: 0, callContext: ScriptCallContext(session: session));
+      expect(res.completed, isTrue);
+      expect(session.lastError, 1);
+      expect(host.records[0]['status'], 'keep');
+    });
+
+    test('Send Mail refuses what a mail draft cannot carry, and never sends formula text', () async {
+      final host = _FullExtendedHost();
+      final runner = _runner(host, const {});
+      final attached = await runner.runStep('Send Mail', {
+        'to': '"a@example.invalid"',
+        'attachments': [r'$report'],
+      }, depth: 0);
+      expect(attached.completed, isFalse);
+      expect(attached.message, contains('attaches files'));
+      final smtp = await runner.runStep('Send Mail', {'to': '"a@example.invalid"', 'send_via': 'smtp'}, depth: 0);
+      expect(smtp.message, contains('SMTP'));
+      final unreadable = await runner.runStep('Send Mail', {
+        'to': 'NoSuchFunction ( 1 ; 2 )',
+        'to_is_calculation': true,
+      }, depth: 0);
+      expect(unreadable.completed, isFalse);
+      expect(host.log.where((l) => l.startsWith('send_mail')), isEmpty, reason: 'nothing was sent');
+    });
+
+    test('Perform Script of a deleted script fails with 104, and an unnamed one explains why', () async {
+      final host = _FullExtendedHost();
+      final runner = _runner(host, const {});
+      final session = ScriptSessionState()..errorCapture = true;
+      final missing = await runner.runStep('Perform Script', {'script_missing': true}, depth: 0,
+          callContext: ScriptCallContext(session: session));
+      expect(missing.completed, isTrue);
+      expect(session.lastError, 104);
+      final unnamed = await runner.runStep('Perform Script', {
+        'script_unresolved': true,
+        'file_reference': 'Ledger',
+        'migration_note': 'Perform Script calls a script of the file "Ledger" that the document does not name',
+      }, depth: 0);
+      expect(unnamed.completed, isFalse);
+      expect(unnamed.message, contains('does not name'));
+    });
+
+    test('a converted Import Records says what it did and why it needs a transfer', () async {
+      final res = await _runner(_FullExtendedHost(), const {}).runStep('Import Records', {
+        'migration_note': 'imports from the FileMaker file "Ledger" into orders',
+      }, depth: 0);
+      expect(res.completed, isFalse);
+      expect(res.message, contains('converted from FileMaker, imports from the FileMaker file "Ledger"'));
+    });
+
+    test('the script editor shows the migration note', () {
+      final step = ScriptStepModel.fromJson({
+        'id': 'x',
+        'step_type': 'Import Records',
+        'params': {'migration_note': 'needs a transfer'},
+      });
+      expect(step.previewText, '[Needs attention: needs a transfer]');
+    });
+  });
 }

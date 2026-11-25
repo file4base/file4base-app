@@ -852,7 +852,7 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 		if firstAttr(sn, "where") != "" && len(sn.Children) == 0 {
 			continue
 		}
-		sc, items := convertScriptNode(sn, defaultContextTable)
+		sc, items := convertScriptNode(sn, defaultContextTable, occTableByName)
 		for _, it := range items {
 			addReportItem(report, it)
 		}
@@ -2272,7 +2272,10 @@ func layoutOccurrenceDetail(occName string, occurrences []schema.BundleOccurrenc
 	return fmt.Sprintf("Layout bound to table occurrence %q", occName)
 }
 
-func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleScript, []ReportItem) {
+// occTableByName maps a lower-cased table occurrence name to the File4Base
+// table it shows, so a step naming an occurrence can say which table it
+// writes.
+func convertScriptNode(sn *xmlNode, defaultContextTable string, occTableByName map[string]string) (*schema.BundleScript, []ReportItem) {
 	var items []ReportItem
 	name := firstAttr(sn, "name", "Name")
 	if name == "" || nativeFolderMarker(sn) || nativeSeparatorMarker(sn) {
@@ -2339,7 +2342,12 @@ func convertScriptNode(sn *xmlNode, defaultContextTable string) (*schema.BundleS
 		}
 
 		if isSupported {
-			if needsTransferDefinition(canonical) {
+			for _, it := range stepOptionItems(canonical, params, occTableByName) {
+				it.SourceName = fmt.Sprintf("%s > %s (step %d)", name, rawStepName, idx+1)
+				it.TargetName = name
+				items = append(items, it)
+			}
+			if _, done := params["migration_note"]; !done && needsTransferDefinition(canonical) {
 				items = append(items, ReportItem{
 					Category:   CategoryManualActionRequired,
 					Domain:     "script",
