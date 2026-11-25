@@ -31,6 +31,15 @@ var ErrInvalidServerAccountName = errors.New("invalid server account name")
 // without an active super-owner.
 var ErrLastSuperOwner = errors.New("the last active super-owner cannot be disabled or deleted")
 
+// ErrInvalidServerAccount is returned, wrapped with the reason, when a request
+// is not valid: a missing or over-long password, or a scope that does not fit
+// the all-databases flag.
+var ErrInvalidServerAccount = errors.New("invalid server account")
+
+func invalidServerAccount(reason string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidServerAccount, reason)
+}
+
 // ErrInvalidCredentials is returned for an unknown account, a wrong password
 // or a disabled account, so a caller cannot tell them apart.
 var ErrInvalidCredentials = errors.New("invalid credentials")
@@ -72,10 +81,10 @@ func burnServerAccountCheck(password string) {
 
 func validateServerAccountPassword(password string) error {
 	if password == "" {
-		return errors.New("password is required")
+		return invalidServerAccount("password is required")
 	}
 	if len(password) > maxServerAccountPasswordBytes {
-		return fmt.Errorf("password is longer than %d bytes", maxServerAccountPasswordBytes)
+		return invalidServerAccount(fmt.Sprintf("password is longer than %d bytes", maxServerAccountPasswordBytes))
 	}
 	return nil
 }
@@ -111,10 +120,10 @@ func normalizeDatabases(databases []string) []string {
 func validateScope(allDatabases bool, databases []string) ([]string, error) {
 	clean := normalizeDatabases(databases)
 	if allDatabases && len(clean) > 0 {
-		return nil, errors.New("an account reaching all databases lists no databases")
+		return nil, invalidServerAccount("an account reaching all databases lists no databases")
 	}
 	if !allDatabases && len(clean) == 0 {
-		return nil, errors.New("an account reaching some databases must list at least one")
+		return nil, invalidServerAccount("an account reaching some databases must list at least one")
 	}
 	return clean, nil
 }

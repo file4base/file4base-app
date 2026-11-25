@@ -2457,6 +2457,15 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `DELETE /api/v1/server/mail-profiles?solution=<name>` | server administrator | Removes the profile of `solution` (no parameter: the server-wide profile). `204`. |
 | `POST /api/v1/server/mail-profiles/test` | server administrator | `{solution, to}`: sends one test message through that profile. |
 | `PUT /api/v1/server/mail-profiles/server-access` | server administrator | `{solution, allowed}`: lets a solution send through the server-wide profile, or withdraws it. Off by default. `200 {solution, allowed}`; `404` for an unknown solution. Audited. |
+| `GET /api/v1/server/accounts` | super-owner | Lists the server accounts (`name`, `active`, `super_owner`, `all_databases`, `databases`, `updated_at`). Never a password. |
+| `POST /api/v1/server/accounts` | super-owner | Creates an account: `{name, password, super_owner, all_databases, databases}`. `201`; `409` when the name exists in any letter case; `422` for a name with `@` or whitespace, a password over 72 bytes, or a database that is not registered. |
+| `GET /api/v1/server/accounts/{name}` | super-owner | One account. `404` when unknown. |
+| `PUT /api/v1/server/accounts/{name}/active` | super-owner | `{active}`. Disabling the last active super-owner answers `409`. |
+| `PUT /api/v1/server/accounts/{name}/scope` | super-owner | `{all_databases, databases}`: replaces the databases the account reaches. `422` for an unknown database. |
+| `PUT /api/v1/server/accounts/{name}/password` | super-owner | `{password}`. `204`. |
+| `DELETE /api/v1/server/accounts/{name}` | super-owner | Deletes the account. Deleting the last active super-owner answers `409`. `204`. |
+
+Server accounts are kept in the control store and are separate from the accounts of each database. Names are case-insensitive. Each action is audited under `server_accounts`. Signing in with a server account arrives in a later change.
 
 ### Send Mail through SMTP (`#133`)
 
