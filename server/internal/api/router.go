@@ -86,6 +86,9 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 
 	authMW := NewAuthMiddleware(sessions, dbMgr)
 	authMW.clientIP = ipResolver
+	if controlStore != nil {
+		authMW.serverAccounts = controlStore
+	}
 
 	throttle := opts.LoginThrottle
 	if throttle == nil {

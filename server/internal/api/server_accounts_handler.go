@@ -22,6 +22,7 @@ const maxServerAccountRequestBytes = 1 << 16
 type createServerAccountRequest struct {
 	Name         string   `json:"name"`
 	Password     string   `json:"password"`
+	Role         string   `json:"role"`
 	SuperOwner   bool     `json:"super_owner"`
 	AllDatabases bool     `json:"all_databases"`
 	Databases    []string `json:"databases"`
@@ -34,6 +35,10 @@ type setServerAccountActiveRequest struct {
 type setServerAccountScopeRequest struct {
 	AllDatabases bool     `json:"all_databases"`
 	Databases    []string `json:"databases"`
+}
+
+type setServerAccountRoleRequest struct {
+	Role string `json:"role"`
 }
 
 type setServerAccountPasswordRequest struct {
@@ -49,6 +54,7 @@ func (h *ServerAdminHandler) registerServerAccountRoutes(r chi.Router) {
 		r.Get("/accounts/{name}", h.GetServerAccount)
 		r.Put("/accounts/{name}/active", h.SetServerAccountActive)
 		r.Put("/accounts/{name}/scope", h.SetServerAccountScope)
+		r.Put("/accounts/{name}/role", h.SetServerAccountRole)
 		r.Put("/accounts/{name}/password", h.SetServerAccountPassword)
 		r.Delete("/accounts/{name}", h.DeleteServerAccount)
 	})
@@ -87,7 +93,7 @@ func (h *ServerAdminHandler) CreateServerAccount(w http.ResponseWriter, r *http.
 	if !h.checkServerAccountDatabases(w, r, req.Databases) {
 		return
 	}
-	if err := h.controlStore.CreateServerAccount(r.Context(), req.Name, req.Password,
+	if err := h.controlStore.CreateServerAccount(r.Context(), req.Name, req.Password, req.Role,
 		req.SuperOwner, req.AllDatabases, req.Databases); err != nil {
 		writeServerAccountError(w, r, err)
 		return
@@ -116,6 +122,25 @@ func (h *ServerAdminHandler) SetServerAccountActive(w http.ResponseWriter, r *ht
 		action = "Enable Server Account"
 	}
 	h.recordAudit("server_accounts", action, sess.Username, sess.Database, name, "success", "")
+	h.writeServerAccount(w, r, name, http.StatusOK)
+}
+
+// SetServerAccountRole sets the role an account holds in the databases it
+// reaches. It applies from the account's next sign-in in each database.
+func (h *ServerAdminHandler) SetServerAccountRole(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	var req setServerAccountRoleRequest
+	if err := decodeServerAccountBody(w, r, &req); err != nil {
+		telemetry.WriteValidationProblem(w, r, "the request body is not valid JSON", nil)
+		return
+	}
+	if err := h.controlStore.SetServerAccountRole(r.Context(), name, req.Role); err != nil {
+		writeServerAccountError(w, r, err)
+		return
+	}
+	sess := currentSession(r)
+	h.recordAudit("server_accounts", "Change Server Account Role", sess.Username, sess.Database,
+		name, "success", "role "+req.Role)
 	h.writeServerAccount(w, r, name, http.StatusOK)
 }
 

@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
 	"github.com/file4base/file4base-app/server/internal/clientip"
+	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
@@ -21,6 +23,27 @@ type AuthMiddleware struct {
 	// forwarding headers only from trusted proxies. A nil resolver falls back
 	// to the direct peer address.
 	clientIP *clientip.Resolver
+	// serverAccounts checks the server accounts that sessions were opened
+	// with. Nil means no server account can have a live session.
+	serverAccounts serverAccountChecker
+}
+
+// serverAccountChecker is the part of the control store a session needs to
+// confirm its server account is still valid for its database.
+type serverAccountChecker interface {
+	ServerAccountSessionStamp(ctx context.Context, name, database string) (string, error)
+}
+
+// currentStamp returns the stamp the session's account has now: from the
+// server account for a server-account session, from the database row otherwise.
+func (m *AuthMiddleware) currentStamp(ctx context.Context, sess auth.Session, driver dbal.DatabaseDriver) (string, error) {
+	if sess.ServerAccount == "" {
+		return schema.NewService(driver).CurrentAccountStamp(ctx, sess.UserID)
+	}
+	if m.serverAccounts == nil {
+		return "", control.ErrServerAccountNotFound
+	}
+	return m.serverAccounts.ServerAccountSessionStamp(ctx, sess.ServerAccount, sess.Database)
 }
 
 // NewAuthMiddleware creates the session-resolving middleware.
@@ -90,8 +113,8 @@ func (m *AuthMiddleware) attach(w http.ResponseWriter, r *http.Request) (*http.R
 	// The account must still be in the state the session was opened with:
 	// this rejects sessions of deleted, disabled, demoted or re-passworded
 	// accounts, including one created by a sign-in that raced a revocation.
-	stamp, err := schema.NewService(driver).CurrentAccountStamp(r.Context(), sess.UserID)
-	if err != nil && !errors.Is(err, schema.ErrAccountNotFound) {
+	stamp, err := m.currentStamp(r.Context(), sess, driver)
+	if err != nil && !errors.Is(err, schema.ErrAccountNotFound) && !errors.Is(err, control.ErrServerAccountNotFound) {
 		telemetry.WriteProblem(w, r, http.StatusServiceUnavailable, "Database Unavailable",
 			"the account of this session could not be checked")
 		return r, false, true

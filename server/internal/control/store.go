@@ -179,7 +179,8 @@ func (s *Store) initSchema(ctx context.Context) error {
 			return fmt.Errorf("failed initializing control store schema: %w", err)
 		}
 	}
-	return nil
+	// Stores created before accounts carried a role get the column in place.
+	return s.ensureServerAccountRoleColumn(ctx)
 }
 
 // Close closes the underlying SQLite connection.

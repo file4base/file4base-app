@@ -285,6 +285,11 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.isServerAccountName(r.Context(), req.Username) {
+		h.signInServerAccount(w, r, dbName, driver, svc, throttleKey, req.Username, req.Password)
+		return
+	}
+
 	user, err := svc.Authenticate(r.Context(), req.Username, req.Password, req.TOTPCode)
 	if err != nil {
 		// A missing second factor is not a wrong credential: the first factor
@@ -356,19 +361,7 @@ func (h *SecurityHandler) Login(w http.ResponseWriter, r *http.Request) {
 	if linked := h.linkDependencies(r, sess.Group, dbName, svc, req.Username, req.Password); len(linked) > 0 {
 		resp["linked"] = linked
 	}
-	if h.controlStore != nil {
-		if proj, err := h.controlStore.GetProject(r.Context(), dbName); err == nil && proj != nil {
-			if proj.Name != "" {
-				resp["solution_name"] = proj.Name
-			}
-			if len(proj.FileOptions) > 0 {
-				resp["file_options"] = proj.FileOptions
-			}
-			if len(proj.PageSetup) > 0 {
-				resp["page_setup"] = proj.PageSetup
-			}
-		}
-	}
+	h.addSignInProjectFields(r.Context(), dbName, resp)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")

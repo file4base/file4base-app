@@ -83,12 +83,15 @@ func TestServerAccountsAPI_SuperOwnerManagesAccounts(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.False(t, one.Active)
 
+	// A fresh value: an empty database list is omitted from the answer, so
+	// decoding into the previous account would keep its old list.
+	var scoped serverAccountView
 	rec = s.do(http.MethodPut, "/api/v1/server/accounts/Clerk/scope", s.adminToken, map[string]interface{}{
 		"all_databases": true,
-	}, &one)
+	}, &scoped)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.True(t, one.AllDatabases)
-	assert.Empty(t, one.Databases)
+	assert.True(t, scoped.AllDatabases)
+	assert.Empty(t, scoped.Databases)
 
 	rec = s.do(http.MethodPut, "/api/v1/server/accounts/Clerk/password", s.adminToken,
 		map[string]string{"password": "clerk-pass-2"}, nil)

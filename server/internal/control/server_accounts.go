@@ -51,6 +51,7 @@ type ServerAccount struct {
 	Name         string    `json:"name"`
 	Active       bool      `json:"active"`
 	SuperOwner   bool      `json:"super_owner"`
+	Role         string    `json:"role"`
 	AllDatabases bool      `json:"all_databases"`
 	Databases    []string  `json:"databases,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -139,8 +140,12 @@ type queryer interface {
 }
 
 // CreateServerAccount adds an account. The password is stored only as a bcrypt hash.
-func (s *Store) CreateServerAccount(ctx context.Context, name, password string, superOwner, allDatabases bool, databases []string) error {
+func (s *Store) CreateServerAccount(ctx context.Context, name, password, role string, superOwner, allDatabases bool, databases []string) error {
 	display, key, err := normalizeServerAccountName(name)
+	if err != nil {
+		return err
+	}
+	role, err = normalizeServerAccountRole(role)
 	if err != nil {
 		return err
 	}
@@ -170,9 +175,9 @@ func (s *Store) CreateServerAccount(ctx context.Context, name, password string, 
 		return ErrServerAccountExists
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO server_accounts (name_key, name, password_hash, is_active, super_owner, all_databases, updated_at)
-		VALUES (?, ?, ?, 1, ?, ?, ?)`,
-		key, display, string(hash), boolToInt(superOwner), boolToInt(allDatabases), serverAccountNowText(),
+		INSERT INTO server_accounts (name_key, name, password_hash, is_active, super_owner, all_databases, updated_at, role)
+		VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+		key, display, string(hash), boolToInt(superOwner), boolToInt(allDatabases), serverAccountNowText(), role,
 	); err != nil {
 		return err
 	}
@@ -375,12 +380,12 @@ func (s *Store) loadServerAccount(ctx context.Context, q queryer, key string) (*
 	var (
 		name                  string
 		active, super, allDBs int
-		updated               string
+		updated, role         string
 	)
 	err := q.QueryRowContext(ctx, `
-		SELECT name, is_active, super_owner, all_databases, updated_at
+		SELECT name, is_active, super_owner, all_databases, updated_at, role
 		FROM server_accounts WHERE name_key = ?`, key).
-		Scan(&name, &active, &super, &allDBs, &updated)
+		Scan(&name, &active, &super, &allDBs, &updated, &role)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrServerAccountNotFound
 	}
@@ -392,6 +397,7 @@ func (s *Store) loadServerAccount(ctx context.Context, q queryer, key string) (*
 		Active:       active != 0,
 		SuperOwner:   super != 0,
 		AllDatabases: allDBs != 0,
+		Role:         role,
 	}
 	if t, err := time.Parse(time.RFC3339Nano, updated); err == nil {
 		acc.UpdatedAt = t
