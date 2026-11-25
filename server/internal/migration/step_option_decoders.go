@@ -397,7 +397,10 @@ func sendMailNote(params map[string]interface{}) string {
 		why = append(why, "it attaches files, which a draft opened in the e-mail client cannot carry")
 	}
 	if len(why) == 0 {
-		return ""
+		// It runs, but not as FileMaker does: without a dialog FileMaker
+		// sends the mail itself.
+		return "Send Mail via the e-mail client opens a draft in the user's e-mail client, and the user " +
+			"sends it: it does not send unattended"
 	}
 	return "Send Mail cannot run as written: " + strings.Join(why, "; ")
 }
@@ -534,6 +537,12 @@ func stepOptionItems(canonical string, params map[string]interface{}, occTableBy
 		}
 	case "Send Mail":
 		note = sendMailNote(params)
+	case "Go to Portal Row":
+		note = "Go to Portal Row is not supported in Browse mode yet: File4Base does not move to a portal " +
+			"row and reports error 101, so the steps after it act on the record, not on a portal row"
+	case "Save Records as PDF":
+		note = "Save Records as PDF produces no PDF in File4Base yet: the step fails with error 3 (command " +
+			"unavailable), and the script stops there unless Set Error Capture is on"
 	}
 	if note == "" {
 		return nil

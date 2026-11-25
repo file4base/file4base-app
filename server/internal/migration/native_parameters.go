@@ -377,15 +377,27 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 				unknown = append(unknown, "Parameter."+kind)
 			}
 		case "Button1", "Button2", "Button3", "Button":
+			// FileMaker writes the label in the parameter's value and whether
+			// the button commits the input fields in a Commit Boolean:
+			// <Parameter type="Button2" value="Cancel"><Boolean type="Commit" value="False"/>.
 			label := ""
 			isCalc := false
 			if calc := findFirstChild(parameter, "Calculation"); calc != nil {
 				label = calculationText(calc)
 				isCalc = true
+			} else if v := firstAttr(parameter, "value"); v != "" {
+				label = v
 			} else if child != nil {
 				label = firstAttr(child, "value", "name")
 			}
 			commit := true
+			for _, ch := range parameter.Children {
+				if ch.Name == "Boolean" && strings.EqualFold(firstAttr(ch, "type"), "Commit") {
+					if c, ok := xmlAttrBool(ch, "value"); ok {
+						commit = c
+					}
+				}
+			}
 			if c, ok := xmlAttrBool(child, "CommitState", "commit"); ok {
 				commit = c
 			}
@@ -554,6 +566,15 @@ func decodeNativeParameters(container *xmlNode, canonical string) (map[string]in
 		default:
 			unknown = append(unknown, "Parameter."+kind)
 		}
+	}
+	// FileMaker shows only the buttons that have a label; the empty ones
+	// after the last labelled button are not there at all.
+	for len(buttons) > 1 {
+		last := buttons[len(buttons)-1]
+		if label, _ := last["label"].(string); label != "" {
+			break
+		}
+		buttons = buttons[:len(buttons)-1]
 	}
 	if len(buttons) > 0 {
 		out["buttons"] = buttons

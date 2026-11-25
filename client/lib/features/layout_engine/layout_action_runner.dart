@@ -871,6 +871,10 @@ class LayoutActionRunner {
           );
         }
       case 'save_records_as_pdf':
+        // No PDF is written yet: reporting success would let the steps after
+        // it attach or send a file that does not exist.
+        return failOrCapture(3, _migrationNote(params,
+            'Save Records as PDF produces no PDF in File4Base yet (error 3, command unavailable).'));
       case 'save_records_as_excel':
         session.lastError = 0;
         if (ext != null) {
@@ -1109,21 +1113,34 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'replace_field_contents':
+        // The step's field may be a field of another table occurrence; the
+        // occurrence goes with it to the window, which refuses to write the
+        // layout's own field of the same name instead.
         var field = params['field']?.toString().trim() ?? '';
+        var table = params['field_table']?.toString().trim() ?? '';
+        final qualifier = field.indexOf('::');
+        if (qualifier >= 0) {
+          if (table.isEmpty) table = field.substring(0, qualifier).trim();
+          field = field.substring(qualifier + 2).trim();
+        }
         if (field.isEmpty) {
           field = ext?.actionActiveFieldName ?? session.activeField;
         }
         if (field.isEmpty) {
           return failOrCapture(102, 'Replace Field Contents has no target field.');
         }
+        if (ext == null) {
+          return failOrCapture(3, 'Replace Field Contents needs a window with a found set.');
+        }
         final replaceType = params['replace_type']?.toString().toLowerCase() ?? 'current_contents';
-        if (boolParam('dialog') && ext != null) {
-          // With dialog, FileMaker asks before it rewrites the found set, and
-          // a cancel leaves every record as it was (error 1).
+        if (boolParam('dialog')) {
+          // With dialog, FileMaker asks before it rewrites the found set. Only
+          // Replace goes ahead: Cancel, or closing the dialog, leaves every
+          // record as it was (error 1).
           final answer = await ext.actionShowDialogEx(
             title: 'Replace Field Contents',
-            message: 'Permanently replace the contents of the field "$field" in all '
-                '${ext.actionFoundCount} record(s) of the found set?',
+            message: 'Permanently replace the contents of the field "$field" in all the records '
+                'of the found set?',
             buttons: const [
               {'label': 'Replace', 'commit': true},
               {'label': 'Cancel', 'commit': false},
@@ -1134,40 +1151,16 @@ class LayoutActionRunner {
             return const LayoutActionResult.ok();
           }
         }
-        if (replaceType == 'calculation' || replaceType == 'serial_numbers') {
-          // FileMaker evaluates the calculation, or counts the serial, for
-          // each record of the found set in turn; one value written to every
-          // record would be wrong for any calculation that reads a field.
-          if (ext == null) {
-            return failOrCapture(3, 'Replace Field Contents needs a window with a found set.');
-          }
-          return _replacePerRecord(
-            ext: ext,
-            field: field,
-            replaceType: replaceType,
-            params: params,
-            vars: vars,
-            context: context,
-            failOrCapture: failOrCapture,
-          );
-        }
-        String? replacement;
-        if (params.containsKey('value') || params.containsKey('expression')) {
-          final expr = (params['value'] ?? params['expression'])?.toString() ?? '';
-          replacement = resolveValue(expr, vars, callContext: context);
-          if (replacement == null) {
-            return const LayoutActionResult.stopped('Replace Field Contents calculation cannot be evaluated.');
-          }
-        }
-        if (ext != null) {
-          final ok = await ext.actionReplaceFieldContents(field: field, replaceType: replaceType, value: replacement);
-          if (!ok) return failOrCapture(102, 'Field "$field" could not be replaced.');
-        } else if (replacement != null) {
-          if (!await host.actionSetField(field, replacement)) {
-            return failOrCapture(102, 'Field "$field" is not in this table.');
-          }
-        }
-        session.lastError = 0;
+        return _replaceFoundSet(
+          ext: ext,
+          field: field,
+          table: table,
+          replaceType: replaceType,
+          params: params,
+          vars: vars,
+          context: context,
+          failOrCapture: failOrCapture,
+        );
       case 'copy':
         var field = params['field']?.toString().trim() ?? '';
         if (field.isEmpty) {
@@ -1379,10 +1372,13 @@ class LayoutActionRunner {
           );
           session.lastMessageChoice = dialogResult.buttonIndex;
           final chosenIdx = dialogResult.buttonIndex - 1;
-          final shouldCommit = resolvedButtons == null ||
-              chosenIdx < 0 ||
-              chosenIdx >= resolvedButtons.length ||
-              resolvedButtons[chosenIdx]['commit'] != false;
+          // A dialog closed without a button commits nothing; neither does a
+          // button that does not commit, such as Cancel.
+          final shouldCommit = dialogResult.buttonIndex != ScriptDialogResult.dismissed &&
+              (resolvedButtons == null ||
+                  chosenIdx < 0 ||
+                  chosenIdx >= resolvedButtons.length ||
+                  resolvedButtons[chosenIdx]['commit'] != false);
           if (shouldCommit) {
             for (final entry in dialogResult.inputValues.entries) {
               if (entry.key.startsWith(r'$')) {
@@ -1630,12 +1626,15 @@ class LayoutActionRunner {
     return 'Send Mail cannot run as written: ${reasons.join('; ')}.';
   }
 
-  /// Replace Field Contents with a calculation or serial numbers: the value
-  /// is worked out for each record of the found set, in its order, and the
-  /// current record is the same one afterwards, as in FileMaker.
-  Future<LayoutActionResult> _replacePerRecord({
+  /// Replace Field Contents over the whole found set. A calculation, or a
+  /// serial number, is worked out for each record in turn, in found-set
+  /// order: one value written to every record would be wrong for any
+  /// calculation that reads a field. A rejected write stops the replace with
+  /// its error, as FileMaker reports it; the records before it stay replaced.
+  Future<LayoutActionResult> _replaceFoundSet({
     required ExtendedLayoutActionHost ext,
     required String field,
+    required String table,
     required String replaceType,
     required Map<String, dynamic> params,
     required Map<String, String> vars,
@@ -1643,17 +1642,18 @@ class LayoutActionRunner {
     required LayoutActionResult Function(int code, String message) failOrCapture,
   }) async {
     final session = context.session;
-    final expression = (params['value'] ?? params['expression'])?.toString() ?? '';
-    num? serial;
-    num increment = 1;
+    final rawExpression = params['value'] ?? params['expression'];
+    final expression = rawExpression?.toString() ?? '';
+    String? Function(int position, int count)? valueFor;
     if (replaceType == 'serial_numbers') {
       final initial = resolveValue(params['serial_initial']?.toString() ?? '', vars, callContext: context);
-      serial = num.tryParse(initial?.trim() ?? '');
+      var serial = num.tryParse(initial?.trim() ?? '');
       if (serial == null) {
         return LayoutActionResult.stopped(
             'Replace Field Contents numbers the records from an initial value it cannot read: '
             '${params['serial_initial'] ?? '(none)'}');
       }
+      num increment = 1;
       final rawIncrement = params['serial_increment']?.toString() ?? '';
       if (rawIncrement.trim().isNotEmpty) {
         final parsed = num.tryParse(resolveValue(rawIncrement, vars, callContext: context)?.trim() ?? '');
@@ -1663,40 +1663,47 @@ class LayoutActionRunner {
         }
         increment = parsed;
       }
-    } else if (expression.trim().isEmpty) {
-      return failOrCapture(3, 'Replace Field Contents has no calculation.');
-    }
-    final count = ext.actionFoundCount;
-    final start = ext.actionCurrentRecordNumber;
-    try {
-      for (var n = 1; n <= count; n++) {
-        final moved = await ext.actionGoToRecordEx('$n');
-        if (!moved.moved && moved.errorCode != 0) {
-          return failOrCapture(moved.errorCode, 'Replace Field Contents could not reach record $n of $count.');
-        }
-        String value;
-        if (serial != null) {
-          value = _formatSerial(serial);
-          serial += increment;
-        } else {
-          final evaluated = resolveValue(expression, vars, callContext: context);
-          if (evaluated == null) {
-            return LayoutActionResult.stopped(
-                'Replace Field Contents cannot evaluate "$expression" for record $n of $count; '
-                'the records before it were replaced.');
-          }
-          value = evaluated;
-        }
-        if (!await host.actionSetField(field, value)) {
-          return failOrCapture(102, 'Field "$field" could not be replaced.');
-        }
+      valueFor = (position, count) {
+        final value = _formatSerial(serial!);
+        serial = serial! + increment;
+        return value;
+      };
+    } else if (replaceType == 'calculation' || rawExpression != null) {
+      if (expression.trim().isEmpty) {
+        return failOrCapture(3, 'Replace Field Contents has no calculation.');
       }
-    } finally {
-      if (start > 0) await ext.actionGoToRecordEx('$start');
+      valueFor = (position, count) => resolveValue(expression, vars, callContext: context);
+    }
+    final outcome = await ext.actionReplaceFieldContents(
+      field: field,
+      table: table.isEmpty ? null : table,
+      valueFor: valueFor,
+    );
+    final target = table.isEmpty ? field : '$table::$field';
+    if (outcome.relatedField) {
+      return failOrCapture(102, 'Replace Field Contents writes "$target", a field of another table '
+          "occurrence than this layout's, which it cannot write yet. Nothing was written.");
+    }
+    if (outcome.unevaluatedAt > 0) {
+      return LayoutActionResult.stopped(
+          'Replace Field Contents cannot evaluate "$expression" for record ${outcome.unevaluatedAt} of '
+          '${outcome.count}; ${_recordsReplaced(outcome.replaced)}.');
+    }
+    if (outcome.errorCode != 0) {
+      final where = outcome.count > 0 ? ' at record ${outcome.replaced + 1} of ${outcome.count}' : '';
+      final why = outcome.detail.isEmpty ? '' : ': ${outcome.detail}';
+      return failOrCapture(outcome.errorCode,
+          'Replace Field Contents of "$target" stopped$where$why; ${_recordsReplaced(outcome.replaced)}.');
     }
     session.lastError = 0;
     return const LayoutActionResult.ok();
   }
+
+  static String _recordsReplaced(int n) => switch (n) {
+        0 => 'no record was replaced',
+        1 => 'the record before it was replaced',
+        _ => 'the $n records before it were replaced',
+      };
 
   static String _formatSerial(num value) =>
       value == value.truncate() ? value.truncate().toString() : value.toString();

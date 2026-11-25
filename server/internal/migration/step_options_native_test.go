@@ -79,7 +79,9 @@ const stepOptionsDesign = `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddActio
  </ParameterValues></Step>
  <Step id="87" name="Show Custom Dialog" enable="True"><ParameterValues>
   <Parameter type="Title"><Calculation><Text>"Code"</Text></Calculation></Parameter>
-  <Parameter type="Button1"><Boolean type="Commit" value="True"/><Calculation><Text>"OK"</Text></Calculation></Parameter>
+  <Parameter type="Button1" value="OK"><Boolean type="Commit" value="True"/></Parameter>
+  <Parameter type="Button2" value="Cancel"><Boolean type="Commit" value="False"/></Parameter>
+  <Parameter type="Button3"><Boolean type="Commit" value="False"/></Parameter>
   <Parameter type="Field1"><Boolean type="Password" value="False"/>
    <Parameter type="Target"><FieldReference id="1" name="Code"><TableOccurrenceReference id="7" name="Open Orders"/></FieldReference></Parameter>
    <Parameter type="Label"><Calculation><Calculation><Text>"Order code"</Text></Calculation></Calculation></Parameter></Parameter>
@@ -171,8 +173,9 @@ func TestStepOptionsAreRead(t *testing.T) {
 			p["message"] != "$body" || p["send_via"] != "email_client" || p["dialog"] != true || p["one_email_per_record"] != false {
 			t.Fatalf("params = %#v", p)
 		}
-		if _, ok := p["migration_note"]; ok {
-			t.Fatal("a mail a draft can carry was marked as not runnable")
+		if note, _ := p["migration_note"].(string); !strings.Contains(note, "opens a draft") ||
+			!strings.Contains(note, "does not send unattended") || strings.Contains(note, "cannot run") {
+			t.Fatalf("note = %q", note)
 		}
 		note, _ := steps[5].Params["migration_note"].(string)
 		if !strings.Contains(note, "SMTP") || !strings.Contains(note, "attaches files") {
@@ -185,6 +188,9 @@ func TestStepOptionsAreRead(t *testing.T) {
 		if p["save_to"] != "file" || p["records"] != "current" || p["path"] != "$out" || p["create_email"] != true {
 			t.Fatalf("params = %#v", p)
 		}
+		if note, _ := p["migration_note"].(string); !strings.Contains(note, "error 3") {
+			t.Fatalf("note = %q", note)
+		}
 	})
 
 	t.Run("Go to Portal Row and Go to Record targets", func(t *testing.T) {
@@ -193,6 +199,11 @@ func TestStepOptionsAreRead(t *testing.T) {
 		}
 		if steps[8].Params["target"] != "by_calculation" || steps[8].Params["record_calculation"] != "$row" {
 			t.Fatalf("portal row by calculation = %#v", steps[8].Params)
+		}
+		for _, step := range steps[7:9] {
+			if note, _ := step.Params["migration_note"].(string); !strings.Contains(note, "not supported in Browse mode yet") {
+				t.Fatalf("note = %q", note)
+			}
 		}
 		// The code in value="4" is not record 4.
 		if steps[9].Params["target"] != "next" || steps[9].Params["exit_after_last"] != true {
@@ -205,6 +216,16 @@ func TestStepOptionsAreRead(t *testing.T) {
 		if p["replace_type"] != "calculation" || p["value"] != "Total * 2" || p["value_is_calculation"] != true ||
 			p["field"] != "total" || p["skip_auto_enter"] != false {
 			t.Fatalf("params = %#v", p)
+		}
+	})
+
+	t.Run("Show Custom Dialog buttons", func(t *testing.T) {
+		// A Cancel button does not commit the input fields, and the empty
+		// third button is not shown.
+		buttons, _ := steps[11].Params["buttons"].([]map[string]interface{})
+		if len(buttons) != 2 || buttons[0]["label"] != "OK" || buttons[0]["commit"] != true ||
+			buttons[1]["label"] != "Cancel" || buttons[1]["commit"] != false {
+			t.Fatalf("buttons = %#v", buttons)
 		}
 	})
 
