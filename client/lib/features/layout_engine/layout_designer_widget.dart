@@ -4211,7 +4211,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   Widget _buildObjectInner(LayoutObjectModel obj) {
     switch (obj.type) {
       case 'label':
-        return Padding(
+        return Container(
+          decoration: layoutBoxDecoration(obj.style),
           padding: EdgeInsets.only(
             left: 4 + obj.style.indentLeft,
             right: 4 + obj.style.indentRight,
@@ -4261,6 +4262,12 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                 const Padding(
                   padding: EdgeInsets.only(right: 2),
                   child: Icon(Icons.link, size: 12, color: Colors.indigo),
+                ),
+              // A migrated field Browse mode cannot read: say so here too.
+              if (layoutFieldUnreadableNotice(obj.fieldBinding) case final notice?)
+                Tooltip(
+                  message: notice,
+                  child: const Icon(Icons.warning_amber_rounded, size: 12, color: Colors.orange),
                 ),
               if (cStyle == 'drop_down_list' || cStyle == 'pop_up_menu')
                 const Icon(Icons.arrow_drop_down, size: 16, color: Colors.grey)
@@ -4812,6 +4819,30 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             _numField('Height', sel.height, (v) => _editSelected((sel) => sel.copyWith(height: math.max(4, v)))),
           ],
         ),
+
+        const Divider(height: 24),
+        _inspectorSectionTitle('BEHAVIOR'),
+        // A calculation: when it is true on the record shown, Browse mode
+        // hides the object, as FileMaker's "Hide object when".
+        _InspectorTextField(
+          key: ValueKey('${sel.id}-hide-when'),
+          value: sel.hideWhen ?? '',
+          label: 'Hide object when',
+          onSubmitted: (v) => _editSelected((o) =>
+              v.trim().isEmpty ? o.copyWith(clearHideWhen: true) : o.copyWith(hideWhen: v.trim())),
+        ),
+        if (sel.fieldBinding != null) ...[
+          const SizedBox(height: 8),
+          _InspectorTextField(
+            key: ValueKey('${sel.id}-placeholder'),
+            value: sel.fieldBinding!.placeholder ?? '',
+            label: 'Placeholder text',
+            onSubmitted: (v) => _editSelected((o) => o.copyWith(
+                fieldBinding: v.isEmpty
+                    ? o.fieldBinding!.copyWith(clearPlaceholder: true)
+                    : o.fieldBinding!.copyWith(placeholder: v))),
+          ),
+        ],
 
         const Divider(height: 24),
         _inspectorSectionTitle('AUTOSIZING (ANCHORS)'),

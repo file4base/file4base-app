@@ -223,6 +223,17 @@ type EvaluateExpressionBody struct {
 	// empty and a formula like UPPER("ab") still answers.
 	RecordID string `json:"record_id"`
 
+	// RecordIDs evaluates every expression against each of these records,
+	// at most maxEvaluatedRecords: what a list of records whose layout hides
+	// objects by a calculation asks, in one request. The answer is then
+	// {"records": {"<record id>": [results]}}.
+	RecordIDs []string `json:"record_ids"`
+
+	// Occurrence is the table occurrence, by name or id, the record is seen
+	// from: a layout's, whose related fields are related to it. Empty is
+	// the table's own occurrence.
+	Occurrence string `json:"occurrence"`
+
 	// ResultType is how to read the answer: Text, Number, Date, Timestamp or
 	// Boolean. Text when it is left out.
 	ResultType string `json:"result_type"`
@@ -276,36 +287,68 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	results := make([]map[string]interface{}, 0, len(expressions))
-	for _, expression := range expressions {
-		evaluation, err := svc.EvaluateExpressionIn(r.Context(), table, body.RecordID, expression, body.ResultType,
+	if len(body.RecordIDs) > maxEvaluatedRecords {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Too Many Records",
+			fmt.Sprintf("at most %d records are evaluated in one request", maxEvaluatedRecords))
+		return
+	}
+	evaluate := func(recordID string) ([]map[string]interface{}, error) {
+		evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, recordID, expressions, body.ResultType,
 			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values})
 		if err != nil {
 			// A record that is not there, or a table that is not reachable,
 			// is about the request rather than about one expression.
-			if errors.Is(err, data.ErrTableNotFound) || errors.Is(err, data.ErrRecordNotFound) {
-				writeDataError(w, r, http.StatusNotFound, "Not Found", err)
+			return nil, err
+		}
+		results := make([]map[string]interface{}, 0, len(expressions))
+		for i, e := range evaluations {
+			if e.Err != nil {
+				results = append(results, map[string]interface{}{
+					"expression": expressions[i],
+					"error":      strings.TrimPrefix(e.Err.Error(), "invalid expression: "),
+				})
+				continue
+			}
+			result := map[string]interface{}{
+				"expression":     e.Expression,
+				"value":          e.Value,
+				"text":           e.Text,
+				"result_type":    e.ResultType,
+				"fields":         e.Fields,
+				"unknown_fields": e.UnknownFields,
+				"record_id":      e.RecordID,
+			}
+			if len(e.Variables) > 0 {
+				result["variables"] = e.Variables
+			}
+			results = append(results, result)
+		}
+		return results, nil
+	}
+
+	if len(body.RecordIDs) > 0 {
+		records := make(map[string]interface{}, len(body.RecordIDs))
+		for _, id := range body.RecordIDs {
+			results, err := evaluate(id)
+			if errors.Is(err, data.ErrRecordNotFound) {
+				// A record deleted since the list was read answers nothing.
+				records[id] = nil
+				continue
+			}
+			if err != nil {
+				writeDataError(w, r, http.StatusBadRequest, "Evaluation Error", err)
 				return
 			}
-			results = append(results, map[string]interface{}{
-				"expression": expression,
-				"error":      strings.TrimPrefix(err.Error(), "invalid expression: "),
-			})
-			continue
+			records[id] = results
 		}
-		result := map[string]interface{}{
-			"expression":     evaluation.Expression,
-			"value":          evaluation.Value,
-			"text":           evaluation.Text,
-			"result_type":    evaluation.ResultType,
-			"fields":         evaluation.Fields,
-			"unknown_fields": evaluation.UnknownFields,
-			"record_id":      evaluation.RecordID,
-		}
-		if len(evaluation.Variables) > 0 {
-			result["variables"] = evaluation.Variables
-		}
-		results = append(results, result)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"records": records})
+		return
+	}
+	results, err := evaluate(body.RecordID)
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Evaluation Error", err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -315,6 +358,9 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 // maxWatchedExpressions bounds one request, since each one reads the record
 // again.
 const maxWatchedExpressions = 50
+
+// maxEvaluatedRecords bounds the records of one evaluation request.
+const maxEvaluatedRecords = 100
 
 // writeDataError maps data-layer errors to RFC 9457 responses.
 func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, title string, err error) {

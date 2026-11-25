@@ -3983,6 +3983,40 @@ class ApiClient {
         .toList();
   }
 
+  /// Most records [evaluateForRecords] evaluates at once.
+  static const maxEvaluatedRecords = 100;
+
+  /// Evaluates every expression against each of [recordIds], records of
+  /// [table] seen from the occurrence [occurrence] (a layout's, by id or
+  /// name): what a list whose layout hides objects by a calculation asks,
+  /// in one request. A record not there any more has no answers.
+  Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(
+    String table, {
+    required List<String> expressions,
+    required List<String> recordIds,
+    String? occurrence,
+    String resultType = 'Text',
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'expressions': expressions,
+        'record_ids': recordIds,
+        if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+        'result_type': resultType,
+      }),
+    );
+    _checkResponse(response);
+    final records = (jsonDecode(response.body) as Map<String, dynamic>)['records'] as Map<String, dynamic>? ?? const {};
+    return {
+      for (final e in records.entries)
+        e.key: e.value is List
+            ? [for (final item in e.value as List) EvaluationModel.fromJson(Map<String, dynamic>.from(item as Map))]
+            : null,
+    };
+  }
+
   // ─── Design report (#49) ───────────────────────────────────────────────────
 
   /// Reads the solution's design: `html` for the report to read, `xml` or

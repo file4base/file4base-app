@@ -352,6 +352,9 @@ func (r *relatedReader) occurrenceGraph(ctx context.Context) (*occurrenceGraph, 
 // solution's table of the same name.
 func (g *occurrenceGraph) contextOf(tableName, name string) (occurrence, error) {
 	local := func(o occurrence) bool { return o.external == nil && o.table == tableName }
+	if o, ok := g.byID[name]; ok && name != "" && local(o) {
+		return o, nil
+	}
 	if name != "" {
 		if o, ok := g.byName[strings.ToLower(name)]; ok && local(o) {
 			return o, nil

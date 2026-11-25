@@ -265,8 +265,12 @@ func changeEventFor(r *http.Request, occurrenceTable string) (realtime.Event, bo
 		table := rest
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
 			table = rest[:i]
-			// A batch of related records is read with a POST.
-			if strings.EqualFold(rest[i:], "/related") {
+			// A batch of related records is read with a POST, and so is an
+			// evaluation: a layout evaluates its hide conditions as its
+			// records are shown, and telling every client the table changed
+			// each time would make them all reload and evaluate again.
+			switch strings.ToLower(rest[i:]) {
+			case "/related", "/evaluate":
 				return realtime.Event{}, false
 			}
 		}

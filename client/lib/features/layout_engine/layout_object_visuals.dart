@@ -22,6 +22,43 @@ Color? parseLayoutColor(String? value) {
   return v == null ? null : Color(v);
 }
 
+/// The box a text object draws behind itself: its fill, and its line when it
+/// has a colour and a width. Null when it draws neither, as a label made in
+/// File4Base does by default.
+BoxDecoration? layoutBoxDecoration(LayoutObjectStyle style) {
+  final fill = parseLayoutColor(style.fillColor);
+  final line = parseLayoutColor(style.borderColor);
+  final border = line == null || style.borderWidth <= 0 ? null : Border.all(color: line, width: style.borderWidth);
+  if (fill == null && border == null) return null;
+  return BoxDecoration(
+    color: fill,
+    border: border,
+    borderRadius: style.cornerRadius > 0 ? BorderRadius.circular(style.cornerRadius) : null,
+  );
+}
+
+/// What a field object shows instead of a value it cannot read: a field the
+/// migration did not find, or one FileMaker read through more than one
+/// relationship, which File4Base does not follow. Null for a readable field.
+String? layoutFieldUnreadableNotice(FieldBindingModel? binding) {
+  if (binding == null) return null;
+  final occurrence = binding.tableOccurrence;
+  final name = occurrence == null || occurrence.isEmpty ? binding.fieldName : '$occurrence::${binding.fieldName}';
+  if (binding.missing) return '<$name> is missing';
+  if (binding.unresolvedRelationship) return '<$name> is not reachable from this layout';
+  return null;
+}
+
+/// Whether a calculation's answer, as text, is true the way FileMaker reads
+/// a condition: a number other than zero.
+bool isLayoutConditionTrue(String text) {
+  final t = text.trim().toLowerCase();
+  if (t.isEmpty || t == 'false') return false;
+  if (t == 'true') return true;
+  final n = num.tryParse(t.replaceAll(',', '.'));
+  return n != null && n != 0;
+}
+
 /// Normalizes a color typed by the user (`fff`, `#1e88e5`) to `#RRGGBB`, or
 /// returns null when it is not a valid color.
 String? normalizeLayoutColor(String value) {
@@ -611,9 +648,24 @@ class LayoutBackgroundView extends StatelessWidget {
                 repeat: image.fit == 'tile' ? ImageRepeat.repeat : ImageRepeat.noRepeat,
               ),
       ),
-      child: const SizedBox.expand(),
+      child: SizedBox.expand(child: Stack(children: layoutPartFills(layout))),
     );
   }
+}
+
+/// The parts of [layout] that have a fill of their own, as bands to draw
+/// behind its objects.
+List<Widget> layoutPartFills(LayoutDefinitionModel layout) {
+  final widgets = <Widget>[];
+  var top = 0.0;
+  for (final part in layout.parts) {
+    final color = parseLayoutColor(part.fillColor);
+    if (color != null && part.height > 0) {
+      widgets.add(Positioned(top: top, left: 0, right: 0, height: part.height, child: ColoredBox(color: color)));
+    }
+    top += part.height;
+  }
+  return widgets;
 }
 
 /// Plays a layout's [effect] (a key of [kLayoutTransitions]) once when it is
@@ -661,4 +713,63 @@ class _LayoutEntryTransitionState extends State<LayoutEntryTransition> with Sing
       _ => widget.child,
     };
   }
+}
+
+/// The order a date format writes a date in, `dmy`, `mdy` or `iso`, or null
+/// for a format that writes no date or says nothing of the order.
+String? dateOrderOfFormat(String? format) => switch (format) {
+      'dd/mm/yyyy' => 'dmy',
+      'mm/dd/yyyy' => 'mdy',
+      'yyyy-mm-dd' => 'iso',
+      _ => null,
+    };
+
+/// The order the device writes dates in: month first in the United States
+/// and the few places that write dates its way, day first elsewhere.
+String deviceDateOrder([Locale? locale]) {
+  final country = (locale ?? WidgetsBinding.instance.platformDispatcher.locale).countryCode?.toUpperCase();
+  return const {'US', 'PH', 'FM', 'MH', 'PW', 'AS', 'GU', 'MP', 'PR', 'UM', 'VI'}.contains(country) ? 'mdy' : 'dmy';
+}
+
+/// An ISO date (`2026-04-03`) written in [order]; any other text, or no
+/// order, as it is.
+String dateInOrder(String text, String? order) {
+  final iso = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(text.trim());
+  if (iso == null) return text;
+  final (y, m, d) = (iso.group(1)!, iso.group(2)!, iso.group(3)!);
+  return switch (order) {
+    'dmy' => '$d/$m/$y',
+    'mdy' => '$m/$d/$y',
+    _ => text,
+  };
+}
+
+/// A complete date typed into a field, ISO or with its day and month in
+/// [order] (`dmy` or `mdy`), as the ISO date the database stores. Invalid
+/// and partial dates are null.
+String? normalizeDateInput(String input, {required String order}) {
+  final value = input.trim();
+  final iso = RegExp(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$').firstMatch(value);
+  final local = RegExp(r'^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$').firstMatch(value);
+  int year;
+  int month;
+  int day;
+  if (iso != null) {
+    year = int.parse(iso.group(1)!);
+    month = int.parse(iso.group(2)!);
+    day = int.parse(iso.group(3)!);
+  } else if (local != null) {
+    final first = int.parse(local.group(1)!);
+    final second = int.parse(local.group(2)!);
+    (day, month) = order == 'mdy' ? (second, first) : (first, second);
+    year = int.parse(local.group(3)!);
+  } else {
+    return null;
+  }
+  if (year < 1) return null;
+  final date = DateTime(year, month, day);
+  if (date.year != year || date.month != month || date.day != day) return null;
+  return '${year.toString().padLeft(4, '0')}-'
+      '${month.toString().padLeft(2, '0')}-'
+      '${day.toString().padLeft(2, '0')}';
 }

@@ -949,6 +949,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
           t.displayName.toLowerCase() == toName ||
           t.name.toLowerCase() == toName).firstOrNull;
     }
+    // The layout's occurrence says which table it shows.
+    final occurrence = _occurrences.where((o) => o.id == layoutModel.tableOccurrenceId).firstOrNull;
+    final baseTableId = occurrence?.baseTableId;
+    if (baseTableId != null && baseTableId.isNotEmpty) {
+      matchTable ??= tables.where((t) => t.id == baseTableId).firstOrNull;
+    }
     matchTable ??= tables.where((t) => t.id == layoutModel.tableOccurrenceId).firstOrNull;
     matchTable ??= tables.where((t) =>
         layoutModel.name.toLowerCase().contains(t.displayName.toLowerCase()) ||

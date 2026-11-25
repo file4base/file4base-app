@@ -109,24 +109,82 @@ func (s *Service) EvaluateExpression(
 func (s *Service) EvaluateExpressionIn(
 	ctx context.Context, tableName, recordID, expression, resultType string, in EvaluationEnv,
 ) (*Evaluation, error) {
-	if strings.TrimSpace(expression) == "" {
-		return nil, fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
-	}
+	return s.evaluateOne(ctx, tableName, "", recordID, expression, resultType, in)
+}
 
+// EvaluateExpressionFrom is EvaluateExpression seen from the occurrence
+// occurrence of the table, by name or id: what a related field the formula
+// reads is related to, as a formula on a layout reads from the layout's
+// occurrence. Empty is the table's own occurrence.
+func (s *Service) EvaluateExpressionFrom(
+	ctx context.Context, tableName, occurrence, recordID, expression, resultType string,
+) (*Evaluation, error) {
+	return s.evaluateOne(ctx, tableName, occurrence, recordID, expression, resultType, EvaluationEnv{})
+}
+
+func (s *Service) evaluateOne(
+	ctx context.Context, tableName, occurrence, recordID, expression, resultType string, in EvaluationEnv,
+) (*Evaluation, error) {
+	evaluations, err := s.EvaluateExpressionsIn(ctx, tableName, occurrence, recordID, []string{expression}, resultType, in)
+	if err != nil {
+		return nil, err
+	}
+	return evaluations[0].Evaluation, evaluations[0].Err
+}
+
+// ExpressionResult is one expression's answer, or why it has none.
+type ExpressionResult struct {
+	*Evaluation
+	Err error
+}
+
+// EvaluateExpressions evaluates several expressions against one record,
+// read once, seen from occurrence as EvaluateExpressionFrom is. An
+// expression that does not parse or evaluate has its own error (wrapping
+// ErrInvalidExpression); the error returned is about the record or the
+// table, and then nothing is evaluated.
+func (s *Service) EvaluateExpressions(
+	ctx context.Context, tableName, occurrence, recordID string, expressions []string, resultType string,
+) ([]ExpressionResult, error) {
+	return s.EvaluateExpressionsIn(ctx, tableName, occurrence, recordID, expressions, resultType, EvaluationEnv{})
+}
+
+// EvaluateExpressionsIn is EvaluateExpressions with a script's variables,
+// Get answers and the values of a record being edited (in). Every
+// expression starts from the variables given; the ones it sets are its own.
+// The solution's custom functions are known to every expression.
+func (s *Service) EvaluateExpressionsIn(
+	ctx context.Context, tableName, occurrence, recordID string, expressions []string, resultType string,
+	in EvaluationEnv,
+) ([]ExpressionResult, error) {
 	lib, err := LoadLibrary(ctx, s.driver)
 	if err != nil {
 		return nil, err
 	}
-	expr, err := calc.ParseWith(expression, calc.Options{Library: lib})
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
-	}
-
 	fields, err := s.tableFields(ctx, tableName)
 	if err != nil {
 		return nil, err
 	}
 
+	out := make([]ExpressionResult, len(expressions))
+	parsed := make([]*calc.Expr, len(expressions))
+	var reads []string
+	for i, expression := range expressions {
+		if strings.TrimSpace(expression) == "" {
+			out[i].Err = fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
+			continue
+		}
+		expr, err := calc.ParseWith(expression, calc.Options{Library: lib})
+		if err != nil {
+			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
+			continue
+		}
+		parsed[i] = expr
+		reads = append(reads, expr.Fields()...)
+	}
+
+	// One reader serves every expression, so what one reads the others
+	// reuse.
 	reader := s.newRelatedReader()
 	record := calc.Record{}
 	row := map[string]interface{}{}
@@ -136,7 +194,7 @@ func (s *Service) EvaluateExpressionIn(
 		}
 	}
 	if len(in.Values) > 0 {
-		if err := s.overlayEdit(ctx, reader, tableName, fields, row, in.Values, expr.Fields()); err != nil {
+		if err := s.overlayEdit(ctx, reader, tableName, fields, row, in.Values, reads); err != nil {
 			return nil, err
 		}
 	}
@@ -144,18 +202,7 @@ func (s *Service) EvaluateExpressionIn(
 		record[name] = typedValue(tableName, fields, row, name, s.describeContainer(ctx))
 	}
 
-	read := expr.Fields()
-	unknown := []string{}
-	for _, name := range read {
-		if _, ok := fields[name]; !ok {
-			unknown = append(unknown, name)
-		}
-	}
-	sort.Strings(unknown)
-
 	result := calc.ParseResultType(resultType)
-	// Related fields are read from the table's own occurrence, as a formula
-	// typed in the Data Viewer is in FileMaker.
 	variables := make(map[string]any, len(in.Variables))
 	for name, v := range in.Variables {
 		variables[strings.ToLower(strings.TrimSpace(name))] = variableInput(v)
@@ -164,38 +211,55 @@ func (s *Service) EvaluateExpressionIn(
 	for selector, v := range in.Get {
 		get[strings.ToUpper(strings.TrimSpace(selector))] = v
 	}
-	scope := make(map[string]any, len(variables))
-	for name, v := range variables {
-		scope[name] = v
-	}
-	env := &envContext{unstoredContext: &unstoredContext{
-		RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
-		reader:        reader, ctx: ctx, table: tableName, row: row}, get: get}
-	value, err := calc.EvaluateWith(expr, env, result)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
-	}
-	var set map[string]string
-	for name, v := range env.Variables {
-		if given, ok := variables[name]; ok && given == v {
+	for i, expr := range parsed {
+		if expr == nil {
 			continue
 		}
-		if set == nil {
-			set = map[string]string{}
+		read := expr.Fields()
+		unknown := []string{}
+		for _, name := range read {
+			if _, ok := fields[name]; !ok {
+				unknown = append(unknown, name)
+			}
 		}
-		set[name] = variableText(v)
+		sort.Strings(unknown)
+		scope := make(map[string]any, len(variables))
+		for name, v := range variables {
+			scope[name] = v
+		}
+		// Related fields are read from the occurrence given, or the table's
+		// own occurrence, as a formula typed in the Data Viewer is in
+		// FileMaker.
+		env := &envContext{unstoredContext: &unstoredContext{
+			RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
+			reader:        reader, ctx: ctx, table: tableName, occurrence: occurrence, row: row}, get: get}
+		value, err := calc.EvaluateWith(expr, env, result)
+		if err != nil {
+			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
+			continue
+		}
+		var set map[string]string
+		for name, v := range env.Variables {
+			if given, ok := variables[name]; ok && given == v {
+				continue
+			}
+			if set == nil {
+				set = map[string]string{}
+			}
+			set[name] = variableText(v)
+		}
+		out[i].Evaluation = &Evaluation{
+			Expression:    expressions[i],
+			Value:         value,
+			Text:          evaluationText(value, result),
+			ResultType:    string(result),
+			Fields:        read,
+			UnknownFields: unknown,
+			RecordID:      recordID,
+			Variables:     set,
+		}
 	}
-
-	return &Evaluation{
-		Expression:    expression,
-		Value:         value,
-		Text:          evaluationText(value, result),
-		ResultType:    string(result),
-		Fields:        read,
-		UnknownFields: unknown,
-		RecordID:      recordID,
-		Variables:     set,
-	}, nil
+	return out, nil
 }
 
 // variableText is a variable's value as a script keeps it, as text.

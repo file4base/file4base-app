@@ -50,6 +50,11 @@
       "enum": ["form", "list", "table"],
       "default": "form"
     },
+    "date_order": {
+      "type": "string",
+      "enum": ["dmy", "mdy", "iso"],
+      "description": "Order a date is typed and shown in on this layout when its field has no date format of its own: set by a migration from the source file's locale. Absent follows the device's locale."
+    },
     "background_color": {
       "type": "string",
       "description": "Layout background as #RRGGBB. Absent = white."
@@ -152,6 +157,10 @@
           "break_field": {
             "type": "string",
             "description": "Field identifier used for grouping if part is subsummary."
+          },
+          "fill_color": {
+            "type": "string",
+            "description": "Colour the part's band is filled with, #RRGGBB or #AARRGGBB. Without it the layout's background shows."
           }
         }
       }
@@ -200,6 +209,15 @@
         },
         "name": { "type": "string" },
         "tooltip": { "type": "string" },
+        "hide_when": {
+          "type": "string",
+          "description": "Calculation evaluated against the record shown: when it is true, Browse mode hides the object (FileMaker's Hide object when)."
+        },
+        "hide_in_find": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether hide_when applies in Find mode too, as FileMaker's Apply in Find mode. Find mode currently shows every object."
+        },
         "is_locked": { "type": "boolean" },
         "tab_order": {
           "type": "integer",
@@ -269,8 +287,25 @@
               "enum": ["edit_box", "drop_down_list", "pop_up_menu", "checkbox_set", "radio_button_set", "drop_down_calendar"]
             },
             "value_list_id": { "type": "string" },
-            "allow_browse_entry": { "type": "boolean", "default": true },
-            "allow_find_entry": { "type": "boolean", "default": true }
+            "allow_browse_entry": { "type": "boolean", "default": true, "description": "False when the field cannot be typed into in Browse mode (Form and List view)." },
+            "allow_find_entry": { "type": "boolean", "default": true, "description": "False when a find request cannot be typed into the field." },
+            "first_repetition": { "type": "integer", "minimum": 1, "default": 1, "description": "First repetition of a repeating field the object shows and edits." },
+            "repetitions_shown": { "type": "integer", "minimum": 1 },
+            "repetition_orientation": { "type": "string", "enum": ["vertical", "horizontal"], "default": "vertical" },
+            "placeholder": {
+              "type": "string",
+              "description": "Text the control shows while it is empty."
+            },
+            "unresolved_relationship": {
+              "type": "boolean",
+              "default": false,
+              "description": "Set by a migration for a related field FileMaker read through more than one relationship. File4Base follows one, so the field is shown as unreachable until a relationship is chosen."
+            },
+            "missing": {
+              "type": "boolean",
+              "default": false,
+              "description": "Set by a migration for a field object whose field is not in the imported tables; it is shown as missing, never read from a column of the same name."
+            }
           }
         },
         "portal_config": {

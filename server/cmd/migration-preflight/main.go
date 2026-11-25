@@ -67,6 +67,14 @@ func run() int {
 		counts.Tables, counts.RecordsDetected, counts.RecordsReady, counts.SourceTextValues,
 		counts.ContainerCellsDetected, counts.ContainerFilesReconstructed, counts.ContainerFilesMissing,
 		counts.RejectedCount, counts.UnsupportedCount, counts.ManualActionCount)
+	if len(counts.LayoutObjects) > 0 {
+		source, migrated := 0, 0
+		for _, c := range counts.LayoutObjects {
+			source += c.Source
+			migrated += c.Migrated
+		}
+		fmt.Printf("layout_objects=%d migrated_layout_objects=%d\n", source, migrated)
+	}
 	if counts.RejectedCount > 0 {
 		return 2
 	}
