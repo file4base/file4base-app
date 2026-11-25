@@ -539,10 +539,18 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   /// as a calculation field would; until it does, the record's last answer
   /// holds, and on a record seen for the first time every object with a
   /// condition is hidden, so nothing hidden is ever shown or typed into.
+  ///
+  /// The answer also holds `<object id>#<index>` for each conditional format
+  /// of a field whose calculation is true on [record] (see [_conditions]);
+  /// until it is known, none applies.
   Set<String> _hiddenOn(LayoutDefinitionModel layout, Map<String, dynamic> record) {
     final conditional = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o.id];
     final recordId = record['id']?.toString() ?? '';
-    if (conditional.isEmpty || recordId.isEmpty || record[_draftKey] == true) return const {};
+    if ((conditional.isEmpty && _conditions(layout).isEmpty) ||
+        recordId.isEmpty ||
+        record[_draftKey] == true) {
+      return const {};
+    }
     final base = '${layout.id}|$recordId';
     final values = Object.hashAllUnordered(record.entries.map((e) => Object.hash(e.key, e.value?.toString())));
     final key = '$base|$_hiddenGeneration|${_hiddenRecordGeneration[recordId] ?? 0}|$values';
@@ -566,6 +574,29 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         : [for (final o in objects) if (!hidden.contains(o.id) && !off.contains(o.id)) o];
   }
 
+  /// The calculations [layout] evaluates against each record, by the key
+  /// its answer is kept under: each object's hide condition, by the object's
+  /// id, and each formula of a field's conditional formats, by
+  /// `<object id>#<index of the rule>`.
+  List<(String, String)> _conditions(LayoutDefinitionModel layout) => [
+        for (final o in layout.objects) ...[
+          if ((o.hideWhen ?? '').trim().isNotEmpty) (o.id, o.hideWhen!),
+          if (o.type == 'field')
+            for (final (i, rule) in o.style.conditionalRules.indexed)
+              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${o.id}#$i', rule.value),
+        ],
+      ];
+
+  /// [obj]'s style on [record], with the conditional formats that apply.
+  LayoutObjectStyle _styleOn(LayoutObjectModel obj, Map<String, dynamic> record, Object? rawValue) {
+    final layout = widget.layout;
+    if (layout == null || !obj.style.conditionalRules.any((r) => r.isFormula)) {
+      return obj.style.effectiveForValue(rawValue);
+    }
+    final truths = _hiddenOn(layout, record);
+    return obj.style.effectiveForValue(rawValue, formulaTrue: (i) => truths.contains('${obj.id}#$i'));
+  }
+
   /// Evaluates what is queued: for each layout, every condition against
   /// every record waiting, in as few requests as the endpoint allows.
   Future<void> _evaluateHidden() async {
@@ -578,7 +609,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final answers = <String, Set<String>>{};
     for (final keys in byLayout.values) {
       final layout = queued[keys.first]!.layout;
-      final objects = [for (final o in layout.objects) if ((o.hideWhen ?? '').trim().isNotEmpty) o];
+      final objects = _conditions(layout);
       final recordOf = {for (final k in keys) k: queued[k]!.recordId};
       final ids = recordOf.values.toSet().toList();
       final hidden = <String, Set<String>>{for (final id in ids) id: {}};
@@ -590,7 +621,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           try {
             final results = await widget.apiClient.evaluateForRecords(
               widget.table.name,
-              expressions: [for (final o in chunk) o.hideWhen!],
+              expressions: [for (final (_, expression) in chunk) expression],
               recordIds: chunkIds,
               occurrence: layout.tableOccurrence,
               resultType: 'Number',
@@ -598,7 +629,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             for (final id in chunkIds) {
               for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {
                 if (j < chunk.length && result.error.isEmpty && isLayoutConditionTrue(result.text)) {
-                  hidden[id]!.add(chunk[j].id);
+                  hidden[id]!.add(chunk[j].$1);
                 }
               }
             }
@@ -2806,7 +2837,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           ? fieldName
           : ColumnModel.repetitionKey(col.name, obj.fieldBinding?.repetitionNumbers(col.maxRepetitions).first ?? 1);
       final rawVal = rec[key];
-      final effStyle = obj.style.effectiveForValue(rawVal);
+      final effStyle = _styleOn(obj, rec, rawVal);
       // A field FileMaker would not let be entered in Browse mode is shown,
       // never typed into, in the list as in the form.
       final enterable = col != null &&
@@ -3858,7 +3889,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final listProblem = computed ? null : _valueListProblems[obj.fieldBinding!.valueListId];
 
     final rawVal = record[key] ?? ctrl?.text;
-    final effStyle = obj.style.effectiveForValue(rawVal);
+    final effStyle = _styleOn(obj, record, rawVal);
     final isFocused = fn?.hasFocus ?? false;
     final hasDisplayFormatting = layoutStyleHasDisplayFormat(effStyle);
 

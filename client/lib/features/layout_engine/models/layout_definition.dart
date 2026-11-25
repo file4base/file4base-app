@@ -391,7 +391,12 @@ class ConditionalFormatRule {
       underline: json['underline'] as bool? ?? false,
     );
   }
-  /// One of `<`, `<=`, `=`, `!=`, `>=`, `>`, `contains`, `is_empty`, `is_not_empty`.
+  /// One of `<`, `<=`, `=`, `!=`, `>=`, `>`, `contains`, `is_empty`,
+  /// `is_not_empty`, or `formula`: [value] is then a calculation, evaluated
+  /// by the server against the record shown, and the rule applies while it
+  /// is true (FileMaker's "Formula is").
+  bool get isFormula => operator == 'formula';
+
   final String operator;
   final String value;
   final String? textColor;
@@ -575,12 +580,14 @@ class LayoutObjectStyle {
   final List<ConditionalFormatRule> conditionalRules;
 
   /// Evaluates [conditionalRules] against [rawValue] and returns an effective
-  /// style with the matching rule's overrides applied.
-  LayoutObjectStyle effectiveForValue(Object? rawValue) {
+  /// style with the matching rule's overrides applied. [formulaTrue] answers
+  /// whether the calculation of the rule at an index is true for the record
+  /// shown; without it a formula rule does not apply.
+  LayoutObjectStyle effectiveForValue(Object? rawValue, {bool Function(int index)? formulaTrue}) {
     if (conditionalRules.isEmpty) return this;
     var effective = this;
-    for (final rule in conditionalRules) {
-      if (rule.matches(rawValue)) {
+    for (final (i, rule) in conditionalRules.indexed) {
+      if (rule.isFormula ? (formulaTrue?.call(i) ?? false) : rule.matches(rawValue)) {
         effective = effective.copyWith(
           textColor: rule.textColor ?? effective.textColor,
           fillColor: rule.fillColor ?? effective.fillColor,

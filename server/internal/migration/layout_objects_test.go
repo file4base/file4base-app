@@ -889,3 +889,49 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
+	design := strings.Replace(layoutObjectsFixture,
+		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide></Conditions>`,
+		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide>
+		<Formatting>
+		  <Condition id="1" type="0"><Options>7</Options><Calculation><Text><![CDATA[Price > 100]]></Text></Calculation>
+		    <LocalCSS><![CDATA[self:normal .self { color: rgba(100%,0%,0%,1); background-color: rgba(0%,0%,100%,1); font-weight: bold; }]]></LocalCSS></Condition>
+		  <Condition id="2" type="3"><Options>5</Options><Calculation><Text><![CDATA[10]]></Text></Calculation>
+		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
+		  <Condition id="3" type="0"><Options>7</Options><Calculation><Text><![CDATA[Nowhere::Thing]]></Text></Calculation>
+		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
+		</Formatting></Conditions>`, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var rules []interface{}
+	for _, o := range objectsByType(def)["field"] {
+		if o["name"] == "price" {
+			rules, _ = o["style"].(map[string]interface{})["conditional_rules"].([]interface{})
+		}
+	}
+	if len(rules) != 1 {
+		t.Fatalf("rules: %v", rules)
+	}
+	rule := rules[0].(map[string]interface{})
+	if rule["operator"] != "formula" || rule["value"] != "price > 100" || rule["text_color"] != "#FF0000" ||
+		rule["fill_color"] != "#0000FF" || rule["bold"] != true {
+		t.Fatalf("rule: %v", rule)
+	}
+	var review string
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "layout" {
+			review += it.Detail
+		}
+	}
+	if !strings.Contains(review, "2 conditional formats not kept") {
+		t.Fatalf("review: %s", review)
+	}
+}

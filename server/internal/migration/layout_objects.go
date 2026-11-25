@@ -199,6 +199,7 @@ type nativeLayout struct {
 	portalsFar   int // portals of an occurrence several relationships away, left out
 	portalFilter int // portal filters that could not be bound, the portal kept empty
 	portalSort   int // portal sort fields of another occurrence, left out of the sort
+	formatsLeft  int // conditional formats not kept
 	vectorImage  int
 	mergeKept    int
 }
@@ -400,8 +401,59 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 	}
 	if ok {
 		base["id"] = l.objectID(obj)
+		l.conditionalFormats(obj, base)
 		l.objects = append(l.objects, base)
 		l.ctx.count(kind).Migrated++
+	}
+}
+
+// conditionalFormats keeps a field's conditional formatting whose condition
+// is a calculation ("Formula is"), bound from the layout's occurrence, with
+// the text colour, fill, bold, italic and underline it gives. Conditions on
+// the field's value, and formats of other objects, are reported.
+func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface{}) {
+	f := childPath(obj, "Conditions", "Formatting")
+	if f == nil {
+		return
+	}
+	style, _ := out["style"].(map[string]interface{})
+	var rules []interface{}
+	for _, c := range f.Children {
+		if c.Name != "Condition" {
+			continue
+		}
+		formula := calculationText(c)
+		if out["type"] != "field" || style == nil || firstAttr(c, "type") != "0" || formula == "" {
+			l.formatsLeft++
+			continue
+		}
+		bound, ok := l.bindFormula(formula)
+		if !ok {
+			l.formatsLeft++
+			continue
+		}
+		css := resolveStyle(nil, nil, findFirstChild(c, "LocalCSS"))
+		rule := map[string]interface{}{"operator": "formula", "value": bound}
+		if color, ok := cssColor(css.text("color")); ok {
+			rule["text_color"] = color
+		}
+		if fill, ok := cssColor(css["self"]["background-color"]); ok {
+			rule["fill_color"] = fill
+		}
+		weight := strings.ToLower(css.text("font-weight"))
+		if n, err := strconv.Atoi(weight); (err == nil && n >= 600) || weight == "bold" || weight == "bolder" {
+			rule["bold"] = true
+		}
+		if strings.EqualFold(css.text("font-style"), "italic") {
+			rule["italic"] = true
+		}
+		if strings.Contains(strings.ToLower(css.text("text-decoration")), "underline") {
+			rule["underline"] = true
+		}
+		rules = append(rules, rule)
+	}
+	if len(rules) > 0 {
+		style["conditional_rules"] = rules
 	}
 }
 
@@ -1021,6 +1073,9 @@ func (l *nativeLayout) report() []ReportItem {
 	}
 	if l.portalSort > 0 {
 		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence, left out of the portal's sort")
+	}
+	if l.formatsLeft > 0 {
+		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition on the value, not a calculation; one that could not be bound; or on an object other than a field)")
 	}
 	if l.mergeKept > 0 {
 		review = append(review, plural(l.mergeKept, "merge field")+" of a related field or a variable, shown as FileMaker wrote it")

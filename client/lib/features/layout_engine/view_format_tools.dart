@@ -1714,6 +1714,7 @@ class FormatDialogs {
                                         DropdownMenuItem(value: 'contains', child: Text('contains')),
                                         DropdownMenuItem(value: 'is_empty', child: Text('is empty')),
                                         DropdownMenuItem(value: 'is_not_empty', child: Text('is not empty')),
+                                        DropdownMenuItem(value: 'formula', child: Text('formula is true')),
                                       ],
                                       onChanged: (op) {
                                         if (op != null) {
