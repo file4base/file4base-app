@@ -178,16 +178,19 @@ class TableModel {
     required this.displayName,
     this.description,
     this.columns = const [],
+    this.privileges,
   });
 
   factory TableModel.fromJson(Map<String, dynamic> json) {
     final rawCols = json['columns'] as List<dynamic>? ?? [];
+    final privileges = json['privileges'];
     return TableModel(
       id: json['id'] as String,
       name: json['name'] as String,
       displayName: json['display_name'] as String,
       description: json['description'] as String?,
       columns: rawCols.map((c) => ColumnModel.fromJson(c as Map<String, dynamic>)).toList(),
+      privileges: privileges is Map<String, dynamic> ? RecordPrivileges.fromJson(privileges) : null,
     );
   }
   final String id;
@@ -195,6 +198,33 @@ class TableModel {
   final String displayName;
   final String? description;
   final List<ColumnModel> columns;
+
+  /// What the session may do with the table's records, as the table of an
+  /// occurrence says (GET /occurrences/{id}/table). For another solution's
+  /// table, it is what the account the session holds there may do (#107).
+  /// Null when the server did not say.
+  final RecordPrivileges? privileges;
+}
+
+/// What an account may do with the records of a table.
+class RecordPrivileges {
+  const RecordPrivileges({this.read = false, this.create = false, this.edit = false, this.delete = false});
+
+  factory RecordPrivileges.fromJson(Map<String, dynamic> json) => RecordPrivileges(
+        read: json['read'] as bool? ?? false,
+        create: json['create'] as bool? ?? false,
+        edit: json['edit'] as bool? ?? false,
+        delete: json['delete'] as bool? ?? false,
+      );
+
+  /// Every privilege: what a table of the session's own solution is given
+  /// when nothing else says, its writes being authorized by the server.
+  static const all = RecordPrivileges(read: true, create: true, edit: true, delete: true);
+
+  final bool read;
+  final bool create;
+  final bool edit;
+  final bool delete;
 }
 
 class ColumnModel {

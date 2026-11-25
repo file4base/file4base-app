@@ -81,6 +81,16 @@ class _Server {
 
   /// Whether Orders has a value list taken from a field of peer_db.
   bool externalValueList = false;
+
+  /// What the account in peer_db may do with its customers, as the table of
+  /// the occurrence says; null says nothing.
+  Map<String, bool>? privileges = const {'read': true, 'create': false, 'edit': false, 'delete': false};
+
+  /// Why the next writes into peer_db are refused, or null once they are not.
+  String? writeUnavailable;
+
+  /// The writes into peer_db, as method, path and body.
+  final writes = <String>[];
   final List<Map<String, dynamic>> orders = [
     for (var i = 1; i <= 3; i++) {'id': 'o-$i', 'customer_code': 'C-$i'},
   ];
@@ -121,7 +131,9 @@ class _Server {
       case ('GET', '/api/v1/data/orders'):
         return _json(orders);
       case ('GET', '/api/v1/occurrences/occ-cust/table'):
-        return external != null ? _json(_unavailable(external), 424) : _json(_customers);
+        return external != null
+            ? _json(_unavailable(external), 424)
+            : _json({..._customers, 'privileges': ?privileges});
       case ('GET', '/api/v1/occurrences/occ-cust/records'):
         final reason = external ?? recordsUnavailable;
         return reason != null
@@ -148,9 +160,19 @@ class _Server {
         }
         unavailable = null;
         recordsUnavailable = null;
+        writeUnavailable = null;
         return _json({'database': 'peer_db', 'status': 'linked', 'username': body['username']});
     }
     final related = RegExp(r'^/api/v1/data/orders/([^/]+)/related$').firstMatch(path);
+    final customerRecords = path.startsWith('/api/v1/occurrences/occ-cust/records');
+    if (request.method != 'GET' && (customerRecords || related != null)) {
+      final refused = writeUnavailable;
+      if (refused != null) return _json(_unavailable(refused), 424);
+      writes.add('${request.method} ${request.url} ${request.body}');
+      if (request.method == 'DELETE') return http.Response('', 204);
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      return _json({'id': 'c-new', ...body}, request.method == 'POST' ? 201 : 200);
+    }
     if (related != null && request.method == 'GET') {
       if (external != null) return _json(_unavailable(external), 424);
       return _json([
@@ -180,7 +202,8 @@ const _customerName = FieldBindingModel(fieldName: 'full_name', relationshipId: 
 
 /// An Orders layout with a customer's name, and a portal of its customers
 /// when [portal].
-LayoutDefinitionModel _ordersLayout({bool portal = false, String defaultView = 'form'}) => LayoutDefinitionModel(
+LayoutDefinitionModel _ordersLayout({bool portal = false, bool portalDeletion = false, String defaultView = 'form'}) =>
+    LayoutDefinitionModel(
       id: 'l-orders',
       name: 'Orders',
       tableOccurrence: 'Orders',
@@ -191,7 +214,8 @@ LayoutDefinitionModel _ordersLayout({bool portal = false, String defaultView = '
         if (!portal) _object('name', 'field', 50, field: _customerName),
         if (portal) ...[
           _object('portal', 'portal', 100,
-              portal: const PortalConfigModel(relationshipId: 'rel-x', occurrence: 'Customers', allowCreation: true)),
+              portal: PortalConfigModel(
+                  relationshipId: 'rel-x', occurrence: 'Customers', allowCreation: true, allowDeletion: portalDeletion)),
           _object('in-portal', 'field', 105, field: const FieldBindingModel(fieldName: 'full_name')),
         ],
       ],
@@ -205,6 +229,11 @@ Future<void> _pump(WidgetTester tester, Widget body) async {
   await tester.pumpAndSettle();
 }
 
+/// The record command button labelled [label].
+ButtonStyleButton _button(WidgetTester tester, String label) => tester.widget<ButtonStyleButton>(find
+    .ancestor(of: find.text(label), matching: find.byWidgetPredicate((w) => w is ButtonStyleButton))
+    .first);
+
 Widget _browser(ApiClient api, LayoutDefinitionModel layout) => DataBrowserWidget(
       table: _orderTable,
       apiClient: api,
@@ -213,7 +242,8 @@ Widget _browser(ApiClient api, LayoutDefinitionModel layout) => DataBrowserWidge
     );
 
 void main() {
-  testWidgets("a portal of another solution's table shows its records, read-only", (tester) async {
+  testWidgets("a portal of another solution's table read-only there shows its records, and writes nothing",
+      (tester) async {
     final server = _Server();
     await _pump(tester, _browser(server.client(), _ordersLayout(portal: true)));
 
@@ -222,8 +252,61 @@ void main() {
     expect(server.requests, contains('GET /api/v1/occurrences/occ-cust/table'),
         reason: "the fields are the other solution's");
     expect(find.byKey(const ValueKey('portal-cell-c-1-full_name')), findsNothing,
-        reason: 'no cell takes entry: the records are not written from here yet');
-    expect(find.byKey(const ValueKey('portal-add-row')), findsNothing, reason: 'nor created');
+        reason: 'no cell takes entry: the account there may only read');
+    expect(find.byKey(const ValueKey('portal-new-row')), findsNothing, reason: 'nor create');
+    expect(find.byKey(const ValueKey('portal-delete-c-1')), findsNothing, reason: 'nor delete');
+  });
+
+  testWidgets("a portal of another solution's table edits, creates and deletes its records there", (tester) async {
+    final server = _Server()..privileges = const {'read': true, 'create': true, 'edit': true, 'delete': true};
+    await _pump(tester, _browser(server.client(), _ordersLayout(portal: true, portalDeletion: true)));
+
+    await tester.enterText(find.byKey(const ValueKey('portal-cell-c-1-full_name')), 'Ada King');
+    await tester.pump(const Duration(milliseconds: 700));
+    await tester.pumpAndSettle();
+    expect(server.writes, ['PUT http://f4b.test/api/v1/occurrences/occ-cust/records/c-1 {"full_name":"Ada King"}'],
+        reason: 'written through the occurrence, as the account there');
+
+    server.writes.clear();
+    await tester.enterText(find.byKey(const ValueKey('portal-new-cell')), 'Mary');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(server.writes, [
+      'POST http://f4b.test/api/v1/data/orders/o-1/related?relationship=rel-x&occurrence=occ-cust {"full_name":"Mary"}',
+    ], reason: 'created through the relationship, the server setting the keys');
+
+    server.writes.clear();
+    await tester.tap(find.byKey(const ValueKey('portal-delete-c-1')));
+    await tester.pumpAndSettle();
+    expect(server.writes, ['DELETE http://f4b.test/api/v1/occurrences/occ-cust/records/c-1 ']);
+  });
+
+  testWidgets("a portal of another solution's table edits only what the account there may", (tester) async {
+    final server = _Server()..privileges = const {'read': true, 'create': false, 'edit': true, 'delete': false};
+    await _pump(tester, _browser(server.client(), _ordersLayout(portal: true, portalDeletion: true)));
+
+    expect(find.byKey(const ValueKey('portal-cell-c-1-full_name')), findsOneWidget);
+    expect(find.byKey(const ValueKey('portal-new-row')), findsNothing);
+    expect(find.byKey(const ValueKey('portal-delete-c-1')), findsNothing);
+  });
+
+  testWidgets('a write into a solution not signed in to signs in, then writes once more', (tester) async {
+    final server = _Server()
+      ..privileges = const {'read': true, 'create': true, 'edit': true, 'delete': true}
+      ..writeUnavailable = ExternalUnavailable.notSignedIn;
+    await _pump(tester, _browser(server.client(), _ordersLayout(portal: true)));
+
+    await tester.enterText(find.byKey(const ValueKey('portal-cell-c-1-full_name')), 'Ada King');
+    await tester.pump(const Duration(milliseconds: 700));
+    // The cell shows it is saving while the dialog is open.
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('Open peer_db (used by this solution)'), findsOneWidget, reason: 'the link sign-in');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Username'), 'alice');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Password'), 'secret');
+    await tester.tap(find.text('Sign In'));
+    await tester.pumpAndSettle();
+
+    expect(server.writes, ['PUT http://f4b.test/api/v1/occurrences/occ-cust/records/c-1 {"full_name":"Ada King"}']);
   });
 
   testWidgets('a related field of another solution shows its first related record', (tester) async {
@@ -293,7 +376,8 @@ void main() {
         reason: 'no request per record');
   });
 
-  testWidgets("a layout on another solution's table browses its records there, read-only", (tester) async {
+  testWidgets("a layout on another solution's table read-only there browses its records, and writes nothing",
+      (tester) async {
     final server = _Server();
     final api = server.client();
     final occurrence = TableOccurrenceModel.fromJson(_occurrences[1]);
@@ -315,6 +399,7 @@ void main() {
           mode: OperationalMode.browse,
           layout: layout,
           externalDatabase: 'peer_db',
+          privileges: table.privileges,
         ),
       ),
     );
@@ -325,6 +410,47 @@ void main() {
     final field = find.byWidgetPredicate((w) => w is TextField && w.controller?.text == 'Ada Lovelace');
     expect(field, findsOneWidget);
     expect(tester.widget<TextField>(field).readOnly, isTrue, reason: 'shown, not typed into');
+    expect(_button(tester, 'New').onPressed, isNull);
+  });
+
+  testWidgets("a layout on another solution's table edits and creates its records there", (tester) async {
+    final server = _Server()..privileges = const {'read': true, 'create': true, 'edit': true, 'delete': false};
+    final layout = LayoutDefinitionModel(
+      id: 'l-customers',
+      name: 'Customers',
+      tableOccurrence: 'Customers',
+      objects: [_object('name', 'field', 10, field: const FieldBindingModel(fieldName: 'full_name', tableOccurrence: 'Customers'))],
+    );
+    TableModel? told;
+    await _pump(
+      tester,
+      ExternalLayoutView(
+        layoutName: 'Customers',
+        occurrence: TableOccurrenceModel.fromJson(_occurrences[1]),
+        apiClient: server.client(),
+        onTable: (table) => told = table,
+        builder: (context, table, client) => DataBrowserWidget(
+          table: table,
+          apiClient: client,
+          mode: OperationalMode.browse,
+          layout: layout,
+          externalDatabase: 'peer_db',
+          privileges: table.privileges,
+        ),
+      ),
+    );
+    expect(told?.privileges?.edit, isTrue, reason: 'what the menu commands follow');
+
+    final field = find.byWidgetPredicate((w) => w is TextField && w.controller?.text == 'Ada Lovelace');
+    expect(tester.widget<TextField>(field).readOnly, isFalse);
+    await tester.enterText(field, 'Ada King');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(server.writes, ['PUT http://f4b.test/api/v1/occurrences/occ-cust/records/c-1 {"full_name":"Ada King"}']);
+
+    expect(_button(tester, 'New').onPressed, isNotNull);
+    expect(_button(tester, 'Delete').onPressed, isNull,
+        reason: 'the account there may not delete');
   });
 
   testWidgets("a layout on another solution's table says why it cannot read it", (tester) async {

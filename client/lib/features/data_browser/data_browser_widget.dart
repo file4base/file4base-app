@@ -44,6 +44,7 @@ class DataBrowserWidget extends StatefulWidget {
     this.onGoHome,
     this.externalOccurrences = const {},
     this.externalDatabase,
+    this.privileges,
   });
   final TableModel table;
   final ApiClient apiClient;
@@ -86,6 +87,12 @@ class DataBrowserWidget extends StatefulWidget {
   /// [apiClient], and relationships are followed from them. Null for a table
   /// of this solution.
   final String? externalDatabase;
+
+  /// What the session may do with [table]'s records, which enables the record
+  /// commands. For another solution's table it is what the account held there
+  /// may do (#107), and without it its records are only read. Null for this
+  /// solution's table enables them all, the server deciding.
+  final RecordPrivileges? privileges;
 
   /// What [obj] shows when it is a field of an external occurrence, else null.
   String? externalFieldNoticeOf(LayoutObjectModel obj) =>
@@ -135,9 +142,21 @@ class FindRequestDraft {
 }
 
 class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutActionHost, ExtendedLayoutActionHost {
-  /// Records of another solution are shown, not created or deleted from
-  /// here yet (#107).
-  bool get _readOnly => widget.externalDatabase != null;
+  /// Without privileges, this solution's records take every command, the
+  /// server deciding, and another solution's are only read.
+  RecordPrivileges get _privileges =>
+      widget.privileges ?? (widget.externalDatabase != null ? const RecordPrivileges(read: true) : RecordPrivileges.all);
+  bool get _canCreate => _privileges.create;
+  bool get _canEdit => _privileges.edit;
+  bool get _canDelete => _privileges.delete;
+
+  /// Whether the current record's fields take entry: a new one's when
+  /// records may be created, a saved one's when they may be edited.
+  bool get _entryAllowed => _onDraft ? _canCreate : _canEdit;
+
+  /// Runs a write, signing in to the solution of an external occurrence and
+  /// trying once more when the session is not signed in to it (#107).
+  Future<T> _write<T>(Future<T> Function() call) => _externalAccess.retryingSignIn(context, call);
 
   List<Map<String, dynamic>> _records = [];
   bool _isLoading = true;
@@ -1167,7 +1186,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     _records[_currentIndex][colName] = valueToSave;
     if (mounted) setState(() => _fieldSaving[colName] = true);
     try {
-      await widget.apiClient.updateRow(widget.table.name, id, {colName: valueToSave});
+      await _write(() => widget.apiClient.updateRow(widget.table.name, id, {colName: valueToSave}));
       // The field now holds what was typed; the server dropped its original
       // text, and so does the record in hand.
       final texts = record[sourceTextKey];
@@ -1275,7 +1294,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
             ColumnModel.repetitionKey(col.name, n): draft[ColumnModel.repetitionKey(col.name, n)],
     };
     try {
-      final created = await widget.apiClient.insertRow(widget.table.name, values);
+      final created = await _write(() => widget.apiClient.insertRow(widget.table.name, values));
       if (mounted) setState(() => _records[_currentIndex] = created);
       return true;
     } catch (e) {
@@ -1498,7 +1517,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// New Record: an empty record shown at the end of the found set. It is
   /// created on the server when committed (see [_commitDraft]).
   Future<void> _createNewRecord() async {
-    if (_readOnly || !await _saveCurrentRecord() || !mounted) return;
+    if (!_canCreate || !await _saveCurrentRecord() || !mounted) return;
     setState(() {
       _records.add(<String, dynamic>{_draftKey: true});
       _currentIndex = _records.length - 1;
@@ -1508,7 +1527,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   }
 
   Future<void> _deleteCurrentRecord() async {
-    if (_readOnly || _records.isEmpty) return;
+    if (_records.isEmpty || (!_onDraft && !_canDelete)) return;
     for (final t in _fieldDebounceTimers.values) {
       t?.cancel();
     }
@@ -1519,7 +1538,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final id = _records[_currentIndex]['id']?.toString();
     if (id == null) return;
     try {
-      await widget.apiClient.deleteRow(widget.table.name, id);
+      await _write(() => widget.apiClient.deleteRow(widget.table.name, id));
       await _fetchRecords();
     } catch (e) {
       if (mounted) {
@@ -2016,12 +2035,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('New'),
                 style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-                onPressed: _readOnly ? null : _createNewRecord,
+                onPressed: _canCreate ? _createNewRecord : null,
               ),
               const SizedBox(width: 6),
-              _barButton(Icons.copy, 'Duplicate', hasRecords && !_readOnly ? actionDuplicateRecord : null),
+              _barButton(Icons.copy, 'Duplicate', hasRecords && _canCreate ? actionDuplicateRecord : null),
               _barButton(Icons.delete_outline, 'Delete',
-                  hasRecords && !_readOnly ? () => actionDeleteRecord(confirm: true) : null,
+                  hasRecords && (_canDelete || _onDraft) ? () => actionDeleteRecord(confirm: true) : null,
                   color: Colors.red.shade700),
               const SizedBox(width: 10),
               _barButton(Icons.search, 'Find', () => _requestMode(OperationalMode.find)),
@@ -2476,7 +2495,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           recordIndex == _currentIndex &&
           !col.isPrimaryKey &&
           !_isComputed(col.name) &&
-          !_readOnly &&
+          _entryAllowed &&
           (obj.fieldBinding?.allowBrowseEntry ?? true)) {
         final ctrl = _fieldControllers[col.name];
         final fn = _fieldFocusNodes[col.name];
@@ -2694,7 +2713,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             ),
                           ),
                           ...cols.map((c) {
-                            final computed = _isComputed(c.name) || _readOnly;
+                            final computed = _isComputed(c.name) || !_entryAllowed;
                             if (selected && !computed) {
                               final ctrl = _fieldControllers[c.name];
                               final fn = _fieldFocusNodes[c.name];
@@ -2796,7 +2815,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           FilledButton.icon(
             icon: const Icon(Icons.add),
             label: const Text('Create First Record'),
-            onPressed: _readOnly ? null : _createNewRecord,
+            onPressed: _canCreate ? _createNewRecord : null,
           ),
         ],
       ),
@@ -2955,7 +2974,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                         ),
                         icon: const Icon(Icons.add, size: 14),
                         label: const Text('Create First Record', style: TextStyle(fontSize: 11)),
-                        onPressed: _readOnly ? null : _createNewRecord,
+                        onPressed: _canCreate ? _createNewRecord : null,
                       )
                     else if (!isFindMode)
                       Container(
@@ -3215,7 +3234,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                 ),
                 decoration: InputDecoration(
                   isDense: true,
-                  hintText: _readOnly ? null : 'Click to create record & enter data...',
+                  hintText: _canCreate ? 'Click to create record & enter data...' : null,
                   hintStyle: TextStyle(fontSize: 10.5, fontStyle: FontStyle.italic, color: Colors.grey.shade400),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   fillColor: obj.style.fillColor != null ? _parseColor(obj.style.fillColor!) : null,
@@ -3442,7 +3461,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final fn = _fieldFocusNodes[key];
     final saving = _fieldSaving[key];
     // Shown like a calculation: read, not typed into.
-    final computed = _isComputed(col.name) || _readOnly;
+    final computed = _isComputed(col.name) || !_entryAllowed;
 
     // A field bound to a value list is filled from a control rather than
     // typed into (#31).
@@ -3838,7 +3857,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionDuplicateRecord() async {
-    if (_readOnly || _records.isEmpty) return;
+    if (!_canCreate || _records.isEmpty) return;
     if (!await _saveCurrentRecord()) return;
     final source = _records[_currentIndex];
     final copy = <String, dynamic>{
@@ -3846,7 +3865,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         if (!col.isPrimaryKey) col.name: source[col.name],
     };
     try {
-      await widget.apiClient.insertRow(widget.table.name, copy);
+      await _write(() => widget.apiClient.insertRow(widget.table.name, copy));
       await _fetchRecords();
       if (_records.isNotEmpty && mounted) {
         setState(() => _currentIndex = _records.length - 1);
@@ -3864,7 +3883,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionDeleteRecord({required bool confirm}) async {
-    if (_readOnly || _records.isEmpty) return;
+    if (_records.isEmpty || (!_onDraft && !_canDelete)) return;
     if (confirm) {
       final ok = await showDialog<bool>(
         context: context,
@@ -4199,7 +4218,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   Future<void> actionDeleteAllRecords({required bool confirm}) async {
-    if (_records.isEmpty) return;
+    if (_records.isEmpty || !_canDelete) return;
     if (confirm && mounted) {
       final ok = await showDialog<bool>(
         context: context,
@@ -4220,7 +4239,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     }
     final ids = _records.map((r) => r['id']?.toString()).whereType<String>().where((id) => id.isNotEmpty).toList();
     for (final id in ids) {
-      await widget.apiClient.deleteRow(widget.table.name, id);
+      await _write(() => widget.apiClient.deleteRow(widget.table.name, id));
     }
     await _fetchRecords();
   }
@@ -4305,7 +4324,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     for (final rec in _records) {
       final id = rec['id']?.toString();
       if (id == null || id.isEmpty) continue;
-      await widget.apiClient.updateRow(widget.table.name, id, {col.name: effective});
+      await _write(() => widget.apiClient.updateRow(widget.table.name, id, {col.name: effective}));
       rec[col.name] = effective;
     }
     _rebuildFieldControllers();

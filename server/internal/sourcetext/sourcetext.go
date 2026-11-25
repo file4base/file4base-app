@@ -232,6 +232,27 @@ func DeleteRecord(ctx context.Context, q Execer, d dbal.Dialect, table, recordID
 	return deleteWhere(ctx, q, `table_name = `+d.Placeholder(1)+` AND record_id = `+d.Placeholder(2), table, recordID)
 }
 
+// DeleteRecords drops every original text of several deleted records of a
+// table, in one statement per batch of ids.
+func DeleteRecords(ctx context.Context, q Execer, d dbal.Dialect, table string, recordIDs []string) error {
+	for start := 0; start < len(recordIDs); start += deleteBatch {
+		ids := recordIDs[start:min(start+deleteBatch, len(recordIDs))]
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, table)
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		where := `table_name = ` + d.Placeholder(1) + ` AND record_id IN (` + placeholders(d, 2, len(ids)) + `)`
+		if err := deleteWhere(ctx, q, where, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteBatch is the most record ids one statement of DeleteRecords names.
+const deleteBatch = 500
+
 // DeleteField drops the original texts of a deleted field.
 func DeleteField(ctx context.Context, q Execer, d dbal.Dialect, table, field string) error {
 	return deleteWhere(ctx, q, `table_name = `+d.Placeholder(1)+` AND field_name = `+d.Placeholder(2), table, field)

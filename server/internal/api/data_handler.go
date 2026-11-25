@@ -68,44 +68,100 @@ func (h *DataHandler) authorizeAction(w http.ResponseWriter, r *http.Request, ta
 	sess := currentSession(r)
 
 	if !sess.IsAdmin() {
-		svc := schema.NewService(driver)
-		level, err := svc.TableAccess(r.Context(), sess.UserID, table)
+		privileges, err := recordPrivileges(r.Context(), schema.NewService(driver), sess.UserID, table)
 		if err != nil {
 			telemetry.WriteInternalError(w, r, err)
 			return nil, false
 		}
-		if level == schema.AccessNone {
-			writeForbidden(w, r, "you do not have access to this table")
-			return nil, false
-		}
-		if write && level != schema.AccessReadWrite {
-			writeForbidden(w, r, "you have read-only access to this table")
-			return nil, false
-		}
-		if write && action != "" {
-			if tp, err := svc.TablePermissionFor(r.Context(), sess.UserID, table); err == nil && tp != nil {
-				switch action {
-				case "create":
-					if !tp.CanCreate {
-						writeForbidden(w, r, "you do not have permission to create records in this table")
-						return nil, false
-					}
-				case "edit":
-					if !tp.CanEdit {
-						writeForbidden(w, r, "you do not have permission to modify records in this table")
-						return nil, false
-					}
-				case "delete":
-					if !tp.CanDelete {
-						writeForbidden(w, r, "you do not have permission to delete records in this table")
-						return nil, false
-					}
+		if refusal := privileges.refusal(write, action); refusal != "" {
+			// The records of another solution are refused as the account
+			// the session group holds there, which the message names, with
+			// the file reference and the solution (#107).
+			if external := externalOrigin(r); external != nil && write {
+				if action == "" {
+					action = data.ActionEdit
 				}
+				refusal = external.Wrap(&data.PermissionError{Account: sess.Username, Table: table, Action: action}).Error()
 			}
+			writeForbidden(w, r, refusal)
+			return nil, false
 		}
 	}
 
 	return callerDataService(r), true
+}
+
+// RecordPrivileges are what a session may do with the records of a table:
+// what the data routes allow it, and what a client enables.
+type RecordPrivileges struct {
+	Read   bool `json:"read"`
+	Create bool `json:"create"`
+	Edit   bool `json:"edit"`
+	Delete bool `json:"delete"`
+}
+
+// allPrivileges are an administrator's.
+var allPrivileges = RecordPrivileges{Read: true, Create: true, Edit: true, Delete: true}
+
+// recordPrivileges works out a non-administrator's privileges on a table:
+// the access level of the table, and, when it is read-write, the record
+// privileges its explicit permission row grants.
+func recordPrivileges(ctx context.Context, svc *schema.Service, userID, table string) (RecordPrivileges, error) {
+	level, err := svc.TableAccess(ctx, userID, table)
+	if err != nil {
+		return RecordPrivileges{}, err
+	}
+	switch level {
+	case schema.AccessNone:
+		return RecordPrivileges{}, nil
+	case schema.AccessReadWrite:
+	default:
+		return RecordPrivileges{Read: true}, nil
+	}
+	tp, err := svc.TablePermissionFor(ctx, userID, table)
+	if err != nil || tp == nil {
+		return allPrivileges, nil
+	}
+	return RecordPrivileges{Read: true, Create: tp.CanCreate, Edit: tp.CanEdit, Delete: tp.CanDelete}, nil
+}
+
+// sessionPrivileges are a session's privileges on a table of its solution.
+func sessionPrivileges(ctx context.Context, driver dbal.DatabaseDriver, sess auth.Session, table string) (RecordPrivileges, error) {
+	if sess.IsAdmin() {
+		return allPrivileges, nil
+	}
+	return recordPrivileges(ctx, schema.NewService(driver), sess.UserID, table)
+}
+
+// allows reports whether the privileges cover a write action.
+func (p RecordPrivileges) allows(action string) bool {
+	switch action {
+	case data.ActionCreate:
+		return p.Create
+	case data.ActionEdit:
+		return p.Edit
+	case data.ActionDelete:
+		return p.Delete
+	}
+	return p.Create || p.Edit || p.Delete
+}
+
+// refusal says why a request is refused, or is empty when it may proceed.
+// A write with no action needs the read-write access level only.
+func (p RecordPrivileges) refusal(write bool, action string) string {
+	switch {
+	case !p.Read:
+		return "you do not have access to this table"
+	case write && !p.Create && !p.Edit && !p.Delete:
+		return "you have read-only access to this table"
+	case !write || action == "" || p.allows(action):
+		return ""
+	case action == data.ActionCreate:
+		return "you do not have permission to create records in this table"
+	case action == data.ActionEdit:
+		return "you do not have permission to modify records in this table"
+	}
+	return "you do not have permission to delete records in this table"
 }
 
 // callerDataService is the data service of a request's database, reading
@@ -123,14 +179,26 @@ func callerDataService(r *http.Request) *data.Service {
 }
 
 // dataServiceAs is the data service of a solution reading as one of its
-// sessions, with that session's access.
+// sessions, with that session's access: what it may read, and, for the
+// records of another solution a request of this one writes (#107), what it
+// may create and delete.
 func dataServiceAs(driver dbal.DatabaseDriver, sess auth.Session) *data.Service {
-	dataSvc := data.NewService(driver)
+	dataSvc := data.NewService(driver).WithDatabase(sess.Database)
 	if !sess.IsAdmin() {
-		schemaSvc, userID := schema.NewService(driver), sess.UserID
+		schemaSvc, userID, username := schema.NewService(driver), sess.UserID, sess.Username
 		dataSvc.WithReadAccess(func(ctx context.Context, table string) (bool, error) {
 			level, err := schemaSvc.TableAccess(ctx, userID, table)
 			return level != schema.AccessNone, err
+		})
+		dataSvc.WithWriteAccess(func(ctx context.Context, table, action string) error {
+			privileges, err := recordPrivileges(ctx, schemaSvc, userID, table)
+			if err != nil {
+				return err
+			}
+			if !privileges.allows(action) {
+				return &data.PermissionError{Account: username, Table: table, Action: action}
+			}
+			return nil
 		})
 	}
 	return dataSvc
@@ -229,6 +297,12 @@ const maxWatchedExpressions = 50
 // writeDataError maps data-layer errors to RFC 9457 responses.
 func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, title string, err error) {
 	switch {
+	// First: it wraps the error that stopped the delete, which says why but
+	// not that another solution's records are already gone.
+	case errors.Is(err, data.ErrPartialDelete):
+		writePartialDelete(w, r, err)
+	case errors.Is(err, data.ErrNoPermission):
+		writeForbidden(w, r, err.Error())
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
 	case errors.Is(err, data.ErrRecordNotFound):
@@ -878,15 +952,20 @@ func (h *DataHandler) listRelatedBatch(w http.ResponseWriter, r *http.Request, s
 //
 //	POST /api/v1/data/{table}/{id}/related?relationship=<id>&occurrence=<id>
 //
-// It is refused with 403 unless the relationship allows creation.
+// It is refused with 403 unless the relationship allows creation. A related
+// table of another solution is written there, as the account the session
+// group holds in it, which needs its create privilege (#107).
 func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
 	table := requestTable(r)
-	id := chi.URLParam(r, "id")
 	svc, ok := h.authorize(w, r, table, false)
 	if !ok {
 		return
 	}
+	h.createRelated(w, r, svc, data.LocalOrigin(table))
+}
 
+// createRelated creates a record related to the record {id} of from.
+func (h *DataHandler) createRelated(w http.ResponseWriter, r *http.Request, svc *data.Service, from data.Origin) {
 	relationship := r.URL.Query().Get("relationship")
 	if strings.TrimSpace(relationship) == "" {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Missing Relationship",
@@ -897,7 +976,7 @@ func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
 
 	// The record is written to the related table, so that is where write
 	// access has to hold.
-	if !h.authorizeRelated(w, r, svc, table, relationship, occurrence, true) {
+	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, true) {
 		return
 	}
 
@@ -907,7 +986,7 @@ func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	inserted, err := svc.CreateRelatedRow(r.Context(), table, id, relationship, occurrence, record)
+	inserted, err := svc.CreateRelatedRowFrom(r.Context(), from, chi.URLParam(r, "id"), relationship, occurrence, record)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Insert Error", err)
 		return
@@ -973,9 +1052,9 @@ func (h *DataHandler) authorizeRelatedFrom(
 		return false
 	}
 	if target.External != nil {
-		// The records are another solution's, read as the account the
-		// session group holds there: the data service checks that
-		// account's access, never this one's (#107).
+		// The records are another solution's, read and written as the
+		// account the session group holds there: the data service checks
+		// that account's access, never this one's (#107).
 		return true
 	}
 	_, ok := h.authorize(w, r, target.TableName, write)

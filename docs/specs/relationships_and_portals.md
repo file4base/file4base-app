@@ -205,6 +205,11 @@ forever.
 This is integrity defined by the schema, so it applies whatever access the
 caller has on the related table — the same way a foreign key would.
 
+The whole cascade is worked out before anything is deleted, a level at a
+time with one statement per table and batch of records, and then deleted in
+one transaction: either every record goes, or none does. Deleting a record
+that is not there answers `404`.
+
 ## Finding on a related field
 
 A criterion typed into a related field finds the records whose **related**
@@ -319,13 +324,48 @@ longer there: verify the reference) or `missing` (unmapped, unbound, not
 installed, or not done across solutions yet). Nothing through an external
 occurrence is ever answered from a table of this solution with the same name.
 
-Not done across solutions yet, refused with `424` and `reason` `missing`:
-writing their records (a portal or a layout on one is read-only, its record
-commands disabled), creating a related record there, a cascading delete that
-reaches one (checked over the whole cascade before anything is deleted, so
-nothing is), and a find or saved find on a related field through one, or
-from a record of one. An unstored calculation reading through an external
-occurrence evaluates empty. A layout's default occurrence is always local. A
+**Writing another solution's records.** They are written there, by that
+solution's data service, as the account the session holds there: with its
+validation, auto-enter values and stored calculations, and its privileges,
+never this session's.
+
+- **A layout on an external occurrence**, and a portal row of one, write
+  through `/api/v1/occurrences/{occurrence}/records` (`POST`, `PUT`, `PATCH`,
+  `DELETE`). `GET /api/v1/occurrences/{occurrence}/table` says what the
+  account may do (`privileges`: `read`, `create`, `edit`, `delete`), and the
+  client enables New, Duplicate, Delete, field entry and the portal's new row
+  and delete buttons by it.
+- **Creating a related record** through a relationship into another solution
+  (a portal's last row, or `POST /api/v1/data/{table}/{id}/related`) reads the
+  match values here and creates the record there with them, every criterion
+  `=` as for a local relationship; the account there must be allowed to
+  create records.
+- A write the account may not make answers `403`, naming the occurrence, the
+  table, the solution, the file reference and the account, and the remedy
+  (ask that solution's administrator for the privilege, or sign in to it with
+  another account). An account with no access answers `424 no_access`, and a
+  solution not signed in to `424 not_signed_in`: the client then opens the
+  sign-in dialog and makes the write once more.
+- **A cascading delete** that reaches another solution follows each
+  solution's own cascading relationships, from its own records, so a ring of
+  solutions that read each other deletes each record once. It is planned in
+  full first, reading each solution as the account held there and checking
+  that account may delete every table it reaches there; a refusal (`403`) or
+  an unavailable solution (`424`) refuses the whole delete before anything is
+  deleted. The other solutions' records are then deleted, each solution in one
+  transaction of its own, and this solution's last, in one transaction. No
+  transaction spans two databases: when this solution's delete fails after
+  another's committed, the request answers `500` with `code`
+  `partial_delete`, `partial: true` and the solutions whose records are
+  already gone (`committed`). Deleting the record again once the cause is
+  fixed finishes the cascade.
+- Other solutions' clients are told of the change, as for a write made there.
+
+Not done across solutions yet, refused with `424` and `reason` `missing`: a
+find or saved find on a related field through one, or from a record of one.
+An unstored calculation reading through an external occurrence evaluates
+empty, and a related field of one is shown, not typed into (as a local related
+field: related records are edited in a portal). A layout's default occurrence is always local. A
 field object of an external occurrence placed directly on a local layout keeps
 its occurrence and is shown as unavailable, never bound to a local field of
 the same name.
@@ -342,6 +382,7 @@ the same name.
   each per relationship, acting left to right as above. FileMaker has them
   separately for each side.
 - **Portals of portals**, and relationships followed through more than one hop.
-- **Writing another solution's records**, cascades and finds across
-  solutions, calculations reading another solution, and the second-field and
-  related options of a value list on an external occurrence come later.
+- **Finds across solutions**, calculations reading another solution, and the
+  second-field and related options of a value list on an external occurrence
+  come later. The clients of this solution are not told when another
+  solution's records they show change; they read them again when they reload.

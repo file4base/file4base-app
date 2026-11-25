@@ -668,7 +668,15 @@ func (s *Service) relatedQuery(
 	if err != nil {
 		return nil, err
 	}
+	return s.relatedQueryOf(ctx, rel, from, targetOccurrence, opts)
+}
+
+// relatedQueryOf is relatedQuery for a relationship already resolved.
+func (s *Service) relatedQueryOf(
+	ctx context.Context, rel *Relationship, from Origin, targetOccurrence string, opts QueryOptions,
+) (*relatedQuery, error) {
 	q := &relatedQuery{rel: rel}
+	var err error
 	if q.source, q.target, err = rel.SidesFrom(from, targetOccurrence); err != nil {
 		return nil, err
 	}
@@ -881,16 +889,28 @@ func (s *Service) CreateRelatedRow(
 	fromTable, recordID, relationshipID, targetOccurrence string,
 	record map[string]interface{},
 ) (map[string]interface{}, error) {
+	return s.CreateRelatedRowFrom(ctx, LocalOrigin(fromTable), recordID, relationshipID, targetOccurrence, record)
+}
+
+// CreateRelatedRowFrom is CreateRelatedRow for a record of any table, of this
+// solution or of another one (#107).
+//
+// The match values are read where the record in hand is, and the new record
+// is inserted where the related records are: in another solution, by that
+// solution's data service as the account the session group holds there,
+// which needs that account's create privilege. Its auto-enter values,
+// calculations and validation rules are that solution's.
+func (s *Service) CreateRelatedRowFrom(
+	ctx context.Context, from Origin, recordID, relationshipID, targetOccurrence string,
+	record map[string]interface{},
+) (map[string]interface{}, error) {
 	rel, err := s.Relationship(ctx, relationshipID)
 	if err != nil {
 		return nil, err
 	}
-	source, target, err := rel.Sides(fromTable, targetOccurrence)
+	source, target, err := rel.SidesFrom(from, targetOccurrence)
 	if err != nil {
 		return nil, err
-	}
-	if external := rel.External(); external != nil {
-		return nil, external.Unsupported("creating a related record")
 	}
 	if !rel.AllowCreation {
 		return nil, fmt.Errorf("%w: %s", ErrCreationNotAllowed, rel.Name)
@@ -905,18 +925,27 @@ func (s *Service) CreateRelatedRow(
 				ErrCreationNotAllowed, rel.Name, rel.predicates()[i].Operator)
 		}
 	}
-
-	keys, err := s.matchValues(ctx, source.TableName, sourceColumns(terms), recordID)
+	q, err := s.relatedQueryOf(ctx, rel, from, targetOccurrence, QueryOptions{})
 	if err != nil {
 		return nil, err
 	}
-	values := make(map[string]interface{}, len(record)+len(terms))
+	if target.External != nil {
+		if err := q.dst.checkWrite(ctx, target.TableName, ActionCreate); err != nil {
+			return nil, wrapSide(target, err)
+		}
+	}
+
+	keys, err := q.src.matchValues(ctx, source.TableName, sourceColumns(q.terms), recordID)
+	if err != nil {
+		return nil, wrapSide(source, err)
+	}
+	values := make(map[string]interface{}, len(record)+len(q.terms))
 	for k, v := range record {
 		values[k] = v
 	}
 	// The match fields belong to the relationship, not to the caller: a portal
 	// row created here is matched by this record and nothing else.
-	for _, t := range terms {
+	for _, t := range q.terms {
 		key := keys[t.SourceColumn]
 		if emptyMatchValue(key) {
 			return nil, fmt.Errorf("%w: %s.%s is empty", ErrNoMatchValue, source.TableName, t.SourceColumn)
@@ -924,7 +953,17 @@ func (s *Service) CreateRelatedRow(
 		values[t.TargetColumn] = key
 	}
 
-	return s.InsertRow(ctx, target.TableName, values)
+	inserted, err := q.dst.InsertRow(ctx, target.TableName, values)
+	if err != nil {
+		return nil, wrapSide(target, err)
+	}
+	// The related table is not the one the request names.
+	database := ""
+	if target.External != nil {
+		database = target.External.Database
+	}
+	observeChange(ctx, database, target.TableName)
+	return inserted, nil
 }
 
 // cascadingRelationships returns the relationships whose "Delete related
@@ -960,96 +999,6 @@ func trueLiteral(dialect dbal.Dialect) string {
 		return "TRUE"
 	}
 	return "1"
-}
-
-// checkCascadePlan follows, table by table, every relationship a delete from
-// tableName may cascade through, and refuses the delete when one of them
-// reaches an occurrence of another solution's table: its records cannot be
-// deleted from here, and deleting the local ones first would leave the
-// cascade half done. It reads no record, so it refuses even when nothing
-// would match through that relationship.
-func (s *Service) checkCascadePlan(ctx context.Context, tableName string) error {
-	visited := map[string]bool{tableName: true}
-	queue := []string{tableName}
-	for len(queue) > 0 {
-		table := queue[0]
-		queue = queue[1:]
-		relationships, err := s.cascadingRelationships(ctx, table)
-		if err != nil {
-			return err
-		}
-		for _, relID := range relationships {
-			rel, err := s.Relationship(ctx, relID)
-			if err != nil {
-				// Anything else is met, and answered, by the delete itself.
-				continue
-			}
-			if external := rel.External(); external != nil {
-				return external.Unsupported("a cascading delete")
-			}
-			if next := rel.Right.TableName; next != "" && !visited[next] {
-				visited[next] = true
-				queue = append(queue, next)
-			}
-		}
-	}
-	return nil
-}
-
-// cascadeDelete deletes the records that belong to the one about to be deleted,
-// following every relationship of the table that asks for it.
-//
-// Children are deleted through DeleteRow itself, so a chain of cascades is
-// followed all the way down. seen stops a relationship that points back at a
-// record already on the way out.
-func (s *Service) cascadeDelete(ctx context.Context, tableName, id string, seen map[string]struct{}) error {
-	relationships, err := s.cascadingRelationships(ctx, tableName)
-	if err != nil {
-		return err
-	}
-	for _, relID := range relationships {
-		rel, err := s.Relationship(ctx, relID)
-		if err != nil {
-			return err
-		}
-		if external := rel.External(); external != nil {
-			return external.Unsupported("a cascading delete")
-		}
-		// Every child goes, not the first page of them: read a page, delete
-		// it, and read again until the relationship matches nothing.
-		for {
-			children, err := s.RelatedRows(ctx, tableName, id, relID, rel.Right.OccurrenceID,
-				QueryOptions{Limit: MaxPageSize})
-			if err != nil {
-				// A relationship pointing at a table that is no longer a user
-				// table must not make a record undeletable.
-				if errors.Is(err, ErrTableNotFound) || errors.Is(err, ErrUnknownField) {
-					break
-				}
-				return err
-			}
-			deleted := 0
-			for _, child := range children {
-				childID, _ := child["id"].(string)
-				if childID == "" {
-					continue
-				}
-				if _, already := seen[seenKey(rel.Right.TableName, childID)]; already {
-					continue
-				}
-				if err := s.deleteRow(ctx, rel.Right.TableName, childID, seen); err != nil {
-					return fmt.Errorf("deleting the records related to %s.%s: %w", tableName, id, err)
-				}
-				deleted++
-			}
-			// Nothing left that this cascade can remove: either the page was
-			// empty or every row in it is already on its way out.
-			if deleted == 0 {
-				break
-			}
-		}
-	}
-	return nil
 }
 
 // ─── Find on a related field (#46) ───────────────────────────────────────────

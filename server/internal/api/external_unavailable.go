@@ -47,3 +47,37 @@ func writeExternalUnavailable(w http.ResponseWriter, r *http.Request, err error)
 	w.WriteHeader(http.StatusFailedDependency)
 	_ = json.NewEncoder(w).Encode(prob)
 }
+
+// partialDeleteProblem is the 500 a cascading delete answers when it deleted
+// related records in another solution and then failed in this one (#107):
+// partial is true, and committed names the solutions already changed.
+type partialDeleteProblem struct {
+	telemetry.ProblemDetails
+	Code      string   `json:"code"`
+	Partial   bool     `json:"partial"`
+	Committed []string `json:"committed"`
+	Database  string   `json:"database"`
+}
+
+func writePartialDelete(w http.ResponseWriter, r *http.Request, err error) {
+	prob := partialDeleteProblem{
+		ProblemDetails: telemetry.ProblemDetails{
+			Type:     "https://file4base.org/errors/partial-delete",
+			Title:    "Delete Partly Done",
+			Status:   http.StatusInternalServerError,
+			Detail:   err.Error(),
+			Instance: r.URL.Path,
+			TraceID:  telemetry.TraceIDFromContext(r.Context()),
+		},
+		Code:      "partial_delete",
+		Partial:   true,
+		Committed: []string{},
+	}
+	var e *data.PartialDeleteError
+	if errors.As(err, &e) {
+		prob.Committed, prob.Database = e.Committed, e.Database
+	}
+	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	_ = json.NewEncoder(w).Encode(prob)
+}
