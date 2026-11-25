@@ -1950,8 +1950,9 @@ func (s *Service) ExportDatabaseData(ctx context.Context, dbName string) ([]byte
 		}
 		// Registered fields only, named explicitly (see data.selectList), in
 		// the order the records were created, which a restore inserts them in
-		// and so keeps.
-		order := ""
+		// and so keeps: by id in a table not yet numbered in creation order,
+		// as its records are read.
+		order := " ORDER BY " + dialect.QuoteIdentifier("id")
 		if has, err := data.HasCreationOrder(ctx, s.driver, tbl.Name); err != nil {
 			return nil, err
 		} else if has {

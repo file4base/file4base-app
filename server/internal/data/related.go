@@ -202,7 +202,8 @@ func sourceColumns(terms []matchTerm) []string {
 
 // matchKeys are the values a match field holds. A text key holding several
 // lines is a multi-key, as in FileMaker: it matches a record holding any of
-// them. Empty lines, and an empty key, match nothing.
+// them. Empty lines, and an empty key, match nothing; a line of spaces is a
+// key, as it is for the statement that splits the other side (multikey.go).
 func matchKeys(key interface{}) []interface{} {
 	text, isText := key.(string)
 	if b, ok := key.([]byte); ok {
@@ -215,10 +216,9 @@ func matchKeys(key interface{}) []interface{} {
 		return []interface{}{key}
 	}
 	var keys []interface{}
+	// FieldsFunc gives no empty line.
 	for _, line := range strings.FieldsFunc(text, func(r rune) bool { return r == '\r' || r == '\n' }) {
-		if strings.TrimSpace(line) != "" {
-			keys = append(keys, line)
-		}
+		keys = append(keys, line)
 	}
 	return keys
 }
@@ -270,9 +270,11 @@ func matchCondition(
 	return strings.Join(conditions, " AND "), args
 }
 
-// notEmpty is the condition that a match field holds something.
+// notEmpty is the condition that a match field holds something. A field of
+// spaces does: it is tested by length, as MariaDB's collations hold spaces
+// equal to an empty string.
 func notEmpty(dialect dbal.Dialect, column string) string {
-	return fmt.Sprintf("%s IS NOT NULL AND %s <> ''", column, dialect.CastToText(column))
+	return valueThere(dialect, column)
 }
 
 // Sides decides which end of the relationship a request reads.

@@ -3,6 +3,8 @@ package data
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -286,6 +288,12 @@ func (r *relatedReader) resolveRoute(ctx context.Context, key routeKey) (*route,
 	if rt.reach.n < 0 {
 		rt.reach.present = end.field
 	}
+	// Across several relationships, the records reached are ordered all
+	// together (walk), so the first is the first of them all: every one is
+	// read, rather than the first of each record on the way.
+	if len(path) > 1 {
+		rt.reach = reachAll
+	}
 	for i, h := range path {
 		// A total needs no order.
 		if rt.plans[i], err = r.plan(ctx, h, i == len(path)-1 && !key.totals); err != nil {
@@ -317,7 +325,26 @@ func (r *relatedReader) walk(ctx context.Context, rt *route, rows []map[string]i
 			return nil, err
 		}
 	}
+	if len(rt.path) > 1 {
+		rt.plans[len(rt.plans)-1].sortReached(rows)
+	}
 	return rows, nil
+}
+
+// sortReached orders the records a path of several relationships reaches,
+// whose last step is p, as FileMaker lists them: all together, in the last
+// relationship's sort order, then in the order they were created (their id
+// in a table not numbered yet), rather than the related records of each
+// record on the way, one after the other. Each record holds what orders it:
+// the fields it is sorted by, and createdKey (see fetch).
+func (p *hopPlan) sortReached(rows []map[string]interface{}) {
+	kind := dbal.FieldTypeText // an id
+	if p.creation == dbal.CreationOrderColumn {
+		kind = dbal.FieldTypeNumber
+	}
+	fields := maps.Clone(p.fields)
+	fields[createdKey] = kind
+	sortRecords(p.to.s.driver.Dialect().Engine(), fields, append(slices.Clone(p.sortOrder), SortField{Field: createdKey}), rows)
 }
 
 // checkPath checks that every table a path crosses is readable, not only the
@@ -570,6 +597,10 @@ type hopPlan struct {
 	// Both are set on the last step of a path only, which creation names.
 	order, reverse, creation string
 	sorts                    []string
+	// sortOrder is the relationship's sort order, which orders, with the
+	// creation order, the records a path of several relationships reaches
+	// all together (sortReached).
+	sortOrder []SortField
 }
 
 // plan resolves a hop, in the relationship's sort order when it is the last
@@ -645,6 +676,7 @@ func (r *relatedReader) plan(ctx context.Context, h hop, last bool) (*hopPlan, e
 		p.order = thenBy(dialect, p.order, p.creation, false)
 		p.reverse = thenBy(dialect, p.reverse, p.creation, true)
 		p.sorts = sortFields(order)
+		p.sortOrder = order
 	}
 	r.plans[key] = p
 	return p, nil
@@ -786,6 +818,10 @@ func (r *relatedReader) fetch(
 	}
 	dialect := p.to.s.driver.Dialect()
 	list, table := withCreationOrder(dialect, selectList(dialect, columns), p.creation), dialect.QuoteIdentifier(p.table)
+	if p.creation != "" {
+		// What orders the record among those of a path (sortReached).
+		list += fmt.Sprintf(", %s AS %s", dialect.QuoteIdentifier(p.creation), dialect.QuoteIdentifier(createdKey))
+	}
 	// Every record, the nth, or the last holding a value.
 	order, limit, present := p.order, fmt.Sprintf(" LIMIT %d", maxRelatedRecords+1), ""
 	switch {

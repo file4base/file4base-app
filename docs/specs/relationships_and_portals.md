@@ -87,8 +87,15 @@ opened.
   fields and calculations, finds on related fields, cascading deletes and
   value lists of related values, for a table of this solution or of another
   one. A CR, an LF or a CRLF ends a line, so a field migrated from FileMaker
-  (whose returns become LFs) and one a client wrote with CRs match alike;
-  empty lines are no key. A field of another type holds one value.
+  (whose returns become LFs) and one a client wrote with CRs match alike.
+  A line is a key when it is not empty: empty lines are no key, and a line
+  of spaces is one (compared as the engine's collation compares it), by the
+  same rule whether the line is split in the server or in SQL. A field of
+  another type holds one value; a date or timestamp meeting the lines of a
+  text field is written as an ISO date (`2026-03-05`), or for a timestamp
+  as an ISO date and time in UTC (`2026-03-05 10:30:00`, no fraction of a
+  second, a date alone at midnight exactly), so a text multi-key of dates
+  relates to a date field.
   **Performance.** On PostgreSQL an `=` criterion on a text field is an
   overlap of arrays of lines, which a GIN index on the same expression
   serves; File4Base creates none, and a large table matched that way can be
@@ -226,6 +233,11 @@ lists them by record ID: a found set without a sort, the records of a
 relationship without "Sort records" (a portal, a related field, `Last` and
 `GetNthRecord`), and every page of them. A sort ends with that order too, so
 records that sort alike keep it and a page never depends on the engine.
+Records reached across several relationships (`List`, a related field,
+`GetNthRecord` through a path) are ordered all together, in the last
+relationship's sort order and then in creation order, not the related
+records of each record on the way one after the other; that sort is done in
+the server, its text comparison ignoring case and accents first.
 
 Each user table numbers its records in a column the engine fills,
 `f4b$creation_order` (an identity on PostgreSQL, `AUTO_INCREMENT` on MariaDB).
@@ -241,7 +253,9 @@ reads them: their physical order on PostgreSQL, close to the order they were
 inserted in (a migrated FileMaker file's record order), and their id order on
 MariaDB. Until then, or while another session holds the table (the upgrade
 waits 5 seconds for it, then tries again at a later sign-in), its records are
-ordered by id, as before.
+ordered by id, as before, and an export lists them by id too. A server finds
+out a table has the column again at most 30 seconds after it was found
+without it, so one that did not run the upgrade itself picks the column up.
 
 ## Sorting by an unstored calculation
 

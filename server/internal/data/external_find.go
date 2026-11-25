@@ -215,7 +215,7 @@ func (f *externalFind) run(ctx context.Context, target relatedFindTarget, crit F
 		// The related record's match field must hold something.
 		where = append(where, notEmpty(dialect, column.sql))
 		// A text match field gives each of its lines as a match value.
-		join, key, present := lineSource(dialect, column, fmt.Sprintf("f4b_l%d", i))
+		join, key, present := lineSource(dialect, column, lineAliasOf(i))
 		if join != "" {
 			joins = append(joins, join)
 		}
@@ -413,15 +413,17 @@ func externalKeySets(
 			}
 			active := activeTerms(target.Terms)
 			types := make([]string, len(active))
+			text := make([]bool, len(active))
 			names := make([]string, len(active))
 			for i, t := range active {
 				types[i] = dialect.MapType(fields.typeOf(t.SourceColumn))
+				text[i] = fields.typeOf(t.SourceColumn) == dbal.FieldTypeText
 				names[i] = keyColumn(i)
 			}
 			name := fmt.Sprintf("f4b_keys%d", len(sets))
 			f.sets[key] = name
 			sets = append(sets, fmt.Sprintf("%s (%s) AS (%s)",
-				name, strings.Join(names, ", "), keyRows(dialect, types, m.keys, idx, values)))
+				name, strings.Join(names, ", "), keyRows(dialect, types, text, m.keys, idx, values)))
 		}
 	}
 	if len(sets) == 0 {
@@ -432,8 +434,9 @@ func externalKeySets(
 
 // keyRows is a table of rows of bound values. PostgreSQL takes a VALUES list,
 // each value cast to the type it is compared as. MariaDB loses the values a
-// VALUES list binds, so it takes a SELECT per row.
-func keyRows(dialect dbal.Dialect, types []string, rows [][]interface{}, idx *int, values *[]interface{}) string {
+// VALUES list binds, so it takes a SELECT per row. A value compared with a
+// text field (text) is bound as the text keyText writes.
+func keyRows(dialect dbal.Dialect, types []string, text []bool, rows [][]interface{}, idx *int, values *[]interface{}) string {
 	postgres := dialect.Engine() == dbal.EnginePostgres
 	out := make([]string, len(rows))
 	for i, row := range rows {
@@ -444,6 +447,9 @@ func keyRows(dialect dbal.Dialect, types []string, rows [][]interface{}, idx *in
 				marks[j] = fmt.Sprintf("CAST(%s AS %s)", marks[j], types[j])
 			}
 			*idx++
+			if text[j] {
+				v = keyText(v)
+			}
 			*values = append(*values, v)
 		}
 		if postgres {

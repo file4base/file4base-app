@@ -3,6 +3,7 @@ package data
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 )
@@ -26,6 +27,16 @@ import (
 // may write either, or both (CRLF), so a CR and an LF both end a line here,
 // and the empty line between the two of a CRLF is no key.
 //
+// A line is a key when it is not empty, whatever it holds: a line of
+// spaces is a key, compared as the engine's collation compares it. The keys
+// of the record in hand (matchKeys) and the lines a statement splits follow
+// this one rule; on MariaDB, whose collations pad with spaces, a line is
+// tested by its length, since a line of spaces equals an empty one there.
+//
+// The names a statement gives the lines it splits hold a $, which no
+// field or table name does (dbal.CheckIdentifier), so a line can never be
+// mistaken for a field of the table, nor a field for a line.
+//
 // Performance. On PostgreSQL the condition for = is an overlap of the
 // field's lines with the keys,
 //
@@ -46,6 +57,9 @@ import (
 type multiKeyColumn struct {
 	sql   string
 	lines bool
+	// kind is the field's type, which says how a field that is not text is
+	// written as text when it meets the lines of one that is (asKeyText).
+	kind dbal.AgnosticFieldType
 }
 
 // keyColumnOf is the match field column of a table whose fields are
@@ -55,8 +69,23 @@ func keyColumnOf(dialect dbal.Dialect, qualifier string, fields fieldSet, column
 	if qualifier != "" {
 		name = qualifier + "." + name
 	}
-	return multiKeyColumn{sql: name, lines: fields[column] == dbal.FieldTypeText}
+	kind := fields[column]
+	return multiKeyColumn{sql: name, lines: kind == dbal.FieldTypeText, kind: kind}
 }
+
+// Names of the lines a statement splits, and of their parts. Each holds a $
+// so as not to collide with a field.
+const (
+	lineAlias  = "f4b$line"  // a line of the field in hand
+	leftAlias  = "f4b$left"  // a line of the left field of two
+	rightAlias = "f4b$right" // a line of the right field of two
+	lineValue  = "f4b$v"     // PostgreSQL: the line itself
+	lineNumber = "f4b$n"     // MariaDB: the line's number, from 1
+)
+
+// lineAliasOf is the name of the lines of the i-th match field a statement
+// splits, when it splits several.
+func lineAliasOf(i int) string { return fmt.Sprintf("f4b$l%d", i) }
 
 // pgLines is the lines of a text expression on PostgreSQL, as an array of
 // text without the empty ones. It is the expression a GIN index serves.
@@ -89,14 +118,21 @@ func mariaSingleLine(expr string) string {
 func mariaLineTable(expr, alias string) string {
 	text := mariaText(expr)
 	return fmt.Sprintf("JSON_TABLE(CONCAT('[', REPEAT('0,', CHAR_LENGTH(%s) - CHAR_LENGTH(REPLACE(%s, %s, ''))), '0]'), "+
-		"'$[*]' COLUMNS (f4b_n FOR ORDINALITY)) %s", text, text, mariaLF, alias)
+		"'$[*]' COLUMNS (%s FOR ORDINALITY)) %s", text, text, mariaLF, lineNumber, alias)
 }
 
 // mariaLine is the line of a text expression a row of its mariaLineTable
 // alias numbers. It keeps the expression's collation, so a line compares as
 // the whole field would.
 func mariaLine(expr, alias string) string {
-	return fmt.Sprintf("SUBSTRING_INDEX(SUBSTRING_INDEX(%s, %s, %s.f4b_n), %s, -1)", mariaText(expr), mariaLF, alias, mariaLF)
+	return fmt.Sprintf("SUBSTRING_INDEX(SUBSTRING_INDEX(%s, %s, %s.%s), %s, -1)", mariaText(expr), mariaLF, alias, lineNumber, mariaLF)
+}
+
+// mariaPresent is the condition that a line on MariaDB is not empty. It is
+// tested by length: a collation that pads with spaces holds a line of spaces
+// equal to an empty string.
+func mariaPresent(line string) string {
+	return fmt.Sprintf("CHAR_LENGTH(%s) > 0", line)
 }
 
 // anyOf is the condition that expr meets op against one of keys.
@@ -129,14 +165,14 @@ func meetsKeys(dialect dbal.Dialect, column multiKeyColumn, op string, keys func
 			}
 			return fmt.Sprintf("%s && ARRAY[%s]", pgLines(column.sql), strings.Join(list, ", "))
 		}
-		return fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(%s) AS f4b_line(v) WHERE %s)",
-			pgLines(column.sql), anyOf("f4b_line.v", op, keys()))
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(%s) AS %s(%s) WHERE %s)",
+			pgLines(column.sql), lineAlias, lineValue, anyOf(lineAlias+"."+lineValue, op, keys()))
 	}
 	// A field of one line is compared whole, without being split.
-	line := mariaLine(column.sql, "f4b_line")
-	return fmt.Sprintf("(CASE WHEN %s THEN %s ELSE EXISTS (SELECT 1 FROM %s WHERE %s <> '' AND %s) END)",
+	line := mariaLine(column.sql, lineAlias)
+	return fmt.Sprintf("(CASE WHEN %s THEN %s ELSE EXISTS (SELECT 1 FROM %s WHERE %s AND %s) END)",
 		mariaSingleLine(column.sql), anyOf(column.sql, op, keys()),
-		mariaLineTable(column.sql, "f4b_line"), line, anyOf(line, op, keys()))
+		mariaLineTable(column.sql, lineAlias), mariaPresent(line), anyOf(line, op, keys()))
 }
 
 // keysMeet is the condition that the match fields left and right meet op,
@@ -147,21 +183,22 @@ func keysMeet(dialect dbal.Dialect, left multiKeyColumn, op string, right multiK
 	case !left.lines && !right.lines:
 		return fmt.Sprintf("%s %s %s", left.sql, op, right.sql)
 	case !right.lines:
-		return meetsKeys(dialect, left, op, func() []string { return []string{right.sql} })
+		return meetsKeys(dialect, left, op, func() []string { return []string{asKeyText(dialect, right)} })
 	case !left.lines:
-		return meetsKeys(dialect, right, reversed[op], func() []string { return []string{left.sql} })
+		return meetsKeys(dialect, right, reversed[op], func() []string { return []string{asKeyText(dialect, left)} })
 	}
 	if dialect.Engine() == dbal.EnginePostgres {
 		if op == "=" {
 			return fmt.Sprintf("%s && %s", pgLines(left.sql), pgLines(right.sql))
 		}
-		return fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(%s) AS f4b_left(v), unnest(%s) AS f4b_right(v) WHERE f4b_left.v %s f4b_right.v)",
-			pgLines(left.sql), pgLines(right.sql), op)
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM unnest(%s) AS %s(%s), unnest(%s) AS %s(%s) WHERE %s.%s %s %s.%s)",
+			pgLines(left.sql), leftAlias, lineValue, pgLines(right.sql), rightAlias, lineValue,
+			leftAlias, lineValue, op, rightAlias, lineValue)
 	}
-	l, r := mariaLine(left.sql, "f4b_left"), mariaLine(right.sql, "f4b_right")
-	return fmt.Sprintf("(CASE WHEN %s AND %s THEN %s %s %s ELSE EXISTS (SELECT 1 FROM %s, %s WHERE %s <> '' AND %s <> '' AND %s %s %s) END)",
+	l, r := mariaLine(left.sql, leftAlias), mariaLine(right.sql, rightAlias)
+	return fmt.Sprintf("(CASE WHEN %s AND %s THEN %s %s %s ELSE EXISTS (SELECT 1 FROM %s, %s WHERE %s AND %s AND %s %s %s) END)",
 		mariaSingleLine(left.sql), mariaSingleLine(right.sql), left.sql, op, right.sql,
-		mariaLineTable(left.sql, "f4b_left"), mariaLineTable(right.sql, "f4b_right"), l, r, l, op, r)
+		mariaLineTable(left.sql, leftAlias), mariaLineTable(right.sql, rightAlias), mariaPresent(l), mariaPresent(r), l, op, r)
 }
 
 // lineSource is how a statement reads the keys of a text match field one
@@ -173,11 +210,23 @@ func lineSource(dialect dbal.Dialect, column multiKeyColumn, alias string) (from
 		return "", column.sql, ""
 	}
 	if dialect.Engine() == dbal.EnginePostgres {
-		return fmt.Sprintf("CROSS JOIN LATERAL unnest(%s) AS %s(v)", pgLines(column.sql), alias), alias + ".v", ""
+		return fmt.Sprintf("CROSS JOIN LATERAL unnest(%s) AS %s(%s)", pgLines(column.sql), alias, lineValue), alias + "." + lineValue, ""
 	}
 	line := mariaLine(column.sql, alias)
-	return "CROSS JOIN " + mariaLineTable(column.sql, alias), line, line + " <> ''"
+	return "CROSS JOIN " + mariaLineTable(column.sql, alias), line, mariaPresent(line)
 }
+
+// A date or timestamp compared with the lines of a text field is written as
+// text, the same way in Go (keyText) and in SQL (asKeyText): a date as
+// YYYY-MM-DD, as a date field shows it, and a timestamp in UTC as
+// YYYY-MM-DD HH:MM:SS, without its fraction of a second, or as a date alone
+// at midnight exactly. The drivers give a date as a timestamp at midnight
+// UTC, so a value read in Go says no more than that; SQL writes a timestamp
+// column by the same rule, so both sides agree.
+const (
+	keyDateLayout      = "2006-01-02"
+	keyTimestampLayout = "2006-01-02 15:04:05"
+)
 
 // keyText is a key compared with the lines of a text field, as text.
 func keyText(key interface{}) interface{} {
@@ -188,6 +237,35 @@ func keyText(key interface{}) interface{} {
 		return string(k)
 	case nil:
 		return nil
+	case time.Time:
+		k = k.UTC()
+		if k.Equal(k.Truncate(24 * time.Hour)) {
+			return k.Format(keyDateLayout)
+		}
+		return k.Format(keyTimestampLayout)
 	}
 	return fmt.Sprint(key)
+}
+
+// asKeyText is a match field that is not text, compared with the lines of
+// one that is, as text: a date or timestamp as keyText writes one.
+func asKeyText(dialect dbal.Dialect, column multiKeyColumn) string {
+	postgres := dialect.Engine() == dbal.EnginePostgres
+	switch column.kind {
+	case dbal.FieldTypeDate:
+		if postgres {
+			return fmt.Sprintf("to_char(%s, 'YYYY-MM-DD')", column.sql)
+		}
+		return fmt.Sprintf("DATE_FORMAT(%s, '%%Y-%%m-%%d')", column.sql)
+	case dbal.FieldTypeTimestamp:
+		if postgres {
+			utc := fmt.Sprintf("(%s AT TIME ZONE 'UTC')", column.sql)
+			return fmt.Sprintf("CASE WHEN CAST(%s AS TIME) = TIME '00:00' THEN to_char(%s, 'YYYY-MM-DD') ELSE to_char(%s, 'YYYY-MM-DD HH24:MI:SS') END",
+				utc, utc, utc)
+		}
+		// A DATETIME holds the UTC time it was given.
+		return fmt.Sprintf("CASE WHEN TIME(%s) = '00:00:00' THEN DATE_FORMAT(%s, '%%Y-%%m-%%d') ELSE DATE_FORMAT(%s, '%%Y-%%m-%%d %%H:%%i:%%s') END",
+			column.sql, column.sql, column.sql)
+	}
+	return column.sql
 }

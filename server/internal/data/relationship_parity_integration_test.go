@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -347,6 +348,32 @@ func TestRelatedRows_SortedByAnUnstoredCalculation(t *testing.T) {
 	require.ErrorIs(t, err, data.ErrUnstoredField)
 }
 
+// A table found without its creation order column is looked up again once
+// that is no longer believed, so a column another server added is used.
+func TestCreationOrder_ColumnAddedElsewhereIsNoticed(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "xelsewhere", "xelsewhere_unused")
+	a.table(t, ctx, "later", [2]string{"label", "TEXT"})
+	dialect := a.driver.Dialect()
+	_, err := a.driver.DB().ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s",
+		dialect.QuoteIdentifier("later"), dialect.QuoteIdentifier(dbal.CreationOrderColumn)))
+	require.NoError(t, err)
+	data.ForgetCreationOrder(a.driver.DB())
+	has, err := data.HasCreationOrder(ctx, a.driver, "later")
+	require.NoError(t, err)
+	require.False(t, has)
+
+	_, err = a.driver.DB().ExecContext(ctx, dbal.AddCreationOrderSQL(dialect, "later", 0))
+	require.NoError(t, err)
+	has, err = data.HasCreationOrder(ctx, a.driver, "later")
+	require.NoError(t, err)
+	assert.False(t, has, "a table found without the column is believed so for a while")
+
+	defer data.SetMissingCreationOrderTTL(0)()
+	has, err = data.HasCreationOrder(ctx, a.driver, "later")
+	require.NoError(t, err)
+	assert.True(t, has, "and then looked up again, without the catalog upgrade forgetting it")
+}
+
 // A table created before records were numbered in creation order is given
 // the column when its catalog is brought up to date: the records it holds
 // are numbered in the order the engine reads them, the next ones after them.
@@ -371,6 +398,22 @@ func TestCreationOrder_ExistingTableIsUpgraded(t *testing.T) {
 	rows, err := svc.ListRows(ctx, "older", data.QueryOptions{})
 	require.NoError(t, err)
 	require.Len(t, rows, 12, "a table without the column is read, by id")
+	exportedIDs := func() []string {
+		raw, err := a.schema.ExportDatabaseData(ctx, a.name)
+		require.NoError(t, err)
+		var bundle schema.DatabaseDataBundle
+		require.NoError(t, msgpack.Unmarshal(raw, &bundle))
+		var out []string
+		for _, record := range bundle.TablesData["older"] {
+			out = append(out, fmt.Sprint(record["id"]))
+		}
+		return out
+	}
+	var listed []string
+	for _, row := range rows {
+		listed = append(listed, fmt.Sprint(row["id"]))
+	}
+	assert.Equal(t, listed, exportedIDs(), "an export lists them as they are read, so a restore keeps their order")
 
 	require.NoError(t, a.schema.EnsureSystemTables(ctx))
 	has, err = data.HasCreationOrder(ctx, a.driver, "older")
@@ -400,10 +443,198 @@ func TestCreationOrder_ExistingTableIsUpgraded(t *testing.T) {
 	require.NoError(t, err)
 	var bundle schema.DatabaseDataBundle
 	require.NoError(t, msgpack.Unmarshal(raw, &bundle))
-	var exported []string
-	for _, record := range bundle.TablesData["older"] {
-		exported = append(exported, fmt.Sprint(record["id"]))
-	}
-	assert.Equal(t, append(got, fmt.Sprint(newest["id"])), exported)
+	assert.Equal(t, append(got, fmt.Sprint(newest["id"])), exportedIDs())
 	assert.NotContains(t, bundle.TablesData["older"][0], dbal.CreationOrderColumn, "the order is not exported as a field")
+}
+
+// keyedTables are two tables of one solution, "holders" and "keyed", related
+// by holders.<holderKey> = keyed.<keyedKey>, and each record's label.
+type keyedTables struct {
+	svc                 *data.Service
+	rel                 string
+	holders             string // table id
+	holderOcc, keyedOcc string
+}
+
+func newKeyedTables(t *testing.T, prefix string, holderKey, keyedKey [2]string) (context.Context, *keyedTables) {
+	t.Helper()
+	ctx, a, _ := twoSolutions(t, prefix, prefix+"_unused")
+	holders, holderOcc, holderFields := a.table(t, ctx, "holders", holderKey, [2]string{"label", "TEXT"})
+	_, keyedOcc, keyedFields := a.table(t, ctx, "keyed", keyedKey, [2]string{"label", "TEXT"})
+	rel := a.relate(t, ctx, schema.CreateRelationshipInput{Name: "holders_keyed",
+		LeftOccurrenceID: holderOcc, RightOccurrenceID: keyedOcc,
+		Predicates: []schema.RelationshipPredicate{{LeftColumnID: holderFields[holderKey[0]], Operator: "=", RightColumnID: keyedFields[keyedKey[0]]}}})
+	return ctx, &keyedTables{svc: data.NewService(a.driver), rel: rel, holders: holders, holderOcc: holderOcc, keyedOcc: keyedOcc}
+}
+
+func (k *keyedTables) insert(t *testing.T, ctx context.Context, table string, records ...map[string]interface{}) []string {
+	t.Helper()
+	var ids []string
+	for _, record := range records {
+		row, err := k.svc.InsertRow(ctx, table, record)
+		require.NoError(t, err)
+		ids = append(ids, fmt.Sprint(row["id"]))
+	}
+	return ids
+}
+
+// related is what a portal, a batched portal and a find on the related label
+// each give for the holders: the labels related to each, and the holders
+// found by label.
+func (k *keyedTables) related(t *testing.T, ctx context.Context, ids []string) (portal, batch map[string][]string, find func(string) []string) {
+	t.Helper()
+	portal, batch = map[string][]string{}, map[string][]string{}
+	rows, err := k.svc.RelatedRowsBatch(ctx, data.LocalOrigin("holders"), ids, k.rel, "", data.QueryOptions{})
+	require.NoError(t, err)
+	for _, id := range ids {
+		one, err := k.svc.RelatedRows(ctx, "holders", id, k.rel, "", data.QueryOptions{})
+		require.NoError(t, err)
+		portal[id], batch[id] = labelsOf(one), labelsOf(rows[id])
+	}
+	find = func(label string) []string {
+		found, err := k.svc.ExecuteFind(ctx, "holders", []data.FindRequest{
+			{Criteria: []data.FindCriterion{{FieldName: "label", Value: "==" + label, RelationshipID: k.rel}}},
+		}, data.QueryOptions{})
+		require.NoError(t, err)
+		return labelsOf(found)
+	}
+	return portal, batch, find
+}
+
+// The lines a statement splits are named so that no field can be taken for
+// one: a match field named like the splitter's own columns still matches.
+func TestMultiKeys_FieldNamedLikeTheSplitter(t *testing.T) {
+	for _, name := range []string{"f4b_n", "v", "f4b_line"} {
+		t.Run(name, func(t *testing.T) {
+			ctx, k := newKeyedTables(t, "xsplit_"+name, [2]string{"key", "TEXT"}, [2]string{name, "TEXT"})
+			k.insert(t, ctx, "keyed",
+				map[string]interface{}{name: "red\nblue", "label": "k1"},
+				map[string]interface{}{name: "green", "label": "k2"})
+			ids := k.insert(t, ctx, "holders",
+				map[string]interface{}{"key": "blue", "label": "h1"},
+				map[string]interface{}{"key": "green\rred", "label": "h2"})
+			portal, batch, find := k.related(t, ctx, ids)
+			want := map[string][]string{ids[0]: {"k1"}, ids[1]: {"k1", "k2"}}
+			assert.Equal(t, want, portal)
+			assert.Equal(t, want, batch)
+			assert.Equal(t, []string{"h1", "h2"}, find("k1"))
+		})
+	}
+}
+
+// A line is a key when it is not empty, on either side and on either
+// engine: a line of spaces is one, an empty line is none.
+func TestMultiKeys_LineOfSpacesIsAKey(t *testing.T) {
+	ctx, k := newKeyedTables(t, "xspaces", [2]string{"key", "TEXT"}, [2]string{"key", "TEXT"})
+	k.insert(t, ctx, "keyed",
+		map[string]interface{}{"key": "red\r\n  ", "label": "k1"}, // a line of spaces among others
+		map[string]interface{}{"key": "  ", "label": "k2"},        // nothing but spaces
+		map[string]interface{}{"key": "blue\n\n", "label": "k3"})  // empty lines, which are no keys
+	ids := k.insert(t, ctx, "holders",
+		map[string]interface{}{"key": "  ", "label": "h1"},
+		map[string]interface{}{"key": "blue\n  ", "label": "h2"},
+		map[string]interface{}{"key": "\n\n", "label": "h3"})
+	portal, batch, find := k.related(t, ctx, ids)
+	want := map[string][]string{ids[0]: {"k1", "k2"}, ids[1]: {"k1", "k2", "k3"}, ids[2]: {}}
+	assert.Equal(t, want, portal, "a portal splits the record in hand's keys in Go")
+	assert.Equal(t, want, batch)
+	assert.Equal(t, []string{"h1", "h2"}, find("k2"), "a find splits both sides in SQL")
+	assert.Equal(t, []string{"h2"}, find("k3"))
+}
+
+// A date or a timestamp meets the lines of a text field written as an ISO
+// date (and time, in UTC), the same way whether the record in hand's key is
+// read in Go or the two fields meet in SQL.
+func TestMultiKeys_DatesAgainstLines(t *testing.T) {
+	t.Run("date", func(t *testing.T) {
+		ctx, k := newKeyedTables(t, "xdatekeys", [2]string{"day", "DATE"}, [2]string{"days", "TEXT"})
+		k.insert(t, ctx, "keyed",
+			map[string]interface{}{"days": "2026-03-01\n2026-03-05", "label": "k1"},
+			map[string]interface{}{"days": "2026-03-05", "label": "k2"},
+			map[string]interface{}{"days": "05/03/2026", "label": "k3"}) // no other format
+		ids := k.insert(t, ctx, "holders",
+			map[string]interface{}{"day": "2026-03-05", "label": "h1"},
+			map[string]interface{}{"day": "2026-03-01", "label": "h2"})
+		portal, batch, find := k.related(t, ctx, ids)
+		want := map[string][]string{ids[0]: {"k1", "k2"}, ids[1]: {"k1"}}
+		assert.Equal(t, want, portal)
+		assert.Equal(t, want, batch)
+		assert.Equal(t, []string{"h1", "h2"}, find("k1"))
+		assert.Equal(t, []string{"h1"}, find("k2"))
+	})
+	t.Run("timestamp", func(t *testing.T) {
+		ctx, k := newKeyedTables(t, "xstampkeys", [2]string{"at", "TIMESTAMP"}, [2]string{"ats", "TEXT"})
+		k.insert(t, ctx, "keyed",
+			map[string]interface{}{"ats": "2026-03-05 10:30:00\n2026-03-06", "label": "k1"},
+			map[string]interface{}{"ats": "2026-03-06 00:00:00", "label": "k2"}) // midnight is a date alone
+		ids := k.insert(t, ctx, "holders",
+			map[string]interface{}{"at": time.Date(2026, 3, 5, 10, 30, 0, 0, time.UTC), "label": "h1"},
+			map[string]interface{}{"at": time.Date(2026, 3, 6, 0, 0, 0, 0, time.UTC), "label": "h2"})
+		portal, batch, find := k.related(t, ctx, ids)
+		want := map[string][]string{ids[0]: {"k1"}, ids[1]: {"k1"}}
+		assert.Equal(t, want, portal)
+		assert.Equal(t, want, batch)
+		assert.Equal(t, []string{"h1", "h2"}, find("k1"))
+		assert.Empty(t, find("k2"))
+	})
+}
+
+// Across several relationships, the records reached are listed all
+// together, in the last relationship's sort order and then in the order they
+// were created, not the related records of each record on the way one after
+// the other: List, First and GetNthRecord read that order.
+func TestCreationOrder_AcrossSeveralRelationships(t *testing.T) {
+	for _, sorted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("sorted=%t", sorted), func(t *testing.T) {
+			ctx, a, _ := twoSolutions(t, fmt.Sprintf("xpath%t", sorted), fmt.Sprintf("xpath%t_unused", sorted))
+			groups, groupsOcc, groupFields := a.table(t, ctx, "groups", [2]string{"code", "TEXT"})
+			_, membersOcc, memberFields := a.table(t, ctx, "members", [2]string{"code", "TEXT"}, [2]string{"key", "TEXT"})
+			_, itemsOcc, itemFields := a.table(t, ctx, "items", [2]string{"key", "TEXT"}, [2]string{"label", "TEXT"},
+				[2]string{"rank", "NUMBER"})
+			a.relate(t, ctx, schema.CreateRelationshipInput{Name: "groups_members",
+				LeftOccurrenceID: groupsOcc, RightOccurrenceID: membersOcc,
+				Predicates: []schema.RelationshipPredicate{{LeftColumnID: groupFields["code"], Operator: "=", RightColumnID: memberFields["code"]}}})
+			var sort *string
+			if sorted {
+				s := "rank"
+				sort = &s
+			}
+			a.relate(t, ctx, schema.CreateRelationshipInput{Name: "members_items", SortRelated: sort,
+				LeftOccurrenceID: membersOcc, RightOccurrenceID: itemsOcc,
+				Predicates: []schema.RelationshipPredicate{{LeftColumnID: memberFields["key"], Operator: "=", RightColumnID: itemFields["key"]}}})
+			for name, formula := range map[string]string{
+				"listed": "List ( items::label )", "first": "items::label", "third": "GetNthRecord ( items::label ; 3 )",
+			} {
+				a.unstored(t, ctx, groups, name, formula, "Text")
+			}
+			svc := data.NewService(a.driver)
+			insert := func(table string, record map[string]interface{}) {
+				_, err := svc.InsertRow(ctx, table, record)
+				require.NoError(t, err)
+			}
+			insert("members", map[string]interface{}{"code": "g", "key": "ma"})
+			insert("members", map[string]interface{}{"code": "g", "key": "mb"})
+			// Created alternately for the second member and the first; rank
+			// sorts them the other way round, ties kept in creation order.
+			for i, item := range []struct {
+				key  string
+				rank int
+			}{{"mb", 4}, {"ma", 3}, {"mb", 2}, {"ma", 2}} {
+				insert("items", map[string]interface{}{"key": item.key, "label": fmt.Sprintf("i%d", i+1), "rank": item.rank})
+			}
+			row, err := svc.InsertRow(ctx, "groups", map[string]interface{}{"code": "g"})
+			require.NoError(t, err)
+			row, err = svc.GetRow(ctx, "groups", fmt.Sprint(row["id"]))
+			require.NoError(t, err)
+			if sorted {
+				assert.Equal(t, "i3\ri4\ri2\ri1", row["listed"])
+				assert.Equal(t, "i3", row["first"])
+				assert.Equal(t, "i2", row["third"])
+			} else {
+				assert.Equal(t, "i1\ri2\ri3\ri4", row["listed"])
+				assert.Equal(t, "i1", row["first"])
+				assert.Equal(t, "i3", row["third"])
+			}
+		})
+	}
 }

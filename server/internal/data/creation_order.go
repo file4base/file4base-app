@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 )
@@ -25,9 +26,23 @@ import (
 // brought up to date (schema.EnsureSystemTables). Until then its records are
 // ordered by id, as before: a read never alters a table.
 
-// knownCreationOrder keeps, by connection pool and table, whether the table
-// has its creation order column, once it was looked up.
+// createdKey is where a record read across a path of relationships holds
+// the number it was created with, or its id in a table not numbered yet, so
+// the records the path reaches can be ordered all together. It holds a $, so
+// no field has that name.
+const createdKey = "f4b$created"
+
+// knownCreationOrder keeps, by connection pool and table, what was found of
+// the table's creation order column: true once the table has it, which it
+// keeps, or the time it was found without it. That is only believed for
+// missingCreationOrderTTL, as the column may be added at any
+// time: by this server's next catalog upgrade, which forgets what it knew
+// (ForgetCreationOrder), or by another server sharing the database.
 var knownCreationOrder sync.Map
+
+// missingCreationOrderTTL is how long a table found without its creation
+// order column is taken not to have it before it is looked up again.
+var missingCreationOrderTTL = 30 * time.Second
 
 type creationOrderKey struct {
 	db    *sql.DB
@@ -49,7 +64,9 @@ func ForgetCreationOrder(db *sql.DB) {
 func HasCreationOrder(ctx context.Context, driver dbal.DatabaseDriver, tableName string) (bool, error) {
 	key := creationOrderKey{driver.DB(), tableName}
 	if known, ok := knownCreationOrder.Load(key); ok {
-		return known.(bool), nil
+		if found, missing := known.(time.Time); !missing || time.Since(found) < missingCreationOrderTTL {
+			return !missing, nil
+		}
 	}
 	dialect := driver.Dialect()
 	schema := "current_schema()"
@@ -63,9 +80,12 @@ func HasCreationOrder(ctx context.Context, driver dbal.DatabaseDriver, tableName
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
-	has := err == nil
-	knownCreationOrder.Store(key, has)
-	return has, nil
+	if err == nil {
+		knownCreationOrder.Store(key, true)
+		return true, nil
+	}
+	knownCreationOrder.Store(key, time.Now())
+	return false, nil
 }
 
 // creationOrder is the column a table's records are ordered by when nothing
