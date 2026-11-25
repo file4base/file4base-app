@@ -26,6 +26,11 @@ is found on and sorted by exactly like any other field.
 
 A value sent for a calculation field is ignored: the formula owns it.
 
+A formula can also be a field's *auto-enter calculated value*, which enters a
+value the field then keeps as data; [Auto-Enter Field Options](auto_enter_options.md)
+says when it is evaluated. There, and in unstored calculations,
+`Get ( AccountName )` and `Get ( UserName )` answer the account writing.
+
 ## Unstored calculations and related fields
 
 A calculation saved with `"stored": false` (Field Options: *Store the result*
@@ -256,6 +261,7 @@ and the families around them:
 | Family | Functions |
 | --- | --- |
 | Logical | `If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `IsValidExpression`, `Evaluate`, `GetField`, `Get ( … )`, `GetNthRecord` (related fields) |
+| Fields | `GetNextSerialValue` (auto-enter and unstored calculations, the Data Viewer; see [Auto-Enter Field Options](auto_enter_options.md#6-scripts-and-functions)) |
 | Text | `Left`, `Right`, `Middle`, `Length`, `Position`, `PatternCount`, `Substitute`, `Replace`, `Filter`, `Trim`, `TrimAll`, `Upper`, `Lower`, `Proper`, `Exact`, `Quote`, `Char`, `Code`, `SerialIncrement`, `LeftWords`, `MiddleWords`, `RightWords`, `WordCount` |
 | Lists | `List`, `ValueCount`, `GetValue`, `LeftValues`, `MiddleValues`, `RightValues`, `FilterValues`, `UniqueValues`, `SortValues` |
 | Numbers | `Abs`, `Int`, `Floor`, `Ceiling`, `Round`, `Truncate`, `Mod`, `Div`, `Sign`, `Sqrt`, `Exp`, `Ln`, `Log`, `Lg`, `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Degrees`, `Radians`, `Pi`, `Random`, `SetPrecision` |
