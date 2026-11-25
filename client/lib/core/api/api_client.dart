@@ -2576,6 +2576,34 @@ class ApiClient {
   /// Most records [listRelatedRowsBatch] reads at once.
   static const maxRelatedBatch = 100;
 
+  /// For each of [ids], records of [table] seen from the occurrence
+  /// [context] (a layout's), the first record of the last occurrence of
+  /// [path] related to it, each occurrence of [path] reached from the one
+  /// before: what a field several relationships away from a layout shows.
+  /// A record with nothing related has null.
+  Future<Map<String, Map<String, dynamic>?>> firstRelatedAlong(
+    String table,
+    List<String> ids, {
+    required List<String> path,
+    String? context,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('${_records(table)}/related-first'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (context != null && context.isNotEmpty) 'context': context,
+        'path': path,
+        'record_ids': ids,
+      }),
+    );
+    _checkResponse(response);
+    final records = (jsonDecode(response.body) as Map<String, dynamic>)['records'] as Map<String, dynamic>? ?? const {};
+    return {
+      for (final e in records.entries)
+        e.key: e.value is Map ? Map<String, dynamic>.from(e.value as Map) : null,
+    };
+  }
+
   /// [listRelatedRows] for several records of [table] in one request: what a
   /// list showing a related field needs, without a request per record. Every
   /// record asked for has an entry, empty when nothing is related to it.

@@ -6107,6 +6107,58 @@
         }
       }
     },
+    "/api/v1/data/{table}/related-first": {
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "First record at the end of an occurrence path, for several records",
+        "description": "What a layout field of an occurrence several relationships away shows: for each record, the first record of the last occurrence of path related to it, each occurrence reached from the one before, starting from context (the layout's occurrence).",
+        "parameters": [
+          {
+            "name": "table",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["path", "record_ids"],
+                "properties": {
+                  "context": { "type": "string", "description": "Occurrence (id or name) the records are seen from. Absent: the table's own occurrence." },
+                  "path": { "type": "array", "items": { "type": "string" }, "description": "Occurrence names, the first one relationship away from context." },
+                  "record_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{\"records\": {id: record or null}}"
+          },
+          "400": {
+            "description": "Missing path, an unknown occurrence, or two occurrences of the path no relationship joins"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "description": "More than 100 records"
+          }
+        }
+      }
+    },
     "/api/v1/occurrences/{occurrence}/records": {
       "parameters": [
         {

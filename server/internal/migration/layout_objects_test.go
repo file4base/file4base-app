@@ -46,6 +46,7 @@ const layoutObjectsFixture = `<?xml version="1.0" encoding="UTF-8"?>
         <Table id="1" name="Recipes" baseTable="Recipes" baseTableId="1"/>
         <Table id="2" name="Ingredients" baseTable="Ingredients" baseTableId="2"/>
         <Table id="3" name="Loose Ingredients" baseTable="Ingredients" baseTableId="2"/>
+        <Table id="4" name="Ingredient Recipes" baseTable="Recipes" baseTableId="1"/>
       </TableList>
       <RelationshipList>
         <Relationship id="1" name="Recipes_Ingredients">
@@ -55,6 +56,16 @@ const layoutObjectsFixture = `<?xml version="1.0" encoding="UTF-8"?>
             <JoinPredicate type="Equal">
               <LeftField><Field name="Title" table="Recipes"/></LeftField>
               <RightField><Field name="RecipeTitle" table="Ingredients"/></RightField>
+            </JoinPredicate>
+          </JoinPredicateList>
+        </Relationship>
+        <Relationship id="2" name="Ingredients_Recipes">
+          <LeftTable name="Ingredients"/>
+          <RightTable name="Ingredient Recipes"/>
+          <JoinPredicateList>
+            <JoinPredicate type="Equal">
+              <LeftField><Field name="RecipeTitle" table="Ingredients"/></LeftField>
+              <RightField><Field name="Title" table="Ingredient Recipes"/></RightField>
             </JoinPredicate>
           </JoinPredicateList>
         </Relationship>
@@ -156,6 +167,14 @@ rectangle:normal .self { background-color: rgba(0%,0%,0%,0.5); }
                 <Bounds top="200" left="20" bottom="220" right="200"/>
                 <Field>
                   <FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Loose Ingredients" id="3"/></FieldReference>
+                  <Display Style="0" show="1"/>
+                </Field>
+              </LayoutObject>
+              <LayoutObject type="Edit Box">
+                <UUID>00000000-0000-0000-0000-000000000031</UUID>
+                <Bounds top="200" left="220" bottom="220" right="320"/>
+                <Field>
+                  <FieldReference name="Price" id="2"><TableOccurrenceReference name="Ingredient Recipes" id="4"/></FieldReference>
                   <Display Style="0" show="1"/>
                 </Field>
               </LayoutObject>
@@ -285,7 +304,7 @@ func TestNativeLayoutPartsAndGeometry(t *testing.T) {
 	// Grouped objects are kept one by one, at their own place; a hover state
 	// does not leak into the normal style.
 	fields := byType["field"]
-	if len(fields) != 5 {
+	if len(fields) != 6 {
 		t.Fatalf("fields: %d", len(fields))
 	}
 	price := fields[0]
@@ -319,6 +338,11 @@ func TestNativeLayoutPartsAndGeometry(t *testing.T) {
 	loose := fields[4]["field_binding"].(map[string]interface{})
 	if loose["unresolved_relationship"] != true || loose["relationship_id"] != nil {
 		t.Fatalf("a field no relationship reaches must say so: %v", loose)
+	}
+	far := fields[5]["field_binding"].(map[string]interface{})
+	if path, _ := far["occurrence_path"].([]interface{}); len(path) != 2 || path[0] != "Ingredients" || path[1] != "Ingredient Recipes" ||
+		far["relationship_id"] != nil || far["unresolved_relationship"] != nil || far["field_name"] != "price" {
+		t.Fatalf("a field two relationships away is read along its path: %v", far)
 	}
 
 	rect := byType["rect"][0]
@@ -368,7 +392,7 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 			t.Fatalf("%s: %+v, want %d/%d", kind, c, source, migrated)
 		}
 	}
-	check("Edit Box", 3, 3)
+	check("Edit Box", 4, 4)
 	check("Text", 1, 1)
 	check("Oval", 1, 0)
 	check("Rounded Rectangle", 1, 1)
@@ -390,7 +414,7 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 			}
 		case CategoryManualActionRequired:
 			review++
-			if !strings.Contains(it.Detail, "1 field read through more than one relationship") ||
+			if !strings.Contains(it.Detail, "1 field of an occurrence no relationship joins") ||
 				!strings.Contains(it.Detail, "1 merge field") {
 				t.Fatalf("review detail: %s", it.Detail)
 			}
@@ -454,6 +478,7 @@ func TestNativeLayoutValueListSurvivesImport(t *testing.T) {
 		`name="Ingredients"`, `name="Ingredients`+suffix+`"`, `baseTable="Ingredients"`, `baseTable="Ingredients`+suffix+`"`,
 		`table="Ingredients"`, `table="Ingredients`+suffix+`"`,
 		`name="Loose Ingredients"`, `name="Loose Ingredients`+suffix+`"`,
+		`name="Ingredient Recipes"`, `name="Ingredient Recipes`+suffix+`"`, `table="Ingredient Recipes"`, `table="Ingredient Recipes`+suffix+`"`,
 		`name="Units"`, `name="Units`+suffix+`"`, `name="Recipe Card"`, `name="Recipe Card`+suffix+`"`,
 	).Replace(layoutObjectsFixture)
 	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})

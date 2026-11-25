@@ -46,10 +46,12 @@ type layoutObjectContext struct {
 	binding       formulaBinding
 	valueLists    map[string]string // lower-cased name -> value list id
 	relationships []schema.BundleRelationship
-	library       map[string]*xmlNode // library reference id -> <BinaryData>
-	themes        map[string]*fmTheme // theme name -> its CSS
-	defaultTheme  *fmTheme            // for a layout that names no theme
-	dateOrder     string              // dmy, mdy or iso: how the file writes dates; empty when unknown
+	library       map[string]*xmlNode    // library reference id -> <BinaryData>
+	themes        map[string]*fmTheme    // theme name -> its CSS
+	defaultTheme  *fmTheme               // for a layout that names no theme
+	dateOrder     string                 // dmy, mdy or iso: how the file writes dates; empty when unknown
+	edges         map[string][][2]string // occurrence id -> {occurrence joined, relationship}
+	occNames      map[string]string      // occurrence id -> name
 
 	counts map[string]*LayoutObjectCount
 	media  map[string]map[string]interface{}
@@ -65,6 +67,10 @@ func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, bindin
 		dateOrder:     dateOrder,
 		counts:        map[string]*LayoutObjectCount{},
 		media:         map[string]map[string]interface{}{},
+		occNames:      map[string]string{},
+	}
+	for _, occ := range bundle.TableOccurrences {
+		ctx.occNames[occ.ID] = occ.Name
 	}
 	for _, vl := range bundle.ValueLists {
 		key := strings.ToLower(vl.Name)
@@ -189,6 +195,7 @@ type nativeLayout struct {
 	frontPanels  int            // tab and slide controls shown by their front panel only
 	hideUnbound  int
 	unreachable  int
+	alongPath    int
 	missingField int
 	noImage      int
 	vectorImage  int
@@ -606,14 +613,40 @@ func (l *nativeLayout) column(ref *xmlNode) (column string, occ boundOccurrence,
 	return column, o, ok
 }
 
-// relationshipBetween is the relationship joining two occurrences directly.
-func (l *nativeLayout) relationshipBetween(a, b string) string {
-	for _, r := range l.ctx.relationships {
-		if (r.LeftOccurrenceID == a && r.RightOccurrenceID == b) || (r.LeftOccurrenceID == b && r.RightOccurrenceID == a) {
-			return r.ID
+// occurrencePath is the chain of occurrences FileMaker follows from the
+// occurrence from to the occurrence to, to included, and the relationship
+// of each step. FileMaker's graph has no cycle, so there is one at most:
+// one step to an occurrence joined to the layout's, more in an anchor–buoy
+// graph. Nil when nothing joins them.
+func (c *layoutObjectContext) occurrencePath(from, to string) (occurrences, relationships []string) {
+	if c.edges == nil {
+		c.edges = map[string][][2]string{}
+		for _, r := range c.relationships {
+			c.edges[r.LeftOccurrenceID] = append(c.edges[r.LeftOccurrenceID], [2]string{r.RightOccurrenceID, r.ID})
+			c.edges[r.RightOccurrenceID] = append(c.edges[r.RightOccurrenceID], [2]string{r.LeftOccurrenceID, r.ID})
 		}
 	}
-	return ""
+	prev := map[string][2]string{from: {}}
+	queue := []string{from}
+	for len(queue) > 0 && from != to {
+		at := queue[0]
+		queue = queue[1:]
+		for _, e := range c.edges[at] {
+			if _, seen := prev[e[0]]; seen {
+				continue
+			}
+			prev[e[0]] = [2]string{at, e[1]}
+			if e[0] == to {
+				for id := to; id != from; id = prev[id][0] {
+					occurrences = append([]string{id}, occurrences...)
+					relationships = append([]string{prev[id][1]}, relationships...)
+				}
+				return occurrences, relationships
+			}
+			queue = append(queue, e[0])
+		}
+	}
+	return nil, nil
 }
 
 func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface{}) bool {
@@ -641,11 +674,21 @@ func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface
 		binding["table_occurrence"] = occ.name
 	}
 	if ok && occ.id != l.occID {
-		if rel := l.relationshipBetween(l.occID, occ.id); rel != "" {
-			binding["relationship_id"] = rel
-		} else {
-			// FileMaker follows several relationships to get there;
-			// File4Base reads related fields through one.
+		occurrences, relationships := l.ctx.occurrencePath(l.occID, occ.id)
+		switch {
+		case len(relationships) == 1:
+			binding["relationship_id"] = relationships[0]
+		case len(occurrences) > 1:
+			// Several relationships away: the first record at the end of
+			// the chain is shown, as FileMaker shows it.
+			path := make([]interface{}, len(occurrences))
+			for i, id := range occurrences {
+				path[i] = l.ctx.occNames[id]
+			}
+			binding["occurrence_path"] = path
+			l.alongPath++
+		default:
+			// Nothing joins them: FileMaker shows <Unrelated Table>.
 			l.unreachable++
 			binding["unresolved_relationship"] = true
 		}
@@ -908,7 +951,7 @@ func (l *nativeLayout) report() []ReportItem {
 		review = append(review, plural(l.hideUnbound, "object")+" with a \"Hide object when\" calculation that could not be bound to the imported fields, so always shown")
 	}
 	if l.unreachable > 0 {
-		review = append(review, plural(l.unreachable, "field")+" read through more than one relationship, shown as unavailable")
+		review = append(review, plural(l.unreachable, "field")+" of an occurrence no relationship joins to the layout's, shown as unavailable")
 	}
 	if l.missingField > 0 {
 		review = append(review, plural(l.missingField, "field object")+" showing a field that is not in the imported tables")

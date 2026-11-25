@@ -48,6 +48,7 @@ func (h *DataHandler) RegisterRoutes(r chi.Router) {
 		r.With(RequireCapability(schema.CapabilityBulkImport)).Post("/import", h.ImportRows)
 		r.With(RequireCapability(schema.CapabilityBulkExport)).Post("/export", h.ExportRows)
 		r.Post("/related", h.ListRelatedRowsBatch)
+		r.Post("/related-first", h.FirstRelatedAlong)
 		r.Post("/relookup", h.RelookupRows)
 		r.Get("/serials/{field}", h.GetNextSerialValue)
 		r.Put("/serials/{field}", h.SetNextSerialValue)
@@ -1008,6 +1009,59 @@ func (h *DataHandler) listRelatedBatch(w http.ResponseWriter, r *http.Request, s
 	}
 	records, err := svc.RelatedRowsBatch(r.Context(), from, body.RecordIDs, body.Relationship, body.Occurrence,
 		data.QueryOptions{Limit: body.Limit, Offset: body.Offset, Sort: body.Sort, End: end})
+	if err != nil {
+		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"records": records})
+}
+
+// RelatedPathBody asks for the first record related to each of several
+// records across a chain of occurrences.
+type RelatedPathBody struct {
+	// Context is the occurrence the records are seen from: the layout's.
+	Context string `json:"context"`
+	// Path names the occurrences reached in turn, the last being the one
+	// whose record is wanted.
+	Path      []string `json:"path"`
+	RecordIDs []string `json:"record_ids"`
+}
+
+// FirstRelatedAlong returns, for each record named, the first record of the
+// last occurrence of a path related to it: what a field of an occurrence
+// several relationships away from a layout's shows (#26).
+//
+//	POST /api/v1/data/{table}/related-first
+//
+// The answer is {"records": {"<record id>": record or null}}. Every table on
+// the path must be readable; the record given is edited as any record of its
+// table is.
+func (h *DataHandler) FirstRelatedAlong(w http.ResponseWriter, r *http.Request) {
+	table := requestTable(r)
+	svc, ok := h.authorize(w, r, table, false)
+	if !ok {
+		return
+	}
+	var body RelatedPathBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if len(body.Path) == 0 {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Missing Path",
+			"the occurrences to follow must be given as \"path\"")
+		return
+	}
+	if len(body.RecordIDs) > data.MaxRelatedBatch {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Batch Too Large", data.ErrBatchTooLarge.Error())
+		return
+	}
+	records, err := svc.FirstRelatedAlong(r.Context(), table, body.Context, body.Path, body.RecordIDs)
+	if errors.Is(err, data.ErrNoAccess) {
+		writeForbidden(w, r, "you do not have access to a table on the way: "+err.Error())
+		return
+	}
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
 		return

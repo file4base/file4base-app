@@ -299,7 +299,12 @@
             "unresolved_relationship": {
               "type": "boolean",
               "default": false,
-              "description": "Set by a migration for a related field FileMaker read through more than one relationship. File4Base follows one, so the field is shown as unreachable until a relationship is chosen."
+              "description": "Set by a migration for a field of an occurrence no relationship joins to the layout's (FileMaker shows <Unrelated Table>): shown as unreachable until a relationship is chosen."
+            },
+            "occurrence_path": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Set by a migration for a field of an occurrence several relationships away from the layout's (anchor-buoy graphs): the occurrences reached in turn, the first one relationship away, the last being table_occurrence. The first related record at the end of the chain is shown. Ignored when relationship_id is set."
             },
             "missing": {
               "type": "boolean",

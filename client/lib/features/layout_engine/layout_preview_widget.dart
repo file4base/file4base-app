@@ -73,7 +73,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     super.initState();
     widget.onAttach?.call(this);
     unawaited(_fetchRecords());
-    if (widget.layout.objects.any((o) => o.fieldBinding?.isRelated ?? false)) unawaited(_loadRelationshipGraph());
+    if (widget.layout.objects.any((o) => o.fieldBinding?.readsRelated ?? false)) unawaited(_loadRelationshipGraph());
     _initKioskCountdown();
   }
 
@@ -113,6 +113,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       tablesById: _tablesById,
       formatValue: DataBrowserWidgetState.fieldText,
       batched: true,
+      layoutOccurrence: widget.layout.tableOccurrence,
     );
   }
 
@@ -728,7 +729,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         final binding = obj.fieldBinding;
         final unreadable = layoutFieldUnreadableNotice(binding);
         if (unreadable != null) return _fieldNotice(obj, unreadable);
-        if (binding != null && binding.isRelated) {
+        if (binding != null && binding.readsRelated) {
           final related = _relatedFor(record);
           if (related == null || related.recordId == null) return _fieldNotice(obj, '<${binding.qualifiedName}>');
           return RelatedFieldView(

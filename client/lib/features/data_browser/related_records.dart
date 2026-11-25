@@ -92,8 +92,14 @@ class RelatedContext {
     required this.formatValue,
     this.fromDatabase,
     this.batched = false,
+    this.layoutOccurrence,
   });
   final ApiClient apiClient;
+
+  /// The occurrence the layout is on (its id or name): where a field read
+  /// along several relationships starts from. Null reads from the table's
+  /// own occurrence.
+  final String? layoutOccurrence;
 
   /// Physical name of the table the layout is on.
   final String fromTable;
@@ -148,7 +154,31 @@ class RelatedContext {
         tablesById: tablesById,
         formatValue: formatValue,
         batched: batched,
+        layoutOccurrence: layoutOccurrence,
       );
+
+  /// The occurrence a field along [path] is read from, the last one, with
+  /// its table; null when it is not in the catalog, or is another
+  /// solution's, which a path is not followed into yet.
+  ({TableOccurrenceModel occurrence, TableModel table})? endOfPath(List<String> path) {
+    if (path.isEmpty) return null;
+    final name = path.last.toLowerCase();
+    final occurrence = occurrencesById.values.where((o) => o.name.toLowerCase() == name || o.id == path.last).firstOrNull;
+    if (occurrence == null || occurrence.isExternal) return null;
+    final table = tablesById[occurrence.baseTableId];
+    return table == null ? null : (occurrence: occurrence, table: table);
+  }
+
+  /// The first record at the end of [path] related to the record in hand,
+  /// or null. Read with those of the other records of a list when
+  /// [batched].
+  Future<Map<String, dynamic>?> firstAlong(List<String> path) {
+    final recordId = this.recordId!;
+    if (batched) return RelatedBatcher.of(apiClient).firstAlong(fromTable, recordId, layoutOccurrence, path);
+    return apiClient
+        .firstRelatedAlong(fromTable, [recordId], path: path, context: layoutOccurrence)
+        .then((records) => records[recordId]);
+  }
 
   /// The related records of the record in hand that [target] shows, at most
   /// [limit].
@@ -254,12 +284,22 @@ class RelatedBatcher {
 
   final ApiClient apiClient;
   final Map<_BatchKey, Map<String, Completer<List<Map<String, dynamic>>>>> _pending = {};
+  final Map<({String table, String context, String path}), Map<String, Completer<Map<String, dynamic>?>>> _pendingAlong = {};
+
+  /// The first record at the end of [path] related to [recordId], read with
+  /// the others asked for while the list is drawn.
+  Future<Map<String, dynamic>?> firstAlong(String table, String recordId, String? context, List<String> path) {
+    if (_pending.isEmpty && _pendingAlong.isEmpty) scheduleMicrotask(() => unawaited(_flush()));
+    final key = (table: table, context: context ?? '', path: path.join('\u0000'));
+    final waiting = _pendingAlong.putIfAbsent(key, () => {});
+    return waiting.putIfAbsent(recordId, Completer.new).future;
+  }
 
   /// At most [limit] related records of [recordId] that [target] shows, in
   /// the order [sort] gives (the relationship's own when empty).
   Future<List<Map<String, dynamic>>> rows(String table, String recordId, RelatedTarget target,
       {List<String>? sort, int limit = 100}) {
-    if (_pending.isEmpty) scheduleMicrotask(() => unawaited(_flush()));
+    if (_pending.isEmpty && _pendingAlong.isEmpty) scheduleMicrotask(() => unawaited(_flush()));
     final key = (
       table: table,
       relationship: target.relationship.id,
@@ -275,6 +315,25 @@ class RelatedBatcher {
   Future<void> _flush() async {
     final batches = Map.of(_pending);
     _pending.clear();
+    final along = Map.of(_pendingAlong);
+    _pendingAlong.clear();
+    for (final MapEntry(:key, value: waiting) in along.entries) {
+      final ids = waiting.keys.toList();
+      for (var start = 0; start < ids.length; start += ApiClient.maxRelatedBatch) {
+        final chunk = ids.sublist(start, (start + ApiClient.maxRelatedBatch).clamp(0, ids.length));
+        try {
+          final records = await apiClient.firstRelatedAlong(key.table, chunk,
+              path: key.path.split('\u0000'), context: key.context);
+          for (final id in chunk) {
+            waiting[id]!.complete(records[id]);
+          }
+        } catch (e, st) {
+          for (final id in chunk) {
+            waiting[id]!.completeError(e, st);
+          }
+        }
+      }
+    }
     for (final MapEntry(:key, value: waiting) in batches.entries) {
       final ids = waiting.keys.toList();
       for (var start = 0; start < ids.length; start += ApiClient.maxRelatedBatch) {
@@ -336,10 +395,15 @@ class RelatedFieldView extends StatefulWidget {
 
   const RelatedFieldView({
     required this.object, required this.related, required this.isDark, super.key,
+    this.editable = false,
   });
   final LayoutObjectModel object;
   final RelatedContext related;
   final bool isDark;
+
+  /// Whether a field several relationships away may be typed into: what it
+  /// writes is the first record at the end of the chain, the one shown.
+  final bool editable;
 
   @override
   State<RelatedFieldView> createState() => _RelatedFieldViewState();
@@ -361,17 +425,54 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
 
   ExternalAccess get _access => ExternalAccess.of(widget.related.apiClient);
 
+  /// What is typed into a field along a path, and what it held when read.
+  final TextEditingController _edit = TextEditingController();
+  final FocusNode _editFocus = FocusNode();
+  String _editShown = '';
+  bool _saving = false;
+
   @override
   void initState() {
     super.initState();
     _access.addListener(_reload);
+    _editFocus.addListener(() {
+      if (!_editFocus.hasFocus) unawaited(_saveAlongPath());
+    });
     unawaited(_load());
   }
 
   @override
   void dispose() {
     _access.removeListener(_reload);
+    _edit.dispose();
+    _editFocus.dispose();
     super.dispose();
+  }
+
+  /// Writes what was typed to the first record at the end of the path.
+  Future<void> _saveAlongPath() async {
+    final binding = widget.object.fieldBinding;
+    final row = _row;
+    final end = binding == null ? null : widget.related.endOfPath(binding.occurrencePath);
+    final col = end?.table.columns.where((c) => c.name.toLowerCase() == binding!.fieldName.toLowerCase()).firstOrNull;
+    final id = row?['id']?.toString();
+    if (_saving || end == null || col == null || id == null || _edit.text == _editShown) return;
+    _saving = true;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    try {
+      final saved = await widget.related.apiClient.updateRow(end.table.name, id, {col.name: _edit.text});
+      if (!mounted) return;
+      setState(() {
+        _row = {...row!, ...saved};
+        _editShown = _edit.text;
+      });
+    } on Exception catch (e) {
+      if (!mounted) return;
+      _edit.text = _editShown;
+      messenger?.showSnackBar(SnackBar(content: Text('${binding!.qualifiedName} was not saved: $e')));
+    } finally {
+      _saving = false;
+    }
   }
 
   void _reload() => unawaited(_load());
@@ -384,7 +485,9 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
         old.object.id != widget.object.id ||
         old.object.fieldBinding?.relationshipId != widget.object.fieldBinding?.relationshipId ||
         old.object.fieldBinding?.tableOccurrence != widget.object.fieldBinding?.tableOccurrence ||
-        old.object.fieldBinding?.relationshipSide != widget.object.fieldBinding?.relationshipSide) {
+        old.object.fieldBinding?.relationshipSide != widget.object.fieldBinding?.relationshipSide ||
+        old.related.layoutOccurrence != widget.related.layoutOccurrence ||
+        old.object.fieldBinding?.occurrencePath.join('/') != widget.object.fieldBinding?.occurrencePath.join('/')) {
       unawaited(_load());
     }
   }
@@ -396,6 +499,33 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     final recordId = widget.related.recordId;
     if (binding == null || recordId == null) {
       setState(() => _row = null);
+      return;
+    }
+    if (binding.isAlongPath) {
+      if (widget.related.endOfPath(binding.occurrencePath) == null) {
+        setState(() => _row = null);
+        return;
+      }
+      setState(() {
+        _loading = true;
+        _failed = false;
+        _problem = null;
+      });
+      try {
+        final row = await widget.related.firstAlong(binding.occurrencePath);
+        if (stale()) return;
+        setState(() {
+          _row = row;
+          _loading = false;
+        });
+      } on Exception catch (_) {
+        if (stale()) return;
+        setState(() {
+          _row = null;
+          _loading = false;
+          _failed = true;
+        });
+      }
       return;
     }
     final target = widget.related.resolve(binding.relationshipId, binding.tableOccurrence, side: binding.relationshipSide);
@@ -436,6 +566,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
   Widget build(BuildContext context) {
     final obj = widget.object;
     final binding = obj.fieldBinding!;
+    if (binding.isAlongPath) return _buildAlongPath(obj, binding);
     final target = widget.related.resolve(binding.relationshipId, binding.tableOccurrence, side: binding.relationshipSide);
 
     if (target == null) {
@@ -460,6 +591,72 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
 
     final text = _row == null ? '' : widget.related.formatValue(col, _row![col.name]);
 
+    return _box(
+      obj,
+      text,
+      _failed
+          ? 'The related record could not be read'
+          : target.isExternal
+              ? 'From ${target.occurrence.name}, in ${target.occurrence.external!.database}, '
+                  'through "${target.relationship.name}"'
+              : 'From ${target.occurrence.name} through "${target.relationship.name}" — '
+                  'shown here, edited in a portal',
+    );
+  }
+
+  /// A field of an occurrence several relationships away: the first record
+  /// at the end of the chain, as FileMaker shows it.
+  Widget _buildAlongPath(LayoutObjectModel obj, FieldBindingModel binding) {
+    final end = widget.related.endOfPath(binding.occurrencePath);
+    final col = end?.table.columns.where((c) => c.name.toLowerCase() == binding.fieldName.toLowerCase()).firstOrNull;
+    if (end == null || col == null) {
+      return relatedNotice('<${binding.qualifiedName}>', isDark: widget.isDark, radius: obj.style.cornerRadius);
+    }
+    final text = _row == null ? '' : widget.related.formatValue(col, _row![col.name]);
+    final editable = widget.editable &&
+        _row != null &&
+        widget.related.fromDatabase == null &&
+        binding.allowBrowseEntry &&
+        !isComputedColumn(col) &&
+        !col.isRepeating &&
+        // Text and numbers, typed as they are stored; a date, a time or a
+        // file is still changed on a layout of its own table.
+        !const {'DATE', 'TIME', 'TIMESTAMP', 'CONTAINER', 'BOOLEAN'}.contains(col.storageType.toUpperCase());
+    if (editable) {
+      if (!_editFocus.hasFocus && _edit.text != text) {
+        _edit.text = text;
+        _editShown = text;
+      }
+      return Tooltip(
+        message: 'From ${end.occurrence.name}, through ${binding.occurrencePath.join(' → ')}: '
+            'the first related record, edited here',
+        child: TextField(
+          key: const ValueKey('related-field-edit'),
+          controller: _edit,
+          focusNode: _editFocus,
+          textAlign: _textAlign(obj.style.textAlign),
+          style: TextStyle(fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13),
+          decoration: InputDecoration(
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(obj.style.cornerRadius)),
+            suffixIcon: const Icon(Icons.link, size: 13, color: Colors.grey),
+          ),
+          onSubmitted: (_) => unawaited(_saveAlongPath()),
+        ),
+      );
+    }
+    return _box(
+      obj,
+      text,
+      _failed
+          ? 'The related record could not be read'
+          : 'From ${end.occurrence.name}, through ${binding.occurrencePath.join(' → ')}: '
+              'the first related record',
+    );
+  }
+
+  Widget _box(LayoutObjectModel obj, String text, String tooltip) {
     return Container(
       key: const ValueKey('related-field'),
       alignment: Alignment.centerLeft,
@@ -498,13 +695,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
             )
           else
             Tooltip(
-              message: _failed
-                  ? 'The related record could not be read'
-                  : target.isExternal
-                      ? 'From ${target.occurrence.name}, in ${target.occurrence.external!.database}, '
-                          'through "${target.relationship.name}"'
-                      : 'From ${target.occurrence.name} through "${target.relationship.name}" — '
-                          'shown here, edited in a portal',
+              message: tooltip,
               child: Icon(
                 _failed ? Icons.error_outline : Icons.link,
                 size: 13,

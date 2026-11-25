@@ -27,6 +27,7 @@ func TestChangeEventFor(t *testing.T) {
 		{http.MethodPost, "/api/v1/data/customers/related", false, "", ""},
 		{http.MethodPost, "/api/v1/data/customers/7/related", true, "data", "customers"},
 		{http.MethodPost, "/api/v1/data/customers/evaluate", false, "", ""},
+		{http.MethodPost, "/api/v1/data/customers/related-first", false, "", ""},
 		{http.MethodPost, "/api/v1/auth/login", false, "", ""},
 		{http.MethodDelete, "/api/v1/server/backups/x", false, "", ""},
 	}

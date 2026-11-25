@@ -172,6 +172,7 @@ class FieldBindingModel {
     this.placeholder,
     this.unresolvedRelationship = false,
     this.missing = false,
+    this.occurrencePath = const [],
   });
 
   factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
@@ -192,6 +193,9 @@ class FieldBindingModel {
       placeholder: json['placeholder'] as String?,
       unresolvedRelationship: json['unresolved_relationship'] as bool? ?? false,
       missing: json['missing'] as bool? ?? false,
+      occurrencePath: json['occurrence_path'] is List
+          ? [for (final o in json['occurrence_path'] as List) if (o is String && o.isNotEmpty) o]
+          : const [],
     );
   }
   /// The table occurrence the field is read from. Null, or the layout's own
@@ -236,10 +240,24 @@ class FieldBindingModel {
   /// The text the control shows while it is empty.
   final String? placeholder;
 
-  /// True when the field was read, in FileMaker, through more than one
-  /// relationship: File4Base follows one, so the field is shown as
-  /// unavailable rather than read from a column of the wrong record.
+  /// True when, in FileMaker, no relationship joined the field's occurrence
+  /// to the layout's: the field is shown as unavailable rather than read
+  /// from a column of the wrong record.
   final bool unresolvedRelationship;
+
+  /// For a field of an occurrence several relationships away from the
+  /// layout's, the occurrences reached in turn, by name, the last being
+  /// [tableOccurrence]: the first record at the end of the chain is shown
+  /// and edited, as FileMaker does in an anchor–buoy graph. Empty for a
+  /// field of the record in hand or one relationship away.
+  final List<String> occurrencePath;
+
+  /// True when the field is read along [occurrencePath].
+  bool get isAlongPath => occurrencePath.isNotEmpty && !isRelated;
+
+  /// True when the field shows a record other than the one in hand: one
+  /// relationship away, or several.
+  bool get readsRelated => isRelated || isAlongPath;
 
   /// True when the field is not in the imported tables.
   final bool missing;
@@ -255,7 +273,7 @@ class FieldBindingModel {
   /// says nothing to a reader, so the bare field name is used instead.
   String get qualifiedName {
     final occurrence = tableOccurrence ?? '';
-    if (!isRelated || occurrence.isEmpty || _looksLikeId(occurrence)) return fieldName;
+    if (!(isRelated || isAlongPath) || occurrence.isEmpty || _looksLikeId(occurrence)) return fieldName;
     return '$occurrence::$fieldName';
   }
 
@@ -305,6 +323,7 @@ class FieldBindingModel {
         // Choosing another field or relationship settles what was unreachable.
         unresolvedRelationship: fieldName == null && relationshipId == null && !clearRelationship && unresolvedRelationship,
         missing: fieldName == null && missing,
+        occurrencePath: clearRelationship || relationshipId != null ? const [] : occurrencePath,
       );
 
   Map<String, dynamic> toJson() => {
@@ -322,6 +341,7 @@ class FieldBindingModel {
         if (placeholder != null) 'placeholder': placeholder,
         if (unresolvedRelationship) 'unresolved_relationship': true,
         if (missing) 'missing': true,
+        if (occurrencePath.isNotEmpty) 'occurrence_path': occurrencePath,
       };
 
   /// How many repetitions an object bound to a field with [maxRepetitions]

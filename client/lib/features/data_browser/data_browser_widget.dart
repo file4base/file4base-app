@@ -804,6 +804,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       tablesById: _tablesById,
       formatValue: fieldText,
       fromDatabase: widget.externalDatabase,
+      layoutOccurrence: widget.layout?.tableOccurrence,
     );
   }
 
@@ -839,7 +840,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   bool get _layoutUsesRelationships {
     final objects = widget.layout?.objects;
     if (objects == null) return false;
-    return objects.any((o) => o.type == 'portal' || (o.fieldBinding?.isRelated ?? false));
+    return objects.any((o) => o.type == 'portal' || (o.fieldBinding?.readsRelated ?? false));
   }
 
   // ─── Value lists (#31) ─────────────────────────────────────────────────────
@@ -1254,7 +1255,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     var most = 1;
     for (final o in widget.layout?.objects ?? const <LayoutObjectModel>[]) {
       final binding = o.fieldBinding;
-      if (o.type != 'field' || binding == null || binding.isRelated) continue;
+      if (o.type != 'field' || binding == null || binding.readsRelated) continue;
       if (binding.fieldName.toLowerCase() != col.name.toLowerCase()) continue;
       most = math.max(most, binding.repetitionNumbers(col.maxRepetitions).last);
     }
@@ -1387,7 +1388,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final layout = widget.layout;
     for (final o in layout?.objects ?? const <LayoutObjectModel>[]) {
       final binding = o.fieldBinding;
-      if (o.type != 'field' || binding == null || binding.isRelated) continue;
+      if (o.type != 'field' || binding == null || binding.readsRelated) continue;
       if (binding.fieldName.toLowerCase() != column) continue;
       final order = dateOrderOfFormat(o.style.dateFormat);
       if (order != null) return order;
@@ -2740,7 +2741,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       }
       // A field of a related record, read with those of the other rows in
       // one request.
-      if (obj.fieldBinding?.isRelated ?? false) {
+      if (obj.fieldBinding?.readsRelated ?? false) {
         final related = _relatedContext?.forRecord(rec['id']?.toString(), batched: true);
         if (related == null) {
           return relatedNotice('<${obj.fieldBinding!.qualifiedName}>', isDark: isDark, radius: obj.style.cornerRadius);
@@ -2750,6 +2751,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           object: obj,
           related: related,
           isDark: isDark,
+          editable: widget.mode == OperationalMode.browse,
         );
       }
       final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
@@ -3426,7 +3428,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         // A field of a related record: `Companies::company_address` on a
         // Customers layout (#36). It is read through the relationship, not
         // from the record in hand, so none of what follows applies.
-        if (obj.fieldBinding?.isRelated ?? false) {
+        if (obj.fieldBinding?.readsRelated ?? false) {
+          if (isFindMode && obj.fieldBinding!.isAlongPath) {
+            // A find follows one relationship; a field several away is not
+            // a criterion yet.
+            return relatedNotice('${obj.fieldBinding!.qualifiedName} takes no criteria',
+                isDark: isDark, radius: obj.style.cornerRadius);
+          }
           if (isFindMode) {
             // A criterion here finds the records whose *related* records
             // match it (#46), so the box is a real criterion box.
@@ -3472,6 +3480,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             object: obj,
             related: related,
             isDark: isDark,
+            editable: widget.mode == OperationalMode.browse,
           );
         }
 
@@ -5156,7 +5165,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     final objects = widget.layout?.objects ?? const <LayoutObjectModel>[];
     return objects.any((o) {
       final binding = o.fieldBinding;
-      if (binding == null || !binding.isRelated) return false;
+      if (binding == null || !binding.readsRelated) return false;
       if (binding.fieldName.toLowerCase() != field.toLowerCase()) return false;
       final occurrence = binding.tableOccurrence ?? '';
       return _occurrenceKey(occurrence) == key || _occurrenceKey(graph[occurrence]?.name ?? '') == key;
