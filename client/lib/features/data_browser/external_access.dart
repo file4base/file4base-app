@@ -69,6 +69,21 @@ class ExternalAccess extends ChangeNotifier {
     });
   }
 
+  /// Runs [call], a write into another solution, and when the session is not
+  /// signed in to that solution, signs it in with the same dialog a read
+  /// uses and runs [call] once more. Any other failure, and a second one, is
+  /// the caller's to show.
+  Future<T> retryingSignIn<T>(BuildContext context, Future<T> Function() call) async {
+    try {
+      return await call();
+    } on ApiException catch (e) {
+      final problem = ExternalUnavailable.of(e);
+      if (problem == null || !problem.isNotSignedIn || !context.mounted) rethrow;
+      if (!await signIn(context, problem)) rethrow;
+      return call();
+    }
+  }
+
   /// Asks once per solution, the first time a view meets it not signed in;
   /// after that the view offers to sign in.
   void askOnce(BuildContext context, ExternalUnavailable problem) {

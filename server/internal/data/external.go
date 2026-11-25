@@ -19,8 +19,8 @@ var ErrExternalUnavailable = errors.New("external table occurrence unavailable")
 const (
 	// ExternalMissing: the file reference is not mapped to a solution, the
 	// table is not known yet, the solution is not installed, or what is
-	// asked is not done across solutions yet (writes, cascading deletes and
-	// finds through a relationship to another solution).
+	// asked is not done across solutions yet (finds through a relationship
+	// to another solution).
 	ExternalMissing = "missing"
 	// ExternalNotSignedIn: the session group holds no session of the other
 	// solution, or the one it held expired or was revoked.
@@ -62,15 +62,28 @@ func (t ExternalTarget) Unsupported(what string) error {
 	return e
 }
 
-// Wrap classifies an error met reading t in the other solution: a table or
-// field that is not there is a schema mismatch, a table the account may not
-// read is no access. Any other error is returned as it is.
+// Wrap classifies an error met reading or writing t in the other solution:
+// a table or field that is not there is a schema mismatch, a table the
+// account may not read is no access, and a write the account may not make
+// says so with the reference and the solution. Any other error is returned
+// as it is.
 func (t ExternalTarget) Wrap(err error) error {
+	var denied *PermissionError
 	switch {
 	case err == nil:
 		return nil
 	case errors.Is(err, ErrExternalUnavailable):
 		return err
+	case errors.As(err, &denied):
+		if denied.External != nil {
+			return err
+		}
+		named := *denied
+		named.External = &t
+		if named.Table == "" {
+			named.Table = t.Table
+		}
+		return &named
 	case errors.Is(err, ErrTableNotFound), errors.Is(err, ErrUnknownField):
 		return t.unavailable(ExternalSchemaMismatch, err)
 	case errors.Is(err, ErrNoAccess):
@@ -112,7 +125,8 @@ func (e *ExternalUnavailableError) remedy() string {
 	case ExternalNotSignedIn:
 		return "sign in to " + e.Database + " to read its records"
 	case ExternalNoAccess:
-		return "the account signed in to " + e.Database + " may not read this table"
+		return "the account signed in to " + e.Database + " may not read this table; " +
+			"ask an administrator of " + e.Database + " for access, or sign in to it with another account"
 	case ExternalSchemaMismatch:
 		why := "the table or a field it uses is not there"
 		if e.cause != nil {
@@ -237,8 +251,9 @@ func (side RelationSide) origin() Origin {
 	return Origin{Table: side.TableName, External: side.External}
 }
 
-// sideService is the data service a side's records are read with: this one
-// for a table of this solution, the other solution's for an external side.
+// sideService is the data service a side's records are read and written
+// with: this one for a table of this solution, the other solution's for an
+// external side.
 func (s *Service) sideService(ctx context.Context, side RelationSide) (*Service, error) {
 	if side.External == nil {
 		return s, nil

@@ -5,13 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
 	"github.com/file4base/file4base-app/server/internal/auth"
+	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/realtime"
 )
 
@@ -129,24 +132,47 @@ func emitChangeEvents(hub *realtime.Hub) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			changed := &changedTable{}
-			r = r.WithContext(context.WithValue(r.Context(), changedTableKey{}, changed))
+			changed := &changedTables{}
+			ctx := context.WithValue(r.Context(), changedTableKey{}, changed)
+			r = r.WithContext(data.WithChangeObserver(ctx, changed.add))
 			next.ServeHTTP(rec, r)
 
-			if rec.status < 200 || rec.status >= 300 {
-				return
-			}
-			ev, ok := changeEventFor(r, changed.name)
-			if !ok {
-				return
-			}
 			sess, ok := auth.FromContext(r.Context())
 			if !ok {
 				return
 			}
-			ev.Database = sess.Database
-			ev.Origin = originID(auth.TokenFromContext(r.Context()))
-			hub.Publish(ev)
+			origin := originID(auth.TokenFromContext(r.Context()))
+			published := map[string]bool{}
+			publish := func(ev realtime.Event) {
+				key := strings.ToLower(ev.Database) + "\x00" + ev.Type + "\x00" + strings.ToLower(ev.Resource)
+				if published[key] {
+					return
+				}
+				published[key] = true
+				ev.Origin = origin
+				hub.Publish(ev)
+			}
+			if rec.status >= 200 && rec.status < 300 {
+				route := changed.routeTable()
+				if ev, ok := changeEventFor(r, route.table); ok {
+					ev.Database = sess.Database
+					if route.database != "" {
+						ev.Database = route.database
+					}
+					publish(ev)
+				}
+			}
+			// The tables a cascade or a write reached beyond the one the
+			// request names, in this solution or another (#107). They are
+			// told once committed, so even a delete that failed after
+			// another solution's records were deleted reports those.
+			for _, c := range changed.list() {
+				database := c.database
+				if database == "" {
+					database = sess.Database
+				}
+				publish(realtime.Event{Type: "data", Resource: c.table, Database: database})
+			}
 		})
 	}
 }
@@ -173,23 +199,54 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 // Flush/Unwrap pass-throughs keep streaming and middleware chains working.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
-// changeEventFor decides whether a request changed data or schema, and names
-// the affected resource, from its method and path. Read-only POSTs (find,
-// summary, import preview) and non-content routes produce no event.
-// changedTable is the table a record route of an occurrence wrote to, which
-// its path does not name: the route sets it once it resolved the occurrence.
-type changedTable struct{ name string }
+// changedTables are the tables a request changed that its path does not
+// name: the table of a record route of an occurrence, which the route sets
+// once it resolved the occurrence and which is told when the request
+// succeeds, and the tables a cascading delete or a write into another
+// solution committed (#107), which are told whatever the request answers. An
+// empty database is the request's own solution.
+type changedTables struct {
+	mu      sync.Mutex
+	route   changedTable
+	changes []changedTable
+}
+
+type changedTable struct{ database, table string }
 
 type changedTableKey struct{}
 
-// noteChangedTable records the table a request writes to, for its change
-// event.
-func noteChangedTable(ctx context.Context, table string) {
-	if changed, ok := ctx.Value(changedTableKey{}).(*changedTable); ok {
-		changed.name = table
+func (c *changedTables) add(database, table string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.changes = append(c.changes, changedTable{database: database, table: table})
+}
+
+func (c *changedTables) routeTable() changedTable {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.route
+}
+
+func (c *changedTables) list() []changedTable {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.changes)
+}
+
+// noteChangedTable records the table a record route of an occurrence writes
+// to, for its change event: one of this solution (database empty), or of
+// another solution, whose clients are told.
+func noteChangedTable(ctx context.Context, database, table string) {
+	if changed, ok := ctx.Value(changedTableKey{}).(*changedTables); ok {
+		changed.mu.Lock()
+		changed.route = changedTable{database: database, table: table}
+		changed.mu.Unlock()
 	}
 }
 
+// changeEventFor decides whether a request changed data or schema, and names
+// the affected resource, from its method and path. Read-only POSTs (find,
+// summary, import preview) and non-content routes produce no event.
 func changeEventFor(r *http.Request, occurrenceTable string) (realtime.Event, bool) {
 	switch r.Method {
 	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:

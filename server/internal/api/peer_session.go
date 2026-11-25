@@ -143,13 +143,16 @@ func (p *groupPeers) end(ctx context.Context, database string) (*peerEnd, error)
 	return end, nil
 }
 
-// Data implements data.Peers.
+// Data implements data.Peers. The other solution's service reads its own
+// external occurrences through the same group, so a chain of solutions, or
+// two that read each other, is followed with the session the group holds in
+// each.
 func (p *groupPeers) Data(ctx context.Context, database string) (*data.Service, error) {
 	end, err := p.end(ctx, database)
 	if err != nil {
 		return nil, err
 	}
-	return dataServiceAs(end.driver, end.session), nil
+	return dataServiceAs(end.driver, end.session).WithPeers(p), nil
 }
 
 type peersKey struct{}

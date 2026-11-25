@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -168,6 +169,20 @@ func TestExternalRelated_ReadsTheOtherSolutionWithoutJoinOrN1(t *testing.T) {
 // statements it runs.
 func countingDriver(t *testing.T, database string) (dbal.DatabaseDriver, *atomic.Int64) {
 	t.Helper()
+	d, queries, _ := instrumentedDriver(t, database)
+	return d, queries
+}
+
+// faultyDriver opens a database through a connection that fails every
+// statement the returned check, once set, says to.
+func faultyDriver(t *testing.T, database string) (dbal.DatabaseDriver, *atomic.Pointer[func(query string) bool]) {
+	t.Helper()
+	d, _, fail := instrumentedDriver(t, database)
+	return d, fail
+}
+
+func instrumentedDriver(t *testing.T, database string) (dbal.DatabaseDriver, *atomic.Int64, *atomic.Pointer[func(query string) bool]) {
+	t.Helper()
 	dsn, err := dbal.NormalizeDSN(testdb.Engine(), dsnForDatabase(testdb.DevDSN(), database))
 	require.NoError(t, err)
 	name := "pgx"
@@ -180,11 +195,12 @@ func countingDriver(t *testing.T, database string) (dbal.DatabaseDriver, *atomic
 	require.NoError(t, err)
 	_ = base.Close()
 	queries := &atomic.Int64{}
-	db := sql.OpenDB(countingConnector{Connector: connector, queries: queries})
+	fail := &atomic.Pointer[func(query string) bool]{}
+	db := sql.OpenDB(countingConnector{Connector: connector, queries: queries, fail: fail})
 	t.Cleanup(func() { _ = db.Close() })
 	dialect, err := dbal.NewDialect(testdb.Engine())
 	require.NoError(t, err)
-	return dbal.NewGenericDriver(dialect, db), queries
+	return dbal.NewGenericDriver(dialect, db), queries, fail
 }
 
 // dsnForDatabase is a DSN with another database: the last path segment, in
@@ -203,6 +219,7 @@ func dsnForDatabase(dsn, database string) string {
 type countingConnector struct {
 	driver.Connector
 	queries *atomic.Int64
+	fail    *atomic.Pointer[func(query string) bool]
 }
 
 func (c countingConnector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -210,14 +227,23 @@ func (c countingConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return countingConn{Conn: conn, queries: c.queries}, nil
+	return countingConn{Conn: conn, queries: c.queries, fail: c.fail}, nil
 }
 
-// countingConn counts the queries run on a connection and passes everything
-// to the engine's own.
+// countingConn counts the queries run on a connection, fails the statements
+// fail says to, and passes everything else to the engine's own.
 type countingConn struct {
 	driver.Conn
 	queries *atomic.Int64
+	fail    *atomic.Pointer[func(query string) bool]
+}
+
+// errInjected is the failure a test injects into a statement.
+var errInjected = errors.New("injected failure")
+
+func (c countingConn) failing(query string) bool {
+	check := c.fail.Load()
+	return check != nil && (*check)(query)
 }
 
 func (c countingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
@@ -226,10 +252,16 @@ func (c countingConn) QueryContext(ctx context.Context, query string, args []dri
 }
 
 func (c countingConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	if c.failing(query) {
+		return nil, errInjected
+	}
 	return c.Conn.(driver.ExecerContext).ExecContext(ctx, query, args)
 }
 
 func (c countingConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	if c.failing(query) {
+		return nil, errInjected
+	}
 	return c.Conn.(driver.ConnPrepareContext).PrepareContext(ctx, query)
 }
 

@@ -349,6 +349,28 @@ func DeleteRecord(ctx context.Context, q Execer, d dbal.Dialect, table, recordID
 	return nil
 }
 
+// DeleteRecords removes all container metadata of several records of a
+// table, in one statement per batch of ids.
+func DeleteRecords(ctx context.Context, q Execer, d dbal.Dialect, table string, recordIDs []string) error {
+	for start := 0; start < len(recordIDs); start += deleteBatch {
+		ids := recordIDs[start:min(start+deleteBatch, len(recordIDs))]
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, table)
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		query := fmt.Sprintf(`DELETE FROM %s WHERE table_name = %s AND record_id IN (%s)`,
+			Table, d.Placeholder(1), placeholders(d, 2, len(ids)))
+		if _, err := q.ExecContext(ctx, query, args...); err != nil && !isMissingTable(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteBatch is the most record ids one statement of DeleteRecords names.
+const deleteBatch = 500
+
 // DeleteField removes all container metadata for one field of a table.
 func DeleteField(ctx context.Context, q Execer, d dbal.Dialect, table, field string) error {
 	query := fmt.Sprintf(`DELETE FROM %s WHERE table_name = %s AND field_name = %s`,

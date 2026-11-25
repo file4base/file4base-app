@@ -126,6 +126,12 @@ type Service struct {
 	// peers, when set, opens the other solutions external occurrences read
 	// from (see WithPeers).
 	peers Peers
+	// database is the name of the solution the driver is bound to (see
+	// WithDatabase).
+	database string
+	// canWrite, when set, says whether the caller may create, edit or
+	// delete the records of a table (see WithWriteAccess).
+	canWrite func(ctx context.Context, tableName, action string) error
 }
 
 func NewService(driver dbal.DatabaseDriver) *Service {
@@ -516,63 +522,22 @@ func (s *Service) UpdateRow(ctx context.Context, tableName string, id string, up
 	return s.GetRow(ctx, tableName, id)
 }
 
-// DeleteRow removes a record by primary key id
 // DeleteRow deletes a record, and with it the records that belong to it:
 // every relationship of the table whose "Delete related records" option is on
-// takes its matching records with it, down the whole chain (#36).
+// takes its matching records with it, down the whole chain (#36), into other
+// solutions too (#107).
+//
+// Every record the delete reaches is found, and every refusal decided, before
+// anything is deleted (see planDelete): a cascade that cannot be completed
+// deletes nothing. The records of each other solution are then deleted in
+// one transaction of that solution, and those of this one, the record itself
+// last, in one transaction of this one.
 func (s *Service) DeleteRow(ctx context.Context, tableName string, id string) error {
-	// A cascade that would reach another solution's table is refused before
-	// anything is deleted, rather than half done (#107).
-	if err := s.checkCascadePlan(ctx, tableName); err != nil {
-		return err
-	}
-	return s.deleteRow(ctx, tableName, id, map[string]struct{}{})
-}
-
-// seenKey identifies a record already on its way out, so a cascade that points
-// back at it does not try to delete it twice.
-func seenKey(tableName, id string) string { return tableName + "\x00" + id }
-
-// deleteRow is DeleteRow with the set of records already being deleted, which
-// is what stops a ring of cascading relationships from recursing forever.
-func (s *Service) deleteRow(ctx context.Context, tableName string, id string, seen map[string]struct{}) error {
-	if _, err := s.tableFields(ctx, tableName); err != nil {
-		return err
-	}
-	key := seenKey(tableName, id)
-	if _, already := seen[key]; already {
-		return nil
-	}
-	seen[key] = struct{}{}
-
-	// The children go first: once the parent is gone the match value it held
-	// is gone with it, and they could no longer be found.
-	if err := s.cascadeDelete(ctx, tableName, id, seen); err != nil {
-		return err
-	}
-
-	dialect := s.driver.Dialect()
-	sqlQuery := fmt.Sprintf(
-		"DELETE FROM %s WHERE %s = %s",
-		dialect.QuoteIdentifier(tableName),
-		dialect.QuoteIdentifier("id"),
-		dialect.Placeholder(1),
-	)
-
-	db := s.driver.DB()
-	res, err := db.ExecContext(ctx, sqlQuery, id)
+	plan, err := s.planDelete(ctx, tableName, id)
 	if err != nil {
-		return fmt.Errorf("failed deleting from %s: %w", tableName, err)
-	}
-
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
-		return fmt.Errorf("record not found with id: %s", id)
-	}
-	if err := sourcetext.DeleteRecord(ctx, db, dialect, tableName, id); err != nil {
 		return err
 	}
-	return containermeta.DeleteRecord(ctx, db, dialect, tableName, id)
+	return plan.execute(ctx)
 }
 
 // AttachSourceText puts the original texts of the given records of a table

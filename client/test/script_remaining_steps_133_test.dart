@@ -291,7 +291,10 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
   }
 
   @override
-  Future<void> actionDeletePortalRow({required bool confirm}) async => log.add('delete_portal_row:$confirm');
+  Future<int> actionDeletePortalRow({required bool confirm}) async {
+    log.add('delete_portal_row:$confirm');
+    return 0;
+  }
 
   @override
   Future<bool> actionReplaceFieldContents({required String field, required String replaceType, String? value}) async {

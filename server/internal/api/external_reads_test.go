@@ -276,9 +276,10 @@ func TestAPI_ExternalReadsAsTheLinkedAccount(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rec.Code)
 	})
 
-	// Writing, cascading and finding across solutions are not done yet: they
-	// are refused, and nothing of Orders is written instead.
-	t.Run("writes stay refused", func(t *testing.T) {
+	// A read-only account in Peer reads there and writes nothing: every write
+	// is refused with what to do about it. A find through a related field of
+	// another solution is not done yet.
+	t.Run("read-only refuses writes", func(t *testing.T) {
 		var any []map[string]interface{}
 		rec := h.do(http.MethodGet, "/api/v1/occurrences/"+p.ext+"/records", token, nil, &any)
 		require.Equal(t, http.StatusOK, rec.Code)
@@ -286,11 +287,14 @@ func TestAPI_ExternalReadsAsTheLinkedAccount(t *testing.T) {
 		for _, c := range []struct{ method, target string }{
 			{http.MethodPost, "/api/v1/occurrences/" + p.ext + "/records"},
 			{http.MethodPut, "/api/v1/occurrences/" + p.ext + "/records/" + id},
+			{http.MethodPatch, "/api/v1/occurrences/" + p.ext + "/records/" + id},
 			{http.MethodDelete, "/api/v1/occurrences/" + p.ext + "/records/" + id},
-			{http.MethodPost, "/api/v1/data/orders/" + p.orderIDs["north"] + "/related?relationship=" + p.relationship},
 		} {
 			rec := h.do(c.method, c.target, token, map[string]string{"full_name": "Eve"}, nil)
-			assertUnavailable(t, rec.Result(), p.peer, "missing")
+			require.Equal(t, http.StatusForbidden, rec.Code, c.method+" "+rec.Body.String())
+			assert.Contains(t, rec.Body.String(), p.peer, c.method)
+			assert.Contains(t, rec.Body.String(), `\"Peer\"`, c.method)
+			assert.Contains(t, rec.Body.String(), "ask an administrator", c.method)
 		}
 		rec = h.do(http.MethodPost, "/api/v1/data/orders/find", token, map[string]interface{}{
 			"requests": []map[string]interface{}{{"criteria": []map[string]string{{"field_name": "full_name", "operator": "=", "value": "Ada", "relationship_id": p.relationship}}}},

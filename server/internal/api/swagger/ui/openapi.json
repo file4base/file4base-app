@@ -843,8 +843,18 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Record not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/PartialDelete"
           }
-        }
+        },
+        "description": "Deletes the record and, in one transaction, what its cascading relationships reach. A cascade that reaches another solution's table (#107) is planned in full first and refused before anything is deleted when the account held there may not delete what it reaches (403) or that solution cannot be reached (424); that solution's records are deleted first, in a transaction of its own."
       },
       "patch": {
         "tags": [
@@ -5971,10 +5981,10 @@
         "tags": [
           "Data Operations"
         ],
-        "summary": "Create a record (424 for another solution)",
+        "summary": "Create a record; in another solution's table, as the account held there",
         "responses": {
           "201": {
-            "description": "Create a record (424 for another solution)"
+            "description": "Create a record; in another solution's table, as the account held there"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -6186,10 +6196,43 @@
         "tags": [
           "Data Operations"
         ],
-        "summary": "Update a record (424 for another solution)",
+        "summary": "Update a record; in another solution's table, as the account held there",
         "responses": {
           "200": {
-            "description": "Update a record (424 for another solution)"
+            "description": "Update a record; in another solution's table, as the account held there"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence not found"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Update a record (as PUT: only the fields sent change)",
+        "responses": {
+          "200": {
+            "description": "Update a record (as PUT: only the fields sent change)"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -6219,10 +6262,10 @@
         "tags": [
           "Data Operations"
         ],
-        "summary": "Delete a record (424 for another solution)",
+        "summary": "Delete a record, with its cascade; in another solution's table, as the account held there",
         "responses": {
           "204": {
-            "description": "Delete a record (424 for another solution)"
+            "description": "Delete a record, with its cascade; in another solution's table, as the account held there"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -6231,10 +6274,13 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "Table occurrence not found"
+            "description": "Table occurrence or record not found"
           },
           "424": {
             "$ref": "#/components/responses/ExternalUnavailable"
+          },
+          "500": {
+            "$ref": "#/components/responses/PartialDelete"
           }
         }
       }
@@ -6286,10 +6332,10 @@
         "tags": [
           "Data Operations"
         ],
-        "summary": "Create a related record (424 for another solution)",
+        "summary": "Create a related record, in another solution's table as the account held there",
         "responses": {
           "201": {
-            "description": "Create a related record (424 for another solution)"
+            "description": "Create a related record, in another solution's table as the account held there"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -6335,7 +6381,26 @@
         "summary": "The occurrence's table and fields, read from the solution it is in",
         "responses": {
           "200": {
-            "description": "The occurrence's table and fields, read from the solution it is in"
+            "description": "The occurrence's table and fields, read from the solution it is in, with what the session may do with its records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/TableMetadata"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "privileges": {
+                          "$ref": "#/components/schemas/RecordPrivileges"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -7131,6 +7196,59 @@
             "description": "The related records of each record asked for, by record id."
           }
         }
+      },
+      "RecordPrivileges": {
+        "type": "object",
+        "description": "What the session may do with a table's records. For another solution's table, what the account the session holds there may do (#107).",
+        "properties": {
+          "read": {
+            "type": "boolean"
+          },
+          "create": {
+            "type": "boolean"
+          },
+          "edit": {
+            "type": "boolean"
+          },
+          "delete": {
+            "type": "boolean"
+          }
+        }
+      },
+      "PartialDeleteProblem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ProblemDetails"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "partial_delete"
+                ]
+              },
+              "partial": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "committed": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The solutions whose related records are already deleted."
+              },
+              "database": {
+                "type": "string",
+                "description": "The solution whose records could not be deleted, and are still there."
+              }
+            }
+          }
+        ]
       }
     },
     "securitySchemes": {
@@ -7162,11 +7280,21 @@
         }
       },
       "ExternalUnavailable": {
-        "description": "The request reads records through an occurrence of another solution's table, which cannot be read from here yet (#107). Never answered from a local table.",
+        "description": "The request reads or writes records through an occurrence of another solution's table, which cannot be reached there: not signed in, no access, schema mismatch, or not done across solutions yet (#107). Never answered from a local table.",
         "content": {
           "application/problem+json": {
             "schema": {
               "$ref": "#/components/schemas/ExternalUnavailableProblem"
+            }
+          }
+        }
+      },
+      "PartialDelete": {
+        "description": "A cascading delete deleted related records in another solution, in a transaction of its own, then failed in this one, whose records are still there (#107). Deleting again once the cause is fixed finishes it, but the re-run may leave records reachable only through the committed part.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/PartialDeleteProblem"
             }
           }
         }

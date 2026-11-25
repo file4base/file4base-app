@@ -29,8 +29,8 @@ class RelatedTarget {
   final TableOccurrenceModel occurrence;
   final TableModel table;
 
-  /// Whether the records are another solution's: they are read there, and
-  /// not written from here yet.
+  /// Whether the records are another solution's: they are read and written
+  /// there, as the account the session holds in it.
   bool get isExternal => occurrence.isExternal;
 }
 
@@ -116,6 +116,13 @@ class RelatedContext {
   bool _isFrom(TableOccurrenceModel occurrence, TableModel table) =>
       table.name == fromTable &&
       (occurrence.isExternal ? occurrence.external!.database == fromDatabase : fromDatabase == null);
+
+  /// The client that writes [target]'s records. Another solution's are
+  /// written through their occurrence; so is any target when the layout is
+  /// on another solution's table, since [apiClient]'s record calls are then
+  /// that layout's occurrence's.
+  ApiClient clientFor(RelatedTarget target) =>
+      target.isExternal || fromDatabase != null ? apiClient.forOccurrence(target.occurrence.id) : apiClient;
 
   RelatedContext forRecord(String? recordId, {bool batched = false}) => RelatedContext(
         apiClient: apiClient,
@@ -510,8 +517,9 @@ class _PortalViewState extends State<PortalView> {
   bool _loading = false;
   String? _error;
 
-  /// The fields of another solution's table, once read (#107), and why that
-  /// solution could not be read. Its records are shown, not written.
+  /// The fields of another solution's table, once read (#107), with what the
+  /// account held there may do with its records, and why that solution could
+  /// not be read.
   TableModel? _externalTable;
   ExternalUnavailable? _problem;
 
@@ -597,9 +605,19 @@ class _PortalViewState extends State<PortalView> {
     }
   }
 
-  /// Whether the portal's records can be changed from here: another
-  /// solution's cannot yet.
-  bool get _writable => !(_target?.isExternal ?? false);
+  /// What may be done with the portal's records: for another solution's,
+  /// what the account the session holds there may do, read with its fields;
+  /// for this solution's, everything, the server deciding.
+  RecordPrivileges get _privileges {
+    final target = _target;
+    if (target == null) return const RecordPrivileges();
+    if (!target.isExternal) return RecordPrivileges.all;
+    return _externalTable?.privileges ?? const RecordPrivileges(read: true);
+  }
+
+  /// Runs a write, signing in to the other solution and trying once more
+  /// when the session is not signed in to it.
+  Future<T> _write<T>(Future<T> Function() call) => _access.retryingSignIn(context, call);
 
   String _cellKey(String rowId, String field) => '$rowId\u0000$field';
 
@@ -657,8 +675,7 @@ class _PortalViewState extends State<PortalView> {
     final key = _cellKey(rowId, field);
     setState(() => _saving[key] = true);
     try {
-      final updated = await widget.related.apiClient
-          .updateRow(target.table.name, rowId, {field: value});
+      final updated = await _write(() => widget.related.clientFor(target).updateRow(target.table.name, rowId, {field: value}));
       if (!mounted) return;
       setState(() {
         _saving.remove(key);
@@ -687,13 +704,13 @@ class _PortalViewState extends State<PortalView> {
 
     setState(() => _creating = true);
     try {
-      await widget.related.apiClient.createRelatedRow(
-        widget.related.fromTable,
-        recordId,
-        relationshipId: target.relationship.id,
-        occurrence: target.occurrence.id,
-        values: value.isEmpty ? const {} : {field: value},
-      );
+      await _write(() => widget.related.apiClient.createRelatedRow(
+            widget.related.fromTable,
+            recordId,
+            relationshipId: target.relationship.id,
+            occurrence: target.occurrence.id,
+            values: value.isEmpty ? const {} : {field: value},
+          ));
       if (!mounted) return;
       setState(() => _creating = false);
       _newRowController.clear();
@@ -710,7 +727,7 @@ class _PortalViewState extends State<PortalView> {
     final target = _target;
     if (target == null) return;
     try {
-      await widget.related.apiClient.deleteRow(target.table.name, rowId);
+      await _write(() => widget.related.clientFor(target).deleteRow(target.table.name, rowId));
       if (!mounted) return;
       await _load();
       widget.onChanged?.call();
@@ -788,7 +805,7 @@ class _PortalViewState extends State<PortalView> {
       for (final (i, row) in visible.indexed)
         _row(target, row, rowHeight, striped: i.isOdd),
     ];
-    if (_config.allowCreation && _writable) {
+    if (_config.allowCreation && _privileges.create) {
       children.add(_newRow(target, rowHeight));
     }
 
@@ -837,7 +854,7 @@ class _PortalViewState extends State<PortalView> {
               height: content.height,
               child: _cell(target, content, rowId, row),
             ),
-          if (_config.allowDeletion && _writable && rowId.isNotEmpty)
+          if (_config.allowDeletion && _privileges.delete && rowId.isNotEmpty)
             Positioned(
               right: 2,
               top: 0,
@@ -872,7 +889,7 @@ class _PortalViewState extends State<PortalView> {
     }
 
     final text = widget.related.formatValue(col, row[col.name]);
-    if (col.isPrimaryKey || isComputedColumn(col) || !_writable) {
+    if (col.isPrimaryKey || isComputedColumn(col) || !_privileges.edit) {
       return Container(
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.symmetric(horizontal: 6),
