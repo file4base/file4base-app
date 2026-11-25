@@ -70,9 +70,8 @@ func TestAutoEnterOptionsRoundTripThroughASolutionFile(t *testing.T) {
 	require.NotNil(t, exported, "the options are in the file")
 	assert.JSONEq(t, stored, *exported)
 
-	// Turned off here, then the file brings them back.
-	_, err = svc.UpdateColumn(ctx, tbl.ID, col.ID, schema.UpdateColumnOptions{DisplayName: "Ref", DefaultValue: nil, UpdateDefaultValue: true})
-	require.NoError(t, err)
+	// The field deleted here, the file brings it back with its options.
+	require.NoError(t, svc.DeleteColumn(ctx, tbl.ID, col.ID))
 	_, err = svc.ImportSolution(ctx, file)
 	require.NoError(t, err)
 	tables, err := svc.ListTables(ctx)

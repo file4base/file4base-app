@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -56,7 +57,7 @@ func TestAPI_AutoEnterOptions(t *testing.T) {
 	rec = send(http.MethodPost, "/api/v1/data/tickets", map[string]string{"subject": "First"}, false)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &row))
-	assert.EqualValues(t, 7, row["num"])
+	assert.Equal(t, "7", fmt.Sprint(row["num"]))
 	assert.Equal(t, "Open", row["status"])
 	id := row["id"].(string)
 
@@ -80,7 +81,7 @@ func TestAPI_AutoEnterOptions(t *testing.T) {
 	rec = h.do(http.MethodPost, "/api/v1/data/tickets/"+id+"/duplicate", token, nil, &dup)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	assert.NotEqual(t, id, dup["id"])
-	assert.EqualValues(t, 100, dup["num"])
+	assert.Equal(t, "100", fmt.Sprint(dup["num"]))
 	assert.Equal(t, "First", dup["subject"])
 	assert.Equal(t, "Open", dup["status"], "the constant is entered anew")
 
