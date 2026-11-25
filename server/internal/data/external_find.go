@@ -214,7 +214,11 @@ func (f *externalFind) run(ctx context.Context, target relatedFindTarget, crit F
 	}
 	idx := 1
 	var values []interface{}
-	where = append(where, criterionClause(dialect, dialect.QuoteIdentifier(field), crit, &idx, &values))
+	clause, err := criterionClause(dialect, dialect.QuoteIdentifier(field), target.Fields[field], crit, &idx, &values)
+	if err != nil {
+		return externalMatch{}, err
+	}
+	where = append(where, clause)
 	from := fmt.Sprintf("FROM %s WHERE %s", dialect.QuoteIdentifier(table), strings.Join(where, " AND "))
 
 	m := externalMatch{kind: kindOf(active)}

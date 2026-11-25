@@ -88,7 +88,9 @@ func TestInterpretSourceValue(t *testing.T) {
 		{"blank", "   ", "NUMBER", fr, data.DateDMY, nil, ""},
 		{"fr date", "13/11/2026", "DATE", fr, data.DateDMY, nil, ""},
 		{"no date", "31/02/2026", "DATE", fr, data.DateDMY, nil, "31/02/2026"},
-		{"time of day", "15:04:05", "TIMESTAMP", fr, data.DateDMY, "0000-01-01T15:04:05Z", ""},
+		{"time of day", "15:04:05", "TIMESTAMP", fr, data.DateDMY, "0001-01-01T15:04:05Z", ""},
+		{"time with a fraction", "15:04:05,25", "TIMESTAMP", fr, data.DateDMY, "0001-01-01T15:04:05.25Z", ""},
+		{"us time with a fraction", "15:04:05.25", "TIMESTAMP", us, data.DateMDY, "0001-01-01T15:04:05.25Z", ""},
 		{"duration", "49:30:00", "TIMESTAMP", fr, data.DateDMY, nil, "49:30:00"},
 		{"negative duration", "-01:02:03,125", "TIMESTAMP", fr, data.DateDMY, nil, "-01:02:03,125"},
 	}

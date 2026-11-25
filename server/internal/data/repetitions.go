@@ -159,9 +159,23 @@ func decodeRepetitions(fields fieldSet, key string, raw interface{}, record map[
 	return nil
 }
 
+// normalizeTemporalValues puts each date and timestamp of a record being
+// written, in every repetition, in the one form every write path then reads
+// (dbal.NormalizeTemporal), before formulas and auto-enter options see it:
+// a formula computes over the value that is stored, not over the text it was
+// sent as.
+func normalizeTemporalValues(fields fieldSet, record map[string]interface{}) {
+	for key, value := range record {
+		base, _, _ := repetition.Split(key)
+		record[key] = dbal.NormalizeTemporal(fields[base], value)
+	}
+}
+
 // packRepetitions is the record as its statement writes it: the "field[n]"
 // keys of each repeating field are gathered into its companion column, under
-// repetitionsKey. The record itself is not changed.
+// repetitionsKey, and a date or timestamp is bound as the value its engine
+// stores (dbal.TemporalValue), in every repetition. The record itself is not
+// changed.
 //
 // An update changes only the repetitions it names, so for a record that
 // exists (id not empty) the others are read from it first, through q.
@@ -174,13 +188,13 @@ func packRepetitions(
 	for key, value := range record {
 		base, n, ok := repetition.Split(key)
 		if !ok || fields.isInternal(base) {
-			out[key] = value
+			out[key] = dbal.TemporalValue(dialect.Engine(), fields[key], value)
 			continue
 		}
 		if written[base] == nil {
 			written[base] = map[int]interface{}{}
 		}
-		written[base][n] = value
+		written[base][n] = dbal.NormalizeTemporal(fields[base], value)
 	}
 	if len(written) == 0 {
 		return out, nil

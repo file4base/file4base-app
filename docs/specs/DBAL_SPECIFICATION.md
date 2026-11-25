@@ -57,6 +57,9 @@ The DBAL driver encapsulates all database engine peculiarities:
 - **Type Casting & Native Conversions**:
   - Mapping agnostic `NUMBER` to `NUMERIC` / `DECIMAL` / `BIGINT`.
   - Mapping agnostic `CONTAINER` to `BYTEA` (Postgres) or `LONGBLOB` (MariaDB).
+- **Dates and timestamps**:
+  - Every record write binds a timestamp as the instant it names, in UTC, and a date as its `YYYY-MM-DD` day (`dbal.TemporalValue`). MariaDB is given a timestamp as a UTC `DATETIME(6)` literal (`2026-01-02 03:04:05.000000`), not a `time.Time`, which its driver writes in the connection's zone and, for midnight on 1 January 0001, as `0000-00-00`.
+  - A find criterion on a date or timestamp compares the column with the edges of the span its text names, never the column's text, which each engine writes its own way: `2026` is the year, `2026-01` or `01/2026` the month, `2026-01-02`, `02 Jan 2026`, `31/01/2026` or `01/31/2026` the day, `2026-01-02 03:04` the minute, `15:30` a time of day (on 1 January 0001, where a Time field keeps one). `=`, a typed value and `==` find the span; `<`, `<=`, `>`, `>=` and `...` (either end may be open) compare with its edges, so `2026-01-01...2026-01-31` takes in all of the 31st on a timestamp field. A text without a zone is in UTC. A day such as `02/01/2026` that could be read day first or month first is refused with `400`, naming both readings. A wildcard pattern, or text that names no date or time, is still compared as text.
 
 ---
 
