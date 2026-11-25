@@ -577,7 +577,7 @@ Updates an existing record by primary key ID. Auto-enter options apply as for `P
 ---
 
 ### `POST /api/v1/data/{table}/{id}/duplicate`
-Creates a copy of record `{id}`, as FileMaker's *Duplicate Record*: every stored field is copied, and the auto-enter options enter new values (a new serial number, new stamps), except a looked-up value and a calculated value with *Do not replace*, which are copied. Needs the create privilege.
+Creates a copy of record `{id}`, as FileMaker's *Duplicate Record*: every stored field is copied, and the auto-enter options enter new values (a new serial number, new stamps), except a looked-up value and a calculated value with *Do not replace*, which are copied. Needs the create privilege. For a record of another solution's occurrence, use the occurrence route (§ 18), which duplicates it in that solution.
 
 #### Response `201 Created`
 The new record.
@@ -586,7 +586,7 @@ The new record.
 
 ### `GET /api/v1/data/{table}/serials/{field}`
 ### `PUT /api/v1/data/{table}/serials/{field}`
-Reads, or sets, the value the next record gets in a serial number field: FileMaker's `GetNextSerialValue` and *Set Next Serial Value*. `PUT` needs the edit privilege.
+Reads, or sets, the value the next record gets in a serial number field: FileMaker's `GetNextSerialValue` and *Set Next Serial Value*. `GET` needs read access to the table, `PUT` the edit privilege.
 
 #### Request Body (`PUT`)
 ```json
@@ -613,8 +613,9 @@ FileMaker's *Relookup Field Contents*: copies again the looked-up values of the 
 ```
 
 #### Response `200 OK`
+`records` are the records it changed, as they are now, for a client to update its found set in place.
 ```json
-{"updated": 2}
+{"updated": 1, "records": [{"id": "c27a…", "rate_code": "R2", "rate": 12.5}]}
 ```
 
 #### Errors
@@ -2659,6 +2660,7 @@ The records of a table occurrence, by id or name: those of a table of this solut
 | `GET /`, `POST /find`, `POST /summary`, `GET /{id}` | `GET /api/v1/data/{table}`, `/find`, `/summary`, `/{id}` | Read as the group's account there. A find on a related field: `424`. |
 | `POST /`, `PUT /{id}`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes (`PATCH` is `PUT`: both change only the fields sent) | Written there as the group's account, with its privileges (above). |
 | `GET /{id}/related`, `POST /related` | the related reads | Follow this solution's relationships from that record. |
+| `POST /{id}/duplicate`, `GET /serials/{field}`, `PUT /serials/{field}`, `POST /relookup` | the auto-enter routes (§ 4) | Run there as the group's account: the copy gets that solution's serial numbers and stamps. |
 
 An unknown occurrence answers `404 Table Occurrence Not Found`.
 

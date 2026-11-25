@@ -77,8 +77,8 @@ A field's auto-enter options are read from Save as XML (the `type` attribute and
 | Creation / modification stamps | Date, Time, Timestamp, Name, Account Name | A stamp the field's type cannot hold (a name in a number field). |
 | Serial number | Next value, increment, on creation / on commit | A serial in a field that is neither text nor number, a number field whose next value is not a whole number, a next value with no digit. |
 | Data | The constant | — |
-| Calculated value | The formula bound to the imported names, as calculations are (below), its context, *Do not replace* and *Do not evaluate if all referenced fields are empty* | A formula that cannot be bound (a field or an occurrence no relationship reaches), a container field. The HTML DDR keeps only formulas reading plain fields of their own table. |
-| Looked-up value | The starting and source occurrences, the field, *Don't copy contents if empty* and the no-match option | An occurrence no relationship reaches, a field it does not have. The HTML DDR does not keep lookups. |
+| Calculated value | The formula bound to the imported names, as calculations are (below), its context, *Do not replace* and *Do not evaluate if all referenced fields are empty*; it may call the solution's custom functions | A formula that cannot be bound (a field or an occurrence no relationship reaches, a custom function that could not be migrated), a container field. The HTML DDR keeps only formulas reading plain fields of their own table and custom functions. |
+| Looked-up value | The starting and source occurrences, the field, *Don't copy contents if empty* and the no-match option. The source occurrence may be several relationships away from the starting one. When the source names no starting occurrence, or one that was not migrated, the lookup starts from an occurrence of the field's table a path leads from. | A source occurrence no path of relationships reaches from where the lookup starts (the report names both), a field it does not have. The HTML DDR does not keep lookups. |
 | Value from last visited record | Kept for the dialog | Not entered: always reported. |
 | Prohibit modification | Kept | — |
 

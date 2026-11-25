@@ -65,7 +65,9 @@ edited, so a dialog left open while records are created does not move the
 counter back. `GET`/`PUT /api/v1/data/{table}/serials/{field}` read and set it
 directly (FileMaker's `GetNextSerialValue` and *Set Next Serial Value*): both
 answer `{"field", "next_value"}`, and `PUT` takes `{"next_value": …}`, a number
-or a text, and needs the edit privilege.
+or a text, and needs the edit privilege. Reading it needs read access to the
+table, from the route and from `GetNextSerialValue` alike: a formula naming a
+table the account may not read fails with `<No Access>`.
 
 ## 2. When each option applies
 
@@ -102,7 +104,10 @@ related references start from, and a field another option entered in the
 same write; with *Do not replace* it is evaluated only while the field is
 empty. Without *Do not replace* it is re-evaluated when its own field is
 changed, which is how a formula reading `Self` or its own field makes it
-self-modifying. With *Do not evaluate if all referenced fields are empty* a
+self-modifying. `Self` is the field's value: what the record holds, or what
+is being typed into it, and empty on a new record nobody typed into. The
+formula may call the solution's custom functions, as a calculation field's
+may; options calling one the solution does not have are refused when saved. With *Do not evaluate if all referenced fields are empty* a
 formula reading fields of the record is not evaluated while every one of them
 is empty (a formula reading none, such as `Get ( UUID )`, always is).
 `Get ( AccountName )` and `Get ( UserName )` answer the account writing.
@@ -116,15 +121,20 @@ created with a value in a match field of the first relationship of that path,
 and when such a match field changes. When no record matches, `do_not_copy`
 leaves the field as it is, `use_constant` enters `looked_up_no_match_value`,
 and `copy_next_lower` / `copy_next_higher` copy from the related record whose
-match field holds the closest value below / above the record's: this needs a
-path of one relationship whose first criterion is `=`, in this solution, and
-does nothing otherwise. *Don't copy contents if empty* leaves the field as it
+match field holds the closest value below / above the record's, among the
+records meeting every other criterion of the relationship: this needs a path
+of one relationship whose first criterion is `=`, in this solution, and does
+nothing otherwise. The first related record itself may be any number of
+relationships away, as a related field may. *Don't copy contents if empty* leaves the field as it
 is when the matching record's value is empty. **Relookup Field Contents**
 (`POST /api/v1/data/{table}/relookup` with `{"field", "record_ids"}`, at most
 10,000 records, the script step and the Records menu) copies again every
 lookup of the given records that starts from the match field `field`, and
-modifies the records it changes; it answers `{"updated": n}` and needs the
-edit privilege. A match field no lookup starts from is refused with `400`.
+modifies the records it changes; it answers `{"updated": n, "records": […]}`,
+the records it changed as they are now, and needs the edit privilege. A match
+field no lookup starts from is refused with `400`. The client sends the records
+of its found set and puts the changed ones back in place, so the found set and
+its order stay as they were.
 
 **Stamps.** `Date`, `Time` and `Timestamp` are the server's clock, as
 `Get ( CurrentDate )`, `Get ( CurrentTime )` and `Get ( CurrentTimestamp )`
@@ -159,6 +169,13 @@ value with *Do not replace* are copied. It needs the create privilege, answers
 *Duplicate Record/Request* step use. A container is copied with its file's
 name and type.
 
+On a layout of another solution's occurrence the copy is made in that
+solution, through `POST /api/v1/occurrences/{occurrence}/records/{id}/duplicate`,
+as the account the session is signed in with there: its privileges, serial
+numbers and stamps are that solution's, never copied from the original. The
+serial routes and relookup have occurrence routes too
+(`…/records/serials/{field}`, `…/records/relookup`).
+
 ## 5. Imports
 
 `POST /api/v1/data/{table}/import` takes `options.perform_auto_enter` (default
@@ -171,7 +188,7 @@ off. Prohibit-modification never stops an import.
 
 | FileMaker | File4Base |
 | --- | --- |
-| *Set Next Serial Value* [field; value] | Script step `set_next_serial_value`, `PUT /api/v1/data/{table}/serials/{field}`. |
+| *Set Next Serial Value* [field; value] | Script step `set_next_serial_value`, `PUT /api/v1/data/{table}/serials/{field}`. A field named `Occurrence::Field` is set in that occurrence's table, through the occurrence's route; an occurrence or field that does not exist fails with error 102 and says which. |
 | `GetNextSerialValue ( fileName ; fieldName )` | Calculation function, in auto-enter calculations, unstored calculations and the Data Viewer (a stored calculation answers an error: its value would go stale). `fileName` is not read: the field is `Table::Field` or a field of the formula's table. |
 | *Relookup Field Contents* [field] | Script step `relookup_field_contents` and Records > Relookup Field Contents: the current found set, from the active (or named) match field. |
 | *Duplicate Record/Request* | The duplicate endpoint (§4). |
@@ -186,7 +203,8 @@ off. Prohibit-modification never stops an import.
   entered.
 - `Name` is the account name (§2).
 - `copy_next_lower` / `copy_next_higher` need a one-relationship path whose
-  first criterion is `=` (§2).
+  first criterion is `=` (§2); a lookup of the first related record may be
+  several relationships away.
 - `GetNextSerialValue` is not available in the client's script evaluator
   (script steps evaluate their own calculations on the client); use it in a
   field calculation, or read `GET /api/v1/data/{table}/serials/{field}`.
