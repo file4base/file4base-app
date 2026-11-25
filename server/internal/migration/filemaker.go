@@ -1563,45 +1563,165 @@ func convertRelationshipNode(
 		}}
 	}
 
-	allowCreate := parseBoolAttr(rn, "allow_creation", "allowCreate", "rightAllowCreate")
-	cascadeDelete := parseBoolAttr(rn, "cascade_delete", "cascadeDelete", "rightCascadeDelete")
-	sortRelated := firstAttr(rn, "sort_related", "sortRelated")
-	if rightTableNode != nil {
-		// A native DDR records allow-creation and cascade-delete per side, on
-		// the side they act on, which is the right-hand table (#101).
-		allowCreate = allowCreate || parseBoolAttr(rightTableNode, "cascadeCreate", "allowCreate", "allow_creation")
-		cascadeDelete = cascadeDelete || parseBoolAttr(rightTableNode, "cascadeDelete", "cascade_delete")
-		if sortRelated == "" {
-			sortRelated = firstAttr(rightTableNode, "sortList", "sort_related", "sortRelated")
+	// A DDR and Save a Copy as XML record the options per side, as FileMaker
+	// sets them: <LeftTable> and <RightTable> each carry those of the table
+	// they describe, acting on that table's records (#101). The right side's
+	// are the relationship's own attributes in a File4Base design document.
+	rel := &schema.BundleRelationship{
+		ID:                uuid.NewString(),
+		Name:              relName,
+		LeftOccurrenceID:  leftOccID,
+		RightOccurrenceID: rightOccID,
+		AllowCreation:     parseBoolAttr(rn, "allow_creation", "allowCreate", "rightAllowCreate"),
+		CascadeDelete:     parseBoolAttr(rn, "cascade_delete", "cascadeDelete", "rightCascadeDelete"),
+		SortRelated:       firstAttr(rn, "sort_related", "sortRelated"),
+		LeftAllowCreation: parseBoolAttr(rn, "left_allow_creation", "leftAllowCreate"),
+		LeftCascadeDelete: parseBoolAttr(rn, "left_cascade_delete", "leftCascadeDelete"),
+		LeftSortRelated:   firstAttr(rn, "left_sort_related", "leftSortRelated"),
+	}
+	var sortNotes []ReportItem
+	for _, side := range []struct {
+		node               *xmlNode
+		occurrence, table  string
+		allowCreate, purge *bool
+		sort               *string
+	}{
+		{leftTableNode, leftOcc, leftTbl, &rel.LeftAllowCreation, &rel.LeftCascadeDelete, &rel.LeftSortRelated},
+		{rightTableNode, rightOcc, rightTbl, &rel.AllowCreation, &rel.CascadeDelete, &rel.SortRelated},
+	} {
+		if side.node == nil {
+			continue
+		}
+		*side.allowCreate = *side.allowCreate || parseBoolAttr(side.node, "cascadeCreate", "allowCreate", "allow_creation")
+		*side.purge = *side.purge || parseBoolAttr(side.node, "cascadeDelete", "cascade_delete")
+		if *side.sort != "" {
+			continue
+		}
+		_, external := externalOccs[strings.ToLower(side.occurrence)]
+		table := side.table
+		spec, notes := relationshipSideSort(side.node, side.occurrence, func(field string) string {
+			if external {
+				return externalFieldName(field)
+			}
+			name := sanitizeIdentifier(field)
+			if names := fieldNamesByTable[table]; names != nil {
+				if resolved, ok := names.resolve(field); ok {
+					name = resolved
+				}
+			}
+			if colIDByTableCol[table+"."+name] == "" {
+				return ""
+			}
+			return name
+		})
+		*side.sort = firstNonEmpty(spec, firstAttr(side.node, "sortList", "sort_related", "sortRelated"))
+		if len(notes) > 0 {
+			sortNotes = append(sortNotes, ReportItem{
+				Category:   CategoryTranslated,
+				Domain:     "relationship",
+				SourceName: relName,
+				TargetName: relName,
+				Detail:     fmt.Sprintf("Sort records of %s: %s", side.occurrence, strings.Join(notes, "; ")),
+			})
 		}
 	}
 
-	detail := strings.Join(resolved, " AND ")
+	detail := strings.Join(resolved, " AND ") + relationshipOptionsDetail(leftOcc, rightOcc, rel)
 	for _, side := range []string{leftOcc, rightOcc} {
 		if _, external := externalOccs[strings.ToLower(side)]; external {
 			detail += fmt.Sprintf("; %s is an occurrence of another file's table, whose fields are verified when its file reference is bound", side)
 			break
 		}
 	}
-	items := []ReportItem{{
+	items := append([]ReportItem{{
 		Category:   CategoryPreserved,
 		Domain:     "relationship",
 		SourceName: relName,
 		TargetName: relName,
 		Detail:     detail,
-	}}
+	}}, sortNotes...)
 
-	rel := &schema.BundleRelationship{
-		ID:                uuid.NewString(),
-		Name:              relName,
-		LeftOccurrenceID:  leftOccID,
-		RightOccurrenceID: rightOccID,
-		AllowCreation:     allowCreate,
-		CascadeDelete:     cascadeDelete,
-		SortRelated:       sortRelated,
-	}
 	rel.WithPredicates(predicates)
 	return rel, items
+}
+
+// relationshipSideSort reads the "Sort records" of one side of a
+// relationship — the order that side's records are read in from a record of
+// the other side — as a sort order of the side's fields ("grouping,-order"):
+// a DDR's <SortList>, or Save a Copy as XML's <SortSpecification>, under the
+// <LeftTable> or <RightTable> of that side. column gives the field's name as
+// migrated, or "" when it is not a field of the side's table.
+//
+// What cannot be kept is described in notes rather than dropped silently: a
+// field of another occurrence, which a side's order cannot name, and a
+// custom order by value list, which sorts ascending instead.
+func relationshipSideSort(side *xmlNode, occurrence string, column func(field string) string) (string, []string) {
+	holder := findFirstChild(side, "SortSpecification", "SortList", "sortList")
+	if holder == nil || (hasAttr(holder, "value", "Value") && !parseBoolAttr(holder, "value", "Value")) {
+		return "", nil
+	}
+	var levels, notes []string
+	for _, level := range findNodes(holder, "Sort", "sort") {
+		fields := findNodes(level, "Field", "FieldReference", "field")
+		if len(fields) == 0 {
+			continue
+		}
+		fieldNode := fields[0]
+		field := referencedFieldName(fieldNode)
+		owner := firstAttr(fieldNode, "table", "Table")
+		if ref := findFirstChild(fieldNode, "TableOccurrenceReference"); owner == "" && ref != nil {
+			owner = firstAttr(ref, "name", "Name")
+		}
+		if owner != "" && !strings.EqualFold(owner, occurrence) {
+			notes = append(notes, fmt.Sprintf("%s::%s is a field of another occurrence, which is not kept", owner, field))
+			continue
+		}
+		name := column(field)
+		if name == "" {
+			notes = append(notes, fmt.Sprintf("%s is not a migrated field of %s, which is not kept", field, occurrence))
+			continue
+		}
+		switch order := strings.ToLower(firstAttr(level, "type", "Type", "order")); {
+		case strings.HasPrefix(order, "desc"):
+			name = "-" + name
+		case order == "custom":
+			notes = append(notes, fmt.Sprintf("%s is sorted by a value list in FileMaker, and ascending here", field))
+		}
+		levels = append(levels, name)
+	}
+	return strings.Join(levels, ","), notes
+}
+
+// relationshipOptionsDetail describes, for a report, the options set on each
+// side of rel, which act on that side's records.
+func relationshipOptionsDetail(leftOcc, rightOcc string, rel *schema.BundleRelationship) string {
+	var parts []string
+	for _, side := range []struct {
+		name, other   string
+		create, purge bool
+		sort          string
+	}{
+		{leftOcc, rightOcc, rel.LeftAllowCreation, rel.LeftCascadeDelete, rel.LeftSortRelated},
+		{rightOcc, leftOcc, rel.AllowCreation, rel.CascadeDelete, rel.SortRelated},
+	} {
+		var options []string
+		if side.create {
+			options = append(options, "records created from "+side.other)
+		}
+		if side.purge {
+			options = append(options, "deleted with their "+side.other+" record")
+		}
+		if side.sort != "" {
+			options = append(options, "sorted by "+side.sort)
+		}
+		if len(options) > 0 {
+			parts = append(parts, side.name+": "+strings.Join(options, ", "))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "; " + strings.Join(parts, "; ")
 }
 
 // joinPredicateEndpoint reads one side of a native DDR join predicate, whose

@@ -108,6 +108,11 @@ func bundleOccurrence(o TableOccurrence) BundleOccurrence {
 // A side on an occurrence of another solution's table has no column id: its
 // field is named, by LeftColumnName or RightColumnName for the first
 // criterion and in Predicates for every one.
+//
+// AllowCreation, CascadeDelete and SortRelated are the right side's options;
+// the left side's are LeftAllowCreation, LeftCascadeDelete and
+// LeftSortRelated, which a file written before they were kept does not have:
+// its relationships have none on the left, as they had none there before.
 type BundleRelationship struct {
 	ID                string            `msgpack:"id"`
 	Name              string            `msgpack:"name"`
@@ -122,6 +127,9 @@ type BundleRelationship struct {
 	SortRelated       string            `msgpack:"sort_related"`
 	LeftColumnName    string            `msgpack:"left_column_name,omitempty"`
 	RightColumnName   string            `msgpack:"right_column_name,omitempty"`
+	LeftAllowCreation bool              `msgpack:"left_allow_creation,omitempty"`
+	LeftCascadeDelete bool              `msgpack:"left_cascade_delete,omitempty"`
+	LeftSortRelated   string            `msgpack:"left_sort_related,omitempty"`
 }
 
 // BundlePredicate is one match criterion of a relationship of a solution
@@ -491,6 +499,7 @@ func (s *Service) buildSolutionBundle(ctx context.Context, opts ExportOptions) (
 			LeftOccurrenceID: r.LeftOccurrenceID, LeftColumnID: r.LeftColumnID,
 			RightOccurrenceID: r.RightOccurrenceID, RightColumnID: r.RightColumnID,
 			Operator: r.Operator, AllowCreation: r.AllowCreation, CascadeDelete: r.CascadeDelete, SortRelated: r.SortRelated,
+			LeftAllowCreation: r.LeftAllowCreation, LeftCascadeDelete: r.LeftCascadeDelete, LeftSortRelated: r.LeftSortRelated,
 		}
 		br.WithPredicates(bundlePredicates(r.Predicates))
 		b.Relationships = append(b.Relationships, br)
@@ -648,6 +657,7 @@ type ImportReport struct {
 	ColumnsCreated          int                    `json:"columns_created"`
 	OccurrencesCreated      int                    `json:"occurrences_created"`
 	RelationshipsCreated    int                    `json:"relationships_created"`
+	RelationshipsUpdated    int                    `json:"relationships_updated"`
 	LayoutsCreated          int                    `json:"layouts_created"`
 	LayoutsUpdated          int                    `json:"layouts_updated"`
 	ScriptsCreated          int                    `json:"scripts_created"`
@@ -936,8 +946,10 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	// related fields of a layout can be pointed at it (#36).
 	relIDs := map[string]string{}
 	haveRel := map[string]string{}
+	existingRel := map[string]RelationshipMetadata{}
 	for _, r := range currentRels {
 		haveRel[relKey(r.LeftOccurrenceID, r.RightOccurrenceID, r.Predicates)] = r.ID
+		existingRel[r.ID] = r
 	}
 	for _, r := range b.Relationships {
 		filePredicates := r.PredicateList()
@@ -953,16 +965,36 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			LeftOccurrenceID: occIDs[r.LeftOccurrenceID], RightOccurrenceID: occIDs[r.RightOccurrenceID],
 			Predicates:    predicates,
 			AllowCreation: r.AllowCreation, CascadeDelete: r.CascadeDelete,
+			LeftAllowCreation: r.LeftAllowCreation, LeftCascadeDelete: r.LeftCascadeDelete,
 		}
 		if r.SortRelated != "" {
 			sort := r.SortRelated
 			in.SortRelated = &sort
 		}
+		if r.LeftSortRelated != "" {
+			sort := r.LeftSortRelated
+			in.LeftSortRelated = &sort
+		}
 		key := relKey(in.LeftOccurrenceID, in.RightOccurrenceID, in.Predicates)
 		if existing := haveRel[key]; existing != "" {
 			// The same join is already there: a layout that points at the
-			// file's relationship is pointed at the one in the database.
+			// file's relationship is pointed at the one in the database, and
+			// the relationship takes the file's options for each side, so a
+			// design imported again corrects what an earlier import set.
 			relIDs[r.ID] = existing
+			cur, ok := existingRel[existing]
+			if !ok {
+				continue // created from an earlier entry of this file
+			}
+			delete(existingRel, existing)
+			updated, err := s.importRelationshipOptions(ctx, cur, in)
+			if err != nil {
+				return nil, rollback(fmt.Errorf("updating the options of relationship %q: %w", r.Name, err))
+			}
+			if updated {
+				undo = append(undo, func() { _, _ = s.UpdateRelationship(bg, cur.ID, relationshipOptionsOf(cur)) })
+				report.RelationshipsUpdated++
+			}
 			continue
 		}
 		created, err := s.CreateRelationship(ctx, in)
@@ -2150,4 +2182,36 @@ func (s *Service) ImportDatabaseData(ctx context.Context, data []byte) (*DataImp
 		return nil, fmt.Errorf("failed committing the restored records: %w", err)
 	}
 	return report, nil
+}
+
+// relationshipOptionsOf is the per-side options of r, as an update.
+func relationshipOptionsOf(r RelationshipMetadata) UpdateRelationshipInput {
+	return UpdateRelationshipInput{
+		AllowCreation: &r.AllowCreation, CascadeDelete: &r.CascadeDelete, SortRelated: &r.SortRelated,
+		LeftAllowCreation: &r.LeftAllowCreation, LeftCascadeDelete: &r.LeftCascadeDelete, LeftSortRelated: &r.LeftSortRelated,
+	}
+}
+
+// importRelationshipOptions gives the existing relationship cur the options
+// each side has in a solution file, and reports whether any changed.
+func (s *Service) importRelationshipOptions(ctx context.Context, cur RelationshipMetadata, in CreateRelationshipInput) (bool, error) {
+	want := RelationshipMetadata{
+		AllowCreation: in.AllowCreation, CascadeDelete: in.CascadeDelete,
+		LeftAllowCreation: in.LeftAllowCreation, LeftCascadeDelete: in.LeftCascadeDelete,
+	}
+	if in.SortRelated != nil {
+		want.SortRelated = *in.SortRelated
+	}
+	if in.LeftSortRelated != nil {
+		want.LeftSortRelated = *in.LeftSortRelated
+	}
+	if want.AllowCreation == cur.AllowCreation && want.CascadeDelete == cur.CascadeDelete &&
+		want.SortRelated == cur.SortRelated && want.LeftAllowCreation == cur.LeftAllowCreation &&
+		want.LeftCascadeDelete == cur.LeftCascadeDelete && want.LeftSortRelated == cur.LeftSortRelated {
+		return false, nil
+	}
+	if _, err := s.UpdateRelationship(ctx, cur.ID, relationshipOptionsOf(want)); err != nil {
+		return false, err
+	}
+	return true, nil
 }

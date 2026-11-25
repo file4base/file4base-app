@@ -188,10 +188,13 @@ type Occurrence struct {
 	DataSource string `json:"data_source,omitempty" xml:"data_source,attr,omitempty"`
 }
 
-// Relationship is one join of the graph, read left to right as parent to
-// child, which is the direction its options act in. LeftField, Operator and
-// RightField are its first match criterion; a relationship with several lists
-// them all, in order, in Predicates.
+// Relationship is one join of the graph. LeftField, Operator and RightField
+// are its first match criterion; a relationship with several lists them all,
+// in order, in Predicates.
+//
+// Each side has its own options, as in FileMaker, acting on the side they are
+// set on: AllowCreation, CascadeDelete and SortRelated are the right side's,
+// LeftAllowCreation, LeftCascadeDelete and LeftSortRelated the left side's.
 type Relationship struct {
 	Name          string      `json:"name" xml:"name,attr"`
 	Left          string      `json:"left" xml:"left,attr"`
@@ -203,6 +206,10 @@ type Relationship struct {
 	AllowCreation bool        `json:"allow_creation" xml:"allow_creation,attr"`
 	CascadeDelete bool        `json:"cascade_delete" xml:"cascade_delete,attr"`
 	SortRelated   string      `json:"sort_related,omitempty" xml:"sort_related,attr,omitempty"`
+
+	LeftAllowCreation bool   `json:"left_allow_creation" xml:"left_allow_creation,attr"`
+	LeftCascadeDelete bool   `json:"left_cascade_delete" xml:"left_cascade_delete,attr"`
+	LeftSortRelated   string `json:"left_sort_related,omitempty" xml:"left_sort_related,attr,omitempty"`
 }
 
 // Predicate is one match criterion of a relationship.

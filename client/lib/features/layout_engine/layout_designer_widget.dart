@@ -5354,13 +5354,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         title: const Text('Allow creation of records in this portal',
             style: TextStyle(fontSize: 11)),
         subtitle: Text(
-          target != null && !target.relationship.allowCreation
-              ? 'The relationship "${target.relationship.name}" does not allow it yet, '
-                  'so the server will refuse. Turn it on in Specify Relationship.'
+          target != null && !target.allowsCreation
+              ? 'The relationship "${target.relationship.name}" does not allow creating records '
+                  'in ${target.occurrence.name} yet, so the portal offers no row for it. '
+                  'Turn it on for ${target.occurrence.name} in Specify Relationship.'
               : 'An empty row at the end creates a related record.',
           style: TextStyle(
             fontSize: 10,
-            color: target != null && !target.relationship.allowCreation
+            color: target != null && !target.allowsCreation
                 ? Colors.orange.shade800
                 : Colors.grey,
           ),

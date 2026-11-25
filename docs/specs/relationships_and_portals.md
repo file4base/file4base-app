@@ -16,23 +16,37 @@ ways:
 
 ## Direction
 
-A relationship is drawn from a **left** side to a **right** side, and File4Base
-reads that direction as **parent to child**. That is what gives its three
-options a side to act on:
+A relationship is drawn from a **left** side to a **right** side. As in
+FileMaker, **each side has its own three options**, and each acts on the
+records of the side it is set on, reached from a record of the other:
 
-| Option | Means |
+| Option, set on a side | Means |
 | --- | --- |
-| Allow creation | A record may be created on the **right** side through this relationship, from a **left** record, by an account with the create privilege on the right table; never on the left side from a right record. |
-| Delete related records | Deleting a **left** record deletes the **right** records that match it. |
-| Sort related records | The order the **right** side's records come back in. |
+| Allow creation of records in this table via this relationship | A record of this side may be created through the relationship from a record of the other side, by an account with the create privilege on this side's table. |
+| Delete related records in this table when a record is deleted in the other table | Deleting a record of the other side deletes the records of this side that match it. |
+| Sort records | The order this side's records come back in, read from a record of the other side. |
 
-Reading goes both ways, so "Sort related records" is read as belonging to the
-right side too: a Companies layout showing its customers uses it, a Customers
-layout showing its company does not, because the fields it names are the right
-side's. A field that side does not have is dropped rather than refused — a
-stale setting on the relationship must not leave a portal blank. A sort typed
-into **Portal Setup** is the caller's own and *is* checked, so a typo there is
-reported.
+The right side's options are the relationship's `allow_creation`,
+`cascade_delete` and `sort_related`; the left side's are `left_allow_creation`,
+`left_cascade_delete` and `left_sort_related`. A relationship drawn as parent
+to child sets them on the right side, the child's; nothing is set on the left
+side unless asked, so a relationship created before the left side had options
+acts as it did. The two sides are never merged: the left side's "delete related
+records" deletes a left record with a right one, never a right record with a
+left one.
+
+A relationship may join an occurrence to itself, a hierarchy drawn as
+`Staff::code = Staff::boss_code` (the left end the boss, the right end the
+reports). Both ends are then the same occurrence, so a cascade follows the end
+whose option is on, and a read or a creation names its end with `side`
+(`left` or `right`); the occurrence alone names the right end.
+
+A portal reads the sort of the side it shows: a Companies layout showing its
+customers uses the customers side's, a Customers layout showing its company
+uses the companies side's. A field that side does not have is dropped rather
+than refused — a stale setting on the relationship must not leave a portal
+blank. A sort typed into **Portal Setup** is the caller's own and *is* checked,
+so a typo there is reported.
 
 The Specify Relationship dialog names both tables in these labels rather than
 saying "this table", because a dialog showing two tables makes that ambiguous.
@@ -72,9 +86,9 @@ opened.
   sorts and cascading deletes all leave it out.
 - **Everything that follows a relationship** uses all its criteria: portals,
   related fields, unstored calculations reading `Occurrence::Field`, finds on
-  related fields, cascading deletes and the relationship's sort. "Sort related
-  records" set to ascending or descending sorts by the right field of the
-  first criterion.
+  related fields, cascading deletes and the relationship's sort. "Sort records"
+  set to ascending or descending sorts by that side's field of the first
+  criterion.
 - **Creation** through the relationship is possible only when every criterion
   is `=`: each right-hand field of the new record is set from the left record,
   and the client cannot override any of them. With any other operator there
@@ -185,8 +199,8 @@ client never sends them, and a value sent for one would be overwritten anyway,
 so a portal row cannot be aimed at a different parent.
 
 Allowing creation in Portal Setup is not enough on its own: the relationship
-must also allow it, or the server refuses with `403`. Portal Setup says so when
-the relationship does not.
+must also allow creation of records on the side the portal shows, or the server
+refuses with `403`. Portal Setup says so when that side does not.
 
 ## An empty match field relates to nothing
 
@@ -198,7 +212,11 @@ answers `422`.
 ## Cascading deletes
 
 Deleting a record deletes the records that belong to it, following every
-relationship of its table that asks for it, and then theirs, all the way down.
+relationship of its table whose other side asks for it — the right side's
+option when the table is on the left, the left side's when it is on the right —
+and then theirs, all the way down. A cascade, like creating a related
+record, reads no page, so the relationship's sort is neither applied nor
+checked there.
 A ring of such relationships deletes each record once rather than recursing
 forever.
 
@@ -412,9 +430,6 @@ the same name.
   relationship allows creation.
 - **Reading a related field in a formula.** A calculation reads the record's own
   fields; see [calculation_formulas.md](calculation_formulas.md).
-- **Per-side options.** Allow creation, cascade delete and sort are one setting
-  each per relationship, acting left to right as above. FileMaker has them
-  separately for each side.
 - **Portals of portals**, and relationships followed through more than one hop.
 - A find through a relationship from a record of another solution, and the
   second-field and related options of a value list on an external occurrence

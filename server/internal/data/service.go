@@ -67,6 +67,10 @@ type QueryOptions struct {
 	SortAsc bool   `json:"sort_asc"`
 
 	Sort []SortField `json:"sort,omitempty"`
+
+	// End is the end of the relationship a related read reads, needed when
+	// the relationship joins an occurrence to itself; see SidesToward.
+	End RelationEnd `json:"-"`
 }
 
 // SortOrder is the effective order: Sort when the caller gave one, otherwise

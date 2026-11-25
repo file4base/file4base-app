@@ -93,6 +93,42 @@ func TestRelationshipSidesOfASelfJoin(t *testing.T) {
 	assert.Equal(t, "id", target.Column)
 }
 
+// A relationship joining an occurrence to itself has the same occurrence at
+// both ends: the end is named, and the occurrence alone names the right end.
+func TestRelationshipSidesTowardAnEnd(t *testing.T) {
+	rel := &data.Relationship{
+		Name:  "staff_bosses",
+		Left:  data.RelationSide{OccurrenceID: "occ-staff", OccurrenceName: "Staff", TableName: "staff", Column: "code", End: data.EndLeft},
+		Right: data.RelationSide{OccurrenceID: "occ-staff", OccurrenceName: "Staff", TableName: "staff", Column: "boss_code", End: data.EndRight},
+	}
+	from := data.LocalOrigin("staff")
+
+	source, target, err := rel.SidesToward(from, "occ-staff", data.EndLeft)
+	require.NoError(t, err)
+	assert.Equal(t, "boss_code", source.Column)
+	assert.Equal(t, data.EndLeft, target.End)
+
+	_, target, err = rel.SidesToward(from, "", data.EndRight)
+	require.NoError(t, err)
+	assert.Equal(t, "boss_code", target.Column)
+
+	_, target, err = rel.SidesFrom(from, "occ-staff")
+	require.NoError(t, err)
+	assert.Equal(t, data.EndRight, target.End)
+
+	_, _, err = rel.SidesToward(from, "occ-other", data.EndLeft)
+	assert.ErrorIs(t, err, data.ErrRelationshipNotFound, "an occurrence that is not the end named")
+	_, _, err = rel.SidesToward(data.LocalOrigin("other"), "", data.EndLeft)
+	assert.ErrorIs(t, err, data.ErrRelationshipNotFound)
+
+	for _, text := range []string{"", "left", "Right"} {
+		_, err := data.ParseRelationEnd(text)
+		assert.NoError(t, err, text)
+	}
+	_, err = data.ParseRelationEnd("up")
+	assert.ErrorIs(t, err, data.ErrRelationshipNotFound)
+}
+
 func TestParseSortSpec(t *testing.T) {
 	assert.Equal(t,
 		[]data.SortField{{Field: "company"}, {Field: "fee_paid", Descending: true}},

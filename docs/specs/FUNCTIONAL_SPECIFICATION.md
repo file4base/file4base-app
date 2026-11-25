@@ -72,14 +72,17 @@ File4Base enforces the exact 4-mode operational paradigm:
 
   The graph stores the mathematical signs; the plain spellings (`<>`, `!=`,
   `<=`, `>=`) are accepted too. The Cartesian product (`x`) is not implemented.
-- A relationship is drawn **left to right**, and that direction is read as
-  parent to child: all three options act on the right-hand side.
-  - `allow_creation`: a record may be created on the right-hand side through
-    this relationship, which is what the empty row at the end of a portal does.
-  - `cascade_delete`: deleting a left-hand record deletes the right-hand
-    records that match it, and theirs, down the whole chain.
-  - `sort_related`: the order the right-hand side's records come back in when
-    the caller asks for none. A portal's own sort order supersedes it.
+- A relationship is drawn **left to right**, and, as in FileMaker, each side
+  has its own three options, acting on the records of that side. The right
+  side's are `allow_creation`, `cascade_delete` and `sort_related`; the left
+  side's `left_allow_creation`, `left_cascade_delete` and `left_sort_related`.
+  - allow creation: a record of that side may be created through this
+    relationship from a record of the other, which is what the empty row at
+    the end of a portal does.
+  - cascade delete: deleting a record of the other side deletes the records of
+    that side that match it, and theirs, down the whole chain.
+  - sort: the order that side's records come back in when the caller asks for
+    none. A portal's own sort order supersedes it.
 
   See [relationships_and_portals.md](relationships_and_portals.md).
 

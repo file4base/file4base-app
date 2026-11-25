@@ -250,7 +250,7 @@ void main() {
       final h = _Harness();
       await h.open(tester, initial: _threeCriteria);
 
-      await tester.tap(find.textContaining('Allow records to be created'));
+      await tester.tap(find.byKey(const ValueKey('relationship-right-allow-creation')));
       await tester.pumpAndSettle();
       expect(find.textContaining('only when every criterion uses ='), findsOneWidget);
     });

@@ -173,6 +173,9 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
           allowCreation: res['allow_creation'] as bool? ?? false,
           cascadeDelete: res['cascade_delete'] as bool? ?? false,
           sortRelated: res['sort_related'] as String?,
+          leftAllowCreation: res['left_allow_creation'] as bool? ?? false,
+          leftCascadeDelete: res['left_cascade_delete'] as bool? ?? false,
+          leftSortRelated: res['left_sort_related'] as String?,
           predicates: res['predicates'] as List<RelationshipPredicateModel>?,
         );
 
@@ -213,6 +216,9 @@ class _RelationshipGraphWidgetState extends State<RelationshipGraphWidget> {
           allowCreation: res['allow_creation'] as bool?,
           cascadeDelete: res['cascade_delete'] as bool?,
           sortRelated: res['sort_related'] as String?,
+          leftAllowCreation: res['left_allow_creation'] as bool?,
+          leftCascadeDelete: res['left_cascade_delete'] as bool?,
+          leftSortRelated: res['left_sort_related'] as String?,
           predicates: res['predicates'] as List<RelationshipPredicateModel>?,
         );
 

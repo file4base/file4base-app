@@ -44,7 +44,7 @@ Golden fixtures produced by each side are read by the other side's tests:
 
 **occurrence**: `id`, `base_table_id`, `name`, `x_pos`, `y_pos`, and `external` (optional). An occurrence of a table of **another solution** (FileMaker's external table occurrence, `#107`) has no `base_table_id` and an `external` map instead: `file_reference` (the name of a file reference of the bundle) and `table` (optional: the table's name in that solution, absent while it is not known). A bundle without external occurrences is encoded exactly as before.
 
-**relationship**: `id`, `name`, `left_occurrence_id`, `left_column_id`, `right_occurrence_id`, `right_column_id`, `operator`, `allow_creation`, `cascade_delete`, `sort_related`, and `predicates` (optional array of predicate).
+**relationship**: `id`, `name`, `left_occurrence_id`, `left_column_id`, `right_occurrence_id`, `right_column_id`, `operator`, `allow_creation`, `cascade_delete`, `sort_related` (the right side's options), `left_allow_creation`, `left_cascade_delete`, `left_sort_related` (the left side's, each omitted when off or empty, so a file without them opens with none), and `predicates` (optional array of predicate).
 
 A side on an external occurrence has no column id: `left_column_name` or `right_column_name` (optional, after the other keys) names the field of the other solution, and the id is empty. Both are omitted on local sides. A field known only by its FileMaker id is named by the marker `#<id>` there, in `source_column_name` and in formulas and layout definitions; it is resolved against the other solution's `source_field_id` when the reference is bound.
 
