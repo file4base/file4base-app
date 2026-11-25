@@ -83,7 +83,7 @@ class _Api extends ApiClient {
 
   @override
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values,
-      {bool script = false}) async {
+      {bool script = false, bool overrideValidation = false}) async {
     updates.add((id, Map.of(values), script));
     final i = children.indexWhere((c) => c['id'] == id);
     children[i] = {...children[i], ...values};
