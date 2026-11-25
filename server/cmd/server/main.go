@@ -26,7 +26,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
-const AppVersion = "0.21.0"
+const AppVersion = "0.22.0"
 
 func init() {
 	dbal.RegisterDialect(dbal.EnginePostgres, func() dbal.Dialect { return postgres.New() })
