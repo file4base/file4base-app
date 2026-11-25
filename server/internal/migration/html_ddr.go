@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/repetition"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/google/uuid"
@@ -189,6 +190,13 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 	fmpTableRawNames := make(map[int]string)            // fmpTableID -> raw source table name
 	fmpFieldMeta := make(map[int]map[int]htmlFieldMeta) // fmpTableID -> fmpFieldID -> meta
 
+	// 0. Custom functions, which the field calculations below may call.
+	var functions formulaBinding
+	for _, it := range bindCustomFunctions(readHTMLCustomFunctions(rawHTML), &functions, bundle) {
+		addReportItem(report, it)
+	}
+	report.Counts.CustomFunctions = len(bundle.CustomFunctions)
+
 	// 1. Parse Base Tables & Fields
 	btMatches := reHTMLBaseTable1.FindAllStringSubmatch(rawHTML, -1)
 	if len(btMatches) == 0 {
@@ -321,7 +329,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			}
 			seenCols[rf.colName] = true
 
-			col, items := convertHTMLField(sqlName, rawTableName, rf.rawName, rf.colName, rf.rawType, rf.rawOptions, knownSameTableCols)
+			col, items := convertHTMLField(sqlName, rawTableName, rf.rawName, rf.colName, rf.rawType, rf.rawOptions, knownSameTableCols, functions.functions)
 			for _, it := range items {
 				addReportItem(report, it)
 			}
@@ -949,7 +957,7 @@ func parseHTMLScriptsSection(scriptsSection string) []htmlParsedScript {
 
 func convertHTMLField(
 	tableSQL, rawTableName, rawFieldName, colName, rawType, rawOptions string,
-	knownSameTableCols map[string]string,
+	knownSameTableCols map[string]string, functions *calc.Library,
 ) (schema.BundleColumn, []ReportItem) {
 	var items []ReportItem
 	col := schema.BundleColumn{
@@ -973,7 +981,7 @@ func convertHTMLField(
 			resType = "Container"
 		}
 		formula := extractHTMLFormula(rawOptions, tableSQL, rawTableName, knownSameTableCols)
-		expr, ok := ownTableFormula(formula)
+		expr, ok := ownTableFormula(formula, functions)
 		if ok {
 			payload, _ := json.Marshal(map[string]interface{}{
 				"formula":     expr,

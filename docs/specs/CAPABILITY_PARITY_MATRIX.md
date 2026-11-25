@@ -100,7 +100,7 @@ Formulas are evaluated deterministically in Go by `server/internal/calc` ([`calc
 FileMaker's calculation grammar (field names with spaces, `Table::Field`, `${…}`, `$`/`$$` variables, `Let`, `While`, comments, `¶`, `≠ ≤ ≥ ^ xor`, locale decimal comma) and value rules (exact decimals, permissive text-to-number, case- and accent-insensitive comparison, FileMaker date/time arithmetic and text output). Pinned by 552 cases observed in FileMaker Pro 26.0.2 (`server/internal/calc/testdata/conformance.json`, **Verified** by `TestConformance`).
 
 ### 3.2 Functions
-About 110 FileMaker functions: logical (`If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `Evaluate`, `GetField`, `Get(…)`), text, list, number (incl. `SetPrecision`, exact `Sqrt`/`Exp`/`Ln`/`Log`), aggregate, date/time, conversion and text-formatting functions, plus custom functions. Full list: [`calculation_formulas.md`](calculation_formulas.md).
+About 110 FileMaker functions: logical (`If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `Evaluate`, `GetField`, `Get(…)`), text, list, number (incl. `SetPrecision`, exact `Sqrt`/`Exp`/`Ln`/`Log`), aggregate, date/time, conversion and text-formatting functions, plus the solution's custom functions (`sys_custom_functions`: recursive, mutually recursive and calling one another whatever their order; carried in solution files; migrated from the XML DDR, Save a Copy as XML and the HTML DDR, so the calculations calling them migrate as calculations; **Verified** by `TestCustomFunctionsApplyAndCompute` (`internal/migration`) and `TestCustomFunctionsRoundTripThroughASolutionFile` (`internal/schema`) on PostgreSQL and MariaDB). Full list: [`calculation_formulas.md`](calculation_formulas.md).
 
 Unstored calculations are computed on every read (record, list, find, portal rows, export) and may read related fields `Occurrence::Field` across any number of relationships from their context occurrence; a stored calculation reading a related field is refused. **Verified** by `TestUnstoredRelatedCalculation` (`internal/data`) and `TestRelatedCalculationsApply` (`internal/migration`) on PostgreSQL and MariaDB.
 
@@ -109,6 +109,7 @@ Containers in formulas read as their file's name (`GetAsText`, `IsEmpty`, `GetCo
 ### 3.3 Not yet supported
 - Find, sort and summary on an unstored calculation (refused with `422 Unstored Calculation`).
 - `ExecuteSQL`, JSON, cryptographic, plug-in and financial functions, and container functions other than `GetContainerAttribute` (`filename`, `fileSize`), are reported as unsupported.
+- Editing custom functions: `File > Manage > Custom Functions` is not implemented, and no API writes them yet; they are migrated and carried in solution files only. Script steps and layout objects do not call them: their calculations are evaluated by the client.
 
 ---|---|---|
 | **Logical & Control** | `IF(test; whenTrue [; whenFalse])`, `ISEMPTY(value)`, `COALESCE(a; b; ...)` | Short-circuit conditional evaluation and empty/null checks. |

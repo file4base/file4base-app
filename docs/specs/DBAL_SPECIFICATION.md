@@ -190,6 +190,15 @@ A file reference keeps `paths` (TEXT, one FileMaker path per line) beside its `n
 
 A catalog created before these columns existed is upgraded by `EnsureSystemTables`, and the first time an occurrence, a file reference, a value list or the columns of a table are used on it (`server/migrations/005_external_occurrences.sql`): the catalog is read first, so an upgraded one is only read.
 
+### 6. `sys_custom_functions` (Custom Functions)
+A solution's own functions, as FileMaker's Manage Custom Functions defines them, which every formula of the solution may call (`server/migrations/007_custom_functions.sql`):
+- `name` (VARCHAR(128), unique, and unique whatever its case: the server checks it)
+- `parameters` (TEXT, a JSON array of the parameter names, in order)
+- `formula` (TEXT, reading its parameters; it may call itself and the other custom functions)
+- `access` (`all`, or `full_access` for a function only full-access accounts see in the design, FileMaker's *Availability*)
+
+A catalog without the table has no custom functions; `EnsureSystemTables` creates it.
+
 ---
 
 ## 5. Configuration & Switching Database Engines

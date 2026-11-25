@@ -18,6 +18,9 @@ import (
 type Error struct {
 	Pos int
 	Msg string
+	// Function is the name of the function a formula calls that neither
+	// File4Base nor the solution's custom functions define, as written.
+	Function string
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("%s (at position %d)", e.Msg, e.Pos) }

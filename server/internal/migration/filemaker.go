@@ -71,6 +71,9 @@ type SummaryCounts struct {
 	RejectedCount     int `json:"rejected_count"`
 	ManualActionCount int `json:"manual_action_count"`
 
+	// CustomFunctions counts the custom functions migrated.
+	CustomFunctions int `json:"custom_functions,omitempty"`
+
 	// SourceTextValues counts the values migrated with their original text
 	// beside FileMaker's reading of it (#124).
 	SourceTextValues int `json:"source_text_values,omitempty"`
@@ -799,6 +802,11 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	// related fields checked to be reachable.
 	externalFields := externalFieldRefs(root, externalOccs)
 	binding := newFormulaBinding(bundle, fieldNamesByTable, locale, externalFields)
+	// Custom functions first, so every calculation that calls one reads.
+	for _, it := range bindCustomFunctions(readXMLCustomFunctions(root), &binding, bundle) {
+		addReportItem(report, it)
+	}
+	report.Counts.CustomFunctions = len(bundle.CustomFunctions)
 	for i := range bundle.Tables {
 		for _, it := range bindTableCalculations(&bundle.Tables[i], binding, colTypeByTableCol) {
 			addReportItem(report, it)

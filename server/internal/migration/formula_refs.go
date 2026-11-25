@@ -84,6 +84,12 @@ type formulaBinding struct {
 	// matchColumns are the columns (by id) a relationship matches on.
 	matchColumns map[string]bool
 	locale       *calc.Locale // nil when source_locale was not named
+	// functions are the solution's custom functions, as the source wrote
+	// them, which its formulas are read with, and stored the same functions
+	// as they were imported (see bindCustomFunctions). dropped are the ones
+	// that could not be, by upper-case name.
+	functions, stored *calc.Library
+	dropped           map[string]string
 }
 
 // boundOccurrence is an imported table occurrence: its name and its table.
@@ -207,7 +213,7 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 			local = append(local, name)
 		}
 	}
-	opts := calc.Options{Fields: local, Tables: b.occurrences, Locale: b.locale}
+	opts := calc.Options{Fields: local, Tables: b.occurrences, Locale: b.locale, Library: b.functions}
 
 	var items []ReportItem
 	var bound []boundCalculation
@@ -232,7 +238,7 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 
 		expr, err := calc.ParseWith(formula, opts)
 		if err != nil {
-			why := fmt.Sprintf("could not be read (%v)", err)
+			why := b.unreadable(formula, err)
 			if b.locale == nil && reCommaDecimal.MatchString(formula) {
 				why += "; it seems to write decimals with a comma, so name the locale of the source file (source_locale, such as fr-FR) and migrate again"
 			}
@@ -280,21 +286,7 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 			continue
 		}
 
-		rewritten, unresolved, err := calc.Rewrite(formula, opts, func(occurrence, field string) (string, bool) {
-			if occurrence == "" {
-				column, ok := names.resolve(field)
-				return calc.QuoteName(column), ok
-			}
-			occ, ok := b.occByName[strings.ToLower(occurrence)]
-			if ok && occ.external {
-				return calc.QuoteName(occ.name) + "::" + calc.QuoteName(externalFieldName(field)), true
-			}
-			if !ok || b.fields[occ.table] == nil {
-				return "", false
-			}
-			column, ok := b.fields[occ.table].resolve(field)
-			return calc.QuoteName(occ.name) + "::" + calc.QuoteName(column), ok
-		})
+		rewritten, unresolved, err := calc.Rewrite(formula, opts, b.renamer(names))
 		if err != nil {
 			quarantine(fmt.Sprintf("could not be read (%v)", err),
 				fmt.Sprintf("Rewrite the calculation of %s in File4Base", target))
@@ -347,7 +339,32 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 		bound = append(bound, this)
 		items = append(items, item)
 	}
-	return append(items, finishCalculations(bound, b.matchColumns, colTypeByTableCol)...)
+	return append(items, finishCalculations(bound, b.matchColumns, colTypeByTableCol, b.stored)...)
+}
+
+// renamer names a field reference of a formula as the import named it: a
+// field of the formula's own table (names, nil for a formula of no table)
+// by its column, one read through an occurrence by the occurrence and the
+// column, a field of another file's table by the name its migration gives it.
+func (b formulaBinding) renamer(names *fieldNameMap) func(occurrence, field string) (string, bool) {
+	return func(occurrence, field string) (string, bool) {
+		if occurrence == "" {
+			if names == nil {
+				return "", false
+			}
+			column, ok := names.resolve(field)
+			return calc.QuoteName(column), ok
+		}
+		occ, ok := b.occByName[strings.ToLower(occurrence)]
+		if ok && occ.external {
+			return calc.QuoteName(occ.name) + "::" + calc.QuoteName(externalFieldName(field)), true
+		}
+		if !ok || b.fields[occ.table] == nil {
+			return "", false
+		}
+		column, ok := b.fields[occ.table].resolve(field)
+		return calc.QuoteName(occ.name) + "::" + calc.QuoteName(column), ok
+	}
 }
 
 // boundCalculation is a calculation whose formula now reads the imported
@@ -377,13 +394,13 @@ func (c boundCalculation) quarantine(why, action string, colTypes map[string]str
 // was computed from changes. One a relationship matches on cannot be, and is
 // quarantined. Then it writes each formula into its column; an unstored
 // calculation's column holds nothing, so it is never required.
-func finishCalculations(bound []boundCalculation, matchColumns map[string]bool, colTypes map[string]string) []ReportItem {
+func finishCalculations(bound []boundCalculation, matchColumns map[string]bool, colTypes map[string]string, lib *calc.Library) []ReportItem {
 	unstored := map[string]bool{}
 	reads := map[string][]string{}
 	for _, c := range bound {
 		unstored[c.col.Name] = c.payload["stored"] == false
 		formula, _ := c.payload["formula"].(string)
-		if expr, err := calc.Parse(formula); err == nil {
+		if expr, err := calc.ParseWith(formula, calc.Options{Library: lib}); err == nil {
 			reads[c.col.Name] = expr.Fields()
 		}
 	}
@@ -455,13 +472,13 @@ func formulaText(raw string) string {
 
 // ownTableFormula is the formula of a Database Design Report calculation when
 // it reads only plain fields of its own table, the only kind that report's
-// route can apply.
-func ownTableFormula(raw string) (string, bool) {
+// route can apply. lib holds the solution's custom functions.
+func ownTableFormula(raw string, lib *calc.Library) (string, bool) {
 	formula := formulaText(raw)
 	if formula == "" {
 		return "", false
 	}
-	expr, err := calc.Parse(formula)
+	expr, err := calc.ParseWith(formula, calc.Options{Library: lib})
 	if err != nil || len(expr.RelatedFields()) > 0 {
 		return formula, false
 	}

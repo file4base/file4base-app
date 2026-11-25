@@ -72,9 +72,30 @@ func NewLibrary(defs []CustomFunction, opts Options) (*Library, error) {
 		}
 		lib.funcs[key].body = body
 	}
+	// A function that calls one that cannot be read cannot be computed
+	// either, whatever its own formula says: it is left out too, and said
+	// why, rather than failing each time a formula reaches it.
+	for changed := true; changed; {
+		changed = false
+		for _, d := range defs {
+			key := strings.ToUpper(strings.TrimSpace(d.Name))
+			cf := lib.funcs[key]
+			if cf == nil || cf.body == nil {
+				continue
+			}
+			for _, callee := range lib.calls(cf.body) {
+				if other := lib.funcs[callee]; other.body == nil {
+					cf.body = nil
+					problems[d.Name] = fmt.Errorf("calls the custom function %s, which cannot be read", other.name)
+					changed = true
+					break
+				}
+			}
+		}
+	}
 	for _, d := range defs {
 		key := strings.ToUpper(strings.TrimSpace(d.Name))
-		if lib.funcs[key].body == nil {
+		if cf := lib.funcs[key]; cf != nil && cf.body == nil {
 			delete(lib.funcs, key)
 		}
 	}
@@ -82,6 +103,28 @@ func NewLibrary(defs []CustomFunction, opts Options) (*Library, error) {
 		return lib, &LibraryError{Problems: problems}
 	}
 	return lib, nil
+}
+
+// calls lists the custom functions of the library a formula calls itself,
+// in upper case.
+func (l *Library) calls(root node) []string {
+	seen := map[string]struct{}{}
+	var rec func(node)
+	rec = func(n node) {
+		if n == nil {
+			return
+		}
+		if c, ok := n.(callNode); ok {
+			if _, custom := l.funcs[c.name]; custom {
+				seen[c.name] = struct{}{}
+			}
+		}
+		for _, child := range children(n) {
+			rec(child)
+		}
+	}
+	rec(root)
+	return sortedKeys(seen)
 }
 
 // Names lists the custom functions of the library.
