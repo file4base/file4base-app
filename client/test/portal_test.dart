@@ -27,6 +27,21 @@ const _companiesOccurrence =
 const _customersOccurrence =
     TableOccurrenceModel(id: 'occ-customers', baseTableId: 't-customers', name: 'Customers', xPos: 300, yPos: 100);
 
+/// Customers again, reached from Customers: a portal of it on a Companies
+/// layout is two relationships away.
+const _referralsOccurrence =
+    TableOccurrenceModel(id: 'occ-referrals', baseTableId: 't-customers', name: 'Referrals', xPos: 500, yPos: 100);
+
+const _referrals = RelationshipModel(
+  id: 'rel-2',
+  name: 'customers_referrals',
+  leftOccurrenceId: 'occ-customers',
+  leftColumnId: 'uc2',
+  rightOccurrenceId: 'occ-referrals',
+  rightColumnId: 'uc1',
+  allowCreation: true,
+);
+
 const _relationship = RelationshipModel(
   id: 'rel-1',
   name: 'companies_customers',
@@ -68,7 +83,17 @@ class _RelatedApi extends ApiClient {
 
   @override
   Future<List<TableOccurrenceModel>> listOccurrences() async =>
-      [_companiesOccurrence, _customersOccurrence];
+      [_companiesOccurrence, _customersOccurrence, _referralsOccurrence];
+
+  /// Reads along a path: table, record, path, context, sort.
+  final List<(String, String, List<String>, String?, List<String>?)> alongCalls = [];
+
+  @override
+  Future<({List<Map<String, dynamic>> records, bool more})> listRelatedAlong(String table, String id,
+      {required List<String> path, String? context, List<String>? sort}) async {
+    alongCalls.add((table, id, path, context, sort));
+    return (records: [for (final r in children) Map<String, dynamic>.from(r)], more: false);
+  }
 
   @override
   Future<List<TableModel>> listTables() async => [_companies, _customers];
@@ -587,6 +612,44 @@ void main() {
     final (table, expressions, occurrence) = api.evaluations.single;
     expect((table, expressions.single, occurrence), ('customers', 'last_name = "Alvarez"', 'occ-customers'),
         reason: 'the filter is evaluated from the portal occurrence against the related records');
+  });
+
+  testWidgets('a portal several relationships away lists the records along its path', (tester) async {
+    final api = await _pump(tester,
+        relationships: const [_relationship, _referrals],
+        layout: _layoutWithPortal(
+            portal: const PortalConfigModel(
+                occurrence: 'Referrals', occurrencePath: ['Customers', 'Referrals'], sort: '-last_name', allowCreation: true)));
+
+    expect(find.byKey(const ValueKey('portal-row-cu-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('portal-row-cu-2')), findsOneWidget);
+    final (table, id, path, context, sort) = api.alongCalls.single;
+    expect((table, id, context), ('companies', 'co-1', 'companies'),
+        reason: 'the record in hand is followed along the path, from the layout occurrence');
+    expect(path, ['Customers', 'Referrals']);
+    expect(sort, ['-last_name']);
+    expect(api.relatedCalls, isEmpty);
+    expect(find.byKey(const ValueKey('portal-new-row')), findsNothing,
+        reason: 'no record is created through several relationships');
+
+    await tester.enterText(find.byKey(const ValueKey('portal-cell-cu-2-last_name')), 'Mendez');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    expect(api.updates.last.$1, 'customers', reason: "the row's record is written in its own table");
+    expect(api.updates.last.$2, 'cu-2');
+  });
+
+  test('a portal path survives a round trip, and choosing a relationship replaces it', () {
+    final config = PortalConfigModel.fromJson(const {
+      'occurrence': 'Referrals',
+      'occurrence_path': ['Customers', 'Referrals'],
+    });
+    expect(config.isAlongPath, isTrue);
+    expect(config.isBound, isTrue);
+    expect(PortalConfigModel.fromJson(config.toJson()).occurrencePath, ['Customers', 'Referrals']);
+    final picked = config.copyWith(clearRelationship: true).copyWith(relationshipId: 'rel-1', occurrence: 'Customers');
+    expect(picked.occurrencePath, isEmpty);
+    expect(picked.isAlongPath, isFalse);
   });
 
   testWidgets('a portal whose filter could not be migrated shows no record', (tester) async {

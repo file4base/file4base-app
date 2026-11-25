@@ -77,6 +77,37 @@ func TestFirstRelatedAlong(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, "edited", again[h]["label"])
 
+			// A portal along the path lists every record reached, in the
+			// same order.
+			labels := func(records []map[string]interface{}) []interface{} {
+				out := []interface{}{}
+				for _, r := range records {
+					out = append(out, r["label"])
+				}
+				return out
+			}
+			all, more, err := svc.RelatedAlong(ctx, "groups", "groups", []string{"members", "items"}, g, nil)
+			require.NoError(t, err)
+			assert.False(t, more)
+			wantAll := []interface{}{"i1", "i2", "i3", "i4"}
+			if sorted {
+				wantAll = []interface{}{"i3", "i4", "i2", "i1"}
+			}
+			assert.Equal(t, wantAll, labels(all))
+			// A portal's own sort orders them then.
+			bySort, _, err := svc.RelatedAlong(ctx, "groups", "groups", []string{"members", "items"}, g,
+				[]data.SortField{{Field: "label", Descending: true}})
+			require.NoError(t, err)
+			assert.Equal(t, []interface{}{"i4", "i3", "i2", "i1"}, labels(bySort))
+			_, _, err = svc.RelatedAlong(ctx, "groups", "groups", []string{"members", "items"}, g,
+				[]data.SortField{{Field: "nowhere"}})
+			assert.Error(t, err)
+			none, _, err := svc.RelatedAlong(ctx, "groups", "groups", []string{"members", "items"}, lonely, nil)
+			require.NoError(t, err)
+			assert.Empty(t, none)
+			_, _, err = svc.RelatedAlong(ctx, "groups", "groups", []string{"members", "items"}, "missing", nil)
+			assert.True(t, errors.Is(err, data.ErrRecordNotFound), "%v", err)
+
 			// The path is followed as given, never searched for.
 			_, err = svc.FirstRelatedAlong(ctx, "groups", "groups", []string{"items"}, []string{g})
 			assert.True(t, errors.Is(err, data.ErrRelationshipNotFound), "%v", err)

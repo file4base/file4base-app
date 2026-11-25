@@ -271,7 +271,7 @@ func changeEventFor(r *http.Request, occurrenceTable string) (realtime.Event, bo
 			// records are shown, and telling every client the table changed
 			// each time would make them all reload and evaluate again.
 			switch strings.ToLower(rest[i:]) {
-			case "/related", "/related-first", "/evaluate":
+			case "/related", "/related-first", "/related-along", "/evaluate":
 				return realtime.Event{}, false
 			}
 		}

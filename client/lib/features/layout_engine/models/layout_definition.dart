@@ -885,6 +885,7 @@ class PortalConfigModel {
     this.allowDeletion = false,
     this.sort = '',
     this.filter = '',
+    this.occurrencePath = const [],
   });
 
   factory PortalConfigModel.fromJson(Map<String, dynamic> json) {
@@ -900,6 +901,9 @@ class PortalConfigModel {
       allowDeletion: json['allow_deletion'] as bool? ?? false,
       sort: json['sort'] as String? ?? '',
       filter: json['filter'] as String? ?? '',
+      occurrencePath: json['occurrence_path'] is List
+          ? [for (final o in json['occurrence_path'] as List) o.toString()]
+          : const [],
     );
   }
   /// The relationship followed to reach the records the rows show.
@@ -944,8 +948,16 @@ class PortalConfigModel {
   /// FileMaker's "Filter portal records". Empty shows them all.
   final String filter;
 
+  /// The occurrences reached in turn from the layout's when the portal's is
+  /// several relationships away (#26), the last being [occurrence]: the rows
+  /// are every record reached at the end. Empty when [relationshipId] says.
+  final List<String> occurrencePath;
+
+  /// True when the portal lists the records along [occurrencePath].
+  bool get isAlongPath => occurrencePath.isNotEmpty && !(relationshipId?.isNotEmpty ?? false);
+
   /// True when the portal knows which records to show.
-  bool get isBound => relationshipId != null && relationshipId!.isNotEmpty;
+  bool get isBound => (relationshipId != null && relationshipId!.isNotEmpty) || isAlongPath;
 
   /// The sort order to ask the server for, split into the fields it takes.
   List<String> get sortFields =>
@@ -970,6 +982,7 @@ class PortalConfigModel {
         'allow_deletion': allowDeletion,
         if (sort.isNotEmpty) 'sort': sort,
         if (filter.isNotEmpty) 'filter': filter,
+        if (occurrencePath.isNotEmpty) 'occurrence_path': occurrencePath,
       };
 
   PortalConfigModel copyWith({
@@ -999,6 +1012,8 @@ class PortalConfigModel {
       allowDeletion: allowDeletion ?? this.allowDeletion,
       sort: sort ?? this.sort,
       filter: filter ?? this.filter,
+      // Choosing a relationship, or none, replaces the path.
+      occurrencePath: clearRelationship || relationshipId != null ? const [] : occurrencePath,
     );
   }
 }

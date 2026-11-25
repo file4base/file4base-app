@@ -196,7 +196,7 @@ type nativeLayout struct {
 	noImage      int
 	buttonsUnrun int             // buttons whose single step File4Base does not run
 	buttonIcons  int             // icons dropped from buttons that have a label
-	portalsFar   int             // portals of an occurrence several relationships away, left out
+	portalsFar   int             // portals of an occurrence several relationships away, listed along the path
 	portalFilter int             // portal filters that could not be bound, the portal kept empty
 	portalSort   int             // portal sort fields of another occurrence, left out of the sort
 	formatsLeft  int             // conditional formats not kept
@@ -1082,7 +1082,7 @@ func (l *nativeLayout) report() []ReportItem {
 		review = append(review, plural(l.buttonIcons, "button")+" with both an icon and a label, shown with its label only")
 	}
 	if l.portalsFar > 0 {
-		review = append(review, plural(l.portalsFar, "portal")+" showing the records of an occurrence several relationships away, not migrated yet")
+		review = append(review, plural(l.portalsFar, "portal")+" showing the records of an occurrence several relationships away, listed along the path; no record can be created in them")
 	}
 	if l.portalFilter > 0 {
 		review = append(review, plural(l.portalFilter, "portal")+" whose filter calculation could not be bound, showing no records until it is set again")
@@ -1246,7 +1246,8 @@ func (l *nativeLayout) buttonAction(action *xmlNode) map[string]interface{} {
 // relationship from the layout's: the rows it shows, from which, their
 // sort and filter; then the objects of its first row, which every row
 // repeats with its own record. A portal reaching its occurrence through
-// several relationships is left out, with its objects.
+// several relationships lists the records along that path
+// (occurrence_path), as a field there reads the first of them.
 func (l *nativeLayout) portal(obj *xmlNode) {
 	p := findFirstChild(obj, "Portal")
 	base := l.baseObject(obj)
@@ -1259,24 +1260,33 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 		return
 	}
 	occ, found := l.ctx.binding.occByName[strings.ToLower(firstAttr(to, "name"))]
-	var relationships []string
+	var occurrences, relationships []string
 	if found && !l.occExternal {
-		_, relationships = l.ctx.occurrencePath(l.occID, occ.id)
+		occurrences, relationships = l.ctx.occurrencePath(l.occID, occ.id)
 	}
-	if len(relationships) != 1 {
+	if len(relationships) == 0 {
 		l.pending["portal"]++
-		if len(relationships) > 1 {
-			l.portalsFar++
-		}
 		return
 	}
 	config := map[string]interface{}{
-		"relationship_id": relationships[0],
 		"occurrence":      occ.name,
 		"show_scroll_bar": true,
+	}
+	if len(relationships) == 1 {
+		config["relationship_id"] = relationships[0]
 		// As in FileMaker, the empty last row is offered only where the
 		// relationship allows creating records on the portal's side.
-		"allow_creation": true,
+		config["allow_creation"] = true
+	} else {
+		// Several relationships away: every record reached at the end of
+		// the chain is listed. No record is created through it.
+		path := make([]interface{}, len(occurrences))
+		for i, id := range occurrences {
+			path[i] = l.ctx.occNames[id]
+		}
+		config["occurrence_path"] = path
+		config["allow_creation"] = false
+		l.portalsFar++
 	}
 	if o := findFirstChild(p, "Options"); o != nil {
 		if n, err := strconv.Atoi(firstAttr(o, "index")); err == nil && n > 1 {

@@ -835,7 +835,7 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	byType := objectsByType(def)
-	if len(byType["portal"]) != 2 {
+	if len(byType["portal"]) != 3 {
 		t.Fatalf("portals: %v", byType["portal"])
 	}
 	var relID string
@@ -869,12 +869,22 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 	if portalAt < 0 || fieldAt < portalAt {
 		t.Fatalf("row field at %d, portal at %d", fieldAt, portalAt)
 	}
-	for _, l := range byType["label"] {
-		if l["text"] == "Far" {
-			t.Fatal("a portal several relationships away is left out with its objects")
-		}
+	// A portal several relationships away lists the records along its
+	// path, and creates none.
+	far := byType["portal"][2]["portal_config"].(map[string]interface{})
+	if path, _ := far["occurrence_path"].([]interface{}); len(path) != 2 || path[0] != "Ingredients" ||
+		path[1] != "Ingredient Recipes" || far["relationship_id"] != nil || far["allow_creation"] != false ||
+		far["occurrence"] != "Ingredient Recipes" {
+		t.Fatalf("portal several relationships away: %v", far)
 	}
-	if c := got.Report.Counts.LayoutObjects["Portal"]; c.Source != 3 || c.Migrated != 2 {
+	kept := false
+	for _, l := range byType["label"] {
+		kept = kept || l["text"] == "Far"
+	}
+	if !kept {
+		t.Fatal("the row objects of a portal several relationships away are kept")
+	}
+	if c := got.Report.Counts.LayoutObjects["Portal"]; c.Source != 3 || c.Migrated != 3 {
 		t.Fatalf("portal counts: %+v", c)
 	}
 	var review string
@@ -883,7 +893,7 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 			review += it.Detail
 		}
 	}
-	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away", "1 portal whose filter calculation could not be bound", "1 portal sort field of another occurrence"} {
+	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away, listed along the path", "1 portal whose filter calculation could not be bound", "1 portal sort field of another occurrence"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review %q lacks %q", review, want)
 		}

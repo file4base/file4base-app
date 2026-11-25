@@ -368,6 +368,11 @@
             "filter_problem": {
               "type": "boolean",
               "description": "Set by a migration when the source filter could not be bound; the filter is then '0' and the portal shows no record until it is set again."
+            },
+            "occurrence_path": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Instead of relationship_id, for an occurrence several relationships from the layout's (#26): the occurrences reached in turn, the last being occurrence. The rows are every record reached at the end; none is created through it."
             }
           }
         },

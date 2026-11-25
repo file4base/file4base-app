@@ -22,8 +22,19 @@ class RelatedTarget {
     required this.occurrence,
     required this.table,
     this.side = 'right',
+    this.path = const [],
   });
+
+  /// The relationship followed; for a target along [path], the last one.
   final RelationshipModel relationship;
+
+  /// The occurrences reached in turn from the layout's when [occurrence] is
+  /// several relationships away (#26); empty when [relationship] alone
+  /// reaches it.
+  final List<String> path;
+
+  /// Whether [occurrence] is reached along [path].
+  bool get isAlongPath => path.isNotEmpty;
 
   /// The end of the relationship looked through, `left` or `right`: what
   /// tells the two ends apart when it joins an occurrence to itself.
@@ -46,7 +57,9 @@ class RelatedTarget {
   /// Whether a record of the other side may create records here: the
   /// relationship's allow-creation of the side looked through, as FileMaker
   /// sets it per side.
-  bool get allowsCreation => side == 'left' ? relationship.leftAllowCreation : relationship.allowCreation;
+  /// No record is created through several relationships.
+  bool get allowsCreation =>
+      !isAlongPath && (side == 'left' ? relationship.leftAllowCreation : relationship.allowCreation);
 }
 
 /// Every occurrence reachable from [fromTable] by following one relationship,
@@ -181,10 +194,38 @@ class RelatedContext {
         .then((records) => records[recordId]);
   }
 
+  /// What a portal along [path] shows: the last occurrence of [path], with
+  /// its table and the relationship that reaches it from the one before.
+  /// Null when one of them is not in the catalog, or is another solution's,
+  /// which a path is not followed into yet.
+  RelatedTarget? alongPath(List<String> path) {
+    final end = endOfPath(path);
+    if (end == null || path.length < 2) return null;
+    final before = path[path.length - 2].toLowerCase();
+    final previous =
+        occurrencesById.values.where((o) => o.name.toLowerCase() == before || o.id == path[path.length - 2]).firstOrNull;
+    if (previous == null) return null;
+    for (final rel in relationshipsById.values) {
+      final right = rel.rightOccurrenceId == end.occurrence.id && rel.leftOccurrenceId == previous.id;
+      final left = rel.leftOccurrenceId == end.occurrence.id && rel.rightOccurrenceId == previous.id;
+      if (right || left) {
+        return RelatedTarget(
+            relationship: rel, occurrence: end.occurrence, table: end.table, side: right ? 'right' : 'left', path: path);
+      }
+    }
+    return null;
+  }
+
   /// The related records of the record in hand that [target] shows, at most
-  /// [limit].
+  /// [limit]. Those along a path are read for that record alone: at most
+  /// [ApiClient.maxRecordsAlong] of them.
   Future<List<Map<String, dynamic>>> rows(RelatedTarget target, {List<String>? sort, int limit = 100}) {
     final recordId = this.recordId!;
+    if (target.isAlongPath) {
+      return apiClient
+          .listRelatedAlong(fromTable, recordId, path: target.path, context: layoutOccurrence, sort: sort)
+          .then((page) => page.records);
+    }
     if (batched) {
       return RelatedBatcher.of(apiClient).rows(fromTable, recordId, target, sort: sort, limit: limit);
     }
@@ -804,8 +845,9 @@ class _PortalViewState extends State<PortalView> {
     super.dispose();
   }
 
-  RelatedTarget? get _target =>
-      widget.related.resolve(_config.relationshipId, _config.occurrence, side: _config.relationshipSide);
+  RelatedTarget? get _target => _config.isAlongPath
+      ? widget.related.alongPath(_config.occurrencePath)
+      : widget.related.resolve(_config.relationshipId, _config.occurrence, side: _config.relationshipSide);
 
   Future<void> _load() async {
     final generation = ++_generation;
@@ -1032,7 +1074,9 @@ class _PortalViewState extends State<PortalView> {
       );
     } else if (target == null) {
       body = relatedNotice(
-        'Portal: the relationship it shows is no longer there',
+        _config.isAlongPath
+            ? 'Portal: the occurrences ${_config.occurrencePath.join(' → ')} are not all there'
+            : 'Portal: the relationship it shows is no longer there',
         isDark: widget.isDark,
       );
     } else if (widget.related.recordId == null) {

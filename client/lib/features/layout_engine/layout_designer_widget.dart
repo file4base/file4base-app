@@ -5387,7 +5387,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     ];
     String keyOf(RelatedTarget t) => '${t.relationship.id}|${t.occurrence.id}';
     final target = _targetOf(config.relationshipId, config.occurrence, side: config.relationshipSide);
-    final dangling = config.isBound && target == null;
+    // A portal along a path keeps it until another occurrence is picked.
+    final dangling = config.isBound && !config.isAlongPath && target == null;
 
     void edit(PortalConfigModel Function(PortalConfigModel) change) {
       _editSelected((sel) => sel.copyWith(portalConfig: change(sel.portal).toJson()));
@@ -5449,6 +5450,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ),
         ),
       ],
+      if (config.isAlongPath)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'Shows every record reached through ${config.occurrencePath.join(' → ')}. '
+            'No record is created from it. Pick an occurrence to show one relationship away instead.',
+            key: const ValueKey('portal-occurrence-path'),
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ),
       if (dangling)
         Padding(
           padding: const EdgeInsets.only(top: 6),
@@ -5597,7 +5608,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         ),
         key: ValueKey('${sel.id}-portal-filter-calc'),
         initial: config.filter,
-        context: target?.occurrence.name,
+        context: target?.occurrence.name ?? config.occurrence,
         onChosen: (v) => edit((c) => c.copyWith(filter: v.trim())),
       ),
     ];

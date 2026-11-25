@@ -2604,6 +2604,43 @@ class ApiClient {
     };
   }
 
+  /// Most records [listRelatedAlong] returns.
+  static const maxRecordsAlong = 1000;
+
+  /// Every record of the last occurrence of [path] related to the record [id]
+  /// of [table] seen from the occurrence [context] (a layout's), each
+  /// occurrence of [path] reached from the one before: what a portal several
+  /// relationships away from its layout lists (#26). [sort] orders them
+  /// (`field`, `-field`); `more` says whether there were more than
+  /// [maxRecordsAlong].
+  Future<({List<Map<String, dynamic>> records, bool more})> listRelatedAlong(
+    String table,
+    String id, {
+    required List<String> path,
+    String? context,
+    List<String>? sort,
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('${_records(table)}/related-along'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        if (context != null && context.isNotEmpty) 'context': context,
+        'path': path,
+        'record_id': id,
+        if (sort != null && sort.isNotEmpty) 'sort': sort,
+      }),
+    );
+    _checkResponse(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (
+      records: [
+        for (final r in body['records'] as List? ?? const [])
+          if (r is Map) Map<String, dynamic>.from(r),
+      ],
+      more: body['more'] == true,
+    );
+  }
+
   /// [listRelatedRows] for several records of [table] in one request: what a
   /// list showing a related field needs, without a request per record. Every
   /// record asked for has an entry, empty when nothing is related to it.
