@@ -97,7 +97,7 @@ class _Api extends ApiClient {
 
   @override
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values,
-      {bool script = false}) async {
+      {bool script = false, bool overrideValidation = false}) async {
     updates.add((table, id, Map.of(values)));
     if (table == 'companies') {
       parent.addAll(values);

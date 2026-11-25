@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file4base_client/core/api/api_client.dart';
@@ -2151,7 +2152,9 @@ class LayoutActionRunner {
     final session = context.session;
     final rawExpression = params['value'] ?? params['expression'];
     final expression = rawExpression?.toString() ?? '';
-    String? Function(int position, int count)? valueFor;
+    FutureOr<String?> Function(int position, int count)? valueFor;
+    // Why the server could not evaluate the calculation, when it was asked.
+    var serverError = '';
     if (replaceType == 'serial_numbers') {
       final initial = resolveValue(params['serial_initial']?.toString() ?? '', vars, callContext: context);
       var serial = num.tryParse(initial?.trim() ?? '');
@@ -2179,7 +2182,30 @@ class LayoutActionRunner {
       if (expression.trim().isEmpty) {
         return failOrCapture(3, 'Replace Field Contents has no calculation.');
       }
-      valueFor = (position, count) => resolveValue(expression, vars, callContext: context);
+      // Each record is the current one while its value is worked out: here
+      // when this runner can, otherwise by the server in that record's
+      // context, as every other step's formula.
+      valueFor = (position, count) async {
+        final local = resolveValue(expression, vars, callContext: context);
+        if (local != null) return local;
+        try {
+          final evaluation = await _evaluateOnServer(expression, vars, callContext: context);
+          if (evaluation == null) return null;
+          if (evaluation.error.isNotEmpty) {
+            serverError = evaluation.error;
+            return null;
+          }
+          if (evaluation.unknownFields.isNotEmpty) {
+            serverError = 'it reads fields this table does not have: ${evaluation.unknownFields.join(', ')}';
+            return null;
+          }
+          _mergeVariables(evaluation.variables, vars);
+          return evaluation.text;
+        } on Object catch (e) {
+          serverError = '$e';
+          return null;
+        }
+      };
     }
     final outcome = await ext.actionReplaceFieldContents(
       field: field,
@@ -2192,9 +2218,10 @@ class LayoutActionRunner {
           "occurrence than this layout's, which it cannot write yet. Nothing was written.");
     }
     if (outcome.unevaluatedAt > 0) {
+      final why = serverError.isEmpty ? '' : ': $serverError';
       return LayoutActionResult.stopped(
           'Replace Field Contents cannot evaluate "$expression" for record ${outcome.unevaluatedAt} of '
-          '${outcome.count}; ${_recordsReplaced(outcome.replaced)}.');
+          '${outcome.count}$why; ${_recordsReplaced(outcome.replaced)}.');
     }
     if (outcome.errorCode != 0) {
       final where = outcome.count > 0 ? ' at record ${outcome.replaced + 1} of ${outcome.count}' : '';
@@ -2521,7 +2548,7 @@ class LayoutActionRunner {
         add(params['layout_calculation'] ?? params['expression']);
       case 'replace_field_contents':
         // Evaluated for each record of the found set, with that record in
-        // hand: the runner's own evaluator only.
+        // hand (see _replaceFoundSet), not once before the step.
         return out;
     }
     add(params['record_calculation']);

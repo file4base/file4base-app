@@ -54,6 +54,28 @@ class _Api extends ApiClient {
   @override
   Future<List<TableModel>> listTables() async => [_table];
 
+  /// What the evaluate requests carried: the record, and a draft's values.
+  final List<({String? recordId, Map<String, Object?>? values})> evaluated = [];
+
+  /// The server knows the custom function `Tag ( text )`; the runner does not.
+  @override
+  Future<List<EvaluationModel>> evaluateExpressions(String table,
+      {required List<String> expressions,
+      String? recordId,
+      String resultType = 'Text',
+      Map<String, String>? variables,
+      Map<String, Object?>? get,
+      Map<String, Object?>? values}) async {
+    evaluated.add((recordId: recordId, values: values));
+    final code = values?['code'] ?? stored[recordId]?['code'];
+    return [
+      for (final e in expressions)
+        e == 'Tag ( code )'
+            ? EvaluationModel(expression: e, text: '$code!')
+            : EvaluationModel(expression: e, error: 'the function Other is not known'),
+    ];
+  }
+
   @override
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data,
       {bool script = false, bool overrideValidation = false}) async {
@@ -96,6 +118,52 @@ Future<DataBrowserWidgetState> _pump(WidgetTester tester, _Api api) async {
 }
 
 void main() {
+  testWidgets('a calculation calling a custom function is evaluated by the server for each record', (tester) async {
+    final api = _Api();
+    final state = await _pump(tester, api);
+    final res = await LayoutActionRunner(apiClient: api, host: state).runStep('Replace Field Contents', {
+      'field': 'mark',
+      'replace_type': 'calculation',
+      'value': 'Tag ( code )',
+      'value_is_calculation': true,
+    }, depth: 0, callContext: ScriptCallContext(session: ScriptSessionState()));
+    await tester.pumpAndSettle();
+    expect(res.completed, isTrue, reason: res.message);
+    expect(api.written, hasLength(150));
+    expect(api.stored['1']!['mark'], 'C1!');
+    expect(api.stored['150']!['mark'], 'C150!');
+    expect(api.evaluated.map((e) => e.recordId).take(2), ['1', '2'], reason: 'each record in its own context');
+
+    // A formula the server cannot evaluate either stops the replace and says why.
+    final failed = await LayoutActionRunner(apiClient: api, host: state).runStep('Replace Field Contents', {
+      'field': 'mark',
+      'replace_type': 'calculation',
+      'value': 'Other ( code )',
+    }, depth: 0, callContext: ScriptCallContext(session: ScriptSessionState()));
+    await tester.pumpAndSettle();
+    expect(failed.completed, isFalse);
+    expect(failed.message, contains('the function Other is not known'));
+    expect(failed.message, contains('no record was replaced'));
+  });
+
+  testWidgets("a new record not committed yet is evaluated with its own values", (tester) async {
+    final api = _Api();
+    final state = await _pump(tester, api);
+    await state.actionNewRecord();
+    await tester.pumpAndSettle();
+    final res = await LayoutActionRunner(apiClient: api, host: state).runStep('Set Field', {
+      'field': 'code',
+      'value': '"Z9"',
+      'value_is_calculation': true,
+    }, depth: 0, callContext: ScriptCallContext(session: ScriptSessionState()));
+    expect(res.completed, isTrue, reason: res.message);
+    final evaluation = await state.actionEvaluateInScript('Tag ( code )');
+    expect(evaluation?.text, 'Z9!');
+    expect(api.evaluated.last.recordId, isNull, reason: 'the server has no record to read yet');
+    expect(api.evaluated.last.values, containsPair('code', 'Z9'));
+    expect(api.evaluated.last.values!.keys.where((k) => k.startsWith('__')), isEmpty);
+  });
+
   testWidgets('a calculation is replaced in every record, beyond the first page read', (tester) async {
     final api = _Api();
     final state = await _pump(tester, api);

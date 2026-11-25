@@ -1,6 +1,7 @@
 // #133 — remaining FileMaker script steps, options, error capture, loop exit,
 // dynamic targets, window model, and runner/debugger parity.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -306,7 +307,7 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost, R
   Future<ReplaceOutcome> actionReplaceFieldContents({
     required String field,
     String? table,
-    String? Function(int position, int count)? valueFor,
+    FutureOr<String?> Function(int position, int count)? valueFor,
   }) async {
     if (table != null && relatedOccurrences.contains(table)) return const ReplaceOutcome(relatedField: true);
     if (records.isEmpty || !currentRecord.containsKey(field)) {
@@ -318,7 +319,7 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost, R
     try {
       for (var i = 0; i < count; i++) {
         recordIdx = i;
-        final value = valueFor == null ? contents : valueFor(i + 1, count);
+        final value = valueFor == null ? contents : await valueFor(i + 1, count);
         if (value == null) return ReplaceOutcome(count: count, replaced: i, unevaluatedAt: i + 1);
         if (i + 1 == rejectWriteAt) {
           return ReplaceOutcome(errorCode: rejectWriteError, detail: 'rejected', count: count, replaced: i);

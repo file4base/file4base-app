@@ -4546,16 +4546,30 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     Map<String, String> variables = const {},
     Map<String, Object?> get = const {},
   }) async {
-    final recordId = _records.isEmpty ? '' : (_currentRecord['id']?.toString() ?? '');
+    // A new record not committed yet exists only here: the server reads
+    // its values from the request, and has no stored record to read.
+    final draft = _onDraft;
+    final recordId = _records.isEmpty || draft ? '' : (_currentRecord['id']?.toString() ?? '');
     final results = await widget.apiClient.evaluateExpressions(
       widget.table.name,
       expressions: [expression],
       recordId: recordId.isEmpty ? null : recordId,
       variables: variables,
       get: get,
+      values: draft ? _draftValues(_currentRecord) : null,
     );
     return results.firstOrNull;
   }
+
+  /// The field values of a new record not committed yet, as the server
+  /// reads them: its own keys, and values that are not text, left out.
+  static Map<String, Object?> _draftValues(Map<String, dynamic> record) => {
+        for (final e in record.entries)
+          if (!e.key.startsWith('__') &&
+              e.key != 'id' &&
+              (e.value == null || e.value is String || e.value is num || e.value is bool))
+            e.key: e.value,
+      };
 
   /// What a field's value looks like inside merge text.
   String _mergeFieldText(String fieldName, Object? value) {
@@ -5466,7 +5480,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   Future<ReplaceOutcome> actionReplaceFieldContents({
     required String field,
     String? table,
-    String? Function(int position, int count)? valueFor,
+    FutureOr<String?> Function(int position, int count)? valueFor,
   }) async {
     // A step that names a table occurrence is placed against the graph,
     // read once if this layout never needed it.
@@ -5501,7 +5515,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         if (id == null || id.isEmpty) continue;
         // The record is the current one while its value is worked out.
         _currentIndex = i;
-        final text = valueFor == null ? contents : valueFor(i + 1, count);
+        final text = valueFor == null ? contents : await valueFor(i + 1, count);
+        if (!mounted) return ReplaceOutcome(count: count, replaced: replaced);
         if (text == null) return ReplaceOutcome(count: count, replaced: replaced, unevaluatedAt: i + 1);
         Object? toSave = text;
         if (col.fieldType == 'DATE' && text.trim().isNotEmpty) {

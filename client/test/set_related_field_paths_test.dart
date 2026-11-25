@@ -117,7 +117,7 @@ class _Api extends ApiClient {
 
   @override
   Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> values,
-      {bool script = false}) async {
+      {bool script = false, bool overrideValidation = false}) async {
     updates.add('$table/$id ${values.entries.map((e) => '${e.key}=${e.value}').join(',')}');
     final manager = managers[id];
     if (manager != null) {

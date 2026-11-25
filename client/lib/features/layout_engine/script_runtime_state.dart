@@ -2,6 +2,8 @@
 /// `ScriptExecution`, and `ScriptDebugSession` (#133).
 library;
 
+import 'dart:async';
+
 /// Outcome of navigating records or portal rows, so `Go to Record/Request/Page`
 /// and `Go to Portal Row` can report boundary conditions (`Exit after last`)
 /// and FileMaker error code 101 deterministically.
@@ -281,7 +283,7 @@ abstract class ExtendedLayoutActionHost {
   Future<ReplaceOutcome> actionReplaceFieldContents({
     required String field,
     String? table,
-    String? Function(int position, int count)? valueFor,
+    FutureOr<String?> Function(int position, int count)? valueFor,
   });
   Future<ScriptDialogResult> actionShowDialogEx({
     required String title,

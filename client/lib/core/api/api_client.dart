@@ -3962,6 +3962,7 @@ class ApiClient {
     String resultType = 'Text',
     Map<String, String>? variables,
     Map<String, Object?>? get,
+    Map<String, Object?>? values,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
@@ -3972,6 +3973,7 @@ class ApiClient {
         'result_type': resultType,
         if (variables != null && variables.isNotEmpty) 'variables': variables,
         if (get != null && get.isNotEmpty) 'get': get,
+        if (values != null && values.isNotEmpty) 'values': values,
       }),
     );
     _checkResponse(response);
