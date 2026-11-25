@@ -676,6 +676,13 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 // that solution cannot be read the list offers nothing of this one in their
 // place: the error says why.
 func (s *Service) externalValueListItems(ctx context.Context, list *ValueList, record *ValueListRecord, reader *data.Service) ([]ValueListItem, bool, error) {
+	if list.RelatedOccurrenceID != nil && (record == nil || strings.TrimSpace(record.ID) == "") {
+		// Related values with no record in hand are none, as for a list of
+		// this solution's field: nothing to read there, so the other
+		// solution is not even opened (and not having it signed in to is no
+		// error yet).
+		return []ValueListItem{}, false, nil
+	}
 	target := data.ExternalTarget{}
 	if list.SourceOccurrenceID != nil {
 		if occ, err := s.GetTableOccurrence(ctx, *list.SourceOccurrenceID); err == nil {

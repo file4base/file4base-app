@@ -1187,17 +1187,25 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     }
   }
 
-  /// File > Manage > File References (#107). The graph and an open layout
-  /// on another solution's table read again once it is closed.
+  /// File > Manage > File References (#107). The record in hand is
+  /// committed first, as FileMaker commits it before a Manage dialog. When
+  /// a reference changed, the layouts are read again, unless a record is
+  /// still uncommitted (its commit was refused): reading again would throw
+  /// it away, and the views through the references read again on their own.
   Future<void> _handleManageFileReferences() async {
     final role = _currentUser?.role;
-    await ManageFileReferencesDialog.show(
+    final browser = _dataBrowserKey.currentState;
+    if (browser != null) await browser.commitRecord();
+    if (!mounted) return;
+    final changed = await ManageFileReferencesDialog.show(
       context,
       apiClient: ref.read(apiClientProvider),
       canEdit: role == 'owner' || role == 'admin',
       solutionName: _activeSolutionName,
     );
-    if (mounted) unawaited(_loadTables(targetLayoutId: _activeLayout?.id));
+    if (!changed || !mounted) return;
+    if (_dataBrowserKey.currentState?.hasUncommittedRecord ?? false) return;
+    unawaited(_loadTables(targetLayoutId: _activeLayout?.id));
   }
 
   Future<void> _handleManageLayouts() async {

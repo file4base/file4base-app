@@ -334,6 +334,33 @@ class _ValueListEditorState extends State<_ValueListEditor> {
 
   String _columnKey(ColumnModel c) => _isExternal ? c.name : c.id;
 
+  /// The entries of a field list whose stored value is [stored]. A field of
+  /// another solution's table the migration knew only by its FileMaker id
+  /// (`#<id>`) is the field it resolves to, and keeps its stored value, so
+  /// saving the list unchanged changes nothing; one no field answers is
+  /// listed as it is, unresolved, never replaced by another field.
+  List<DropdownMenuItem<String>> _fieldItems(String? stored) {
+    final columns = _sourceColumns;
+    final resolved = _isExternal ? ColumnModel.externalField(columns, stored) : null;
+    final items = [
+      for (final c in columns)
+        DropdownMenuItem(
+          value: resolved != null && c.name == resolved.name ? stored! : _columnKey(c),
+          child: Text(c.displayName),
+        ),
+    ];
+    if (_isExternal && stored != null && !items.any((i) => i.value == stored)) {
+      items.add(DropdownMenuItem(
+        value: stored,
+        child: Text(
+          _externalTable == null ? stored : ColumnModel.unresolvedLabel(stored),
+          style: const TextStyle(fontStyle: FontStyle.italic),
+        ),
+      ));
+    }
+    return items;
+  }
+
   void _readExternalTable() {
     final occ = _externalOccurrence;
     final client = widget.apiClient;
@@ -536,9 +563,7 @@ class _ValueListEditorState extends State<_ValueListEditor> {
           key: ValueKey('value-list-second-column-$_sourceTableId'),
           initialValue: _secondColumnId,
           decoration: const InputDecoration(labelText: 'Second field', border: OutlineInputBorder(), isDense: true),
-          items: _sourceColumns
-              .map((c) => DropdownMenuItem(value: _columnKey(c), child: Text(c.displayName)))
-              .toList(),
+          items: _fieldItems(_secondColumnId),
           onChanged: (v) => setState(() => _secondColumnId = v),
         ),
         CheckboxListTile(
@@ -683,9 +708,7 @@ class _ValueListEditorState extends State<_ValueListEditor> {
                   initialValue: _sourceColumnId,
                   decoration: const InputDecoration(
                       labelText: 'Field', border: OutlineInputBorder(), isDense: true),
-                  items: _sourceColumns
-                      .map((c) => DropdownMenuItem(value: _columnKey(c), child: Text(c.displayName)))
-                      .toList(),
+                  items: _fieldItems(_sourceColumnId),
                   onChanged: _sourceTableId == null ? null : (v) => setState(() => _sourceColumnId = v),
                 ),
                 ..._externalNotice(),

@@ -79,10 +79,15 @@ class ManageFileReferencesDialog extends StatefulWidget {
     required this.apiClient,
     this.canEdit = true,
     this.solutionName = '',
+    this.onChanged,
     super.key,
   });
 
   final ApiClient apiClient;
+
+  /// Called on closing when a reference was added, changed, bound or
+  /// deleted.
+  final VoidCallback? onChanged;
 
   /// Only an owner or an administrator may add, change, bind or verify a
   /// reference; anyone else sees where each one goes.
@@ -91,11 +96,20 @@ class ManageFileReferencesDialog extends StatefulWidget {
   /// The solution signed in to, named in the title.
   final String solutionName;
 
-  static Future<void> show(BuildContext context, {required ApiClient apiClient, bool canEdit = true, String solutionName = ''}) {
-    return showDialog<void>(
+  /// Shows the dialog; true when a reference was added, changed, bound or
+  /// deleted, so what reads through one should be read again.
+  static Future<bool> show(BuildContext context, {required ApiClient apiClient, bool canEdit = true, String solutionName = ''}) async {
+    var changed = false;
+    await showDialog<void>(
       context: context,
-      builder: (_) => ManageFileReferencesDialog(apiClient: apiClient, canEdit: canEdit, solutionName: solutionName),
+      builder: (_) => ManageFileReferencesDialog(
+        apiClient: apiClient,
+        canEdit: canEdit,
+        solutionName: solutionName,
+        onChanged: () => changed = true,
+      ),
     );
+    return changed;
   }
 
   @override
@@ -123,7 +137,10 @@ class _ManageFileReferencesDialogState extends State<ManageFileReferencesDialog>
   @override
   void dispose() {
     // Views that read through a remapped or rebound reference read again.
-    if (_changed) ExternalAccess.of(widget.apiClient).refresh();
+    if (_changed) {
+      ExternalAccess.of(widget.apiClient).refresh();
+      widget.onChanged?.call();
+    }
     super.dispose();
   }
 
@@ -158,6 +175,10 @@ class _ManageFileReferencesDialogState extends State<ManageFileReferencesDialog>
     _changed = true;
     _reports.remove(saved.id);
     _problems.remove(saved.id);
+    // Tables chosen for its occurrences were tables of the solution it was
+    // mapped to: they mean nothing in another one.
+    _tableChoices.remove(saved.id);
+    _peerTables.remove(saved.id);
     _selectedId = saved.id;
     await _load();
   }
@@ -245,8 +266,9 @@ class _ManageFileReferencesDialogState extends State<ManageFileReferencesDialog>
       setState(() => _reports[ref.id] = report);
       // An occurrence no field singles a table out for is bound by hand,
       // from the tables of that solution.
-      final needsTables = report.occurrences
-          .any((o) => o.status == ExternalOccurrenceStatus.unbound && o.candidates.isEmpty);
+      final needsTables = report.occurrences.any((o) =>
+          o.status == ExternalOccurrenceStatus.mismatch ||
+          (o.status == ExternalOccurrenceStatus.unbound && o.candidates.isEmpty));
       if (needsTables && peerToken != null && !_peerTables.containsKey(ref.id)) {
         final tables = await widget.apiClient.forPeerSession(peerToken).listTables();
         if (mounted) setState(() => _peerTables[ref.id] = [for (final t in tables) t.name]);
@@ -254,7 +276,7 @@ class _ManageFileReferencesDialogState extends State<ManageFileReferencesDialog>
     } catch (e) {
       if (!mounted) return;
       final problem = describeFileReferenceError(e, ref);
-      if (e is ApiException && e.title == 'Peer Token Rejected') widget.apiClient.forgetLinked(ref.database);
+      if (e is ApiException && e.title == 'Peer Token Rejected') ExternalAccess.of(widget.apiClient).peerRejected(ref.database);
       setState(() => _problems[ref.id] = problem);
       if (e is ApiException && e.statusCode == 404) unawaited(_load());
     } finally {
@@ -511,7 +533,8 @@ class _ManageFileReferencesDialogState extends State<ManageFileReferencesDialog>
     };
     final String? remedy;
     if (occ.status == ExternalOccurrenceStatus.mismatch) {
-      remedy = 'Rename the field in ${ref.database}, or change what uses it in this solution, then Verify again.';
+      remedy = 'Rename the field in ${ref.database}, or change what uses it in this solution, then Verify again; '
+          'or choose another table of ${ref.database} for it, then Bind (it keeps its relationships).';
     } else if (occ.status != ExternalOccurrenceStatus.unbound) {
       remedy = null;
     } else if (!ref.isMapped) {
@@ -522,7 +545,9 @@ class _ManageFileReferencesDialogState extends State<ManageFileReferencesDialog>
       remedy = 'No table of ${ref.database} holds every field it uses. Choose its table, then Bind; '
           'the fields that differ are listed after that.';
     }
-    final choices = occ.candidates.isNotEmpty ? occ.candidates : (_peerTables[ref.id] ?? const <String>[]);
+    final choices = occ.status != ExternalOccurrenceStatus.mismatch && occ.candidates.isNotEmpty
+        ? occ.candidates
+        : (_peerTables[ref.id] ?? const <String>[]);
     return Container(
       key: ValueKey('file-reference-occurrence-${occ.name}'),
       margin: const EdgeInsets.only(top: 10),
@@ -555,14 +580,14 @@ class _ManageFileReferencesDialogState extends State<ManageFileReferencesDialog>
               padding: const EdgeInsets.only(top: 4, left: 22),
               child: Text(remedy, style: TextStyle(fontSize: 11.5, color: Colors.grey.shade700)),
             ),
-          if (occ.status == ExternalOccurrenceStatus.unbound && ref.isMapped && choices.isNotEmpty && widget.canEdit)
+          if (occ.status != ExternalOccurrenceStatus.bound && ref.isMapped && choices.isNotEmpty && widget.canEdit)
             Padding(
               padding: const EdgeInsets.only(top: 6, left: 22),
               child: DropdownButton<String>(
                 key: ValueKey('file-reference-table-${occ.name}'),
                 isDense: true,
                 hint: const Text('Choose a table', style: TextStyle(fontSize: 12)),
-                value: _tableChoices[ref.id]?[occ.name],
+                value: choices.contains(_tableChoices[ref.id]?[occ.name]) ? _tableChoices[ref.id]![occ.name] : null,
                 items: [
                   for (final t in choices) DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 12))),
                 ],

@@ -241,6 +241,7 @@ class ColumnModel {
     this.calculationFormula,
     this.validationRules,
     this.maxRepetitions = 1,
+    this.sourceFieldId,
   });
 
   factory ColumnModel.fromJson(Map<String, dynamic> json) {
@@ -256,8 +257,34 @@ class ColumnModel {
       calculationFormula: json['calculation_formula'] as String?,
       validationRules: json['validation_rules'] as String?,
       maxRepetitions: (json['max_repetitions'] as num?)?.toInt() ?? 1,
+      sourceFieldId: json['source_field_id'] as String?,
     );
   }
+
+  /// The FileMaker id of the field a migrated column comes from (#107), by
+  /// which a field another solution's migration knew only by id is found.
+  final String? sourceFieldId;
+
+  /// Whether [name], a field of another solution's table, is the marker
+  /// `#<id>` of a field the migration knew only by its FileMaker id.
+  static bool isFieldMarker(String? name) => name != null && RegExp(r'^#[0-9]+$').hasMatch(name);
+
+  /// The field of [columns] a name of another solution's field stands for
+  /// (#107): the field of that name, or for a marker the one field migrated
+  /// with its id, as the server resolves it. Null when there is none, or
+  /// several: the stored name is then kept as it is, never replaced by
+  /// another field.
+  static ColumnModel? externalField(List<ColumnModel> columns, String? name) {
+    if (name == null || name.isEmpty) return null;
+    if (!isFieldMarker(name)) return columns.where((c) => c.name == name).firstOrNull;
+    final found = columns.where((c) => c.sourceFieldId == name.substring(1)).toList();
+    return found.length == 1 ? found.single : null;
+  }
+
+  /// How a stored name of another solution's field no field answers is
+  /// shown.
+  static String unresolvedLabel(String name) =>
+      isFieldMarker(name) ? 'field $name (unresolved)' : '$name (not in that table)';
 
   /// The largest maximum number of repetitions a field may have, as in
   /// FileMaker.
@@ -352,6 +379,7 @@ class ColumnModel {
       calculationFormula: calculationFormula ?? this.calculationFormula,
       validationRules: validationRules ?? this.validationRules,
       maxRepetitions: maxRepetitions ?? this.maxRepetitions,
+      sourceFieldId: sourceFieldId,
     );
   }
 }
@@ -1780,8 +1808,9 @@ class ApiClient {
   // These keys and values remain in memory and are cleared with the session.
   static final Map<(String, String), Map<String, String>> _scriptGlobals = {};
 
-  // The sessions this session opened in other solutions (#107), by
-  // database in lower case, keyed like the globals so every client of the
+  // The sessions this session opened in other solutions (#107), by the
+  // exact database name (on PostgreSQL `Sales` and `sales` are two
+  // solutions, as the server matches them), keyed like the globals so every client of the
   // session sees them. Their tokens stay in memory, and go with the session.
   static final Map<(String, String), Map<String, LinkedSolutionModel>> _linked = {};
 
@@ -1794,13 +1823,13 @@ class ApiClient {
 
   void _keepLinked(LinkedSolutionModel linked) {
     if (!linked.isLinked) return;
-    _linkedOfSession?[linked.database.toLowerCase()] = linked;
+    _linkedOfSession?[linked.database.trim()] = linked;
   }
 
   /// The token of the session this one opened in [database], at sign-in or
   /// with [linkSolution], or null when it is not signed in there.
   String? linkedToken(String database) {
-    final linked = _linkedOfSession?[database.trim().toLowerCase()];
+    final linked = _linkedOfSession?[database.trim()];
     if (linked == null) return null;
     final expires = linked.expiresAt;
     if (expires != null && expires.isBefore(DateTime.now())) return null;
@@ -1815,7 +1844,7 @@ class ApiClient {
 
   /// Forgets the session opened in [database], once it is known to have
   /// ended (a 401 there).
-  void forgetLinked(String database) => _linkedOfSession?.remove(database.trim().toLowerCase());
+  void forgetLinked(String database) => _linkedOfSession?.remove(database.trim());
   final Map<String, String> _anonymousScriptGlobals = {};
 
   Map<String, String> get scriptGlobalVariables {

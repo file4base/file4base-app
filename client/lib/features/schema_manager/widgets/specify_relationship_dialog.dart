@@ -123,12 +123,16 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
       setState(() {
         _externalTables[occ.id] = table;
         _externalProblems.remove(occ.id);
-        final first = _predicates.firstOrNull;
+        // The fields of the criterion in hand. A stored name, or a marker
+        // of a field known only by its FileMaker id, that no field of the
+        // table answers selects nothing: it is kept as stored, never taken
+        // for the first field.
+        final shown = _predicates.elementAtOrNull(_selectedPredicate ?? 0);
         if (_leftOccurrence?.id == occ.id) {
-          _leftColumn = _columnOf(table, '', first?.leftColumnName) ?? table.columns.firstOrNull;
+          _leftColumn = shown == null ? table.columns.firstOrNull : _columnOf(table, '', shown.leftColumnName);
         }
         if (_rightOccurrence?.id == occ.id) {
-          _rightColumn = _columnOf(table, '', first?.rightColumnName) ?? table.columns.firstOrNull;
+          _rightColumn = shown == null ? table.columns.firstOrNull : _columnOf(table, '', shown.rightColumnName);
         }
         if (!_isEditing && _predicates.isEmpty) _occurrenceChanged(tableChanged: true);
       });
@@ -154,13 +158,27 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
     }
   }
 
-  /// A field of [table]: by id on this solution's side, by name on another
+  /// A field of [table]: by id on this solution's side, by name (or the
+  /// marker of a field known only by its FileMaker id) on another
   /// solution's.
   static ColumnModel? _columnOf(TableModel? table, String id, String? name) {
     final columns = table?.columns ?? const <ColumnModel>[];
     if (id.isNotEmpty) return columns.where((c) => c.id == id).firstOrNull;
-    if (name == null || name.isEmpty) return null;
-    return columns.where((c) => c.name == name).firstOrNull;
+    return ColumnModel.externalField(columns, name);
+  }
+
+  /// Whether [stored] and [editing] are the same criterion: a stored marker
+  /// is the field it resolves to, so selecting a criterion and saving
+  /// changes nothing.
+  bool _sameCriterion(RelationshipPredicateModel stored, RelationshipPredicateModel editing) {
+    if (stored.operator != editing.operator) return false;
+    bool side(TableOccurrenceModel? occ, String storedId, String? storedName, String editingId, String? editingName) {
+      if (!(occ?.isExternal ?? false)) return storedId == editingId;
+      if (storedName == editingName) return true;
+      return _columnOf(_getTableForOccurrence(occ), '', storedName)?.name == editingName;
+    }
+    return side(_leftOccurrence, stored.leftColumnId, stored.leftColumnName, editing.leftColumnId, editing.leftColumnName) &&
+        side(_rightOccurrence, stored.rightColumnId, stored.rightColumnName, editing.rightColumnId, editing.rightColumnName);
   }
 
   /// What makes two occurrences show the same table, so that their criteria
@@ -297,7 +315,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
     if (_hasExternalSide) return false;
     final editing = _editingCriterion;
     final selected = _selectedPredicate;
-    return editing != null && selected != null && _predicates[selected] != editing;
+    return editing != null && selected != null && !_sameCriterion(_predicates[selected], editing);
   }
 
   void _selectPredicate(int index) {
@@ -305,11 +323,11 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
     setState(() {
       _selectedPredicate = index;
       _notice = null;
-      _leftColumn = _columnOf(_getTableForOccurrence(_leftOccurrence), criterion.leftColumnId, criterion.leftColumnName) ??
-          _leftColumn;
+      // A field no longer there selects nothing, so the criterion is kept
+      // as stored rather than replaced by the field selected before.
+      _leftColumn = _columnOf(_getTableForOccurrence(_leftOccurrence), criterion.leftColumnId, criterion.leftColumnName);
       _rightColumn =
-          _columnOf(_getTableForOccurrence(_rightOccurrence), criterion.rightColumnId, criterion.rightColumnName) ??
-              _rightColumn;
+          _columnOf(_getTableForOccurrence(_rightOccurrence), criterion.rightColumnId, criterion.rightColumnName);
       _operator = _operators.contains(criterion.operator) ? criterion.operator : '=';
     });
   }
@@ -416,7 +434,9 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
       if ((_getTableForOccurrence(occurrence)?.columns ?? []).isEmpty) {
         return 'The table of "${occurrence!.name}" has no fields to match.';
       }
-      if (column == null) return 'Select a field on each side.';
+      // Criteria already in the list are saved as they are, even one whose
+      // field cannot be found.
+      if (column == null && _predicates.isEmpty) return 'Select a field on each side.';
     }
     if (_hasPendingChange) {
       final pending = _criterionProblem(_editingCriterion, replacing: _selectedPredicate);
@@ -432,9 +452,12 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   }
 
   String _fieldLabel(TableOccurrenceModel? occurrence, String columnId, String? storedName) {
-    final column = _columnOf(_getTableForOccurrence(occurrence), columnId, storedName);
+    final table = _getTableForOccurrence(occurrence);
+    final column = _columnOf(table, columnId, storedName);
     final field = column == null
-        ? (storedName ?? columnId)
+        ? (storedName != null && storedName.isNotEmpty
+            ? (table == null ? storedName : ColumnModel.unresolvedLabel(storedName))
+            : columnId)
         : (column.displayName.isNotEmpty ? column.displayName : column.name);
     return '${occurrence?.name ?? '?'}::$field';
   }

@@ -172,6 +172,17 @@ func TestAPI_ExternalValueListSecondFieldAndRelatedValues(t *testing.T) {
 		require.Equal(t, http.StatusCreated, code)
 		assert.Equal(t, []string{"Ada South"}, read(id, "?table=orders&record_id="+p.orderIDs["south"]).Values)
 		assert.Empty(t, read(id, "?table=orders&record_id="+p.orderIDs["empty"]).Values)
+
+		// No record in hand: nothing related, and the other solution is not
+		// opened for it, so a session not signed in there gets an empty
+		// list, not a 424.
+		assert.Empty(t, read(id, "").Values)
+		var none values
+		rec := h.do(http.MethodGet, "/api/v1/value-lists/"+id+"/values", p.owner, nil, &none)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Empty(t, none.Values)
+		rec = h.do(http.MethodGet, "/api/v1/value-lists/"+id+"/values?table=orders&record_id="+p.orderIDs["south"], p.owner, nil, nil)
+		assert.Equal(t, http.StatusFailedDependency, rec.Code, "with a record, the other solution is read: not signed in there")
 	})
 
 	t.Run("refused", func(t *testing.T) {

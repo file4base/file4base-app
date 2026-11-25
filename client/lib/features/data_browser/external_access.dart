@@ -90,11 +90,41 @@ class ExternalAccess extends ChangeNotifier {
   /// runner's peerTokenProvider). With none yet, it asks for an account of
   /// that solution, as a read does. Null when the user cancels: the step
   /// then stops and says so.
+  ///
+  /// A token kept from earlier is checked first, with one light request
+  /// (`GET /api/v1/auth/session` there): one that solution no longer accepts (`401`: the
+  /// account there was disabled or changed its password, or that session
+  /// ended) is dropped and the user asked to sign in again, rather than
+  /// handed to a step that would fail with it.
   Future<String?> peerToken(BuildContext context, String database) async {
     final known = apiClient.linkedToken(database);
-    if (known != null && known.isNotEmpty) return known;
+    if (known != null && known.isNotEmpty) {
+      if (await _accepted(known)) return known;
+      peerRejected(database);
+    }
     if (!context.mounted || !await signInTo(context, database)) return null;
     return apiClient.linkedToken(database);
+  }
+
+  /// Whether the solution a linked [token] was opened in still accepts it.
+  Future<bool> _accepted(String token) async {
+    try {
+      await apiClient.forPeerSession(token).sessionCapabilities();
+    } on ApiException catch (e) {
+      // Anything but a refused session is the step's to meet and report.
+      return e.statusCode != 401;
+    } on Object {
+      // Likewise: unreachable now is not signed out.
+    }
+    return true;
+  }
+
+  /// Forgets the session held in [database], which answered `401`: the
+  /// next read or step that needs it asks for an account there again.
+  void peerRejected(String database) {
+    apiClient.forgetLinked(database);
+    _tables.clear();
+    notifyListeners();
   }
 
   /// Runs [call], a write into another solution, and when the session is not

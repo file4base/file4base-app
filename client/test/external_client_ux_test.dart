@@ -51,7 +51,12 @@ final Map<String, dynamic> _itemsJson = {
   'id': 't-peer-items',
   'name': 'items',
   'display_name': 'Items',
-  'columns': [_column('t-peer-items', 'id', key: true), _column('t-peer-items', 'sku'), _column('t-peer-items', 'label')],
+  'columns': [
+    _column('t-peer-items', 'id', key: true),
+    // Migrated from the FileMaker field with id 7.
+    {..._column('t-peer-items', 'sku'), 'source_field_id': '7'},
+    _column('t-peer-items', 'label'),
+  ],
 };
 
 final _answers = TableModel.fromJson(_answersJson);
@@ -79,6 +84,10 @@ class _Server {
   /// Whether binding refuses the account signed in to catalog_db, as one
   /// that is neither its owner nor an administrator.
   bool notAdmin = false;
+
+  /// Whether catalog_db no longer accepts the session held there (its
+  /// account was disabled, say), until the next sign-in.
+  bool peerEnded = false;
 
   final requests = <String>[];
   final bodies = <String, Map<String, dynamic>>{};
@@ -118,7 +127,10 @@ class _Server {
       final decoded = jsonDecode(request.body);
       if (decoded is Map<String, dynamic>) bodies['${request.method} $path'] = decoded;
     }
+    if (peer && peerEnded) return _problem(401, 'Unauthorized', 'session ended');
     switch ((request.method, path)) {
+      case ('GET', '/api/v1/auth/session'):
+        return _json({'capabilities': <String>[]});
       case ('GET', '/api/v1/schemas/tables'):
         return _json(peer ? [_itemsJson] : [_answersJson]);
       case ('GET', '/api/v1/schemas/occurrences'):
@@ -156,6 +168,7 @@ class _Server {
           return _problem(401, 'Authentication Failed', 'invalid credentials');
         }
         linked = true;
+        peerEnded = false;
         return _json({
           'database': body['database'],
           'references': ['Catalog'],
@@ -401,6 +414,134 @@ void main() {
         isTrue,
         reason: 'a field of another solution is named, never given an id of this one',
       );
+    });
+  });
+
+  group('fields known only by their FileMaker id', () {
+    RelationshipModel relationship(String rightName) => RelationshipModel.fromJson({
+          'id': 'rel-1',
+          'name': 'answers_items',
+          'left_occurrence_id': 'occ-answers',
+          'left_column_id': 't-answers-item_sku',
+          'right_occurrence_id': 'occ-items',
+          'right_column_id': '',
+          'predicates': [
+            {'left_column_id': 't-answers-item_sku', 'right_column_id': '', 'right_column_name': rightName},
+          ],
+        });
+
+    Future<List<RelationshipPredicateModel>> changeAndSave(WidgetTester tester, String rightName, {String? shown}) async {
+      _bigView(tester);
+      final server = _Server();
+      final client = server.client();
+      await client.linkSolution(database: 'catalog_db', username: 'ann', password: 'secret');
+      Object? result;
+      await tester.pumpWidget(_opener(
+        (context) => SpecifyRelationshipDialog.show(context,
+            occurrences: [_answersOcc, _itemsOcc],
+            tables: [_answers],
+            initialRelationship: relationship(rightName),
+            apiClient: client),
+        (r) => result = r,
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      if (shown != null) expect(find.text(shown), findsWidgets);
+      // Change something else, then save.
+      final option = find.byKey(const ValueKey('relationship-left-cascade-delete'));
+      await tester.ensureVisible(option);
+      await tester.tap(option);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      final map = result! as Map<String, dynamic>;
+      expect(map['left_cascade_delete'], isTrue);
+      return map['predicates'] as List<RelationshipPredicateModel>;
+    }
+
+    testWidgets('a marker the other solution resolves shows that field, and saving keeps the marker', (tester) async {
+      final predicates = await changeAndSave(tester, '#7', shown: 'Items::sku');
+      expect(predicates, hasLength(1));
+      expect(predicates.single.rightColumnName, '#7');
+      expect(predicates.single.rightColumnId, isEmpty);
+    });
+
+    testWidgets('a marker nothing resolves is shown unresolved and saved untouched, never as the first field',
+        (tester) async {
+      _bigView(tester);
+      final server = _Server();
+      final client = server.client();
+      await client.linkSolution(database: 'catalog_db', username: 'ann', password: 'secret');
+      await tester.pumpWidget(_opener(
+        (context) => SpecifyRelationshipDialog.show(context,
+            occurrences: [_answersOcc, _itemsOcc], tables: [_answers], initialRelationship: relationship('#9'), apiClient: client),
+        (_) {},
+      ));
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('field #9 (unresolved)'), findsWidgets);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      final predicates = await changeAndSave(tester, '#9');
+      expect(predicates.single.rightColumnName, '#9');
+    });
+
+    test('a marker is the one field migrated with its id; none or several is unresolved', () {
+      final columns = TableModel.fromJson(_itemsJson).columns;
+      expect(ColumnModel.externalField(columns, '#7')?.name, 'sku');
+      expect(ColumnModel.externalField(columns, '#9'), isNull);
+      expect(ColumnModel.externalField([...columns, columns[1].copyWith(name: 'sku_copy')], '#7'), isNull);
+      expect(ColumnModel.externalField(columns, 'label')?.name, 'label');
+      expect(ColumnModel.unresolvedLabel('#9'), 'field #9 (unresolved)');
+    });
+  });
+
+  group('linked sessions', () {
+    test('are kept by the exact name of their solution', () async {
+      final server = _Server();
+      final client = server.client();
+      await client.linkSolution(database: 'Sales', username: 'ann', password: 'secret');
+      expect(client.linkedToken('Sales'), _peerToken);
+      expect(client.linkedToken('sales'), isNull, reason: 'on PostgreSQL Sales and sales are two solutions');
+      client.forgetLinked('sales');
+      expect(client.linkedToken('Sales'), _peerToken);
+    });
+
+    testWidgets('a token the other solution no longer accepts is dropped and the user asked to sign in again',
+        (tester) async {
+      _bigView(tester);
+      final server = _Server();
+      final client = server.client();
+      await client.linkSolution(database: 'catalog_db', username: 'ann', password: 'secret');
+      String? peer;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async => peer = await ExternalAccess.of(client).peerToken(context, 'catalog_db'),
+              child: const Text('Perform Script'),
+            ),
+          ),
+        ),
+      ));
+
+      // Accepted: handed out with no dialog.
+      await tester.tap(find.text('Perform Script'));
+      await tester.pumpAndSettle();
+      expect(peer, _peerToken);
+      expect(find.byType(AlertDialog), findsNothing);
+
+      // Refused now: not handed to the step, the user is asked again.
+      server.peerEnded = true;
+      peer = null;
+      await tester.tap(find.text('Perform Script'));
+      await tester.pumpAndSettle();
+      expect(find.text('Sign In'), findsOneWidget);
+      expect(client.linkedToken('catalog_db'), isNull);
+      await _signIn(tester);
+      expect(peer, _peerToken);
+      expect(server.peerEnded, isFalse);
     });
   });
 

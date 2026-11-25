@@ -434,7 +434,10 @@ a problem is about, and what to do, with no dead end:
   created with `external: {file_reference, table}`.
 - **Specify Relationship** reads the fields of an external side in its
   solution, and a criterion names them (`right_column_name`). Not signed in,
-  the field list offers to sign in.
+  the field list offers to sign in. A marker (`#<id>`) is shown as the field
+  it resolves to and saved as it is stored; one no field resolves is shown
+  as *field #<id> (unresolved)*, kept untouched, and never replaced by
+  another field. Value lists do the same.
 - **File > Manage > File References** lists the references, adds and edits
   them (name, solution, FileMaker paths; a path naming one installed solution
   is *suggested*, never chosen), binds, verifies and deletes them. Bind and
@@ -449,7 +452,9 @@ a problem is about, and what to do, with no dead end:
   each with *Sign in…*; signing in never fails because of them.
 - **Script steps** that reach another solution (Perform Script and Open File
   through a file reference, Import and Export Records through a transfer) use
-  the session held there, or ask for an account of it first.
+  the session held there, kept by the solution's exact name, or ask for an
+  account of it first. A session that solution no longer accepts (`401`) is
+  dropped and the user asked to sign in again.
 - **Layout mode** on a layout of an external occurrence designs it with that
   table's fields; a new field is added in that solution. Until its fields can
   be read, the layout says why.

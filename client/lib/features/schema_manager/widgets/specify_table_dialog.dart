@@ -180,7 +180,7 @@ class _SpecifyTableDialogState extends State<SpecifyTableDialog> {
     } catch (e) {
       if (!mounted) return;
       final ended = e is ApiException && e.statusCode == 401;
-      if (ended) client.forgetLinked(ref.database);
+      if (ended) ExternalAccess.of(client).peerRejected(ref.database);
       setState(() {
         _loadingExternal = false;
         _needsSignIn = ended;
