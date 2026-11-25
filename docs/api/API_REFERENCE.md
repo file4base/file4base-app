@@ -1131,7 +1131,8 @@ A `field` list may also have the options FileMaker gives such a list. Left out, 
 | `sort_by` | `first` (default) or `second`: the field the values are sorted by. `second` needs a second field. |
 | `related_occurrence_id` | Include only the values of the records related to the current record of this table occurrence, following the relationship graph from it, across as many relationships as the path takes. |
 | `source_occurrence_id` | The occurrence of the list's table the related values are read through; required with `related_occurrence_id`, and cleared without it. |
-| `source_column_name` | A field of **another solution's table**, by name: the list has no `source_table_id` or `source_column_id`, and `source_occurrence_id` is the external occurrence it is read through (§ 18). No second field or related values yet. Resolving it answers `424 external_unavailable`. |
+| `source_column_name` | A field of **another solution's table**, by name: the list has no `source_table_id` or `source_column_id`, and `source_occurrence_id` is the external occurrence it is read through (§ 18). Resolving it answers `424 external_unavailable` when that solution cannot be read. |
+| `second_column_name` | The second field of a list with `source_column_name`, by name in the same table (`second_column_id` is refused on such a list, `422`). `show_second_only` and `sort_by` apply as above, and `related_occurrence_id` names an occurrence **of this solution** the related values start from (one of another solution's table answers `422`): the match values are read here, the values in that solution. |
 
 ```json
 {
@@ -1464,7 +1465,7 @@ Revokes the session of the bearer token, and with the session a sign-in opened e
 ---
 
 ### `POST /api/v1/auth/link`
-Signs the session in to a solution its external occurrences read (§ 18), with an account **of that solution**: what a client asks for when a read answers `424` with `reason: "not_signed_in"`, or when the sign-in could not link it. The session group then reads that solution as that account, replacing the account it held there. Nothing of the signed-in account carries over: its role and privileges in the other solution are its own.
+Signs the session in to a solution its external occurrences read (§ 18), with an account **of that solution**: what a client asks for when a read answers `424` with `reason: "not_signed_in"`, or when the sign-in could not link it. A solution a **mapped file reference** names can be signed in to before any occurrence goes through it (to list its tables in Specify Table, or for a `Perform Script` or `Open File` through it), and so can the far solution of a **transfer** (`Import Records`, `Export Records`); `references` lists the file references that name it, empty for a transfer's. The session group then reads that solution as that account, replacing the account it held there. Nothing of the signed-in account carries over: its role and privileges in the other solution are its own.
 ```json
 { "database": "customers_db", "username": "alice", "password": "…", "totp_code": "123456" }
 ```
@@ -1475,7 +1476,7 @@ One entry of `linked`, with `status: "linked"`, `username`, `token` and `expires
 
 #### Errors
 - `401 Unauthorized`: wrong credentials, or `"mfa_required": true` when the code is missing or wrong.
-- `404 Not A Dependency`: no external occurrence of the session group's solutions is mapped to `database`; `404 Database Not Found`: it is not on this server.
+- `404 Not A Dependency`: no external occurrence, mapped file reference or transfer of the session group's solutions reaches `database`; `404 Database Not Found`: it is not on this server.
 - `409 Conflict`: `database` is the session's own solution, or the group was signed out.
 - `422 Unprocessable Entity`: `database` or `username` missing.
 - `429 Too Many Requests`: that account's lockout is active (`Retry-After`).

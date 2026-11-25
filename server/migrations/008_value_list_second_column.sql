@@ -1,0 +1,23 @@
+-- File4Base System Catalog Migration 008 (PostgreSQL & MariaDB)
+--
+-- The second field of a value list taken from a field of another solution's
+-- table (#107). Such a list names its field, since the field has no id in
+-- this solution's catalog (005: source_column_name), and names its second
+-- field the same way.
+--
+--   sys_value_lists.second_column_name   the second field of a list taken
+--                                        from a field of another solution's
+--                                        table, by name; NULL for every
+--                                        other list, whose second field is
+--                                        second_column_id.
+--
+-- show_second_only and sort_by (004) apply to it as to second_column_id, and
+-- related_occurrence_id (004) names the occurrence of this solution's table
+-- the related values start from. An existing list keeps no second field, so
+-- it lists exactly what it listed before.
+--
+-- The server applies this itself (schema.EnsureSystemTables, and the first
+-- time a value list is read or written on an older database), reading the
+-- catalog first so an upgraded catalog is only read.
+
+ALTER TABLE sys_value_lists ADD COLUMN IF NOT EXISTS second_column_name VARCHAR(64);

@@ -1330,6 +1330,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   bool _runningLayoutTrigger = false;
 
+  /// The runner of this window's buttons and triggers. A step that reaches
+  /// another solution runs on the session this one opened there, and asks
+  /// to sign in to it when there is none (#107).
+  LayoutActionRunner _actionRunner() => LayoutActionRunner(
+        apiClient: widget.apiClient,
+        host: this,
+        peerTokenProvider: (solution) => _externalAccess.peerToken(context, solution),
+      );
+
   /// Runs an OnLayoutEnter / OnLayoutExit script. A trigger started while
   /// another one runs (e.g. the script itself goes to another layout) is
   /// skipped, so layouts that switch to each other cannot loop forever.
@@ -1337,7 +1346,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     if (action == null || _runningLayoutTrigger) return;
     _runningLayoutTrigger = true;
     try {
-      final result = await LayoutActionRunner(apiClient: widget.apiClient, host: this).run(action);
+      final result = await _actionRunner().run(action);
       if (!result.completed && mounted && result.message != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(result.message!), backgroundColor: Colors.orange.shade800),
@@ -3821,7 +3830,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       _handleLegacyButtonLabel(label);
       return;
     }
-    final result = await LayoutActionRunner(apiClient: widget.apiClient, host: this).run(action);
+    final result = await _actionRunner().run(action);
     if (!result.completed && mounted && result.message != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(result.message!), backgroundColor: Colors.orange.shade800),

@@ -41,13 +41,14 @@ import (
 // data.ErrExternalUnavailable until cross-solution reads exist.
 
 // externalOccurrenceColumns are the columns a catalog created before
-// external occurrences existed lacks, by table. server/migrations/005 adds
-// the same for PostgreSQL.
+// external occurrences existed lacks, by table. server/migrations/005 and 008
+// add the same for PostgreSQL.
 var externalOccurrenceColumns = []struct{ table, column, typ string }{
 	{"sys_table_occurrences", "file_reference_id", "VARCHAR(36)"},
 	{"sys_table_occurrences", "external_table", "VARCHAR(64)"},
 	{"sys_file_references", "paths", "TEXT"},
 	{"sys_value_lists", "source_column_name", "VARCHAR(64)"},
+	{"sys_value_lists", "second_column_name", "VARCHAR(64)"},
 	{"sys_columns", "source_field_id", "VARCHAR(32)"},
 }
 
@@ -378,6 +379,9 @@ func (s *Service) externalFieldUses(ctx context.Context, occurrences []TableOccu
 	for _, vl := range lists {
 		if vl.SourceOccurrenceID != nil && external[*vl.SourceOccurrenceID] {
 			add(*vl.SourceOccurrenceID, vl.SourceColumnName, fmt.Sprintf("value list %q", vl.Name), "")
+			if vl.SecondColumnName != "" {
+				add(*vl.SourceOccurrenceID, vl.SecondColumnName, fmt.Sprintf("value list %q", vl.Name), "")
+			}
 		}
 	}
 

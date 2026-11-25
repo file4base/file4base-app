@@ -230,7 +230,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 			source_column_id VARCHAR(36) REFERENCES sys_columns(id) ON DELETE CASCADE,
 			created_at ` + ts + `,
 			updated_at ` + ts + `,
-			source_column_name VARCHAR(64)
+			source_column_name VARCHAR(64),
+			second_column_name VARCHAR(64)
 		);`,
 		`CREATE TABLE IF NOT EXISTS sys_users (
 			id VARCHAR(36) PRIMARY KEY,

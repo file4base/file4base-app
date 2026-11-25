@@ -25,6 +25,7 @@ class File4BaseMenuBar extends StatelessWidget {
     this.onScriptWorkspace,
     this.onManageThemes,
     this.onManageValueLists,
+    this.onManageFileReferences,
     this.onNewDatabase,
     this.onOpenSolution,
     this.onSave,
@@ -121,6 +122,10 @@ class File4BaseMenuBar extends StatelessWidget {
   final VoidCallback? onScriptWorkspace;
   final VoidCallback? onManageThemes;
   final VoidCallback? onManageValueLists;
+
+  /// File > Manage > File References (#107): the other solutions this one
+  /// reads tables from and performs scripts in.
+  final VoidCallback? onManageFileReferences;
   final VoidCallback onOpenRemote;
   final VoidCallback onAbout;
   final VoidCallback? onNewDatabase;
@@ -648,6 +653,10 @@ class File4BaseMenuBar extends StatelessWidget {
             MenuItemButton(
               onPressed: () => _showRoadmapDialog(context, 'Custom Functions', 'Roadmap Phase 7', 'Calculation engine reusable functions and recursive formulas.'),
               child: const Text('Custom Functions...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageFileReferences,
+              child: const Text('File References...'),
             ),
             MenuItemButton(
               onPressed: onManageDataSources,
@@ -1830,6 +1839,11 @@ class File4BaseMenuBar extends StatelessWidget {
               onPressed: onManageValueLists,
               leadingIcon: const Icon(Icons.list_alt_outlined, size: 18),
               child: const Text('Value Lists...'),
+            ),
+            MenuItemButton(
+              onPressed: onManageFileReferences,
+              leadingIcon: const Icon(Icons.link, size: 18),
+              child: const Text('File References...'),
             ),
             MenuItemButton(
               onPressed: onManageDataSources,

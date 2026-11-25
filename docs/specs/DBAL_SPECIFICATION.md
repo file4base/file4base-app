@@ -184,7 +184,7 @@ An occurrence of a table of **another solution** (`#107`) has a NULL `base_table
 - `file_reference_id` (`sys_file_references.id`): the reference it goes through;
 - `external_table` (the table's name in that solution, NULL until bound; names, not ids, because ids differ between databases).
 
-A file reference keeps `paths` (TEXT, one FileMaker path per line) beside its `name` and `database_name`. A value list taken from a field of another solution's table has NULL `source_table_id`/`source_column_id`, its external occurrence in `source_occurrence_id`, and the field in `source_column_name`.
+A file reference keeps `paths` (TEXT, one FileMaker path per line) beside its `name` and `database_name`. A value list taken from a field of another solution's table has NULL `source_table_id`/`source_column_id`, its external occurrence in `source_occurrence_id`, the field in `source_column_name` and its second field, if any, in `second_column_name` (VARCHAR(64), migration 008).
 
 `sys_columns.source_field_id` (VARCHAR(32), digits, NULL for a column created here) keeps the FileMaker id of the field a migrated column comes from. A field of another solution that the source document names by id only is stored as the marker `#<id>` in `*_column_name` and `source_column_name` (an identifier never contains `#`), and matched against the other solution's `source_field_id` when the reference is bound.
 

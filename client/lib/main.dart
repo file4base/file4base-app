@@ -14,6 +14,7 @@ import 'package:file4base_client/core/widgets/file4base_menu_bar.dart';
 import 'package:file4base_client/core/widgets/file4base_status_sidebar.dart' show File4BaseStatusSidebar, LayoutTool;
 import 'package:file4base_client/features/about/about_dialog.dart';
 import 'package:file4base_client/features/auth/database_login_dialog.dart';
+import 'package:file4base_client/features/auth/linked_sign_in_notice.dart';
 import 'package:file4base_client/features/connection/server_connection_dialog.dart';
 import 'package:file4base_client/features/data_browser/data_browser_widget.dart';
 import 'package:file4base_client/features/data_browser/export_records_dialog.dart';
@@ -31,6 +32,7 @@ import 'package:file4base_client/features/layout_engine/new_layout_assistant.dar
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
 import 'package:file4base_client/features/preflight/preflight_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_database_dialog.dart';
+import 'package:file4base_client/features/schema_manager/manage_file_references_dialog.dart';
 import 'package:file4base_client/features/schema_manager/manage_value_lists_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger_dialog.dart';
 import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
@@ -398,6 +400,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       });
       await _loadUserPermissions();
       await _loadTables();
+      if (mounted) showLinkedSignInNotice(context, client, solutionName: _activeSolutionName);
       _updatePromptedVersion = null;
       _updateCheckForbidden = false;
       unawaited(_checkContainerUpdatesInBackground());
@@ -475,6 +478,12 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         subtitle: 'Reusable value lists',
         icon: Icons.list_alt_outlined,
         onSelected: () => unawaited(ManageValueListsDialog.show(context)),
+      ),
+      ServerToolsManagementAction(
+        label: 'File References',
+        subtitle: 'Other solutions this one reads',
+        icon: Icons.link,
+        onSelected: () => unawaited(_handleManageFileReferences()),
       ),
       ServerToolsManagementAction(
         label: 'External Data Sources',
@@ -1162,9 +1171,11 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     final host = _dataBrowserKey.currentState;
     if (host == null) return;
     final action = ButtonActionModel.fromJson(item.action);
+    final client = ref.read(apiClientProvider);
     final result = await LayoutActionRunner(
-      apiClient: ref.read(apiClientProvider),
+      apiClient: client,
       host: host,
+      peerTokenProvider: (solution) => ExternalAccess.of(client).peerToken(context, solution),
     ).run(action);
     if (!result.completed && mounted && result.message != null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1174,6 +1185,19 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         ),
       );
     }
+  }
+
+  /// File > Manage > File References (#107). The graph and an open layout
+  /// on another solution's table read again once it is closed.
+  Future<void> _handleManageFileReferences() async {
+    final role = _currentUser?.role;
+    await ManageFileReferencesDialog.show(
+      context,
+      apiClient: ref.read(apiClientProvider),
+      canEdit: role == 'owner' || role == 'admin',
+      solutionName: _activeSolutionName,
+    );
+    if (mounted) unawaited(_loadTables(targetLayoutId: _activeLayout?.id));
   }
 
   Future<void> _handleManageLayouts() async {
@@ -1440,6 +1464,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
     await _loadUserPermissions();
     await _loadTables(targetLayoutId: startupTargetLayoutId);
     AutoSaveService.instance.markDirty();
+    if (mounted) showLinkedSignInNotice(context, client, solutionName: _activeSolutionName);
 
     if (mounted) {
       final originDesc = result.type == OpenSolutionType.serverDatabase ? 'server database' : 'local file "${result.fileName}"';
@@ -2392,6 +2417,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
                   onManageValueLists: _currentUser == null
                       ? null
                       : () => ManageValueListsDialog.show(context),
+                  onManageFileReferences: _currentUser == null ? null : _handleManageFileReferences,
                   onPerformFind: _externalLayoutOccurrence != null ? null : () => _dataBrowserKey.currentState?.performFind(),
                   onNewFindRequest: mode == OperationalMode.find
                       ? () => _dataBrowserKey.currentState?.newFindRequest()
@@ -3302,21 +3328,102 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       );
     }
 
+    // The layout designer, on this solution's table or, for a layout on an
+    // external occurrence, on that table as its solution has it (#107).
+    Widget designer(TableModel table, {TableOccurrenceModel? external}) {
+      return LayoutDesignerWidget(
+        key: _layoutDesignerKey,
+        table: table,
+        tables: external == null ? _tables : [table],
+        externalOccurrence: external,
+        apiClient: client,
+        initialLayout: _activeLayout ??
+            LayoutDefinitionModel.defaultForTable(
+              table.displayName,
+              table.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
+            ),
+        layouts: _serverLayouts,
+        showPageMargins: _isPageMarginsVisible,
+        showTextRuler: _isTextRulerVisible,
+        pageSetup: _pageSetup,
+        onSelectionChanged: () {
+          if (mounted) setState(() {});
+        },
+        onLayoutSelected: _selectLayout,
+        onNewLayout: _handleNewLayout,
+        onManageLayouts: _handleManageLayouts,
+        onRenameLayout: _handleRenameActiveLayout,
+        onExitLayout: () => _changeMode(OperationalMode.browse),
+        onManageDatabase: () async {
+          await ManageDatabaseDialog.show(context);
+          unawaited(_loadTables());
+        },
+        onManageSecurity: () async {
+          if (_currentUser == null) {
+            unawaited(_startAuthSequence());
+            return;
+          }
+          if (_currentUser!.role == 'user') {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Access Denied: Only Owner or Admin accounts can manage security and user accounts.'),
+                backgroundColor: Colors.red,
+              ),
+            );
+            return;
+          }
+          final client = ref.read(apiClientProvider);
+          await ManageSecurityDialog.show(
+            context,
+            client,
+            _currentUser!,
+            databaseName: _activeDatabaseName,
+            onModified: () async {
+              AutoSaveService.instance.markDirty();
+            },
+          );
+          await _loadUserPermissions();
+          await _loadTables();
+        },
+        onManageScripts: () async {
+          final client = ref.read(apiClientProvider);
+          await ScriptWorkspaceDialog.show(
+            context,
+            client,
+            databaseName: _activeDatabaseName,
+          );
+        },
+        onManageThemes: () => ManageThemesDialog.show(context),
+        onLayoutChanged: (updated) {
+          _activeLayout = updated;
+        },
+        onSaved: () => _loadTables(targetLayoutId: _activeLayout?.id),
+        onAutoSaveDirty: AutoSaveService.instance.markDirty,
+        activeTool: _activeLayoutTool,
+        onToolChanged: (tool) {
+          if (mounted && tool != _activeLayoutTool) setState(() => _activeLayoutTool = tool);
+        },
+      );
+    }
+
     // A layout on another solution's table browses that solution's records,
     // read and written there as the account this session holds in it, with
     // what that account may do (#107).
     ExternalAccess.of(client).solutionName = _activeSolutionName;
     final external = _externalLayoutOccurrence;
     if (external != null) {
-      if (mode == OperationalMode.layout) {
-        return ExternalLayoutPlaceholder(layoutName: _activeLayout?.name ?? '', occurrence: external);
-      }
+      final designing = mode == OperationalMode.layout;
       return ExternalLayoutView(
         key: ValueKey('external-layout-${external.id}'),
         layoutName: _activeLayout?.name ?? '',
         occurrence: external,
         apiClient: client,
-        builder: (context, table, occurrenceClient) => browser(table, occurrenceClient, external: external),
+        designing: designing,
+        // Layout mode designs it with that table's fields; the layout itself
+        // is saved in this solution, so the designer keeps this session.
+        builder: (context, table, occurrenceClient) => designing
+            ? designer(table, external: external)
+            : browser(table, occurrenceClient, external: external),
         onTable: (table) {
           if (mounted) setState(() => _externalPrivileges = table?.privileges);
         },
@@ -3332,78 +3439,7 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       case OperationalMode.find:
         return browser(_selectedTable!, client);
       case OperationalMode.layout:
-        return LayoutDesignerWidget(
-          key: _layoutDesignerKey,
-          table: _selectedTable!,
-          tables: _tables,
-          apiClient: client,
-          initialLayout: _activeLayout ??
-              LayoutDefinitionModel.defaultForTable(
-                _selectedTable!.displayName,
-                _selectedTable!.columns.map((c) => (name: c.name, label: c.displayName)).toList(),
-              ),
-          layouts: _serverLayouts,
-          showPageMargins: _isPageMarginsVisible,
-          showTextRuler: _isTextRulerVisible,
-          pageSetup: _pageSetup,
-          onSelectionChanged: () {
-            if (mounted) setState(() {});
-          },
-          onLayoutSelected: _selectLayout,
-          onNewLayout: _handleNewLayout,
-          onManageLayouts: _handleManageLayouts,
-          onRenameLayout: _handleRenameActiveLayout,
-          onExitLayout: () => _changeMode(OperationalMode.browse),
-          onManageDatabase: () async {
-            await ManageDatabaseDialog.show(context);
-            unawaited(_loadTables());
-          },
-          onManageSecurity: () async {
-            if (_currentUser == null) {
-              unawaited(_startAuthSequence());
-              return;
-            }
-            if (_currentUser!.role == 'user') {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Access Denied: Only Owner or Admin accounts can manage security and user accounts.'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-              return;
-            }
-            final client = ref.read(apiClientProvider);
-            await ManageSecurityDialog.show(
-              context,
-              client,
-              _currentUser!,
-              databaseName: _activeDatabaseName,
-              onModified: () async {
-                AutoSaveService.instance.markDirty();
-              },
-            );
-            await _loadUserPermissions();
-            await _loadTables();
-          },
-          onManageScripts: () async {
-            final client = ref.read(apiClientProvider);
-            await ScriptWorkspaceDialog.show(
-              context,
-              client,
-              databaseName: _activeDatabaseName,
-            );
-          },
-          onManageThemes: () => ManageThemesDialog.show(context),
-          onLayoutChanged: (updated) {
-            _activeLayout = updated;
-          },
-          onSaved: () => _loadTables(targetLayoutId: _activeLayout?.id),
-          onAutoSaveDirty: AutoSaveService.instance.markDirty,
-          activeTool: _activeLayoutTool,
-          onToolChanged: (tool) {
-            if (mounted && tool != _activeLayoutTool) setState(() => _activeLayoutTool = tool);
-          },
-        );
+        return designer(_selectedTable!);
       case OperationalMode.preview:
         return LayoutPreviewWidget(
           key: ValueKey('preview_${_selectedTable!.id}_${_activeLayout?.id}_${_activeLayout?.name}_${_activeLayout?.objects.length}'),

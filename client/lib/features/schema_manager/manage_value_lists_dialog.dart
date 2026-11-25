@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/main.dart' show apiClientProvider;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -68,7 +69,12 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
   Future<void> _edit({ValueListModel? existing}) async {
     final saved = await showDialog<ValueListModel>(
       context: context,
-      builder: (_) => _ValueListEditor(existing: existing, tables: _tables, occurrences: _occurrences),
+      builder: (_) => _ValueListEditor(
+        existing: existing,
+        tables: _tables,
+        occurrences: _occurrences,
+        apiClient: ref.read(apiClientProvider),
+      ),
     );
     if (saved == null) return;
 
@@ -122,6 +128,15 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
   }
 
   String _sourceLabel(ValueListModel list) {
+    final through = _occurrences.where((o) => o.id == list.sourceOccurrenceId).firstOrNull;
+    if (list.sourceColumnName != null && through != null && through.isExternal) {
+      var label = '${through.name} · ${list.sourceColumnName} (${through.external!.database.isEmpty ? through.external!.fileReference : through.external!.database})';
+      final second = list.secondColumnName;
+      if (second != null) label += list.showSecondOnly ? ', showing $second' : ' and $second';
+      final related = _occurrences.where((o) => o.id == list.relatedOccurrenceId).firstOrNull;
+      if (related != null) label += ', related from ${related.name}';
+      return label;
+    }
     for (final table in _tables) {
       for (final col in table.columns) {
         if (col.id == list.sourceColumnId) {
@@ -272,10 +287,14 @@ class _ManageValueListsDialogState extends ConsumerState<ManageValueListsDialog>
 /// Creating or changing one value list.
 class _ValueListEditor extends StatefulWidget {
 
-  const _ValueListEditor({required this.existing, required this.tables, this.occurrences = const []});
+  const _ValueListEditor({required this.existing, required this.tables, this.occurrences = const [], this.apiClient});
   final ValueListModel? existing;
   final List<TableModel> tables;
   final List<TableOccurrenceModel> occurrences;
+
+  /// Reads the fields of another solution's table, for a list taken from
+  /// one through an external occurrence (#107).
+  final ApiClient? apiClient;
 
   @override
   State<_ValueListEditor> createState() => _ValueListEditorState();
@@ -296,6 +315,52 @@ class _ValueListEditorState extends State<_ValueListEditor> {
   String? _sourceOccurrenceId;
   String? _error;
 
+  /// The source of a list taken from a field of another solution's table:
+  /// `occ:` and the external occurrence it is read through. Its fields are
+  /// then named, and [_sourceColumnId] and [_secondColumnId] hold names.
+  static const _externalPrefix = 'occ:';
+  TableModel? _externalTable;
+  ExternalUnavailable? _externalProblem;
+  String? _externalError;
+
+  TableOccurrenceModel? get _externalOccurrence {
+    final key = _sourceTableId;
+    if (key == null || !key.startsWith(_externalPrefix)) return null;
+    final id = key.substring(_externalPrefix.length);
+    return widget.occurrences.where((o) => o.id == id).firstOrNull;
+  }
+
+  bool get _isExternal => _sourceTableId?.startsWith(_externalPrefix) ?? false;
+
+  String _columnKey(ColumnModel c) => _isExternal ? c.name : c.id;
+
+  void _readExternalTable() {
+    final occ = _externalOccurrence;
+    final client = widget.apiClient;
+    _externalTable = null;
+    _externalProblem = null;
+    _externalError = null;
+    if (occ == null) return;
+    final external = occ.external!;
+    if (client == null || external.database.isEmpty || external.table.isEmpty) {
+      _externalError = 'The fields of "${occ.name}" are not known: its file reference "${external.fileReference}" '
+          'is not bound yet. Bind it in File > Manage > File References.';
+      return;
+    }
+    unawaited(ExternalAccess.of(client).table(occ).then((table) {
+      if (mounted && _externalOccurrence?.id == occ.id) setState(() => _externalTable = table);
+    }, onError: (Object e) {
+      if (!mounted || _externalOccurrence?.id != occ.id) return;
+      setState(() {
+        _externalProblem = ExternalUnavailable.of(e);
+        if (_externalProblem == null) {
+          _externalError = 'The fields of "${occ.name}" could not be read in ${external.database}: '
+              '${e is ApiException ? e.detail : e}';
+        }
+      });
+    }));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -312,6 +377,13 @@ class _ValueListEditorState extends State<_ValueListEditor> {
     _relatedOccurrenceId = existing?.relatedOccurrenceId;
     _sourceOccurrenceId = existing?.sourceOccurrenceId;
     _related = _relatedOccurrenceId != null;
+    if (existing != null && existing.sourceTableId == null && existing.sourceColumnName != null) {
+      _sourceTableId = '$_externalPrefix${existing.sourceOccurrenceId}';
+      _sourceColumnId = existing.sourceColumnName;
+      _secondColumnId = existing.secondColumnName;
+      _useSecond = _secondColumnId != null;
+      _readExternalTable();
+    }
   }
 
   @override
@@ -322,14 +394,24 @@ class _ValueListEditorState extends State<_ValueListEditor> {
   }
 
   List<ColumnModel> get _sourceColumns {
-    final table = widget.tables.where((t) => t.id == _sourceTableId).firstOrNull;
+    final table = _isExternal ? _externalTable : widget.tables.where((t) => t.id == _sourceTableId).firstOrNull;
     return table?.columns.where((c) => !c.isPrimaryKey).toList() ?? const [];
   }
 
   /// The occurrences of the list's table, one of which the related values are
-  /// read through.
-  List<TableOccurrenceModel> get _sourceOccurrences =>
-      widget.occurrences.where((o) => o.baseTableId == _sourceTableId).toList();
+  /// read through: for another solution's table, the external occurrence
+  /// the list is taken through.
+  List<TableOccurrenceModel> get _sourceOccurrences {
+    final external = _externalOccurrence;
+    if (external != null) return [external];
+    return widget.occurrences.where((o) => o.baseTableId == _sourceTableId).toList();
+  }
+
+  /// The occurrences related values can start from: any of this solution's,
+  /// the ones a layout shows records of. One of another solution's table
+  /// shows that solution's records, which nothing here relates from.
+  List<TableOccurrenceModel> get _startOccurrences =>
+      _isExternal ? widget.occurrences.where((o) => !o.isExternal).toList() : widget.occurrences;
 
   void _chooseTable(String? id) {
     _sourceTableId = id;
@@ -337,6 +419,7 @@ class _ValueListEditorState extends State<_ValueListEditor> {
     _secondColumnId = null;
     final through = _sourceOccurrences;
     _sourceOccurrenceId = through.length == 1 ? through.single.id : null;
+    _readExternalTable();
   }
 
   void _save() {
@@ -376,6 +459,22 @@ class _ValueListEditorState extends State<_ValueListEditor> {
       return;
     }
 
+    final external = fromField ? _externalOccurrence : null;
+    if (external != null) {
+      Navigator.of(context).pop(ValueListModel(
+        id: widget.existing?.id ?? '',
+        name: name,
+        kind: _kind,
+        sourceOccurrenceId: external.id,
+        sourceColumnName: _sourceColumnId,
+        secondColumnName: second,
+        showSecondOnly: second != null && _showSecondOnly,
+        sortBy: second != null ? _sortBy : ValueListModel.sortFirst,
+        relatedOccurrenceId: related ? _relatedOccurrenceId : null,
+      ));
+      return;
+    }
+
     Navigator.of(context).pop(ValueListModel(
       id: widget.existing?.id ?? '',
       name: name,
@@ -389,6 +488,31 @@ class _ValueListEditorState extends State<_ValueListEditor> {
       relatedOccurrenceId: related ? _relatedOccurrenceId : null,
       sourceOccurrenceId: related ? _sourceOccurrenceId : null,
     ));
+  }
+
+  /// Why the fields of another solution's table are not listed, and, when
+  /// the session is only not signed in there, a way to sign in.
+  List<Widget> _externalNotice() {
+    final problem = _externalProblem;
+    final message = problem?.message ?? _externalError;
+    if (!_isExternal || message == null) return const [];
+    return [
+      const SizedBox(height: 8),
+      Text(message, key: const ValueKey('value-list-external-problem'), style: const TextStyle(fontSize: 12)),
+      if (problem != null && problem.isNotSignedIn && widget.apiClient != null)
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            key: const ValueKey('value-list-external-sign-in'),
+            onPressed: () async {
+              if (await ExternalAccess.of(widget.apiClient!).signIn(context, problem) && mounted) {
+                setState(_readExternalTable);
+              }
+            },
+            child: Text('Sign in to ${problem.database}…'),
+          ),
+        ),
+    ];
   }
 
   /// FileMaker's Specify Fields for Value List options: a second field, the
@@ -413,7 +537,7 @@ class _ValueListEditorState extends State<_ValueListEditor> {
           initialValue: _secondColumnId,
           decoration: const InputDecoration(labelText: 'Second field', border: OutlineInputBorder(), isDense: true),
           items: _sourceColumns
-              .map((c) => DropdownMenuItem(value: c.id, child: Text(c.displayName)))
+              .map((c) => DropdownMenuItem(value: _columnKey(c), child: Text(c.displayName)))
               .toList(),
           onChanged: (v) => setState(() => _secondColumnId = v),
         ),
@@ -463,12 +587,13 @@ class _ValueListEditorState extends State<_ValueListEditor> {
           initialValue: _relatedOccurrenceId,
           decoration: const InputDecoration(
               labelText: 'Starting from occurrence', border: OutlineInputBorder(), isDense: true),
-          items: widget.occurrences
+          items: _startOccurrences
               .map((o) => DropdownMenuItem(value: o.id, child: Text(o.name)))
               .toList(),
           onChanged: (v) => setState(() => _relatedOccurrenceId = v),
         ),
         const SizedBox(height: 12),
+        if (!_isExternal)
         DropdownButtonFormField<String>(
           key: ValueKey('value-list-source-occurrence-$_sourceTableId'),
           initialValue: _sourceOccurrenceId,
@@ -537,9 +662,19 @@ class _ValueListEditorState extends State<_ValueListEditor> {
                   initialValue: _sourceTableId,
                   decoration: const InputDecoration(
                       labelText: 'Table', border: OutlineInputBorder(), isDense: true),
-                  items: widget.tables
-                      .map((t) => DropdownMenuItem(value: t.id, child: Text(t.displayName)))
-                      .toList(),
+                  items: [
+                    for (final t in widget.tables) DropdownMenuItem(value: t.id, child: Text(t.displayName)),
+                    // A table of another solution, through the external
+                    // occurrence the list reads it with (#107).
+                    for (final o in widget.occurrences.where((o) => o.isExternal))
+                      DropdownMenuItem(
+                        value: '$_externalPrefix${o.id}',
+                        child: Text(
+                          '${o.name} (${o.external!.database.isEmpty ? o.external!.fileReference : o.external!.database})',
+                          style: const TextStyle(fontStyle: FontStyle.italic),
+                        ),
+                      ),
+                  ],
                   onChanged: (v) => setState(() => _chooseTable(v)),
                 ),
                 const SizedBox(height: 12),
@@ -549,10 +684,11 @@ class _ValueListEditorState extends State<_ValueListEditor> {
                   decoration: const InputDecoration(
                       labelText: 'Field', border: OutlineInputBorder(), isDense: true),
                   items: _sourceColumns
-                      .map((c) => DropdownMenuItem(value: c.id, child: Text(c.displayName)))
+                      .map((c) => DropdownMenuItem(value: _columnKey(c), child: Text(c.displayName)))
                       .toList(),
                   onChanged: _sourceTableId == null ? null : (v) => setState(() => _sourceColumnId = v),
                 ),
+                ..._externalNotice(),
                 ..._fieldOptions(),
               ],
               if (_error != null) ...[

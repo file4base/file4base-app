@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/layout_engine/layout_action_runner.dart';
 import 'package:file4base_client/features/script_workspace/script_debugger.dart';
 import 'package:flutter/material.dart';
@@ -83,7 +84,11 @@ class _ScriptDebuggerDialogState extends State<ScriptDebuggerDialog> {
             ? null
             : (ScriptDebugSession(
                 script: script,
-                runner: LayoutActionRunner(apiClient: widget.apiClient, host: host),
+                runner: LayoutActionRunner(
+                  apiClient: widget.apiClient,
+                  host: host,
+                  peerTokenProvider: (solution) => ExternalAccess.of(widget.apiClient).peerToken(context, solution),
+                ),
               )..begin());
         _loading = false;
       });

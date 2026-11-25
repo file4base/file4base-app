@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:flutter/material.dart';
 
 class SpecifyRelationshipDialog extends StatefulWidget {
@@ -10,6 +13,7 @@ class SpecifyRelationshipDialog extends StatefulWidget {
     this.preselectedRightOccurrenceId,
     this.preselectedLeftColumnId,
     this.preselectedRightColumnId,
+    this.apiClient,
   });
   final List<TableOccurrenceModel> occurrences;
   final List<TableModel> tables;
@@ -18,6 +22,11 @@ class SpecifyRelationshipDialog extends StatefulWidget {
   final String? preselectedRightOccurrenceId;
   final String? preselectedLeftColumnId;
   final String? preselectedRightColumnId;
+
+  /// Reads the fields of an occurrence of another solution's table there
+  /// (#107), so its criteria are chosen from them. Without it such a side
+  /// keeps its criteria as they are, by name.
+  final ApiClient? apiClient;
 
   static Future<Map<String, dynamic>?> show(
     BuildContext context, {
@@ -28,6 +37,7 @@ class SpecifyRelationshipDialog extends StatefulWidget {
     String? preselectedRightOccurrenceId,
     String? preselectedLeftColumnId,
     String? preselectedRightColumnId,
+    ApiClient? apiClient,
   }) {
     return showDialog<Map<String, dynamic>>(
       context: context,
@@ -39,6 +49,7 @@ class SpecifyRelationshipDialog extends StatefulWidget {
         preselectedRightOccurrenceId: preselectedRightOccurrenceId,
         preselectedLeftColumnId: preselectedLeftColumnId,
         preselectedRightColumnId: preselectedRightColumnId,
+        apiClient: apiClient,
       ),
     );
   }
@@ -80,9 +91,88 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
 
   final List<String> _operators = ['=', '≠', '<', '≤', '>', '≥', '×'];
 
+  /// The tables of the external occurrences on either side, read in their
+  /// solution, and why one could not be.
+  final Map<String, TableModel> _externalTables = {};
+  final Map<String, ExternalUnavailable?> _externalProblems = {};
+  final Map<String, String> _externalErrors = {};
+
   @override
   void initState() {
     super.initState();
+    _initSides();
+    _loadExternal(_leftOccurrence);
+    _loadExternal(_rightOccurrence);
+  }
+
+  /// Reads the table of [occ] when it is an occurrence of another solution's
+  /// table, then selects a field in the list of its side.
+  void _loadExternal(TableOccurrenceModel? occ) {
+    final client = widget.apiClient;
+    if (occ == null || !occ.isExternal || client == null || _externalTables.containsKey(occ.id)) return;
+    final external = occ.external!;
+    if (external.database.isEmpty || external.table.isEmpty) {
+      _externalErrors[occ.id] = 'The file reference "${external.fileReference}" is not bound yet, so the fields of '
+          '"${occ.name}" are not known. Bind it in File > Manage > File References.';
+      return;
+    }
+    _externalErrors.remove(occ.id);
+    _externalProblems.remove(occ.id);
+    unawaited(ExternalAccess.of(client).table(occ).then((table) {
+      if (!mounted) return;
+      setState(() {
+        _externalTables[occ.id] = table;
+        _externalProblems.remove(occ.id);
+        final first = _predicates.firstOrNull;
+        if (_leftOccurrence?.id == occ.id) {
+          _leftColumn = _columnOf(table, '', first?.leftColumnName) ?? table.columns.firstOrNull;
+        }
+        if (_rightOccurrence?.id == occ.id) {
+          _rightColumn = _columnOf(table, '', first?.rightColumnName) ?? table.columns.firstOrNull;
+        }
+        if (!_isEditing && _predicates.isEmpty) _occurrenceChanged(tableChanged: true);
+      });
+    }, onError: (Object e) {
+      if (!mounted) return;
+      setState(() {
+        final problem = ExternalUnavailable.of(e);
+        _externalProblems[occ.id] = problem;
+        if (problem == null) {
+          _externalErrors[occ.id] = 'The fields of "${occ.name}" could not be read in ${external.database}: '
+              '${e is ApiException ? e.detail : e}';
+        }
+      });
+    }));
+  }
+
+  Future<void> _signIn(ExternalUnavailable problem, TableOccurrenceModel occ) async {
+    final client = widget.apiClient;
+    if (client == null) return;
+    if (await ExternalAccess.of(client).signIn(context, problem) && mounted) {
+      setState(() => _externalProblems.remove(occ.id));
+      _loadExternal(occ);
+    }
+  }
+
+  /// A field of [table]: by id on this solution's side, by name on another
+  /// solution's.
+  static ColumnModel? _columnOf(TableModel? table, String id, String? name) {
+    final columns = table?.columns ?? const <ColumnModel>[];
+    if (id.isNotEmpty) return columns.where((c) => c.id == id).firstOrNull;
+    if (name == null || name.isEmpty) return null;
+    return columns.where((c) => c.name == name).firstOrNull;
+  }
+
+  /// What makes two occurrences show the same table, so that their criteria
+  /// carry over: the base table, or the reference and table of another
+  /// solution's.
+  static String? _tableKey(TableOccurrenceModel? occ) {
+    final external = occ?.external;
+    if (external != null) return 'external:${external.fileReferenceId}/${external.table}';
+    return occ?.baseTableId;
+  }
+
+  void _initSides() {
     if (widget.initialRelationship != null) {
       final rel = widget.initialRelationship!;
       _leftOccurrence = widget.occurrences.where((o) => o.id == rel.leftOccurrenceId).firstOrNull ??
@@ -144,6 +234,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
 
   TableModel? _getTableForOccurrence(TableOccurrenceModel? occ) {
     if (occ == null) return null;
+    if (occ.isExternal) return _externalTables[occ.id];
     return widget.tables.where((t) => t.id == occ.baseTableId).firstOrNull;
   }
 
@@ -155,17 +246,37 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
 
   bool get _isEditing => widget.initialRelationship != null;
 
-  /// Whether a side is an occurrence of another solution's table. Its fields
-  /// are not in this solution's catalog, so its criteria are kept as they
+  /// Whether a side is an occurrence of another solution's table whose
+  /// fields are not read (yet, or at all). Its criteria are then kept as they
   /// are, by field name, rather than edited from field lists.
-  bool get _hasExternalSide => (_leftOccurrence?.isExternal ?? false) || (_rightOccurrence?.isExternal ?? false);
+  bool get _hasExternalSide => [_leftOccurrence, _rightOccurrence]
+      .any((o) => o != null && o.isExternal && !_externalTables.containsKey(o.id));
 
-  /// The criterion the field lists and the operator currently show.
+  /// The external side whose fields are not known, with why, or null.
+  String? get _externalSideProblem {
+    for (final occ in [_leftOccurrence, _rightOccurrence]) {
+      if (occ == null || !occ.isExternal || _externalTables.containsKey(occ.id)) continue;
+      final problem = _externalProblems[occ.id];
+      if (problem != null) return problem.message;
+      final error = _externalErrors[occ.id];
+      if (error != null) return error;
+      if (widget.apiClient != null) return 'Reading the fields of "${occ.name}" in ${occ.external!.database}…';
+    }
+    return null;
+  }
+
+  /// The criterion the field lists and the operator currently show. A side
+  /// on another solution's table is named by its field, which has no id
+  /// here.
   RelationshipPredicateModel? get _editingCriterion {
     if (_leftColumn == null || _rightColumn == null) return null;
+    final leftExternal = _leftOccurrence?.isExternal ?? false;
+    final rightExternal = _rightOccurrence?.isExternal ?? false;
     return RelationshipPredicateModel(
-      leftColumnId: _leftColumn!.id,
-      rightColumnId: _rightColumn!.id,
+      leftColumnId: leftExternal ? '' : _leftColumn!.id,
+      leftColumnName: leftExternal ? _leftColumn!.name : null,
+      rightColumnId: rightExternal ? '' : _rightColumn!.id,
+      rightColumnName: rightExternal ? _rightColumn!.name : null,
       operator: _operator,
     );
   }
@@ -173,7 +284,8 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   String? _selfMatchMessage(RelationshipPredicateModel criterion) {
     if (_leftOccurrence != null &&
         _leftOccurrence!.id == _rightOccurrence?.id &&
-        criterion.leftColumnId == criterion.rightColumnId) {
+        criterion.leftColumnId == criterion.rightColumnId &&
+        (criterion.leftColumnId.isNotEmpty || criterion.leftColumnName == criterion.rightColumnName)) {
       return 'A field cannot be matched with itself.';
     }
     return null;
@@ -193,16 +305,11 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
     setState(() {
       _selectedPredicate = index;
       _notice = null;
-      _leftColumn = _getTableForOccurrence(_leftOccurrence)
-              ?.columns
-              .where((c) => c.id == criterion.leftColumnId)
-              .firstOrNull ??
+      _leftColumn = _columnOf(_getTableForOccurrence(_leftOccurrence), criterion.leftColumnId, criterion.leftColumnName) ??
           _leftColumn;
-      _rightColumn = _getTableForOccurrence(_rightOccurrence)
-              ?.columns
-              .where((c) => c.id == criterion.rightColumnId)
-              .firstOrNull ??
-          _rightColumn;
+      _rightColumn =
+          _columnOf(_getTableForOccurrence(_rightOccurrence), criterion.rightColumnId, criterion.rightColumnName) ??
+              _rightColumn;
       _operator = _operators.contains(criterion.operator) ? criterion.operator : '=';
     });
   }
@@ -299,7 +406,10 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   String? get _blockingProblem {
     if (_leftOccurrence == null || _rightOccurrence == null) return 'Select a table occurrence on each side.';
     if (_hasExternalSide) {
-      if (!_isEditing) return 'A relationship to an occurrence of another file cannot be created here yet.';
+      if (!_isEditing) {
+        return _externalSideProblem ??
+            'The fields of the table of another solution are not known here, so this relationship cannot be created.';
+      }
       return _predicates.isEmpty ? 'Add at least one match criterion.' : null;
     }
     for (final (occurrence, column) in [(_leftOccurrence, _leftColumn), (_rightOccurrence, _rightColumn)]) {
@@ -322,7 +432,7 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
   }
 
   String _fieldLabel(TableOccurrenceModel? occurrence, String columnId, String? storedName) {
-    final column = _getTableForOccurrence(occurrence)?.columns.where((c) => c.id == columnId).firstOrNull;
+    final column = _columnOf(_getTableForOccurrence(occurrence), columnId, storedName);
     final field = column == null
         ? (storedName ?? columnId)
         : (column.displayName.isNotEmpty ? column.displayName : column.name);
@@ -432,8 +542,8 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
-              'One side is a table of another file: its criteria are kept as they are, by field name, '
-              'and cannot be edited here yet.',
+              'One side is a table of another solution whose fields are not read here: its criteria are '
+              'kept as they are, by field name.${_externalSideProblem == null ? '' : ' ${_externalSideProblem!}'}',
               style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
             ),
           ),
@@ -536,6 +646,19 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
     final theme = Theme.of(context);
     final table = _getTableForOccurrence(occurrence);
     final columns = table?.columns ?? [];
+    final external = occurrence?.external;
+    final problem = occurrence == null ? null : _externalProblems[occurrence.id];
+    final String empty;
+    if (external == null || table != null) {
+      empty = 'No fields';
+    } else if (problem != null) {
+      empty = problem.message;
+    } else {
+      empty = _externalErrors[occurrence!.id] ??
+          (widget.apiClient == null
+              ? 'Fields of ${external.table.isEmpty ? 'another solution' : external.table} (${external.fileReference})'
+              : 'Reading the fields of ${external.table} in ${external.database}…');
+    }
 
     return Container(
       height: 180,
@@ -545,14 +668,28 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
         color: theme.cardColor,
       ),
       child: columns.isEmpty
-          ? const Center(
-              child: Text('No fields', style: TextStyle(color: Colors.grey, fontSize: 12)),
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(empty, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                    if (problem != null && problem.isNotSignedIn)
+                      TextButton(
+                        key: const ValueKey('relationship-external-sign-in'),
+                        onPressed: () => _signIn(problem, occurrence!),
+                        child: Text('Sign in to ${problem.database}…'),
+                      ),
+                  ],
+                ),
+              ),
             )
           : ListView.builder(
               itemCount: columns.length,
               itemBuilder: (ctx, idx) {
                 final col = columns[idx];
-                final isSelected = selectedColumn?.id == col.id;
+                final isSelected = selectedColumn?.id == col.id && selectedColumn?.name == col.name;
                 return InkWell(
                   onTap: () => onSelected(col),
                   child: Container(
@@ -649,8 +786,9 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                                 : (occ) {
                                     if (occ != null) {
                                       setState(() {
-                                        final tableChanged = occ.baseTableId != _leftOccurrence?.baseTableId;
+                                        final tableChanged = _tableKey(occ) != _tableKey(_leftOccurrence);
                                         _leftOccurrence = occ;
+                                        _loadExternal(occ);
                                         final tbl = _getTableForOccurrence(occ);
                                         if (tableChanged) {
                                           _leftColumn = tbl?.columns.isNotEmpty == true ? tbl!.columns.first : null;
@@ -741,8 +879,9 @@ class _SpecifyRelationshipDialogState extends State<SpecifyRelationshipDialog> {
                                 : (occ) {
                                     if (occ != null) {
                                       setState(() {
-                                        final tableChanged = occ.baseTableId != _rightOccurrence?.baseTableId;
+                                        final tableChanged = _tableKey(occ) != _tableKey(_rightOccurrence);
                                         _rightOccurrence = occ;
+                                        _loadExternal(occ);
                                         final tbl = _getTableForOccurrence(occ);
                                         if (tableChanged) {
                                           _rightColumn = tbl?.columns.isNotEmpty == true ? tbl!.columns.first : null;

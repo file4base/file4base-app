@@ -73,6 +73,9 @@ type ValueList struct {
 	// field is read through, and the field is named, since it has no id
 	// here. Empty for every other list.
 	SourceColumnName string `json:"source_column_name,omitempty"`
+	// SecondColumnName is the second field of such a list, by name, as
+	// SecondColumnID is for a list of this solution's field.
+	SecondColumnName string `json:"second_column_name,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -91,6 +94,7 @@ type ValueListInput struct {
 	SourceOccurrenceID  *string `json:"source_occurrence_id"`
 	RelatedOccurrenceID *string `json:"related_occurrence_id"`
 	SourceColumnName    string  `json:"source_column_name,omitempty"`
+	SecondColumnName    string  `json:"second_column_name,omitempty"`
 }
 
 // valueListOptionsSQL adds the options of a list taken from a field to
@@ -164,7 +168,7 @@ func normalizeValueListInput(in ValueListInput) (ValueListInput, error) {
 		in.Kind = ValueListCustom
 		in.SourceTableID, in.SourceColumnID, in.SecondColumnID = nil, nil, nil
 		in.SourceOccurrenceID, in.RelatedOccurrenceID = nil, nil
-		in.ShowSecondOnly, in.SortBy, in.SourceColumnName = false, "", ""
+		in.ShowSecondOnly, in.SortBy, in.SourceColumnName, in.SecondColumnName = false, "", "", ""
 		if strings.TrimSpace(in.CustomValues) == "" {
 			return in, fmt.Errorf("%w: a custom value list needs at least one value", ErrInvalidFieldOptions)
 		}
@@ -175,7 +179,7 @@ func normalizeValueListInput(in ValueListInput) (ValueListInput, error) {
 		if in.SourceTableID == nil && in.SourceColumnID == nil && strings.TrimSpace(in.SourceColumnName) != "" {
 			return normalizeExternalFieldList(in)
 		}
-		in.SourceColumnName = ""
+		in.SourceColumnName, in.SecondColumnName = "", ""
 		if in.SourceTableID == nil || in.SourceColumnID == nil {
 			return in, fmt.Errorf("%w: a value list taken from a field needs the table and the field to read", ErrInvalidFieldOptions)
 		}
@@ -187,9 +191,9 @@ func normalizeValueListInput(in ValueListInput) (ValueListInput, error) {
 }
 
 // normalizeExternalFieldList checks a list taken from a field of another
-// solution's table: named, through an occurrence, without the options a list
-// of this solution's field has. The occurrence is checked to be external when
-// the list is saved, the field when its file reference is verified.
+// solution's table: named, through an occurrence, with its second field named
+// too. The occurrence is checked to be external when the list is saved, the
+// fields when its file reference is verified.
 func normalizeExternalFieldList(in ValueListInput) (ValueListInput, error) {
 	in.SourceOccurrenceID = optionalID(in.SourceOccurrenceID)
 	if in.SourceOccurrenceID == nil {
@@ -200,11 +204,32 @@ func normalizeExternalFieldList(in ValueListInput) (ValueListInput, error) {
 		return in, fmt.Errorf("%w: a value list taken from a field of another solution needs the field's name: %v", ErrInvalidFieldOptions, err)
 	}
 	in.SourceColumnName = name
-	if optionalID(in.SecondColumnID) != nil || optionalID(in.RelatedOccurrenceID) != nil || in.ShowSecondOnly ||
-		strings.EqualFold(strings.TrimSpace(in.SortBy), ValueListSortSecond) {
-		return in, fmt.Errorf("%w: a value list taken from a field of another solution has no second field or related values yet", ErrInvalidFieldOptions)
+	if optionalID(in.SecondColumnID) != nil {
+		return in, fmt.Errorf("%w: the second field of a value list taken from a field of another solution is named (second_column_name), as the first one is", ErrInvalidFieldOptions)
 	}
-	in.SecondColumnID, in.RelatedOccurrenceID, in.SortBy = nil, nil, ValueListSortFirst
+	in.SecondColumnID = nil
+	if strings.TrimSpace(in.SecondColumnName) != "" {
+		second, err := normalizeExternalField(in.SecondColumnName)
+		if err != nil {
+			return in, fmt.Errorf("%w: the second field of a value list: %v", ErrInvalidFieldOptions, err)
+		}
+		in.SecondColumnName = second
+	} else {
+		in.SecondColumnName = ""
+	}
+	switch strings.ToLower(strings.TrimSpace(in.SortBy)) {
+	case "", ValueListSortFirst:
+		in.SortBy = ValueListSortFirst
+	case ValueListSortSecond:
+		in.SortBy = ValueListSortSecond
+	default:
+		return in, fmt.Errorf("%w: a value list is sorted by its %q or its %q field",
+			ErrInvalidFieldOptions, ValueListSortFirst, ValueListSortSecond)
+	}
+	if in.SecondColumnName == "" && (in.ShowSecondOnly || in.SortBy == ValueListSortSecond) {
+		return in, fmt.Errorf("%w: showing or sorting by the second field of a value list needs a second field", ErrInvalidFieldOptions)
+	}
+	in.RelatedOccurrenceID = optionalID(in.RelatedOccurrenceID)
 	return in, nil
 }
 
@@ -258,6 +283,18 @@ func (s *Service) checkValueListReferences(ctx context.Context, in ValueListInpu
 		if occ.External == nil {
 			return "", fmt.Errorf("%w: %q is an occurrence of a table of this solution: name the table and the field instead",
 				ErrInvalidFieldOptions, occ.Name)
+		}
+		if in.RelatedOccurrenceID != nil {
+			// The related values start from the record a layout of this
+			// solution shows: an occurrence of one of its tables.
+			start, err := s.GetTableOccurrence(ctx, *in.RelatedOccurrenceID)
+			if err != nil {
+				return "", fmt.Errorf("%w: the table occurrence the related values start from does not exist", ErrInvalidFieldOptions)
+			}
+			if start.External != nil {
+				return "", fmt.Errorf("%w: the related values start from %q, an occurrence of another solution's table: start them from an occurrence of a table of this solution",
+					ErrInvalidFieldOptions, start.Name)
+			}
 		}
 		return "", nil
 	}
@@ -401,22 +438,23 @@ func (s *Service) createValueList(ctx context.Context, in ValueListInput, restor
 		SourceOccurrenceID:  in.SourceOccurrenceID,
 		RelatedOccurrenceID: in.RelatedOccurrenceID,
 		SourceColumnName:    in.SourceColumnName,
+		SecondColumnName:    in.SecondColumnName,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
 
-	marks := make([]string, 14)
+	marks := make([]string, 15)
 	for i := range marks {
 		marks[i] = s.valueListPlaceholder(i + 1)
 	}
 	q := `INSERT INTO sys_value_lists (id, name, kind, custom_values, source_table_id, source_column_id,
 	      second_column_id, show_second_only, sort_by, source_occurrence_id, related_occurrence_id, created_at, updated_at,
-	      source_column_name)
+	      source_column_name, second_column_name)
 	      VALUES (` + strings.Join(marks, ", ") + `)`
 	if _, err := s.driver.DB().ExecContext(ctx, q, list.ID, list.Name, list.Kind, list.CustomValues,
 		list.SourceTableID, list.SourceColumnID, list.SecondColumnID, list.ShowSecondOnly, nullableSort(list.SortBy),
 		list.SourceOccurrenceID, list.RelatedOccurrenceID, list.CreatedAt, list.UpdatedAt,
-		nullable(list.SourceColumnName)); err != nil {
+		nullable(list.SourceColumnName), nullable(list.SecondColumnName)); err != nil {
 		return nil, "", fmt.Errorf("failed creating value list %q: %w", list.Name, err)
 	}
 	return list, unindexable, nil
@@ -441,11 +479,11 @@ func (s *Service) updateValueList(ctx context.Context, id string, in ValueListIn
 	q := fmt.Sprintf(`UPDATE sys_value_lists SET name = %s, kind = %s, custom_values = %s,
 	                  source_table_id = %s, source_column_id = %s, second_column_id = %s, show_second_only = %s,
 	                  sort_by = %s, source_occurrence_id = %s, related_occurrence_id = %s, updated_at = %s,
-	                  source_column_name = %s WHERE id = %s`,
-		p(1), p(2), p(3), p(4), p(5), p(6), p(7), p(8), p(9), p(10), p(11), p(12), p(13))
+	                  source_column_name = %s, second_column_name = %s WHERE id = %s`,
+		p(1), p(2), p(3), p(4), p(5), p(6), p(7), p(8), p(9), p(10), p(11), p(12), p(13), p(14))
 	res, err := s.driver.DB().ExecContext(ctx, q, in.Name, in.Kind, in.CustomValues,
 		in.SourceTableID, in.SourceColumnID, in.SecondColumnID, in.ShowSecondOnly, nullableSort(in.SortBy),
-		in.SourceOccurrenceID, in.RelatedOccurrenceID, now, nullable(in.SourceColumnName), id)
+		in.SourceOccurrenceID, in.RelatedOccurrenceID, now, nullable(in.SourceColumnName), nullable(in.SecondColumnName), id)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed updating value list %s: %w", id, err)
 	}
@@ -499,7 +537,7 @@ func (s *Service) readValueLists(ctx context.Context, clause string, args ...int
 	}
 	q := `SELECT id, name, kind, custom_values, source_table_id, source_column_id, second_column_id,
 	      show_second_only, sort_by, source_occurrence_id, related_occurrence_id, created_at, updated_at,
-	      source_column_name
+	      source_column_name, second_column_name
 	      FROM sys_value_lists ` + clause
 	rows, err := s.driver.DB().QueryContext(ctx, q, args...)
 	if err != nil {
@@ -515,19 +553,20 @@ func (s *Service) readValueLists(ctx context.Context, clause string, args ...int
 	lists := []ValueList{}
 	for rows.Next() {
 		var list ValueList
-		var custom, sortBy, columnName sql.NullString
+		var custom, sortBy, columnName, secondName sql.NullString
 		var showSecondOnly sql.NullBool
 		if err := rows.Scan(&list.ID, &list.Name, &list.Kind, &custom, &list.SourceTableID, &list.SourceColumnID,
 			&list.SecondColumnID, &showSecondOnly, &sortBy, &list.SourceOccurrenceID, &list.RelatedOccurrenceID,
-			&list.CreatedAt, &list.UpdatedAt, &columnName); err != nil {
+			&list.CreatedAt, &list.UpdatedAt, &columnName, &secondName); err != nil {
 			return nil, err
 		}
 		list.CustomValues, list.SourceColumnName = custom.String, columnName.String
+		list.SecondColumnName = secondName.String
 		if list.Kind == ValueListFromField {
 			// A list written before it had these options, or whose second
 			// field was deleted, shows and sorts by its first field.
 			list.SortBy = ValueListSortFirst
-			if list.SecondColumnID != nil {
+			if list.SecondColumnID != nil || list.SecondColumnName != "" {
 				list.ShowSecondOnly = showSecondOnly.Bool
 				if sortBy.String == ValueListSortSecond {
 					list.SortBy = ValueListSortSecond
@@ -608,7 +647,7 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 		reader = data.NewService(s.driver)
 	}
 	if list.SourceTableID == nil || list.SourceColumnID == nil {
-		return s.externalValueListItems(ctx, list, reader)
+		return s.externalValueListItems(ctx, list, record, reader)
 	}
 
 	src, err := s.valueListSource(ctx, list)
@@ -636,7 +675,7 @@ func (s *Service) ValueListItems(ctx context.Context, id string, record *ValueLi
 // session group holds there: its values, each once, in value order. When
 // that solution cannot be read the list offers nothing of this one in their
 // place: the error says why.
-func (s *Service) externalValueListItems(ctx context.Context, list *ValueList, reader *data.Service) ([]ValueListItem, bool, error) {
+func (s *Service) externalValueListItems(ctx context.Context, list *ValueList, record *ValueListRecord, reader *data.Service) ([]ValueListItem, bool, error) {
 	target := data.ExternalTarget{}
 	if list.SourceOccurrenceID != nil {
 		if occ, err := s.GetTableOccurrence(ctx, *list.SourceOccurrenceID); err == nil {
@@ -650,17 +689,40 @@ func (s *Service) externalValueListItems(ctx context.Context, list *ValueList, r
 	if err != nil {
 		return nil, false, err
 	}
-	// A field known only by its FileMaker id is the one bound to that id.
-	field, err := peer.ResolveFieldMarker(ctx, target.Table, list.SourceColumnName)
+	order := entryOrder{bySecond: list.SortBy == ValueListSortSecond, secondOnly: list.ShowSecondOnly && list.SecondColumnName != ""}
+	var items []ValueListItem
+	var truncated bool
+	if list.RelatedOccurrenceID != nil {
+		// The related records are found from this solution's record, and
+		// their fields read there, by name: the relationship path resolves a
+		// field known only by its FileMaker id itself.
+		src := fieldSource{table: target.Table, first: list.SourceColumnName, second: list.SecondColumnName}
+		items, err = s.relatedFieldItems(ctx, list, src, record, reader)
+		switch {
+		case errors.Is(err, data.ErrExternalUnavailable):
+			return nil, false, err
+		case errors.Is(err, data.ErrNoAccess):
+			// The record the values start from may not be read here: a
+			// list of this solution's related values offers nothing then.
+			return []ValueListItem{}, false, nil
+		}
+	} else {
+		// A field known only by its FileMaker id is the one bound to that id.
+		src := fieldSource{table: target.Table}
+		if src.first, err = peer.ResolveFieldMarker(ctx, target.Table, list.SourceColumnName); err != nil {
+			return nil, false, target.Wrap(err)
+		}
+		if list.SecondColumnName != "" {
+			if src.second, err = peer.ResolveFieldMarker(ctx, target.Table, list.SecondColumnName); err != nil {
+				return nil, false, target.Wrap(err)
+			}
+		}
+		items, truncated, err = distinctFieldItems(ctx, src, order, peer)
+	}
 	if err != nil {
 		return nil, false, target.Wrap(err)
 	}
-	src := fieldSource{table: target.Table, first: field}
-	items, truncated, err := distinctFieldItems(ctx, src, entryOrder{}, peer)
-	if err != nil {
-		return nil, false, target.Wrap(err)
-	}
-	items, more := entryOrder{}.entries(items)
+	items, more := order.entries(items)
 	return items, truncated || more, nil
 }
 

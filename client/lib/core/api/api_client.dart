@@ -124,10 +124,10 @@ class ExternalUnavailable {
         return 'Your account in $solution may not read these records. Ask its administrator for access.';
       case schemaMismatch:
         return 'The table or a field read through $source is no longer in $solution. '
-            'Verify the file reference in Manage File References.';
+            'Verify the file reference in File > Manage > File References.';
       default:
         if (database.isEmpty) {
-          return 'The file reference $source is not mapped to a solution. Map it in Manage File References.';
+          return 'The file reference $source is not mapped to a solution. Map it in File > Manage > File References.';
         }
         return detail.isNotEmpty ? detail : 'The solution $solution is not available on this server.';
     }
@@ -374,6 +374,8 @@ class ValueListModel {
     this.sortBy = sortFirst,
     this.sourceOccurrenceId,
     this.relatedOccurrenceId,
+    this.sourceColumnName,
+    this.secondColumnName,
   });
 
   factory ValueListModel.fromJson(Map<String, dynamic> json) => ValueListModel(
@@ -388,6 +390,8 @@ class ValueListModel {
         sortBy: json['sort_by'] as String? ?? sortFirst,
         sourceOccurrenceId: json['source_occurrence_id'] as String?,
         relatedOccurrenceId: json['related_occurrence_id'] as String?,
+        sourceColumnName: json['source_column_name'] as String?,
+        secondColumnName: json['second_column_name'] as String?,
       );
   /// A fixed list the designer typed.
   static const String kindCustom = 'custom';
@@ -424,6 +428,13 @@ class ValueListModel {
   final String? sourceOccurrenceId;
   final String? relatedOccurrenceId;
 
+  /// For a list taken from a field of another solution's table, through
+  /// [sourceOccurrenceId], an external occurrence (#107): its field and its
+  /// second field, by name, since this solution's catalog has no id for
+  /// them.
+  final String? sourceColumnName;
+  final String? secondColumnName;
+
   bool get isFromField => kind == kindFromField;
 
   /// True when what the list offers depends on the record it is shown on.
@@ -453,6 +464,8 @@ class ValueListModel {
         'sort_by': sortBy,
         'source_occurrence_id': sourceOccurrenceId,
         'related_occurrence_id': relatedOccurrenceId,
+        'source_column_name': ?sourceColumnName,
+        'second_column_name': ?secondColumnName,
       };
 
   ValueListModel copyWith({
@@ -466,6 +479,8 @@ class ValueListModel {
     String? sortBy,
     String? sourceOccurrenceId,
     String? relatedOccurrenceId,
+    String? sourceColumnName,
+    String? secondColumnName,
   }) =>
       ValueListModel(
         id: id,
@@ -479,6 +494,8 @@ class ValueListModel {
         sortBy: sortBy ?? this.sortBy,
         sourceOccurrenceId: sourceOccurrenceId ?? this.sourceOccurrenceId,
         relatedOccurrenceId: relatedOccurrenceId ?? this.relatedOccurrenceId,
+        sourceColumnName: sourceColumnName ?? this.sourceColumnName,
+        secondColumnName: secondColumnName ?? this.secondColumnName,
       );
 }
 
@@ -1341,6 +1358,7 @@ class AuthResult {
     this.fileOptions,
     this.pageSetup,
     this.directoryRef,
+    this.linked = const [],
   });
 
   factory AuthResult.fromJson(Map<String, dynamic> json) {
@@ -1357,11 +1375,19 @@ class AuthResult {
       solutionName: json['solution_name'] as String?,
       fileOptions: rawFileOpts is Map ? Map<String, dynamic>.from(rawFileOpts) : null,
       pageSetup: rawPageSetup is Map ? Map<String, dynamic>.from(rawPageSetup) : null,
+      linked: [
+        for (final l in json['linked'] as List<dynamic>? ?? const [])
+          if (l is Map) LinkedSolutionModel.fromJson(Map<String, dynamic>.from(l)),
+      ],
     );
   }
   final String status;
   final String database;
   final UserModel user;
+
+  /// The solutions this sign-in reached for the one signed in to (#107),
+  /// with the same account: linked, or why not.
+  final List<LinkedSolutionModel> linked;
 
   /// What the account's role may do, as the server reports it at sign-in.
   final List<String> capabilities;
@@ -1397,6 +1423,7 @@ class AuthResult {
       fileOptions: fileOptions ?? this.fileOptions,
       pageSetup: pageSetup ?? this.pageSetup,
       directoryRef: directoryRef ?? this.directoryRef,
+      linked: linked,
     );
   }
 }
@@ -1752,6 +1779,43 @@ class ApiClient {
   // another solution or sign-in has a different token and independent state.
   // These keys and values remain in memory and are cleared with the session.
   static final Map<(String, String), Map<String, String>> _scriptGlobals = {};
+
+  // The sessions this session opened in other solutions (#107), by
+  // database in lower case, keyed like the globals so every client of the
+  // session sees them. Their tokens stay in memory, and go with the session.
+  static final Map<(String, String), Map<String, LinkedSolutionModel>> _linked = {};
+
+  Map<String, LinkedSolutionModel>? get _linkedOfSession {
+    final token = _authToken;
+    if (token == null || token.isEmpty) return null;
+    final server = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    return _linked.putIfAbsent((server, token), () => <String, LinkedSolutionModel>{});
+  }
+
+  void _keepLinked(LinkedSolutionModel linked) {
+    if (!linked.isLinked) return;
+    _linkedOfSession?[linked.database.toLowerCase()] = linked;
+  }
+
+  /// The token of the session this one opened in [database], at sign-in or
+  /// with [linkSolution], or null when it is not signed in there.
+  String? linkedToken(String database) {
+    final linked = _linkedOfSession?[database.trim().toLowerCase()];
+    if (linked == null) return null;
+    final expires = linked.expiresAt;
+    if (expires != null && expires.isBefore(DateTime.now())) return null;
+    return linked.token;
+  }
+
+  /// What the last sign-in reached besides the solution signed in to: the
+  /// solutions linked with the same account, and those it could not be,
+  /// with why (#107). Empty until a sign-in, and after the session ends.
+  List<LinkedSolutionModel> get signInLinks => _signInLinks;
+  List<LinkedSolutionModel> _signInLinks = const [];
+
+  /// Forgets the session opened in [database], once it is known to have
+  /// ended (a 401 there).
+  void forgetLinked(String database) => _linkedOfSession?.remove(database.trim().toLowerCase());
   final Map<String, String> _anonymousScriptGlobals = {};
 
   Map<String, String> get scriptGlobalVariables {
@@ -1797,7 +1861,9 @@ class ApiClient {
     if (token != null && token.isNotEmpty) {
       final server = baseUrl.trim().replaceAll(RegExp(r'/+$'), '');
       _scriptGlobals.remove((server, token))?.clear();
+      _linked.remove((server, token));
     }
+    _signInLinks = const [];
     _anonymousScriptGlobals.clear();
     _authToken = null;
   }
@@ -2432,9 +2498,10 @@ class ApiClient {
   }
 
   /// Signs this session in to [database], a solution its external
-  /// occurrences read (#107), with an account of that solution. The session
-  /// then reads that solution as that account.
-  Future<void> linkSolution({
+  /// occurrences, file references or transfers reach (#107), with an
+  /// account of that solution. The session then reads that solution as that
+  /// account, and [linkedToken] answers the session opened there.
+  Future<LinkedSolutionModel> linkSolution({
     required String database,
     required String username,
     required String password,
@@ -2452,6 +2519,9 @@ class ApiClient {
     );
     // A refused password is about the other solution, not this session.
     _checkResponse(response, isSignIn: true);
+    final linked = LinkedSolutionModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    _keepLinked(linked);
+    return linked;
   }
 
   Future<List<TableOccurrenceModel>> listOccurrences() async {
@@ -2464,9 +2534,14 @@ class ApiClient {
     return list.map((item) => TableOccurrenceModel.fromJson(item as Map<String, dynamic>)).toList();
   }
 
+  /// Adds an occurrence of [baseTableId], a table of this solution, or, with
+  /// [externalReference] and [externalTable], of the table of that name in
+  /// the solution the file reference is mapped to (#107).
   Future<TableOccurrenceModel> createOccurrence({
-    required String baseTableId,
     required String name,
+    String baseTableId = '',
+    String? externalReference,
+    String? externalTable,
     double xPos = 100.0,
     double yPos = 100.0,
   }) async {
@@ -2474,7 +2549,9 @@ class ApiClient {
       Uri.parse('$baseUrl/api/v1/schemas/occurrences'),
       headers: _headers(contentType: 'application/json'),
       body: jsonEncode({
-        'base_table_id': baseTableId,
+        if (externalReference == null) 'base_table_id': baseTableId,
+        if (externalReference != null)
+          'external': {'file_reference': externalReference, 'table': externalTable ?? ''},
         'name': name,
         'x_pos': xPos,
         'y_pos': yPos,
@@ -2781,6 +2858,8 @@ class ApiClient {
     if (previousToken != null && previousToken.isNotEmpty && previousToken != result.token) {
       unawaited(_revokeToken(previousToken));
     }
+    result.linked.forEach(_keepLinked);
+    _signInLinks = result.linked;
     return result;
   }
 
@@ -3657,6 +3736,95 @@ class ApiClient {
   // ==========================================
   // File references API (#107)
   // ==========================================
+
+  /// This solution's file references, by name.
+  Future<List<FileReferenceModel>> listFileReferences() async {
+    final response = await _httpClient.get(
+      Uri.parse('$baseUrl/api/v1/file-references'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+    final list = jsonDecode(response.body) as List<dynamic>? ?? const [];
+    return [for (final item in list) FileReferenceModel.fromJson(item as Map<String, dynamic>)];
+  }
+
+  /// Saves a new file reference; [database] empty leaves it unmapped.
+  Future<FileReferenceModel> createFileReference({
+    required String name,
+    String database = '',
+    List<String> paths = const [],
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/file-references'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'name': name, 'database': database, if (paths.isNotEmpty) 'paths': paths}),
+    );
+    _checkResponse(response);
+    return FileReferenceModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Renames or remaps a file reference. [paths] left null keeps its paths.
+  Future<FileReferenceModel> updateFileReference(
+    String id, {
+    required String name,
+    String database = '',
+    List<String>? paths,
+  }) async {
+    final response = await _httpClient.put(
+      Uri.parse('$baseUrl/api/v1/file-references/${Uri.encodeComponent(id)}'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'name': name, 'database': database, 'paths': ?paths}),
+    );
+    _checkResponse(response);
+    return FileReferenceModel.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Deletes a file reference. The server refuses (409) while an occurrence
+  /// goes through it.
+  Future<void> deleteFileReference(String id) async {
+    final response = await _httpClient.delete(
+      Uri.parse('$baseUrl/api/v1/file-references/${Uri.encodeComponent(id)}'),
+      headers: _headers(),
+    );
+    _checkResponse(response);
+  }
+
+  /// Maps a file reference to [database] and resolves the table of every
+  /// occurrence through it, reading that solution's catalog on [peerToken],
+  /// a session there of an owner or an administrator. [tables] names the
+  /// table of an occurrence, by occurrence name, that its fields do not
+  /// single out.
+  Future<ExternalBindingReport> bindFileReference(
+    String id, {
+    required String database,
+    required String peerToken,
+    Map<String, String> tables = const {},
+  }) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/file-references/${Uri.encodeComponent(id)}/bind'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({
+        'database': database,
+        'peer_token': peerToken,
+        if (tables.isNotEmpty) 'tables': tables,
+      }),
+    );
+    _checkResponse(response);
+    return ExternalBindingReport.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Checks every occurrence through a file reference against the solution
+  /// it is mapped to, writing nothing. An unmapped reference needs no
+  /// [peerToken].
+  Future<ExternalBindingReport> verifyFileReference(String id, {String? peerToken}) async {
+    final response = await _httpClient.post(
+      Uri.parse('$baseUrl/api/v1/file-references/${Uri.encodeComponent(id)}/verify'),
+      headers: _headers(contentType: 'application/json'),
+      body: jsonEncode({'peer_token': ?peerToken}),
+    );
+    _checkResponse(response);
+    return ExternalBindingReport.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
 
   /// Where the file reference [name] goes. An unmapped reference (409) or an
   /// unknown one (404) throws, and a `Perform Script` step stops on either.

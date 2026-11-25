@@ -10,7 +10,9 @@ class MockApiClient extends ApiClient {
 
   @override
   Future<TableOccurrenceModel> createOccurrence({
-    required String baseTableId,
+    String baseTableId = '',
+    String? externalReference,
+    String? externalTable,
     required String name,
     double xPos = 100.0,
     double yPos = 100.0,
