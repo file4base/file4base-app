@@ -1155,7 +1155,7 @@ A `field` list offers each entry once, as FileMaker does: each value once, or wi
 
 Values are read as the caller: a table the caller may not read offers nothing (there are no field-level privileges; both fields are of the list's table). A list of related values is resolved for the record it is shown on, `GET /api/v1/value-lists/{id}/values?table=<table name>&record_id=<id>`; without a record, or for a record of a table other than the one the list starts from, it offers nothing. Related records are read as the caller, so a table on the way that they may not read offers nothing.
 
-A list with no name, a `custom` list with no values, or a `field` list without its table and field answers `422 Invalid Field Options`, as does a first or second field that cannot be indexed (an unstored calculation, computed only when it is shown, or a summary field, which has no value in a record: FileMaker's "This field cannot be indexed"; making unstored a calculation a list reads is refused the same way), a second field of another table, `show_second_only` or `sort_by: "second"` without a second field, an unknown starting occurrence, or related values read through an occurrence of another table. Deleting the second field leaves the list with its first; deleting either occurrence deletes the list. Two lists cannot share a name (`409 Value List Already Exists`). An id that is not there answers `404 Value List Not Found`.
+A list with no name, a `custom` list with no values, or a `field` list without its table and field answers `422 Invalid Field Options`, as does a first or second field that cannot be indexed (an unstored calculation, computed only when it is shown, or a summary field, which has no value in a record: FileMaker's "This field cannot be indexed"; making unstored a calculation a list reads is refused the same way; restoring a solution file keeps such a list with a warning instead), a second field of another table, `show_second_only` or `sort_by: "second"` without a second field, an unknown starting occurrence, or related values read through an occurrence of another table. Deleting the second field leaves the list with its first; deleting either occurrence deletes the list. Two lists cannot share a name (`409 Value List Already Exists`). An id that is not there answers `404 Value List Not Found`.
 
 Value lists are carried in the solution file and matched by name on import, so re-importing the same file updates them instead of making copies; a `field` list has its table, fields and occurrences rewritten to the destination's ids.
 
@@ -1301,6 +1301,7 @@ Merges a solution file into the session's database (owner only). Version `2.0` f
 3. Missing objects are created; matching layouts and scripts are updated; existing tables, fields and accounts are left unchanged. Importing the same file twice creates nothing new.
 4. Missing accounts are created **disabled**, with a random password nobody knows, keeping their role and layout permissions: an owner enables them and sets their password in Manage Security.
 5. If a write fails, everything the import created is removed and every updated layout or script gets its previous version back; the response is `400` with the reason.
+6. A value list is restored as it was saved, even one whose field cannot be indexed (refused when a list is created or updated): a solution file must stay restorable. Such a list offers nothing until its field is stored or changed, and `warnings` says so; the import is not refused for it.
 
 Before decoding, the payload's structure is checked: a collection or string declaring more elements or bytes than the payload holds, nesting deeper than 32 levels or more than 5,000,000 collection entries in total answers `400 Bad Request` and changes nothing (also for `import-data`).
 
@@ -1322,6 +1323,7 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
   "scripts_updated": 0,
   "accounts_created": 1,
   "accounts_pending_password": ["bob"],
+  "warnings": ["value list \"Shouts\" was restored as saved but offers no values: \"shout\" cannot be indexed, so a value list cannot take its values from it: it is an unstored calculation, computed only when it is shown; store its result (Field Options > Storage) or choose another field"],
   "tables_count": 2,
   "layouts_count": 2
 }

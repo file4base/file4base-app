@@ -14,6 +14,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 func TestSplitCustomValues(t *testing.T) {
@@ -897,6 +898,86 @@ func TestValueListRefusesAFieldThatCannotBeIndexed(t *testing.T) {
 	})
 	require.ErrorIs(t, err, schema.ErrInvalidFieldOptions)
 	assert.Contains(t, err.Error(), stored.Name, "the refusal names the list that reads the field")
+}
+
+// A solution file is a backup: a list it holds was valid when it was saved,
+// so restoring it never fails on a field that cannot be indexed. The list is
+// kept as it was and the import report says it offers nothing.
+func TestARestoredValueListOfAnUnindexableFieldIsKeptWithAWarning(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database unavailable:", err)
+		return
+	}
+	defer driver.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+		return
+	}
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+
+	stamp := uniqueTestStamp()
+	name := fmt.Sprintf("vlr_lines_%d", stamp)
+	tbl, err := svc.CreateTable(ctx, name, name)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.DeleteTable(context.Background(), tbl.ID) })
+	_, err = svc.AddColumn(ctx, tbl.ID, schema.ColumnMetadata{
+		Name: "label", DisplayName: "label", FieldType: dbal.FieldTypeText, IsNullable: true,
+	})
+	require.NoError(t, err)
+	shout, err := svc.AddColumn(ctx, tbl.ID, schema.ColumnMetadata{
+		Name: "shout", DisplayName: "shout", FieldType: dbal.FieldTypeCalculation, IsNullable: true,
+		CalculationFormula: ptr(`{"formula":"Upper ( label )","result_type":"Text","stored":false}`),
+	})
+	require.NoError(t, err)
+
+	// A file saved before such lists were refused.
+	file, err := svc.ExportSolution(ctx, schema.ExportOptions{SolutionName: "VL Restore"})
+	require.NoError(t, err)
+	bundle, err := schema.DecodeSolutionBundle(file)
+	require.NoError(t, err)
+	listName := fmt.Sprintf("Shouts %d", stamp)
+	bundle.ValueLists = append(bundle.ValueLists, schema.BundleValueList{
+		ID: fmt.Sprintf("vlr-%d", stamp), Name: listName, Kind: schema.ValueListFromField,
+		SourceTableID: &tbl.ID, SourceColumnID: &shout.ID,
+	})
+	file, err = msgpack.Marshal(bundle)
+	require.NoError(t, err)
+
+	// Restored once (created), then again (updated): kept both times.
+	for _, restore := range []string{"created", "updated"} {
+		report, err := svc.ImportSolution(ctx, file)
+		require.NoError(t, err, "restoring must not fail on a list that was valid when saved (%s)", restore)
+		var warned bool
+		for _, w := range report.Warnings {
+			if strings.Contains(w, listName) && strings.Contains(w, "cannot be indexed") {
+				warned = true
+			}
+		}
+		assert.True(t, warned, "the import report says the list offers nothing (%s): %v", restore, report.Warnings)
+	}
+
+	lists, err := svc.ListValueLists(ctx)
+	require.NoError(t, err)
+	var kept *schema.ValueList
+	for i := range lists {
+		if lists[i].Name == listName {
+			kept = &lists[i]
+		}
+	}
+	require.NotNil(t, kept, "the list is restored as it was saved")
+	t.Cleanup(func() { _ = svc.DeleteValueList(context.Background(), kept.ID) })
+	require.NotNil(t, kept.SourceColumnID)
+	assert.Equal(t, shout.ID, *kept.SourceColumnID)
+
+	// Defining one is still refused.
+	_, err = svc.UpdateValueList(ctx, kept.ID, schema.ValueListInput{
+		Name: listName, Kind: schema.ValueListFromField, SourceTableID: &tbl.ID, SourceColumnID: &shout.ID,
+	})
+	require.ErrorIs(t, err, schema.ErrInvalidFieldOptions)
 }
 
 func ptr(s string) *string { return &s }
