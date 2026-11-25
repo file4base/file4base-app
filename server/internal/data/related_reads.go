@@ -22,9 +22,11 @@ import (
 //   - Count, Sum, Average, Min and Max of a stored field of the records one
 //     relationship away are totalled where the records are, without reading
 //     them;
-//   - List, Last and GetNthRecord, and the aggregates that cannot be totalled
-//     there, read every related record, at most maxRelatedRecords for one
-//     record in hand.
+//   - Last and GetNthRecord read one related record, the last holding a
+//     value or the nth, in the relationship's sort order, when it has one
+//     and the records are one relationship away;
+//   - List, and the reads above that cannot be done that way, read every
+//     related record, at most maxRelatedRecords for one record in hand.
 //
 // Only the fields a read needs are read: the field, what the relationship
 // sorts by, and, on the way, what the next relationship matches on. A record
@@ -43,19 +45,26 @@ import (
 const maxRelatedRecords = 10000
 
 // ErrTooManyRelated is returned for a read of more than maxRelatedRecords
-// related records of one record: a List, Last or GetNthRecord of them, or a
-// path through them.
+// related records of one record: a List of them, a Last or GetNthRecord that
+// cannot read one record (no sort order, or a longer path), or a path
+// through them.
 var ErrTooManyRelated = fmt.Errorf("more than %d related records", maxRelatedRecords)
 
 // reach is how far a read goes into the records related across the last
-// relationship of its path.
-type reach int
+// relationship of its path: every one (n 0), the nth in the relationship's
+// sort order (n ≥ 1), or the last whose field present holds a value (n < 0).
+type reach struct {
+	n       int
+	present string
+}
 
-const (
+var (
 	// reachAll reads every related record.
-	reachAll reach = iota
+	reachAll = reach{}
 	// reachFirst reads the first, in the relationship's sort order.
-	reachFirst
+	reachFirst = reach{n: 1}
+	// reachLast reads the last whose field holds a value.
+	reachLast = reach{n: -1}
 )
 
 // unstoredContext is what an unstored calculation reads: its record, and the
@@ -78,6 +87,11 @@ func (c *unstoredContext) RelatedFirst(occurrence, field string) ([]any, error) 
 	return c.reader.related(c.ctx, c.table, c.occurrence, c.row, occurrence, field, reachFirst)
 }
 
+// RelatedNth implements calc.Bounded.
+func (c *unstoredContext) RelatedNth(occurrence, field string, n int) ([]any, bool, error) {
+	return c.reader.nth(c.ctx, c.table, c.occurrence, c.row, occurrence, field, n)
+}
+
 // RelatedTotals implements calc.Bounded.
 func (c *unstoredContext) RelatedTotals(occurrence, field, function string) (calc.RelatedTotals, bool, error) {
 	return c.reader.totals(c.ctx, c.table, c.occurrence, c.row, occurrence, field, function)
@@ -97,7 +111,7 @@ func (r *relatedReader) related(
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	if rc == reachFirst {
+	if rc != reachAll {
 		rows = rows[:1]
 	}
 	end := rt.end
@@ -112,6 +126,54 @@ func (r *relatedReader) related(
 		out[i] = inSolution(typedValue(end.table, end.fields, rel, end.field, describe), end.database)
 	}
 	return out, nil
+}
+
+// nth reads field in one record of the occurrence target related to row:
+// the nth (n ≥ 1) or the last whose field holds a value (n < 0), when the
+// route reads one record (see route.single). ok is false otherwise, or when
+// every related record of row is read already, and they are then read.
+func (r *relatedReader) nth(
+	ctx context.Context, tableName, contextName string, row map[string]interface{}, target, field string, n int,
+) ([]any, bool, error) {
+	rc := reach{n: n}
+	if n < 0 {
+		rc = reachLast
+	}
+	rt, err := r.route(ctx, routeKey{tableName, contextName, target, field, rc, false})
+	if err != nil {
+		return nil, false, err
+	}
+	if !rt.single() {
+		return nil, false, nil
+	}
+	if memo := hopMemo(rt.plans[0], reachAll, rt.columns[0], row); !r.overflow[memo] {
+		if _, read := r.hops[memo]; read {
+			return nil, false, nil
+		}
+	}
+	values, err := r.related(ctx, tableName, contextName, row, target, field, rc)
+	return values, err == nil, err
+}
+
+// single reports whether a route reads one record for a nth or last reach:
+// the records are one relationship away, in a sort order, and a last's
+// field is a stored field whose having a value the database tells as a
+// formula does.
+func (rt *route) single() bool {
+	if len(rt.path) != 1 || rt.plans[0].order == "" {
+		return false
+	}
+	if rt.reach.n >= 0 {
+		return true
+	}
+	if rt.columns[0] == nil || rt.end.base() != rt.end.field {
+		return false
+	}
+	switch rt.end.fields[rt.end.field] {
+	case dbal.FieldTypeText, dbal.FieldTypeNumber, dbal.FieldTypeDate, dbal.FieldTypeTimestamp, dbal.FieldTypeBoolean:
+		return true
+	}
+	return false
 }
 
 // totals totals field, for function, across the records of the occurrence
@@ -219,6 +281,9 @@ func (r *relatedReader) resolveRoute(ctx context.Context, key routeKey) (*route,
 	}
 	rt := &route{path: path, end: end, reach: key.reach, totals: key.totals,
 		plans: make([]*hopPlan, len(path)), columns: make([]fieldSet, len(path))}
+	if rt.reach.n < 0 {
+		rt.reach.present = end.field
+	}
 	for i, h := range path {
 		// A total needs no order.
 		if rt.plans[i], err = r.plan(ctx, h, i == len(path)-1 && !key.totals); err != nil {
@@ -456,8 +521,11 @@ type hopPlan struct {
 	to     *relatedReader
 	table  string
 	fields fieldSet
-	order  string
-	sorts  []string
+	// order is the relationship's sort order, then the records' ids, so
+	// that the nth record is the one reading them all gives; reverse is
+	// its opposite. Both are empty for a relationship that does not sort.
+	order, reverse string
+	sorts          []string
 }
 
 // plan resolves a hop, in the relationship's sort order when it is the last
@@ -514,7 +582,18 @@ func (r *relatedReader) plan(ctx context.Context, h hop, last bool) (*hopPlan, e
 		if err := refuseUnstored(calculations, h.to.TableName, "sort", sortFields(order)...); err != nil {
 			return nil, err
 		}
-		if p.order, err = orderByClause(to.s.driver.Dialect(), fields, h.to.TableName, order); err != nil {
+		if len(order) > 0 {
+			order = append(order, SortField{Field: "id"})
+		}
+		reverse := make([]SortField, len(order))
+		for i, level := range order {
+			reverse[i] = SortField{Field: level.Field, Descending: !level.Descending}
+		}
+		dialect := to.s.driver.Dialect()
+		if p.order, err = orderByClause(dialect, fields, h.to.TableName, order); err != nil {
+			return nil, err
+		}
+		if p.reverse, err = orderByClause(dialect, fields, h.to.TableName, reverse); err != nil {
 			return nil, err
 		}
 		p.sorts = sortFields(order)
@@ -535,7 +614,7 @@ func (r *relatedReader) side(ctx context.Context, side RelationSide) (*relatedRe
 // plan, how far, which fields, and what it holds in its match fields.
 func hopMemo(p *hopPlan, rc reach, columns fieldSet, row map[string]interface{}) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s\x00%d\x00%s", p.key, rc, columns.signature())
+	fmt.Fprintf(&b, "%s\x00%d\x00%s\x00%s", p.key, rc.n, rc.present, columns.signature())
 	for _, column := range sourceColumns(p.terms) {
 		fmt.Fprintf(&b, "\x00%v", row[column])
 	}
@@ -659,13 +738,19 @@ func (r *relatedReader) fetch(
 	}
 	dialect := p.to.s.driver.Dialect()
 	list, table := selectList(dialect, columns), dialect.QuoteIdentifier(p.table)
-	limit := maxRelatedRecords + 1
-	if rc == reachFirst {
-		limit = 1
+	// Every record, the nth, or the last holding a value.
+	order, limit, present := p.order, fmt.Sprintf(" LIMIT %d", maxRelatedRecords+1), ""
+	switch {
+	case rc.n < 0:
+		order, limit = p.reverse, " LIMIT 1"
+		present = " AND " + valueThere(dialect, dialect.QuoteIdentifier(rc.present))
+	case rc.n == 1:
+		limit = " LIMIT 1"
+	case rc.n > 1:
+		limit = fmt.Sprintf(" LIMIT 1 OFFSET %d", rc.n-1)
 	}
-	order := ""
-	if p.order != "" {
-		order = " " + p.order
+	if order != "" {
+		order = " " + order
 	}
 	outer := "ORDER BY " + batchBranch
 	if rest, ok := strings.CutPrefix(p.order, "ORDER BY "); ok {
@@ -673,8 +758,8 @@ func (r *relatedReader) fetch(
 	}
 	return r.batch(ctx, h, p, rows, memos,
 		func(n int, match string) string {
-			return fmt.Sprintf("(SELECT %d AS %s, %s FROM %s WHERE %s%s LIMIT %d)",
-				n, batchBranch, list, table, match, order, limit)
+			return fmt.Sprintf("(SELECT %d AS %s, %s FROM %s WHERE %s%s%s%s)",
+				n, batchBranch, list, table, match, present, order, limit)
 		},
 		func(branches []string) string {
 			return fmt.Sprintf("SELECT * FROM (%s) f4b_batch %s", strings.Join(branches, " UNION ALL "), outer)
@@ -773,8 +858,7 @@ func (r *relatedReader) fetchTotals(ctx context.Context, rt *route, rows []map[s
 	// text.
 	selects := []string{
 		"COUNT(*) AS " + totalRecords,
-		fmt.Sprintf("COUNT(CASE WHEN %s IS NOT NULL AND LENGTH(%s) > 0 THEN 1 END) AS %s",
-			column, dialect.CastToText(column), totalValues),
+		fmt.Sprintf("COUNT(CASE WHEN %s THEN 1 END) AS %s", valueThere(dialect, column), totalValues),
 	}
 	fields := fieldSet{totalRecords: dbal.FieldTypeNumber, totalValues: dbal.FieldTypeNumber}
 	if t == dbal.FieldTypeNumber {
@@ -809,6 +893,12 @@ func (r *relatedReader) fetchTotals(ctx context.Context, rt *route, rows []map[s
 				}
 			}
 		})
+}
+
+// valueThere is the condition that column holds a value a formula sees: not
+// NULL, nor empty text.
+func valueThere(dialect dbal.Dialect, column string) string {
+	return fmt.Sprintf("%s IS NOT NULL AND LENGTH(%s) > 0", column, dialect.CastToText(column))
 }
 
 // countOf reads a COUNT the driver returned.
@@ -854,8 +944,8 @@ func (r *relatedReader) prefetch(
 			if read.Missing {
 				continue
 			}
-			key := fmt.Sprintf("%s%s\x00%s\x00%s\x00%s\x00%d\x00%s",
-				r.scope, tableName, c.field, read.Table, read.Field, read.Use, read.Function)
+			key := fmt.Sprintf("%s%s\x00%s\x00%s\x00%s\x00%d\x00%s\x00%d",
+				r.scope, tableName, c.field, read.Table, read.Field, read.Use, read.Function, read.N)
 			done := r.prefetched[key]
 			if done == nil {
 				done = map[string]bool{}
@@ -892,12 +982,23 @@ func (r *relatedReader) prefetchRead(
 		}
 	}
 	rc := reachAll
-	if read.Use == calc.UseFirst {
+	switch {
+	case read.Use == calc.UseFirst:
 		rc = reachFirst
+	case read.Use == calc.UseLast:
+		rc = reachLast
+	case read.Use == calc.UseNth && read.N > 0:
+		rc = reach{n: read.N}
 	}
 	rt, err := r.route(ctx, routeKey{tableName, contextName, read.Table, read.Field, rc, false})
 	if err != nil {
 		return
+	}
+	// A Last or GetNthRecord that cannot read one record reads them all.
+	if rc.n != 0 && rc != reachFirst && !rt.single() {
+		if rt, err = r.route(ctx, routeKey{tableName, contextName, read.Table, read.Field, reachAll, false}); err != nil {
+			return
+		}
 	}
 	if rows, err = r.walk(ctx, rt, rows); err != nil || len(rows) == 0 {
 		return

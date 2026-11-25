@@ -593,18 +593,28 @@ func TestRelatedReads_NoFurtherThanTheFormulaNeeds(t *testing.T) {
 	a.relate(t, ctx, schema.CreateRelationshipInput{Name: "batches_items", LeftOccurrenceID: batchesOcc,
 		RightOccurrenceID: items, SortRelated: &byRank, Predicates: []schema.RelationshipPredicate{
 			{LeftColumnID: batchFields["code"], Operator: "=", RightColumnName: "code"}}})
+	// The same records in a table of this solution.
+	_, localItems, localFields := a.table(t, ctx, "local_items", [2]string{"code", "TEXT"}, [2]string{"label", "TEXT"},
+		[2]string{"rank", "NUMBER"})
+	a.relate(t, ctx, schema.CreateRelationshipInput{Name: "batches_local_items", LeftOccurrenceID: batchesOcc,
+		RightOccurrenceID: localItems, SortRelated: &byRank, Predicates: []schema.RelationshipPredicate{
+			{LeftColumnID: batchFields["code"], Operator: "=", RightColumnID: localFields["code"]}}})
 	formulas := map[string][2]string{
-		"first":     {"batch_items::label", "Text"},
-		"labels":    {"Count ( batch_items::label )", "Number"},
-		"numbers":   {"Count ( batch_items::n )", "Number"},
-		"total":     {"Sum ( batch_items::n )", "Number"},
-		"mean":      {"Average ( batch_items::n )", "Number"},
-		"least":     {"Min ( batch_items::n )", "Number"},
-		"earliest":  {"DayOfYear ( Min ( batch_items::day ) )", "Number"},
-		"latest":    {"DayOfYear ( Max ( batch_items::day ) )", "Number"},
-		"list":      {"List ( batch_items::label )", "Text"},
-		"last":      {"Last ( batch_items::label )", "Text"},
-		"label_sum": {"Sum ( batch_items::label )", "Number"},
+		"first":      {"batch_items::label", "Text"},
+		"labels":     {"Count ( batch_items::label )", "Number"},
+		"numbers":    {"Count ( batch_items::n )", "Number"},
+		"total":      {"Sum ( batch_items::n )", "Number"},
+		"mean":       {"Average ( batch_items::n )", "Number"},
+		"least":      {"Min ( batch_items::n )", "Number"},
+		"earliest":   {"DayOfYear ( Min ( batch_items::day ) )", "Number"},
+		"latest":     {"DayOfYear ( Max ( batch_items::day ) )", "Number"},
+		"list":       {"List ( batch_items::label )", "Text"},
+		"last":       {"Last ( batch_items::label )", "Text"},
+		"label_sum":  {"Sum ( batch_items::label )", "Number"},
+		"second":     {"GetNthRecord ( batch_items::label ; 2 )", "Text"},
+		"local_last": {"Last ( local_items::label )", "Text"},
+		"local_nth":  {"GetNthRecord ( local_items::label ; 3 )", "Text"},
+		"local_list": {"List ( local_items::label )", "Text"},
 	}
 	for name, f := range formulas {
 		a.unstored(t, ctx, batchesTable, name, f[0], f[1])
@@ -626,6 +636,22 @@ func TestRelatedReads_NoFurtherThanTheFormulaNeeds(t *testing.T) {
 	b.bulkInsert(t, ctx, "items", []string{"code", "label", "n", "rank"}, 10001, func(i int) []interface{} {
 		return []interface{}{"BIG", fmt.Sprintf("big-%05d", i), 1, i}
 	})
+	// The last by rank, rank 0, has no label: Last is the one before.
+	a.bulkInsert(t, ctx, "local_items", []string{"code", "label", "rank"}, 10002, func(i int) []interface{} {
+		label := fmt.Sprintf("local-%05d", i)
+		if i == 0 {
+			label = ""
+		}
+		return []interface{}{"BIG", label, i}
+	})
+	for _, item := range []map[string]interface{}{
+		{"code": "SMALL", "label": "p", "rank": 1},
+		{"code": "SMALL", "label": "", "rank": 2},
+		{"code": "SMALL", "label": "r", "rank": 3},
+	} {
+		_, err := data.NewService(a.driver).InsertRow(ctx, "local_items", item)
+		require.NoError(t, err)
+	}
 	batch := map[string]string{}
 	for _, code := range []string{"SMALL", "EMPTY", "BIG", "NONE"} {
 		row, err := batchesData.InsertRow(ctx, "batches", map[string]interface{}{"code": code})
@@ -647,9 +673,11 @@ func TestRelatedReads_NoFurtherThanTheFormulaNeeds(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"first": "c", "labels": "2", "numbers": "2", "total": "5", "mean": "2.5", "least": "1",
 		"earliest": "1", "latest": "3", "list": "c\ra", "last": "a", "label_sum": "0",
+		"local_last": "p", "local_nth": "p", "local_list": "r\rp",
 	}, read("SMALL"), "the first in the relationship's order; totals of the values that are there")
 	assert.Equal(t, map[string]string{
 		"first": "y", "labels": "2", "numbers": "0", "list": "y\rx", "last": "x", "label_sum": "0",
+		"second": "x",
 	}, read("EMPTY"), "the sum, average and least of values none of which is there are empty")
 	assert.Equal(t, map[string]string{"labels": "0", "numbers": "0", "total": "0", "label_sum": "0"}, read("NONE"))
 
@@ -659,7 +687,18 @@ func TestRelatedReads_NoFurtherThanTheFormulaNeeds(t *testing.T) {
 	assert.Equal(t, "10001", big["total"])
 	assert.Equal(t, "1", big["mean"])
 	assert.Empty(t, big["list"], "a list of more records than are read for one record is refused")
-	_, err := batchesData.EvaluateExpression(ctx, "batches", batch["BIG"], "List ( batch_items::label )", "Text")
+	assert.Equal(t, "big-00000", big["last"], "the last of 10001 related records")
+	assert.Equal(t, "big-09999", big["second"])
+	// The record a number computed for each record gives: past what is read
+	// for one record, it is read for that record alone.
+	counted, err := batchesData.EvaluateExpression(ctx, "batches", batch["BIG"],
+		"GetNthRecord ( batch_items::label ; Count ( batch_items::label ) )", "Text")
+	require.NoError(t, err)
+	assert.Equal(t, "big-00000", counted.Text, "the 10001st of 10001")
+	assert.Equal(t, "local-00001", big["local_last"], "the last holding a value of 10002 related records")
+	assert.Equal(t, "local-09999", big["local_nth"])
+	assert.Empty(t, big["local_list"])
+	_, err = batchesData.EvaluateExpression(ctx, "batches", batch["BIG"], "List ( batch_items::label )", "Text")
 	require.ErrorContains(t, err, data.ErrTooManyRelated.Error())
 	_, err = batchesData.EvaluateExpression(ctx, "batches", batch["BIG"], "Sum ( batch_items::label )", "Number")
 	require.ErrorContains(t, err, data.ErrTooManyRelated.Error(), "a sum of text is read value by value")

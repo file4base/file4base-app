@@ -73,10 +73,17 @@ without its own record being written.
   fields it uses: `Occurrence::Field` reads the first related record in the
   relationship's sort; `Count`, `Sum`, `Average`, `Min` and `Max` of a stored
   field of the records one relationship away are totalled by the database,
-  without carrying the records back; `List`, `Last`, `GetNthRecord` and the
-  other reads of every value take at most 10,000 related records of one
-  record. A formula reading more fails (the field is empty) rather than
-  loading them all.
+  without carrying the records back; `Last` and `GetNthRecord` read the one
+  record they give, the last holding a value or the nth, when the
+  relationship sorts its records (then by id, so that records sorting alike
+  keep one order) and they are one relationship away; `List` and the other
+  reads of every value take at most 10,000 related records of one record. A
+  formula reading more fails (the field is empty) rather than loading them
+  all. A relationship that does not sort has no record order to count from,
+  so its `Last` and `GetNthRecord` read every record, within that limit. A
+  `GetNthRecord` whose number is computed for each record reads every
+  record ahead for the page, or, for a record with more related records
+  than that, its one record in a statement of its own.
 - An occurrence of **another solution's table** (#107) is read the same way,
   in that solution, as the account the session holds there; that solution's
   own unstored calculations are computed there. See

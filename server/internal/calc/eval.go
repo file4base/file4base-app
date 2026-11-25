@@ -90,12 +90,16 @@ type Repeating interface {
 }
 
 // Bounded is a Context that reads related records no further than a formula
-// needs: the first record for Occurrence::Field, and an aggregate's totals
-// where the records are, without reading them. Without it, every related
-// record is read with Related.
+// needs: the first record for Occurrence::Field, one record for Last and
+// GetNthRecord, and an aggregate's totals where the records are, without
+// reading them. Without it, every related record is read with Related.
 type Bounded interface {
 	// RelatedFirst is Related limited to the first related record.
 	RelatedFirst(table, field string) ([]any, error)
+	// RelatedNth is Related limited to the nth related record (n ≥ 1), or,
+	// for n < 0, to the last whose field holds a value: at most one value.
+	// ok is false when it cannot, and the values are then read with Related.
+	RelatedNth(table, field string, n int) (values []any, ok bool, err error)
 	// RelatedTotals totals field across every related record for function
 	// (SUM, COUNT, AVERAGE, MIN or MAX). ok is false when it cannot, and the
 	// values are then read with Related.
@@ -590,6 +594,23 @@ func (ev *evaluator) relatedTotals(c callNode) (RelatedTotals, bool, error) {
 		return totals, false, ev.contextError(f.at, f.table+"::"+f.name, err)
 	}
 	return totals, ok, nil
+}
+
+// relatedNth reads the one related value Last (n < 0) or GetNthRecord (n)
+// gives, when the Context can.
+func (ev *evaluator) relatedNth(f fieldNode, n int) (value, bool, error) {
+	b, ok := ev.ctx.(Bounded)
+	if !ok || f.table == "" || f.missing {
+		return empty, false, nil
+	}
+	values, ok, err := b.RelatedNth(f.table, f.name, n)
+	if err != nil {
+		return empty, false, ev.contextError(f.at, f.table+"::"+f.name, err)
+	}
+	if !ok || len(values) == 0 {
+		return empty, ok, nil
+	}
+	return fromStored(values[0]), true, nil
 }
 
 // relatedValues reads every value of a reference, for an aggregate.

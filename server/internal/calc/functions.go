@@ -1073,6 +1073,9 @@ func aggregateFunctions() map[string]function {
 				var err error
 				many := f.table != ""
 				if many {
+					if v, ok, err := ev.relatedNth(f, -1); err != nil || ok {
+						return v, err
+					}
 					vals, err = ev.relatedValues(f)
 				} else {
 					vals, many, err = ev.repetitionValues(f)
@@ -1143,11 +1146,16 @@ func aggregateFunctions() map[string]function {
 			if err != nil {
 				return empty, err
 			}
+			i := int(nv.asNumber(ev.loc).IntPart())
+			if i >= 1 {
+				if v, ok, err := ev.relatedNth(f, i); err != nil || ok {
+					return v, err
+				}
+			}
 			vals, err := ev.relatedValues(f)
 			if err != nil {
 				return empty, err
 			}
-			i := int(nv.asNumber(ev.loc).IntPart())
 			if i < 1 || i > len(vals) {
 				return empty, nil
 			}

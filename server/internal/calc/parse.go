@@ -1,6 +1,7 @@
 package calc
 
 import (
+	"math"
 	"sort"
 	"strings"
 
@@ -70,8 +71,13 @@ const (
 	// UseTotals reads an aggregate of every related record that its totals
 	// answer: Sum, Count, Average, Min or Max of one related field.
 	UseTotals
-	// UseAll reads every related record: List, Last and GetNthRecord.
+	// UseAll reads every related record: List.
 	UseAll
+	// UseLast reads the last related record whose field holds a value: Last.
+	UseLast
+	// UseNth reads the Nth related record: GetNthRecord ( Field ; N ), N
+	// being 0 when it is not a number written in the formula.
+	UseNth
 )
 
 // RelatedRead is one way a formula reads a Table::Field reference.
@@ -80,15 +86,17 @@ type RelatedRead struct {
 	Use RelatedUse
 	// Function is the aggregate a UseTotals read is for, in upper case.
 	Function string
+	// N is the record a UseNth read is for, 0 when known only once computed.
+	N int
 }
 
 // RelatedReads lists how the formula reads each Table::Field reference, so
 // what it reads can be fetched ahead, no further than it needs.
 func (e *Expr) RelatedReads() []RelatedRead {
 	seen := map[RelatedRead]struct{}{}
-	add := func(f fieldNode, use RelatedUse, function string) {
+	add := func(f fieldNode, use RelatedUse, function string, n int) {
 		seen[RelatedRead{Reference: Reference{Table: f.table, Field: f.name, Missing: f.missing},
-			Use: use, Function: function}] = struct{}{}
+			Use: use, Function: function, N: n}] = struct{}{}
 	}
 	var rec func(n node)
 	rec = func(n node) {
@@ -98,16 +106,22 @@ func (e *Expr) RelatedReads() []RelatedRead {
 		switch t := n.(type) {
 		case fieldNode:
 			if t.table != "" {
-				add(t, UseFirst, "")
+				add(t, UseFirst, "", 0)
 			}
 		case callNode:
 			if use, ok := wholeUse(t); ok {
 				f := t.args[0].(fieldNode)
-				function := ""
-				if use == UseTotals {
+				function, n := "", 0
+				switch use {
+				case UseTotals:
 					function = t.name
+				case UseNth:
+					if num, ok := t.args[1].(numberNode); ok && num.value.IsInteger() && num.value.IsPositive() &&
+						num.value.LessThanOrEqual(decimal.NewFromInt(math.MaxInt32)) {
+						n = int(num.value.IntPart())
+					}
 				}
-				add(f, use, function)
+				add(f, use, function, n)
 				for _, a := range t.args[1:] {
 					rec(a)
 				}
@@ -134,13 +148,16 @@ func (e *Expr) RelatedReads() []RelatedRead {
 		if a.Use != b.Use {
 			return a.Use < b.Use
 		}
-		return a.Function < b.Function
+		if a.Function != b.Function {
+			return a.Function < b.Function
+		}
+		return a.N < b.N
 	})
 	return out
 }
 
 // wholeUse is how a call reads its first argument when that is a related
-// field it reads across every related record, as aggregateArgs, Last and
+// field it reads across the related records, as aggregateArgs, Last and
 // GetNthRecord do.
 func wholeUse(c callNode) (RelatedUse, bool) {
 	if len(c.args) == 0 {
@@ -153,8 +170,12 @@ func wholeUse(c callNode) (RelatedUse, bool) {
 	switch {
 	case len(c.args) == 1 && (c.name == "SUM" || c.name == "COUNT" || c.name == "AVERAGE" || c.name == "MIN" || c.name == "MAX"):
 		return UseTotals, true
-	case len(c.args) == 1 && (c.name == "LIST" || c.name == "LAST"), c.name == "GETNTHRECORD":
+	case len(c.args) == 1 && c.name == "LIST":
 		return UseAll, true
+	case len(c.args) == 1 && c.name == "LAST":
+		return UseLast, true
+	case len(c.args) == 2 && c.name == "GETNTHRECORD":
+		return UseNth, true
 	}
 	return 0, false
 }
