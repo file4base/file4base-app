@@ -1230,12 +1230,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
       initialLayoutId: layoutId,
     );
     if (!mounted) return;
-    if (result.changed && !(_dataBrowserKey.currentState?.hasUncommittedRecord ?? false)) {
-      await _loadTables(targetLayoutId: _activeLayout?.id);
-      if (!mounted) return;
-      final fresh = _activeLayout;
-      if (fresh != null) _layoutDesignerKey.currentState?.adoptScriptTriggers(fresh);
-    }
+    if (result.changed) await _refreshLayoutTriggers(result.changedLayouts);
+    if (!mounted) return;
     final script = result.openScript;
     final target = result.openLayout;
     if (script != null) {
@@ -1251,6 +1247,40 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         WidgetsBinding.instance.addPostFrameCallback((_) => _layoutDesignerKey.currentState?.selectObject(objectId));
       }
     }
+  }
+
+  /// Reads again the layouts whose triggers were switched (#26), and takes
+  /// only their triggers into the layout on screen: the window is not
+  /// rebuilt, its record stays, and its OnLayoutEnter does not run again.
+  Future<void> _refreshLayoutTriggers(Set<String> layoutIds) async {
+    final client = ref.read(apiClientProvider);
+    final fresh = <String, LayoutModel>{};
+    for (final id in layoutIds) {
+      try {
+        fresh[id] = await client.getLayout(id);
+      } on Object catch (_) {
+        // Read with the next full reload.
+      }
+    }
+    if (!mounted || fresh.isEmpty) return;
+    final active = _activeLayout;
+    final activeFresh = active == null ? null : fresh[active.id];
+    LayoutDefinitionModel? updated;
+    if (active != null && activeFresh != null) {
+      final def = LayoutDefinitionModel.fromJson(activeFresh.definition);
+      updated = active.copyWith(
+        onLayoutEnter: def.onLayoutEnter,
+        clearOnLayoutEnter: def.onLayoutEnter == null,
+        onLayoutExit: def.onLayoutExit,
+        clearOnLayoutExit: def.onLayoutExit == null,
+        scriptTriggers: def.scriptTriggers,
+      );
+    }
+    setState(() {
+      _serverLayouts = [for (final l in _serverLayouts) fresh[l.id] ?? l];
+      if (updated != null) _activeLayout = updated;
+    });
+    if (updated != null) _layoutDesignerKey.currentState?.adoptScriptTriggers(updated);
   }
 
   Future<void> _handleManageLayouts() async {
@@ -3412,6 +3442,8 @@ class _WorkspaceShellState extends ConsumerState<WorkspaceShell> {
         onNewLayout: _handleNewLayout,
         onManageLayouts: _handleManageLayouts,
         onReviewScriptTriggers: (layoutId) => unawaited(_handleManageScriptTriggers(layoutId: layoutId)),
+        onScriptTriggersChanged: (layoutId) => unawaited(_refreshLayoutTriggers({layoutId})),
+        canSwitchScriptTriggers: _currentUser?.role == 'owner' || _currentUser?.role == 'admin',
         onRenameLayout: _handleRenameActiveLayout,
         onExitLayout: () => _changeMode(OperationalMode.browse),
         onManageDatabase: () async {

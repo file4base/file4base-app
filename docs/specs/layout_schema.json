@@ -100,7 +100,7 @@
         "type": "object",
         "required": ["id", "event", "type"],
         "properties": {
-          "id": { "type": "string" },
+          "id": { "type": "string", "description": "Unique across the solution; a copied layout gets new ids." },
           "event": { "type": "string", "description": "The FileMaker event, such as OnLayoutEnter, OnRecordLoad or OnObjectSave." },
           "type": { "type": "string", "enum": ["perform_script"] },
           "script_id": { "type": "string", "description": "The imported script it runs; absent when the script was not found." },
@@ -115,6 +115,7 @@
             "properties": { "type": { "type": "string" }, "name": { "type": "string" }, "field": { "type": "string" } }
           },
           "parameter_problem": { "type": "string", "description": "Why the parameter could not be bound to the imported fields." },
+          "file_reference": { "type": "string", "description": "The FileMaker file reference of a script in another file. Such a trigger is never bound to a script of this solution." },
           "modes": { "type": "array", "items": { "type": "string", "enum": ["browse", "find"] } }
         }
       }

@@ -731,7 +731,23 @@ func (h *SchemaHandler) UpdateLayout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	layout, err := svc.UpdateLayout(r.Context(), id, req.Name, req.Definition)
+	// Switching a script trigger on is the review's, an owner's or an
+	// administrator's: a layout saved by anyone else keeps its triggers as
+	// they were (#26).
+	definition := req.Definition
+	if previous, err := svc.GetLayout(r.Context(), id); err == nil {
+		definition, err = schema.GuardScriptTriggerEdits(previous.Definition, req.Definition, currentSession(r).IsAdmin())
+		if errors.Is(err, schema.ErrScriptTriggersAdminOnly) {
+			writeForbidden(w, r, err.Error())
+			return
+		}
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return
+		}
+	}
+
+	layout, err := svc.UpdateLayout(r.Context(), id, req.Name, definition)
 	if err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Schema Error", err.Error())
 		return
@@ -1347,6 +1363,9 @@ func (h *SchemaHandler) SetScriptTriggersEnabled(w http.ResponseWriter, r *http.
 		return
 	case errors.Is(err, schema.ErrScriptTriggerCannotEnable):
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Script Trigger Cannot Be Enabled", err.Error())
+		return
+	case errors.Is(err, schema.ErrScriptTriggerDuplicateID):
+		telemetry.WriteProblem(w, r, http.StatusConflict, "Script Trigger Id Not Unique", err.Error())
 		return
 	case err != nil:
 		telemetry.WriteInternalError(w, r, err)

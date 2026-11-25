@@ -505,13 +505,13 @@ Creates a visual layout. `table_occurrence_id` may be a table occurrence ID, a t
 Retrieves a single layout by ID.
 
 ### `PUT /api/v1/schemas/layouts/{id}`
-Updates a layout definition and name.
+Updates a layout definition and name. A definition without `script_triggers` keeps the stored ones. Only an owner or an admin may switch on a script trigger here — move a disabled one into `on_layout_enter` / `on_layout_exit`, or change the stored list; anyone else answers `403` (the review API is the way to switch them).
 
 ### `DELETE /api/v1/schemas/layouts/{id}`
 Deletes a layout.
 
 ### `GET /api/v1/schemas/script-triggers`
-Lists every script trigger of every layout and layout object (#26), ordered by layout name — what File > Manage > Script Triggers shows. A trigger imported from FileMaker arrives with `enabled: false` and `quarantined_by_migration: true`, and no client runs it. Each one carries the problems that keep it from running, in plain words with what to do (`missing_script`, `unresolved_script`, `unbound_parameter`, `find_mode_only`, `unsupported_event`, `object_missing`, `event_taken`), and `can_enable`. File4Base runs `OnLayoutEnter` and `OnLayoutExit` set on a layout, in Browse mode, one per event; every other event is kept, disabled, with `unsupported_event`. Requires admin (owner or admin role).
+Lists every script trigger of every layout and layout object (#26), ordered by layout name — what File > Manage > Script Triggers shows. A trigger imported from FileMaker arrives with `enabled: false` and `quarantined_by_migration: true`, and no client runs it. Each one carries the problems that keep it from running, in plain words with what to do (`missing_script`, `unresolved_script`, `ambiguous_script` — several scripts have the name it gives —, `script_in_other_file` — its script is in another FileMaker file —, `unbound_parameter`, `find_mode_only`, `unsupported_event`, `object_missing`, `event_taken`, `duplicate_id` — its id names another trigger too —), and `can_enable`. File4Base runs `OnLayoutEnter` and `OnLayoutExit` set on a layout, in Browse mode, one per event; every other event is kept, disabled, with `unsupported_event`. Requires admin (owner or admin role).
 
 ```json
 {
@@ -535,7 +535,7 @@ Lists every script trigger of every layout and layout object (#26), ordered by l
 ```
 
 ### `PUT /api/v1/schemas/script-triggers`
-Enables or disables triggers in bulk: `{"ids": ["…"], "enabled": true}`. All or none, in one transaction: an unknown id answers `404 Script Trigger Not Found`, and enabling a trigger that has a problem (or two of the same event on one layout) answers `409 Script Trigger Cannot Be Enabled` and changes nothing. Enabling one moves it into the layout's `on_layout_enter` / `on_layout_exit`, where a client runs it, and clears `quarantined_by_migration`; disabling one moves it back into `script_triggers`, under the same id. Every layout changed gets a new `updated_at`, and the change is announced as a schema change, so the other open clients read their layouts again. Answers `{"updated": 2, "layouts": ["layout-uuid"]}`. Requires admin (owner or admin role) and an unlocked design.
+Enables or disables triggers in bulk: `{"ids": ["…"], "enabled": true}`. All or none, in one transaction: an unknown id answers `404 Script Trigger Not Found`, an id that names more than one trigger answers `409 Script Trigger Id Not Unique`, and enabling a trigger that has a problem (or two of the same event on one layout) answers `409 Script Trigger Cannot Be Enabled` and changes nothing. Enabling one moves it into the layout's `on_layout_enter` / `on_layout_exit`, where a client runs it, and clears `quarantined_by_migration`; disabling one moves it back into `script_triggers`, under the same id. Every layout changed gets a new `updated_at`, and the change is announced as a schema change, so the other open clients read their layouts again. Answers `{"updated": 2, "layouts": ["layout-uuid"]}`. Requires admin (owner or admin role) and an unlocked design.
 
 ---
 

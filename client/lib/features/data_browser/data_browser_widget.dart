@@ -142,7 +142,7 @@ class FindRequestDraft {
 }
 
 class DataBrowserWidgetState extends State<DataBrowserWidget>
-    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost {
+    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost, CalculationContextHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -3922,6 +3922,26 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
 
   @override
   String actionResolveText(String text) => _resolveTextForRecord(text, _currentRecord);
+
+  @override
+  Set<String> get actionOwnOccurrenceNames => {
+        for (final name in [widget.layout?.tableOccurrence, widget.table.name, widget.table.displayName])
+          if (name != null && name.trim().isNotEmpty) name.trim().toLowerCase(),
+      };
+
+  @override
+  Future<String?> actionEvaluateCalculation(String expression) async {
+    final recordId = _currentRecord['id']?.toString() ?? '';
+    if (recordId.isEmpty || expression.trim().isEmpty) return null;
+    final results = await widget.apiClient.evaluateExpressions(
+      widget.table.name,
+      expressions: [expression],
+      recordId: recordId,
+    );
+    final result = results.firstOrNull;
+    if (result == null || result.error.isNotEmpty || result.unknownFields.isNotEmpty) return null;
+    return result.text;
+  }
 
   /// What a field's value looks like inside merge text.
   String _mergeFieldText(String fieldName, Object? value) {

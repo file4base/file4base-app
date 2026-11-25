@@ -1237,6 +1237,10 @@ class LayoutDefinitionModel {
     final slot = _slotOf(trigger.event);
     if (slot == null) return 'File4Base does not run ${trigger.event.isEmpty ? 'this event' : trigger.event} triggers yet.';
     if (trigger.scriptId == null && (trigger.scriptName ?? '').isEmpty) return 'The trigger runs no script.';
+    final otherFile = trigger.extra['file_reference'] as String?;
+    if (otherFile != null && otherFile.isNotEmpty) {
+      return 'The script "${trigger.scriptName ?? ''}" is in another file ($otherFile).';
+    }
     if (scriptIds != null && (trigger.scriptId == null || !scriptIds.contains(trigger.scriptId))) {
       return 'The script "${trigger.scriptName ?? trigger.scriptId}" is not in this solution.';
     }

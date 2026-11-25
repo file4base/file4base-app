@@ -518,6 +518,7 @@
           "Schemas & DDL"
         ],
         "summary": "Update Layout",
+        "description": "Updates a layout's name and definition. A definition without script_triggers keeps the stored ones. Only an owner or an admin may switch on a script trigger here (move a disabled one into on_layout_enter / on_layout_exit, or change the stored list); anyone else gets 403.",
         "parameters": [
           {
             "name": "id",
@@ -702,7 +703,7 @@
             "description": "Script Trigger Not Found"
           },
           "409": {
-            "description": "Script Trigger Cannot Be Enabled"
+            "description": "Script Trigger Cannot Be Enabled, or Script Trigger Id Not Unique (an id names more than one trigger)"
           },
           "422": {
             "description": "ids and enabled are required"
@@ -7991,11 +7992,14 @@
             "enum": [
               "missing_script",
               "unresolved_script",
+              "ambiguous_script",
+              "script_in_other_file",
               "unbound_parameter",
               "find_mode_only",
               "unsupported_event",
               "object_missing",
-              "event_taken"
+              "event_taken",
+              "duplicate_id"
             ]
           },
           "message": {

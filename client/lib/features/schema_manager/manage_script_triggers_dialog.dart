@@ -15,12 +15,21 @@ import 'package:flutter/material.dart';
 /// What the developer asked for on closing the review: to open a trigger's
 /// script, or its layout on the object it is set on.
 class ScriptTriggerReviewResult {
-  const ScriptTriggerReviewResult({this.changed = false, this.openScript, this.openLayout});
+  const ScriptTriggerReviewResult({this.changedLayouts = const {}, this.openScript, this.openLayout});
 
-  /// A trigger was enabled or disabled, so open layouts must be read again.
-  final bool changed;
+  /// The layouts whose triggers were enabled or disabled, to read again.
+  final Set<String> changedLayouts;
+
+  /// A trigger was enabled or disabled.
+  bool get changed => changedLayouts.isNotEmpty;
   final ScriptTriggerModel? openScript;
   final ScriptTriggerModel? openLayout;
+}
+
+/// What the review changed, kept outside the dialog so that it is known
+/// however the dialog is closed — Close, Escape or a click beside it.
+class _ReviewChanges {
+  final Set<String> layouts = {};
 }
 
 /// The status filter's choices.
@@ -33,9 +42,18 @@ class ManageScriptTriggersDialog extends StatefulWidget {
     this.canEdit = true,
     this.initialLayoutId,
     super.key,
+  }) : _changes = null;
+
+  const ManageScriptTriggersDialog._tracked(
+    _ReviewChanges this._changes, {
+    required this.apiClient,
+    this.solutionName = '',
+    this.canEdit = true,
+    this.initialLayoutId,
   });
 
   final ApiClient apiClient;
+  final _ReviewChanges? _changes;
 
   /// The solution signed in to, named in the title.
   final String solutionName;
@@ -53,16 +71,23 @@ class ManageScriptTriggersDialog extends StatefulWidget {
     bool canEdit = true,
     String? initialLayoutId,
   }) async {
+    final changes = _ReviewChanges();
     final result = await showDialog<ScriptTriggerReviewResult>(
       context: context,
-      builder: (_) => ManageScriptTriggersDialog(
+      builder: (_) => ManageScriptTriggersDialog._tracked(
+        changes,
         apiClient: apiClient,
         solutionName: solutionName,
         canEdit: canEdit,
         initialLayoutId: initialLayoutId,
       ),
     );
-    return result ?? const ScriptTriggerReviewResult();
+    // Dismissed without a button, it still says what it changed.
+    return ScriptTriggerReviewResult(
+      changedLayouts: {...changes.layouts},
+      openScript: result?.openScript,
+      openLayout: result?.openLayout,
+    );
   }
 
   @override
@@ -75,7 +100,7 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
   bool _working = false;
   String? _error;
   String? _notice;
-  bool _changed = false;
+  late final _ReviewChanges _changes = widget._changes ?? _ReviewChanges();
 
   final Set<String> _selected = {};
   String? _focusedId;
@@ -124,8 +149,7 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
   }
 
   void _close([ScriptTriggerReviewResult? result]) {
-    Navigator.of(context).pop(result ??
-        ScriptTriggerReviewResult(changed: _changed));
+    Navigator.of(context).pop(result ?? ScriptTriggerReviewResult(changedLayouts: {..._changes.layouts}));
   }
 
   // ─── Filtering ───────────────────────────────────────────────────────────
@@ -205,8 +229,8 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
       _notice = null;
     });
     try {
-      await widget.apiClient.setScriptTriggersEnabled(ids, enabled: enabled);
-      _changed = true;
+      final update = await widget.apiClient.setScriptTriggersEnabled(ids, enabled: enabled);
+      _changes.layouts.addAll(update.layouts);
       _selected.clear();
       if (mounted) setState(() => _notice = done);
     } on Object catch (e) {
@@ -473,7 +497,9 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
             itemBuilder: (_, i) {
               final row = rows[i];
               if (row is String) return _groupHeader(groups[row]!);
-              return _triggerRow(row as ScriptTriggerModel);
+              // Keyed by position: triggers that share an id (#26) are
+              // still rows of their own.
+              return KeyedSubtree(key: ValueKey('trigger-item-$i'), child: _triggerRow(row as ScriptTriggerModel));
             },
           ),
         ),
@@ -564,7 +590,7 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
                     icon: const Icon(Icons.code),
                     onPressed: t.scriptId == null
                         ? null
-                        : () => _close(ScriptTriggerReviewResult(changed: _changed, openScript: t)),
+                        : () => _close(ScriptTriggerReviewResult(changedLayouts: {..._changes.layouts}, openScript: t)),
                   ),
                   IconButton(
                     key: ValueKey('trigger-open-layout-${t.id}'),
@@ -572,7 +598,7 @@ class _ManageScriptTriggersDialogState extends State<ManageScriptTriggersDialog>
                     iconSize: 16,
                     visualDensity: VisualDensity.compact,
                     icon: const Icon(Icons.design_services_outlined),
-                    onPressed: () => _close(ScriptTriggerReviewResult(changed: _changed, openLayout: t)),
+                    onPressed: () => _close(ScriptTriggerReviewResult(changedLayouts: {..._changes.layouts}, openLayout: t)),
                   ),
                 ],
               ),

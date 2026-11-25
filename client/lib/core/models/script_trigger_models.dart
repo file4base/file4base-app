@@ -23,6 +23,9 @@ class ScriptTriggerProblem {
   static const unsupportedEvent = 'unsupported_event';
   static const objectMissing = 'object_missing';
   static const eventTaken = 'event_taken';
+  static const ambiguousScript = 'ambiguous_script';
+  static const scriptInOtherFile = 'script_in_other_file';
+  static const duplicateId = 'duplicate_id';
 
   final String code;
   final String message;
@@ -37,6 +40,9 @@ class ScriptTriggerProblem {
         unsupportedEvent => 'Event not run',
         objectMissing => 'Object not on layout',
         eventTaken => 'Event already used',
+        ambiguousScript => 'Several scripts have this name',
+        scriptInOtherFile => 'Script in another file',
+        duplicateId => 'Shared id',
         _ => code,
       };
 }

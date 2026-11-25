@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/google/uuid"
 )
 
 // Script triggers of a solution's layouts, and their review (#26).
@@ -106,6 +108,9 @@ const (
 	TriggerProblemUnsupportedEvent = "unsupported_event"
 	TriggerProblemObjectMissing    = "object_missing"
 	TriggerProblemSlotTaken        = "event_taken"
+	TriggerProblemAmbiguousScript  = "ambiguous_script"
+	TriggerProblemExternalScript   = "script_in_other_file"
+	TriggerProblemDuplicateID      = "duplicate_id"
 )
 
 var (
@@ -114,6 +119,13 @@ var (
 	// ErrScriptTriggerCannotEnable is returned when a trigger to enable has
 	// a problem that keeps it from running.
 	ErrScriptTriggerCannotEnable = errors.New("script trigger cannot be enabled")
+	// ErrScriptTriggerDuplicateID is returned when an id names more than
+	// one trigger, so which one is meant cannot be told.
+	ErrScriptTriggerDuplicateID = errors.New("script trigger id is not unique")
+	// ErrScriptTriggersAdminOnly is returned when a layout update by someone
+	// who is neither an owner nor an administrator would switch a trigger on
+	// or change the stored triggers.
+	ErrScriptTriggersAdminOnly = errors.New("only an owner or an administrator can enable or change script triggers")
 )
 
 // ScriptTriggerUpdate is what SetScriptTriggersEnabled changed.
@@ -145,15 +157,27 @@ type scriptNames struct {
 }
 
 func (n scriptNames) resolve(id, name string) (string, string) {
+	found, foundName, _ := n.lookup(id, name)
+	return found, foundName
+}
+
+// lookup finds a script by id, then by name; matches is how many scripts
+// have the name when the id finds none, so a name several scripts share
+// is reported as ambiguous rather than bound to one of them.
+func (n scriptNames) lookup(id, name string) (string, string, int) {
 	if id != "" {
 		if found, ok := n.byID[id]; ok {
-			return id, found
+			return id, found, 1
 		}
 	}
-	if ids := n.byName[strings.ToLower(strings.TrimSpace(name))]; len(ids) == 1 && name != "" {
-		return ids[0], n.byID[ids[0]]
+	if strings.TrimSpace(name) == "" {
+		return "", "", 0
 	}
-	return "", ""
+	ids := n.byName[strings.ToLower(strings.TrimSpace(name))]
+	if len(ids) == 1 {
+		return ids[0], n.byID[ids[0]], 1
+	}
+	return "", "", len(ids)
 }
 
 func (s *Service) scriptNames(ctx context.Context, q queryer) (scriptNames, error) {
@@ -169,7 +193,7 @@ func (s *Service) scriptNames(ctx context.Context, q queryer) (scriptNames, erro
 			return n, err
 		}
 		n.byID[id] = name
-		key := strings.ToLower(name)
+		key := strings.ToLower(strings.TrimSpace(name))
 		n.byName[key] = append(n.byName[key], id)
 	}
 	return n, rows.Err()
@@ -192,12 +216,35 @@ func (s *Service) ListScriptTriggers(ctx context.Context) ([]ScriptTrigger, erro
 		return nil, err
 	}
 	out := make([]ScriptTrigger, 0)
-	for _, l := range layouts {
-		for _, t := range locateTriggers(l, scripts) {
-			out = append(out, t.trigger)
-		}
+	for _, t := range locateAll(layouts, scripts) {
+		out = append(out, t.trigger)
 	}
 	return out, nil
+}
+
+// locateAll lists the triggers of every layout. Triggers sharing an id —
+// a layout copied with them before copies got ids of their own — are each
+// reported, and none of them can be switched by that id.
+func locateAll(layouts []*layoutDefinition, scripts scriptNames) []*located {
+	var all []*located
+	count := map[string]int{}
+	for _, l := range layouts {
+		for _, t := range locateTriggers(l, scripts) {
+			all = append(all, t)
+			count[t.trigger.ID]++
+		}
+	}
+	for _, t := range all {
+		if count[t.trigger.ID] > 1 {
+			t.trigger.Problems = append(t.trigger.Problems, ScriptTriggerProblem{
+				Code:    TriggerProblemDuplicateID,
+				Message: fmt.Sprintf("%d triggers share this trigger's id, so it cannot be told apart from the others.", count[t.trigger.ID]),
+				Remedy:  "Duplicate the layout again and delete the old copy, or set the trigger again in Layout Setup.",
+			})
+			t.trigger.CanEnable = false
+		}
+	}
+	return all
 }
 
 // SetScriptTriggersEnabled switches the given triggers on or off, all of them
@@ -221,13 +268,15 @@ func (s *Service) SetScriptTriggersEnabled(ctx context.Context, ids []string, en
 		return nil, err
 	}
 	byID := map[string]*located{}
-	for _, l := range layouts {
-		for _, t := range locateTriggers(l, scripts) {
-			byID[t.trigger.ID] = t
+	shared := map[string]bool{}
+	for _, t := range locateAll(layouts, scripts) {
+		if _, again := byID[t.trigger.ID]; again {
+			shared[t.trigger.ID] = true
 		}
+		byID[t.trigger.ID] = t
 	}
 
-	var missing, refused []string
+	var missing, ambiguous, refused []string
 	wanted := make([]*located, 0, len(ids))
 	seen := map[string]bool{}
 	for _, id := range ids {
@@ -240,10 +289,17 @@ func (s *Service) SetScriptTriggersEnabled(ctx context.Context, ids []string, en
 			missing = append(missing, id)
 			continue
 		}
+		if shared[id] {
+			ambiguous = append(ambiguous, id)
+			continue
+		}
 		wanted = append(wanted, t)
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("%w: %s", ErrScriptTriggerNotFound, strings.Join(missing, ", "))
+	}
+	if len(ambiguous) > 0 {
+		return nil, fmt.Errorf("%w: %s names more than one trigger", ErrScriptTriggerDuplicateID, strings.Join(ambiguous, ", "))
 	}
 
 	if enabled {
@@ -314,7 +370,7 @@ func enableTrigger(t *located, scripts scriptNames) {
 	entry := t.entry
 	entry["enabled"] = true
 	delete(entry, "quarantined_by_migration")
-	if id, name := scripts.resolve(asString(entry["script_id"]), asString(entry["script_name"])); id != "" {
+	if id, name := scripts.resolve(asString(entry["script_id"]), asString(entry["script_name"])); id != "" && asString(entry["file_reference"]) == "" {
 		entry["script_id"], entry["script_name"] = id, name
 	}
 	if t.slot != nil {
@@ -424,8 +480,14 @@ func describeTrigger(l *layoutDefinition, id, event string, entry map[string]int
 		Enabled: enabled, QuarantinedByMigration: asBool(entry["quarantined_by_migration"]),
 		Problems: []ScriptTriggerProblem{},
 	}
-	if scriptID, name := scripts.resolve(asString(entry["script_id"]), t.ScriptName); scriptID != "" {
-		t.ScriptID, t.ScriptName = scriptID, name
+	fileReference := strings.TrimSpace(asString(entry["file_reference"]))
+	matches := 0
+	if fileReference == "" {
+		var scriptID, name string
+		scriptID, name, matches = scripts.lookup(asString(entry["script_id"]), t.ScriptName)
+		if scriptID != "" {
+			t.ScriptID, t.ScriptName = scriptID, name
+		}
 	}
 
 	objectID := asString(entry["object_id"])
@@ -444,7 +506,19 @@ func describeTrigger(l *layoutDefinition, id, event string, entry map[string]int
 	}
 
 	switch {
+	case fileReference != "":
+		t.Problems = append(t.Problems, ScriptTriggerProblem{
+			Code:    TriggerProblemExternalScript,
+			Message: fmt.Sprintf("The script %q is in another file (%s), and File4Base does not run a trigger's script in another solution.", t.ScriptName, fileReference),
+			Remedy:  "Leave the trigger disabled, or run the script from a button with Perform Script through the file reference.",
+		})
 	case t.ScriptID != "":
+	case matches > 1:
+		t.Problems = append(t.Problems, ScriptTriggerProblem{
+			Code:    TriggerProblemAmbiguousScript,
+			Message: fmt.Sprintf("%d scripts are named %q, and the trigger does not say which one it runs.", matches, t.ScriptName),
+			Remedy:  "Rename the scripts so that only the one the trigger runs has this name, or set the trigger again in Layout Setup.",
+		})
 	case t.ScriptName == "":
 		t.Problems = append(t.Problems, ScriptTriggerProblem{
 			Code:    TriggerProblemMissingScript,
@@ -560,7 +634,7 @@ func (s *Service) layoutDefinitions(ctx context.Context, q queryer, forUpdate bo
 		if err := rows.Scan(&l.id, &l.name, &raw); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(raw), &l.def); err != nil || l.def == nil {
+		if l.def = decodeDefinition([]byte(raw)); l.def == nil {
 			l.def = map[string]interface{}{}
 		}
 		out = append(out, &l)
@@ -570,4 +644,161 @@ func (s *Service) layoutDefinitions(ctx context.Context, q queryer, forUpdate bo
 	}
 	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].name) < strings.ToLower(out[j].name) })
 	return out, nil
+}
+
+// decodeDefinition reads a layout definition with its numbers kept as
+// written (json.Number), so a definition written back after a trigger is
+// switched has every other value exactly as it was. Nil when it does not
+// read as an object.
+func decodeDefinition(raw []byte) map[string]interface{} {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var def map[string]interface{}
+	if err := dec.Decode(&def); err != nil {
+		return nil
+	}
+	return def
+}
+
+// FreshScriptTriggerIDs gives every trigger of a new layout's definition an
+// id of its own, so a copied layout's triggers are not the original's: the
+// review switches a trigger by its id. A definition without triggers is
+// returned as it was given.
+func FreshScriptTriggerIDs(definition json.RawMessage) json.RawMessage {
+	if !bytes.Contains(definition, []byte(`"id"`)) {
+		return definition
+	}
+	def := decodeDefinition(definition)
+	if def == nil || !renewScriptTriggerIDs(def) {
+		return definition
+	}
+	encoded, err := json.Marshal(def)
+	if err != nil {
+		return definition
+	}
+	return encoded
+}
+
+// renewScriptTriggerIDs gives every trigger of a definition that has an id a
+// new one, and reports whether there was any.
+func renewScriptTriggerIDs(def map[string]interface{}) bool {
+	changed := false
+	renew := func(entry map[string]interface{}) {
+		if entry != nil && asString(entry["id"]) != "" {
+			entry["id"] = uuid.NewString()
+			changed = true
+		}
+	}
+	for _, slot := range LayoutTriggerSlots {
+		renew(asMap(def[slot.Key]))
+	}
+	for _, raw := range asSlice(def[LayoutScriptTriggersKey]) {
+		renew(asMap(raw))
+	}
+	return changed
+}
+
+// GuardScriptTriggerEdits checks a layout update against the definition it
+// replaces. A definition that leaves the trigger list out keeps the stored
+// one, as a client that does not know the list would otherwise drop it.
+// Someone who is neither an owner nor an administrator may not change the
+// list, nor put in a slot a trigger that was switched off — a migrated one
+// above all: switching triggers on is the review's, which is theirs alone.
+// Answers the definition to store.
+func GuardScriptTriggerEdits(previous, next json.RawMessage, admin bool) (json.RawMessage, error) {
+	old := decodeDefinition(previous)
+	if old == nil {
+		return next, nil
+	}
+	def := decodeDefinition(next)
+	if def == nil {
+		return next, nil
+	}
+	out := next
+	if _, has := def[LayoutScriptTriggersKey]; !has && len(asSlice(old[LayoutScriptTriggersKey])) > 0 {
+		def[LayoutScriptTriggersKey] = old[LayoutScriptTriggersKey]
+		encoded, err := json.Marshal(def)
+		if err != nil {
+			return nil, err
+		}
+		out = encoded
+	}
+	if admin {
+		return out, nil
+	}
+
+	if !reflect.DeepEqual(normalizeTriggers(asSlice(old[LayoutScriptTriggersKey])), normalizeTriggers(asSlice(def[LayoutScriptTriggersKey]))) {
+		return nil, fmt.Errorf("%w: the layout's stored script triggers were changed", ErrScriptTriggersAdminOnly)
+	}
+	// The triggers that were switched off, wherever they were.
+	var off []map[string]interface{}
+	for _, raw := range asSlice(old[LayoutScriptTriggersKey]) {
+		if entry := asMap(raw); entry != nil && entry["enabled"] != true {
+			off = append(off, entry)
+		}
+	}
+	for _, slot := range LayoutTriggerSlots {
+		if entry := asMap(old[slot.Key]); entry != nil && entry["enabled"] == false {
+			off = append(off, entry)
+		}
+	}
+	for _, slot := range LayoutTriggerSlots {
+		before, after := asMap(old[slot.Key]), asMap(def[slot.Key])
+		if after == nil || after["enabled"] == false || reflect.DeepEqual(normalizeTrigger(before), normalizeTrigger(after)) {
+			continue
+		}
+		if asBool(after["quarantined_by_migration"]) {
+			return nil, fmt.Errorf("%w: %s would run a trigger imported from FileMaker that has not been reviewed", ErrScriptTriggersAdminOnly, slot.Event)
+		}
+		for _, entry := range off {
+			if id := asString(after["id"]); (id != "" && id == asString(entry["id"])) || sameAction(entry, after) {
+				return nil, fmt.Errorf("%w: %s would run a trigger that is switched off", ErrScriptTriggersAdminOnly, slot.Event)
+			}
+		}
+	}
+	return out, nil
+}
+
+// normalizeTrigger is a stored trigger without what a client may drop or
+// add on a round trip without changing it: empty values and empty params.
+func normalizeTrigger(entry map[string]interface{}) map[string]interface{} {
+	if entry == nil {
+		return nil
+	}
+	out := map[string]interface{}{}
+	for k, v := range entry {
+		if v == nil {
+			continue
+		}
+		if m, ok := v.(map[string]interface{}); ok && len(m) == 0 && k == "params" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func normalizeTriggers(list []interface{}) []interface{} {
+	out := make([]interface{}, 0, len(list))
+	for _, raw := range list {
+		if entry := asMap(raw); entry != nil {
+			out = append(out, normalizeTrigger(entry))
+			continue
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+// sameAction reports whether two triggers run the same script with the same
+// parameter, whatever their ids, events and flags.
+func sameAction(a, b map[string]interface{}) bool {
+	strip := func(m map[string]interface{}) map[string]interface{} {
+		out := normalizeTrigger(m)
+		for _, k := range []string{"id", "event", "enabled", "quarantined_by_migration", "object_id", "object", "modes", "parameter_problem"} {
+			delete(out, k)
+		}
+		return out
+	}
+	return reflect.DeepEqual(strip(a), strip(b))
 }

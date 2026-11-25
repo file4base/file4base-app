@@ -207,3 +207,53 @@ func TestScriptTriggers_ExplicitDefinitionIsQuarantined(t *testing.T) {
 		t.Fatalf("the slot's event is named: %v", list[1])
 	}
 }
+
+// A trigger running a script of another FileMaker file is never bound to the
+// script of this file that has the same id or name, and one naming a script
+// several imported scripts share is not bound to one of them (#26).
+func TestScriptTriggers_OtherFileAndAmbiguousName(t *testing.T) {
+	doc := strings.Replace(triggerFixture, `<ScriptTriggers membercount="3">
+          <ScriptTrigger id="1" action="OnLayoutEnter" browseMode="True">
+            <ScriptReference id="1" name="Greet">`, `<ScriptTriggers membercount="3">
+          <ScriptTrigger id="1" action="OnLayoutEnter" browseMode="True">
+            <ScriptReference id="1" name="Greet">
+              <DataSourceReference id="2" name="Seed Bank"/>`, 1)
+	doc = strings.Replace(doc, `<ScriptTrigger id="2" action="OnLayoutExit" browseMode="True">
+            <ScriptReference id="1" name="Greet">`, `<ScriptTrigger id="2" action="OnLayoutExit" browseMode="True">
+            <ScriptReference name="Water">`, 1)
+	if doc == triggerFixture {
+		t.Fatal("fixture not rewritten")
+	}
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byEvent := map[string]map[string]interface{}{}
+	for _, raw := range res.Bundle.Layouts[0].Definition[schema.LayoutScriptTriggersKey].([]interface{}) {
+		e := raw.(map[string]interface{})
+		byEvent[e["event"].(string)] = e
+	}
+	enter := byEvent["OnLayoutEnter"]
+	if _, bound := enter["script_id"]; bound || enter["file_reference"] != "Seed Bank" || enter["script_name"] != "Greet" {
+		t.Fatalf("a script of another file keeps its file and binds to nothing here: %v", enter)
+	}
+	if _, kept := enter[sourceScriptIDKey]; kept {
+		t.Fatalf("the other file's script id is not kept: %v", enter)
+	}
+	exit := byEvent["OnLayoutExit"]
+	if _, bound := exit["script_id"]; bound || exit["script_name"] != "Water" {
+		t.Fatalf("a name two scripts share binds to neither: %v", exit)
+	}
+	var details []string
+	for _, it := range res.Report.ManualActionRequired {
+		if it.Domain == "trigger" {
+			details = append(details, it.Detail)
+		}
+	}
+	joined := strings.Join(details, "\n")
+	for _, want := range []string{`"Greet" this trigger runs is in another FileMaker file (Seed Bank)`, `2 imported scripts are named "Water"`} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in %s", want, joined)
+		}
+	}
+}

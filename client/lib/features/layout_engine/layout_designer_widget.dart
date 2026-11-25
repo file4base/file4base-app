@@ -46,6 +46,8 @@ class LayoutDesignerWidget extends StatefulWidget {
     this.onManageSecurity,
     this.onManageScripts,
     this.onReviewScriptTriggers,
+    this.onScriptTriggersChanged,
+    this.canSwitchScriptTriggers = false,
     this.onManageThemes,
     this.onAutoSaveDirty,
     this.onLayoutChanged,
@@ -75,6 +77,14 @@ class LayoutDesignerWidget extends StatefulWidget {
 
   /// Opens File > Manage > Script Triggers on this layout's triggers (#26).
   final ValueChanged<String>? onReviewScriptTriggers;
+
+  /// Called with the layout's id once one of its triggers was switched.
+  final ValueChanged<String>? onScriptTriggersChanged;
+
+  /// Switching a trigger on or off is an owner's or an administrator's, and
+  /// goes through the trigger review, as File > Manage > Script Triggers
+  /// does: the layout is never saved with a trigger switched on (#26).
+  final bool canSwitchScriptTriggers;
   final VoidCallback? onManageThemes;
   final VoidCallback onSaved;
   final VoidCallback? onAutoSaveDirty;
@@ -5689,13 +5699,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             script: current.scriptName ?? '',
             status: current.enabled ? 'Enabled' : 'Disabled',
             on: current.enabled,
-            onChanged: (on) => _editLayout((l) => on
-                ? (enter ? l.copyWith(onLayoutEnter: current.withEnabled(on: true)) : l.copyWith(onLayoutExit: current.withEnabled(on: true)))
-                : l.disableSlotTrigger(enter: enter)),
+            why: widget.canSwitchScriptTriggers ? null : _switchRefused,
+            onChanged: !widget.canSwitchScriptTriggers
+                ? null
+                : (on) => _switchScriptTrigger(
+                    current.triggerId ?? '${_layout.id}:${enter ? 'on_layout_enter' : 'on_layout_exit'}', on: on),
           ),
       for (final t in stored)
         Builder(builder: (_) {
-          final why = _layout.whyTriggerCannotRun(t, scriptIds: scriptIds);
+          final why = _layout.whyTriggerCannotRun(t, scriptIds: scriptIds) ??
+              (widget.canSwitchScriptTriggers ? null : _switchRefused);
           return _triggerSwitchTile(
             key: 'stored-${t.triggerId}',
             event: t.event,
@@ -5703,7 +5716,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             status: t.quarantinedByMigration ? 'Disabled by migration' : 'Disabled',
             on: false,
             why: why,
-            onChanged: why != null || t.triggerId == null ? null : (_) => _editLayout((l) => l.enableStoredTrigger(t.triggerId!)),
+            onChanged: why != null || t.triggerId == null ? null : (_) => _switchScriptTrigger(t.triggerId!, on: true),
           );
         }),
       if (objectCount > 0)
@@ -5723,6 +5736,39 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ),
         ),
     ];
+  }
+
+  static const _switchRefused = 'Only an owner or an administrator can switch a script trigger.';
+
+  /// Switches the trigger [id] through the trigger review: the layout is
+  /// saved first, then the trigger switched where it is stored, then read
+  /// back, so that nothing this designer holds writes over it.
+  Future<void> _switchScriptTrigger(String id, {required bool on}) async {
+    if (!_isPersisted) return;
+    await commitAndSave();
+    String? refused;
+    try {
+      await widget.apiClient.setScriptTriggersEnabled([id], enabled: on);
+    } on ApiException catch (e) {
+      refused = e.detail;
+    } on Object catch (e) {
+      refused = e.toString();
+    }
+    try {
+      final fresh = await widget.apiClient.getLayout(_layout.id);
+      if (!mounted) return;
+      adoptScriptTriggers(LayoutDefinitionModel.fromJson(fresh.definition).copyWith(id: _layout.id));
+    } on Object catch (_) {
+      // Read again with the layout list.
+    }
+    if (!mounted) return;
+    if (refused != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('The trigger was not switched: $refused'), backgroundColor: Colors.orange.shade800),
+      );
+      return;
+    }
+    widget.onScriptTriggersChanged?.call(_layout.id);
   }
 
   /// The triggers set on the selected object: kept, switched off, as

@@ -11,6 +11,7 @@ import 'package:file4base_client/features/layout_engine/layout_designer_widget.d
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/schema_manager/manage_script_triggers_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -109,11 +110,35 @@ class _Api extends ApiClient {
   }
 }
 
+/// The server of Layout Setup: switching a trigger goes through the review
+/// API, and the layout is read back with the trigger in its new place.
 class _ScriptsApi extends ApiClient {
-  _ScriptsApi() : super(baseUrl: 'http://localhost:1');
+  _ScriptsApi(this.stored) : super(baseUrl: 'http://localhost:1');
+
+  Map<String, dynamic> stored;
+  final switched = <(List<String>, bool)>[];
+  final saved = <Map<String, dynamic>>[];
 
   @override
   Future<List<ScriptModel>> listScripts({String? database}) async => const [ScriptModel(id: 's1', name: 'Greet')];
+
+  @override
+  Future<LayoutModel> updateLayout(String id, String name, Map<String, dynamic> definition) async {
+    saved.add(definition);
+    return LayoutModel(id: id, name: name, tableOccurrenceId: 'tbl', definition: definition);
+  }
+
+  @override
+  Future<ScriptTriggerUpdate> setScriptTriggersEnabled(List<String> ids, {required bool enabled}) async {
+    switched.add((ids, enabled));
+    final layout = LayoutDefinitionModel.fromJson(stored);
+    stored = (enabled ? layout.enableStoredTrigger(ids.single) : layout).toJson();
+    return ScriptTriggerUpdate(updated: ids.length, layouts: const ['l-card']);
+  }
+
+  @override
+  Future<LayoutModel> getLayout(String id) async =>
+      LayoutModel(id: id, name: 'Plant Card', tableOccurrenceId: 'tbl', definition: stored);
 }
 
 Finder _inRow(String id, String text) =>
@@ -324,7 +349,7 @@ void main() {
     const table = TableModel(id: 'tbl', name: 'plants', displayName: 'Plants', columns: [
       ColumnModel(id: 'c1', tableId: 'tbl', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
     ]);
-    final layout = LayoutDefinitionModel.fromJson({
+    final definition = {
       'id': 'l-card',
       'name': 'Plant Card',
       'table_occurrence': 'plants',
@@ -333,19 +358,21 @@ void main() {
         {'id': 'm1', 'event': 'OnLayoutEnter', 'type': 'perform_script', 'script_id': 's1', 'script_name': 'Greet', 'enabled': false, 'quarantined_by_migration': true},
         {'id': 'm2', 'event': 'OnRecordLoad', 'type': 'perform_script', 'script_id': 's1', 'script_name': 'Greet', 'enabled': false, 'quarantined_by_migration': true},
       ],
-    });
-    LayoutDefinitionModel? changed;
+    };
+    final api = _ScriptsApi(definition);
     String? reviewed;
+    final triggersChanged = <String>[];
     await tester.pumpWidget(MaterialApp(
       home: Scaffold(
         body: LayoutDesignerWidget(
           table: table,
           tables: const [table],
-          apiClient: _ScriptsApi(),
-          initialLayout: layout,
+          apiClient: api,
+          initialLayout: LayoutDefinitionModel.fromJson(definition),
           onSaved: () {},
-          onLayoutChanged: (l) => changed = l,
           onReviewScriptTriggers: (id) => reviewed = id,
+          onScriptTriggersChanged: triggersChanged.add,
+          canSwitchScriptTriggers: true,
         ),
       ),
     ));
@@ -360,13 +387,91 @@ void main() {
 
     await tester.tap(enter);
     await tester.pumpAndSettle();
-    expect(changed?.activeOnLayoutEnter?.scriptId, 's1');
-    expect(changed?.scriptTriggers.map((t) => t.triggerId), ['m2']);
+    expect(api.switched, hasLength(1), reason: 'switched by the admin-only review API');
+    expect(api.switched.single.$1, ['m1']);
+    expect(api.switched.single.$2, isTrue);
+    for (final saved in api.saved) {
+      expect(LayoutDefinitionModel.fromJson(saved).activeOnLayoutEnter, isNull,
+          reason: 'the layout update never carries the enabling');
+    }
+    expect(triggersChanged, ['l-card']);
+    expect(find.byKey(const ValueKey('trigger-switch-stored-m1')), findsNothing, reason: 'now in its slot');
 
     final review = find.byKey(const ValueKey('review-script-triggers'));
     await tester.ensureVisible(review);
     await tester.tap(review);
     expect(reviewed, 'l-card');
+  });
+
+  testWidgets('a user who is not an owner or an administrator cannot switch a trigger in Layout Setup', (tester) async {
+    tester.view.physicalSize = const Size(1600, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    const table = TableModel(id: 'tbl', name: 'plants', displayName: 'Plants', columns: [
+      ColumnModel(id: 'c1', tableId: 'tbl', name: 'id', displayName: 'ID', fieldType: 'int', isPrimaryKey: true),
+    ]);
+    final definition = {
+      'id': 'l-card',
+      'name': 'Plant Card',
+      'objects': <dynamic>[],
+      'script_triggers': [
+        {'id': 'm1', 'event': 'OnLayoutEnter', 'type': 'perform_script', 'script_id': 's1', 'script_name': 'Greet', 'enabled': false, 'quarantined_by_migration': true},
+      ],
+    };
+    final api = _ScriptsApi(definition);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LayoutDesignerWidget(
+          table: table,
+          tables: const [table],
+          apiClient: api,
+          initialLayout: LayoutDefinitionModel.fromJson(definition),
+          onSaved: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final enter = find.byKey(const ValueKey('trigger-switch-stored-m1'));
+    await tester.ensureVisible(enter);
+    expect(tester.widget<Switch>(enter).onChanged, isNull);
+    expect(find.textContaining('Only an owner or an administrator'), findsOneWidget);
+  });
+
+  testWidgets('closing the review after a change reports the layouts it changed', (tester) async {
+    final api = _Api();
+    ScriptTriggerReviewResult? result;
+    var closed = false;
+    tester.view.physicalSize = const Size(1600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () async {
+              result = await ManageScriptTriggersDialog.show(context, apiClient: api);
+              closed = true;
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('trigger-check-t-enter')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('trigger-enable-selected')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('trigger-enable-confirm-ok')));
+    await tester.pumpAndSettle();
+
+    // Dismissed with Escape, not with its Close button.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(closed, isTrue);
+    expect(result?.changed, isTrue);
+    expect(result?.changedLayouts, {'l-card'});
   });
 
   group('layout definition', () {

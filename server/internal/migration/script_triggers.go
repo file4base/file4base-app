@@ -34,7 +34,10 @@ type sourceTrigger struct {
 	// trigger names none (FileMaker keeps a trigger whose script was deleted).
 	scriptName, scriptID string
 	named                bool
-	parameter            string
+	// fileReference names the other FileMaker file the script is in; its
+	// scriptID is that file's, never one of this file's scripts.
+	fileReference string
+	parameter     string
 	// findOnly is set when FileMaker runs the trigger in Find mode only.
 	findOnly bool
 	// object is the layout object the trigger is set on; nil for the layout.
@@ -74,6 +77,12 @@ func readTrigger(t *xmlNode, obj *xmlNode) sourceTrigger {
 		st.scriptName = firstAttr(ref, "name", "Name")
 		st.scriptID = firstAttr(ref, "id", "ID")
 		st.parameter = calculationText(ref)
+		if external := findFirstChild(ref, "DataSourceReference", "FileReference"); external != nil {
+			st.fileReference = firstAttr(external, "name", "Name")
+			if st.fileReference == "" {
+				st.fileReference = "another file"
+			}
+		}
 	}
 	if name := firstAttr(t, "script", "scriptName"); name != "" && st.scriptName == "" {
 		st.named, st.scriptName = true, name
@@ -155,7 +164,12 @@ func layoutTriggerEntries(triggers []sourceTrigger, objectIDs map[*xmlNode]strin
 		}
 		if st.named {
 			entry["script_name"] = st.scriptName
-			entry[sourceScriptIDKey] = st.scriptID
+			if st.fileReference != "" {
+				// Its id is the other file's: it must not find one of ours.
+				entry["file_reference"] = st.fileReference
+			} else {
+				entry[sourceScriptIDKey] = st.scriptID
+			}
 		}
 		if st.parameter != "" {
 			entry["parameter"] = st.parameter
@@ -217,37 +231,46 @@ func quarantineDefinitionTriggers(def map[string]interface{}) {
 // trigger gives.
 type scriptIndex struct {
 	bySourceID map[string]string
-	byName     map[string]string
+	byName     map[string][]string
 	byID       map[string]bool
 }
 
 func newScriptIndex() scriptIndex {
-	return scriptIndex{bySourceID: map[string]string{}, byName: map[string]string{}, byID: map[string]bool{}}
+	return scriptIndex{bySourceID: map[string]string{}, byName: map[string][]string{}, byID: map[string]bool{}}
 }
 
 func (x scriptIndex) add(sourceID string, sc *schema.BundleScript) {
 	if sourceID != "" {
 		x.bySourceID[sourceID] = sc.ID
 	}
-	if _, taken := x.byName[strings.ToLower(sc.Name)]; !taken {
-		x.byName[strings.ToLower(sc.Name)] = sc.ID
-	}
+	key := strings.ToLower(strings.TrimSpace(sc.Name))
+	x.byName[key] = append(x.byName[key], sc.ID)
 	x.byID[sc.ID] = true
 }
 
 // resolve returns the imported script a trigger runs: by FileMaker id, which
-// tells apart two scripts of the same name, then by name.
-func (x scriptIndex) resolve(entry map[string]interface{}) string {
+// tells apart two scripts of the same name, then by name when exactly one
+// script has it. matches is the number of scripts with the name when it
+// finds none, so a name several scripts share is reported, not guessed. A
+// script in another file is never one of these.
+func (x scriptIndex) resolve(entry map[string]interface{}) (id string, matches int) {
+	if ref, _ := entry["file_reference"].(string); ref != "" {
+		return "", 0
+	}
 	if id, _ := entry["script_id"].(string); id != "" && x.byID[id] {
-		return id
+		return id, 1
 	}
 	if src, _ := entry[sourceScriptIDKey].(string); src != "" {
 		if id := x.bySourceID[src]; id != "" {
-			return id
+			return id, 1
 		}
 	}
 	name, _ := entry["script_name"].(string)
-	return x.byName[strings.ToLower(strings.TrimSpace(name))]
+	ids := x.byName[strings.ToLower(strings.TrimSpace(name))]
+	if len(ids) == 1 {
+		return ids[0], 1
+	}
+	return "", len(ids)
 }
 
 // bindLayoutTriggers binds the triggers of every converted layout to the
@@ -291,15 +314,25 @@ func bindLayoutTriggers(bundle *schema.SolutionBundle, scripts scriptIndex, b fo
 			name, named := entry["script_name"].(string)
 			_, hasSource := entry[sourceScriptIDKey]
 			named = named || hasSource
-			if id := scripts.resolve(entry); id != "" {
+			fileReference, _ := entry["file_reference"].(string)
+			if id, matches := scripts.resolve(entry); id != "" {
 				entry["script_id"] = id
 			} else {
 				delete(entry, "script_id")
-				if named && name != "" {
+				switch {
+				case fileReference != "":
+					items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger",
+						SourceName: where, TargetName: layout.Name,
+						Detail: fmt.Sprintf("The script %q this trigger runs is in another FileMaker file (%s). The trigger is kept, disabled, and cannot be enabled: File4Base does not run a trigger's script in another solution", name, fileReference)})
+				case matches > 1:
+					items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger",
+						SourceName: where, TargetName: layout.Name,
+						Detail: fmt.Sprintf("%d imported scripts are named %q, and nothing tells which one this trigger runs. The trigger is kept, disabled, and cannot be enabled until only one script has the name", matches, name)})
+				case named && name != "":
 					items = append(items, ReportItem{Category: CategoryManualActionRequired, Domain: "trigger",
 						SourceName: where, TargetName: layout.Name,
 						Detail: fmt.Sprintf("The script %q this trigger runs was not found among the imported scripts. The trigger is kept, disabled, and cannot be enabled until it runs an existing script", name)})
-				} else {
+				default:
 					// Already broken in FileMaker, which keeps a trigger
 					// whose script was deleted: counted, not itemised.
 					scriptless++

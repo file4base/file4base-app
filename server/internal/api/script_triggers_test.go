@@ -43,17 +43,23 @@ func TestAPI_ScriptTriggerReview(t *testing.T) {
 	var layout struct {
 		ID string `json:"id"`
 	}
-	rec = h.do(http.MethodPost, "/api/v1/schemas/layouts", owner, map[string]interface{}{
-		"name": "Plant Card", "table_occurrence_id": tbl.ID,
-		"definition": map[string]interface{}{
-			"objects": []interface{}{},
-			"script_triggers": []interface{}{
-				trigger("t-enter", "OnLayoutEnter", nil),
-				trigger("t-save", "OnObjectSave", map[string]interface{}{"object": map[string]interface{}{"type": "Edit Box", "field": "Plants::Height"}}),
-			},
+	definition := map[string]interface{}{
+		"objects": []interface{}{},
+		"script_triggers": []interface{}{
+			trigger("t-enter", "OnLayoutEnter", nil),
+			trigger("t-save", "OnObjectSave", map[string]interface{}{"object": map[string]interface{}{"type": "Edit Box", "field": "Plants::Height"}}),
 		},
+	}
+	rec = h.do(http.MethodPost, "/api/v1/schemas/layouts", owner, map[string]interface{}{
+		"name": "Plant Card", "table_occurrence_id": tbl.ID, "definition": definition,
 	}, &layout)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	// A created layout's triggers get ids of their own; an owner's update
+	// writes these.
+	rec = h.do(http.MethodPut, "/api/v1/schemas/layouts/"+layout.ID, owner, map[string]interface{}{
+		"name": "Plant Card", "definition": definition,
+	}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	rec = h.do(http.MethodPost, "/api/v1/security/users", owner,
 		map[string]interface{}{"username": "bob", "password": "bob-secret-pw", "role": "user"}, nil)
@@ -63,6 +69,24 @@ func TestAPI_ScriptTriggerReview(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code, "listing triggers is a developer's tool")
 	rec = h.do(http.MethodPut, "/api/v1/schemas/script-triggers", user, map[string]interface{}{"ids": []string{"t-enter"}, "enabled": true}, nil)
 	assert.Equal(t, http.StatusForbidden, rec.Code, "and so is switching them")
+
+	// Nor can a user switch one on by saving the layout (#26): neither by
+	// moving it where a client runs it, nor by changing the stored list.
+	enabledInSlot := map[string]interface{}{
+		"objects": []interface{}{},
+		"on_layout_enter": func() map[string]interface{} {
+			m := trigger("t-enter", "OnLayoutEnter", nil)
+			m["enabled"] = true
+			delete(m, "quarantined_by_migration")
+			return m
+		}(),
+		"script_triggers": definition["script_triggers"].([]interface{})[1:],
+	}
+	rec = h.do(http.MethodPut, "/api/v1/schemas/layouts/"+layout.ID, user, map[string]interface{}{"name": "Plant Card", "definition": enabledInSlot}, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	edited := map[string]interface{}{"objects": []interface{}{map[string]interface{}{"id": "o1", "type": "text"}}, "script_triggers": definition["script_triggers"]}
+	rec = h.do(http.MethodPut, "/api/v1/schemas/layouts/"+layout.ID, user, map[string]interface{}{"name": "Plant Card", "definition": edited}, nil)
+	assert.Equal(t, http.StatusOK, rec.Code, "any other edit is the user's to make: %s", rec.Body.String())
 
 	var listed struct {
 		Triggers []schema.ScriptTrigger `json:"triggers"`

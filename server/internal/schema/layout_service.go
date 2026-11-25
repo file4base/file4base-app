@@ -169,7 +169,9 @@ func (s *Service) CreateLayout(ctx context.Context, name string, toID string, de
 	layoutID := uuid.NewString()
 	now := time.Now().UTC()
 
-	defStr := string(definition)
+	// A new layout — a copy, a pasted or an imported one — has triggers of
+	// its own, whatever ids the definition it was made from gave them (#26).
+	defStr := string(FreshScriptTriggerIDs(definition))
 	if defStr == "" || defStr == "null" {
 		defStr = "{}"
 	}
