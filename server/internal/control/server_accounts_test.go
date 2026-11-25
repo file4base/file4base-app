@@ -67,6 +67,24 @@ func TestServerAccount_ScopeRules(t *testing.T) {
 	assert.Error(t, store.CreateServerAccount(ctx, "no_password", "", false, true, nil))
 }
 
+func TestServerAccount_PasswordLimitIsExplicit(t *testing.T) {
+	ctx := context.Background()
+	store := newServerAccountStore(t)
+
+	tooLong := make([]byte, maxServerAccountPasswordBytes+1)
+	for i := range tooLong {
+		tooLong[i] = 'x'
+	}
+	err := store.CreateServerAccount(ctx, "long_pass", string(tooLong), false, true, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "longer than 72 bytes")
+
+	exact := string(tooLong[:maxServerAccountPasswordBytes])
+	require.NoError(t, store.CreateServerAccount(ctx, "edge_pass", exact, false, true, nil))
+	_, err = store.AuthenticateServerAccount(ctx, "edge_pass", exact)
+	assert.NoError(t, err, "a password of exactly the limit works")
+}
+
 func TestServerAccount_AuthenticateRefusesEveryFailureTheSameWay(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)

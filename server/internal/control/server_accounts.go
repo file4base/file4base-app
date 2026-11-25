@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -46,15 +47,37 @@ type ServerAccount struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// dummyServerAccountHash keeps a failed lookup as slow as a real password check.
-var dummyServerAccountHash = mustHashServerPassword("file4base-server-account-timing")
+// maxServerAccountPasswordBytes is bcrypt's input limit. Longer passwords would
+// be refused by the hash with an unclear error, so they are refused here.
+const maxServerAccountPasswordBytes = 72
 
-func mustHashServerPassword(password string) string {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		panic(fmt.Sprintf("control: bcrypt unavailable: %v", err))
+// timingHash is computed once, on first use, so that a failed lookup costs as
+// much as a real password check without slowing every program that links this package.
+var (
+	timingHashOnce sync.Once
+	timingHash     string
+)
+
+// burnServerAccountCheck spends the time of a real bcrypt comparison.
+func burnServerAccountCheck(password string) {
+	timingHashOnce.Do(func() {
+		hash, err := bcrypt.GenerateFromPassword([]byte("file4base-server-account-timing"), bcrypt.DefaultCost)
+		if err != nil {
+			panic(fmt.Sprintf("control: bcrypt unavailable: %v", err))
+		}
+		timingHash = string(hash)
+	})
+	_ = bcrypt.CompareHashAndPassword([]byte(timingHash), []byte(password))
+}
+
+func validateServerAccountPassword(password string) error {
+	if password == "" {
+		return errors.New("password is required")
 	}
-	return string(hash)
+	if len(password) > maxServerAccountPasswordBytes {
+		return fmt.Errorf("password is longer than %d bytes", maxServerAccountPasswordBytes)
+	}
+	return nil
 }
 
 func normalizeServerAccountName(name string) (string, string, error) {
@@ -112,8 +135,8 @@ func (s *Store) CreateServerAccount(ctx context.Context, name, password string, 
 	if err != nil {
 		return err
 	}
-	if password == "" {
-		return errors.New("password is required")
+	if err := validateServerAccountPassword(password); err != nil {
+		return err
 	}
 	clean, err := validateScope(allDatabases, databases)
 	if err != nil {
@@ -263,8 +286,8 @@ func (s *Store) SetServerAccountPassword(ctx context.Context, name, password str
 	if err != nil {
 		return ErrServerAccountNotFound
 	}
-	if password == "" {
-		return errors.New("password is required")
+	if err := validateServerAccountPassword(password); err != nil {
+		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -316,7 +339,7 @@ func (s *Store) DeleteServerAccount(ctx context.Context, name string) error {
 func (s *Store) AuthenticateServerAccount(ctx context.Context, name, password string) (*ServerAccount, error) {
 	_, key, err := normalizeServerAccountName(name)
 	if err != nil {
-		_ = bcrypt.CompareHashAndPassword([]byte(dummyServerAccountHash), []byte(password))
+		burnServerAccountCheck(password)
 		return nil, ErrInvalidCredentials
 	}
 	var hash string
@@ -324,7 +347,7 @@ func (s *Store) AuthenticateServerAccount(ctx context.Context, name, password st
 	err = s.db.QueryRowContext(ctx,
 		`SELECT password_hash, is_active FROM server_accounts WHERE name_key = ?`, key).Scan(&hash, &active)
 	if errors.Is(err, sql.ErrNoRows) {
-		_ = bcrypt.CompareHashAndPassword([]byte(dummyServerAccountHash), []byte(password))
+		burnServerAccountCheck(password)
 		return nil, ErrInvalidCredentials
 	}
 	if err != nil {
