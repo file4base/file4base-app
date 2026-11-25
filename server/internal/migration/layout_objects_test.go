@@ -778,3 +778,114 @@ func TestNativeLayoutButtonsRunTheirScripts(t *testing.T) {
 		t.Fatalf("report: %+v", got.Report.ManualActionRequired)
 	}
 }
+
+func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
+	portals := `<LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000050</UUID>
+                <Bounds top="300" left="20" bottom="400" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="2" name="Ingredients"/>
+                  <Options index="2" show="4"/>
+                  <SortSpecification value="True" maintain="True" blanksLast="False"><SortList membercount="2">
+                    <Sort type="Descending"><PrimaryField><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></PrimaryField></Sort>
+                    <Sort type="Ascending"><PrimaryField><FieldReference name="Title" id="1"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference></PrimaryField></Sort>
+                  </SortList></SortSpecification>
+                  <Calculation><Text><![CDATA[Quantity > 1]]></Text></Calculation>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box"><UUID>00000000-0000-0000-0000-000000000051</UUID><Bounds top="300" left="20" bottom="320" right="120"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000052</UUID>
+                <Bounds top="410" left="20" bottom="500" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="2" name="Ingredients"/>
+                  <Options index="1" show="3"/>
+                  <Calculation><Text><![CDATA[Nowhere::Thing = 1]]></Text></Calculation>
+                  <ObjectList/>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000053</UUID>
+                <Bounds top="510" left="20" bottom="600" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="4" name="Ingredient Recipes"/>
+                  <Options index="1" show="3"/>
+                  <ObjectList>
+                    <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000054</UUID><Bounds top="510" left="20" bottom="530" right="120"/>
+                      <Text><StyledText><Data><![CDATA[Far]]></Data></StyledText></Text>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, portals, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	byType := objectsByType(def)
+	if len(byType["portal"]) != 2 {
+		t.Fatalf("portals: %v", byType["portal"])
+	}
+	var relID string
+	for _, r := range got.Bundle.Relationships {
+		if r.Name == "Recipes_Ingredients" {
+			relID = r.ID
+		}
+	}
+	first := byType["portal"][0]["portal_config"].(map[string]interface{})
+	if first["relationship_id"] != relID || first["occurrence"] != "Ingredients" || first["initial_row"] != 2.0 ||
+		first["row_count"] != 4.0 || first["sort"] != "-quantity" || first["filter"] != "quantity > 1" ||
+		first["filter_problem"] != nil || first["allow_creation"] != true {
+		t.Fatalf("portal: %v", first)
+	}
+	// A filter that cannot be bound shows no record rather than all of them.
+	second := byType["portal"][1]["portal_config"].(map[string]interface{})
+	if second["filter"] != "0" || second["filter_problem"] != true {
+		t.Fatalf("portal with an unbound filter: %v", second)
+	}
+	// The portal's row objects follow it, so they are drawn over it.
+	var portalAt, fieldAt = -1, -1
+	for i, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		if o["type"] == "portal" && portalAt < 0 {
+			portalAt = i
+		}
+		if b, _ := o["field_binding"].(map[string]interface{}); b != nil && b["table_occurrence"] == "Ingredients" && o["y"] == 300.0 {
+			fieldAt = i
+		}
+	}
+	if portalAt < 0 || fieldAt < portalAt {
+		t.Fatalf("row field at %d, portal at %d", fieldAt, portalAt)
+	}
+	for _, l := range byType["label"] {
+		if l["text"] == "Far" {
+			t.Fatal("a portal several relationships away is left out with its objects")
+		}
+	}
+	if c := got.Report.Counts.LayoutObjects["Portal"]; c.Source != 3 || c.Migrated != 2 {
+		t.Fatalf("portal counts: %+v", c)
+	}
+	var review string
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "layout" {
+			review += it.Detail
+		}
+	}
+	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away", "1 portal whose filter calculation could not be bound", "1 portal sort field of another occurrence"} {
+		if !strings.Contains(review, want) {
+			t.Fatalf("review %q lacks %q", review, want)
+		}
+	}
+}

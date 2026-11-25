@@ -360,6 +360,14 @@
             "sort": {
               "type": "string",
               "description": "Row order, as the data API takes it: 'last_name,-fee_paid'. Empty uses the relationship's own sort."
+            },
+            "filter": {
+              "type": "string",
+              "description": "Calculation evaluated from the portal's occurrence against each related record; only the records it is true for are shown (FileMaker's Filter portal records). Empty shows them all."
+            },
+            "filter_problem": {
+              "type": "boolean",
+              "description": "Set by a migration when the source filter could not be bound; the filter is then '0' and the portal shows no record until it is set again."
             }
           }
         },

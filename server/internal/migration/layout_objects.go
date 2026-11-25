@@ -196,6 +196,9 @@ type nativeLayout struct {
 	noImage      int
 	buttonsUnrun int // buttons whose single step File4Base does not run
 	buttonIcons  int // icons dropped from buttons that have a label
+	portalsFar   int // portals of an occurrence several relationships away, left out
+	portalFilter int // portal filters that could not be bound, the portal kept empty
+	portalSort   int // portal sort fields of another occurrence, left out of the sort
 	vectorImage  int
 	mergeKept    int
 }
@@ -365,6 +368,9 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 		return
 	case "Button Bar":
 		l.buttonBar(obj)
+		return
+	case "Portal":
+		l.portal(obj)
 		return
 	}
 
@@ -1007,6 +1013,15 @@ func (l *nativeLayout) report() []ReportItem {
 	if l.buttonIcons > 0 {
 		review = append(review, plural(l.buttonIcons, "button")+" with both an icon and a label, shown with its label only")
 	}
+	if l.portalsFar > 0 {
+		review = append(review, plural(l.portalsFar, "portal")+" showing the records of an occurrence several relationships away, not migrated yet")
+	}
+	if l.portalFilter > 0 {
+		review = append(review, plural(l.portalFilter, "portal")+" whose filter calculation could not be bound, showing no records until it is set again")
+	}
+	if l.portalSort > 0 {
+		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence, left out of the portal's sort")
+	}
 	if l.mergeKept > 0 {
 		review = append(review, plural(l.mergeKept, "merge field")+" of a related field or a variable, shown as FileMaker wrote it")
 	}
@@ -1154,6 +1169,97 @@ func (l *nativeLayout) buttonAction(action *xmlNode) map[string]interface{} {
 		}
 	}
 	return out
+}
+
+// portal converts a portal showing the records of an occurrence one
+// relationship from the layout's: the rows it shows, from which, their
+// sort and filter; then the objects of its first row, which every row
+// repeats with its own record. A portal reaching its occurrence through
+// several relationships is left out, with its objects.
+func (l *nativeLayout) portal(obj *xmlNode) {
+	p := findFirstChild(obj, "Portal")
+	base := l.baseObject(obj)
+	if p == nil || base == nil {
+		return
+	}
+	to := findFirstChild(p, "TableOccurrenceReference")
+	if to == nil {
+		l.pending["portal"]++
+		return
+	}
+	occ, found := l.ctx.binding.occByName[strings.ToLower(firstAttr(to, "name"))]
+	var relationships []string
+	if found && !l.occExternal {
+		_, relationships = l.ctx.occurrencePath(l.occID, occ.id)
+	}
+	if len(relationships) != 1 {
+		l.pending["portal"]++
+		if len(relationships) > 1 {
+			l.portalsFar++
+		}
+		return
+	}
+	config := map[string]interface{}{
+		"relationship_id": relationships[0],
+		"occurrence":      occ.name,
+		"show_scroll_bar": true,
+		// As in FileMaker, the empty last row is offered only where the
+		// relationship allows creating records on the portal's side.
+		"allow_creation": true,
+	}
+	if o := findFirstChild(p, "Options"); o != nil {
+		if n, err := strconv.Atoi(firstAttr(o, "index")); err == nil && n > 1 {
+			config["initial_row"] = n
+		}
+		if n, err := strconv.Atoi(firstAttr(o, "show")); err == nil && n > 0 {
+			config["row_count"] = n
+		}
+	}
+	if spec := findFirstChild(p, "SortSpecification"); spec != nil {
+		var keys []string
+		for _, sort := range findNodes(spec, "Sort") {
+			ref := childPath(sort, "PrimaryField", "FieldReference")
+			if ref == nil {
+				continue
+			}
+			column, at, ok := l.column(ref)
+			if !ok || at.id != occ.id {
+				l.portalSort++
+				continue
+			}
+			if firstAttr(sort, "type") == "Descending" {
+				column = "-" + column
+			}
+			keys = append(keys, column)
+		}
+		if len(keys) > 0 {
+			config["sort"] = strings.Join(keys, ",")
+		}
+	}
+	if c := findFirstChild(p, "Calculation"); c != nil {
+		if formula := calculationText(c); formula != "" {
+			// FileMaker evaluates the filter from the portal's occurrence,
+			// against each related record.
+			fb := l.ctx.binding.bind(occ.table, formula, occ.name, fmt.Sprintf("the portal filter of the layout %q", l.name))
+			if fb.why == "" && !occ.external {
+				config["filter"] = fb.rewritten
+			} else {
+				// Rows the filter would leave out are never shown.
+				config["filter"] = "0"
+				config["filter_problem"] = true
+				l.portalFilter++
+			}
+		}
+	}
+	base["type"] = "portal"
+	base["portal_config"] = config
+	base["style"] = l.style(obj, []string{"portal"}, false)
+	base["id"] = l.objectID(obj)
+	l.objects = append(l.objects, base)
+	l.ctx.count("Portal").Migrated++
+	if list := findFirstChild(p, "ObjectList"); list != nil {
+		l.convertList(list)
+	}
 }
 
 // groupedButton keeps the objects a grouped button draws, and puts over

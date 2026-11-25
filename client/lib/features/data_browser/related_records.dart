@@ -5,6 +5,7 @@
 // relationship from it and returns what matches.
 
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/features/data_browser/external_access.dart';
@@ -825,8 +826,12 @@ class _PortalViewState extends State<PortalView> {
       final table = target.isExternal ? await _access.table(target.occurrence) : null;
       if (stale()) return;
       if (table != null) _externalTable = table;
-      final rows = await widget.related.rows(target, sort: _config.sortFields, limit: ApiClient.maxPageSize);
+      var rows = await widget.related.rows(target, sort: _config.sortFields, limit: ApiClient.maxPageSize);
       if (stale()) return;
+      if (_config.filter.trim().isNotEmpty && rows.isNotEmpty) {
+        rows = await _filtered(target, rows, _config.filter.trim());
+        if (stale()) return;
+      }
       setState(() {
         _rows = rows;
         _loading = false;
@@ -843,6 +848,33 @@ class _PortalViewState extends State<PortalView> {
       });
       if (problem != null) _access.askOnce(context, problem);
     }
+  }
+
+  /// The [rows] [filter] is true for, evaluated from the portal's
+  /// occurrence against each related record, as FileMaker filters portal
+  /// records. A filter that cannot be evaluated throws, so the portal shows
+  /// none of them rather than all.
+  Future<List<Map<String, dynamic>>> _filtered(
+      RelatedTarget target, List<Map<String, dynamic>> rows, String filter) async {
+    if (filter == '0') return const [];
+    final ids = [
+      for (final r in rows)
+        if ((r['id']?.toString() ?? '').isNotEmpty) r['id'].toString(),
+    ];
+    final keep = <String>{};
+    final client = widget.related.clientFor(target);
+    for (var i = 0; i < ids.length; i += ApiClient.maxEvaluatedRecords) {
+      final chunk = ids.sublist(i, math.min(i + ApiClient.maxEvaluatedRecords, ids.length));
+      final results = await client.evaluateForRecords(target.table.name,
+          expressions: [filter], recordIds: chunk, occurrence: target.occurrence.id, resultType: 'Number');
+      for (final id in chunk) {
+        final answer = results[id];
+        if (answer == null || answer.isEmpty) continue;
+        if (answer.first.error.isNotEmpty) throw StateError('the portal filter cannot be evaluated: ${answer.first.error}');
+        if (isLayoutConditionTrue(answer.first.text)) keep.add(id);
+      }
+    }
+    return [for (final r in rows) if (keep.contains(r['id']?.toString())) r];
   }
 
   /// What may be done with the portal's records: for another solution's,
@@ -1126,9 +1158,16 @@ class _PortalViewState extends State<PortalView> {
     }
 
     final field = content.fieldBinding?.fieldName ?? '';
-    final col = _column(target, field);
+    // A field of another occurrence than the portal's is not a column of
+    // the row's record, even when one has its name.
+    final occurrence = content.fieldBinding?.tableOccurrence ?? '';
+    final ofRow = occurrence.isEmpty ||
+        occurrence == target.occurrence.id ||
+        occurrence.toLowerCase() == target.occurrence.name.toLowerCase();
+    final col = ofRow ? _column(target, field) : null;
     if (col == null) {
-      return relatedNotice('<$field>', isDark: widget.isDark, radius: content.style.cornerRadius);
+      final name = ofRow ? field : (content.fieldBinding?.qualifiedName ?? field);
+      return relatedNotice('<$name>', isDark: widget.isDark, radius: content.style.cornerRadius);
     }
 
     final text = widget.related.formatValue(col, row[col.name]);

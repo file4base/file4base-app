@@ -877,6 +877,7 @@ class PortalConfigModel {
     this.allowCreation = false,
     this.allowDeletion = false,
     this.sort = '',
+    this.filter = '',
   });
 
   factory PortalConfigModel.fromJson(Map<String, dynamic> json) {
@@ -891,6 +892,7 @@ class PortalConfigModel {
       allowCreation: json['allow_creation'] as bool? ?? false,
       allowDeletion: json['allow_deletion'] as bool? ?? false,
       sort: json['sort'] as String? ?? '',
+      filter: json['filter'] as String? ?? '',
     );
   }
   /// The relationship followed to reach the records the rows show.
@@ -930,6 +932,11 @@ class PortalConfigModel {
   /// `-fee_paid`). Empty means the relationship's own "Sort related records".
   final String sort;
 
+  /// A calculation evaluated from the portal's occurrence against each
+  /// related record: only the records it is true for are shown, as
+  /// FileMaker's "Filter portal records". Empty shows them all.
+  final String filter;
+
   /// True when the portal knows which records to show.
   bool get isBound => relationshipId != null && relationshipId!.isNotEmpty;
 
@@ -955,6 +962,7 @@ class PortalConfigModel {
         'allow_creation': allowCreation,
         'allow_deletion': allowDeletion,
         if (sort.isNotEmpty) 'sort': sort,
+        if (filter.isNotEmpty) 'filter': filter,
       };
 
   PortalConfigModel copyWith({
@@ -970,6 +978,7 @@ class PortalConfigModel {
     bool? allowCreation,
     bool? allowDeletion,
     String? sort,
+    String? filter,
   }) {
     return PortalConfigModel(
       relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
@@ -982,6 +991,7 @@ class PortalConfigModel {
       allowCreation: allowCreation ?? this.allowCreation,
       allowDeletion: allowDeletion ?? this.allowDeletion,
       sort: sort ?? this.sort,
+      filter: filter ?? this.filter,
     );
   }
 }

@@ -118,6 +118,19 @@ class _RelatedApi extends ApiClient {
     deletes.add('$table/$id');
     children.removeWhere((c) => c['id'] == id);
   }
+
+  /// Filters asked about: table, expressions, occurrence. The filter is
+  /// true for cu-2 only.
+  final List<(String, List<String>, String?)> evaluations = [];
+
+  @override
+  Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(String table,
+      {required List<String> expressions, required List<String> recordIds, String? occurrence, String resultType = 'Text'}) async {
+    evaluations.add((table, expressions, occurrence));
+    return {
+      for (final id in recordIds) id: [EvaluationModel(expression: expressions.first, text: id == 'cu-2' ? '1' : '0')],
+    };
+  }
 }
 
 /// A Companies layout with a portal of Customers, holding one Last Name field.
@@ -562,5 +575,43 @@ void main() {
       expect(toggled.valueListId, 'vl-1');
       expect(toggled.allowBrowseEntry, isFalse);
     });
+  });
+
+  testWidgets('a filtered portal shows only the related records its filter is true for', (tester) async {
+    final api = await _pump(tester,
+        layout: _layoutWithPortal(
+            portal: const PortalConfigModel(relationshipId: 'rel-1', occurrence: 'Customers', filter: 'last_name = "Alvarez"')));
+
+    expect(find.byKey(const ValueKey('portal-row-cu-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('portal-row-cu-1')), findsNothing);
+    final (table, expressions, occurrence) = api.evaluations.single;
+    expect((table, expressions.single, occurrence), ('customers', 'last_name = "Alvarez"', 'occ-customers'),
+        reason: 'the filter is evaluated from the portal occurrence against the related records');
+  });
+
+  testWidgets('a portal whose filter could not be migrated shows no record', (tester) async {
+    final api = await _pump(tester,
+        layout: _layoutWithPortal(portal: const PortalConfigModel(relationshipId: 'rel-1', occurrence: 'Customers', filter: '0')));
+
+    expect(find.byKey(const ValueKey('portal-row-cu-1')), findsNothing);
+    expect(find.byKey(const ValueKey('portal-row-cu-2')), findsNothing);
+    expect(api.evaluations, isEmpty);
+  });
+
+  testWidgets('a field of another occurrence in a portal row is not read from the row', (tester) async {
+    final base = _layoutWithPortal();
+    final layout = base.copyWith(objects: [
+      for (final o in base.objects)
+        if (o.id == 'fld_in_portal')
+          o.copyWith(fieldBinding: const FieldBindingModel(fieldName: 'company', tableOccurrence: 'Companies'))
+        else
+          o,
+    ]);
+    await _pump(tester, layout: layout);
+
+    expect(find.byKey(const ValueKey('portal-row-cu-1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('portal-cell-cu-1-company')), findsNothing,
+        reason: "the customers table has a company column, but the field is the company record's");
+    expect(find.text('<company>'), findsNWidgets(2));
   });
 }
