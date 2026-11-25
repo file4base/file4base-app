@@ -14,6 +14,7 @@ import 'package:file4base_client/features/layout_engine/layout_object_visuals.da
 import 'package:file4base_client/features/layout_engine/models/chart_definition.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
+import 'package:file4base_client/features/script_workspace/calculation_builder_dialog.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior, kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -4821,11 +4822,17 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         _inspectorSectionTitle('BEHAVIOR'),
         // A calculation: when it is true on the record shown, Browse mode
         // hides the object, as FileMaker's "Hide object when".
-        _InspectorTextField(
-          key: ValueKey('${sel.id}-hide-when'),
-          value: sel.hideWhen ?? '',
-          label: 'Hide object when',
-          onSubmitted: (v) => _editSelected((o) =>
+        _calculationRow(
+          field: _InspectorTextField(
+            key: ValueKey('${sel.id}-hide-when'),
+            value: sel.hideWhen ?? '',
+            label: 'Hide object when',
+            onSubmitted: (v) => _editSelected((o) =>
+                v.trim().isEmpty ? o.copyWith(clearHideWhen: true) : o.copyWith(hideWhen: v.trim())),
+          ),
+          key: ValueKey('${sel.id}-hide-when-calc'),
+          initial: sel.hideWhen ?? '',
+          onChosen: (v) => _editSelected((o) =>
               v.trim().isEmpty ? o.copyWith(clearHideWhen: true) : o.copyWith(hideWhen: v.trim())),
         ),
         if (sel.fieldBinding != null) ...[
@@ -5578,7 +5585,71 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           onChanged: (v) => edit((c) => c.copyWith(allowDeletion: v ?? false)),
         ),
       ),
+      const SizedBox(height: 4),
+      // FileMaker's "Filter portal records": a calculation evaluated from
+      // the portal's occurrence against each related record.
+      _calculationRow(
+        field: _InspectorTextField(
+          key: ValueKey('${sel.id}-portal-filter'),
+          value: config.filter,
+          label: 'Filter portal records',
+          onSubmitted: (v) => edit((c) => c.copyWith(filter: v.trim())),
+        ),
+        key: ValueKey('${sel.id}-portal-filter-calc'),
+        initial: config.filter,
+        context: target?.occurrence.name,
+        onChosen: (v) => edit((c) => c.copyWith(filter: v.trim())),
+      ),
     ];
+  }
+
+  /// [field], with a button opening the calculation editor on [initial],
+  /// from the occurrence [context] (the layout's by default); what it gives
+  /// back goes to [onChosen].
+  Widget _calculationRow({
+    required Widget field,
+    required Key key,
+    required String initial,
+    required ValueChanged<String> onChosen,
+    String? context,
+  }) {
+    return Row(
+      children: [
+        Expanded(child: field),
+        IconButton(
+          key: key,
+          tooltip: 'Specify Calculation',
+          iconSize: 16,
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.functions),
+          onPressed: () async {
+            final formula = await _editCalculation(initial, occurrence: context);
+            if (formula != null && mounted) onChosen(formula);
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Opens the calculation editor with the fields of every occurrence, from
+  /// [occurrence] or the layout's.
+  Future<String?> _editCalculation(String initial, {String? occurrence}) {
+    final tablesById = {for (final t in widget.tables) t.id: t};
+    final fields = <String, List<String>>{
+      for (final o in _occurrences.values)
+        if (tablesById[o.baseTableId] != null) o.name: [for (final c in tablesById[o.baseTableId]!.columns) c.name],
+    };
+    final own = _occurrences[_layout.tableOccurrence]?.name ??
+        _occurrences.values.where((o) => o.name.toLowerCase() == _layout.tableOccurrence.toLowerCase()).firstOrNull?.name ??
+        _currentTable.name;
+    fields.putIfAbsent(own, () => [for (final c in _currentTable.columns) c.name]);
+    return CalculationBuilderDialog.show(
+      context,
+      initialFormula: initial,
+      contextTable: occurrence ?? own,
+      availableTables: fields.keys.toList(),
+      fieldsByTable: fields,
+    );
   }
 
   /// The inspector's way in to Chart Setup, with what the chart draws now.
