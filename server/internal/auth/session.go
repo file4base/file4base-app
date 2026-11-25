@@ -56,6 +56,10 @@ type Session struct {
 	// session of its own account in its own solution; revoking the sign-in
 	// that started the group revokes all of them.
 	Group string
+	// ServerAccount names the server account the session was opened with, or
+	// is empty for a session of a database account. Such a session is checked
+	// against the server account's state rather than the database's row.
+	ServerAccount string
 	// Linked marks a session opened in a solution of another session's
 	// group, rather than by a sign-in of its own.
 	Linked bool
@@ -126,6 +130,24 @@ func (s *Store) Create(userID, username, role, database, stamp string, superOwne
 	sess.Group = digest(token)
 	s.sessions[digest(token)] = sess
 	return token, *sess, nil
+}
+
+// CreateForServerAccount registers a session opened by a server account. The
+// session carries the account's name, so each request checks the account
+// itself: a disabled account, a changed password or role, or one that no
+// longer reaches the database ends the session.
+func (s *Store) CreateForServerAccount(userID, username, role, database, stamp string, superOwner bool, account string) (string, Session, error) {
+	token, sess, err := s.Create(userID, username, role, database, stamp, superOwner)
+	if err != nil {
+		return "", Session{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stored, ok := s.sessions[digest(token)]; ok {
+		stored.ServerAccount = account
+	}
+	sess.ServerAccount = account
+	return token, sess, nil
 }
 
 func (s *Store) newSessionLocked(now time.Time, userID, username, role, database, stamp string, superOwner bool) *Session {

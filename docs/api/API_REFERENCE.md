@@ -2458,14 +2458,17 @@ Powers the top-level **Server Tools** administration console (`ServerToolsDialog
 | `POST /api/v1/server/mail-profiles/test` | server administrator | `{solution, to}`: sends one test message through that profile. |
 | `PUT /api/v1/server/mail-profiles/server-access` | server administrator | `{solution, allowed}`: lets a solution send through the server-wide profile, or withdraws it. Off by default. `200 {solution, allowed}`; `404` for an unknown solution. Audited. |
 | `GET /api/v1/server/accounts` | super-owner | Lists the server accounts (`name`, `active`, `super_owner`, `all_databases`, `databases`, `updated_at`). Never a password. |
-| `POST /api/v1/server/accounts` | super-owner | Creates an account: `{name, password, super_owner, all_databases, databases}`. `201`; `409` when the name exists in any letter case; `422` for a name with `@` or whitespace, a password over 72 bytes, or a database that is not registered. |
+| `POST /api/v1/server/accounts` | super-owner | Creates an account: `{name, password, role, super_owner, all_databases, databases}`; `role` is `owner`, `admin` or `user` (default `user`). `201`; `409` when the name exists in any letter case; `422` for a name with `@` or whitespace, a password over 72 bytes, or a database that is not registered. |
 | `GET /api/v1/server/accounts/{name}` | super-owner | One account. `404` when unknown. |
 | `PUT /api/v1/server/accounts/{name}/active` | super-owner | `{active}`. Disabling the last active super-owner answers `409`. |
 | `PUT /api/v1/server/accounts/{name}/scope` | super-owner | `{all_databases, databases}`: replaces the databases the account reaches. `422` for an unknown database. |
+| `PUT /api/v1/server/accounts/{name}/role` | super-owner | `{role}`: the role the account holds in the databases it reaches (`owner`, `admin` or `user`). It applies from the next sign-in in each database. `422` for any other role. |
 | `PUT /api/v1/server/accounts/{name}/password` | super-owner | `{password}`. `204`. |
 | `DELETE /api/v1/server/accounts/{name}` | super-owner | Deletes the account. Deleting the last active super-owner answers `409`. `204`. |
 
-Server accounts are kept in the control store and are separate from the accounts of each database. Names are case-insensitive. Each action is audited under `server_accounts`. Signing in with a server account arrives in a later change.
+Server accounts are kept in the control store and are separate from the accounts of each database. Names are case-insensitive. Each action is audited under `server_accounts`.
+
+**Signing in.** `POST /api/v1/auth/login` with the database and the account's name. A name without `@` that is a server account signs in with the server's password, and only to a database the account reaches; any other database answers `401`, as a wrong password does. The first sign-in keeps a row for the account in that database, with the account's role and super-owner flag, and the session is bound to that row. A session ends on its next request when the account is disabled or deleted, its password or role changes, or it no longer reaches the database. A database account of the same name in that database answers `409`, and nothing is merged. Server accounts sign in to PostgreSQL databases only (`422` otherwise). Sign-in does not yet open the sessions of other solutions (`linked`).
 
 ### Send Mail through SMTP (`#133`)
 

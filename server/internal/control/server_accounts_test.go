@@ -21,7 +21,7 @@ func TestServerAccount_CreateAndGet(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "Jdoe", "s3cret-pass", false, false, []string{"sales", " sales ", "hr"}))
+	require.NoError(t, store.CreateServerAccount(ctx, "Jdoe", "s3cret-pass", "user", false, false, []string{"sales", " sales ", "hr"}))
 
 	acc, err := store.GetServerAccount(ctx, "JDOE")
 	require.NoError(t, err)
@@ -36,8 +36,8 @@ func TestServerAccount_NamesAreUniqueIgnoringCase(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "admin", "pw-one", true, true, nil))
-	err := store.CreateServerAccount(ctx, "ADMIN", "pw-two", false, true, nil)
+	require.NoError(t, store.CreateServerAccount(ctx, "admin", "pw-one", "user", true, true, nil))
+	err := store.CreateServerAccount(ctx, "ADMIN", "pw-two", "user", false, true, nil)
 	assert.ErrorIs(t, err, ErrServerAccountExists)
 }
 
@@ -46,25 +46,25 @@ func TestServerAccount_NameRules(t *testing.T) {
 	store := newServerAccountStore(t)
 
 	for _, bad := range []string{"", "   ", "jdoe@empresa.com", "two words", "tab\there"} {
-		err := store.CreateServerAccount(ctx, bad, "pw", false, true, nil)
+		err := store.CreateServerAccount(ctx, bad, "pw", "user", false, true, nil)
 		assert.ErrorIs(t, err, ErrInvalidServerAccountName, "name %q", bad)
 	}
 	long := make([]byte, maxServerAccountNameLength+1)
 	for i := range long {
 		long[i] = 'a'
 	}
-	assert.ErrorIs(t, store.CreateServerAccount(ctx, string(long), "pw", false, true, nil), ErrInvalidServerAccountName)
+	assert.ErrorIs(t, store.CreateServerAccount(ctx, string(long), "pw", "user", false, true, nil), ErrInvalidServerAccountName)
 }
 
 func TestServerAccount_ScopeRules(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	assert.Error(t, store.CreateServerAccount(ctx, "all_and_some", "pw", false, true, []string{"sales"}),
+	assert.Error(t, store.CreateServerAccount(ctx, "all_and_some", "pw", "user", false, true, []string{"sales"}),
 		"an account reaching all databases lists none")
-	assert.Error(t, store.CreateServerAccount(ctx, "nothing", "pw", false, false, nil),
+	assert.Error(t, store.CreateServerAccount(ctx, "nothing", "pw", "user", false, false, nil),
 		"an account reaching some databases lists at least one")
-	assert.Error(t, store.CreateServerAccount(ctx, "no_password", "", false, true, nil))
+	assert.Error(t, store.CreateServerAccount(ctx, "no_password", "", "user", false, true, nil))
 }
 
 func TestServerAccount_PasswordLimitIsExplicit(t *testing.T) {
@@ -75,12 +75,12 @@ func TestServerAccount_PasswordLimitIsExplicit(t *testing.T) {
 	for i := range tooLong {
 		tooLong[i] = 'x'
 	}
-	err := store.CreateServerAccount(ctx, "long_pass", string(tooLong), false, true, nil)
+	err := store.CreateServerAccount(ctx, "long_pass", string(tooLong), "user", false, true, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "longer than 72 bytes")
 
 	exact := string(tooLong[:maxServerAccountPasswordBytes])
-	require.NoError(t, store.CreateServerAccount(ctx, "edge_pass", exact, false, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "edge_pass", exact, "user", false, true, nil))
 	_, err = store.AuthenticateServerAccount(ctx, "edge_pass", exact)
 	assert.NoError(t, err, "a password of exactly the limit works")
 }
@@ -89,8 +89,8 @@ func TestServerAccount_AuthenticateRefusesEveryFailureTheSameWay(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "right-pass", false, false, []string{"sales"}))
-	require.NoError(t, store.CreateServerAccount(ctx, "retired", "old-pass", false, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "right-pass", "user", false, false, []string{"sales"}))
+	require.NoError(t, store.CreateServerAccount(ctx, "retired", "old-pass", "user", false, true, nil))
 	require.NoError(t, store.SetServerAccountActive(ctx, "retired", false))
 
 	acc, err := store.AuthenticateServerAccount(ctx, "CLERK", "right-pass")
@@ -114,7 +114,7 @@ func TestServerAccount_PasswordIsNeverStoredInClear(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "plain-secret", false, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "plain-secret", "user", false, true, nil))
 	var hash string
 	require.NoError(t, store.db.QueryRowContext(ctx,
 		`SELECT password_hash FROM server_accounts WHERE name_key = 'clerk'`).Scan(&hash))
@@ -126,7 +126,7 @@ func TestServerAccount_SetPasswordAndScope(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "first-pass", false, false, []string{"sales"}))
+	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "first-pass", "user", false, false, []string{"sales"}))
 	require.NoError(t, store.SetServerAccountPassword(ctx, "clerk", "second-pass"))
 	_, err := store.AuthenticateServerAccount(ctx, "clerk", "first-pass")
 	assert.ErrorIs(t, err, ErrInvalidCredentials)
@@ -151,8 +151,8 @@ func TestServerAccount_LastSuperOwnerIsProtected(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "root", "root-pass", true, true, nil))
-	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "clerk-pass", false, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "root", "root-pass", "user", true, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "clerk-pass", "user", false, true, nil))
 
 	assert.ErrorIs(t, store.SetServerAccountActive(ctx, "root", false), ErrLastSuperOwner)
 	assert.ErrorIs(t, store.DeleteServerAccount(ctx, "root"), ErrLastSuperOwner)
@@ -161,7 +161,7 @@ func TestServerAccount_LastSuperOwnerIsProtected(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, acc.Active, "a refused change leaves the account as it was")
 
-	require.NoError(t, store.CreateServerAccount(ctx, "backup", "backup-pass", true, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "backup", "backup-pass", "user", true, true, nil))
 	require.NoError(t, store.SetServerAccountActive(ctx, "root", false), "another active super-owner exists")
 	assert.ErrorIs(t, store.DeleteServerAccount(ctx, "backup"), ErrLastSuperOwner,
 		"root is disabled, so backup is the last active super-owner")
@@ -171,8 +171,8 @@ func TestServerAccount_DeleteRemovesScope(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "root", "root-pass", true, true, nil))
-	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "clerk-pass", false, false, []string{"sales", "hr"}))
+	require.NoError(t, store.CreateServerAccount(ctx, "root", "root-pass", "user", true, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "clerk", "clerk-pass", "user", false, false, []string{"sales", "hr"}))
 	require.NoError(t, store.DeleteServerAccount(ctx, "CLERK"))
 
 	_, err := store.GetServerAccount(ctx, "clerk")
@@ -188,8 +188,8 @@ func TestServerAccount_ListIsOrderedByName(t *testing.T) {
 	ctx := context.Background()
 	store := newServerAccountStore(t)
 
-	require.NoError(t, store.CreateServerAccount(ctx, "zoe", "pw", false, true, nil))
-	require.NoError(t, store.CreateServerAccount(ctx, "Anna", "pw", false, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "zoe", "pw", "user", false, true, nil))
+	require.NoError(t, store.CreateServerAccount(ctx, "Anna", "pw", "user", false, true, nil))
 
 	list, err := store.ListServerAccounts(ctx)
 	require.NoError(t, err)
