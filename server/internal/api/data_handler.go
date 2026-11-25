@@ -852,7 +852,8 @@ func (h *DataHandler) SummarizeRows(w http.ResponseWriter, r *http.Request) {
 //
 // `occurrence` names the side whose records are wanted. It may be left out
 // unless the relationship joins a table to itself, where there is no other
-// side to infer.
+// side to infer. `side` (`left` or `right`) names the end instead, which a
+// relationship joining an occurrence to itself needs for its left end.
 func (h *DataHandler) ListRelatedRows(w http.ResponseWriter, r *http.Request) {
 	table := requestTable(r)
 	svc, ok := h.authorize(w, r, table, false)
@@ -871,9 +872,13 @@ func (h *DataHandler) listRelated(w http.ResponseWriter, r *http.Request, svc *d
 		return
 	}
 	occurrence := r.URL.Query().Get("occurrence")
+	end, ok := requestRelationEnd(w, r, r.URL.Query().Get("side"))
+	if !ok {
+		return
+	}
 
 	// The caller needs access to the table the records come from as well.
-	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, false, "") {
+	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, end, false, "") {
 		return
 	}
 
@@ -884,6 +889,7 @@ func (h *DataHandler) listRelated(w http.ResponseWriter, r *http.Request, svc *d
 		Limit:  limit,
 		Offset: offset,
 		Sort:   parseSortOrder(r.URL.Query()["sort"]),
+		End:    end,
 	})
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
@@ -898,6 +904,7 @@ func (h *DataHandler) listRelated(w http.ResponseWriter, r *http.Request, svc *d
 type RelatedBatchBody struct {
 	Relationship string           `json:"relationship"`
 	Occurrence   string           `json:"occurrence"`
+	Side         string           `json:"side,omitempty"`
 	RecordIDs    []string         `json:"record_ids"`
 	Limit        int              `json:"limit"`
 	Offset       int              `json:"offset"`
@@ -936,11 +943,15 @@ func (h *DataHandler) listRelatedBatch(w http.ResponseWriter, r *http.Request, s
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Batch Too Large", data.ErrBatchTooLarge.Error())
 		return
 	}
-	if !h.authorizeRelatedFrom(w, r, svc, from, body.Relationship, body.Occurrence, false, "") {
+	end, ok := requestRelationEnd(w, r, body.Side)
+	if !ok {
+		return
+	}
+	if !h.authorizeRelatedFrom(w, r, svc, from, body.Relationship, body.Occurrence, end, false, "") {
 		return
 	}
 	records, err := svc.RelatedRowsBatch(r.Context(), from, body.RecordIDs, body.Relationship, body.Occurrence,
-		data.QueryOptions{Limit: body.Limit, Offset: body.Offset, Sort: body.Sort})
+		data.QueryOptions{Limit: body.Limit, Offset: body.Offset, Sort: body.Sort, End: end})
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
 		return
@@ -952,9 +963,10 @@ func (h *DataHandler) listRelatedBatch(w http.ResponseWriter, r *http.Request, s
 // CreateRelatedRow creates a record in a related table and fills its match
 // field, which is what typing into the last row of a portal does.
 //
-//	POST /api/v1/data/{table}/{id}/related?relationship=<id>&occurrence=<id>
+//	POST /api/v1/data/{table}/{id}/related?relationship=<id>&occurrence=<id>[&side=left|right]
 //
-// It is refused with 403 unless the relationship allows creation. A related
+// It is refused with 403 unless the relationship allows creation on the side
+// created in. A related
 // table of another solution is written there, as the account the session
 // group holds in it, which needs its create privilege (#107).
 func (h *DataHandler) CreateRelatedRow(w http.ResponseWriter, r *http.Request) {
@@ -975,10 +987,14 @@ func (h *DataHandler) createRelated(w http.ResponseWriter, r *http.Request, svc 
 		return
 	}
 	occurrence := r.URL.Query().Get("occurrence")
+	end, ok := requestRelationEnd(w, r, r.URL.Query().Get("side"))
+	if !ok {
+		return
+	}
 
 	// The record is created in the related table, so that is where the
 	// create privilege has to hold.
-	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, true, data.ActionCreate) {
+	if !h.authorizeRelatedFrom(w, r, svc, from, relationship, occurrence, end, true, data.ActionCreate) {
 		return
 	}
 
@@ -988,7 +1004,7 @@ func (h *DataHandler) createRelated(w http.ResponseWriter, r *http.Request, svc 
 		return
 	}
 
-	inserted, err := svc.CreateRelatedRowFrom(r.Context(), from, chi.URLParam(r, "id"), relationship, occurrence, record)
+	inserted, err := svc.CreateRelatedRowToward(r.Context(), from, chi.URLParam(r, "id"), relationship, occurrence, end, record)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Insert Error", err)
 		return
@@ -1036,19 +1052,30 @@ func (h *DataHandler) authorizeRelated(
 	w http.ResponseWriter, r *http.Request, svc *data.Service,
 	table, relationship, occurrence string, write bool,
 ) bool {
-	return h.authorizeRelatedFrom(w, r, svc, data.LocalOrigin(table), relationship, occurrence, write, "")
+	return h.authorizeRelatedFrom(w, r, svc, data.LocalOrigin(table), relationship, occurrence, "", write, "")
+}
+
+// requestRelationEnd reads the end of a relationship a request names, and
+// answers 400 itself when it is neither left nor right.
+func requestRelationEnd(w http.ResponseWriter, r *http.Request, text string) (data.RelationEnd, bool) {
+	end, err := data.ParseRelationEnd(text)
+	if err != nil {
+		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid Side", err.Error())
+		return "", false
+	}
+	return end, true
 }
 
 func (h *DataHandler) authorizeRelatedFrom(
 	w http.ResponseWriter, r *http.Request, svc *data.Service,
-	from data.Origin, relationship, occurrence string, write bool, action string,
+	from data.Origin, relationship, occurrence string, end data.RelationEnd, write bool, action string,
 ) bool {
 	rel, err := svc.Relationship(r.Context(), relationship)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
 		return false
 	}
-	_, target, err := rel.SidesFrom(from, occurrence)
+	_, target, err := rel.SidesToward(from, occurrence, end)
 	if err != nil {
 		writeDataError(w, r, http.StatusBadRequest, "Related Records Error", err)
 		return false

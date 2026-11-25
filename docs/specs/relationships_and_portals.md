@@ -35,6 +35,12 @@ acts as it did. The two sides are never merged: the left side's "delete related
 records" deletes a left record with a right one, never a right record with a
 left one.
 
+A relationship may join an occurrence to itself, a hierarchy drawn as
+`Staff::code = Staff::boss_code` (the left end the boss, the right end the
+reports). Both ends are then the same occurrence, so a cascade follows the end
+whose option is on, and a read or a creation names its end with `side`
+(`left` or `right`); the occurrence alone names the right end.
+
 A portal reads the sort of the side it shows: a Companies layout showing its
 customers uses the customers side's, a Customers layout showing its company
 uses the companies side's. A field that side does not have is dropped rather
@@ -208,7 +214,9 @@ answers `422`.
 Deleting a record deletes the records that belong to it, following every
 relationship of its table whose other side asks for it — the right side's
 option when the table is on the left, the left side's when it is on the right —
-and then theirs, all the way down.
+and then theirs, all the way down. A cascade, like creating a related
+record, reads no page, so the relationship's sort is neither applied nor
+checked there.
 A ring of such relationships deletes each record once rather than recursing
 forever.
 

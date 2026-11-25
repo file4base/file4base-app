@@ -1030,6 +1030,7 @@ Returns the records of a related table that match record `{id}` of `{table}`.
 #### Query Parameters
 - `relationship` (string, **required**) — the relationship to follow. Missing answers `400 Missing Relationship`.
 - `occurrence` (string, optional) — the occurrence whose records are wanted, by id or by name. It may be left out unless the relationship joins a table to itself, where there is no other side to infer and leaving it out answers `400`.
+- `side` (`left` or `right`, optional) — the end of the relationship whose records are wanted. A relationship that joins an occurrence to itself has the same occurrence at both ends, where `occurrence` alone names the right end: `side=left` reads the left end. Given with `occurrence`, that occurrence must be the end named. Anything else answers `400 Invalid Side`.
 - `limit`, `offset`, `sort` — as in `GET /api/v1/data/{table}`. Without `sort` the "Sort records" of the side being read applies: `sort_related` when it is the right side, `left_sort_related` when it is the left side. A `sort` the caller gives is always checked: a field the related table does not have answers `400 Unknown Field`.
 
 The caller needs read access to **both** tables.
@@ -1052,7 +1053,7 @@ An **empty match field relates to nothing**: a record with nothing in its match 
 
 ### `POST /api/v1/data/{table}/{id}/related`
 
-Creates a record on the other side of a relationship and fills its match field from record `{id}`, which is what typing into the last row of a portal does. Takes the same `relationship` and `occurrence` query parameters.
+Creates a record on the other side of a relationship and fills its match field from record `{id}`, which is what typing into the last row of a portal does. Takes the same `relationship`, `occurrence` and `side` query parameters: on a relationship joining an occurrence to itself, `side=left` creates on the left end, with `left_allow_creation`.
 
 The match field belongs to the relationship: a value sent for it in the body is **overwritten** with the parent's, so a request cannot aim the new record at a different parent.
 
@@ -1075,7 +1076,7 @@ The related records of several records of `{table}` in one request: what a list 
 { "relationship": "rel-1", "occurrence": "occ-customers", "record_ids": ["co-1", "co-2"], "limit": 1,
   "sort": [{ "field": "last_name" }, { "field": "fee_paid", "descending": true }] }
 ```
-`occurrence`, `limit` and `offset` as for the single read, and `sort` as its `?sort=last_name,-fee_paid`, the relationship's own order when omitted; at most 100 `record_ids` (`422 Batch Too Large`). The same access is needed.
+`occurrence`, `side`, `limit` and `offset` as for the single read, and `sort` as its `?sort=last_name,-fee_paid`, the relationship's own order when omitted; at most 100 `record_ids` (`422 Batch Too Large`). The same access is needed.
 
 #### Response `200 OK`
 Every record asked for has an entry, empty when nothing is related to it or it does not exist:
@@ -1303,9 +1304,9 @@ Merges a solution file into the session's database (owner only). Version `2.0` f
 
 1. The whole file is validated first (structure, names, field options and every internal reference); a file with a dangling reference answers `400` and changes nothing.
 2. Existing objects are matched by name (tables, fields, occurrences, layouts and scripts, accounts by username) and every reference is rewritten to the database's own IDs, including the `script_id` of buttons and script triggers in layout definitions.
-3. Missing objects are created; matching layouts and scripts are updated; existing tables, fields and accounts are left unchanged. Importing the same file twice creates nothing new.
+3. Missing objects are created; matching layouts and scripts are updated; a relationship joining the same occurrences on the same criteria takes the file's options for each side (allow creation, delete related records, sort), counted in `relationships_updated` when they changed; existing tables, fields and accounts are left unchanged. Importing the same file twice creates nothing new.
 4. Missing accounts are created **disabled**, with a random password nobody knows, keeping their role and layout permissions: an owner enables them and sets their password in Manage Security.
-5. If a write fails, everything the import created is removed and every updated layout or script gets its previous version back; the response is `400` with the reason.
+5. If a write fails, everything the import created is removed and every updated layout, script or relationship gets its previous version back; the response is `400` with the reason.
 
 Before decoding, the payload's structure is checked: a collection or string declaring more elements or bytes than the payload holds, nesting deeper than 32 levels or more than 5,000,000 collection entries in total answers `400 Bad Request` and changes nothing (also for `import-data`).
 
@@ -1321,6 +1322,7 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
   "columns_created": 5,
   "occurrences_created": 1,
   "relationships_created": 1,
+  "relationships_updated": 0,
   "layouts_created": 2,
   "layouts_updated": 0,
   "scripts_created": 1,

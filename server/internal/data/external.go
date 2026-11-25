@@ -422,6 +422,7 @@ func scanExternalRelationship(row interface{ Scan(...any) error }) (*Relationshi
 	if !external {
 		return nil, nil
 	}
+	rel.setEnds()
 	return &rel, nil
 }
 

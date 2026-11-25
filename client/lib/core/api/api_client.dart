@@ -2299,13 +2299,16 @@ class ApiClient {
   ///
   /// [occurrence] names the side whose records are wanted. It may be left out
   /// unless the relationship joins a table to itself, where there is no other
-  /// side to infer. [sort] takes the same form as in [listRows]; without it the
-  /// relationship's own "Sort related records" applies.
+  /// side to infer. [side] (`left` or `right`) names the end instead, which a
+  /// relationship joining an occurrence to itself needs. [sort] takes the
+  /// same form as in [listRows]; without it the side's own "Sort records"
+  /// applies.
   Future<List<Map<String, dynamic>>> listRelatedRows(
     String table,
     String id, {
     required String relationshipId,
     String? occurrence,
+    String? side,
     List<String>? sort,
     int limit = 100,
     int offset = 0,
@@ -2313,6 +2316,7 @@ class ApiClient {
     final uri = Uri.parse('${_records(table)}/$id/related').replace(queryParameters: {
       'relationship': relationshipId,
       if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+      'side': ?side,
       'limit': limit.toString(),
       'offset': offset.toString(),
       if (sort != null && sort.isNotEmpty) 'sort': sort.join(','),
@@ -2328,17 +2332,19 @@ class ApiClient {
   /// field filled from [id] so the new record belongs to it (#36).
   ///
   /// The server refuses this unless the relationship allows records to be
-  /// created through it.
+  /// created through it on that side. [side] is as in [listRelatedRows].
   Future<Map<String, dynamic>> createRelatedRow(
     String table,
     String id, {
     required String relationshipId,
     String? occurrence,
+    String? side,
     Map<String, dynamic> values = const {},
   }) async {
     final uri = Uri.parse('${_records(table)}/$id/related').replace(queryParameters: {
       'relationship': relationshipId,
       if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+      'side': ?side,
     });
 
     final response = await _httpClient.post(
@@ -2361,6 +2367,7 @@ class ApiClient {
     List<String> ids, {
     required String relationshipId,
     String? occurrence,
+    String? side,
     List<String>? sort,
     int limit = 100,
   }) async {
@@ -2378,6 +2385,7 @@ class ApiClient {
       body: jsonEncode({
         'relationship': relationshipId,
         if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
+        'side': ?side,
         'record_ids': ids,
         'limit': limit,
         if (order.isNotEmpty) 'sort': order,

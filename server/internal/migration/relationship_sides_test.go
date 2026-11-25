@@ -354,3 +354,86 @@ func TestRecipeHTMLDDRKeepsItsOptionsOnTheLeftSide(t *testing.T) {
 		t.Fatalf("recipe_ingredients side: got %+v, want %+v", ingredients[0], want)
 	}
 }
+
+// An HTML report writes each criterion's operator in the middle cell of its
+// "Field" row, in FileMaker's signs; each is kept as it is, and one this
+// reader does not know refuses the relationship rather than being read as =.
+func TestHTMLDDRRelationshipOperators(t *testing.T) {
+	off := [2]string{"Off", "Off"}
+	withCriteria := func(rows string) string {
+		doc := projectTasksHTML(off, off, off)
+		field := `<tr vAlign="top"><td class="chartheadersnobg">Field</td><td class="regularcharttext"><a href="#1301FieldAnchor_">project_code</a></td>` +
+			`<td class="regularcharttext" align="middle">=</td><td class="regularcharttext"><a href="#1291FieldAnchor_">code</a></td></tr>`
+		if !strings.Contains(doc, field) {
+			t.Fatal("the fixture's criterion row changed")
+		}
+		return strings.Replace(doc, field, rows, 1)
+	}
+	criterion := func(title, left, op, right string) string {
+		return `<tr vAlign="top"><td class="chartheadersnobg">` + title + `</td><td class="regularcharttext">` + left +
+			`</td><td class="regularcharttext" align="middle">` + op + `</td><td class="regularcharttext">` + right + `</td></tr>`
+	}
+
+	for _, tc := range []struct{ cell, want string }{
+		{"=", "="}, {"&ne;", "≠"}, {"≠", "≠"}, {"&lt;", "<"}, {"&le;", "≤"}, {"&gt;", ">"}, {"≥", "≥"}, {"&times;", "×"},
+	} {
+		res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: withCriteria(criterion("Field", "project_code", tc.cell, "code"))})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.cell, err)
+		}
+		if got := describeCriteria(res.Bundle, onlyRelationship(t, res)); len(got) != 1 || got[0] != "tasks.project_code "+tc.want+" projects.code" {
+			t.Fatalf("%s: criteria %v", tc.cell, got)
+		}
+	}
+
+	t.Run("every criterion, each with its operator", func(t *testing.T) {
+		res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: withCriteria(
+			criterion("Field", "project_code", "=", "code") + criterion("", "due", "&ge;", "title"))})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := describeCriteria(res.Bundle, onlyRelationship(t, res))
+		if want := "tasks.project_code = projects.code; tasks.due ≥ projects.title"; strings.Join(got, "; ") != want {
+			t.Fatalf("criteria %v, want %s", got, want)
+		}
+	})
+
+	for _, op := range []string{"~", ""} {
+		t.Run("an operator that is not known refuses the relationship: "+op, func(t *testing.T) {
+			res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: withCriteria(criterion("Field", "project_code", op, "code"))})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(res.Bundle.Relationships) != 0 {
+				t.Fatalf("migrated as %v", describeCriteria(res.Bundle, res.Bundle.Relationships[0]))
+			}
+			if len(res.Report.Rejected) == 0 || !strings.Contains(res.Report.Rejected[0].Detail, "Unsupported join operator") {
+				t.Fatalf("the report must say why: %+v", res.Report.Rejected)
+			}
+		})
+	}
+
+	t.Run("a report of three cells writes the operator between the fields", func(t *testing.T) {
+		for _, tc := range []struct{ text, want string }{
+			{"tasks::project_code &ge; projects::code", "≥"},
+			{"tasks::project_code&lt;projects::code", "<"},
+		} {
+			doc := strings.Replace(projectTasksHTMLLegacy, "tasks::project_code = projects::code", tc.text, 1)
+			res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := describeCriteria(res.Bundle, onlyRelationship(t, res)); len(got) != 1 || got[0] != "tasks.project_code "+tc.want+" projects.code" {
+				t.Fatalf("%s: criteria %v", tc.text, got)
+			}
+		}
+		doc := strings.Replace(projectTasksHTMLLegacy, "tasks::project_code = projects::code", "tasks::project_code like projects::code", 1)
+		res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(res.Bundle.Relationships) != 0 || len(res.Report.Rejected) == 0 {
+			t.Fatalf("an operator that is not known must refuse the relationship: %+v", res.Report.Rejected)
+		}
+	})
+}

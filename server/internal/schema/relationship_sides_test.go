@@ -170,3 +170,41 @@ func TestRelationshipSideOptions_UpgradeAnOlderCatalog(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, rels[0].LeftCascadeDelete)
 }
+
+// Importing a design again onto the solution that has its relationships
+// gives each matched relationship the file's options for each side, so the
+// options an earlier import set wrong are corrected, and says so.
+func TestRelationshipSideOptions_ImportAgainCorrectsTheOptions(t *testing.T) {
+	mgr, ctx := externalTestManager(t)
+	if mgr == nil {
+		return
+	}
+	s := newExternalSolution(t, ctx, mgr, "rel_sides_again")
+	rel, reload := sideOptionsSolution(t, s)
+	file, err := s.svc.ExportSolution(ctx, schema.ExportOptions{SolutionName: "Side Options"})
+	require.NoError(t, err)
+
+	// What an import that merged the sides would have left: the delete on
+	// the wrong side, the sorts gone.
+	on, off, none := true, false, ""
+	_, err = s.svc.UpdateRelationship(ctx, rel.ID, schema.UpdateRelationshipInput{
+		CascadeDelete: &off, LeftCascadeDelete: &on, LeftAllowCreation: &off, SortRelated: &none, LeftSortRelated: &none,
+	})
+	require.NoError(t, err)
+
+	report, err := s.svc.ImportSolution(ctx, file)
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.RelationshipsCreated)
+	assert.Equal(t, 1, report.RelationshipsUpdated)
+	got := reload(t)
+	assert.Equal(t, rel.ID, got.ID, "the same relationship, not a second one")
+	assert.True(t, got.CascadeDelete)
+	assert.False(t, got.LeftCascadeDelete)
+	assert.True(t, got.LeftAllowCreation)
+	assert.Equal(t, "due", got.SortRelated)
+	assert.Equal(t, "-title", got.LeftSortRelated)
+
+	report, err = s.svc.ImportSolution(ctx, file)
+	require.NoError(t, err)
+	assert.Equal(t, 0, report.RelationshipsUpdated, "nothing to correct the second time")
+}

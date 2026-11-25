@@ -157,6 +157,38 @@ void main() {
     expect(fromProjects.single.allowsCreation, isFalse, reason: "the right side's is off");
   });
 
+  test('a relationship joining an occurrence to itself is looked through by its end', () {
+    const staff = TableModel(id: 'tbl-s', name: 'staff', displayName: 'Staff', columns: [
+      ColumnModel(id: 's-code', tableId: 'tbl-s', name: 'code', displayName: 'code', fieldType: 'TEXT'),
+      ColumnModel(id: 's-boss', tableId: 'tbl-s', name: 'boss_code', displayName: 'boss_code', fieldType: 'TEXT'),
+    ]);
+    const occurrence = TableOccurrenceModel(id: 'occ-s', baseTableId: 'tbl-s', name: 'Staff', xPos: 0, yPos: 0);
+    const bosses = RelationshipModel(
+      id: 'rel-s',
+      name: 'Staff_Bosses',
+      leftOccurrenceId: 'occ-s',
+      leftColumnId: 's-code',
+      rightOccurrenceId: 'occ-s',
+      rightColumnId: 's-boss',
+      leftAllowCreation: true,
+    );
+    final targets = reachableTargets(
+      fromTable: 'staff',
+      relationships: const [bosses],
+      occurrencesById: const {'occ-s': occurrence},
+      tablesById: const {'tbl-s': staff},
+    );
+    expect([for (final t in targets) t.side], ['right', 'left']);
+    expect([for (final t in targets) t.allowsCreation], [false, true], reason: "each end's own option");
+    expect([for (final t in targets) t.requestSide], ['right', 'left'], reason: 'the occurrence alone cannot tell them apart');
+    expect(reachableTargets(
+      fromTable: 'tasks',
+      relationships: const [_relationship],
+      occurrencesById: {for (final o in _occurrences) o.id: o},
+      tablesById: {for (final t in _tables) t.id: t},
+    ).single.requestSide, isNull, reason: 'two occurrences need no end');
+  });
+
   test('the left side options travel in JSON, and default to off', () {
     final back = RelationshipModel.fromJson(_relationship.toJson());
     expect(back.leftAllowCreation, isTrue);

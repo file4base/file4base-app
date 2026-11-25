@@ -218,12 +218,14 @@ func (p *deletePlan) children(ctx context.Context, lv level) ([]level, error) {
 		if err != nil {
 			return nil, err
 		}
-		// The side whose option is on is the one whose records go.
-		side := rel.Right
+		// The side whose option is on is the one whose records go, named by
+		// its end: a relationship joining an occurrence to itself has the
+		// same occurrence at both. No sort is applied or checked.
+		side, end := rel.Right, EndRight
 		if link.toLeft {
-			side = rel.Left
+			side, end = rel.Left, EndLeft
 		}
-		q, err := svc.relatedQueryOf(ctx, rel, LocalOrigin(lv.table), side.OccurrenceID, QueryOptions{})
+		q, err := svc.relatedQueryOf(ctx, rel, LocalOrigin(lv.table), "", end)
 		if err != nil {
 			// A relationship pointing at a table of this solution that is no
 			// longer a user table must not make a record undeletable. One
@@ -234,7 +236,7 @@ func (p *deletePlan) children(ctx context.Context, lv level) ([]level, error) {
 			}
 			return nil, err
 		}
-		scope := lv.sol.name + "\x00" + rel.ID + "\x00" + q.target.OccurrenceID + "\x00"
+		scope := lv.sol.name + "\x00" + rel.ID + "\x00" + string(end) + "\x00"
 		ids, steps, err := q.relatedIDs(ctx, lv.ids, func(signature string) bool {
 			if _, done := p.keys[scope+signature]; done {
 				return false

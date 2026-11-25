@@ -7187,6 +7187,14 @@
           "occurrence": {
             "type": "string"
           },
+          "side": {
+            "type": "string",
+            "enum": [
+              "left",
+              "right"
+            ],
+            "description": "The end of the relationship whose records are wanted, which a relationship joining an occurrence to itself needs for its left end."
+          },
           "record_ids": {
             "type": "array",
             "maxItems": 100,

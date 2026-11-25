@@ -455,7 +455,12 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 	for _, rm := range relAnchorRe.FindAllStringSubmatch(detailsBlock, -1) {
 		relName := cleanHTMLText(rm[1])
 		relTableHTML := rm[2]
-		var leftOcc, leftField, rightOcc, rightField string
+		var leftOcc, rightOcc string
+		// Each "Field" row is a criterion: the left field, the operator in
+		// the middle cell and the right field. A row with no title right
+		// after one is the next criterion of the same relationship.
+		var criteria []htmlCriterion
+		inCriteria := false
 		// The report gives each side's options in that side's column, as
 		// FileMaker sets them: the second cell is the left table's, the
 		// fourth the right table's, each acting on the records of its own
@@ -470,20 +475,23 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		// (a "Create" or "Delete" row of three cells) leaves the side to
 		// guess.
 		unsidedCreate, unsidedDelete := false, false
+		var unreadable []string
 
 		for _, tr := range reHTMLTableRow.FindAllStringSubmatch(relTableHTML, -1) {
 			cells := reHTMLTableCell.FindAllStringSubmatch(tr[1], -1)
 			if len(cells) >= 4 {
 				rowTitle := strings.ToLower(cleanHTMLText(cells[0][1]))
 				c1 := cleanHTMLText(cells[1][1])
+				c2 := cleanHTMLText(cells[2][1])
 				c3 := cleanHTMLText(cells[3][1])
+				isCriterion := rowTitle == "field" || (rowTitle == "" && inCriteria && (c1 != "" || c3 != ""))
+				inCriteria = isCriterion
 				switch {
+				case isCriterion:
+					criteria = append(criteria, htmlCriterion{leftField: c1, op: c2, rightField: c3})
 				case rowTitle == "table occurrence":
 					leftOcc = c1
 					rightOcc = c3
-				case rowTitle == "field":
-					leftField = c1
-					rightField = c3
 				case strings.Contains(rowTitle, "allow creation"):
 					left.create, right.create = htmlOptionOn(c1), htmlOptionOn(c3)
 				case strings.Contains(rowTitle, "delete related"):
@@ -494,12 +502,16 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			} else if len(cells) >= 3 {
 				c1 := cleanHTMLText(cells[1][1])
 				c2 := cleanHTMLText(cells[2][1])
-				if strings.Contains(c2, "::") && strings.Contains(c2, "=") {
-					parts := strings.SplitN(c2, "=", 2)
-					if len(parts) == 2 {
-						leftOcc, leftField = splitQualifiedField(parts[0])
-						rightOcc, rightField = splitQualifiedField(parts[1])
-					}
+				if m := matchHTMLPredicate(c2); m != nil {
+					var c htmlCriterion
+					leftOcc, c.leftField = splitQualifiedField(m[1])
+					c.op = m[2]
+					rightOcc, c.rightField = splitQualifiedField(m[3])
+					criteria = append(criteria, c)
+				} else if strings.Count(c2, "::") >= 2 {
+					// Two fields with no operator this reader can tell
+					// apart: refused rather than read as =.
+					unreadable = append(unreadable, c2)
 				}
 				if strings.EqualFold(c1, "Create") && strings.EqualFold(c2, "Yes") {
 					unsidedCreate = true
@@ -509,7 +521,16 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 				}
 			}
 		}
-		if leftOcc == "" || rightOcc == "" || leftField == "" || rightField == "" {
+		if len(unreadable) > 0 {
+			addReportItem(report, ReportItem{
+				Category:   CategoryRejected,
+				Domain:     "relationship",
+				SourceName: relName,
+				Detail:     fmt.Sprintf("Unsupported join operator (%s)", strings.Join(unreadable, ", ")),
+			})
+			continue
+		}
+		if leftOcc == "" || rightOcc == "" || len(criteria) == 0 {
 			continue
 		}
 		// Allowing creation on the side drawn second is what such a report
@@ -521,15 +542,42 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 		rightOccID := occIDByName[strings.ToLower(rightOcc)]
 		leftTbl := occTableByName[strings.ToLower(leftOcc)]
 		rightTbl := occTableByName[strings.ToLower(rightOcc)]
-		leftColID := colIDByTableCol[leftTbl+"."+sanitizeIdentifier(leftField)]
-		rightColID := colIDByTableCol[rightTbl+"."+sanitizeIdentifier(rightField)]
-
-		if leftOccID == "" || rightOccID == "" || leftColID == "" || rightColID == "" {
+		// Every criterion is kept, with its own operator: a relationship
+		// missing one, or read with = in place of an operator that is not
+		// known, would relate (and cascade deletes to) records the source
+		// never related, so it is refused whole instead.
+		var predicates []schema.BundlePredicate
+		var described, unresolved, unsupported []string
+		for _, c := range criteria {
+			op, known := normalizeRelOperator(c.op)
+			if !known || strings.TrimSpace(c.op) == "" {
+				unsupported = append(unsupported, fmt.Sprintf("%s::%s %q %s::%s", leftOcc, c.leftField, c.op, rightOcc, c.rightField))
+				continue
+			}
+			text := fmt.Sprintf("%s.%s %s %s.%s", leftOcc, c.leftField, op, rightOcc, c.rightField)
+			leftColID := colIDByTableCol[leftTbl+"."+sanitizeIdentifier(c.leftField)]
+			rightColID := colIDByTableCol[rightTbl+"."+sanitizeIdentifier(c.rightField)]
+			if leftOccID == "" || rightOccID == "" || leftColID == "" || rightColID == "" {
+				unresolved = append(unresolved, text)
+				continue
+			}
+			described = append(described, text)
+			predicates = append(predicates, schema.BundlePredicate{LeftColumnID: leftColID, Operator: op, RightColumnID: rightColID})
+		}
+		if len(unsupported) > 0 || len(unresolved) > 0 {
+			var reasons []string
+			if len(unsupported) > 0 {
+				reasons = append(reasons, fmt.Sprintf("Unsupported join operator in %d of its %d criteria (%s)",
+					len(unsupported), len(criteria), strings.Join(unsupported, ", ")))
+			}
+			if len(unresolved) > 0 {
+				reasons = append(reasons, fmt.Sprintf("Unresolvable join endpoints (%s)", strings.Join(unresolved, ", ")))
+			}
 			addReportItem(report, ReportItem{
 				Category:   CategoryRejected,
 				Domain:     "relationship",
 				SourceName: relName,
-				Detail:     fmt.Sprintf("Unresolvable join endpoints (%s::%s = %s::%s)", leftOcc, leftField, rightOcc, rightField),
+				Detail:     strings.Join(reasons, "; "),
 			})
 			continue
 		}
@@ -548,15 +596,13 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			ID:                relID,
 			Name:              relName,
 			LeftOccurrenceID:  leftOccID,
-			LeftColumnID:      leftColID,
 			RightOccurrenceID: rightOccID,
-			RightColumnID:     rightColID,
-			Operator:          "=",
 			AllowCreation:     right.create,
 			CascadeDelete:     right.purge,
 			LeftAllowCreation: left.create,
 			LeftCascadeDelete: left.purge,
 		}
+		rel.WithPredicates(predicates)
 		var notes []ReportItem
 		for _, side := range []struct {
 			occurrence, table, cell string
@@ -601,7 +647,7 @@ func analyzeAndConvertHTMLDDR(req MigrationRequest) (*ConvertedSolution, error) 
 			Domain:     "relationship",
 			SourceName: relName,
 			TargetName: relName,
-			Detail:     fmt.Sprintf("%s.%s = %s.%s", leftOcc, leftField, rightOcc, rightField) + relationshipOptionsDetail(leftOcc, rightOcc, &rel),
+			Detail:     strings.Join(described, " AND ") + relationshipOptionsDetail(leftOcc, rightOcc, &rel),
 		})
 		for _, item := range notes {
 			addReportItem(report, item)
@@ -2306,6 +2352,30 @@ func parseWidthHeight(bounds string) (float64, float64) {
 		h, _ = strconv.ParseFloat(m[1], 64)
 	}
 	return w, h
+}
+
+// htmlCriterion is one match criterion of a relationship as an HTML report
+// writes it: a field of each side and the operator between them.
+type htmlCriterion struct {
+	leftField, op, rightField string
+}
+
+// reHTMLPredicate reads the criterion a report of three cells writes as one
+// text, "Occurrence::Field <operator> Occurrence::Field". The operator is
+// whatever stands between the two qualified fields, read as FileMaker writes
+// it, and refused when it is not one of its operators.
+var (
+	reHTMLPredicate       = regexp.MustCompile(`^\s*([^:]+::.+?)\s+(\S+)\s+([^:\s][^:]*::.+?)\s*$`)
+	reHTMLPredicateSigned = regexp.MustCompile(`^\s*([^:]+::.+?)\s*(<>|!=|<=|>=|==|[=≠<>≤≥×])\s*([^:]+::.+?)\s*$`)
+)
+
+// matchHTMLPredicate splits a criterion written as one text into its left
+// field, operator and right field, or returns nil.
+func matchHTMLPredicate(text string) []string {
+	if m := reHTMLPredicate.FindStringSubmatch(text); m != nil {
+		return m
+	}
+	return reHTMLPredicateSigned.FindStringSubmatch(text)
 }
 
 func splitQualifiedField(s string) (string, string) {

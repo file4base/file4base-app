@@ -56,6 +56,39 @@ type RelationSide struct {
 	TableName      string          `json:"table_name"`
 	Column         string          `json:"column"`
 	External       *ExternalTarget `json:"external,omitempty"`
+	// End is which end of the relationship the side is. Its occurrence does
+	// not say when the relationship joins an occurrence to itself.
+	End RelationEnd `json:"end,omitempty"`
+}
+
+// RelationEnd names one end of a relationship.
+type RelationEnd string
+
+const (
+	EndLeft  RelationEnd = "left"
+	EndRight RelationEnd = "right"
+)
+
+// ParseRelationEnd reads the end a request names: "left", "right", or none.
+func ParseRelationEnd(text string) (RelationEnd, error) {
+	switch end := RelationEnd(strings.ToLower(strings.TrimSpace(text))); end {
+	case "", EndLeft, EndRight:
+		return end, nil
+	}
+	return "", fmt.Errorf("%w: the end of a relationship is left or right, not %q", ErrRelationshipNotFound, text)
+}
+
+// isLeft reports whether side is the left end of r.
+func (r *Relationship) isLeft(side RelationSide) bool {
+	if side.End != "" {
+		return side.End == EndLeft
+	}
+	return side.OccurrenceID == r.Left.OccurrenceID
+}
+
+// setEnds records which end each side is.
+func (r *Relationship) setEnds() {
+	r.Left.End, r.Right.End = EndLeft, EndRight
 }
 
 // Relationship is a catalog relationship with both of its sides resolved.
@@ -90,19 +123,19 @@ type Relationship struct {
 // the relationship, from a record of its other side: the option of the side
 // they are created in.
 func (r *Relationship) allowsCreationIn(target RelationSide) bool {
-	if target.OccurrenceID == r.Right.OccurrenceID {
-		return r.AllowCreation
+	if r.isLeft(target) {
+		return r.LeftAllowCreation
 	}
-	return r.LeftAllowCreation
+	return r.AllowCreation
 }
 
 // sortOf is the "Sort records" order of a side: the order its records are
 // read in from a record of the other side.
 func (r *Relationship) sortOf(target RelationSide) string {
-	if target.OccurrenceID == r.Right.OccurrenceID {
-		return r.SortRelated
+	if r.isLeft(target) {
+		return r.LeftSortRelated
 	}
-	return r.LeftSortRelated
+	return r.SortRelated
 }
 
 // RelationPredicate is one match criterion of a relationship, with its two
@@ -138,7 +171,7 @@ type matchTerm struct {
 // left side — otherwise Lines::Date > Orders::Date read from an order would
 // return the lines dated before it.
 func (r *Relationship) matchTerms(source RelationSide) ([]matchTerm, error) {
-	fromLeft := source.OccurrenceID == r.Left.OccurrenceID
+	fromLeft := r.isLeft(source)
 	preds := r.predicates()
 	terms := make([]matchTerm, len(preds))
 	for i, p := range preds {
@@ -250,6 +283,32 @@ func notEmpty(dialect dbal.Dialect, column string) string {
 // taken as the target.
 func (r *Relationship) Sides(fromTable, targetOccurrence string) (source, target RelationSide, err error) {
 	return r.SidesFrom(LocalOrigin(fromTable), targetOccurrence)
+}
+
+// SidesToward is SidesFrom with the end of the relationship to read named,
+// which is how the two ends are told apart when the relationship joins an
+// occurrence to itself: there, an occurrence alone names the right end. A
+// target occurrence given with an end must be that end's.
+func (r *Relationship) SidesToward(from Origin, targetOccurrence string, end RelationEnd) (source, target RelationSide, err error) {
+	switch end {
+	case "":
+		return r.SidesFrom(from, targetOccurrence)
+	case EndLeft:
+		source, target = r.Right, r.Left
+	case EndRight:
+		source, target = r.Left, r.Right
+	default:
+		return source, target, fmt.Errorf("%w: relationship %s has no %s end", ErrRelationshipNotFound, r.Name, end)
+	}
+	if targetOccurrence != "" && targetOccurrence != target.OccurrenceID && targetOccurrence != target.OccurrenceName {
+		return source, target, fmt.Errorf("%w: the %s end of relationship %s is %s, not %q",
+			ErrRelationshipNotFound, end, r.Name, target.OccurrenceName, targetOccurrence)
+	}
+	if source.origin().key() != from.key() {
+		return source, target, fmt.Errorf("%w: the other side of relationship %s is %s, not %s",
+			ErrRelationshipNotFound, r.Name, source.TableName, from.Table)
+	}
+	return source, target, nil
 }
 
 // SidesFrom is Sides for a record of any table, of this solution or of
@@ -426,6 +485,7 @@ func scanRelationship(row interface{ Scan(...any) error }) (*Relationship, error
 	rel.SortRelated = sortRelated.String
 	rel.LeftAllowCreation, rel.LeftCascadeDelete, rel.LeftSortRelated =
 		leftAllowCreation.Bool, leftCascadeDelete.Bool, leftSortRelated.String
+	rel.setEnds()
 	return &rel, nil
 }
 
@@ -694,16 +754,28 @@ func (s *Service) relatedQuery(
 	if err != nil {
 		return nil, err
 	}
-	return s.relatedQueryOf(ctx, rel, from, targetOccurrence, opts)
+	q, err := s.relatedQueryOf(ctx, rel, from, targetOccurrence, opts.End)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.paged(ctx, opts); err != nil {
+		return nil, err
+	}
+	return q, nil
 }
 
 // relatedQueryOf is relatedQuery for a relationship already resolved.
+//
+// It resolves what matching needs, and no order: creating and cascading
+// read no page, so the relationship's sort is neither applied nor checked
+// there, and a sort its side cannot use never stops a record being created
+// or deleted.
 func (s *Service) relatedQueryOf(
-	ctx context.Context, rel *Relationship, from Origin, targetOccurrence string, opts QueryOptions,
+	ctx context.Context, rel *Relationship, from Origin, targetOccurrence string, end RelationEnd,
 ) (*relatedQuery, error) {
 	q := &relatedQuery{rel: rel}
 	var err error
-	if q.source, q.target, err = rel.SidesFrom(from, targetOccurrence); err != nil {
+	if q.source, q.target, err = rel.SidesToward(from, targetOccurrence, end); err != nil {
 		return nil, err
 	}
 	if q.terms, err = rel.matchTerms(q.source); err != nil {
@@ -738,9 +810,16 @@ func (s *Service) relatedQueryOf(
 			return nil, wrapSide(q.target, err)
 		}
 	}
+	return q, nil
+}
+
+// paged gives a read its order, the caller's or the target side's own sort,
+// and its page.
+func (q *relatedQuery) paged(ctx context.Context, opts QueryOptions) error {
+	var err error
 	if q.order, err = q.dst.orderBy(ctx, q.fields, q.target.TableName,
-		relatedSortOrder(rel, q.target, q.fields, opts)); err != nil {
-		return nil, wrapSide(q.target, err)
+		relatedSortOrder(q.rel, q.target, q.fields, opts)); err != nil {
+		return wrapSide(q.target, err)
 	}
 	q.limit, q.offset = opts.Limit, opts.Offset
 	if q.limit <= 0 {
@@ -751,7 +830,7 @@ func (s *Service) relatedQueryOf(
 	if q.offset < 0 {
 		q.offset = 0
 	}
-	return q, nil
+	return nil
 }
 
 // page is the statement reading one page of the related records that meet
@@ -930,11 +1009,21 @@ func (s *Service) CreateRelatedRowFrom(
 	ctx context.Context, from Origin, recordID, relationshipID, targetOccurrence string,
 	record map[string]interface{},
 ) (map[string]interface{}, error) {
+	return s.CreateRelatedRowToward(ctx, from, recordID, relationshipID, targetOccurrence, "", record)
+}
+
+// CreateRelatedRowToward is CreateRelatedRowFrom with the end of the
+// relationship to create in named, which a relationship joining an
+// occurrence to itself needs to create on its left end.
+func (s *Service) CreateRelatedRowToward(
+	ctx context.Context, from Origin, recordID, relationshipID, targetOccurrence string, end RelationEnd,
+	record map[string]interface{},
+) (map[string]interface{}, error) {
 	rel, err := s.Relationship(ctx, relationshipID)
 	if err != nil {
 		return nil, err
 	}
-	source, target, err := rel.SidesFrom(from, targetOccurrence)
+	source, target, err := rel.SidesToward(from, targetOccurrence, end)
 	if err != nil {
 		return nil, err
 	}
@@ -960,7 +1049,7 @@ func (s *Service) CreateRelatedRowFrom(
 				ErrCreationNotAllowed, rel.Name, rel.predicates()[i].Operator)
 		}
 	}
-	q, err := s.relatedQueryOf(ctx, rel, from, targetOccurrence, QueryOptions{})
+	q, err := s.relatedQueryOf(ctx, rel, from, targetOccurrence, end)
 	if err != nil {
 		return nil, err
 	}

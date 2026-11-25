@@ -20,8 +20,17 @@ class RelatedTarget {
     required this.relationship,
     required this.occurrence,
     required this.table,
+    this.side = 'right',
   });
   final RelationshipModel relationship;
+
+  /// The end of the relationship looked through, `left` or `right`: what
+  /// tells the two ends apart when it joins an occurrence to itself.
+  final String side;
+
+  /// [side] as a request names it: only when the occurrence alone does not
+  /// say which end is meant.
+  String? get requestSide => relationship.leftOccurrenceId == relationship.rightOccurrenceId ? side : null;
 
   /// The occurrence whose records are read, and the table behind it. For an
   /// occurrence of another solution's table (#107) the table only has its
@@ -36,7 +45,7 @@ class RelatedTarget {
   /// Whether a record of the other side may create records here: the
   /// relationship's allow-creation of the side looked through, as FileMaker
   /// sets it per side.
-  bool get allowsCreation => relationship.allowsCreationIn(occurrence.id);
+  bool get allowsCreation => side == 'left' ? relationship.leftAllowCreation : relationship.allowCreation;
 }
 
 /// Every occurrence reachable from [fromTable] by following one relationship,
@@ -63,7 +72,7 @@ List<RelatedTarget> reachableTargets({
       targets.add(RelatedTarget(relationship: rel, occurrence: right, table: rightTable));
     }
     if (rightTable.name == fromTable) {
-      targets.add(RelatedTarget(relationship: rel, occurrence: left, table: leftTable));
+      targets.add(RelatedTarget(relationship: rel, occurrence: left, table: leftTable, side: 'left'));
     }
   }
   return targets;
@@ -153,6 +162,7 @@ class RelatedContext {
       recordId,
       relationshipId: target.relationship.id,
       occurrence: target.occurrence.id,
+      side: target.requestSide,
       sort: sort,
       limit: limit,
     );
@@ -201,6 +211,7 @@ class RelatedContext {
         relationship: rel,
         occurrence: wantsRight ? right : left,
         table: wantsRight ? rightTable : leftTable,
+        side: wantsRight ? 'right' : 'left',
       );
     }
 
@@ -244,6 +255,7 @@ class RelatedBatcher {
       table: table,
       relationship: target.relationship.id,
       occurrence: target.occurrence.id,
+      side: target.requestSide,
       sort: (sort ?? const []).join(','),
       limit: limit,
     );
@@ -262,6 +274,7 @@ class RelatedBatcher {
           final rows = await apiClient.listRelatedRowsBatch(key.table, chunk,
               relationshipId: key.relationship,
               occurrence: key.occurrence,
+              side: key.side,
               sort: key.sort.isEmpty ? null : [key.sort],
               limit: key.limit);
           for (final id in chunk) {
@@ -277,7 +290,7 @@ class RelatedBatcher {
   }
 }
 
-typedef _BatchKey = ({String table, String relationship, String occurrence, String sort, int limit});
+typedef _BatchKey = ({String table, String relationship, String occurrence, String? side, String sort, int limit});
 
 /// A calculation or summary field is filled in by the database, so it is shown
 /// rather than typed into.
@@ -714,6 +727,7 @@ class _PortalViewState extends State<PortalView> {
             recordId,
             relationshipId: target.relationship.id,
             occurrence: target.occurrence.id,
+            side: target.requestSide,
             values: value.isEmpty ? const {} : {field: value},
           ));
       if (!mounted) return;
