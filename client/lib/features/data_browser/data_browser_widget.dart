@@ -142,7 +142,7 @@ class FindRequestDraft {
 }
 
 class DataBrowserWidgetState extends State<DataBrowserWidget>
-    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost, CalculationContextHost {
+    implements LayoutActionHost, ExtendedLayoutActionHost, AutoEnterActionHost, CalculationContextHost, RelatedFieldHost {
   /// Without privileges, this solution's records take every command, the
   /// server deciding, and another solution's are only read.
   RecordPrivileges get _privileges =>
@@ -1168,6 +1168,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     fn.addListener(() {
       if (fn.hasFocus) {
         _lastFocusedBrowseField = col.name;
+        _activePortalRow = null;
         if (mounted) setState(() {});
         widget.onFocusedFieldChanged?.call();
       } else {
@@ -3268,7 +3269,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
                 isDark: isDark, radius: obj.style.cornerRadius);
           }
           return RelatedFieldView(
-            key: ValueKey('related-${obj.id}-${related.recordId}'),
+            key: ValueKey('related-${obj.id}-${related.recordId}-$_relatedWrites'),
             object: obj,
             related: related,
             isDark: isDark,
@@ -3518,6 +3519,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           isDark: isDark,
           refreshGeneration: _portalRefreshes[obj.id] ?? 0,
           onChanged: () => unawaited(_fetchRecords()),
+          onRowActivated: _activatePortalRow,
         );
 
       default:
@@ -4113,12 +4115,147 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     return true;
   }
 
+  // ---- RelatedFieldHost ----
+
+  /// The portal row last clicked into, on the record it was clicked on: a
+  /// step writing a field of that portal's occurrence writes this row, as
+  /// FileMaker writes the active portal row. Going to a field of the record
+  /// itself leaves the portal.
+  ({String recordId, String occurrenceId, String rowId})? _activePortalRow;
+
+  /// Counts the writes of related records, so the related fields shown read
+  /// theirs again.
+  int _relatedWrites = 0;
+
+  void _activatePortalRow(String occurrenceId, String rowId) {
+    final recordId = currentRecordId;
+    if (recordId == null || rowId.isEmpty) return;
+    _activePortalRow = (recordId: recordId, occurrenceId: occurrenceId, rowId: rowId);
+  }
+
+  /// Whether [occurrence], as a step names it, is the occurrence this layout
+  /// shows. Any other name is another occurrence, even one the graph does
+  /// not know: its field is never taken for the layout's own of that name.
+  bool _isOwnOccurrence(String occurrence) {
+    final key = _occurrenceKey(occurrence);
+    if (key.isEmpty) return true;
+    final layoutOccurrence = widget.layout?.tableOccurrence ?? '';
+    return <String>{
+      _occurrenceKey(widget.table.name),
+      _occurrenceKey(layoutOccurrence),
+      _occurrenceKey(_occurrences[layoutOccurrence]?.name ?? ''),
+    }.contains(key);
+  }
+
+  TableOccurrenceModel? _occurrenceNamed(String occurrence) {
+    final key = _occurrenceKey(occurrence);
+    return _occurrences[occurrence] ?? _occurrences.values.where((o) => _occurrenceKey(o.name) == key).firstOrNull;
+  }
+
+  @override
+  Future<bool> actionIsOwnOccurrence(String occurrence) async {
+    if (_isOwnOccurrence(occurrence)) return true;
+    if (_occurrences.isEmpty) await _loadRelationshipGraph();
+    return _isOwnOccurrence(occurrence);
+  }
+
+  /// Where a step writes [field] of [occurrence], another occurrence: the
+  /// relationship to it, the column, and the related record — the active
+  /// portal row of that occurrence, else the first related record in the
+  /// relationship's order, else none. `code` is FileMaker's error when there
+  /// is nowhere to write.
+  Future<({int code, RelatedContext? related, RelatedTarget? target, ColumnModel? column, String? rowId, Map<String, dynamic>? row})>
+      _relatedSlot(String occurrence, String field) async {
+    const none = (code: 102, related: null, target: null, column: null, rowId: null, row: null);
+    if (_occurrences.isEmpty) await _loadRelationshipGraph();
+    final related = _relatedContext;
+    final occ = _occurrenceNamed(occurrence);
+    if (related == null || occ == null) return none;
+    final target = related.resolve(null, occ.id);
+    if (target == null) return (code: 103, related: null, target: null, column: null, rowId: null, row: null);
+    TableModel table;
+    try {
+      table = target.isExternal ? await ExternalAccess.of(widget.apiClient).table(target.occurrence) : target.table;
+    } on Object catch (_) {
+      return (code: 3, related: null, target: null, column: null, rowId: null, row: null);
+    }
+    final name = field.trim().toLowerCase();
+    final column = table.columns.where((c) => c.name.toLowerCase() == name).firstOrNull ??
+        table.columns.where((c) => c.displayName.toLowerCase() == name).firstOrNull;
+    if (column == null) return none;
+    final recordId = related.recordId;
+    if (recordId == null) return (code: 101, related: related, target: target, column: column, rowId: null, row: null);
+    final active = _activePortalRow;
+    if (active != null && active.recordId == recordId && active.occurrenceId == target.occurrence.id) {
+      return (code: 0, related: related, target: target, column: column, rowId: active.rowId, row: null);
+    }
+    final rows = await related.rows(target, limit: 1);
+    final first = rows.firstOrNull;
+    return (code: 0, related: related, target: target, column: column, rowId: first?['id']?.toString(), row: first);
+  }
+
+  @override
+  Future<String?> actionRelatedFieldText(String occurrence, String field) async {
+    try {
+      final slot = await _relatedSlot(occurrence, field);
+      final column = slot.column;
+      if (column == null) return null;
+      final rowId = slot.rowId;
+      if (rowId == null) return '';
+      final row = slot.row ?? await slot.related!.clientFor(slot.target!).getRow(slot.target!.table.name, rowId);
+      return recordFieldText(column, row);
+    } on Object catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Future<int> actionSetRelatedField(String occurrence, String field, String value) async {
+    if (!mounted) return 3;
+    if (_mode != OperationalMode.browse) return 3;
+    // A record not committed yet has no related records: it is committed
+    // first, as FileMaker does before following a relationship from it.
+    if (_onDraft && !await _saveCurrentRecord()) return 3;
+    try {
+      final slot = await _relatedSlot(occurrence, field);
+      if (slot.code != 0) return slot.code;
+      final related = slot.related!;
+      final target = slot.target!;
+      final column = slot.column!;
+      if (column.isPrimaryKey || isComputedColumn(column)) return 201;
+      final rowId = slot.rowId;
+      if (rowId == null) {
+        if (!target.allowsCreation) return 101;
+        await _write(() => related.apiClient.createRelatedRow(
+              related.fromTable,
+              related.recordId!,
+              relationshipId: target.relationship.id,
+              occurrence: target.occurrence.id,
+              side: target.requestSide,
+              values: {column.name: value},
+            ));
+      } else {
+        await _write(() => related.clientFor(target).updateRow(target.table.name, rowId, {column.name: value}, script: true));
+      }
+    } on Object catch (e) {
+      return _errorCodeOf(e);
+    }
+    if (!mounted) return 0;
+    setState(() => _relatedWrites++);
+    // A calculation of the record in hand, and the portals, may show it.
+    await actionRefreshWindow();
+    return 0;
+  }
+
   // ---- AutoEnterActionHost ----
 
   /// The column a script step or a menu names: `Table::Field` or `Field`, by
-  /// its name or the name shown.
+  /// its name or the name shown. A field of another occurrence is not one of
+  /// this table's, whatever its name.
   ColumnModel? _columnNamed(String field) {
-    final name = (field.contains('::') ? field.split('::').last : field).trim().toLowerCase();
+    final cut = field.indexOf('::');
+    if (cut >= 0 && !_isOwnOccurrence(field.substring(0, cut))) return null;
+    final name = (cut < 0 ? field : field.substring(cut + 2)).trim().toLowerCase();
     if (name.isEmpty) return null;
     return widget.table.columns.where((c) => c.name.toLowerCase() == name).firstOrNull ??
         widget.table.columns.where((c) => c.displayName.toLowerCase() == name).firstOrNull;

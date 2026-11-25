@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
-class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
+class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost, RelatedFieldHost {
   _FullExtendedHost({
     List<Map<String, String>>? records,
     Set<String>? knownLayouts,
@@ -387,6 +387,17 @@ class _FullExtendedHost implements LayoutActionHost, ExtendedLayoutActionHost {
 
   /// Table occurrences shown on the layout that are not its own.
   Set<String> relatedOccurrences = <String>{};
+
+  // Any occurrence but those in [relatedOccurrences] is the window's own; a
+  // related field is not written here.
+  @override
+  Future<bool> actionIsOwnOccurrence(String occurrence) async => !relatedOccurrences.contains(occurrence);
+
+  @override
+  Future<String?> actionRelatedFieldText(String occurrence, String field) async => null;
+
+  @override
+  Future<int> actionSetRelatedField(String occurrence, String field, String value) async => 102;
 
   /// Find mode: insertions go to [findRequest], not the record.
   bool findMode = false;
