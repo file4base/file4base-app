@@ -25,7 +25,7 @@ class _Api extends ApiClient {
   final updates = <(String, String, Map<String, dynamic>)>[];
 
   @override
-  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data, {bool script = false}) async {
+  Future<Map<String, dynamic>> updateRow(String table, String id, Map<String, dynamic> data, {bool overrideValidation = false, bool script = false}) async {
     updates.add((table, id, data));
     return {'id': id, ...data};
   }
