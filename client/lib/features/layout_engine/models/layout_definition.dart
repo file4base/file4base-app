@@ -130,11 +130,23 @@ class FieldControlStyle {
   static bool isMultiValue(String style) => style == checkboxSet;
 }
 
+/// The ends of a relationship a layout object can read (#167): which one is
+/// meant only needs saying when the relationship joins an occurrence to
+/// itself, so the occurrence is at both ends.
+abstract final class RelationshipSide {
+  static const left = 'left';
+  static const right = 'right';
+
+  /// [value] when it names an end, otherwise null (the right end).
+  static String? parse(Object? value) => value is String && (value == left || value == right) ? value : null;
+}
+
 class FieldBindingModel {
 
   const FieldBindingModel({
     required this.fieldName, this.tableOccurrence,
     this.relationshipId,
+    this.relationshipSide,
     this.controlStyle = FieldControlStyle.editBox,
     this.valueListId,
     this.allowBrowseEntry = true,
@@ -147,6 +159,7 @@ class FieldBindingModel {
     return FieldBindingModel(
       tableOccurrence: json['table_occurrence'] as String?,
       relationshipId: json['relationship_id'] as String?,
+      relationshipSide: RelationshipSide.parse(json['relationship_side']),
       fieldName: json['field_name'] as String? ?? '',
       controlStyle: json['control_style'] as String? ?? FieldControlStyle.editBox,
       valueListId: json['value_list_id'] as String?,
@@ -167,6 +180,11 @@ class FieldBindingModel {
   /// needs one: the same two tables can be joined more than once, so the
   /// occurrence alone does not say which join to follow.
   final String? relationshipId;
+
+  /// The end of [relationshipId] the field is read from, one of
+  /// [RelationshipSide], when the relationship joins an occurrence to itself.
+  /// Null reads the right end.
+  final String? relationshipSide;
 
   final String fieldName;
 
@@ -220,6 +238,7 @@ class FieldBindingModel {
   FieldBindingModel copyWith({
     String? tableOccurrence,
     String? relationshipId,
+    String? relationshipSide,
     bool clearRelationship = false,
     String? fieldName,
     String? controlStyle,
@@ -233,6 +252,7 @@ class FieldBindingModel {
       FieldBindingModel(
         tableOccurrence: clearRelationship ? null : (tableOccurrence ?? this.tableOccurrence),
         relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
+        relationshipSide: clearRelationship ? null : (relationshipSide ?? this.relationshipSide),
         fieldName: fieldName ?? this.fieldName,
         controlStyle: controlStyle ?? this.controlStyle,
         valueListId: clearValueList ? null : (valueListId ?? this.valueListId),
@@ -245,6 +265,7 @@ class FieldBindingModel {
   Map<String, dynamic> toJson() => {
         if (tableOccurrence != null) 'table_occurrence': tableOccurrence,
         if (relationshipId != null) 'relationship_id': relationshipId,
+        if (relationshipSide != null) 'relationship_side': relationshipSide,
         'field_name': fieldName,
         'control_style': controlStyle,
         if (valueListId != null) 'value_list_id': valueListId,
@@ -708,6 +729,7 @@ class PortalConfigModel {
   const PortalConfigModel({
     this.relationshipId,
     this.occurrence,
+    this.relationshipSide,
     this.initialRow = 1,
     this.rowCount = 5,
     this.rowHeight,
@@ -721,6 +743,7 @@ class PortalConfigModel {
     return PortalConfigModel(
       relationshipId: json['relationship_id'] as String?,
       occurrence: json['occurrence'] as String?,
+      relationshipSide: RelationshipSide.parse(json['relationship_side']),
       initialRow: (json['initial_row'] as num?)?.toInt() ?? 1,
       rowCount: (json['row_count'] as num?)?.toInt() ?? 5,
       rowHeight: (json['row_height'] as num?)?.toDouble(),
@@ -734,8 +757,13 @@ class PortalConfigModel {
   final String? relationshipId;
 
   /// The occurrence whose records the rows show. It is what tells the two ends
-  /// apart when a relationship joins a table to itself.
+  /// apart when a relationship joins two occurrences of the same table.
   final String? occurrence;
+
+  /// The end of the relationship whose records the rows show, one of
+  /// [RelationshipSide], when the relationship joins an occurrence to itself:
+  /// [occurrence] is then at both ends. Null reads the right end, as before.
+  final String? relationshipSide;
 
   /// First related record shown, counting from 1, so a portal can start past
   /// the first row.
@@ -779,6 +807,7 @@ class PortalConfigModel {
   Map<String, dynamic> toJson() => {
         if (relationshipId != null) 'relationship_id': relationshipId,
         if (occurrence != null) 'occurrence': occurrence,
+        if (relationshipSide != null) 'relationship_side': relationshipSide,
         'initial_row': initialRow,
         'row_count': rowCount,
         if (rowHeight != null) 'row_height': rowHeight,
@@ -791,6 +820,7 @@ class PortalConfigModel {
   PortalConfigModel copyWith({
     String? relationshipId,
     String? occurrence,
+    String? relationshipSide,
     bool clearRelationship = false,
     int? initialRow,
     int? rowCount,
@@ -804,6 +834,7 @@ class PortalConfigModel {
     return PortalConfigModel(
       relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
       occurrence: clearRelationship ? null : (occurrence ?? this.occurrence),
+      relationshipSide: clearRelationship ? null : (relationshipSide ?? this.relationshipSide),
       initialRow: initialRow ?? this.initialRow,
       rowCount: rowCount ?? this.rowCount,
       rowHeight: clearRowHeight ? null : (rowHeight ?? this.rowHeight),

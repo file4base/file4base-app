@@ -778,6 +778,10 @@ field (#46). It then finds the records that have a related record matching it:
 
 `relationship_id` is the relationship to reach through; `occurrence` names the
 side to read and is needed only when the relationship joins a table to itself.
+`side` (`left` or `right`) names the end when it joins an **occurrence** to
+itself, where `occurrence` alone names the right end, as for
+`GET /api/v1/data/{table}/{id}/related`; anything else answers
+`400 Invalid Value`.
 The criterion takes the same operators as one on an own field and combines with
 them, and with the OR and omit semantics of several requests, in the same way.
 

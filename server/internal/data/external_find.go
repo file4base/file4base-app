@@ -111,7 +111,7 @@ func kindOf(active []matchTerm) matchKind {
 // externalFindTarget resolves a relationship from tableName, a table of this
 // solution, to another solution's table, opening that solution.
 func (s *Service) externalFindTarget(ctx context.Context, tableName string, rel *Relationship, crit FindCriterion) (relatedFindTarget, error) {
-	source, target, err := rel.Sides(tableName, strings.TrimSpace(crit.Occurrence))
+	source, target, err := crit.sides(rel, tableName)
 	if err != nil {
 		return relatedFindTarget{}, err
 	}

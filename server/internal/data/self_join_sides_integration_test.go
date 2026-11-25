@@ -182,3 +182,35 @@ func TestCascadeAndCreationIgnoreTheRelationshipSort(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, remaining)
 }
+
+// A find on a related field through a self-join searches the end it names:
+// the left end finds the records whose boss matches, the right end (or the
+// occurrence alone) those with a report that matches.
+func TestSelfJoinFindSearchesTheEndNamed(t *testing.T) {
+	f := newStaffFixture(t, schema.CreateRelationshipInput{})
+	if f == nil {
+		return
+	}
+	find := func(code, side string) []string {
+		t.Helper()
+		rows, err := f.dataSvc.ExecuteFind(t.Context(), f.staff, []data.FindRequest{{Criteria: []data.FindCriterion{
+			{FieldName: "code", Operator: "==", Value: code, RelationshipID: f.relationship, Occurrence: f.occurrence, Side: side},
+		}}}, data.QueryOptions{})
+		require.NoError(t, err)
+		out := []string{}
+		for _, r := range rows {
+			out = append(out, fmt.Sprint(r["code"]))
+		}
+		sort.Strings(out)
+		return out
+	}
+	assert.Equal(t, []string{"cfo", "vp"}, find("ceo", "left"), "whose boss is the ceo")
+	assert.Equal(t, []string{"vp"}, find("lead", "right"), "who has the lead as a report")
+	assert.Equal(t, []string{"vp"}, find("lead", ""), "the occurrence alone names the right end")
+	assert.Equal(t, []string{"vp"}, find("lead", "RIGHT"))
+
+	_, err := f.dataSvc.ExecuteFind(t.Context(), f.staff, []data.FindRequest{{Criteria: []data.FindCriterion{
+		{FieldName: "code", Value: "ceo", RelationshipID: f.relationship, Occurrence: f.occurrence, Side: "middle"},
+	}}}, data.QueryOptions{})
+	require.ErrorIs(t, err, data.ErrInvalidValue, "an end that is neither")
+}

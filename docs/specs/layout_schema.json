@@ -225,6 +225,11 @@
               "type": "string",
               "description": "Relationship followed to reach table_occurrence. The same two tables can be joined more than once, so the occurrence alone does not identify the join."
             },
+            "relationship_side": {
+              "type": "string",
+              "enum": ["left", "right"],
+              "description": "End read when relationship_id joins table_occurrence to itself, sent as side. Absent reads the right end; ignored for a relationship between two occurrences."
+            },
             "field_name": { "type": "string" },
             "control_style": {
               "type": "string",
@@ -242,7 +247,12 @@
             "relationship_id": { "type": "string" },
             "occurrence": {
               "type": "string",
-              "description": "Occurrence whose records the rows show, by name. It tells the two ends apart when a relationship joins a table to itself."
+              "description": "Occurrence whose records the rows show, by name. It tells apart two occurrences of the same table; relationship_side tells apart the two ends of a relationship joining an occurrence to itself."
+            },
+            "relationship_side": {
+              "type": "string",
+              "enum": ["left", "right"],
+              "description": "End the rows come from when relationship_id joins occurrence to itself, sent as side. Absent shows the right end; ignored for a relationship between two occurrences."
             },
             "initial_row": { "type": "integer", "default": 1 },
             "row_count": { "type": "integer", "default": 5 },
