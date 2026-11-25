@@ -2307,8 +2307,17 @@ class ApiClient {
     List<String> ids, {
     required String relationshipId,
     String? occurrence,
+    List<String>? sort,
     int limit = 100,
   }) async {
+    // The same order a single read takes as ?sort=a,-b, as the body's
+    // {field, descending} entries.
+    final order = <Map<String, Object>>[];
+    for (final part in (sort ?? const <String>[]).expand((spec) => spec.split(','))) {
+      final term = part.trim();
+      final field = term.replaceFirst(RegExp('^[-+]'), '').trim();
+      if (field.isNotEmpty) order.add({'field': field, 'descending': term.startsWith('-')});
+    }
     final response = await _httpClient.post(
       Uri.parse('${_records(table)}/related'),
       headers: _headers(contentType: 'application/json'),
@@ -2317,6 +2326,7 @@ class ApiClient {
         if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
         'record_ids': ids,
         'limit': limit,
+        if (order.isNotEmpty) 'sort': order,
       }),
     );
     _checkResponse(response);

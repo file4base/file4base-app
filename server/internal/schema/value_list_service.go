@@ -595,7 +595,12 @@ func (s *Service) externalValueListItems(ctx context.Context, list *ValueList, r
 	if err != nil {
 		return nil, false, err
 	}
-	src := fieldSource{table: target.Table, first: list.SourceColumnName}
+	// A field known only by its FileMaker id is the one bound to that id.
+	field, err := peer.ResolveFieldMarker(ctx, target.Table, list.SourceColumnName)
+	if err != nil {
+		return nil, false, target.Wrap(err)
+	}
+	src := fieldSource{table: target.Table, first: field}
 	items, truncated, err := distinctFieldItems(ctx, src, entryOrder{}, peer)
 	if err != nil {
 		return nil, false, target.Wrap(err)

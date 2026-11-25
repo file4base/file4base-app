@@ -1,9 +1,11 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"sort"
 	"testing"
 	"time"
@@ -463,4 +465,94 @@ func TestAPI_ExternalAutoLinkIsThrottled(t *testing.T) {
 	rec = p.h.do(http.MethodPost, "/api/v1/auth/link", login.Token,
 		map[string]string{"database": p.peer, "username": "bob", "password": "bob-secret"}, nil)
 	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// A field of Peer known in Orders only by its FileMaker id ("#11") is read,
+// in a relationship predicate and a value list, as the field of Peer
+// migrated with that id: the one binding reports it resolved to. An id no
+// field of Peer has is a schema mismatch (#107).
+func TestAPI_ExternalMarkersReadTheFieldBoundToTheirID(t *testing.T) {
+	p := newExternalPair(t, api.Options{}, "alice-secret")
+	h := p.h
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	driver, err := h.mgr.DriverFor(ctx, p.peer)
+	require.NoError(t, err)
+	for field, id := range map[string]string{"code": "11", "full_name": "13"} {
+		_, err := driver.DB().ExecContext(ctx, h.rebind(`UPDATE sys_columns SET source_field_id = $1
+			WHERE name = $2 AND table_id = (SELECT id FROM sys_tables WHERE name = 'customers')`), id, field)
+		require.NoError(t, err)
+	}
+
+	var ordersFields map[string]string
+	for _, tbl := range h.observeTables(p.owner) {
+		if tbl.Name == "orders" {
+			ordersFields = map[string]string{}
+			for _, c := range tbl.Columns {
+				ordersFields[c.Name] = c.ID
+			}
+		}
+	}
+	require.NotNil(t, ordersFields)
+	relationship := func(name, code string) string {
+		var rel struct {
+			ID string `json:"id"`
+		}
+		rec := h.do(http.MethodPost, "/api/v1/schemas/relationships", p.owner, map[string]interface{}{
+			"name": name, "left_occurrence_id": p.ordersOcc, "right_occurrence_id": p.ext,
+			"predicates": []map[string]string{
+				{"left_column_id": ordersFields["customer_code"], "operator": "=", "right_column_name": code},
+				{"left_column_id": ordersFields["region"], "operator": "=", "right_column_name": "region"},
+			},
+		}, &rel)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		return rel.ID
+	}
+	byID, unknown := relationship("orders_customers_by_id", "#11"), relationship("orders_customers_unknown", "#99")
+	var list struct {
+		ID string `json:"id"`
+	}
+	rec := h.do(http.MethodPost, "/api/v1/value-lists", p.owner, map[string]interface{}{
+		"name": "Customer names by id", "kind": "field", "source_occurrence_id": p.ext, "source_column_name": "#13",
+	}, &list)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	var refs []schema.FileReference
+	refs = h.observeFileReferences(p.owner)
+	require.Len(t, refs, 1)
+	var report schema.ExternalBindingReport
+	rec = h.do(http.MethodPost, "/api/v1/file-references/"+refs[0].ID+"/verify", p.owner, map[string]string{"peer_token": p.peerOwner}, &report)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, report.Occurrences, 1)
+	assert.Equal(t, map[string]string{"#11": "code", "#13": "full_name"}, report.Occurrences[0].Resolved)
+
+	token := p.signIn(t, p.orders, "alice-secret").Token
+	related := func(relationship, order string) *httptest.ResponseRecorder {
+		return h.do(http.MethodGet, fmt.Sprintf("/api/v1/data/orders/%s/related?relationship=%s", p.orderIDs[order], relationship), token, nil, nil)
+	}
+	for order, want := range map[string][]string{"north": {"Ada"}, "south": {"Ada South"}, "code only": {}} {
+		rec := related(byID, order)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Equal(t, want, namesOf(rec.Code, rec.Body.Bytes()), order)
+	}
+	var batch struct {
+		Records map[string][]map[string]interface{} `json:"records"`
+	}
+	rec = h.do(http.MethodPost, "/api/v1/data/orders/related", token, map[string]interface{}{
+		"relationship": byID, "record_ids": []string{p.orderIDs["north"]},
+	}, &batch)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Len(t, batch.Records[p.orderIDs["north"]], 1)
+	assert.Equal(t, "Ada", batch.Records[p.orderIDs["north"]][0]["full_name"])
+
+	var values struct {
+		Values []string `json:"values"`
+	}
+	rec = h.do(http.MethodGet, "/api/v1/value-lists/"+list.ID+"/values", token, nil, &values)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"Ada", "Ada South", "Bob"}, values.Values)
+
+	rec = related(unknown, "north")
+	require.Equal(t, http.StatusFailedDependency, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "schema_mismatch")
 }

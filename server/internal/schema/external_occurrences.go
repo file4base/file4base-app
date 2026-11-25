@@ -755,7 +755,7 @@ func (s *Service) ExternalDependencies(ctx context.Context) ([]ExternalDependenc
 		if o.External == nil || strings.TrimSpace(o.External.Database) == "" {
 			continue
 		}
-		key := strings.ToLower(o.External.Database)
+		key := o.External.Database
 		i, seen := index[key]
 		if !seen {
 			i = len(deps)

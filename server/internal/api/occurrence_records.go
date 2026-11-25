@@ -213,17 +213,15 @@ func (h *DataHandler) OccurrenceTable(w http.ResponseWriter, r *http.Request) {
 	} else if _, ok := h.authorize(w, r, origin.Table, false); !ok {
 		return
 	}
-	tables, err := schema.NewService(driver).ListTables(r.Context())
+	table, found, err := schema.NewService(driver).TableByName(r.Context(), origin.Table)
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return
 	}
-	for _, table := range tables {
-		if table.Name == origin.Table {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(table)
-			return
-		}
+	if found {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(table)
+		return
 	}
 	err = data.ErrTableNotFound
 	if origin.External != nil {

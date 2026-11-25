@@ -1032,9 +1032,10 @@ The created record, as `POST /api/v1/data/{table}` returns it.
 
 The related records of several records of `{table}` in one request: what a list showing a related field or a portal on every row reads, instead of a request per row. Each record gets exactly what `GET /api/v1/data/{table}/{id}/related` gives it, and the server reads them in a fixed number of statements, however many records are asked for.
 ```json
-{ "relationship": "rel-1", "occurrence": "occ-customers", "record_ids": ["co-1", "co-2"], "limit": 1 }
+{ "relationship": "rel-1", "occurrence": "occ-customers", "record_ids": ["co-1", "co-2"], "limit": 1,
+  "sort": [{ "field": "last_name" }, { "field": "fee_paid", "descending": true }] }
 ```
-`occurrence`, `limit` and `offset` as for the single read; at most 100 `record_ids` (`422 Batch Too Large`). The same access is needed.
+`occurrence`, `limit` and `offset` as for the single read, and `sort` as its `?sort=last_name,-fee_paid`, the relationship's own order when omitted; at most 100 `record_ids` (`422 Batch Too Large`). The same access is needed.
 
 #### Response `200 OK`
 Every record asked for has an entry, empty when nothing is related to it or it does not exist:
@@ -1404,7 +1405,7 @@ When the solution's external occurrences read other solutions (§ 18), the sign-
   { "database": "stock_db", "references": ["Stock"], "status": "refused" }
 ]
 ```
-`status` is `linked` (an account with those credentials exists there: the session group now reads that solution as that account, with its privileges), `refused` (no such account, or another password), `mfa_required` (that account needs its own code), `throttled` (its lockout is active) or `missing` (the solution is not on this server). For anything but `linked`, sign in to it with `POST /api/v1/auth/link`. `token` is the linked session's own bearer token, which works on that solution directly. A solution is followed only once it is linked: the design of one the user cannot sign in to is not read.
+`status` is `linked` (an account with those credentials exists there: the session group now reads that solution as that account, with its privileges), `refused` (no such account, or another password), `mfa_required` (that account needs its own code), `throttled` (its lockout is active) or `missing` (the solution is not on this server). For anything but `linked`, sign in to it with `POST /api/v1/auth/link`. `token` is the linked session's own bearer token, which works on that solution directly for as long as the session that signed in lasts: once that one has signed out or expired, the linked token is rejected too, and using it does not extend it. A solution is matched by its exact name (`Sales` and `sales` are two solutions on PostgreSQL). A solution is followed only once it is linked: the design of one the user cannot sign in to is not read.
 
 #### Errors
 - `401 Unauthorized`: invalid username or password, deactivated account, or the database has no File4Base catalog.

@@ -681,6 +681,21 @@ func (s *Service) relatedQuery(
 	if q.dst, err = s.sideService(ctx, q.target); err != nil {
 		return nil, err
 	}
+	// A predicate on a field of another solution known only by its
+	// FileMaker id names it by marker: it reads the field bound to that id.
+	for i := range q.terms {
+		t := &q.terms[i]
+		if q.source.External != nil {
+			if t.SourceColumn, err = q.src.ResolveFieldMarker(ctx, q.source.TableName, t.SourceColumn); err != nil {
+				return nil, wrapSide(q.source, err)
+			}
+		}
+		if q.target.External != nil {
+			if t.TargetColumn, err = q.dst.ResolveFieldMarker(ctx, q.target.TableName, t.TargetColumn); err != nil {
+				return nil, wrapSide(q.target, err)
+			}
+		}
+	}
 	if q.fields, err = q.dst.tableFields(ctx, q.target.TableName); err != nil {
 		return nil, wrapSide(q.target, err)
 	}

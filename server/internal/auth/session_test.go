@@ -146,9 +146,13 @@ func TestStore_SessionGroups(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "h1", got.UserID)
 
-	member, ok := store.Member(survey.Group, "HR")
-	require.True(t, ok, "solutions are matched as their names are")
+	member, ok := store.Member(survey.Group, "hr")
+	require.True(t, ok)
 	assert.Equal(t, "h1", member.UserID)
+	// Database names are matched exactly: on PostgreSQL "HR" is another one.
+	_, ok = store.Member(survey.Group, "HR")
+	assert.False(t, ok)
+	assert.False(t, store.Unlink(survey.Group, "HR"))
 
 	// A cycle back to the group's own solution resolves to its sign-in.
 	self, ok := store.Member(survey.Group, "survey")
@@ -159,7 +163,7 @@ func TestStore_SessionGroups(t *testing.T) {
 	_, ok = store.Member("", "hr")
 	assert.False(t, ok)
 
-	_, _, err = store.Link(survey.Group, "u9", "alice", RoleUser, "Survey", "x", false)
+	_, _, err = store.Link(survey.Group, "u9", "alice", RoleUser, "survey", "x", false)
 	assert.ErrorIs(t, err, ErrLinkToRoot)
 
 	// Linking again replaces the group's session there.
@@ -250,4 +254,36 @@ func TestStore_LinkedSessionsExpireAndAreRevokedLikeOthers(t *testing.T) {
 	require.NoError(t, err)
 	store.RevokeDatabase("survey")
 	assert.Zero(t, store.Len())
+}
+
+// A linked token used on its own never outlives the sign-in of its group.
+func TestStore_LinkedTokenEndsWithItsRoot(t *testing.T) {
+	store := NewStore(10 * time.Minute)
+	current := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	store.now = func() time.Time { return current }
+
+	root, survey, err := store.Create("u1", "alice", RoleUser, "survey", "s1", false)
+	require.NoError(t, err)
+	linked, _, err := store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h", false)
+	require.NoError(t, err)
+
+	// Using the linked token keeps it alive, not the sign-in.
+	current = current.Add(6 * time.Minute)
+	_, ok := store.Get(linked)
+	require.True(t, ok)
+	current = current.Add(6 * time.Minute)
+	_, ok = store.Get(linked)
+	assert.False(t, ok, "the sign-in expired: the linked token goes with it")
+	_, ok = store.Get(root)
+	assert.False(t, ok)
+	assert.Zero(t, store.Len())
+
+	// A revoked sign-in takes its linked tokens at once.
+	root, survey, err = store.Create("u1", "alice", RoleUser, "survey", "s1", false)
+	require.NoError(t, err)
+	linked, _, err = store.Link(survey.Group, "h1", "alice", RoleUser, "hr", "h", false)
+	require.NoError(t, err)
+	store.Revoke(root)
+	_, ok = store.Get(linked)
+	assert.False(t, ok)
 }

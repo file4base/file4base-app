@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/file4base/file4base-app/server/internal/dbal"
 )
 
 // ErrExternalUnavailable is returned when a request reaches a table
@@ -241,6 +244,54 @@ func (s *Service) sideService(ctx context.Context, side RelationSide) (*Service,
 		return s, nil
 	}
 	return s.Open(ctx, *side.External)
+}
+
+// fieldMarkerPrefix starts the marker of a field of another solution known
+// only by its FileMaker id (schema.ExternalFieldMarker): "#" and that id.
+const fieldMarkerPrefix = "#"
+
+// ResolveFieldMarker returns the field of table a name stands for. A name
+// is returned as it is; a marker is resolved by the source_field_id of the
+// table's fields, as binding resolves it, to the one field migrated with
+// that id. No field, or more than one, is ErrUnknownField.
+func (s *Service) ResolveFieldMarker(ctx context.Context, table, name string) (string, error) {
+	id, ok := strings.CutPrefix(name, fieldMarkerPrefix)
+	if !ok {
+		return name, nil
+	}
+	query := `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id
+		WHERE t.name = $1 AND c.source_field_id = $2`
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		query = `SELECT c.name FROM sys_columns c JOIN sys_tables t ON t.id = c.table_id
+		WHERE t.name = ? AND c.source_field_id = ?`
+	}
+	var names []string
+	if id != "" {
+		rows, err := s.driver.DB().QueryContext(ctx, query, table, id)
+		if err != nil {
+			return "", fmt.Errorf("failed resolving the field of %s with FileMaker id %s: %w", table, id, err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err != nil {
+				return "", err
+			}
+			names = append(names, n)
+		}
+		if err := rows.Err(); err != nil {
+			return "", err
+		}
+	}
+	switch len(names) {
+	case 1:
+		return names[0], nil
+	case 0:
+		return "", fmt.Errorf("%w: %s has no field migrated with FileMaker id %q", ErrUnknownField, table, id)
+	default:
+		return "", fmt.Errorf("%w: the FileMaker id %q is ambiguous in %s: %s all have it",
+			ErrUnknownField, id, table, strings.Join(names, ", "))
+	}
 }
 
 // wrapSide classifies an error met reading a side (see ExternalTarget.Wrap).

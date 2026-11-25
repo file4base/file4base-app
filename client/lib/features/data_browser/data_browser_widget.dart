@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/models/page_setup_model.dart';
+import 'package:file4base_client/features/data_browser/external_access.dart';
 import 'package:file4base_client/features/data_browser/external_layout.dart';
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/data_browser/report_view.dart';
@@ -692,6 +693,32 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   /// The lists that offer more entries than the server gave.
   final Set<String> _truncatedValueLists = {};
 
+  /// Why a list taken from another solution's table (#107) offers nothing:
+  /// that solution cannot be read, most often because the session is not
+  /// signed in to it yet. The field offers to sign in.
+  final Map<String, ExternalUnavailable> _valueListProblems = {};
+
+  /// The external occurrences of this session: signing in to a solution
+  /// there resolves again the lists that could not read it.
+  late final ExternalAccess _externalAccess = ExternalAccess.of(widget.apiClient);
+
+  void _onExternalSignedIn() {
+    for (final id in _valueListProblems.keys.toList()) {
+      final list = _valueLists[id];
+      if (list != null) unawaited(_resolveValueList(list));
+    }
+  }
+
+  /// Keeps why [list] could not be read from another solution, and asks
+  /// once to sign in to it. Returns false for any other failure.
+  bool _valueListUnavailable(ValueListModel list, Object error) {
+    final problem = ExternalUnavailable.of(error);
+    if (problem == null || !mounted) return false;
+    setState(() => _valueListProblems[list.id] = problem);
+    _externalAccess.askOnce(context, problem);
+    return true;
+  }
+
   /// For a list of related values: the record its entries are for, and the
   /// latest request, so an answer that arrives late never replaces a newer one.
   final Map<String, String?> _relatedValueListRecords = {};
@@ -737,22 +764,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         final offer =
             await widget.apiClient.valueListItems(list.id, table: widget.table.name, recordId: recordId);
         if (mounted && _relatedValueListRequests[list.id] == request) _applyValueListOffer(list.id, offer);
-      } catch (_) {
+      } catch (e) {
         // The control keeps what it offered: at least the stored value.
+        _valueListUnavailable(list, e);
       }
       return;
     }
     try {
       final offer = await widget.apiClient.valueListItems(list.id);
       if (mounted) _applyValueListOffer(list.id, offer);
-    } catch (_) {
-      if (mounted) setState(() => _valueListItems[list.id] = const []);
+    } catch (e) {
+      if (!_valueListUnavailable(list, e) && mounted) setState(() => _valueListItems[list.id] = const []);
     }
   }
 
   void _applyValueListOffer(String id, ValueListOffer offer) {
     setState(() {
       _valueListItems[id] = offer.items;
+      _valueListProblems.remove(id);
       offer.truncated ? _truncatedValueLists.add(id) : _truncatedValueLists.remove(id);
     });
   }
@@ -773,6 +802,24 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     final items = _valueListItems[id];
     if (items == null || (items.isEmpty && !(_valueLists[id]?.isRelated ?? false))) return null;
     return items;
+  }
+
+  /// The icon of a field whose value list [problem] keeps from reading another
+  /// solution: a sign-in when the session is only not signed in to it.
+  Widget _valueListProblemIcon(ExternalUnavailable problem) {
+    if (!problem.isNotSignedIn) {
+      return Tooltip(
+        message: problem.message,
+        child: const Icon(Icons.warning_amber, size: 14, color: Colors.amber),
+      );
+    }
+    return IconButton(
+      key: const ValueKey('value-list-sign-in'),
+      icon: const Icon(Icons.login, size: 14, color: Colors.amber),
+      tooltip: 'Sign in to ${problem.database}…',
+      visualDensity: VisualDensity.compact,
+      onPressed: () => unawaited(_externalAccess.signIn(context, problem)),
+    );
   }
 
   /// What an entry shows: its second field only, or its value with the second
@@ -1253,6 +1300,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
   void initState() {
     super.initState();
     _initFindControllers();
+    _externalAccess.addListener(_onExternalSignedIn);
     unawaited(_loadValueLists());
     if (_layoutUsesRelationships) unawaited(_loadRelationshipGraph());
     unawaited(_fetchRecords().then((_) {
@@ -1375,6 +1423,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   @override
   void dispose() {
+    _externalAccess.removeListener(_onExternalSignedIn);
     HardwareKeyboard.instance.removeHandler(_handleRecordShortcut);
     _recordNumberCtrl.dispose();
     _recordNumberFocus.dispose();
@@ -1393,7 +1442,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     super.dispose();
   }
 
-  Future<void> _fetchRecords({bool preserveCurrent = false, bool loadAll = false}) async {
+  Future<void> _fetchRecords({bool preserveCurrent = false, bool loadAll = false, bool retried = false}) async {
     final keepId = preserveCurrent && _records.isNotEmpty
         ? _records[_currentIndex]['id']?.toString()
         : null;
@@ -1434,7 +1483,15 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         if (!keepFoundSet) widget.onFoundSetChanged?.call(const []);
       }
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
+      if (!mounted) return;
+      final problem = ExternalUnavailable.of(e);
+      setState(() { _error = problem?.message ?? e.toString(); _isLoading = false; });
+      // Another solution's records (#107) the session is not signed in to
+      // yet: sign in to it, then read them again, once.
+      if (problem != null && problem.isNotSignedIn && !retried &&
+          await _externalAccess.signIn(context, problem) && mounted) {
+        await _fetchRecords(preserveCurrent: preserveCurrent, loadAll: loadAll, retried: true);
+      }
     }
   }
 
@@ -2229,13 +2286,28 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     );
   }
 
+  /// The objects drawn inside each portal of [layout], by portal id, and the
+  /// ids of all of them. They belong to the portal's rows, where each row
+  /// redraws them against its own related record (#36), and are not drawn a
+  /// second time on the layout itself.
+  (Map<String, List<LayoutObjectModel>>, Set<String>) _portalContents(LayoutDefinitionModel layout) {
+    final portals = layout.objects.where((o) => o.type == 'portal').toList();
+    final contents = <String, List<LayoutObjectModel>>{
+      for (final portal in portals)
+        portal.id: layout.objects.where((o) => o.type != 'portal' && portal.contains(o)).toList(),
+    };
+    return (contents, {for (final objects in contents.values) for (final o in objects) o.id});
+  }
+
   Widget _buildCustomLayoutListView(LayoutDefinitionModel layout) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final theme = Theme.of(context);
     final headerPart = layout.parts.where((p) => p.type == LayoutPartType.header).firstOrNull;
     final headerHeight = headerPart?.height ?? 0.0;
-    final headerObjects = layout.objects.where((o) => o.y < headerHeight).toList();
-    final bodyObjects = layout.objects.where((o) => o.y >= headerHeight).toList();
+    final (portalContents, insidePortal) = _portalContents(layout);
+    final shown = layout.objects.where((o) => !insidePortal.contains(o.id));
+    final headerObjects = shown.where((o) => o.y < headerHeight).toList();
+    final bodyObjects = shown.where((o) => o.y >= headerHeight).toList();
 
     var maxBodyBottom = headerHeight + 48.0;
     for (final o in bodyObjects) {
@@ -2280,7 +2352,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                           top: obj.y,
                           width: obj.width,
                           height: obj.height,
-                          child: _buildLayoutObject(obj, _currentRecord, isDark, false),
+                          child: _buildLayoutObject(obj, _currentRecord, isDark, false,
+                              portalContents: portalContents[obj.id] ?? const []),
                         ),
                     ],
                   ),
@@ -2314,7 +2387,8 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                             top: obj.y - headerHeight,
                             width: obj.width,
                             height: obj.height,
-                            child: _buildListRowObject(obj, rec, i, isDark),
+                            child: _buildListRowObject(obj, rec, i, isDark,
+                                portalContents: portalContents[obj.id] ?? const []),
                           ),
                         Positioned(
                           right: 2,
@@ -2344,8 +2418,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
     LayoutObjectModel obj,
     Map<String, dynamic> rec,
     int recordIndex,
-    bool isDark,
-  ) {
+    bool isDark, {
+    List<LayoutObjectModel> portalContents = const [],
+  }) {
     if (obj.type == 'field') {
       final external = widget.externalFieldNoticeOf(obj);
       if (external != null) {
@@ -2496,7 +2571,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
         child: Text(btnText, overflow: TextOverflow.ellipsis),
       );
     }
-    return _buildLayoutObject(obj, rec, isDark, false);
+    // A portal of a row shows that row's related records, read with those
+    // of the other rows in one request.
+    return _buildLayoutObject(obj, rec, isDark, false, portalContents: portalContents, listRow: true);
   }
 
   /// The found set drawn through the layout's parts (#32).
@@ -2756,18 +2833,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       for (final (i, o) in sortLayoutTabStops(layout.objects.where((o) => o.isTabStop)).indexed) o.id: i + 1,
     };
 
-    // The objects drawn inside a portal belong to its rows, where each row
-    // redraws them against its own related record (#36). They are not drawn a
-    // second time on the layout itself.
-    final portals = layout.objects.where((o) => o.type == 'portal').toList();
-    final portalContents = <String, List<LayoutObjectModel>>{
-      for (final portal in portals)
-        portal.id: layout.objects.where((o) => o.type != 'portal' && portal.contains(o)).toList(),
-    };
-    final insidePortal = {
-      for (final contents in portalContents.values)
-        for (final o in contents) o.id,
-    };
+    final (portalContents, insidePortal) = _portalContents(layout);
     final topLevel = layout.objects.where((o) => !insidePortal.contains(o.id)).toList();
 
     return LayoutEntryTransition(
@@ -2991,7 +3057,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
 
   Widget _buildLayoutObject(
       LayoutObjectModel obj, Map<String, dynamic> record, bool isDark, bool isFindMode,
-      {List<LayoutObjectModel> portalContents = const []}) {
+      {List<LayoutObjectModel> portalContents = const [], bool listRow = false}) {
     switch (obj.type) {
       case 'label':
         final resolvedText = applyLayoutTextCase(
@@ -3300,7 +3366,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           return relatedNotice('A portal shows nothing in Find mode', isDark: isDark,
               radius: obj.style.cornerRadius);
         }
-        final related = _relatedContext;
+        // In a list, each row's portal shows the related records of that
+        // row's record, not of the record in hand.
+        final related =
+            listRow ? _relatedContext?.forRecord(record['id']?.toString(), batched: true) : _relatedContext;
         if (related == null) {
           return relatedNotice(
             obj.portal.isBound
@@ -3311,7 +3380,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
           );
         }
         return PortalView(
-          key: ValueKey('portal-${obj.id}'),
+          key: ValueKey(listRow ? 'portal-${obj.id}-${related.recordId}' : 'portal-${obj.id}'),
           object: obj,
           contents: portalContents,
           related: related,
@@ -3392,6 +3461,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
       );
     }
 
+    // A list of another solution that cannot be read leaves an edit box,
+    // which says why and offers to sign in to that solution.
+    final listProblem = computed ? null : _valueListProblems[obj.fieldBinding!.valueListId];
+
     final rawVal = record[key] ?? ctrl?.text;
     final effStyle = obj.style.effectiveForValue(rawVal);
     final isFocused = fn?.hasFocus ?? false;
@@ -3451,7 +3524,9 @@ class DataBrowserWidgetState extends State<DataBrowserWidget> implements LayoutA
                   )
                 : saving == false
                     ? const Icon(Icons.error_outline, size: 14, color: Colors.red)
-                    : null,
+                    : listProblem != null
+                        ? _valueListProblemIcon(listProblem)
+                        : null,
       ),
       onChanged: computed ? null : (v) => _onFieldChanged(key, v),
       onEditingComplete: computed

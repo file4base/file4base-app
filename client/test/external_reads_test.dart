@@ -74,6 +74,13 @@ Map<String, dynamic> _unavailable(String reason) => {
 class _Server {
   /// Why peer_db cannot be read, or null once it can.
   String? unavailable;
+
+  /// Why the records of the external layout cannot be read while its table
+  /// can (a table read before, and kept), or null once they can.
+  String? recordsUnavailable;
+
+  /// Whether Orders has a value list taken from a field of peer_db.
+  bool externalValueList = false;
   final List<Map<String, dynamic>> orders = [
     for (var i = 1; i <= 3; i++) {'id': 'o-$i', 'customer_code': 'C-$i'},
   ];
@@ -101,14 +108,24 @@ class _Server {
       case ('GET', '/api/v1/schemas/relationships'):
         return _json(_relationships);
       case ('GET', '/api/v1/value-lists'):
-        return _json([]);
+        return _json([
+          if (externalValueList)
+            {'id': 'vl-cust', 'name': 'Customer names', 'kind': 'field', 'source_occurrence_id': 'occ-cust'},
+        ]);
+      case ('GET', '/api/v1/value-lists/vl-cust/values'):
+        return external != null
+            ? _json(_unavailable(external), 424)
+            : _json({
+                'values': ['Ada Lovelace', 'Grace Hopper'],
+              });
       case ('GET', '/api/v1/data/orders'):
         return _json(orders);
       case ('GET', '/api/v1/occurrences/occ-cust/table'):
         return external != null ? _json(_unavailable(external), 424) : _json(_customers);
       case ('GET', '/api/v1/occurrences/occ-cust/records'):
-        return external != null
-            ? _json(_unavailable(external), 424)
+        final reason = external ?? recordsUnavailable;
+        return reason != null
+            ? _json(_unavailable(reason), 424)
             : _json([
                 {'id': 'c-1', 'full_name': 'Ada Lovelace'},
               ]);
@@ -130,6 +147,7 @@ class _Server {
           return _json({'title': 'Authentication Failed', 'status': 401, 'detail': 'invalid credentials'}, 401);
         }
         unavailable = null;
+        recordsUnavailable = null;
         return _json({'database': 'peer_db', 'status': 'linked', 'username': body['username']});
     }
     final related = RegExp(r'^/api/v1/data/orders/([^/]+)/related$').firstMatch(path);
@@ -355,5 +373,115 @@ void main() {
     expect(find.widgetWithText(TextFormField, 'API Server URL'), findsNothing);
     expect(server.requests.where((r) => r.contains('/solutions/databases')), isEmpty,
         reason: 'the solution is the one named, not chosen');
+  });
+  testWidgets("a list row's portal shows that row's related records, all rows in one request", (tester) async {
+    final server = _Server();
+    await _pump(tester, _browser(server.client(), _ordersLayout(portal: true, defaultView: 'list')));
+    server.requests.clear(); // the form showed the first record's
+    await tester.tap(find.text('List'));
+    await tester.pumpAndSettle();
+
+    for (final order in server.orders) {
+      expect(find.text('Customer of ${order['id']}'), findsOneWidget, reason: 'the row of ${order['id']}');
+    }
+    expect(find.text('Ada Lovelace'), findsNothing, reason: "not the selected record's portal on every row");
+    expect(server.requests.where((r) => r == 'POST /api/v1/data/orders/related'), hasLength(1));
+    expect(server.requests.where((r) => r.endsWith('/related') && r.startsWith('GET')), isEmpty,
+        reason: 'no request per row');
+  });
+
+  testWidgets('a value list of another solution not signed in to offers to sign in, then its values',
+      (tester) async {
+    final server = _Server()
+      ..unavailable = ExternalUnavailable.notSignedIn
+      ..externalValueList = true;
+    final layout = LayoutDefinitionModel(
+      id: 'l-orders',
+      name: 'Orders',
+      tableOccurrence: 'Orders',
+      parts: const [LayoutPartModel(id: 'b', type: 'body', height: 400)],
+      objects: [
+        _object('code', 'field', 10,
+            field: const FieldBindingModel(
+                fieldName: 'customer_code', controlStyle: FieldControlStyle.popUpMenu, valueListId: 'vl-cust')),
+      ],
+    );
+    await _pump(tester, _browser(server.client(), layout));
+    expect(find.textContaining('Open peer_db'), findsOneWidget, reason: 'asked once, by itself');
+    await tester.tap(find.text('Cancel').last);
+    await tester.pumpAndSettle();
+
+    final signIn = find.byKey(const ValueKey('value-list-sign-in'));
+    expect(signIn, findsOneWidget, reason: 'not a silent edit box');
+    expect(tester.widget<IconButton>(signIn).tooltip, 'Sign in to peer_db…');
+    await tester.tap(signIn);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Username'), 'alice');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Password'), 'secret');
+    await tester.tap(find.text('Sign In'));
+    await tester.pumpAndSettle();
+
+    expect(signIn, findsNothing);
+    expect(server.requests.where((r) => r == 'GET /api/v1/value-lists/vl-cust/values'), hasLength(2),
+        reason: 'read again once signed in');
+  });
+
+  testWidgets("a kept external layout whose records need a sign-in signs in, then reads them once more",
+      (tester) async {
+    final server = _Server()..recordsUnavailable = ExternalUnavailable.notSignedIn;
+    final layout = LayoutDefinitionModel(
+      id: 'l-customers',
+      name: 'Customers',
+      tableOccurrence: 'Customers',
+      objects: [_object('name', 'field', 10, field: const FieldBindingModel(fieldName: 'full_name', tableOccurrence: 'Customers'))],
+    );
+    await _pump(
+      tester,
+      ExternalLayoutView(
+        layoutName: 'Customers',
+        occurrence: TableOccurrenceModel.fromJson(_occurrences[1]),
+        apiClient: server.client(),
+        builder: (context, table, client) => DataBrowserWidget(
+          table: table,
+          apiClient: client,
+          mode: OperationalMode.browse,
+          layout: layout,
+          externalDatabase: 'peer_db',
+        ),
+      ),
+    );
+
+    expect(find.textContaining('Open peer_db'), findsOneWidget, reason: 'the link sign-in, not only an error');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Username'), 'alice');
+    await tester.enterText(find.widgetWithText(TextFormField, 'Password'), 'secret');
+    await tester.tap(find.text('Sign In'));
+    await tester.pumpAndSettle();
+
+    expect(server.requests.where((r) => r == 'GET /api/v1/occurrences/occ-cust/records'), hasLength(2));
+    expect(find.byWidgetPredicate((w) => w is TextField && w.controller?.text == 'Ada Lovelace'), findsOneWidget);
+  });
+
+  testWidgets('a kept external layout whose sign-in is dismissed says why, and reads once', (tester) async {
+    final server = _Server()..recordsUnavailable = ExternalUnavailable.notSignedIn;
+    await _pump(
+      tester,
+      ExternalLayoutView(
+        layoutName: 'Customers',
+        occurrence: TableOccurrenceModel.fromJson(_occurrences[1]),
+        apiClient: server.client(),
+        builder: (context, table, client) => DataBrowserWidget(
+          table: table,
+          apiClient: client,
+          mode: OperationalMode.browse,
+          layout: LayoutDefinitionModel(id: 'l-customers', name: 'Customers', tableOccurrence: 'Customers'),
+          externalDatabase: 'peer_db',
+        ),
+      ),
+    );
+    await tester.tap(find.text('Cancel').last);
+    await tester.pumpAndSettle();
+
+    expect(server.requests.where((r) => r == 'GET /api/v1/occurrences/occ-cust/records'), hasLength(1));
+    expect(find.textContaining('Not signed in to "peer_db"'), findsWidgets);
   });
 }

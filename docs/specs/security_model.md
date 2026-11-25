@@ -119,7 +119,11 @@ privilege never crosses from one solution to another.
   counts against the lockout of the account it is made on, exactly as a
   sign-in there does, so one solution's sign-in cannot be used to guess
   another's passwords; an account with MFA is never linked without its code.
-  A failed link never fails the sign-in.
+  A failed link never fails the sign-in. A solution is matched by its exact
+  name: on PostgreSQL, `Sales` and `sales` are two solutions, and a link never
+  goes to one for the other. Linking costs only the sign-in there: it does
+  not walk that solution's accounts, so a sign-in takes no longer for the
+  number of accounts of the solutions it reads.
 - **Explicit sign-in.** `POST /api/v1/auth/link` signs in to a solution the
   group reads with an account of that solution, under the same lockout, and
   replaces the account the group held there. It is refused for a solution no
@@ -129,7 +133,9 @@ privilege never crosses from one solution to another.
   holds no credentials for them. Each linked session is checked against its
   own account's stamp: a change to that account signs it out of the group, and
   reads then answer `not_signed_in`. Signing out of the group's session, or its
-  revocation, ends every session linked to it.
+  revocation or expiry, ends every session linked to it: a linked session's
+  own token stops working with it, and using that token does not keep the
+  group's session alive.
 - **What is read.** Each read of another solution runs with that solution's
   session and access checks, the table access of the account there included,
   so an account without access gets `424` with `no_access`, never the

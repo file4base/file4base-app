@@ -108,7 +108,9 @@ func newGroupPeers(sessions *auth.Store, dbMgr *dbal.MultiDatabaseManager, group
 // request checks its own: a member whose account changed since it signed in
 // is revoked and reads as not signed in.
 func (p *groupPeers) end(ctx context.Context, database string) (*peerEnd, error) {
-	key := strings.ToLower(database)
+	// Names are matched exactly: on PostgreSQL "Sales" and "sales" are two
+	// solutions.
+	key := database
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if end, ok := p.ends[key]; ok {

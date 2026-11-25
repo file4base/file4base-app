@@ -133,8 +133,8 @@ class RelatedContext {
   /// [limit].
   Future<List<Map<String, dynamic>>> rows(RelatedTarget target, {List<String>? sort, int limit = 100}) {
     final recordId = this.recordId!;
-    if (batched && limit == 1 && (sort == null || sort.isEmpty)) {
-      return RelatedBatcher.of(apiClient).first(fromTable, recordId, target);
+    if (batched) {
+      return RelatedBatcher.of(apiClient).rows(fromTable, recordId, target, sort: sort, limit: limit);
     }
     return apiClient.listRelatedRows(
       fromTable,
@@ -210,9 +210,10 @@ class RelatedContext {
   }
 }
 
-/// Reads the first related record of every record of a list in one request
-/// per relationship (#107): each related field asks for its record, and the
-/// asks made while a list is drawn go together.
+/// Reads the related records of every record of a list in one request per
+/// relationship, order and page size (#107): each related field or portal of
+/// a row asks for its record, and the asks made while a list is drawn go
+/// together.
 class RelatedBatcher {
   RelatedBatcher._(this.apiClient);
 
@@ -220,24 +221,37 @@ class RelatedBatcher {
   static final Expando<RelatedBatcher> _byClient = Expando();
 
   final ApiClient apiClient;
-  final Map<(String, String, String), Map<String, Completer<List<Map<String, dynamic>>>>> _pending = {};
+  final Map<_BatchKey, Map<String, Completer<List<Map<String, dynamic>>>>> _pending = {};
 
-  Future<List<Map<String, dynamic>>> first(String table, String recordId, RelatedTarget target) {
+  /// At most [limit] related records of [recordId] that [target] shows, in
+  /// the order [sort] gives (the relationship's own when empty).
+  Future<List<Map<String, dynamic>>> rows(String table, String recordId, RelatedTarget target,
+      {List<String>? sort, int limit = 100}) {
     if (_pending.isEmpty) scheduleMicrotask(() => unawaited(_flush()));
-    final waiting = _pending.putIfAbsent((table, target.relationship.id, target.occurrence.id), () => {});
+    final key = (
+      table: table,
+      relationship: target.relationship.id,
+      occurrence: target.occurrence.id,
+      sort: (sort ?? const []).join(','),
+      limit: limit,
+    );
+    final waiting = _pending.putIfAbsent(key, () => {});
     return waiting.putIfAbsent(recordId, Completer.new).future;
   }
 
   Future<void> _flush() async {
     final batches = Map.of(_pending);
     _pending.clear();
-    for (final MapEntry(key: (table, relationship, occurrence), value: waiting) in batches.entries) {
+    for (final MapEntry(:key, value: waiting) in batches.entries) {
       final ids = waiting.keys.toList();
       for (var start = 0; start < ids.length; start += ApiClient.maxRelatedBatch) {
         final chunk = ids.sublist(start, (start + ApiClient.maxRelatedBatch).clamp(0, ids.length));
         try {
-          final rows = await apiClient.listRelatedRowsBatch(table, chunk,
-              relationshipId: relationship, occurrence: occurrence, limit: 1);
+          final rows = await apiClient.listRelatedRowsBatch(key.table, chunk,
+              relationshipId: key.relationship,
+              occurrence: key.occurrence,
+              sort: key.sort.isEmpty ? null : [key.sort],
+              limit: key.limit);
           for (final id in chunk) {
             waiting[id]!.complete(rows[id] ?? const []);
           }
@@ -250,6 +264,8 @@ class RelatedBatcher {
     }
   }
 }
+
+typedef _BatchKey = ({String table, String relationship, String occurrence, String sort, int limit});
 
 /// A calculation or summary field is filled in by the database, so it is shown
 /// rather than typed into.

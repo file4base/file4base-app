@@ -1069,33 +1069,69 @@ func (s *Service) ListTables(ctx context.Context) ([]TableMetadata, error) {
 		tables = append(tables, t)
 	}
 
-	// Fetch columns for each table
 	for i := range tables {
-		colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
-		if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
-			colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
-		}
-		cRows, err := db.QueryContext(ctx, colQuery, tables[i].ID)
+		cols, err := s.tableColumns(ctx, tables[i].ID)
 		if err != nil {
 			return nil, err
 		}
-
-		cols := make([]ColumnMetadata, 0)
-		for cRows.Next() {
-			var c ColumnMetadata
-			var fType string
-			if err := cRows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions, &c.SourceFieldID); err != nil {
-				cRows.Close()
-				return nil, err
-			}
-			c.FieldType = dbal.AgnosticFieldType(fType)
-			cols = append(cols, c)
-		}
-		cRows.Close()
 		tables[i].Columns = cols
 	}
 
 	return tables, nil
+}
+
+// TableByName reads one registered table with its columns, by its exact
+// name. found is false when the catalog has no such table. Unlike
+// ListTables it reads the columns of that table only.
+func (s *Service) TableByName(ctx context.Context, name string) (table *TableMetadata, found bool, err error) {
+	if err := s.ensureExternalCatalog(ctx); err != nil {
+		return nil, false, err
+	}
+	query := `SELECT id, name, display_name, COALESCE(description, ''), created_at, updated_at FROM sys_tables WHERE name = $1`
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		query = `SELECT id, name, display_name, COALESCE(description, ''), created_at, updated_at FROM sys_tables WHERE name = ?`
+	}
+	var t TableMetadata
+	err = s.driver.DB().QueryRowContext(ctx, query, name).Scan(&t.ID, &t.Name, &t.DisplayName, &t.Description, &t.CreatedAt, &t.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	// MariaDB compares names without case: the table is the one named so.
+	if t.Name != name {
+		return nil, false, nil
+	}
+	if t.Columns, err = s.tableColumns(ctx, t.ID); err != nil {
+		return nil, false, err
+	}
+	return &t, true, nil
+}
+
+// tableColumns reads the columns of a registered table, with their
+// source_field_id (#107), in the order they were created.
+func (s *Service) tableColumns(ctx context.Context, tableID string) ([]ColumnMetadata, error) {
+	colQuery := `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = $1 ORDER BY created_at ASC`
+	if s.driver.Dialect().Engine() == dbal.EngineMariaDB {
+		colQuery = `SELECT id, table_id, name, display_name, field_type, is_nullable, is_primary_key, default_value, calculation_formula, validation_rules, created_at, max_repetitions, COALESCE(source_field_id, '') FROM sys_columns WHERE table_id = ? ORDER BY created_at ASC`
+	}
+	rows, err := s.driver.DB().QueryContext(ctx, colQuery, tableID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	cols := make([]ColumnMetadata, 0)
+	for rows.Next() {
+		var c ColumnMetadata
+		var fType string
+		if err := rows.Scan(&c.ID, &c.TableID, &c.Name, &c.DisplayName, &fType, &c.IsNullable, &c.IsPrimaryKey, &c.DefaultValue, &c.CalculationFormula, &c.ValidationRules, &c.CreatedAt, &c.MaxRepetitions, &c.SourceFieldID); err != nil {
+			return nil, err
+		}
+		c.FieldType = dbal.AgnosticFieldType(fType)
+		cols = append(cols, c)
+	}
+	return cols, rows.Err()
 }
 
 // DeleteTable removes a table entirely: drops the physical table and deletes sys_* metadata.

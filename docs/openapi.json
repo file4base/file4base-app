@@ -7096,6 +7096,24 @@
           },
           "offset": {
             "type": "integer"
+          },
+          "sort": {
+            "type": "array",
+            "description": "The order of each record's related records, as ?sort= of the single read: field names, each descending or not. The relationship's own order when omitted.",
+            "items": {
+              "type": "object",
+              "required": [
+                "field"
+              ],
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "descending": {
+                  "type": "boolean"
+                }
+              }
+            }
           }
         }
       },

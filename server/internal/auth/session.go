@@ -12,7 +12,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 )
@@ -172,11 +171,11 @@ func (s *Store) Link(group, userID, username, role, database, stamp string, supe
 	if !ok || root.Group != group {
 		return "", Session{}, ErrGroupClosed
 	}
-	if strings.EqualFold(root.Database, database) {
+	if root.Database == database {
 		return "", Session{}, ErrLinkToRoot
 	}
 	for key, sess := range s.sessions {
-		if sess.Linked && sess.Group == group && strings.EqualFold(sess.Database, database) {
+		if sess.Linked && sess.Group == group && sess.Database == database {
 			delete(s.sessions, key)
 		}
 	}
@@ -199,7 +198,7 @@ func (s *Store) Member(group, database string) (Session, bool) {
 
 	now := s.now()
 	for key, sess := range s.sessions {
-		if sess.Group != group || !strings.EqualFold(sess.Database, database) || (!sess.Linked && key != group) {
+		if sess.Group != group || sess.Database != database || (!sess.Linked && key != group) {
 			continue
 		}
 		if !now.Before(sess.ExpiresAt) {
@@ -246,7 +245,7 @@ func (s *Store) Unlink(group, database string) bool {
 	defer s.mu.Unlock()
 	found := false
 	for key, sess := range s.sessions {
-		if sess.Linked && sess.Group == group && strings.EqualFold(sess.Database, database) {
+		if sess.Linked && sess.Group == group && sess.Database == database {
 			delete(s.sessions, key)
 			found = true
 		}
@@ -297,7 +296,9 @@ func (s *Store) TouchMeta(token, clientIP, webContainer, userAgent string) {
 	}
 }
 
-// Get returns the session for a token and extends its idle lifetime.
+// Get returns the session for a token and extends its idle lifetime. A
+// linked session lives no longer than the sign-in of its group: once that
+// one has expired or been revoked, the linked token is refused and dropped.
 func (s *Store) Get(token string) (Session, bool) {
 	if token == "" {
 		return Session{}, false
@@ -315,6 +316,13 @@ func (s *Store) Get(token string) (Session, bool) {
 	if !now.Before(sess.ExpiresAt) {
 		s.deleteLocked(key)
 		return Session{}, false
+	}
+	if sess.Linked {
+		if root, ok := s.sessions[sess.Group]; !ok || !now.Before(root.ExpiresAt) {
+			s.deleteLocked(sess.Group)
+			s.deleteLocked(key)
+			return Session{}, false
+		}
 	}
 	sess.LastSeenAt = now
 	sess.ExpiresAt = now.Add(s.ttl)

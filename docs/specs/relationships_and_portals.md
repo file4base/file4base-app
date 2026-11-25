@@ -296,7 +296,13 @@ could not link is signed in to with `POST /api/v1/auth/link`.
   the operator's direction and multi-key matching as for a local relationship.
   No statement joins the two databases. A list reads the related records of
   all its rows at once (`POST /api/v1/data/{table}/related`): one statement
-  for the match values and one for the related records, however many rows.
+  for the match values and one for the related records, however many rows;
+  a portal on each row of a list shows that row's related records, read the
+  same way.
+- A **marker** (`#<id>`) in a predicate or a value list is read as the field
+  binding resolved it to: the one field of that table whose `source_field_id`
+  is the id. When no field, or more than one, has it, the read answers `424`
+  with `schema_mismatch`.
 - **Value lists** of a field of the other table offer that solution's values.
 - **A layout on an external occurrence** browses that solution's records
   through `/api/v1/occurrences/{occurrence}/records`, with the fields read

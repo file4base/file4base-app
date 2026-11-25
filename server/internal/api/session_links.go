@@ -70,8 +70,10 @@ type linkAttempt struct {
 // sign-in does. It returns the canonical name, or a link status saying why
 // it cannot be signed in to.
 func (h *SecurityHandler) openSolution(ctx context.Context, name string) (string, *schema.Service, string) {
+	// The name is matched exactly, as the file reference has it: another
+	// database that only differs in case is another solution.
 	canonical, exists, err := h.dbMgr.LookupDatabase(ctx, strings.TrimSpace(name))
-	if err != nil || !exists {
+	if err != nil || !exists || canonical != strings.TrimSpace(name) {
 		return name, nil, linkMissing
 	}
 	driver, err := h.dbMgr.DriverFor(ctx, canonical)
@@ -108,7 +110,9 @@ func (h *SecurityHandler) link(r *http.Request, group, database, username, passw
 		return linkAttempt{status: linkRefused, err: err}
 	}
 	h.throttle.Succeed(key)
-	h.syncProjectSecurity(ctx, database, svc)
+	// No security sync here: it walks every account of that solution, and
+	// a sign-in must not cost more for each solution it reads. That
+	// solution's privileges are read from its own catalog on every request.
 	// The account's own standing in that solution: nothing of the account
 	// that started the group carries over.
 	superOwner := user.SuperOwner || h.isSeededSuperOwner(database, user.Username) || h.isAdminDatabaseOwner(database, user.Role)
@@ -126,7 +130,7 @@ func (h *SecurityHandler) link(r *http.Request, group, database, username, passw
 // the sign-in. A solution is followed only once the group is signed in to
 // it: the design of one it could not sign in to is not read.
 func (h *SecurityHandler) linkDependencies(r *http.Request, group, database string, svc *schema.Service, username, password string) []LinkedSolution {
-	visited := map[string]bool{strings.ToLower(database): true}
+	visited := map[string]bool{database: true}
 	queue := []*schema.Service{svc}
 	var out []LinkedSolution
 	for len(queue) > 0 && len(out) < maxLinkedSolutions {
@@ -136,10 +140,10 @@ func (h *SecurityHandler) linkDependencies(r *http.Request, group, database stri
 			continue
 		}
 		for _, dep := range deps {
-			if visited[strings.ToLower(dep.Database)] || len(out) == maxLinkedSolutions {
+			if visited[dep.Database] || len(out) == maxLinkedSolutions {
 				continue
 			}
-			visited[strings.ToLower(dep.Database)] = true
+			visited[dep.Database] = true
 			attempt := h.link(r, group, dep.Database, username, password, "")
 			linked := LinkedSolution{Database: dep.Database, References: dep.References, Status: attempt.status}
 			if attempt.status == linkLinked {
@@ -171,8 +175,7 @@ func (h *SecurityHandler) groupDependencies(ctx context.Context, sess auth.Sessi
 			continue
 		}
 		for _, dep := range list {
-			key := strings.ToLower(dep.Database)
-			deps[key] = append(deps[key], dep.References...)
+			deps[dep.Database] = append(deps[dep.Database], dep.References...)
 		}
 	}
 	return deps
@@ -203,11 +206,11 @@ func (h *SecurityHandler) Link(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess := currentSession(r)
-	if strings.EqualFold(database, sess.Database) {
+	if database == sess.Database {
 		telemetry.WriteProblem(w, r, http.StatusConflict, "Already Signed In", auth.ErrLinkToRoot.Error())
 		return
 	}
-	references, uses := h.groupDependencies(r.Context(), sess)[strings.ToLower(database)]
+	references, uses := h.groupDependencies(r.Context(), sess)[database]
 	if !uses {
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Not A Dependency",
 			"no external table occurrence of this session's solutions is mapped to '"+database+"'")
