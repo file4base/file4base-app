@@ -1118,11 +1118,14 @@ Returns the records of a related table that match record `{id}` of `{table}`.
 
 The caller needs read access to **both** tables.
 
-An **empty match field relates to nothing**: a record with nothing in its match field answers `200 OK` with `[]`, rather than matching every related record whose own match field is also empty.
+An **empty match field relates to nothing**: a record with nothing in its match field answers `200 OK` with `[]`, rather than matching every related record whose own match field is also empty. A text match field holding several lines matches through each of them, on either side (multi-keys).
+
+Records come back in the order they were created when nothing sorts them, and a sort's ties keep that order, as in FileMaker. A sort by an **unstored calculation**, the caller's or the relationship's, is applied once the related records are read: every related record of `{id}` is read, up to 10,000, its calculations computed, and the page taken from the sorted records. See [relationships_and_portals.md](../specs/relationships_and_portals.md#sorting-by-an-unstored-calculation).
 
 #### Errors
 - `404 Relationship Not Found` — no such relationship, or it does not reach `{table}`, or the named `occurrence` is not one of its two sides.
 - `400 Unknown Field` — a `sort` field the related table does not have.
+- `422 Too Many Related Records` — sorted by an unstored calculation, the record has more than 10,000 related records.
 
 #### Response `200 OK`
 ```json
@@ -1159,7 +1162,7 @@ The related records of several records of `{table}` in one request: what a list 
 { "relationship": "rel-1", "occurrence": "occ-customers", "record_ids": ["co-1", "co-2"], "limit": 1,
   "sort": [{ "field": "last_name" }, { "field": "fee_paid", "descending": true }] }
 ```
-`occurrence`, `side`, `limit` and `offset` as for the single read, and `sort` as its `?sort=last_name,-fee_paid`, the relationship's own order when omitted; at most 100 `record_ids` (`422 Batch Too Large`). The same access is needed.
+`occurrence`, `side`, `limit` and `offset` as for the single read, and `sort` as its `?sort=last_name,-fee_paid`, the relationship's own order when omitted; at most 100 `record_ids` (`422 Batch Too Large`). Sorted by an unstored calculation, the records asked for may have at most 10,000 related records in all (`422 Too Many Related Records`). The same access is needed.
 
 #### Response `200 OK`
 Every record asked for has an entry, empty when nothing is related to it or it does not exist:

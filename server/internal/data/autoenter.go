@@ -705,7 +705,7 @@ func (a *autoEnter) nearest(ctx context.Context, f *autoField, row map[string]in
 	if lower {
 		op, order = "<", "DESC"
 	}
-	others, args := matchCondition(dialect, terms[1:], func(column string) interface{} { return row[column] }, 2)
+	others, args := matchCondition(dialect, terms[1:], types, func(column string) interface{} { return row[column] }, 2)
 	if others == "" {
 		return nil, false, nil // another criterion relates nothing
 	}

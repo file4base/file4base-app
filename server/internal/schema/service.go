@@ -525,6 +525,10 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		return err
 	}
 	upgradedCatalogs.Store(db, true)
+	// Every user table numbers its records in creation order.
+	if err := s.ensureCreationOrder(ctx); err != nil {
+		return err
+	}
 
 	provisionUser := func(username, password, role string) {
 		username = strings.ToLower(strings.TrimSpace(username))
@@ -645,7 +649,8 @@ func (s *Service) CreateTable(ctx context.Context, displayName, customName strin
 	// 1. Build physical table DDL via Dialect
 	dialect := s.driver.Dialect()
 	ddlSQL, err := dialect.BuildCreateTableSQL(dbal.TableDefinition{
-		Name: name,
+		Name:          name,
+		CreationOrder: true,
 		Columns: []dbal.ColumnDefinition{
 			{
 				Name:         pkColumn.Name,

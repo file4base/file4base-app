@@ -272,13 +272,36 @@ void main() {
         final api = ApiClient(baseUrl: 'http://x', httpClient: server(total, log: log));
         final rows = await api.listAllRows('items');
         expect(rows.map((r) => r['id']).toSet().length, total);
-        expect(log.every((u) => u.queryParameters['sort_by'] == 'id'), isTrue, reason: 'stable order on every page');
+        expect(log.every((u) => !u.queryParameters.containsKey('sort_by')), isTrue,
+            reason: "every page in the server's order, the order the records were created");
       });
     }
 
     test('a failing later page fails the whole read', () async {
       final api = ApiClient(baseUrl: 'http://x', httpClient: server(2500, failAtOffset: 1000));
       expect(api.listAllRows('items'), throwsA(isA<Exception>()));
+    });
+
+    test('a found set is paged in creation order, not sorted by id', () async {
+      final bodies = <Map<String, dynamic>>[];
+      final api = ApiClient(
+        baseUrl: 'http://x',
+        httpClient: MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, dynamic>;
+          bodies.add(body);
+          final offset = (body['options'] as Map<String, dynamic>)['offset'] as int;
+          final rows = [for (var i = offset; i < (offset + 1000).clamp(0, 1500); i++) {'id': 'r$i'}];
+          return http.Response(jsonEncode(rows), 200, headers: {'content-type': 'application/json'});
+        }),
+      );
+      final rows = await api.executeFindAll('items', [
+        {'label': 'a*'},
+      ]);
+      expect(rows, hasLength(1500));
+      expect(bodies, hasLength(2));
+      for (final body in bodies) {
+        expect((body['options'] as Map<String, dynamic>).containsKey('sort_by'), isFalse);
+      }
     });
   });
 }

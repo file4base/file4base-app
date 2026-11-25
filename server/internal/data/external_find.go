@@ -39,7 +39,9 @@ import (
 // The rules are those of a find on a field of a related record of this
 // solution: every criterion of the relationship must be met, an empty match
 // field relates nothing on either side, and a text key holding several lines
-// is compared as a whole, not as a multi-key.
+// is a multi-key on either side (see multikey.go): the match values found in
+// the other solution are its fields' lines, and a record searched here is
+// related through any line of its own.
 
 // MaxExternalFindKeys is the most match values a find carries back from
 // other solutions, for all its criteria on related fields of their tables.
@@ -205,21 +207,31 @@ func (f *externalFind) run(ctx context.Context, target relatedFindTarget, crit F
 
 	dialect := f.peer.driver.Dialect()
 	active := activeTerms(target.Terms)
+	quoted := dialect.QuoteIdentifier(table)
 	columns := make([]string, len(active))
-	var where []string
+	var joins, where []string
 	for i, t := range active {
-		columns[i] = dialect.QuoteIdentifier(t.TargetColumn)
+		column := keyColumnOf(dialect, quoted, target.Fields, t.TargetColumn)
 		// The related record's match field must hold something.
-		where = append(where, notEmpty(dialect, columns[i]))
+		where = append(where, notEmpty(dialect, column.sql))
+		// A text match field gives each of its lines as a match value.
+		join, key, present := lineSource(dialect, column, lineAliasOf(i))
+		if join != "" {
+			joins = append(joins, join)
+		}
+		if present != "" {
+			where = append(where, present)
+		}
+		columns[i] = key
 	}
 	idx := 1
 	var values []interface{}
-	clause, err := criterionClause(dialect, dialect.QuoteIdentifier(field), target.Fields[field], crit, &idx, &values)
+	clause, err := criterionClause(dialect, quoted+"."+dialect.QuoteIdentifier(field), target.Fields[field], crit, &idx, &values)
 	if err != nil {
 		return externalMatch{}, err
 	}
 	where = append(where, clause)
-	from := fmt.Sprintf("FROM %s WHERE %s", dialect.QuoteIdentifier(table), strings.Join(where, " AND "))
+	from := fmt.Sprintf("FROM %s %s WHERE %s", quoted, strings.Join(joins, " "), strings.Join(where, " AND "))
 
 	m := externalMatch{kind: kindOf(active)}
 	var q string
@@ -278,28 +290,38 @@ func (f *externalFind) run(ctx context.Context, target relatedFindTarget, crit F
 	return m, nil
 }
 
-// clause is the condition on the records of tableName that crit, run in the
-// other solution, matched a related record of. A record whose match field is
-// empty relates to nothing, so it never matches.
+// clause is the condition on the records of tableName, whose fields are
+// fields, that crit, run in the other solution, matched a related record of.
+// A record whose match field is empty relates to nothing, so it never
+// matches; one whose match field is text is related through any of its lines.
 func (f *externalFind) clause(
-	dialect dbal.Dialect, tableName string, target relatedFindTarget, crit FindCriterion, idx *int, values *[]interface{},
+	dialect dbal.Dialect, tableName string, fields fieldSet, target relatedFindTarget, crit FindCriterion,
+	idx *int, values *[]interface{},
 ) (string, error) {
 	m, ok := f.found[criterionKey(crit)]
 	if !ok {
 		return "", errors.New("a find on a related field of another solution was not run there; run it again")
 	}
 	active := activeTerms(target.Terms)
-	parents := make([]string, len(active))
+	parents := make([]multiKeyColumn, len(active))
 	var parts []string
 	for i, t := range active {
-		parents[i] = dialect.QuoteIdentifier(tableName) + "." + dialect.QuoteIdentifier(t.SourceColumn)
-		parts = append(parts, notEmpty(dialect, parents[i]))
+		parents[i] = keyColumnOf(dialect, dialect.QuoteIdentifier(tableName), fields, t.SourceColumn)
+		parts = append(parts, notEmpty(dialect, parents[i].sql))
 	}
 	place := func(v interface{}) string {
 		p := dialect.Placeholder(*idx)
 		*idx++
 		*values = append(*values, v)
 		return p
+	}
+	// value is a match value found there, compared with a record's field
+	// here: bound when the comparison is built, as often as it is used.
+	value := func(v interface{}, text bool) func() []string {
+		if text {
+			v = keyText(v)
+		}
+		return func() []string { return []string{place(v)} }
 	}
 	const none = "(1 = 0)"
 	switch m.kind {
@@ -311,13 +333,14 @@ func (f *externalFind) clause(
 		if m.bound == nil {
 			return none, nil
 		}
-		parts = append(parts, fmt.Sprintf("%s %s %s", place(m.bound), active[0].Op, parents[0]))
+		// bound op parent, read from the record's side.
+		parts = append(parts, meetsKeys(dialect, parents[0], reversed[active[0].Op], value(m.bound, parents[0].lines)))
 	case matchDistinct:
 		switch len(m.keys) {
 		case 0:
 			return none, nil
 		case 1:
-			parts = append(parts, fmt.Sprintf("%s <> %s", place(m.keys[0][0]), parents[0]))
+			parts = append(parts, meetsKeys(dialect, parents[0], "<>", value(m.keys[0][0], parents[0].lines)))
 		}
 	default:
 		if len(m.keys) == 0 {
@@ -327,7 +350,7 @@ func (f *externalFind) clause(
 		if !ok {
 			return "", errors.New("the match values a find found in another solution were not bound; run it again")
 		}
-		parts = append(parts, keysCondition(active, parents, set))
+		parts = append(parts, keysCondition(dialect, active, parents, set))
 	}
 	if len(parts) == 0 {
 		return "(1 = 1)", nil
@@ -337,24 +360,27 @@ func (f *externalFind) clause(
 
 // keysCondition is the condition that a record is related to one of the
 // related records whose match values are the rows of the common table
-// expression set: an IN list when every criterion is an equality, of tuples
-// for several, and otherwise one related record meeting every criterion.
-func keysCondition(active []matchTerm, parents []string, set string) string {
-	equality := true
+// expression set: an IN list when every criterion is an equality on a field
+// holding one value, of tuples for several, and otherwise one related record
+// meeting every criterion, a text field through any of its lines.
+func keysCondition(dialect dbal.Dialect, active []matchTerm, parents []multiKeyColumn, set string) string {
+	plain := true
 	keys := make([]string, len(active))
+	names := make([]string, len(active))
 	for i, t := range active {
-		equality = equality && t.Op == "="
+		plain = plain && t.Op == "=" && !parents[i].lines
 		keys[i] = keyColumn(i)
+		names[i] = parents[i].sql
 	}
 	switch {
-	case equality && len(active) == 1:
-		return fmt.Sprintf("%s IN (SELECT %s FROM %s)", parents[0], keys[0], set)
-	case equality:
-		return fmt.Sprintf("(%s) IN (SELECT %s FROM %s)", strings.Join(parents, ", "), strings.Join(keys, ", "), set)
+	case plain && len(active) == 1:
+		return fmt.Sprintf("%s IN (SELECT %s FROM %s)", names[0], keys[0], set)
+	case plain:
+		return fmt.Sprintf("(%s) IN (SELECT %s FROM %s)", strings.Join(names, ", "), strings.Join(keys, ", "), set)
 	}
 	terms := make([]string, len(active))
 	for i, t := range active {
-		terms[i] = fmt.Sprintf("%s.%s %s %s", set, keys[i], t.Op, parents[i])
+		terms[i] = keysMeet(dialect, multiKeyColumn{sql: set + "." + keys[i]}, t.Op, parents[i])
 	}
 	return fmt.Sprintf("EXISTS (SELECT 1 FROM %s WHERE %s)", set, strings.Join(terms, " AND "))
 }
@@ -391,15 +417,17 @@ func externalKeySets(
 			}
 			active := activeTerms(target.Terms)
 			types := make([]string, len(active))
+			text := make([]bool, len(active))
 			names := make([]string, len(active))
 			for i, t := range active {
 				types[i] = dialect.MapType(fields.typeOf(t.SourceColumn))
+				text[i] = fields.typeOf(t.SourceColumn) == dbal.FieldTypeText
 				names[i] = keyColumn(i)
 			}
 			name := fmt.Sprintf("f4b_keys%d", len(sets))
 			f.sets[key] = name
 			sets = append(sets, fmt.Sprintf("%s (%s) AS (%s)",
-				name, strings.Join(names, ", "), keyRows(dialect, types, m.keys, idx, values)))
+				name, strings.Join(names, ", "), keyRows(dialect, types, text, m.keys, idx, values)))
 		}
 	}
 	if len(sets) == 0 {
@@ -410,8 +438,9 @@ func externalKeySets(
 
 // keyRows is a table of rows of bound values. PostgreSQL takes a VALUES list,
 // each value cast to the type it is compared as. MariaDB loses the values a
-// VALUES list binds, so it takes a SELECT per row.
-func keyRows(dialect dbal.Dialect, types []string, rows [][]interface{}, idx *int, values *[]interface{}) string {
+// VALUES list binds, so it takes a SELECT per row. A value compared with a
+// text field (text) is bound as the text keyText writes.
+func keyRows(dialect dbal.Dialect, types []string, text []bool, rows [][]interface{}, idx *int, values *[]interface{}) string {
 	postgres := dialect.Engine() == dbal.EnginePostgres
 	out := make([]string, len(rows))
 	for i, row := range rows {
@@ -422,6 +451,9 @@ func keyRows(dialect dbal.Dialect, types []string, rows [][]interface{}, idx *in
 				marks[j] = fmt.Sprintf("CAST(%s AS %s)", marks[j], types[j])
 			}
 			*idx++
+			if text[j] {
+				v = keyText(v)
+			}
 			*values = append(*values, v)
 		}
 		if postgres {

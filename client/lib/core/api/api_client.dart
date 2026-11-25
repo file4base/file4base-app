@@ -2143,13 +2143,14 @@ class ApiClient {
   /// Largest page the server returns for [listRows] (`limit` is clamped to it).
   static const maxPageSize = 1000;
 
-  /// Every row of [table], fetched page by page in a stable order (by `id`).
+  /// Every row of [table], fetched page by page in the order the records were
+  /// created, the server's order when nothing sorts them, which is stable.
   /// Throws if any page fails, so callers never get a silently partial set.
   /// [onProgress] receives the number of rows fetched so far.
   Future<List<Map<String, dynamic>>> listAllRows(String table, {void Function(int fetched)? onProgress}) async {
     final all = <Map<String, dynamic>>[];
     while (true) {
-      final page = await listRows(table, limit: maxPageSize, offset: all.length, sortBy: 'id');
+      final page = await listRows(table, limit: maxPageSize, offset: all.length);
       all.addAll(page);
       onProgress?.call(all.length);
       if (page.length < maxPageSize) return all;
@@ -2310,10 +2311,10 @@ class ApiClient {
   ) async {
     final all = <Map<String, dynamic>>[];
     while (true) {
-      // Paged in a stable order, so a record is neither skipped nor read
-      // twice as the pages advance.
-      final page = await executeFind(table, requests,
-          limit: maxPageSize, offset: all.length, sortBy: 'id');
+      // Paged in the server's order for an unsorted found set, the order the
+      // records were created, which is stable: a record is neither skipped
+      // nor read twice as the pages advance.
+      final page = await executeFind(table, requests, limit: maxPageSize, offset: all.length);
       all.addAll(page);
       if (page.length < maxPageSize) return all;
     }

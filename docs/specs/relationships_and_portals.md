@@ -77,8 +77,32 @@ opened.
 
 - **Both directions.** Read from the right side, each comparison is turned
   round, so the accounts a visit belongs to are the same pairs of records.
-- **Multi-keys.** A field holding several lines (separated by returns) matches
-  through any of them, criterion by criterion.
+- **Multi-keys.** A text field holding several lines is a key per line, on
+  either side, as FileMaker indexes it: a record keyed `A¶B` is related to a
+  record keyed `A` and to one keyed `B`, whichever of the two holds the
+  multi-key, and two multi-keys match when any line of one meets any line of
+  the other. It holds for every operator, criterion by criterion (an `<`
+  criterion holds when a line of one is before a line of the other), and for
+  everything that follows a relationship: portals, batched reads, related
+  fields and calculations, finds on related fields, cascading deletes and
+  value lists of related values, for a table of this solution or of another
+  one. A CR, an LF or a CRLF ends a line, so a field migrated from FileMaker
+  (whose returns become LFs) and one a client wrote with CRs match alike.
+  A line is a key when it is not empty: empty lines are no key, and a line
+  of spaces is one (compared as the engine's collation compares it), by the
+  same rule whether the line is split in the server or in SQL. A field of
+  another type holds one value; a date or timestamp meeting the lines of a
+  text field is written as an ISO date (`2026-03-05`), or for a timestamp
+  as an ISO date and time in UTC (`2026-03-05 10:30:00`, no fraction of a
+  second, a date alone at midnight exactly), so a text multi-key of dates
+  relates to a date field.
+  **Performance.** On PostgreSQL an `=` criterion on a text field is an
+  overlap of arrays of lines, which a GIN index on the same expression
+  serves; File4Base creates none, and a large table matched that way can be
+  given one:
+  `CREATE INDEX ON "table" USING gin (array_remove(string_to_array(replace("field", E'\r', E'\n'), E'\n'), ''));`.
+  Other operators, and MariaDB, split each record's field as it is read
+  (on MariaDB a one-line field is compared whole, as before).
 - **Empty fields.** A record with an empty field in any criterion other than
   `×` relates to nothing, on either side: an account with no region has no
   visits, and a visit with no region is no account's, even through `≠`, where
@@ -232,6 +256,56 @@ so a portal row cannot be aimed at a different parent.
 Allowing creation in Portal Setup is not enough on its own: the relationship
 must also allow creation of records on the side the portal shows, or the server
 refuses with `403`. Portal Setup says so when that side does not.
+
+## Creation order
+
+Records nothing sorts are listed in the order they were created, as FileMaker
+lists them by record ID: a found set without a sort, the records of a
+relationship without "Sort records" (a portal, a related field, `Last` and
+`GetNthRecord`), and every page of them. A sort ends with that order too, so
+records that sort alike keep it and a page never depends on the engine.
+Records reached across several relationships (`List`, a related field,
+`GetNthRecord` through a path) are ordered all together, in the last
+relationship's sort order and then in creation order, not the related
+records of each record on the way one after the other; that sort is done in
+the server, its text comparison ignoring case and accents first.
+
+Each user table numbers its records in a column the engine fills,
+`f4b$creation_order` (an identity on PostgreSQL, `AUTO_INCREMENT` on MariaDB).
+It is not a field: it is in no field list, no client reads or writes it, and
+no field name can hold `$`. A solution export lists each table's records in
+that order, and an import, like a migration from FileMaker, inserts them in
+the order it reads them, so the order survives both.
+
+A table created before the column existed is given it when its catalog is
+brought up to date, at sign-in or on restore (`server/migrations/007` does
+the same by hand). The records it holds are numbered in the order the engine
+reads them: their physical order on PostgreSQL, close to the order they were
+inserted in (a migrated FileMaker file's record order), and their id order on
+MariaDB. Until then, or while another session holds the table (the upgrade
+waits 5 seconds for it, then tries again at a later sign-in), its records are
+ordered by id, as before, and an export lists them by id too. A server finds
+out a table has the column again at most 30 seconds after it was found
+without it, so one that did not run the upgrade itself picks the column up.
+
+## Sorting by an unstored calculation
+
+A portal, or any read of one record's related records, may be sorted by an
+unstored calculation, through the relationship's "Sort records" or the
+caller's sort, as in FileMaker. The engine cannot sort by a value it does not
+hold, so such a read takes every related record of the record in hand, in
+creation order, computes their calculations, sorts them (numbers as numbers,
+dates in time, text ignoring case and accents first, records that sort alike
+in creation order, an empty value where the engine puts an empty one), and
+then keeps the page asked for. It costs the calculations of every related
+record rather than of one page, and it reads at most 10,000 related records:
+more are refused (`422`, "more than 10000 related records") rather than cut
+short. A batched read sorts the related records of all its rows the same way,
+within the same 10,000 in all.
+
+A found set is still never sorted by an unstored calculation (`422 Unstored
+Calculation`), since it may hold any number of records, nor are the records a
+calculation reads through a relationship.
 
 ## An empty match field relates to nothing
 
