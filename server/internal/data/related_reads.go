@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
+	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/repetition"
 )
@@ -440,7 +441,8 @@ func (f fieldSet) signature() string {
 // what a value list that includes only related values offers (#31). The
 // path is the one an unstored calculation reading target from from would
 // follow, and every table on it, the first included, must be readable.
-// Each value is given as the text a client shows for its field (fieldText).
+// Each value is given as the text a client shows for its field (fieldText),
+// and a container as the name of its file.
 func (s *Service) RelatedValues(ctx context.Context, from, recordID, target string, fields ...string) ([]map[string]string, error) {
 	r := s.newRelatedReader()
 	graph, err := r.occurrenceGraph(ctx)
@@ -502,13 +504,53 @@ func (s *Service) RelatedValues(ctx context.Context, from, recordID, target stri
 		}
 	}
 	out := make([]map[string]string, len(rows))
-	for i, row := range rows {
+	for i := range rows {
 		out[i] = make(map[string]string, len(fields))
-		for j, field := range fields {
-			out[i][field] = fieldText(ends[j].fields[ends[j].field], row[ends[j].field])
+	}
+	for j, field := range fields {
+		e := ends[j]
+		if e.fields.typeOf(e.field) != dbal.FieldTypeContainer {
+			for i, row := range rows {
+				out[i][field] = fieldText(e.fields[e.field], row[e.field])
+			}
+			continue
+		}
+		// A container is offered as the name of its file, as DistinctValues
+		// offers it.
+		names, err := e.containerNames(ctx, rows)
+		if err != nil {
+			return nil, err
+		}
+		for i, row := range rows {
+			out[i][field] = names[fmt.Sprint(row["id"])]
 		}
 	}
 	return out, nil
+}
+
+// containerNames are the file names the container field e ends at holds in
+// rows, by record id; a container without a file, or whose file name is not
+// known, has none.
+func (e pathEnd) containerNames(ctx context.Context, rows []map[string]interface{}) (map[string]string, error) {
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if _, ok := containerSize(row[e.field]); ok {
+			ids = append(ids, fmt.Sprint(row["id"]))
+		}
+	}
+	names := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return names, nil
+	}
+	driver := e.reader.s.driver
+	meta, err := containermeta.Load(ctx, driver.DB(), driver.Dialect(), e.table, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		names[id] = meta[id][e.field].Filename
+	}
+	return names, nil
 }
 
 // hopPlan is what reading across one relationship needs, resolved once: the

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
@@ -654,6 +655,168 @@ func TestValueListEntries(t *testing.T) {
 		allowed := data.NewService(driver).WithReadAccess(func(context.Context, string) (bool, error) { return true, nil })
 		got, _ = resolve(id, allowed)
 		assert.NotEmpty(t, got)
+	})
+}
+
+// A list showing only its second field stores the least value of the
+// records that show each text, which PostgreSQL has no MIN for when the first
+// field is a Boolean or a container. A container is offered as the name of
+// its file, the text FileMaker and a calculation give it, on both engines and
+// whether the list reads every record or only the related ones.
+func TestValueListEntriesOfBooleansAndContainers(t *testing.T) {
+	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
+	if err != nil {
+		t.Skip("database unavailable:", err)
+		return
+	}
+	defer driver.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := driver.Ping(ctx); err != nil {
+		t.Skip("database ping failed:", err)
+		return
+	}
+	svc := schema.NewService(driver)
+	require.NoError(t, svc.EnsureSystemTables(ctx))
+
+	stamp := uniqueTestStamp()
+	tables := map[string]*schema.TableMetadata{}
+	for _, key := range []string{"parcels", "boxes"} {
+		name := fmt.Sprintf("vlb_%s_%d", key, stamp)
+		tbl, err := svc.CreateTable(ctx, name, name)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.DeleteTable(context.Background(), tbl.ID) })
+		tables[key] = tbl
+	}
+	column := func(table, name string, fieldType dbal.AgnosticFieldType) *schema.ColumnMetadata {
+		col, err := svc.AddColumn(ctx, tables[table].ID, schema.ColumnMetadata{
+			Name: name, DisplayName: name, FieldType: fieldType, IsNullable: true,
+		})
+		require.NoError(t, err)
+		return col
+	}
+	parcelCode := column("parcels", "code", dbal.FieldTypeText)
+	boxParcel, label := column("boxes", "parcel_code", dbal.FieldTypeText), column("boxes", "label", dbal.FieldTypeText)
+	sealed, scan := column("boxes", "sealed", dbal.FieldTypeBoolean), column("boxes", "scan", dbal.FieldTypeContainer)
+
+	occurrence := map[string]string{}
+	occurrences, err := svc.ListTableOccurrences(ctx)
+	require.NoError(t, err)
+	for _, o := range occurrences {
+		for key, tbl := range tables {
+			if o.BaseTableID == tbl.ID {
+				occurrence[key] = o.ID
+			}
+		}
+	}
+	rel, err := svc.CreateRelationship(ctx, schema.CreateRelationshipInput{
+		Name:             fmt.Sprintf("vlb_parcel_boxes_%d", stamp),
+		LeftOccurrenceID: occurrence["parcels"], LeftColumnID: parcelCode.ID,
+		RightOccurrenceID: occurrence["boxes"], RightColumnID: boxParcel.ID, Operator: "=",
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = svc.DeleteRelationship(context.Background(), rel.ID) })
+
+	dialect := driver.Dialect()
+	insert := func(table, id string, columns map[string]interface{}) {
+		t.Helper()
+		cols, marks, args := []string{dialect.QuoteIdentifier("id")}, []string{dialect.Placeholder(1)}, []interface{}{id}
+		for col, value := range columns {
+			cols = append(cols, dialect.QuoteIdentifier(col))
+			marks = append(marks, dialect.Placeholder(len(args)+1))
+			args = append(args, value)
+		}
+		_, err := driver.DB().ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+			dialect.QuoteIdentifier(tables[table].Name), strings.Join(cols, ", "), strings.Join(marks, ", ")), args...)
+		require.NoError(t, err)
+	}
+	insert("parcels", fmt.Sprintf("p1-%d", stamp), map[string]interface{}{"code": "P1"})
+	parcel := fmt.Sprintf("p1-%d", stamp)
+	file := func(id, name string, content []byte) {
+		t.Helper()
+		require.NoError(t, containermeta.Put(ctx, driver.DB(), dialect, tables["boxes"].Name, id,
+			map[string]containermeta.Entry{"scan": {Filename: name, MimeType: "application/octet-stream", SizeBytes: int64(len(content))}}))
+	}
+	// Two open boxes with a named file each, one closed box whose file has
+	// no known name, and one closed box with neither a seal nor a file.
+	boxes := []struct {
+		id, label string
+		sealed    interface{}
+		scan      []byte
+		filename  string
+	}{
+		{"b1", "Open", false, []byte("one"), "plan.pdf"},
+		{"b2", "Open", true, []byte("two"), "photo.png"},
+		{"b3", "Closed", true, []byte("three"), ""},
+		{"b4", "Closed", nil, nil, ""},
+	}
+	for _, b := range boxes {
+		id := fmt.Sprintf("%s-%d", b.id, stamp)
+		values := map[string]interface{}{"parcel_code": "P1", "label": b.label, "sealed": b.sealed}
+		if b.scan != nil {
+			values["scan"] = b.scan
+		}
+		insert("boxes", id, values)
+		if b.filename != "" {
+			file(id, b.filename, b.scan)
+		}
+	}
+
+	lists := 0
+	create := func(first *schema.ColumnMetadata, in schema.ValueListInput) string {
+		t.Helper()
+		lists++
+		in.Name = fmt.Sprintf("Boxes %d %d", stamp, lists)
+		in.Kind, in.SourceTableID, in.SourceColumnID = schema.ValueListFromField, &tables["boxes"].ID, &first.ID
+		list, err := svc.CreateValueList(ctx, in)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = svc.DeleteValueList(context.Background(), list.ID) })
+		return list.ID
+	}
+	type entry struct{ value, second string }
+	resolve := func(id string, record *schema.ValueListRecord) []entry {
+		t.Helper()
+		items, _, err := svc.ValueListItems(ctx, id, record, nil)
+		require.NoError(t, err)
+		out := []entry{}
+		for _, item := range items {
+			e := entry{value: item.Value}
+			if item.Second != nil {
+				e.second = *item.Second
+			}
+			out = append(out, e)
+		}
+		return out
+	}
+
+	t.Run("a Boolean first field shown by its second field only", func(t *testing.T) {
+		got := resolve(create(sealed, schema.ValueListInput{SecondColumnID: &label.ID, ShowSecondOnly: true, SortBy: "second"}), nil)
+		assert.Equal(t, []entry{{"true", "Closed"}, {"false", "Open"}}, got,
+			"each label once, storing the least seal of its boxes; a box with no seal offers nothing")
+		got = resolve(create(sealed, schema.ValueListInput{SecondColumnID: &label.ID}), nil)
+		assert.Equal(t, []entry{{"false", "Open"}, {"true", "Closed"}, {"true", "Open"}}, got)
+	})
+
+	t.Run("a container first field is offered as its file name", func(t *testing.T) {
+		got := resolve(create(scan, schema.ValueListInput{SecondColumnID: &label.ID, ShowSecondOnly: true, SortBy: "second"}), nil)
+		assert.Equal(t, []entry{{"photo.png", "Open"}}, got,
+			"a file without a known name offers nothing, so Closed has no entry")
+		got = resolve(create(scan, schema.ValueListInput{}), nil)
+		assert.Equal(t, []entry{{value: "photo.png"}, {value: "plan.pdf"}}, got)
+	})
+
+	t.Run("a container second field is shown as its file name", func(t *testing.T) {
+		got := resolve(create(label, schema.ValueListInput{SecondColumnID: &scan.ID}), nil)
+		assert.Equal(t, []entry{{"Closed", ""}, {"Open", "photo.png"}, {"Open", "plan.pdf"}}, got)
+	})
+
+	t.Run("related containers are offered as their file names too", func(t *testing.T) {
+		id := create(scan, schema.ValueListInput{
+			SecondColumnID: &label.ID, ShowSecondOnly: true,
+			RelatedOccurrenceID: ptr(occurrence["parcels"]), SourceOccurrenceID: ptr(occurrence["boxes"]),
+		})
+		got := resolve(id, &schema.ValueListRecord{Table: tables["parcels"].Name, ID: parcel})
+		assert.Equal(t, []entry{{"photo.png", "Open"}}, got)
 	})
 }
 

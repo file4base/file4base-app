@@ -3,8 +3,10 @@ package data
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/file4base/file4base-app/server/internal/containermeta"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 )
 
@@ -32,7 +34,9 @@ type DistinctQuery struct {
 // true when there are others past those. The grouping, the order and the limit
 // are applied by the database, so a value repeated across many records never
 // hides another. Each value is given as the text a client shows for its field
-// (fieldText). A table the caller may not read is ErrNoAccess.
+// (fieldText), and a container as the name of its file, which is the text
+// FileMaker gives a container: a container whose file name is not known
+// offers nothing. A table the caller may not read is ErrNoAccess.
 func (s *Service) DistinctValues(ctx context.Context, tableName string, q DistinctQuery) (rows []map[string]string, more bool, err error) {
 	if err := s.newRelatedReader().checkRead(ctx, tableName); err != nil {
 		return nil, false, err
@@ -52,45 +56,81 @@ func (s *Service) DistinctValues(ctx context.Context, tableName string, q Distin
 	}
 
 	dialect := s.driver.Dialect()
-	value := dialect.QuoteIdentifier(q.Field)
+	source := dialect.QuoteIdentifier("src")
+	var joins []string
+	var args []interface{}
+	// read is the type each field is read back as: a container is read as
+	// its file name, which is text.
+	read := fieldSet{}
+	// column is the expression a field is read with.
+	column := func(name string) string {
+		if fields[name] != dbal.FieldTypeContainer {
+			read[name] = fields[name]
+			return source + "." + dialect.QuoteIdentifier(name)
+		}
+		read[name] = dbal.FieldTypeText
+		meta := dialect.QuoteIdentifier(fmt.Sprintf("meta%d", len(joins)+1))
+		joins = append(joins, fmt.Sprintf(" LEFT JOIN %s %s ON %s.table_name = %s AND %s.field_name = %s AND %s.record_id = %s.%s",
+			containermeta.Table, meta, meta, dialect.Placeholder(len(args)+1), meta, dialect.Placeholder(len(args)+2),
+			meta, source, dialect.QuoteIdentifier("id")))
+		args = append(args, tableName, name)
+		return meta + ".filename"
+	}
+
+	value := column(q.Field)
 	where := value + " IS NOT NULL"
-	if fields[q.Field] == dbal.FieldTypeText {
+	if read[q.Field] == dbal.FieldTypeText {
 		where += fmt.Sprintf(" AND TRIM(%s) <> ''", value)
 	}
-	selected, group, order := value, value, "1"
+	if fields[q.Field] == dbal.FieldTypeContainer {
+		where = fmt.Sprintf("%s.%s IS NOT NULL AND %s", source, dialect.QuoteIdentifier(q.Field), where)
+	}
+	as := func(expr, name string) string { return expr + " AS " + dialect.QuoteIdentifier(name) }
+	selected, group, order := as(value, q.Field), value, "1"
 	if q.Label != "" {
-		label := dialect.QuoteIdentifier(q.Label)
-		selected, group, order = value+", "+label, value+", "+label, "1, 2"
+		label := column(q.Label)
+		selected, group, order = as(value, q.Field)+", "+as(label, q.Label), value+", "+label, "1, 2"
 		if q.LabelOnly {
-			selected, group = fmt.Sprintf("MIN(%s) AS %s, %s", value, value, label), label
+			selected, group = as(leastValue(fields[q.Field], value), q.Field)+", "+as(label, q.Label), label
 		}
 		if q.ByLabel {
 			order = "2, 1"
 		}
 	}
-	sqlText := fmt.Sprintf("SELECT %s FROM %s WHERE %s GROUP BY %s ORDER BY %s LIMIT %d",
-		selected, dialect.QuoteIdentifier(tableName), where, group, order, q.Limit+1)
+	sqlText := fmt.Sprintf("SELECT %s FROM %s %s%s WHERE %s GROUP BY %s ORDER BY %s LIMIT %d",
+		selected, dialect.QuoteIdentifier(tableName), source, strings.Join(joins, ""), where, group, order, q.Limit+1)
 
-	result, err := s.driver.DB().QueryContext(ctx, sqlText)
+	result, err := s.driver.DB().QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("failed reading the values of %s.%s: %w", tableName, q.Field, err)
 	}
 	defer result.Close()
-	read, err := rowsToMaps(result, fields)
+	found, err := rowsToMaps(result, read)
 	if err != nil {
 		return nil, false, err
 	}
-	if len(read) > q.Limit {
-		read, more = read[:q.Limit], true
+	if len(found) > q.Limit {
+		found, more = found[:q.Limit], true
 	}
-	rows = make([]map[string]string, len(read))
-	for i, row := range read {
+	rows = make([]map[string]string, len(found))
+	for i, row := range found {
 		rows[i] = make(map[string]string, len(names))
 		for _, name := range names {
-			rows[i][name] = fieldText(fields[name], row[name])
+			rows[i][name] = fieldText(read[name], row[name])
 		}
 	}
 	return rows, more, nil
+}
+
+// leastValue is the least of the values of a group, the one an entry of a
+// list showing only its second field stores. PostgreSQL has no MIN of a
+// boolean, so a Boolean is ranked as 0 or 1, which reads back as false or
+// true.
+func leastValue(fieldType dbal.AgnosticFieldType, expr string) string {
+	if fieldType == dbal.FieldTypeBoolean {
+		return fmt.Sprintf("MIN(CASE WHEN %s THEN 1 ELSE 0 END)", expr)
+	}
+	return fmt.Sprintf("MIN(%s)", expr)
 }
 
 // fieldText is a value read for the JSON API as the text a client shows for
