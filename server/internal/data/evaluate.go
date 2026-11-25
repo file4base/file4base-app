@@ -2,8 +2,10 @@ package data
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -39,7 +41,51 @@ type Evaluation struct {
 	// RecordID is the record it was evaluated against, empty when there was
 	// none.
 	RecordID string `json:"record_id,omitempty"`
+
+	// Variables are the $ and $$ variables the expression set, with Let
+	// ( [ $x = … ] ; … ), as text, by lower-case name: a script keeps them.
+	Variables map[string]string `json:"variables,omitempty"`
 }
+
+// EvaluationEnv is what a script gives the expressions it evaluates: its $
+// and $$ variables, and the answers to Get functions only the client knows
+// (Get ( ScriptParameter ), Get ( LayoutName ), …), by selector.
+type EvaluationEnv struct {
+	Variables map[string]any
+	Get       map[string]any
+}
+
+// envContext answers the Get functions the environment gives, and the
+// others as the record's context does.
+type envContext struct {
+	*unstoredContext
+	get map[string]any
+}
+
+func (c *envContext) Get(selector string) (any, error) {
+	if v, ok := c.get[selector]; ok {
+		return v, nil
+	}
+	return c.unstoredContext.Get(selector)
+}
+
+// variableInput is a variable as a script sends it: a number written as a
+// plain decimal number is a number, as Set Variable [ $n ; 10 ] keeps one,
+// and any other text stays text (a leading zero, as in "007", too).
+func variableInput(v any) any {
+	switch t := v.(type) {
+	case nil, bool, float64, json.Number:
+		return t
+	case string:
+		if plainNumber.MatchString(t) {
+			return json.Number(t)
+		}
+		return t
+	}
+	return fmt.Sprint(v) // a list or an object is not a value a variable holds
+}
+
+var plainNumber = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?$`)
 
 // EvaluateExpression computes one expression against one record of a table,
 // with the engine the calculation fields use, so the viewer and the field
@@ -49,6 +95,15 @@ type Evaluation struct {
 // is all the engine can do.
 func (s *Service) EvaluateExpression(
 	ctx context.Context, tableName, recordID, expression, resultType string,
+) (*Evaluation, error) {
+	return s.EvaluateExpressionIn(ctx, tableName, recordID, expression, resultType, EvaluationEnv{})
+}
+
+// EvaluateExpressionIn is EvaluateExpression with a script's variables and
+// Get answers: how a script step evaluates a formula the client cannot,
+// with the solution's custom functions, in one request.
+func (s *Service) EvaluateExpressionIn(
+	ctx context.Context, tableName, recordID, expression, resultType string, in EvaluationEnv,
 ) (*Evaluation, error) {
 	if strings.TrimSpace(expression) == "" {
 		return nil, fmt.Errorf("%w: there is nothing to evaluate", ErrInvalidExpression)
@@ -91,11 +146,34 @@ func (s *Service) EvaluateExpression(
 	result := calc.ParseResultType(resultType)
 	// Related fields are read from the table's own occurrence, as a formula
 	// typed in the Data Viewer is in FileMaker.
-	env := &unstoredContext{RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating()},
-		reader: s.newRelatedReader(), ctx: ctx, table: tableName, row: row}
+	variables := make(map[string]any, len(in.Variables))
+	for name, v := range in.Variables {
+		variables[strings.ToLower(strings.TrimSpace(name))] = variableInput(v)
+	}
+	get := make(map[string]any, len(in.Get))
+	for selector, v := range in.Get {
+		get[strings.ToUpper(strings.TrimSpace(selector))] = v
+	}
+	scope := make(map[string]any, len(variables))
+	for name, v := range variables {
+		scope[name] = v
+	}
+	env := &envContext{unstoredContext: &unstoredContext{
+		RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
+		reader:        s.newRelatedReader(), ctx: ctx, table: tableName, row: row}, get: get}
 	value, err := calc.EvaluateWith(expr, env, result)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())
+	}
+	var set map[string]string
+	for name, v := range env.Variables {
+		if given, ok := variables[name]; ok && given == v {
+			continue
+		}
+		if set == nil {
+			set = map[string]string{}
+		}
+		set[name] = variableText(v)
 	}
 
 	return &Evaluation{
@@ -106,7 +184,21 @@ func (s *Service) EvaluateExpression(
 		Fields:        read,
 		UnknownFields: unknown,
 		RecordID:      recordID,
+		Variables:     set,
 	}, nil
+}
+
+// variableText is a variable's value as a script keeps it, as text.
+func variableText(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case calc.Value:
+		return t.Text(nil)
+	case string:
+		return t
+	}
+	return fmt.Sprint(v)
 }
 
 // evaluationText writes the answer the way the viewer shows it, in the same

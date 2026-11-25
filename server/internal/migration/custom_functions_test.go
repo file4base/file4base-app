@@ -258,6 +258,7 @@ func TestCustomFunctionsApplyAndCompute(t *testing.T) {
 		d := driver.Dialect()
 		_, _ = driver.DB().ExecContext(context.Background(),
 			`DELETE FROM `+data.CustomFunctionsTable+` WHERE name LIKE `+d.Placeholder(1), "%"+tag)
+		data.InvalidateLibrary(driver)
 	})
 	imported, err := schemaSvc.ImportSolution(ctx, file)
 	require.NoError(t, err)
