@@ -525,6 +525,7 @@ class PortalView extends StatefulWidget {
     required this.object, required this.contents, required this.related, required this.isDark, super.key,
     this.onChanged,
     this.refreshGeneration = 0,
+    this.onRowActivated,
   });
   final LayoutObjectModel object;
 
@@ -542,6 +543,11 @@ class PortalView extends StatefulWidget {
   /// Changes when a script asks this portal to reload its related records
   /// (Refresh Portal, Refresh Window), whether or not the record changed.
   final int refreshGeneration;
+
+  /// Called with the record whose portal it is, the occurrence and the row
+  /// of a related record clicked into: the active portal row, which a script
+  /// step writing a field of that occurrence writes.
+  final void Function(String? recordId, String occurrenceId, String rowId)? onRowActivated;
 
   @override
   State<PortalView> createState() => _PortalViewState();
@@ -882,6 +888,15 @@ class _PortalViewState extends State<PortalView> {
   Widget _row(RelatedTarget target, Map<String, dynamic> row, double rowHeight,
       {required bool striped}) {
     final rowId = row['id']?.toString() ?? '';
+    // Clicking anywhere in a row makes it the active portal row.
+    return Listener(
+      onPointerDown: (_) => widget.onRowActivated?.call(widget.related.recordId, target.occurrence.id, rowId),
+      child: _rowBox(target, row, rowId, rowHeight, striped: striped),
+    );
+  }
+
+  Widget _rowBox(RelatedTarget target, Map<String, dynamic> row, String rowId, double rowHeight,
+      {required bool striped}) {
     return Container(
       key: ValueKey('portal-row-$rowId'),
       height: rowHeight,

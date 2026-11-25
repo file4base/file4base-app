@@ -107,6 +107,30 @@ abstract class CalculationContextHost {
   Future<String?> actionEvaluateCalculation(String expression);
 }
 
+/// A field of another table occurrence than the window's (`Occurrence::Field`).
+/// FileMaker writes it in a related record, never in the field of the same
+/// name of the record in hand. Implemented by the data browser.
+abstract class RelatedFieldHost {
+  /// Whether [occurrence] is the occurrence the window's layout shows.
+  Future<bool> actionIsOwnOccurrence(String occurrence);
+
+  /// What [field] of [occurrence] holds in the related record a step would
+  /// write (see [actionSetRelatedField]): empty when there is none, null
+  /// when the field cannot be read.
+  Future<String?> actionRelatedFieldText(String occurrence, String field);
+
+  /// Writes [value] into [field] of [occurrence], another occurrence than
+  /// the window's: in the active portal row when it is a row of that
+  /// occurrence, otherwise in the first related record through the
+  /// relationship, in the relationship's sort order; with none, in a record
+  /// created through the relationship when it allows creation. Returns
+  /// FileMaker's error code: 0 when written, 101 when there is no related
+  /// record and none may be created, 102 when there is no such field, 103
+  /// when no relationship leads to [occurrence], 201 for a field that cannot
+  /// be modified.
+  Future<int> actionSetRelatedField(String occurrence, String field, String value);
+}
+
 /// Script steps of the auto-enter options: Set Next Serial Value and
 /// Relookup Field Contents. Implemented by the data browser; a host without
 /// it makes the steps fail with FileMaker's error 3 (command unavailable).
@@ -366,6 +390,69 @@ class LayoutActionRunner {
   ExtendedLayoutActionHost? get _extHost => host is ExtendedLayoutActionHost ? host as ExtendedLayoutActionHost : null;
   AutoEnterActionHost? get _autoEnterHost => host is AutoEnterActionHost ? host as AutoEnterActionHost : null;
 
+  RelatedFieldHost? get _relatedHost => host is RelatedFieldHost ? host as RelatedFieldHost : null;
+
+  /// The field a step names: `Occurrence::Field`, or a bare name with the
+  /// occurrence [table] (the step's `field_table`) gives. The occurrence is
+  /// kept: a field of another occurrence is a related field, not the field
+  /// of the same name of the record in hand.
+  static ({String occurrence, String field}) fieldTarget(String raw, [String table = '']) {
+    final text = raw.trim();
+    final cut = text.indexOf('::');
+    if (cut < 0) return (occurrence: table.trim(), field: text);
+    return (occurrence: text.substring(0, cut).trim(), field: text.substring(cut + 2).trim());
+  }
+
+  static String _qualified(({String occurrence, String field}) target) =>
+      target.occurrence.isEmpty ? target.field : '${target.occurrence}::${target.field}';
+
+  /// Whether [occurrence] is the window's own; a host that cannot tell
+  /// writes no field of a named occurrence.
+  Future<bool> _isOwnOccurrence(String occurrence) async {
+    if (occurrence.trim().isEmpty) return true;
+    final related = _relatedHost;
+    if (related != null) return related.actionIsOwnOccurrence(occurrence);
+    final context = host is CalculationContextHost ? host as CalculationContextHost : null;
+    return context != null && context.actionOwnOccurrenceNames.contains(occurrence.trim().toLowerCase());
+  }
+
+  /// Writes [value] into [target], in the record in hand or, for a field of
+  /// another occurrence, in the related record FileMaker writes. Returns
+  /// FileMaker's error code.
+  Future<int> _writeField(({String occurrence, String field}) target, String value) async {
+    if (!await _isOwnOccurrence(target.occurrence)) {
+      final related = _relatedHost;
+      if (related == null) return 102;
+      return related.actionSetRelatedField(target.occurrence, target.field, value);
+    }
+    return await host.actionSetField(target.field, value) ? 0 : 102;
+  }
+
+  /// What [target] holds where [_writeField] would write it; null when it
+  /// cannot be read.
+  Future<String?> _readField(({String occurrence, String field}) target) async {
+    if (!await _isOwnOccurrence(target.occurrence)) {
+      return _relatedHost?.actionRelatedFieldText(target.occurrence, target.field);
+    }
+    final token = '{{${target.field}}}';
+    final value = host.actionResolveText(token);
+    return value == token ? null : value;
+  }
+
+  /// Why [step] wrote nothing into [target], for FileMaker's error [code].
+  static String _writeRefusal(String step, ({String occurrence, String field}) target, int code) {
+    final name = _qualified(target);
+    return switch (code) {
+      101 => '$step: there is no related record of ${target.occurrence} to write "$name" into, '
+          'and the relationship does not allow creating one. Nothing was written.',
+      103 => '$step: no relationship leads from this layout to ${target.occurrence}, so '
+          '"$name" cannot be written. Nothing was written.',
+      201 => '$step: "$name" cannot be modified. Nothing was written.',
+      _ when target.occurrence.isEmpty => 'Field "${target.field}" is not in this table.',
+      _ => '$step: "$name" is not a field this window can write. Nothing was written.',
+    };
+  }
+
   Future<LayoutActionResult> run(ButtonActionModel action) async {
     if (action.isPerformScript) {
       if (action.scriptId == null && (action.scriptName == null || action.scriptName!.isEmpty)) {
@@ -497,11 +584,17 @@ class LayoutActionRunner {
       return null;
     }
 
-    String normalizeFieldTarget(String rawField) {
-      final trimmed = rawField.trim();
-      final fieldPart = trimmed.contains('::') ? trimmed.split('::').last.trim() : trimmed;
-      return fieldPart.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), '');
+    ({String occurrence, String field}) normalizeFieldTarget(String rawField) {
+      final target = fieldTarget(rawField);
+      return (
+        occurrence: target.occurrence,
+        field: target.field.toLowerCase().replaceAll(RegExp('[^a-z0-9]+'), '_').replaceAll(RegExp(r'^_+|_+$'), ''),
+      );
     }
+
+    // The field a step names, with its occurrence.
+    ({String occurrence, String field}) stepField([String key = 'field']) =>
+        fieldTarget(params[key]?.toString() ?? '', params['field_table']?.toString() ?? '');
 
     switch (norm) {
       case 'comment':
@@ -1006,17 +1099,16 @@ class LayoutActionRunner {
         session.ensureCurrentWindow(layout).layoutName = layout;
         session.lastError = 0;
       case 'set_field':
-        final field = params['field']?.toString() ?? '';
-        if (field.isEmpty) return failOrCapture(102, 'Set Field has no field selected.');
+        final target = stepField();
+        if (target.field.isEmpty) return failOrCapture(102, 'Set Field has no field selected.');
         final value = params['value_is_calculation'] == true
             ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
             : p('value');
         if (value == null) {
           return const LayoutActionResult.stopped('Set Field calculation is not supported in this context.');
         }
-        if (!await host.actionSetField(field, value)) {
-          return failOrCapture(102, 'Field "$field" is not in this table.');
-        }
+        final written = await _writeField(target, value);
+        if (written != 0) return failOrCapture(written, _writeRefusal('Set Field', target, written));
         session.lastError = 0;
       case 'set_field_by_name':
         final rawTargetField = params['target_field']?.toString() ?? params['field']?.toString() ?? '';
@@ -1026,23 +1118,28 @@ class LayoutActionRunner {
         if (resolvedTarget == null || resolvedTarget.trim().isEmpty) {
           return failOrCapture(102, 'Set Field By Name could not resolve target field "$rawTargetField".');
         }
-        final colName = normalizeFieldTarget(resolvedTarget);
+        final target = normalizeFieldTarget(resolvedTarget);
         final value = params['value_is_calculation'] == true
             ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
             : (resolveValue(params['value']?.toString() ?? '', vars, callContext: context) ?? p('value'));
         if (value == null) {
           return const LayoutActionResult.stopped('Set Field By Name calculation is not supported in this context.');
         }
-        if (!await host.actionSetField(colName, value)) {
-          return failOrCapture(102, 'Field "$resolvedTarget" ($colName) is not in this table.');
+        final written = await _writeField(target, value);
+        if (written != 0) {
+          return failOrCapture(
+              written,
+              target.occurrence.isEmpty && written == 102
+                  ? 'Field "$resolvedTarget" (${target.field}) is not in this table.'
+                  : _writeRefusal('Set Field By Name', target, written));
         }
         session.lastError = 0;
       case 'insert_calculated_result':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isEmpty) {
+        if (target.field.isEmpty) {
           return failOrCapture(102, 'Insert Calculated Result has no target or active field.');
         }
         final calcVal = resolveValue((params['value'] ?? params['expression'])?.toString() ?? '', vars, callContext: context);
@@ -1052,14 +1149,13 @@ class LayoutActionRunner {
         final selectAll = boolParam('select', defaultValue: true);
         var finalVal = calcVal;
         if (!selectAll) {
-          final existing = host.actionResolveText('{{$field}}');
-          if (existing != '{{$field}}') {
+          final existing = await _readField(target);
+          if (existing != null) {
             finalVal = '$existing$calcVal';
           }
         }
-        if (!await host.actionSetField(field, finalVal)) {
-          return failOrCapture(102, 'Field "$field" is not in this table.');
-        }
+        final written = await _writeField(target, finalVal);
+        if (written != 0) return failOrCapture(written, _writeRefusal('Insert Calculated Result', target, written));
         session.lastError = 0;
       case 'insert_current_date':
         final now = DateTime.now();
@@ -1079,7 +1175,8 @@ class LayoutActionRunner {
           break;
         }
         if (!hasWindow) return windowless();
-        var field = textParam('field');
+        final named = fieldTarget(textParam('field'), textParam('field_table'));
+        var field = named.field;
         if (field.isEmpty) {
           // Only a step that names no target at all writes the active field;
           // one whose target could not be read fails rather than writing
@@ -1095,7 +1192,10 @@ class LayoutActionRunner {
         if (field.isEmpty) {
           return failOrCapture(102, 'Insert Current Date has no target or active field.');
         }
-        final table = textParam('field_table');
+        final table = named.occurrence;
+        // Placing the occurrence first lets the window read the type of a
+        // related field from its own table.
+        final ownField = await _isOwnOccurrence(table);
         final fieldType = ext?.actionFieldType(field, table: table.isEmpty ? null : table)?.toUpperCase();
         if (fieldType != null && const {'CALCULATION', 'SUMMARY', 'CONTAINER'}.contains(fieldType)) {
           return failOrCapture(201, 'Insert Current Date cannot write the date into "$field", a '
@@ -1105,6 +1205,20 @@ class LayoutActionRunner {
         // gets it at midnight. Elsewhere Select entire contents decides.
         final value = fieldType == 'TIMESTAMP' ? '$today 00:00:00' : today;
         final replaceAll = selectAll || fieldType == 'DATE' || fieldType == 'TIMESTAMP';
+        // A field of another occurrence is written in the related record.
+        Future<LayoutActionResult> insertRelated() async {
+          final target = (occurrence: table, field: field);
+          var text = value;
+          if (!replaceAll) {
+            final existing = await _readField(target);
+            if (existing != null) text = '$existing$value';
+          }
+          final written = await _writeField(target, text);
+          if (written != 0) return failOrCapture(written, _writeRefusal('Insert Current Date', target, written));
+          session.lastError = 0;
+          return const LayoutActionResult.ok();
+        }
+        if (!ownField) return insertRelated();
         if (ext != null) {
           final outcome = await ext.actionInsertIntoField(
               field: field, text: value, replaceAll: replaceAll, table: table.isEmpty ? null : table);
@@ -1114,17 +1228,12 @@ class LayoutActionRunner {
             case FieldInsertOutcome.noSuchField:
               return failOrCapture(102, 'Field "$field" is not in this table.');
             case FieldInsertOutcome.relatedField:
-              return failOrCapture(102, 'Insert Current Date writes "$table::$field", a field of '
-                  'another table occurrence than this layout\'s, which a script cannot write yet. '
-                  'Nothing was written.');
+              return insertRelated();
           }
           session.lastError = 0;
           break;
         }
-        if (table.isNotEmpty) {
-          return failOrCapture(102, 'Insert Current Date writes "$table::$field", which this window '
-              'cannot write. Nothing was written.');
-        }
+        if (table.isNotEmpty) return insertRelated();
         var plain = value;
         if (!replaceAll) {
           final token = '{{$field}}';
@@ -1193,7 +1302,7 @@ class LayoutActionRunner {
           failOrCapture: failOrCapture,
         );
       case 'set_next_serial_value':
-        final field = params['field']?.toString().trim() ?? '';
+        final field = _qualified(stepField());
         if (field.isEmpty) return failOrCapture(102, 'Set Next Serial Value has no field selected.');
         final value = params['value_is_calculation'] == true
             ? resolveValue(params['value']?.toString() ?? '', vars, callContext: context)
@@ -1209,7 +1318,7 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'relookup_field_contents':
-        var field = params['field']?.toString().trim() ?? '';
+        var field = _qualified(stepField());
         if (field.isEmpty) {
           field = ext?.actionActiveFieldName ?? session.activeField;
         }
@@ -1225,15 +1334,13 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'copy':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
         var copied = '';
-        if (field.isNotEmpty) {
-          final token = '{{$field}}';
-          final val = host.actionResolveText(token);
-          copied = val == token ? '' : val;
+        if (target.field.isNotEmpty) {
+          copied = await _readField(target) ?? '';
         }
         session.clipboard = copied;
         if (ext != null) {
@@ -1241,40 +1348,39 @@ class LayoutActionRunner {
         }
         session.lastError = 0;
       case 'cut':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isNotEmpty) {
-          final token = '{{$field}}';
-          final val = host.actionResolveText(token);
-          session.clipboard = val == token ? '' : val;
+        if (target.field.isNotEmpty) {
+          session.clipboard = await _readField(target) ?? '';
           if (ext != null) await ext.actionCopyToClipboard(session.clipboard);
-          await host.actionSetField(field, '');
+          final written = await _writeField(target, '');
+          if (written != 0 && target.occurrence.isNotEmpty) {
+            return failOrCapture(written, _writeRefusal('Cut', target, written));
+          }
         }
         session.lastError = 0;
       case 'paste':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isEmpty) {
+        if (target.field.isEmpty) {
           return failOrCapture(102, 'Paste has no target or active field.');
         }
         final clip = (ext != null ? await ext.actionReadFromClipboard() : null) ?? session.clipboard;
-        if (!await host.actionSetField(field, clip)) {
-          return failOrCapture(102, 'Field "$field" is not in this table.');
-        }
+        final written = await _writeField(target, clip);
+        if (written != 0) return failOrCapture(written, _writeRefusal('Paste', target, written));
         session.lastError = 0;
       case 'clear':
-        var field = params['field']?.toString().trim() ?? '';
-        if (field.isEmpty) {
-          field = ext?.actionActiveFieldName ?? session.activeField;
+        var target = stepField();
+        if (target.field.isEmpty) {
+          target = (occurrence: '', field: ext?.actionActiveFieldName ?? session.activeField);
         }
-        if (field.isNotEmpty) {
-          if (!await host.actionSetField(field, '')) {
-            return failOrCapture(102, 'Field "$field" is not in this table.');
-          }
+        if (target.field.isNotEmpty) {
+          final written = await _writeField(target, '');
+          if (written != 0) return failOrCapture(written, _writeRefusal('Clear', target, written));
         }
         session.lastError = 0;
       case 'export_field_contents':
@@ -1291,7 +1397,15 @@ class LayoutActionRunner {
         session.lastError = 0;
       case 'insert_picture':
       case 'insert_file':
-        var field = params['field']?.toString().trim() ?? '';
+        final named = stepField();
+        if (!await _isOwnOccurrence(named.occurrence)) {
+          // A file goes into the record in hand only; a related container
+          // field is not written instead of the field of the same name here.
+          return failOrCapture(102, '${norm == 'insert_picture' ? 'Insert Picture' : 'Insert File'} writes '
+              '"${_qualified(named)}", a field of another table occurrence, which File4Base cannot insert a '
+              'file into yet. Nothing was written.');
+        }
+        var field = named.field;
         if (field.isEmpty) {
           field = ext?.actionActiveFieldName ?? session.activeField;
         }
@@ -1311,7 +1425,7 @@ class LayoutActionRunner {
           return failOrCapture(1631, 'Insert from URL has no URL.');
         }
         final targetVar = params['target']?.toString().trim() ?? '';
-        final targetField = params['field']?.toString().trim() ?? '';
+        final targetField = stepField();
         if (!hasWindow && targetVar.isEmpty) {
           return LayoutActionResult.stopped(
               'Step "$stepType" targeting a field acts on a window, and this script has no window here.');
@@ -1343,10 +1457,9 @@ class LayoutActionRunner {
         }
         if (targetVar.startsWith(r'$')) {
           _setVariable(targetVar, fetched, vars);
-        } else if (targetField.isNotEmpty) {
-          if (!await host.actionSetField(targetField, fetched)) {
-            return failOrCapture(102, 'Field "$targetField" is not in this table.');
-          }
+        } else if (targetField.field.isNotEmpty) {
+          final written = await _writeField(targetField, fetched);
+          if (written != 0) return failOrCapture(written, _writeRefusal('Insert from URL', targetField, written));
         }
         session.lastError = 0;
       case 'send_mail':
@@ -1412,21 +1525,27 @@ class LayoutActionRunner {
                 : _resolveParamsText(b['label']?.toString() ?? 'OK', vars);
             return <String, dynamic>{'label': lbl, 'commit': b['commit'] != false};
           }).toList();
-          final resolvedInputs = rawInputs?.map((inp) {
-            final lbl = inp['label_is_calculation'] == true
-                ? (resolveValue(inp['label']?.toString() ?? '', vars, callContext: context) ?? '')
-                : _resolveParamsText(inp['label']?.toString() ?? '', vars);
-            final fieldKey = inp['field']?.toString() ?? '';
-            final current = fieldKey.startsWith(r'$')
-                ? (_lookupVariable(fieldKey, vars) ?? '')
-                : (host.actionResolveText('{{$fieldKey}}') == '{{$fieldKey}}' ? '' : host.actionResolveText('{{$fieldKey}}'));
-            return <String, dynamic>{
-              'field': fieldKey,
-              'label': lbl,
-              'value': current,
-              'password': inp['password'] == true,
-            };
-          }).toList();
+          List<Map<String, dynamic>>? resolvedInputs;
+          if (rawInputs != null) {
+            resolvedInputs = [];
+            for (final inp in rawInputs) {
+              final lbl = inp['label_is_calculation'] == true
+                  ? (resolveValue(inp['label']?.toString() ?? '', vars, callContext: context) ?? '')
+                  : _resolveParamsText(inp['label']?.toString() ?? '', vars);
+              final raw = inp['field']?.toString() ?? '';
+              // A field input is keyed by its occurrence too, so what is typed
+              // goes back into that field: a related one into the related record.
+              final target = raw.startsWith(r'$') ? (occurrence: '', field: raw) : fieldTarget(raw, inp['field_table']?.toString() ?? '');
+              final fieldKey = _qualified(target);
+              final current = raw.startsWith(r'$') ? (_lookupVariable(raw, vars) ?? '') : (await _readField(target) ?? '');
+              resolvedInputs.add(<String, dynamic>{
+                'field': fieldKey,
+                'label': lbl,
+                'value': current,
+                'password': inp['password'] == true,
+              });
+            }
+          }
           final dialogResult = await ext.actionShowDialogEx(
             title: title,
             message: message,
@@ -1447,7 +1566,7 @@ class LayoutActionRunner {
               if (entry.key.startsWith(r'$')) {
                 _setVariable(entry.key, entry.value, vars);
               } else if (entry.key.isNotEmpty) {
-                await host.actionSetField(entry.key, entry.value);
+                await _writeField(fieldTarget(entry.key), entry.value);
               }
             }
           }
