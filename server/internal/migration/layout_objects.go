@@ -2,12 +2,15 @@ package migration
 
 import (
 	"fmt"
+	"html"
 	"math"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/google/uuid"
 )
@@ -52,6 +55,7 @@ type layoutObjectContext struct {
 	dateOrder     string                 // dmy, mdy or iso: how the file writes dates; empty when unknown
 	edges         map[string][][2]string // occurrence id -> {occurrence joined, relationship}
 	occNames      map[string]string      // occurrence id -> name
+	repetitions   map[string]int         // "table.column" -> repetitions of a repeating field
 
 	counts map[string]*LayoutObjectCount
 	media  map[string]map[string]interface{}
@@ -68,6 +72,7 @@ func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, bindin
 		counts:        map[string]*LayoutObjectCount{},
 		media:         map[string]map[string]interface{}{},
 		occNames:      map[string]string{},
+		repetitions:   bundleRepetitions(bundle),
 	}
 	for _, occ := range bundle.TableOccurrences {
 		ctx.occNames[occ.ID] = occ.Name
@@ -201,6 +206,10 @@ type nativeLayout struct {
 	portalFilter   int             // portal filters that could not be bound, the portal kept empty
 	portalSort     int             // portal sort fields of another occurrence, left out of the sort
 	formatsLeft    int             // conditional formats not kept
+	formatsDiffer  int             // "Value is" conditions kept as a calculation that compares with other values
+	formatsOff     int             // conditional formats switched off in FileMaker, left out
+	formatsInRows  int             // conditional formats of portal row objects, kept but not drawn in the rows
+	inPortal       int             // depth of portals whose row objects are being converted
 	popovers       map[string]bool // ids of the popover buttons, whose panels open over the layout
 	vectorImage    int
 	mergeKept      int
@@ -424,10 +433,26 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 	}
 }
 
-// conditionalFormats keeps a field's conditional formatting whose condition
-// is a calculation ("Formula is"), bound from the layout's occurrence, with
-// the text colour, fill, bold, italic and underline it gives. Conditions on
-// the field's value, and formats of other objects, are reported.
+// fmConditionOperands is, by the type of a <Condition>, how many values of
+// its <Range> the condition compares with: 0 is FileMaker's "Formula is",
+// 1 to 20 its "Value is" conditions, in the order of its menu: between, not
+// between, equal to, not equal to, greater than, less than, greater than or
+// equal to, less than or equal to, containing, not containing, beginning
+// with, ending with, empty, before today, today, after today, more than x
+// days passed, more than x days ahead, less than x days passed and less than
+// x days ahead.
+var fmConditionOperands = map[string]int{
+	"0": 0, "1": 2, "2": 2, "3": 1, "4": 1, "5": 1, "6": 1, "7": 1, "8": 1, "9": 1, "10": 1,
+	"11": 1, "12": 1, "13": 0, "14": 0, "15": 0, "16": 0, "17": 1, "18": 1, "19": 1, "20": 1,
+}
+
+// conditionalFormats keeps a field's conditional formatting, bound from the
+// layout's occurrence, with the text colour, fill, bold, italic and
+// underline it gives. FileMaker writes every condition as the calculation it
+// evaluates, a "Value is" condition too (greater than 0 as Self>0, a date
+// as Date(3;15;1990)): each is kept as that calculation, its Self written as
+// the object's field, so it compares as the field's type does. Formats that
+// cannot be bound, and formats of other objects, are reported.
 func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface{}) {
 	f := childPath(obj, "Conditions", "Formatting")
 	if f == nil {
@@ -439,15 +464,35 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 		if c.Name != "Condition" {
 			continue
 		}
+		// Bit 0 of <Options> is the condition's check box in FileMaker's
+		// dialog: a condition switched off is never applied.
+		if opt := findFirstChild(c, "Options"); opt != nil {
+			if o, err := strconv.Atoi(strings.TrimSpace(opt.Text)); err == nil && o&1 == 0 {
+				l.formatsOff++
+				continue
+			}
+		}
+		operands, known := fmConditionOperands[firstAttr(c, "type")]
 		formula := calculationText(c)
-		if out["type"] != "field" || style == nil || firstAttr(c, "type") != "0" || formula == "" {
+		if out["type"] != "field" || style == nil || !known || formula == "" {
 			l.formatsLeft++
 			continue
 		}
-		bound, ok := l.bindFormula(formula)
+		own, ok := l.selfAsField(obj, formula)
 		if !ok {
 			l.formatsLeft++
 			continue
+		}
+		bound, ok := l.bindFormula(own)
+		if !ok {
+			l.formatsLeft++
+			continue
+		}
+		if !rangeInFormula(findFirstChild(c, "Range"), operands, formula) {
+			l.formatsDiffer++
+		}
+		if l.inPortal > 0 {
+			l.formatsInRows++
 		}
 		css := resolveStyle(nil, nil, findFirstChild(c, "LocalCSS"))
 		rule := map[string]interface{}{"operator": "formula", "value": bound}
@@ -472,6 +517,150 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 	if len(rules) > 0 {
 		style["conditional_rules"] = rules
 	}
+}
+
+// selfAsField writes the Self of a condition of the field object obj as the
+// field it shows, Occurrence::Field as FileMaker names them (with the
+// repetition it shows), since nothing answers Self where a layout's
+// conditions are evaluated. A box showing several repetitions has a Self for
+// each, which one formula cannot read: its conditions on Self are not kept.
+func (l *nativeLayout) selfAsField(obj *xmlNode, formula string) (string, bool) {
+	opts, _ := l.ctx.binding.options(l.table)
+	ref := childPath(obj, "Field", "FieldReference")
+	name, occName := "", l.occName
+	if ref != nil {
+		name = referencedFieldName(ref)
+		if to := findFirstChild(ref, "TableOccurrenceReference"); to != nil && firstAttr(to, "name") != "" {
+			occName = firstAttr(to, "name")
+		}
+	}
+	if name == "" || strings.ContainsAny(name+occName, "{}") {
+		// Self names nothing a formula can write: the formula stands only
+		// if it does not read it.
+		replaced, err := calc.ReplaceSelf(formula, opts, "")
+		return formula, err == nil && replaced == formula
+	}
+	self := calc.QuoteQualifiedName(occName, name)
+	// The repetitions the box shows, as Browse mode shows them: from the
+	// first one (within the field's), as many as it shows, all by default.
+	reps := 1
+	if column, occ, ok := l.column(ref); ok && !occ.external {
+		reps = max(l.ctx.repetitions[occ.table+"."+column], 1)
+	}
+	first := 1
+	if n, err := strconv.Atoi(firstAttr(ref, "repetition")); err == nil && n > 1 {
+		first = min(n, reps)
+	}
+	shown := reps - first + 1
+	if display := childPath(obj, "Field", "Display"); display != nil {
+		if n, err := strconv.Atoi(firstAttr(display, "show")); err == nil && n != 0 {
+			shown = min(max(n, -n), shown)
+		}
+	}
+	if first > 1 {
+		self += "[" + strconv.Itoa(first) + "]"
+	}
+	replaced, err := calc.ReplaceSelf(formula, opts, self)
+	if err != nil {
+		// Unreadable: binding it says why.
+		return formula, true
+	}
+	if replaced != formula && shown > 1 {
+		return "", false
+	}
+	return replaced, true
+}
+
+// rangeInFormula reports whether the calculation FileMaker keeps for a
+// "Value is" condition compares with the values its <Range> shows (the
+// first operands of Start and End): a number is one of the formula's
+// numbers, sign included; anything else is one of its quoted texts, or its
+// digits are among the formula's, as 15/03/1990 is written Date(3;15;1990).
+// An export was seen to keep, for a condition showing greater than one
+// number, a calculation comparing with another.
+func rangeInFormula(r *xmlNode, operands int, formula string) bool {
+	if operands == 0 || r == nil {
+		return true
+	}
+	texts, numbers, digits := formulaLiterals(formula)
+	for _, tag := range []string{"Start", "End"}[:operands] {
+		n := findFirstChild(r, tag)
+		if n == nil || strings.TrimSpace(n.Text) == "" {
+			continue
+		}
+		// FileMaker writes the quotes of a value typed in quotes, which
+		// it compares as that text, as &quot;.
+		v := html.UnescapeString(strings.TrimSpace(n.Text))
+		if len(v) >= 2 && strings.HasPrefix(v, `"`) && strings.HasSuffix(v, `"`) {
+			v = v[1 : len(v)-1]
+		}
+		if slices.ContainsFunc(texts, func(t string) bool { return strings.EqualFold(t, v) }) {
+			continue
+		}
+		if fmNumber.MatchString(v) {
+			if !slices.Contains(numbers, fmNumberValue(v)) {
+				return false
+			}
+			continue
+		}
+		runs := fmDigitRuns.FindAllString(v, -1)
+		if len(runs) == 0 {
+			return false
+		}
+		for _, d := range runs {
+			if !digits[strings.TrimLeft(d, "0")] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+var (
+	fmDigitRuns     = regexp.MustCompile(`[0-9]+`)
+	fmNumber        = regexp.MustCompile(`^-?[0-9]+(?:[.,][0-9]+)?$`)
+	fmNumberLiteral = regexp.MustCompile(`-?[0-9]+(?:[.,][0-9]+)?`)
+)
+
+// fmNumberValue is the value of a number written with "." or ",".
+func fmNumberValue(s string) float64 {
+	f, _ := strconv.ParseFloat(strings.Replace(s, ",", ".", 1), 64)
+	return f
+}
+
+// formulaLiterals are the quoted texts of a formula, unescaped, the numbers
+// written outside them, and their runs of digits without leading zeros.
+func formulaLiterals(formula string) (texts []string, numbers []float64, digits map[string]bool) {
+	digits = map[string]bool{}
+	var outside, text strings.Builder
+	quoted := false
+	runes := []rune(formula)
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		switch {
+		case !quoted && r == '"':
+			quoted = true
+			text.Reset()
+		case quoted && r == '\\' && i+1 < len(runes):
+			i++
+			text.WriteRune(runes[i])
+		case quoted && r == '"':
+			quoted = false
+			texts = append(texts, text.String())
+			outside.WriteRune(' ')
+		case quoted:
+			text.WriteRune(r)
+		default:
+			outside.WriteRune(r)
+		}
+	}
+	for _, n := range fmNumberLiteral.FindAllString(outside.String(), -1) {
+		numbers = append(numbers, fmNumberValue(n))
+	}
+	for _, d := range fmDigitRuns.FindAllString(outside.String(), -1) {
+		digits[strings.TrimLeft(d, "0")] = true
+	}
+	return texts, numbers, digits
 }
 
 // panelControl converts a tab or slide control: the control itself, drawn
@@ -1095,7 +1284,16 @@ func (l *nativeLayout) report() []ReportItem {
 		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence, left out of the portal's sort")
 	}
 	if l.formatsLeft > 0 {
-		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition on the value, not a calculation; one that could not be bound; or on an object other than a field)")
+		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition that could not be bound, or on an object other than a field)")
+	}
+	if l.formatsOff > 0 {
+		review = append(review, plural(l.formatsOff, "conditional format")+" switched off in FileMaker, left out")
+	}
+	if l.formatsInRows > 0 {
+		review = append(review, plural(l.formatsInRows, "conditional format")+" of objects in portal rows, kept but not drawn in the rows yet")
+	}
+	if l.formatsDiffer > 0 {
+		review = append(review, plural(l.formatsDiffer, "conditional format")+" whose \"Value is\" condition shows other values than the calculation FileMaker keeps for it, kept as that calculation")
 	}
 	if l.mergeKept > 0 {
 		review = append(review, plural(l.mergeKept, "merge field")+" of a related field or a variable, shown as FileMaker wrote it")
@@ -1443,7 +1641,9 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	l.objects = append(l.objects, base)
 	l.ctx.count("Portal").Migrated++
 	if list := findFirstChild(p, "ObjectList"); list != nil {
+		l.inPortal++
 		l.convertList(list)
+		l.inPortal--
 	}
 }
 

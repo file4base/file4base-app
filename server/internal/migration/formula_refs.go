@@ -295,13 +295,13 @@ func (b formulaBinding) renamer(names *fieldNameMap) func(occurrence, field stri
 		}
 		occ, ok := b.occByName[strings.ToLower(occurrence)]
 		if ok && occ.external {
-			return calc.QuoteName(occ.name) + "::" + calc.QuoteName(externalFieldName(field)), true
+			return calc.QuoteQualifiedName(occ.name, externalFieldName(field)), true
 		}
 		if !ok || b.fields[occ.table] == nil {
 			return "", false
 		}
 		column, ok := b.fields[occ.table].resolve(field)
-		return calc.QuoteName(occ.name) + "::" + calc.QuoteName(column), ok
+		return calc.QuoteQualifiedName(occ.name, column), ok
 	}
 }
 
@@ -476,11 +476,9 @@ type boundFormula struct {
 	why, action string
 }
 
-// bind reads a formula of table, evaluated from the occurrence contextName,
-// with the names the source wrote, and rewrites it with the names the import
-// gave them: what a calculation field and an auto-enter calculation share.
-// target names the field in the report.
-func (b formulaBinding) bind(tableName, formula, contextName, target string) boundFormula {
+// options are what a formula of table is read with: the names the source
+// gave its fields and occurrences, its locale and its custom functions.
+func (b formulaBinding) options(tableName string) (calc.Options, *fieldNameMap) {
 	names := b.fields[tableName]
 	if names == nil {
 		names = newFieldNameMap()
@@ -493,7 +491,15 @@ func (b formulaBinding) bind(tableName, formula, contextName, target string) bou
 			local = append(local, name)
 		}
 	}
-	opts := calc.Options{Fields: local, Tables: b.occurrences, Locale: b.locale, Library: b.functions}
+	return calc.Options{Fields: local, Tables: b.occurrences, Locale: b.locale, Library: b.functions}, names
+}
+
+// bind reads a formula of table, evaluated from the occurrence contextName,
+// with the names the source wrote, and rewrites it with the names the import
+// gave them: what a calculation field and an auto-enter calculation share.
+// target names the field in the report.
+func (b formulaBinding) bind(tableName, formula, contextName, target string) boundFormula {
+	opts, names := b.options(tableName)
 	refuse := func(why, action string) boundFormula { return boundFormula{why: why, action: action} }
 
 	expr, err := calc.ParseWith(formula, opts)
