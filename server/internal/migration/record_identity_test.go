@@ -85,37 +85,37 @@ func TestNativeRecordsKeepTheirRecordIDs(t *testing.T) {
 }
 
 // An FMPXMLRESULT export keeps each record's RECORDID and MODID; a record
-// the file does not number is given a new ID, and the report says so.
+// the file does not number, or numbers as another, is given a new ID and
+// keeps its MODID, and the report says so.
 func TestAnalyzeAndConvert_KeepsXMLRecordIdentities(t *testing.T) {
 	design := `<FMPReport><File name="Synthetic.fmp12"><BaseTableCatalog>` +
 		`<BaseTable name="Visits"><FieldCatalog><Field name="Code" dataType="Text"/></FieldCatalog></BaseTable>` +
 		`</BaseTableCatalog></File></FMPReport>`
 	records := `<FMPXMLRESULT xmlns="http://www.filemaker.com/fmpxmlresult"><METADATA>` +
-		`<FIELD NAME="Code" TYPE="TEXT"/></METADATA><RESULTSET FOUND="3">` +
+		`<FIELD NAME="Code" TYPE="TEXT"/></METADATA><RESULTSET FOUND="4">` +
 		`<ROW MODID="4" RECORDID="12"><COL><DATA>V-12</DATA></COL></ROW>` +
 		`<ROW MODID="0" RECORDID="30"><COL><DATA>V-30</DATA></COL></ROW>` +
-		`<ROW><COL><DATA>V-none</DATA></COL></ROW>` +
+		`<ROW MODID="2"><COL><DATA>V-none</DATA></COL></ROW>` +
+		`<ROW MODID="1" RECORDID="12"><COL><DATA>V-again</DATA></COL></ROW>` +
 		`</RESULTSET></FMPXMLRESULT>`
 	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design, DataFiles: map[string]string{"Visits": records}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rows := res.TableRows["visits"]
-	if len(rows) != 3 {
-		t.Fatalf("expected 3 records, got %d", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 records, got %d", len(rows))
 	}
-	for i, want := range [][2]int64{{12, 4}, {30, 0}} {
+	for i, want := range [][2]int64{{12, 4}, {30, 0}, {0, 2}, {0, 1}} {
 		identity, ok := identityOf(rows[i])
-		if !ok || identity["record_id"] != want[0] || identity["mod_id"] != want[1] {
-			t.Errorf("record %d carries %v, want record ID %d and modification count %d", i, rows[i], want[0], want[1])
+		recordID, numbered := identity["record_id"]
+		if !ok || identity["mod_id"] != want[1] || numbered != (want[0] > 0) || (numbered && recordID != want[0]) {
+			t.Errorf("record %d carries %v, want record ID %d (0: a new one) and modification count %d", i, rows[i], want[0], want[1])
 		}
-	}
-	if _, ok := identityOf(rows[2]); ok {
-		t.Error("a record the file does not number carries no record ID")
 	}
 	found := false
 	for _, item := range res.Report.Translated {
-		if item.Domain == "data" && item.TargetName == "visits" && strings.HasPrefix(item.Detail, "1 record(s) did not say") {
+		if item.Domain == "data" && item.TargetName == "visits" && strings.HasPrefix(item.Detail, "2 record(s) did not say") {
 			found = true
 		}
 	}

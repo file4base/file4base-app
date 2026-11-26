@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -35,7 +36,7 @@ type calculation struct {
 	table    string
 	describe func(*calc.Container)
 	// identify is the identity of the record the formula is computed for,
-	// for one that reads it (Get ( RecordID )); nil otherwise.
+	// read when the formula asks for it (Get ( RecordID )).
 	identify func(record map[string]interface{}) (*Identity, error)
 }
 
@@ -187,9 +188,8 @@ func (s *Service) tableCalculations(ctx context.Context, tableName string) ([]ca
 		c := calculation{field: name, expr: expr, result: calc.ParseResultType(stored.ResultType),
 			types: types, unstored: !stored.IsStored(), occurrence: stored.Context, reps: types.maxRepetitions(name),
 			table: tableName, describe: s.describeContainer(ctx)}
-		if readsIdentity(expr) {
-			c.identify = func(record map[string]interface{}) (*Identity, error) { return s.identityOf(ctx, tableName, record) }
-		}
+		// Read when asked, so Evaluate can ask too.
+		c.identify = func(record map[string]interface{}) (*Identity, error) { return s.identityOf(ctx, tableName, record) }
 		parsed[name] = c
 		reads[name] = expr.Fields()
 	}
@@ -299,7 +299,7 @@ func (s *Service) recalculateForUpdate(ctx context.Context, tableName, id string
 func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, error) {
 	// The identities of each page are read at once for the formulas that
 	// read them.
-	ctx, _ = withIdentityScope(ctx)
+	ctx, scope := withIdentityScope(ctx)
 	calculations, err := s.tableCalculations(ctx, tableName)
 	if err != nil {
 		return 0, err
@@ -326,7 +326,8 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 		if err := containermeta.AttachFromDB(ctx, s.driver.DB(), s.driver.Dialect(), tableName, page); err != nil {
 			return written, err
 		}
-		if slices.ContainsFunc(calculations, func(c calculation) bool { return c.identify != nil }) {
+		scope.forget() // the previous page's
+		if slices.ContainsFunc(calculations, func(c calculation) bool { return readsIdentity(c.expr) }) {
 			if err := s.prefetchIdentities(ctx, tableName, page); err != nil {
 				return written, err
 			}
@@ -336,23 +337,7 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 			if id == "" {
 				continue
 			}
-			updates := make(map[string]interface{}, len(calculations))
-			for _, c := range calculations {
-				if c.unstored {
-					continue // computed when read, never written
-				}
-				answers, err := c.evaluate(row)
-				if err != nil {
-					return written, fmt.Errorf("%w: the formula of %q could not be computed for record %s: %s",
-						ErrInvalidValue, c.field, id, err.Error())
-				}
-				for key, answer := range answers {
-					row[key] = answer
-					updates[key] = answer
-				}
-			}
-			// A recalculation is no modification: it enters no auto-enter value.
-			if _, err := s.updateRow(ctx, tableName, id, updates, autoMode{off: true}); err != nil {
+			if err := s.recalculateRow(ctx, tableName, calculations, id, row); err != nil {
 				return written, err
 			}
 			written++
@@ -361,6 +346,67 @@ func (s *Service) RecalculateTable(ctx context.Context, tableName string) (int, 
 			return written, nil
 		}
 	}
+}
+
+// recalculateRow recomputes the stored calculations of a record and writes
+// them.
+func (s *Service) recalculateRow(
+	ctx context.Context, tableName string, calculations []calculation, id string, row map[string]interface{},
+) error {
+	updates := make(map[string]interface{}, len(calculations))
+	for _, c := range calculations {
+		if c.unstored {
+			continue // computed when read, never written
+		}
+		answers, err := c.evaluate(row)
+		if err != nil {
+			return fmt.Errorf("%w: the formula of %q could not be computed for record %s: %s",
+				ErrInvalidValue, c.field, id, err.Error())
+		}
+		for key, answer := range answers {
+			row[key] = answer
+			updates[key] = answer
+		}
+	}
+	// A recalculation is no modification: it enters no auto-enter value.
+	_, err := s.updateRow(ctx, tableName, id, updates, autoMode{off: true})
+	return err
+}
+
+// RecalculateRenumbered recomputes the stored calculations of records given
+// a record ID other than the one their values were computed with, as a
+// restore gives one, when a stored calculation of the table reads it
+// (Get ( RecordID )). A record that is not there is passed over.
+func (s *Service) RecalculateRenumbered(ctx context.Context, tableName string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	ctx, scope := withIdentityScope(ctx)
+	calculations, err := s.tableCalculations(ctx, tableName)
+	if err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(calculations, func(c calculation) bool { return !c.unstored && readsIdentity(c.expr) }) {
+		return nil
+	}
+	for _, id := range ids {
+		scope.forget()
+		row, err := s.GetRow(ctx, tableName, id)
+		if errors.Is(err, ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := containermeta.AttachFromDB(ctx, s.driver.DB(), s.driver.Dialect(), tableName,
+			[]map[string]interface{}{row}); err != nil {
+			return err
+		}
+		if err := s.recalculateRow(ctx, tableName, calculations, id, row); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // StorageType is the column type a field is physically stored in: its own

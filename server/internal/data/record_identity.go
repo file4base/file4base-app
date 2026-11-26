@@ -3,9 +3,11 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -42,6 +44,11 @@ type Identity struct {
 // count the record no longer has: FileMaker's error 306, "Record
 // modification ID does not match".
 var ErrModIDMismatch = errors.New("record modification ID does not match")
+
+// ErrModCountUnavailable is returned by a write conditioned on a modification
+// count to a table that does not count modifications yet (its upgrade waits
+// for a later sign-in): the condition could not be checked.
+var ErrModCountUnavailable = errors.New("the table does not count record modifications yet")
 
 // identityBatch bounds the ids one statement looks up.
 const identityBatch = 500
@@ -125,58 +132,64 @@ func seedRecordIDs(ctx context.Context, db *sql.DB, dialect dbal.Dialect, tableN
 	return nil
 }
 
-// RecordIDsGiven is the highest record ID a table's allocator has given, or
-// 0 when it has given none: an ID above it was never a record's.
-func RecordIDsGiven(ctx context.Context, driver dbal.DatabaseDriver, tableName string) (int64, error) {
+// ClaimRecordIDs moves a table's allocator past last, so that records
+// written with IDs up to last, as a restore writes the IDs it carries, are
+// never given another's, and returns the highest ID it had given before, 0
+// when none: an ID above it was never a record's. An allocator already past
+// last stays where it is.
+//
+// On MariaDB the allocator is read and moved in one statement, so a record
+// created meanwhile takes an ID either before the claim or past last. A
+// PostgreSQL sequence cannot be read and moved at once: a record created
+// between the two can take an ID a restore also writes, and one of the two
+// inserts is then refused by the column's unique constraint.
+func ClaimRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, tableName string, last int64) (int64, error) {
 	has, err := HasCreationOrder(ctx, driver, tableName)
 	if err != nil || !has {
 		return 0, err
 	}
 	dialect := driver.Dialect()
 	db := driver.DB()
-	var given sql.NullInt64
 	if dialect.Engine() == dbal.EnginePostgres {
-		err = db.QueryRowContext(ctx, `SELECT pg_sequence_last_value(`+dbal.RecordIDSequenceSQL("$1")+`::regclass)`,
-			dialect.QuoteIdentifier(tableName)).Scan(&given)
-	} else {
-		if err := seedRecordIDs(ctx, db, dialect, tableName); err != nil {
-			return 0, err
+		var given, set sql.NullInt64
+		err := db.QueryRowContext(ctx, `SELECT g, CASE WHEN $2::bigint > g THEN setval(s::regclass, $2::bigint) END
+			FROM (SELECT COALESCE(pg_sequence_last_value(s::regclass), 0) AS g, s
+			FROM (SELECT `+dbal.RecordIDSequenceSQL("$1")+` AS s) q) r`,
+			dialect.QuoteIdentifier(tableName), last).Scan(&given, &set)
+		if err != nil {
+			return 0, fmt.Errorf("failed claiming the record IDs of %s: %w", tableName, err)
 		}
-		err = db.QueryRowContext(ctx, `SELECT last_id FROM `+dbal.RecordIDsTable+` WHERE table_name = ?`, tableName).Scan(&given)
+		return given.Int64, nil
 	}
+	if err := seedRecordIDs(ctx, db, dialect, tableName); err != nil {
+		return 0, err
+	}
+	// LAST_INSERT_ID(expr) keeps the value the row had, which the statement
+	// answers.
+	res, err := db.ExecContext(ctx, `UPDATE `+dbal.RecordIDsTable+` SET last_id = GREATEST(LAST_INSERT_ID(last_id), ?) WHERE table_name = ?`,
+		last, tableName)
 	if err != nil {
-		return 0, fmt.Errorf("failed reading the record ID allocator of %s: %w", tableName, err)
+		return 0, fmt.Errorf("failed claiming the record IDs of %s: %w", tableName, err)
 	}
-	return given.Int64, nil
+	given, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("failed claiming the record IDs of %s: %w", tableName, err)
+	}
+	return given, nil
 }
 
-// AdvanceRecordIDs moves a table's allocator past last, so that records
-// written with IDs up to last, as a restore writes the IDs it carries, are
-// never given another's. An allocator already past it stays where it is.
-func AdvanceRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, tableName string, last int64) error {
-	if last <= 0 {
-		return nil
-	}
-	has, err := HasCreationOrder(ctx, driver, tableName)
-	if err != nil || !has {
-		return err
-	}
+// recoverRecordIDs moves a table's allocator past every record ID the table
+// holds, after an insert was refused because its ID was taken: by a record
+// written without the allocator, as a server of an earlier version writes
+// one on MariaDB, or by hand. The next ID reserved is free.
+func recoverRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, tableName string) {
 	dialect := driver.Dialect()
-	db := driver.DB()
-	if dialect.Engine() == dbal.EnginePostgres {
-		_, err = db.ExecContext(ctx, `SELECT setval(s::regclass, GREATEST($2::bigint, COALESCE(pg_sequence_last_value(s::regclass), 0)))
-			FROM (SELECT `+dbal.RecordIDSequenceSQL("$1")+` AS s) q`, dialect.QuoteIdentifier(tableName), last)
-	} else {
-		if err := seedRecordIDs(ctx, db, dialect, tableName); err != nil {
-			return err
-		}
-		_, err = db.ExecContext(ctx, `UPDATE `+dbal.RecordIDsTable+` SET last_id = GREATEST(last_id, ?) WHERE table_name = ?`,
-			last, tableName)
+	var highest sql.NullInt64
+	if err := driver.DB().QueryRowContext(ctx, fmt.Sprintf("SELECT MAX(%s) FROM %s",
+		dialect.QuoteIdentifier(dbal.CreationOrderColumn), dialect.QuoteIdentifier(tableName))).Scan(&highest); err != nil {
+		return
 	}
-	if err != nil {
-		return fmt.Errorf("failed advancing the record ID allocator of %s: %w", tableName, err)
-	}
-	return nil
+	_, _ = ClaimRecordIDs(ctx, driver, tableName, highest.Int64)
 }
 
 // ForgetRecordIDs drops a deleted table's allocator. PostgreSQL drops the
@@ -198,11 +211,11 @@ func (s *Service) RecordIdentity(ctx context.Context, tableName, id string) (Ide
 	if err != nil {
 		return Identity{}, err
 	}
-	identity, ok := found[id]
-	if !ok {
-		return Identity{}, fmt.Errorf("%w: %s", ErrRecordNotFound, id)
+	// The one record the engine matched, however its collation spells id.
+	for _, identity := range found {
+		return identity, nil
 	}
-	return identity, nil
+	return Identity{}, fmt.Errorf("%w: %s", ErrRecordNotFound, id)
 }
 
 // RecordIdentities reads the identities of records, by id. A record that is
@@ -314,6 +327,11 @@ func (s *Service) UpdateRowIfModID(
 // checkModID refuses a write conditioned on a modification count the record
 // does not have.
 func (s *Service) checkModID(ctx context.Context, tableName, id string, modID int64) error {
+	if has, err := HasModCount(ctx, s.driver, tableName); err != nil {
+		return err
+	} else if !has {
+		return ErrModCountUnavailable
+	}
 	identity, err := s.RecordIdentity(ctx, tableName, id)
 	if err != nil {
 		return err
@@ -330,6 +348,13 @@ type modification struct {
 	counted bool
 	// modifies is true when the write modifies the record.
 	modifies bool
+	// read is the record's identity when the write compared its values, and
+	// found tells whether the record was there; current is what it held.
+	read    Identity
+	found   bool
+	current map[string]interface{}
+	// modifying are the fields a write modifies the record by changing.
+	modifying map[string]bool
 }
 
 // countsModification reports whether writing updates modifies the record
@@ -345,11 +370,90 @@ func (s *Service) countsModification(
 	if err != nil {
 		return modification{}, err
 	}
-	current, err := storedRow(ctx, s.driver.DB(), s.driver.Dialect(), tableName, id, fields)
+	current, read, found, err := storedRowIdentity(ctx, s.driver.DB(), s.driver.Dialect(), tableName, id, fields)
 	if err != nil {
 		return modification{}, err
 	}
-	return modification{counted: true, modifies: modifiesRecord(fields, modifying, updates, current)}, nil
+	return modification{counted: true, modifies: modifiesRecord(fields, modifying, updates, current),
+		read: read, found: found, current: current, modifying: modifying}, nil
+}
+
+// alsoModifiedBy notes what the auto-enter options entered as a consequence
+// of the write: a value they change modifies the record too.
+func (m *modification) alsoModifiedBy(fields fieldSet, updates map[string]interface{}) {
+	if m.counted && !m.modifies {
+		m.modifies = modifiesRecord(fields, m.modifying, updates, m.current)
+	}
+}
+
+// countSQL is the assignment an UPDATE counts the modification with, its
+// value bound at placeholder index next, or "" when it counts none. Whether
+// the write modifies the record was decided on the values read with the
+// count m.read: when the record has been written since, that decision no
+// longer holds, and the write is counted, which can only make a write
+// conditioned on the count it read fail, never let one through.
+func (m modification) countSQL(dialect dbal.Dialect, next int) (string, []interface{}) {
+	if !m.counted {
+		return "", nil
+	}
+	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
+	if m.modifies || !m.found {
+		return modCount + " = " + modCount + " + 1", nil
+	}
+	return fmt.Sprintf("%s = %s + CASE WHEN %s = %s THEN 0 ELSE 1 END", modCount, modCount, modCount,
+		dialect.Placeholder(next)), []interface{}{m.read.ModID}
+}
+
+// storedRowIdentity reads a record as storedRow does, with its identity
+// read by the same statement. found is false when it is not there.
+func storedRowIdentity(
+	ctx context.Context, q execer, dialect dbal.Dialect, tableName, id string, fields fieldSet,
+) (map[string]interface{}, Identity, bool, error) {
+	query := fmt.Sprintf("SELECT %s, %s AS f4b_record_id, %s AS f4b_mod_id FROM %s WHERE %s = %s LIMIT 1",
+		selectList(dialect, fields), dialect.QuoteIdentifier(dbal.CreationOrderColumn),
+		dialect.QuoteIdentifier(dbal.ModCountColumn), dialect.QuoteIdentifier(tableName),
+		dialect.QuoteIdentifier("id"), dialect.Placeholder(1))
+	rows, err := q.QueryContext(ctx, query, id)
+	if err != nil {
+		return nil, Identity{}, false, err
+	}
+	defer rows.Close()
+	stored, err := rowsToMaps(rows, fields)
+	if err != nil || len(stored) == 0 {
+		return map[string]interface{}{}, Identity{}, false, err
+	}
+	row := stored[0]
+	var identity Identity
+	for key, target := range map[string]*int64{"f4b_record_id": &identity.RecordID, "f4b_mod_id": &identity.ModID} {
+		n, ok := wholeNumberOf(row[key])
+		if !ok {
+			return nil, Identity{}, false, fmt.Errorf("failed reading the identity of %s %s", tableName, id)
+		}
+		*target = n
+		delete(row, key)
+	}
+	return row, identity, true, nil
+}
+
+// wholeNumberOf reads an integer column as the driver hands it.
+func wholeNumberOf(v interface{}) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case int32:
+		return int64(n), true
+	case int:
+		return int64(n), true
+	case uint64:
+		return int64(n), n <= 1<<63-1
+	case []byte:
+		parsed, err := strconv.ParseInt(string(n), 10, 64)
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseInt(n, 10, 64)
+		return parsed, err == nil
+	}
+	return 0, false
 }
 
 // modifyingFields are the fields of a table a write modifies a record by
@@ -392,6 +496,12 @@ func modifiesRecord(fields fieldSet, modifying map[string]bool, updates, current
 		if !modifying[base] || base == "id" {
 			continue
 		}
+		if fields.typeOf(base) == dbal.FieldTypeContainer {
+			// What is written may be the bytes; what is read is their base64.
+			if b, ok := value.([]byte); ok {
+				value = base64.StdEncoding.EncodeToString(b)
+			}
+		}
 		if !compare.same(base, value, current[key]) {
 			return true
 		}
@@ -404,7 +514,15 @@ func modifiesRecord(fields fieldSet, modifying map[string]bool, updates, current
 // yet, and those read ahead for many records at once.
 type identityScope struct {
 	mu    sync.Mutex
-	known map[string]Identity
+	known map[identityKey]Identity
+}
+
+// identityKey names a record of a table of one database: an external
+// relationship can reach a table of the same name, with the same ids, in
+// another.
+type identityKey struct {
+	db        *sql.DB
+	table, id string
 }
 
 type identityScopeKey struct{}
@@ -414,7 +532,7 @@ func withIdentityScope(ctx context.Context) (context.Context, *identityScope) {
 	if scope, ok := ctx.Value(identityScopeKey{}).(*identityScope); ok {
 		return ctx, scope
 	}
-	scope := &identityScope{known: map[string]Identity{}}
+	scope := &identityScope{known: map[identityKey]Identity{}}
 	return context.WithValue(ctx, identityScopeKey{}, scope), scope
 }
 
@@ -423,17 +541,24 @@ func identityScopeOf(ctx context.Context) *identityScope {
 	return scope
 }
 
-func (sc *identityScope) put(tableName, id string, identity Identity) {
+func (sc *identityScope) put(db *sql.DB, tableName, id string, identity Identity) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	sc.known[tableName+"\x00"+id] = identity
+	sc.known[identityKey{db, tableName, id}] = identity
 }
 
-func (sc *identityScope) get(tableName, id string) (Identity, bool) {
+func (sc *identityScope) get(db *sql.DB, tableName, id string) (Identity, bool) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	identity, ok := sc.known[tableName+"\x00"+id]
+	identity, ok := sc.known[identityKey{db, tableName, id}]
 	return identity, ok
+}
+
+// forget drops what the scope knows, as a scan moves to its next page.
+func (sc *identityScope) forget() {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	clear(sc.known)
 }
 
 // prefetchIdentities reads ahead the identities of rows of a table into the
@@ -446,7 +571,7 @@ func (s *Service) prefetchIdentities(ctx context.Context, tableName string, rows
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
 		if id, _ := row["id"].(string); id != "" {
-			if _, known := scope.get(tableName, id); !known {
+			if _, known := scope.get(s.driver.DB(), tableName, id); !known {
 				ids = append(ids, id)
 			}
 		}
@@ -456,7 +581,7 @@ func (s *Service) prefetchIdentities(ctx context.Context, tableName string, rows
 		return err
 	}
 	for id, identity := range found {
-		scope.put(tableName, id, identity)
+		scope.put(s.driver.DB(), tableName, id, identity)
 	}
 	return nil
 }
@@ -469,7 +594,7 @@ func (s *Service) identityOf(ctx context.Context, tableName string, row map[stri
 	scope := identityScopeOf(ctx)
 	if scope != nil {
 		// A record being created that has no id yet is known as "".
-		if identity, ok := scope.get(tableName, id); ok {
+		if identity, ok := scope.get(s.driver.DB(), tableName, id); ok {
 			return &identity, nil
 		}
 	}
@@ -485,7 +610,7 @@ func (s *Service) identityOf(ctx context.Context, tableName string, row map[stri
 		return nil, nil
 	}
 	if scope != nil {
-		scope.put(tableName, id, identity)
+		scope.put(s.driver.DB(), tableName, id, identity)
 	}
 	return &identity, nil
 }

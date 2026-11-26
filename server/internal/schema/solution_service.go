@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -2261,14 +2262,15 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 	// from each table's allocator, before the transaction: an allocator is
 	// not held for as long as it lasts.
 	recordIDs := map[string][]int64{}
+	renumbered := map[string][]bool{}
 	modCounts := map[string]bool{}
 	for _, tableName := range tableNames {
-		ids, renumbered, err := s.restoredRecordIDs(ctx, tableName, identities[tableName])
+		ids, moved, err := s.restoredRecordIDs(ctx, tableName, identities[tableName])
 		if err != nil {
 			return nil, err
 		}
 		recordIDs[tableName] = ids
-		report.RecordIDsRenumbered += renumbered
+		renumbered[tableName] = moved
 		if modCounts[tableName], err = data.HasModCount(ctx, s.driver, tableName); err != nil {
 			return nil, err
 		}
@@ -2280,6 +2282,10 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 	}
 	defer tx.Rollback()
 
+	// The records restored with a record ID other than the one they carried,
+	// or with a new one, by table: their stored calculations were computed
+	// with another.
+	reassigned := map[string][]string{}
 	for _, tableName := range tableNames {
 		// The type each column is stored as: a calculation's result's.
 		cols := storedTypes[tableName]
@@ -2354,7 +2360,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 				// duplicate key, which is this record being skipped. Any other
 				// error still fails the whole import.
 				if dialect.Engine() != dbal.EnginePostgres && dbal.IsDuplicateKey(err) &&
-					!strings.Contains(err.Error(), dbal.CreationOrderColumn) {
+					!dbal.IsRecordIDConflict(err) {
 					report.RecordsSkipped++
 					continue
 				}
@@ -2365,6 +2371,12 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 			}
 			if n, _ := res.RowsAffected(); n > 0 {
 				report.RecordsInserted++
+				if moved := renumbered[tableName]; moved != nil && moved[i] {
+					report.RecordIDsRenumbered++
+				}
+				if ids := recordIDs[tableName]; ids != nil && ids[i] != identities[tableName][i].RecordID {
+					reassigned[tableName] = append(reassigned[tableName], fmt.Sprint(row["id"]))
+				}
 				if texts := originals[tableName][i]; len(texts) > 0 {
 					if err := sourcetext.Put(ctx, tx, dialect, tableName, fmt.Sprint(row["id"]), texts); err != nil {
 						return nil, fmt.Errorf("record %d of table %s could not be restored, nothing was imported: %w", i+1, tableName, err)
@@ -2383,6 +2395,15 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed committing the restored records: %w", err)
+	}
+	// A stored calculation that reads the record ID is computed again for
+	// the records that did not keep the one it was computed with.
+	records := data.NewService(s.driver)
+	for _, tableName := range tableNames {
+		if err := records.RecalculateRenumbered(ctx, tableName, reassigned[tableName]); err != nil {
+			// The records are in; the formula is that field's problem.
+			log.Printf("Warning: the calculations of %s that read the record ID could not be computed again: %v", tableName, err)
+		}
 	}
 	return report, nil
 }

@@ -299,22 +299,23 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if err != nil {
 		return nil, err
 	}
-	id, given := record["id"], true
-	if id == nil || id == "" {
-		id, given = uuid.NewString(), false
-	}
-	ctx, scope := withIdentityScope(ctx)
-	if len(recordIDs) == 1 {
-		scope.put(tableName, fmt.Sprint(id), Identity{RecordID: recordIDs[0]})
-		if !given {
-			// What the auto-enter options compute sees no id yet.
-			scope.put(tableName, "", Identity{RecordID: recordIDs[0]})
-		}
-	}
 	if err := normalizeRepetitionKeys(fields, tableName, record); err != nil {
 		return nil, err
 	}
 	normalizeTemporalValues(fields, record)
+	id, given := record["id"], true
+	if id == nil || id == "" {
+		id, given = uuid.NewString(), false
+	}
+	db := s.driver.DB()
+	ctx, scope := withIdentityScope(ctx)
+	if len(recordIDs) == 1 {
+		scope.put(db, tableName, fmt.Sprint(id), Identity{RecordID: recordIDs[0]})
+		if !given {
+			// What the auto-enter options compute sees no id yet.
+			scope.put(db, tableName, "", Identity{RecordID: recordIDs[0]})
+		}
+	}
 
 	// The auto-enter options (Fields dialog) enter what the caller did not
 	// give: a value given wins.
@@ -327,7 +328,7 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 	if v := record["id"]; v == nil || v == "" {
 		record["id"] = id
 	} else if len(recordIDs) == 1 && fmt.Sprint(v) != fmt.Sprint(id) {
-		scope.put(tableName, fmt.Sprint(v), Identity{RecordID: recordIDs[0]}) // an id an option entered
+		scope.put(db, tableName, fmt.Sprint(v), Identity{RecordID: recordIDs[0]}) // an id an option entered
 	}
 
 	// Calculation fields are filled from their formulas (#30). They are
@@ -383,10 +384,12 @@ func (s *Service) insertRow(ctx context.Context, tableName string, record map[st
 		strings.Join(placeholders, ", "),
 	)
 
-	db := s.driver.DB()
 	if _, err := db.ExecContext(ctx, sqlQuery, values...); err != nil {
 		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {
 			return nil, validation.UniqueViolation(tableName, f)
+		}
+		if dbal.IsRecordIDConflict(err) {
+			recoverRecordIDs(ctx, s.driver, tableName) // the next create gets a free ID
 		}
 		return nil, fmt.Errorf("failed inserting into %s: %w", tableName, err)
 	}
@@ -436,6 +439,10 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 	return s.updateRowIf(ctx, tableName, id, updates, mode, nil)
 }
 
+// beforeUpdate, when set by a test, runs just before updateRowIf writes, as
+// another write would.
+var beforeUpdate func()
+
 // updateRowIf updates a record, provided it has the modification count
 // modID when modID is not nil (see UpdateRowIfModID).
 func (s *Service) updateRowIf(
@@ -470,17 +477,26 @@ func (s *Service) updateRowIf(
 		return s.GetRow(ctx, tableName, id)
 	}
 	// Whether the write modifies the record, which counts it (see
-	// record_identity.go), is decided on what the caller gives, before any
-	// option enters a value as a consequence.
+	// record_identity.go), is decided on what the caller gives, and then on
+	// what the options enter as a consequence.
 	countsModification, err := s.countsModification(ctx, tableName, id, fields, updates)
 	if err != nil {
 		return nil, err
+	}
+	if countsModification.found {
+		if modID != nil && countsModification.read.ModID != *modID {
+			return nil, ErrModIDMismatch
+		}
+		var scope *identityScope
+		ctx, scope = withIdentityScope(ctx)
+		scope.put(s.driver.DB(), tableName, id, countsModification.read) // as before the write
 	}
 	// Modification stamps, and the calculated and looked-up values the
 	// change reaches (see autoenter.go).
 	if err := s.applyAutoEnter(ctx, tableName, fields, mode, updates, id); err != nil {
 		return nil, err
 	}
+	countsModification.alsoModifiedBy(fields, updates)
 	if err := decodeContainerValues(fields, tableName, updates); err != nil {
 		return nil, err
 	}
@@ -520,10 +536,12 @@ func (s *Service) updateRowIf(
 		values = append(values, val)
 		idx++
 	}
-	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
-	if countsModification.modifies {
-		setClauses = append(setClauses, modCount+" = "+modCount+" + 1")
+	if count, args := countsModification.countSQL(dialect, idx); count != "" {
+		setClauses = append(setClauses, count)
+		values = append(values, args...)
+		idx += len(args)
 	}
+	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
 	values = append(values, id)
 	where := fmt.Sprintf("%s = %s", dialect.QuoteIdentifier("id"), dialect.Placeholder(idx))
 	if modID != nil && countsModification.counted {
@@ -539,6 +557,9 @@ func (s *Service) updateRowIf(
 	)
 
 	db := s.driver.DB()
+	if beforeUpdate != nil {
+		beforeUpdate()
+	}
 	res, err := db.ExecContext(ctx, sqlQuery, values...)
 	if err != nil {
 		if f, ok := validation.IsUniqueIndexViolation(err, tableName, checker.Fields); ok {

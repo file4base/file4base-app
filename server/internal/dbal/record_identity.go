@@ -1,6 +1,13 @@
 package dbal
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/go-sql-driver/mysql"
+	"github.com/jackc/pgx/v5/pgconn"
+)
 
 // A record's identity, as FileMaker gives it (#208): its record ID, the
 // number it was created with (CreationOrderColumn), and its modification
@@ -29,14 +36,40 @@ const ModCountColumn = "f4b$mod_count"
 const ModCountType = "BIGINT NOT NULL DEFAULT 0"
 
 // AddModCountSQL gives an existing table the modification count column, with
-// the bounded lock wait of AddCreationOrderSQL.
+// the bounded lock wait of AddCreationOrderSQL. On MariaDB it insists on an
+// instant change: a table that would have to be rebuilt (a compressed one)
+// is left without the column rather than rebuilt at sign-in.
 func AddModCountSQL(dialect Dialect, tableName string, lockWait int) string {
-	wait := ""
-	if dialect.Engine() == EngineMariaDB && lockWait > 0 {
-		wait = fmt.Sprintf(" WAIT %d", lockWait)
+	wait, instant := "", ""
+	if dialect.Engine() == EngineMariaDB {
+		if lockWait > 0 {
+			wait = fmt.Sprintf(" WAIT %d", lockWait)
+		}
+		instant = ", ALGORITHM=INSTANT"
 	}
-	return fmt.Sprintf("ALTER TABLE %s%s ADD COLUMN %s %s", dialect.QuoteIdentifier(tableName), wait,
-		dialect.QuoteIdentifier(ModCountColumn), ModCountType)
+	return fmt.Sprintf("ALTER TABLE %s%s ADD COLUMN %s %s%s", dialect.QuoteIdentifier(tableName), wait,
+		dialect.QuoteIdentifier(ModCountColumn), ModCountType, instant)
+}
+
+// MaxRecordIdentity bounds the record IDs and modification counts a record
+// can be given from outside (a restore, a migration), so that the allocator
+// and the count always have room to go on.
+const MaxRecordIdentity int64 = 1 << 62
+
+// IsRecordIDConflict reports whether err is an insert refused because
+// another record holds the record ID it gives (CreationOrderColumn).
+func IsRecordIDConflict(err error) bool {
+	var my *mysql.MySQLError
+	if errors.As(err, &my) {
+		// "Duplicate entry '12' for key 'f4b$creation_order'": the key is
+		// last, after the value, which may hold anything.
+		return my.Number == 1062 && strings.HasSuffix(strings.TrimSpace(my.Message), CreationOrderColumn+"'")
+	}
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "23505" && strings.Contains(pg.ConstraintName, CreationOrderColumn)
+	}
+	return false
 }
 
 // RecordIDsTable is, on MariaDB, the allocator of each user table's record

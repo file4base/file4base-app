@@ -358,15 +358,20 @@ func (s *Service) ImportRecords(
 		}
 	}
 	// The record IDs of the records added are taken outside the transaction,
-	// all at once when every row is added, as a failed import spends them.
+	// as a failed import spends them: before it when every row is added, one
+	// by one for the rows an update does not match.
 	var recordIDs []int64
-	nextRecordID := func(remaining int) (int64, error) {
+	if opts.Action != ImportUpdateMatching {
+		if recordIDs, err = ReserveRecordIDs(ctx, s.driver, tableName, len(source.Rows)); err != nil {
+			return nil, err
+		}
+	}
+	nextRecordID := func() (int64, error) {
 		if len(recordIDs) == 0 {
-			n := 1
 			if opts.Action != ImportUpdateMatching {
-				n = min(remaining, maxReservedRecordIDs)
+				return 0, nil // a table not numbered yet
 			}
-			ids, err := ReserveRecordIDs(ctx, s.driver, tableName, n)
+			ids, err := ReserveRecordIDs(ctx, s.driver, tableName, 1)
 			if err != nil || len(ids) == 0 {
 				return 0, err
 			}
@@ -442,17 +447,31 @@ func (s *Service) ImportRecords(
 			}
 			if id != "" {
 				var current map[string]interface{}
-				if ae != nil || countsModifications {
+				var counted modification
+				if countsModifications {
+					// Read with its identity, as this transaction sees it: a
+					// row updating a record an earlier row updated sees that.
+					var read Identity
+					var found bool
+					if current, read, found, err = storedRowIdentity(ctx, tx, dialect, tableName, id, fields); err != nil {
+						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
+					}
+					counted = modification{counted: true, modifies: modifiesRecord(fields, modifying, record, current),
+						read: read, found: found, current: current, modifying: modifying}
+					if found {
+						scope.put(db, tableName, id, read)
+					}
+				} else if ae != nil {
 					if current, err = storedRow(ctx, tx, dialect, tableName, id, fields); err != nil {
 						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 					}
 				}
-				modifies := countsModifications && modifiesRecord(fields, modifying, record, current)
 				if ae != nil {
 					if err := ae.enterModified(ctx, autoMode{overwrite: true, tx: tx}, record, current); err != nil {
 						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 					}
 				}
+				counted.alsoModifiedBy(fields, record)
 				if err := applyCalculationsForUpdate(
 					ctx, tx, dialect, tableName, id, fields, calculations, record,
 				); err != nil {
@@ -465,7 +484,7 @@ func (s *Service) ImportRecords(
 				if err != nil {
 					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 				}
-				if err := updateInTx(ctx, tx, dialect, tableName, id, writes, modifies); err != nil {
+				if err := updateInTx(ctx, tx, dialect, tableName, id, writes, counted); err != nil {
 					return nil, fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
 				}
 				updatedFields := make([]string, 0, len(record))
@@ -489,12 +508,12 @@ func (s *Service) ImportRecords(
 		// first: a container result refers to the record it is in.
 		id := uuid.NewString()
 		record["id"] = id
-		recordID, err := nextRecordID(len(source.Rows) - i)
+		recordID, err := nextRecordID()
 		if err != nil {
 			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
 		if recordID > 0 {
-			scope.put(tableName, id, Identity{RecordID: recordID})
+			scope.put(db, tableName, id, Identity{RecordID: recordID})
 		}
 		if ae != nil {
 			if err := ae.enterNew(ctx, autoMode{overwrite: true, tx: tx}, record); err != nil {
@@ -512,6 +531,9 @@ func (s *Service) ImportRecords(
 			return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 		}
 		if err := insertInTx(ctx, tx, dialect, tableName, writes, recordID); err != nil {
+			if dbal.IsRecordIDConflict(err) {
+				recoverRecordIDs(ctx, s.driver, tableName) // the next import gets free IDs
+			}
 			return nil, fmt.Errorf("%w: row %d could not be added: %v", ErrImport, rowNumber, err)
 		}
 		report.Added++
@@ -522,9 +544,6 @@ func (s *Service) ImportRecords(
 	}
 	return report, nil
 }
-
-// maxReservedRecordIDs bounds the record IDs an import takes at once.
-const maxReservedRecordIDs = 10000
 
 // execer is a transaction, or anything else that can run the statements an
 // import needs.
@@ -678,11 +697,11 @@ func insertInTx(
 	return err
 }
 
-// updateInTx writes a record's new values, counting a modification when
-// modifies is true.
+// updateInTx writes a record's new values, counting the modification as m
+// says (see modification.countSQL).
 func updateInTx(
 	ctx context.Context, tx execer, dialect dbal.Dialect,
-	tableName, id string, record map[string]interface{}, modifies bool,
+	tableName, id string, record map[string]interface{}, m modification,
 ) error {
 	sets := make([]string, 0, len(record))
 	values := make([]interface{}, 0, len(record)+1)
@@ -698,9 +717,10 @@ func updateInTx(
 	if len(sets) == 0 {
 		return nil
 	}
-	if modifies {
-		modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
-		sets = append(sets, modCount+" = "+modCount+" + 1")
+	if count, args := m.countSQL(dialect, i); count != "" {
+		sets = append(sets, count)
+		values = append(values, args...)
+		i += len(args)
 	}
 	values = append(values, id)
 	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = %s",

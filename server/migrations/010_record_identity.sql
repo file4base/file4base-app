@@ -22,6 +22,11 @@
 -- of an existing catalog itself (schema.EnsureSystemTables, at sign-in and
 -- on restore), reading the catalog first so an upgraded one is only read.
 
+-- Every table is altered in one transaction: a table another session holds
+-- would keep those altered before it locked while it waits. The wait is
+-- bounded, and a run that times out changes nothing and can be run again.
+SET lock_timeout = '5s';
+
 DO $$
 DECLARE
 	t RECORD;
@@ -38,6 +43,8 @@ BEGIN
 	END LOOP;
 END $$;
 
+RESET lock_timeout;
+
 -- MariaDB:
 --
 --   CREATE TABLE IF NOT EXISTS sys_record_ids (
@@ -47,7 +54,11 @@ END $$;
 --
 -- and, for each user table <name> without the column:
 --
---   ALTER TABLE `<name>` ADD COLUMN `f4b$mod_count` BIGINT NOT NULL DEFAULT 0;
+--   ALTER TABLE `<name>` WAIT 5 ADD COLUMN `f4b$mod_count` BIGINT NOT NULL DEFAULT 0, ALGORITHM=INSTANT;
+--
+-- (a table that cannot take the column instantly, a compressed one, refuses
+-- it: add it without ALGORITHM=INSTANT in a maintenance window, as that
+-- rebuilds the table)
 --
 -- A table's row of sys_record_ids is created the first time one of its
 -- record IDs is taken, past every ID the table holds and every one its

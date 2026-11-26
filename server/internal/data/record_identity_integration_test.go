@@ -169,6 +169,69 @@ func TestRecordIdentity_ModificationCount(t *testing.T) {
 	_, err = tb.svc.ImportRecords(ctx, tb.name, source, opts)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), count())
+	// Two rows of one import updating the record modify it twice, the
+	// second seeing the first.
+	source.Rows = [][]string{{"C-1", "fifth", "yes"}, {"C-1", "sixth", "yes"}}
+	_, err = tb.svc.ImportRecords(ctx, tb.name, source, opts)
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), count())
+}
+
+// A write that sends back what it read, while another changes the record
+// in between, counts a modification: the record it writes over is not the
+// one it compared, and a writer holding the other's count must not get
+// through (#208).
+func TestRecordIdentity_ModificationCountUnderAnotherWrite(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "modrace", "modrace_unused")
+	tb := newIdentityTable(t, ctx, a, "visits")
+	id := tb.insert(t, ctx, "A")
+	dialect := a.driver.Dialect()
+	restore := data.SetBeforeUpdate(func() {
+		_, err := a.driver.DB().ExecContext(ctx, fmt.Sprintf("UPDATE %s SET %s = 'B', %s = %s + 1 WHERE %s = %s",
+			dialect.QuoteIdentifier("visits"), dialect.QuoteIdentifier("label"),
+			dialect.QuoteIdentifier(dbal.ModCountColumn), dialect.QuoteIdentifier(dbal.ModCountColumn),
+			dialect.QuoteIdentifier("id"), dialect.Placeholder(1)), id)
+		require.NoError(t, err)
+	})
+	tb.update(t, ctx, id, map[string]interface{}{"label": "A"})
+	restore()
+	assert.Equal(t, int64(2), tb.identity(t, ctx, id).ModID, "the other write's modification, and this one's")
+	_, err := tb.svc.UpdateRowIfModID(ctx, tb.name, id, 1, map[string]interface{}{"label": "C"})
+	assert.ErrorIs(t, err, data.ErrModIDMismatch, "the other writer's count no longer holds")
+}
+
+// The allocator is read and moved past what a restore writes at once.
+func TestRecordIdentity_ClaimRecordIDs(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "claim", "claim_unused")
+	tb := newIdentityTable(t, ctx, a, "visits")
+	tb.insert(t, ctx, "first")
+	tb.insert(t, ctx, "second")
+
+	given, err := data.ClaimRecordIDs(ctx, a.driver, "visits", 1)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), given)
+	given, err = data.ClaimRecordIDs(ctx, a.driver, "visits", 7)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), given, "the IDs given before the claim")
+	given, err = data.ClaimRecordIDs(ctx, a.driver, "visits", 3)
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), given, "an allocator already past stays")
+	assert.Equal(t, int64(8), tb.identity(t, ctx, tb.insert(t, ctx, "third")).RecordID)
+}
+
+// A formula that asks for the record ID through Evaluate gets it too.
+func TestRecordIdentity_Evaluate(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "rideval", "rideval_unused")
+	tb := newIdentityTable(t, ctx, a, "visits")
+	_, err := a.schema.AddColumn(ctx, tb.tableID, schema.ColumnMetadata{Name: "evaluated", DisplayName: "evaluated",
+		FieldType: dbal.FieldTypeCalculation, IsNullable: true,
+		CalculationFormula: calcJSON(`Evaluate ( "Get ( RecordID )" )`, "NUMBER")})
+	require.NoError(t, err)
+	tb.insert(t, ctx, "first")
+	id := tb.insert(t, ctx, "second")
+	row, err := tb.svc.GetRow(ctx, tb.name, id)
+	require.NoError(t, err)
+	assert.Equal(t, "2", fmt.Sprint(row["evaluated"]))
 }
 
 // A write conditioned on a modification count is refused when the record
@@ -241,10 +304,14 @@ func TestRecordIdentity_RestoreKeepsIdentities(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, report.RecordsInserted)
 	assert.Equal(t, 2, report.RecordsSkipped)
-	assert.Equal(t, 3, report.RecordIDsRenumbered)
+	assert.Equal(t, 1, report.RecordIDsRenumbered, "only the records written are counted")
 	restored := src.identity(t, ctx, ids[3])
 	assert.Greater(t, restored.RecordID, int64(4))
 	assert.Equal(t, int64(0), restored.ModID)
+	row, err := src.svc.GetRow(ctx, src.name, ids[3])
+	require.NoError(t, err)
+	assert.Equal(t, fmt.Sprintf("%d|v3", restored.RecordID), fmt.Sprint(row["stored_id"]),
+		"a stored calculation reading the record ID is computed with the new one")
 	assert.Equal(t, data.Identity{RecordID: 3, ModID: 2}, src.identity(t, ctx, ids[2]), "a record skipped keeps its own")
 }
 
@@ -263,7 +330,8 @@ func TestRecordIdentity_ExistingTableIsUpgraded(t *testing.T) {
 
 	tb.update(t, ctx, id, map[string]interface{}{"label": "third"})
 	_, err = tb.svc.UpdateRowIfModID(ctx, tb.name, id, 0, map[string]interface{}{"label": "fourth"})
-	require.NoError(t, err, "a table that counts nothing has every record at 0")
+	require.ErrorIs(t, err, data.ErrModCountUnavailable, "a condition that cannot be checked is not taken as met")
+	tb.update(t, ctx, id, map[string]interface{}{"label": "fourth"})
 	second := tb.insert(t, ctx, "another")
 	assert.Equal(t, data.Identity{RecordID: 2}, tb.identity(t, ctx, second))
 

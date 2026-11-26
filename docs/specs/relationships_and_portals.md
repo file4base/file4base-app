@@ -304,10 +304,15 @@ The **modification count** (`Get ( RecordModificationCount )`, the Data API's
 is created with 0, and every write that changes a field stored with the
 record raises it by one, in the same statement: a write sending back the
 values the record holds, a recalculation, a global field and a write that
-changes nothing count none, as they leave the modification stamps alone. The
-data service can write a record on condition that its modification count is
-still the one a client read; otherwise it changes nothing and says so (the
-Data API's error 306).
+changes nothing count none, as they leave the modification stamps alone. A
+value an auto-enter option enters as a consequence counts as the write's. A
+write compares its values with the record as it read it, with its count; if
+another write has changed the count by the time it writes, it counts one
+anyway, so a write conditioned on a count read before either never gets
+through. The data service can write a record on condition that its
+modification count is still the one a client read; otherwise it changes
+nothing and says so (the Data API's error 306). A table not given its count
+yet refuses such a write rather than take the condition as met.
 
 A migration keeps both. A record of a `.fmp12` file keeps the record ID the
 file gives it and counts no modification, as FileMaker Server answers for a
@@ -321,7 +326,10 @@ A solution export (`.f4data`) carries each record's identity, and restoring it
 keeps both unless the table has given that record ID already, in which case
 the record is given a new one and the import's `record_ids_renumbered` counts
 it: a backup restored into the database it was taken from, its records still
-there, keeps none of their IDs.
+there, keeps none of their IDs. The stored calculations that read the record
+ID are computed again for the records given a new one. A file carries no
+table's allocator: restored into a new database, the IDs of records deleted
+before the export can be given again there.
 
 A table created before the modification count existed is given its column
 with the creation order's, at sign-in or on restore, counting no modification

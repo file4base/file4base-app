@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/file4base/file4base-app/server/internal/data"
+	"github.com/file4base/file4base-app/server/internal/dbal"
 )
 
 // RecordIdentityKey is the reserved record key under which a data file
@@ -48,8 +49,9 @@ func recordIdentityFromRecord(record map[string]interface{}) (data.Identity, err
 		switch {
 		case key != "record_id" && key != "mod_id":
 			return identity, fmt.Errorf("%s has an unknown key %q", RecordIdentityKey, key)
-		case !ok || n < 0 || (key == "record_id" && n == 0):
-			return identity, fmt.Errorf("%s.%s must be a whole number above 0", RecordIdentityKey, key)
+		case !ok || n < 0 || n > dbal.MaxRecordIdentity || (key == "record_id" && n == 0):
+			return identity, fmt.Errorf("%s.%s must be a whole number of at most %d, above 0 for a record ID",
+				RecordIdentityKey, key, dbal.MaxRecordIdentity)
 		case key == "record_id":
 			identity.RecordID = n
 		default:
@@ -110,44 +112,45 @@ func wholeNumber(v interface{}) (int64, bool) {
 // of the file carries it too; a new one otherwise. A record ID is never
 // given twice, so a backup restored into the database it was taken from
 // keeps none of the IDs its records still hold there. It returns the IDs, by
-// record index, and how many records carried an ID they could not keep.
+// record index, and which records carried an ID they could not keep.
 //
 // The table's allocator is moved past the IDs kept before any record is
-// written, so a record created meanwhile does not take one of them.
-func (s *Service) restoredRecordIDs(ctx context.Context, tableName string, carried []data.Identity) ([]int64, int, error) {
+// written, so a record created meanwhile does not take one of them (see
+// data.ClaimRecordIDs).
+func (s *Service) restoredRecordIDs(ctx context.Context, tableName string, carried []data.Identity) ([]int64, []bool, error) {
 	if has, err := data.HasCreationOrder(ctx, s.driver, tableName); err != nil || !has {
-		return nil, 0, err // a table not numbered yet: the engine numbers its records
+		return nil, nil, err // a table not numbered yet: the engine numbers its records
 	}
-	given, err := data.RecordIDsGiven(ctx, s.driver, tableName)
+	var last int64
+	for _, identity := range carried {
+		last = max(last, identity.RecordID)
+	}
+	given, err := data.ClaimRecordIDs(ctx, s.driver, tableName, last)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	ids := make([]int64, len(carried))
+	renumbered := make([]bool, len(carried))
 	kept := map[int64]bool{}
-	var last int64
-	renumbered, fresh := 0, 0
+	fresh := 0
 	for i, identity := range carried {
 		switch {
 		case identity.RecordID > given && !kept[identity.RecordID]:
 			ids[i] = identity.RecordID
 			kept[identity.RecordID] = true
-			last = max(last, identity.RecordID)
 		case identity.RecordID > 0:
-			renumbered++
+			renumbered[i] = true
 			fresh++
 		default:
 			fresh++
 		}
 	}
-	if err := data.AdvanceRecordIDs(ctx, s.driver, tableName, last); err != nil {
-		return nil, 0, err
-	}
 	reserved, err := data.ReserveRecordIDs(ctx, s.driver, tableName, fresh)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	if len(reserved) < fresh {
-		return nil, 0, fmt.Errorf("failed reserving the record IDs of %s", tableName)
+		return nil, nil, fmt.Errorf("failed reserving the record IDs of %s", tableName)
 	}
 	for i := range ids {
 		if ids[i] == 0 {

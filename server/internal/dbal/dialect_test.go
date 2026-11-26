@@ -101,7 +101,7 @@ func TestDialects_CreationOrderColumn(t *testing.T) {
 	assert.Contains(t, maria, "`f4b$mod_count` BIGINT NOT NULL DEFAULT 0")
 	assert.Equal(t, `ALTER TABLE "customers" ADD COLUMN "f4b$mod_count" BIGINT NOT NULL DEFAULT 0`,
 		dbal.AddModCountSQL(postgres.New(), "customers", 5))
-	assert.Equal(t, "ALTER TABLE `customers` WAIT 5 ADD COLUMN `f4b$mod_count` BIGINT NOT NULL DEFAULT 0",
+	assert.Equal(t, "ALTER TABLE `customers` WAIT 5 ADD COLUMN `f4b$mod_count` BIGINT NOT NULL DEFAULT 0, ALGORITHM=INSTANT",
 		dbal.AddModCountSQL(mariadb.New(), "customers", 5))
 	assert.Equal(t, " OVERRIDING SYSTEM VALUE", dbal.OverridingSystemValue(dbal.EnginePostgres))
 	assert.Empty(t, dbal.OverridingSystemValue(dbal.EngineMariaDB))
