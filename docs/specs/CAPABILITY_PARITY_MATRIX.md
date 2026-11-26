@@ -111,7 +111,7 @@ Containers in formulas read as their file's name (`GetAsText`, `IsEmpty`, `GetCo
 
 ### 3.3 Not yet supported
 - Find, sort and summary on an unstored calculation (refused with `422 Unstored Calculation`), except the sort of a portal or of one record's related records, done once they are read, up to 10,000 of them; a relationship a calculation reads through cannot sort by one.
-- `ExecuteSQL`, JSON, cryptographic, plug-in and financial functions, and container functions other than `GetContainerAttribute` (`filename`, `fileSize`), are reported as unsupported.
+- JSON, cryptographic, plug-in and financial functions, and container functions other than `GetContainerAttribute` (`filename`, `fileSize`), are reported as unsupported.
 - Layout calculations (hide object, tooltip, conditional formatting, portal filter) do not call custom functions yet, and value lists have no filter; *Replace Field Contents* by calculation is evaluated by the client's evaluator only. Script steps and button parameters call them through the server (see [Custom Functions](custom_functions.md)).
 
 ---|---|---|
@@ -122,7 +122,7 @@ Containers in formulas read as their file's name (`GetAsText`, `IsEmpty`, `GetCo
 
 ### 3.3 Translation & Unsupported Function Policy
 - **Translated Aliases during Migration (`#26`):** Common FileMaker expressions such as `Get ( CurrentDate )` → `TODAY()`, `Get ( CurrentTimestamp )` → `NOW()`, and `Case(c1; v1; default)` → nested `IF(...)` are automatically translated or flagged during assisted migration.
-- **Unsupported Function Families:** `Let()`, `Evaluate()`, `ExecuteSQL()`, `While()`, `GetNthRecord()`, JSON/Cryptographic functions, and financial functions (`PMT`, `FV`, `NPV`) are rejected at formula save time with `422 Unprocessable Entity` and flagged as `manual_action_required` in the FileMaker Migration Preflight Report.
+- **Unsupported Function Families:** `Let()`, `Evaluate()`, `While()`, `GetNthRecord()`, JSON/Cryptographic functions, and financial functions (`PMT`, `FV`, `NPV`) are rejected at formula save time with `422 Unprocessable Entity` and flagged as `manual_action_required` in the FileMaker Migration Preflight Report.
 
 ---
 

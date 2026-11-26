@@ -269,6 +269,7 @@ and the families around them:
 | Family | Functions |
 | --- | --- |
 | Logical | `If`, `Case`, `Choose`, `Let`, `While`, `IsEmpty`, `IsValid`, `IsValidExpression`, `Evaluate`, `GetField`, `Get ( … )`, `GetNthRecord` (related fields) |
+| SQL | `ExecuteSQL`, `ExecuteSQLe` (see [ExecuteSQL](#executesql)) |
 | Fields | `GetNextSerialValue` (auto-enter and unstored calculations, the Data Viewer; see [Auto-Enter Field Options](auto_enter_options.md#6-scripts-and-functions)) |
 | Text | `Left`, `Right`, `Middle`, `Length`, `Position`, `PatternCount`, `Substitute`, `Replace`, `Filter`, `Trim`, `TrimAll`, `Upper`, `Lower`, `Proper`, `Exact`, `Quote`, `Char`, `Code`, `SerialIncrement`, `LeftWords`, `MiddleWords`, `RightWords`, `WordCount` |
 | Lists | `List`, `ValueCount`, `GetValue`, `LeftValues`, `MiddleValues`, `RightValues`, `FilterValues`, `UniqueValues`, `SortValues` |
@@ -292,6 +293,65 @@ edits them; script steps call them through the server (see
 [Custom Functions](custom_functions.md)).
 `TODAY()`, `NOW()`, `COALESCE` and `CONCAT` remain for formulas written in
 File4Base before.
+
+## ExecuteSQL
+
+`ExecuteSQL ( query ; fieldSeparator ; rowSeparator { ; arguments… } )` runs
+a query of FileMaker's SQL over the solution's **table occurrences**, on the
+server, as the account the formula is computed for, and answers the rows as
+text: each row's values joined by `fieldSeparator` (empty: a comma), the rows
+by `rowSeparator` (empty: a return). Nothing found is empty. A query that
+cannot be read or run answers `?`, as FileMaker does; `ExecuteSQLe` answers
+`? ERROR: ` and FileMaker's error, `FQL0007/(1:7): The column named "x" does
+not exist in any table in the column reference's scope.`, with the line and
+offset in the query.
+
+```
+ExecuteSQL ( "SELECT \"Last Name\", Salary FROM Staff WHERE Dept = ? ORDER BY 1" ; " | " ; "" ; dept )
+```
+
+- **Where it runs.** An unstored calculation, an auto-enter or validation
+  calculation, a script's formula (Set Variable, If, parameters…) and the Data
+  Viewer. A stored calculation calling it, itself or through a custom function,
+  is refused when saved: its answer changes without its record changing, so it
+  must be unstored, as a calculation reading related fields. Elsewhere it
+  answers `?`.
+- **Access.** Each table a query names is read only if the account may read it,
+  as a related field is read: one it may not read answers `?` (`<No Access>` in
+  `ExecuteSQLe`), never its records. The relationships graph is not used: a
+  query joins as it says.
+- **What it reads.** `SELECT [DISTINCT]` of fields, constants, `*`, `t.*`,
+  `||` and `+ - * /`, the aggregates `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` (with
+  `DISTINCT`, and `COUNT(*)`) and the functions `UPPER`, `LOWER`, `TRIM`,
+  `LTRIM`, `RTRIM`, `LENGTH`/`CHAR_LENGTH`, `ABS`, `COALESCE`; `FROM` table
+  occurrences with aliases, `[INNER] JOIN` and `LEFT [OUTER] JOIN … ON`;
+  `WHERE` with `= <> != < > <= >=`, `LIKE` (`%` and `_`), `IN ( … )`,
+  `BETWEEN`, `IS [NOT] NULL`, `AND`, `OR`, `NOT`; `GROUP BY`, `HAVING`,
+  `ORDER BY` (fields, aliases, ordinals, `ASC`/`DESC`), `OFFSET n ROWS` and
+  `FETCH FIRST n ROWS ONLY`; `?` arguments, bound with their type; `DATE '…'`,
+  `TIME '…'` and `TIMESTAMP '…'`. Names are found whatever their case, quoted
+  (`"Last Name"`) when they are not plain words; a field is the one FileMaker
+  named, or its column.
+- **As FileMaker answers.** Numbers, dates (`2026-01-05`), times
+  (`13:04:05`) and timestamps (`2026-01-05 13:04:05`) are written as SQL
+  writes them, whatever the file's locale. Text compares and sorts
+  case-sensitively, by code point; an empty field is `NULL`, and `NULL` sorts
+  first; a constant compared with a field is read as the field's type
+  (`Hired > '2026-01-01'`); a division by zero is empty.
+- **Refused**, with FileMaker's error: anything but one `SELECT` (`INSERT`,
+  `UPDATE`, `DELETE`, DDL, a second statement), `UNION`, subqueries, `RIGHT` and
+  `FULL OUTER JOIN` (FileMaker does not run them either), `CROSS`/`NATURAL`
+  joins, `CASE`, `CAST` and the other functions, `CURRENT_DATE` and the like,
+  ODBC `{d '…'}` literals, `LIKE … ESCAPE`, `LIMIT`, and arithmetic on dates
+  and times. Unstored calculations,
+  summary and container fields cannot be read; `*` leaves them out, with the
+  record's id. An occurrence of another solution's table is refused.
+- **Safety.** The query is parsed and translated into the database's own SQL
+  from the solution's names alone; every value of the query and every argument
+  is bound as a parameter, never written into the statement. A query answers at
+  most 10,000 rows and 16 MB of values (more is an error: ask for fewer with
+  `WHERE` or `FETCH FIRST`), runs at most 5 seconds, and has at most 10,000
+  words, values and signs.
 
 ## Validation
 
@@ -344,7 +404,7 @@ Roughly how many years a customer has been with you. Result type: Number.
 - **Finding, sorting or summarizing by an unstored calculation** (FileMaker
   does it by computing every record); store the result, or use the fields it
   reads.
-- `ExecuteSQL`, JSON, cryptographic and plug-in functions, and container
+- JSON, cryptographic and plug-in functions, and container
   functions other than `GetContainerAttribute` ( `filename`, `fileSize` ),
   are reported as unsupported.
 - **Finding or sorting by a Container calculation** works on the stored

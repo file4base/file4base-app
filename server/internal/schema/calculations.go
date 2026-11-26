@@ -49,7 +49,8 @@ func StorageType(fieldType dbal.AgnosticFieldType, calculationFormula *string) d
 // calculation, which is computed each time a record is read; it must name an
 // occurrence and a field that exist, reachable through relationships. A
 // stored calculation can then neither read related fields nor an unstored
-// calculation, since what it stores would go stale.
+// calculation, since what it stores would go stale; nor run a query with
+// ExecuteSQL, for the same reason.
 //
 // `columnID` is the column being saved; it is excluded from the existing ones
 // so that saving a field again does not see its own previous formula.
@@ -86,6 +87,12 @@ func (s *Service) checkCalculation(
 		return fmt.Errorf("%w: the formula of %q reads the related field %s::%s; a calculation that reads related records "+
 			"must be computed when it is shown: make it unstored (clear \"Store the result\" in Field Options)",
 			ErrInvalidFieldOptions, fieldName, related[0].Table, related[0].Field)
+	}
+
+	if spec.IsStored() && expr.RunsSQL() {
+		return fmt.Errorf("%w: the formula of %q runs a query with ExecuteSQL, which reads other records; a calculation "+
+			"that runs a query must be computed when it is shown: make it unstored (clear \"Store the result\" in Field Options)",
+			ErrInvalidFieldOptions, fieldName)
 	}
 
 	columns, err := s.listColumns(ctx, tableID)

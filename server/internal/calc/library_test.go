@@ -121,9 +121,9 @@ func TestRewriteFunction(t *testing.T) {
 // A function neither File4Base nor the solution defines is named in the
 // error, so a caller can say which one it is.
 func TestUnknownFunctionIsNamed(t *testing.T) {
-	_, err := Parse(`ExecuteSQL ( "SELECT 1" ; "" ; "" )`)
+	_, err := Parse(`NoSuchFunction ( "Logo" ; "content" )`)
 	var problem *Error
-	if !errors.As(err, &problem) || problem.Function != "ExecuteSQL" {
+	if !errors.As(err, &problem) || problem.Function != "NoSuchFunction" {
 		t.Fatalf("err = %#v, want the function named", err)
 	}
 }
