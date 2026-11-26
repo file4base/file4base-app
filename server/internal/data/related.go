@@ -257,6 +257,8 @@ func matchCondition(
 			for i, key := range keys {
 				if column.lines {
 					key = keyText(key)
+				} else {
+					key = keyValue(dialect, column.kind, key)
 				}
 				marks[i] = dialect.Placeholder(first + len(args))
 				args = append(args, key)

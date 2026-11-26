@@ -73,6 +73,19 @@ func keyColumnOf(dialect dbal.Dialect, qualifier string, fields fieldSet, column
 	return multiKeyColumn{sql: name, lines: kind == dbal.FieldTypeText, kind: kind}
 }
 
+// keyValue is a key as it is bound against a match field of type kind. On
+// SQLite, the driver reads a DATE or TIMESTAMP column as a time.Time and
+// would bind one back as a timestamp text, "2026-01-02 00:00:00+00:00",
+// which a DATE column holding "2026-01-02" does not equal: a date or a
+// timestamp is bound as the text the column holds (dbal.TemporalValue). The
+// other engines compare a time.Time with their date columns by value.
+func keyValue(dialect dbal.Dialect, kind dbal.AgnosticFieldType, key interface{}) interface{} {
+	if dialect.Engine() != dbal.EngineSQLite {
+		return key
+	}
+	return dbal.TemporalValue(dbal.EngineSQLite, kind, key)
+}
+
 // Names of the lines a statement splits, and of their parts. Each holds a $
 // so as not to collide with a field.
 const (
@@ -145,7 +158,7 @@ func mariaPresent(line string) string {
 // arguments, a field named like one of json_each's columns (key, value,
 // type, path...) would be read as that column.
 func sqliteLines(expr, alias string) string {
-	return fmt.Sprintf("(SELECT f4b_lines(%s) AS f4b$j) AS %s$s, json_each(%s$s.f4b$j) AS %s", expr, alias, alias, alias)
+	return fmt.Sprintf("(SELECT f4b_lines(%s) AS f4b$j) AS %s$s, temp.json_each(%s$s.f4b$j) AS %s", expr, alias, alias, alias)
 }
 
 // anyOf is the condition that expr meets op against one of keys.
@@ -236,7 +249,7 @@ func lineSource(dialect dbal.Dialect, column multiKeyColumn, alias string) (from
 	if dialect.Engine() == dbal.EngineSQLite {
 		// The column is qualified by its table, so json_each's own columns
 		// cannot hide it.
-		return fmt.Sprintf("CROSS JOIN json_each(f4b_lines(%s)) AS %s", column.sql, alias), alias + ".value", ""
+		return fmt.Sprintf("CROSS JOIN temp.json_each(f4b_lines(%s)) AS %s", column.sql, alias), alias + ".value", ""
 	}
 	line := mariaLine(column.sql, alias)
 	return "CROSS JOIN " + mariaLineTable(column.sql, alias), line, mariaPresent(line)
@@ -280,12 +293,18 @@ func asKeyText(dialect dbal.Dialect, column multiKeyColumn) string {
 	if dialect.Engine() == dbal.EngineSQLite {
 		// Both hold the text of their UTC value (dbal.TemporalValue), which
 		// SQLite's date functions read.
+		// A timestamp is midnight exactly when its stored text says so: the
+		// date functions round to the millisecond, where keyText does not.
+		// A number is compared as its text, as a line is text and SQLite
+		// never holds a number equal to a text.
 		switch column.kind {
 		case dbal.FieldTypeDate:
 			return fmt.Sprintf("date(%s)", column.sql)
 		case dbal.FieldTypeTimestamp:
-			return fmt.Sprintf("CASE WHEN strftime('%%H:%%M:%%f', %s) = '00:00:00.000' THEN date(%s) ELSE datetime(%s) END",
+			return fmt.Sprintf("CASE WHEN substr(%s, 11) = ' 00:00:00+00:00' THEN date(%s) ELSE datetime(%s) END",
 				column.sql, column.sql, column.sql)
+		case dbal.FieldTypeNumber:
+			return fmt.Sprintf("CAST(%s AS TEXT)", column.sql)
 		}
 		return column.sql
 	}

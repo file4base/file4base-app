@@ -2439,20 +2439,26 @@ func (h *ServerAdminHandler) RunDatabaseOptimize(w http.ResponseWriter, r *http.
 	svc := schema.NewService(driver)
 	_ = svc.EnsureSystemTables(r.Context())
 
+	var opErr error
 	switch h.dbMgr.Engine() {
 	case dbal.EnginePostgres:
 		if op == "vacuum_analyze" {
-			_, _ = driver.DB().ExecContext(r.Context(), "VACUUM ANALYZE")
+			_, opErr = driver.DB().ExecContext(r.Context(), "VACUUM ANALYZE")
 		} else {
-			_, _ = driver.DB().ExecContext(r.Context(), "ANALYZE")
+			_, opErr = driver.DB().ExecContext(r.Context(), "ANALYZE")
 		}
 	case dbal.EngineSQLite:
 		// VACUUM would rewrite the whole file holding the writer lock;
 		// optimize refreshes the statistics the planner needs, bounded.
-		_, _ = driver.DB().ExecContext(r.Context(), "PRAGMA analysis_limit = 1000; PRAGMA optimize = 0x10002")
+		_, opErr = driver.DB().ExecContext(r.Context(), "PRAGMA analysis_limit = 1000; PRAGMA optimize = 0x10002")
 	}
 
 	durationMs := float64(time.Since(start).Microseconds()) / 1000.0
+	if opErr != nil {
+		h.recordAudit("maintenance", "Optimize & Analyze Database", sess.Username, dbName, dbName, "error", fmt.Sprintf("%s failed after %.2f ms: %v", strings.ToUpper(op), durationMs, opErr))
+		telemetry.WriteProblem(w, r, http.StatusInternalServerError, "Optimization Failed", opErr.Error())
+		return
+	}
 	h.recordAudit("maintenance", "Optimize & Analyze Database", sess.Username, dbName, dbName, "success", fmt.Sprintf("Completed %s and catalog integrity check in %.2f ms", strings.ToUpper(op), durationMs))
 
 	w.Header().Set("Content-Type", "application/json")

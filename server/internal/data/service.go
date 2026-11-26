@@ -710,6 +710,11 @@ func criterionClause(
 	if clause, ok, err := temporalCriterionClause(dialect, colIdent, fieldType, crit, place, values); err != nil || ok {
 		return clause, err
 	}
+	if fieldType == dbal.FieldTypeBoolean && dialect.Engine() == dbal.EngineSQLite {
+		// SQLite holds a Boolean as 0 or 1: it is compared as the text
+		// PostgreSQL casts one to, so "==true" finds the true ones.
+		colIdent = fmt.Sprintf("(CASE WHEN %[1]s THEN 'true' WHEN NOT %[1]s THEN 'false' END)", colIdent)
+	}
 	return textCriterionClause(dialect, colIdent, crit, place, values), nil
 }
 

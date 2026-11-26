@@ -417,17 +417,17 @@ func externalKeySets(
 			}
 			active := activeTerms(target.Terms)
 			types := make([]string, len(active))
-			text := make([]bool, len(active))
+			kinds := make([]dbal.AgnosticFieldType, len(active))
 			names := make([]string, len(active))
 			for i, t := range active {
 				types[i] = dialect.MapType(fields.typeOf(t.SourceColumn))
-				text[i] = fields.typeOf(t.SourceColumn) == dbal.FieldTypeText
+				kinds[i] = fields.typeOf(t.SourceColumn)
 				names[i] = keyColumn(i)
 			}
 			name := fmt.Sprintf("f4b_keys%d", len(sets))
 			f.sets[key] = name
 			sets = append(sets, fmt.Sprintf("%s (%s) AS (%s)",
-				name, strings.Join(names, ", "), keyRows(dialect, types, text, m.keys, idx, values)))
+				name, strings.Join(names, ", "), keyRows(dialect, types, kinds, m.keys, idx, values)))
 		}
 	}
 	if len(sets) == 0 {
@@ -440,9 +440,9 @@ func externalKeySets(
 // each value cast to the type it is compared as; SQLite takes one too, its
 // values bound as they are (a cast to DATE would make a number of a date).
 // MariaDB loses the values a VALUES list binds, so it takes a SELECT per row.
-// A value compared with a text field (text) is bound as the text keyText
-// writes.
-func keyRows(dialect dbal.Dialect, types []string, text []bool, rows [][]interface{}, idx *int, values *[]interface{}) string {
+// A value compared with a text field is bound as the text keyText writes,
+// one compared with a date or a timestamp as keyValue binds it.
+func keyRows(dialect dbal.Dialect, types []string, kinds []dbal.AgnosticFieldType, rows [][]interface{}, idx *int, values *[]interface{}) string {
 	postgres := dialect.Engine() == dbal.EnginePostgres
 	list := dialect.Engine() != dbal.EngineMariaDB
 	out := make([]string, len(rows))
@@ -454,8 +454,10 @@ func keyRows(dialect dbal.Dialect, types []string, text []bool, rows [][]interfa
 				marks[j] = fmt.Sprintf("CAST(%s AS %s)", marks[j], types[j])
 			}
 			*idx++
-			if text[j] {
+			if kinds[j] == dbal.FieldTypeText {
 				v = keyText(v)
+			} else {
+				v = keyValue(dialect, kinds[j], v)
 			}
 			*values = append(*values, v)
 		}
