@@ -458,6 +458,7 @@ class RelatedFieldView extends StatefulWidget {
     required this.object, required this.related, required this.isDark, super.key,
     this.editable = false,
     this.formulaTrue,
+    this.onWritten,
   });
   final LayoutObjectModel object;
   final RelatedContext related;
@@ -471,6 +472,11 @@ class RelatedFieldView extends StatefulWidget {
   /// index is true on the record in hand, evaluated from the layout's
   /// occurrence with Self as the value shown. Null applies none.
   final bool Function(int index)? formulaTrue;
+
+  /// Called once a value typed into the field is saved, for what reads it
+  /// (its conditional formats, the layout's conditions) to be evaluated
+  /// again.
+  final VoidCallback? onWritten;
 
   @override
   State<RelatedFieldView> createState() => _RelatedFieldViewState();
@@ -564,6 +570,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
         _editShown = value;
         if (!_editFocus.hasFocus) _edit.text = value;
       });
+      widget.onWritten?.call();
     } on Exception catch (e) {
       if (!mounted) return;
       _edit.text = _editShown;
@@ -1374,12 +1381,37 @@ class _PortalViewState extends State<PortalView> {
   /// The formulas of the row objects' conditional formats, by the key their
   /// answer is kept under, each with its Self: the field the object shows
   /// of the row's record.
-  List<(String, String, ConditionSelf)> _rowConditions(RelatedTarget target) => [
+  List<(String, String, ConditionSelf)> _rowConditions(RelatedTarget target) {
+    // The target and the objects are made anew on each build: they are
+    // told apart by what the conditions depend on.
+    final of = Object.hash(
+      target.table.name,
+      target.occurrence.id,
+      Object.hashAll([
+        for (final content in widget.contents)
+          for (final (i, rule) in content.style.conditionalRules.indexed)
+            if (rule.isFormula)
+              Object.hash(content.id, i, rule.value, content.fieldBinding?.fieldName, content.fieldBinding?.tableOccurrence),
+      ]),
+    );
+    if (of != _rowConditionsOf) {
+      _rowConditionsOf = of;
+      _rowConditionsList = [
         for (final content in widget.contents)
           if (_rowColumn(target, content) case final col?)
             for (final (i, rule) in content.style.conditionalRules.indexed)
               if (rule.isFormula && rule.value.trim().isNotEmpty) ('${content.id}#$i', rule.value, ConditionSelf(col.name)),
       ];
+      // Answers to other conditions do not hold for these.
+      _rowTruths.clear();
+      _lastRowTruths.clear();
+    }
+    return _rowConditionsList;
+  }
+
+  /// What [_rowConditions] last answered, and for which conditions.
+  int? _rowConditionsOf;
+  List<(String, String, ConditionSelf)> _rowConditionsList = const [];
 
   /// The conditional formats true on [row], evaluated from the portal's
   /// occurrence against the row's record, as FileMaker evaluates those of a
@@ -1432,6 +1464,7 @@ class _PortalViewState extends State<PortalView> {
           } on Exception catch (_) {
             // A calculation that cannot be evaluated applies no format.
           }
+          if (!mounted) return;
         }
       }
     }

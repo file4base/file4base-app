@@ -183,6 +183,9 @@ func TestEvaluateExpressions_SelfIsTheObjectsField(t *testing.T) {
 		{"Self>9", &data.SelfField{Field: "marks", Repetition: 2}, "1"},
 		{"IsEmpty(Self)", &data.SelfField{Field: "marks", Repetition: 3}, "1"},
 		{"Self=7", &data.SelfField{Occurrence: "orders", Field: "amount"}, "1"},
+		// Self is the field's value: a Let variable of the field's name does
+		// not change it.
+		{"Let(score = 0; Self > 5)", &data.SelfField{Field: "score"}, "1"},
 	}
 	expressions := make([]string, 0, len(cases)+1)
 	self := make([]*data.SelfField, 0, len(cases))
@@ -191,9 +194,7 @@ func TestEvaluateExpressions_SelfIsTheObjectsField(t *testing.T) {
 		self = append(self, c.self)
 	}
 	expressions = append(expressions, "IsEmpty(Self)") // no field given
-	bound, err := svc.BindSelf(ctx, expressions, self)
-	require.NoError(t, err)
-	got, err := svc.EvaluateExpressions(ctx, "visits", "VIS__Visits", id, bound, "Number")
+	got, err := svc.EvaluateExpressionsIn(ctx, "visits", "VIS__Visits", id, expressions, "Number", data.EvaluationEnv{Self: self})
 	require.NoError(t, err)
 	require.Len(t, got, len(expressions))
 	for i, c := range cases {

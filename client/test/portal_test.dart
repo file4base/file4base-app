@@ -162,15 +162,16 @@ class _RelatedApi extends ApiClient {
     evaluations.add((table, expressions, occurrence));
     evaluatedRecords.add(recordIds);
     evaluatedSelves.add(self);
-    // `Self = "Soto"`, as the server answers it: Self is the field given, of
+    // `Self = "…"`, as the server answers it: Self is the field given, of
     // the record evaluated, or of its first related record.
     String answer(String id, int i) {
+      final wanted = RegExp('"([^"]*)"').firstMatch(expressions[i])?.group(1);
       final s = self == null || i >= self.length ? null : self[i];
       if (s == null) return id == 'cu-2' ? '1' : '0';
       final record = s.occurrence == 'Customers'
           ? children.first
           : [...parents, ...children].firstWhere((r) => r['id'] == id, orElse: () => const {});
-      return record[s.field] == 'Soto' ? '1' : '0';
+      return record[s.field] == wanted ? '1' : '0';
     }
 
     return {
@@ -732,6 +733,37 @@ void main() {
       await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();
       expect(api.evaluations, hasLength(1), reason: 'an unchanged row is not asked again');
+    });
+
+    testWidgets('a rule changed on a portal row is asked again, its old answer dropped', (tester) async {
+      final api = await _pump(tester, layout: withRule('fld_in_portal'));
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-1-last_name'))).style?.color, red);
+
+      final base = withRule('fld_in_portal');
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: DataBrowserWidget(
+            table: _companies,
+            apiClient: api,
+            mode: OperationalMode.browse,
+            layout: base.copyWith(objects: [
+              for (final o in base.objects)
+                if (o.id == 'fld_in_portal')
+                  o.copyWith(
+                      style: o.style.copyWith(conditionalRules: const [
+                    ConditionalFormatRule(operator: 'formula', value: 'Self = "Alvarez"', textColor: '#FF0000'),
+                  ]))
+                else
+                  o,
+            ]),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(api.evaluations.last.$2, ['Self = "Alvarez"']);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('portal-cell-cu-1-last_name'))).style?.color, isNot(red),
+          reason: 'the answer to the old rule does not hold for the new one');
     });
 
     testWidgets('a related field is drawn by its rule, Self being the related field', (tester) async {

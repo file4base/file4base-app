@@ -650,6 +650,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     return _conditionsOf;
   }
 
+  /// A value typed into a related field was saved: the conditions of the
+  /// records shown, which may read it, are evaluated again.
+  void _relatedFieldWritten() {
+    if (mounted) setState(() => _hiddenGeneration++);
+  }
+
   /// What [_conditions] last answered, and for which layout and table.
   LayoutDefinitionModel? _conditionsLayout;
   TableModel? _conditionsTable;
@@ -727,6 +733,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             // records are asked about again when next drawn.
             failed.addAll(chunkIds);
           }
+          if (!mounted) return;
         }
       }
       for (final k in keys) {
@@ -3407,6 +3414,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
           isDark: isDark,
           editable: widget.mode == OperationalMode.browse,
           formulaTrue: _formulaTrueOn(obj, rec),
+          onWritten: _relatedFieldWritten,
         );
       }
       final fieldName = obj.fieldBinding?.fieldName ?? obj.text;
@@ -4146,6 +4154,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
             isDark: isDark,
             editable: widget.mode == OperationalMode.browse,
             formulaTrue: _formulaTrueOn(obj, record),
+            onWritten: _relatedFieldWritten,
           );
         }
 

@@ -207,6 +207,7 @@ type nativeLayout struct {
 	formatsDiffer  int             // "Value is" conditions kept as a calculation that compares with other values
 	formatsOff     int             // conditional formats switched off in FileMaker, left out
 	popovers       map[string]bool // ids of the popover buttons, whose panels open over the layout
+	inPortal       bool            // converting a portal's row objects
 	vectorImage    int
 	mergeKept      int
 }
@@ -475,7 +476,7 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 			l.formatsLeft++
 			continue
 		}
-		bound, ok := l.bindFormula(formula)
+		bound, ok := l.bindCondition(formula)
 		if !ok || !l.selfReadable(obj, formula) {
 			l.formatsLeft++
 			continue
@@ -533,8 +534,32 @@ func (l *nativeLayout) selfReadable(obj *xmlNode, formula string) bool {
 	if err != nil || replaced == formula {
 		return true
 	}
-	_, ok := l.bindFormula(replaced)
+	_, ok := l.bindCondition(replaced)
 	return ok
+}
+
+// bindCondition binds a conditional format's calculation from the layout's
+// occurrence, as FileMaker reads it. Browse mode evaluates a portal row's
+// from the portal's occurrence, against the row's record, as it does the
+// portal filter: the layout's own fields are then written qualified, for
+// them to read the layout's record still.
+func (l *nativeLayout) bindCondition(formula string) (string, bool) {
+	bound, ok := l.bindFormula(formula)
+	if !ok || !l.inPortal {
+		return bound, ok
+	}
+	// The bound formula reads the imported names.
+	opts := calc.Options{Library: l.ctx.binding.stored}
+	qualified, unresolved, err := calc.Rewrite(bound, opts, func(occurrence, field string) (string, bool) {
+		if occurrence == "" {
+			occurrence = l.occName
+		}
+		return calc.QuoteQualifiedName(occurrence, field), true
+	})
+	if err != nil || len(unresolved) > 0 {
+		return "", false
+	}
+	return qualified, true
 }
 
 // rangeInFormula reports whether the calculation FileMaker keeps for a
@@ -1604,7 +1629,10 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	l.objects = append(l.objects, base)
 	l.ctx.count("Portal").Migrated++
 	if list := findFirstChild(p, "ObjectList"); list != nil {
+		outer := l.inPortal
+		l.inPortal = true
 		l.convertList(list)
+		l.inPortal = outer
 	}
 }
 

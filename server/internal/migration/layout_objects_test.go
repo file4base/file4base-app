@@ -1157,7 +1157,8 @@ func TestNativeLayoutConditionalFormatInAPortalRow(t *testing.T) {
                   <TableOccurrenceReference id="2" name="Ingredients"/>
                   <ObjectList>
                     <LayoutObject type="Edit Box"><UUID>00000000-0000-0000-0000-000000000051</UUID><Bounds top="300" left="20" bottom="320" right="120"/>
-                      <Conditions><Formatting>` + fmCondition(6, "Self<1", "1", "") + `</Formatting></Conditions>
+                      <Conditions><Formatting>` + fmCondition(6, "Self<1", "1", "") +
+		fmCondition(0, "Ingredients::Quantity > Price", "", "") + `</Formatting></Conditions>
                       <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></Field>
                     </LayoutObject>
                   </ObjectList>
@@ -1174,6 +1175,11 @@ func TestNativeLayoutConditionalFormatInAPortalRow(t *testing.T) {
 	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
 	if !strings.Contains(string(encoded), `"value":"Self\u003c1"`) {
 		t.Fatalf("definition: %s", encoded)
+	}
+	// Each row evaluates it from the portal's occurrence: a field of the
+	// layout's, which FileMaker reads from the layout, is written qualified.
+	if !strings.Contains(string(encoded), `"value":"Ingredients::quantity \u003e Recipes::price"`) {
+		t.Fatalf("the layout's field read from the portal's occurrence: %s", encoded)
 	}
 	for _, it := range got.Report.ManualActionRequired {
 		if strings.Contains(it.Detail, "conditional format") {

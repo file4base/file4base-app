@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,16 +58,23 @@ type EvaluationEnv struct {
 	// committed yet (a new record especially), by name, read in place of
 	// what is stored.
 	Values map[string]any
+	// Self is, for the expression at the same index, the field Self reads
+	// (see SelfField); a nil entry, or none, leaves Self unknown.
+	Self []*SelfField
 }
 
 // envContext answers the Get functions the environment gives, and the
 // others as the record's context does.
 type envContext struct {
 	*unstoredContext
-	get map[string]any
+	get  map[string]any
+	self *SelfField
 }
 
 func (c *envContext) Get(selector string) (any, error) {
+	if selector == "SELF" && c.self != nil {
+		return c.self.read(c.unstoredContext)
+	}
 	if v, ok := c.get[selector]; ok {
 		return v, nil
 	}
@@ -86,44 +92,28 @@ type SelfField struct {
 	Repetition int    `json:"repetition,omitempty"`
 }
 
-// reference writes the field as a formula reads it back.
-func (f SelfField) reference(lib *calc.Library) string {
-	ref := calc.QuoteFieldName(f.Field, lib)
-	if f.Occurrence != "" {
-		ref = calc.QuoteQualifiedName(f.Occurrence, f.Field)
-	}
-	if f.Repetition > 1 {
-		ref += "[" + strconv.Itoa(f.Repetition) + "]"
-	}
-	return ref
-}
+// bound reports whether f names a field.
+func (f *SelfField) bound() bool { return f != nil && strings.TrimSpace(f.Field) != "" }
 
-// BindSelf returns expressions with each Self written as the field given at
-// the same index of self: how a condition of a layout object reads the
-// object's own value, as FileMaker evaluates Self there, comparing as that
-// field's type does. A nil or empty field leaves its expression as it is,
-// and so does an expression that does not parse, for its evaluation to say
-// why.
-func (s *Service) BindSelf(ctx context.Context, expressions []string, self []*SelfField) ([]string, error) {
-	out := slices.Clone(expressions)
-	bound := func(f *SelfField) bool { return f != nil && strings.TrimSpace(f.Field) != "" }
-	if !slices.ContainsFunc(self, bound) {
-		return out, nil
+// read answers Self: the field's value in the record evaluated, or in the
+// first record related through the occurrence, in the repetition given,
+// as a reference to that field reads it. Self is answered as a value, not
+// written into the formula, so a Let variable of the same name does not
+// capture it.
+func (f *SelfField) read(c *unstoredContext) (any, error) {
+	rep := max(f.Repetition, 1)
+	if f.Occurrence == "" {
+		return c.Field(f.Field, rep)
 	}
-	lib, err := LoadLibrary(ctx, s.driver)
-	if err != nil {
+	name := f.Field
+	if rep > 1 {
+		name += "[" + strconv.Itoa(rep) + "]"
+	}
+	values, err := c.RelatedFirst(f.Occurrence, name)
+	if err != nil || len(values) == 0 {
 		return nil, err
 	}
-	opts := calc.Options{Library: lib}
-	for i := range out {
-		if i >= len(self) || !bound(self[i]) {
-			continue
-		}
-		if replaced, err := calc.ReplaceSelf(out[i], opts, self[i].reference(lib)); err == nil {
-			out[i] = replaced
-		}
-	}
-	return out, nil
+	return values[0], nil
 }
 
 // variableInput is a variable as a script sends it: a number written as a
@@ -286,6 +276,9 @@ func (s *Service) EvaluateExpressionsIn(
 		env := &envContext{unstoredContext: &unstoredContext{
 			RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
 			reader:        reader, ctx: ctx, table: tableName, occurrence: occurrence, row: row}, get: get}
+		if i < len(in.Self) && in.Self[i].bound() {
+			env.self = in.Self[i]
+		}
 		value, err := calc.EvaluateWith(expr, env, result)
 		if err != nil {
 			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())

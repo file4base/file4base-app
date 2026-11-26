@@ -303,15 +303,9 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 			fmt.Sprintf("at most %d records are evaluated in one request", maxEvaluatedRecords))
 		return
 	}
-	// Self is bound once for every record.
-	evaluated, err := svc.BindSelf(r.Context(), expressions, body.Self)
-	if err != nil {
-		writeDataError(w, r, http.StatusBadRequest, "Evaluation Error", err)
-		return
-	}
 	evaluate := func(recordID string) ([]map[string]interface{}, error) {
-		evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, recordID, evaluated, body.ResultType,
-			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values})
+		evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, recordID, expressions, body.ResultType,
+			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values, Self: body.Self})
 		if err != nil {
 			// A record that is not there, or a table that is not reachable,
 			// is about the request rather than about one expression.
@@ -327,7 +321,7 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 			result := map[string]interface{}{
-				"expression":     expressions[i],
+				"expression":     e.Expression,
 				"value":          e.Value,
 				"text":           e.Text,
 				"result_type":    e.ResultType,
