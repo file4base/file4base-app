@@ -61,6 +61,26 @@ type EvaluationEnv struct {
 	// Self is, for the expression at the same index, the field Self reads
 	// (see SelfField); a nil entry, or none, leaves Self unknown.
 	Self []*SelfField
+	// Context is the record of the layout a portal shows the records
+	// evaluated on (see ContextRecord); nil evaluates them on their own.
+	Context *ContextRecord
+}
+
+// ContextRecord is the record of a layout, seen from its occurrence (by
+// name or id), that a record of a portal on it is evaluated in, as
+// FileMaker evaluates a portal row's conditions and the portal's filter:
+// from the layout, with the row as the current record of the portal's
+// occurrence. A reference to a field of that occurrence then reads the
+// row, and so does one through it; a reference to the layout's own
+// occurrence reads the layout's record, and any other is related to the
+// layout's record, never read back from the row through a relationship.
+// An aggregate of the portal's occurrence (Count, Sum, List, Last…) reads
+// every record related to the layout's record. A field named without an
+// occurrence reads the row, as the formulas bound for a portal write the
+// row's fields.
+type ContextRecord struct {
+	Occurrence string `json:"occurrence"`
+	RecordID   string `json:"record_id"`
 }
 
 // envContext answers the Get functions the environment gives, and the
@@ -211,10 +231,14 @@ func (s *Service) EvaluateExpressionsIn(
 	if err != nil {
 		return nil, err
 	}
-	fields, err := s.tableFields(ctx, tableName)
+	// One reader serves every expression, so what one reads the others
+	// reuse.
+	reader := s.newRelatedReader()
+	at, err := reader.evaluated(ctx, tableName, occurrence, recordID, in.Context)
 	if err != nil {
 		return nil, err
 	}
+	fields, row := at.fields, at.row
 
 	out := make([]ExpressionResult, len(expressions))
 	parsed := make([]*calc.Expr, len(expressions))
@@ -233,23 +257,17 @@ func (s *Service) EvaluateExpressionsIn(
 		reads = append(reads, expr.Fields()...)
 	}
 
-	// One reader serves every expression, so what one reads the others
-	// reuse.
-	reader := s.newRelatedReader()
 	record := calc.Record{}
-	row := map[string]interface{}{}
-	if recordID != "" {
-		if row, err = s.GetRow(ctx, tableName, recordID); err != nil {
-			return nil, err
-		}
-	}
 	if len(in.Values) > 0 {
+		if at.database != "" {
+			return nil, fmt.Errorf("%w: the values of a record being edited are not evaluated in another solution", ErrInvalidValue)
+		}
 		if err := s.overlayEdit(ctx, reader, tableName, fields, row, in.Values, reads); err != nil {
 			return nil, err
 		}
 	}
 	for name := range row {
-		record[name] = typedValue(tableName, fields, row, name, s.describeContainer(ctx))
+		record[name] = inSolution(typedValue(at.table, fields, row, name, at.describe), at.database)
 	}
 
 	result := calc.ParseResultType(resultType)
@@ -282,7 +300,8 @@ func (s *Service) EvaluateExpressionsIn(
 		// FileMaker.
 		env := &envContext{unstoredContext: &unstoredContext{
 			RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
-			reader:        reader, ctx: ctx, table: tableName, occurrence: occurrence, row: row}, get: get}
+			reader:        reader, ctx: ctx, table: at.from.table, occurrence: at.from.occurrence, row: at.from.row,
+			pin: at.pin}, get: get}
 		if i < len(in.Self) && in.Self[i].bound() {
 			env.self = in.Self[i]
 		}

@@ -605,9 +605,20 @@ func calculatedLabel(obj *xmlNode) bool {
 // row's record, as it does the portal filter: the layout's own fields are
 // then written qualified, for them to read the layout's record still.
 func (l *nativeLayout) bindCondition(formula string) (string, bool) {
+	if !l.inPortal {
+		return l.bindFormula(formula)
+	}
+	return l.bindQualified(formula)
+}
+
+// bindQualified binds a formula of a portal row from the layout's
+// occurrence, with the layout's own fields written qualified: Browse mode
+// reads a field named alone from the row, and one of the layout's
+// occurrence from the layout's record (see the evaluate route's context).
+func (l *nativeLayout) bindQualified(formula string) (string, bool) {
 	bound, ok := l.bindFormula(formula)
-	if !ok || !l.inPortal {
-		return bound, ok
+	if !ok {
+		return "", false
 	}
 	// The bound formula reads the imported names.
 	opts := calc.Options{Library: l.ctx.binding.stored}
@@ -1670,11 +1681,22 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	}
 	if c := findFirstChild(p, "Calculation"); c != nil {
 		if formula := calculationText(c); formula != "" {
-			// FileMaker evaluates the filter from the portal's occurrence,
-			// against each related record.
-			fb := l.ctx.binding.bind(occ.table, formula, occ.name, fmt.Sprintf("the portal filter of the layout %q", l.name))
-			if fb.why == "" && !occ.external {
-				config["filter"] = fb.rewritten
+			// FileMaker evaluates the filter on each related record, from
+			// the layout: Browse mode reads a field named alone from the
+			// row, so one of the portal's occurrence is written so, bound
+			// from it; one of another solution's table is named only
+			// through its occurrence, so its filter is bound from the
+			// layout, the layout's fields qualified.
+			var filter string
+			var ok bool
+			if occ.external {
+				filter, ok = l.bindQualified(formula)
+			} else {
+				fb := l.ctx.binding.bind(occ.table, formula, occ.name, fmt.Sprintf("the portal filter of the layout %q", l.name))
+				filter, ok = fb.rewritten, fb.why == ""
+			}
+			if ok {
+				config["filter"] = filter
 			} else {
 				// Rows the filter would leave out are never shown.
 				config["filter"] = "0"

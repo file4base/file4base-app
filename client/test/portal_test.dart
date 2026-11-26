@@ -152,16 +152,21 @@ class _RelatedApi extends ApiClient {
   final List<List<String>> evaluatedRecords = [];
   final List<List<ConditionSelf?>?> evaluatedSelves = [];
 
+  /// The layout's record each request evaluated its records in.
+  final List<EvaluationContext?> evaluatedContexts = [];
+
   @override
   Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(String table,
       {required List<String> expressions,
       required List<String> recordIds,
       String? occurrence,
       String resultType = 'Text',
-      List<ConditionSelf?>? self}) async {
+      List<ConditionSelf?>? self,
+      EvaluationContext? context}) async {
     evaluations.add((table, expressions, occurrence));
     evaluatedRecords.add(recordIds);
     evaluatedSelves.add(self);
+    evaluatedContexts.add(context);
     // `Self = "…"`, as the server answers it: Self is the field given, of
     // the record evaluated, or of its first related record.
     String answer(String id, int i) {
@@ -642,6 +647,8 @@ void main() {
     final (table, expressions, occurrence) = api.evaluations.single;
     expect((table, expressions.single, occurrence), ('customers', 'last_name = "Alvarez"', 'occ-customers'),
         reason: 'the filter is evaluated from the portal occurrence against the related records');
+    expect(api.evaluatedContexts.single, (occurrence: 'companies', recordId: 'co-1'),
+        reason: "in the layout's record, which a field of the layout reads");
   });
 
   testWidgets('a portal several relationships away lists the records along its path', (tester) async {
@@ -736,6 +743,8 @@ void main() {
         {'field': 'last_name'},
       ]);
       expect(api.evaluatedRecords.single.toSet(), {'cu-1', 'cu-2'}, reason: 'each row shown, in one request');
+      expect(api.evaluatedContexts.single, (occurrence: 'companies', recordId: 'co-1'),
+          reason: "each row in the layout's record");
 
       await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();

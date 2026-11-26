@@ -4288,6 +4288,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "404": {
+            "description": "No such table or record; with a context, an occurrence that is not there, or a portal occurrence of another table."
+          },
           "422": {
             "description": "Too Many Records: more than 100 record_ids in one request."
           }
@@ -4315,6 +4318,7 @@
                   "record_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100, "description": "Evaluates every expression against each record, in one request." },
                   "occurrence": { "type": "string", "description": "Occurrence of the table (id or name) the expressions are evaluated from, as a layout on it does; a related field is read through its relationships. Absent: the table's own occurrence." },
                   "self": { "type": "array", "items": { "type": "object", "nullable": true, "properties": { "field": { "type": "string" }, "occurrence": { "type": "string" }, "repetition": { "type": "integer", "minimum": 1 }, "text": { "type": "string" } } }, "description": "For the expression at the same index, what Self reads, as a layout object's conditions read it: a field of the record (no occurrence) or of an occurrence by name, in the repetition shown (1 by default), or the text a text object or a button shows (text, which wins over field). A null entry, or one with neither, leaves Self unknown." },
+                  "context": { "$ref": "#/components/schemas/EvaluationContext" },
                   "result_type": { "type": "string" }
                 }
               }
@@ -6429,6 +6433,65 @@
         }
       }
     },
+    "/api/v1/occurrences/{occurrence}/records/evaluate": {
+      "parameters": [
+        {
+          "name": "occurrence",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "The table occurrence, by id or name: a portal's, whose rows are evaluated."
+        }
+      ],
+      "post": {
+        "tags": [
+          "Data Operations"
+        ],
+        "summary": "Evaluate expressions against records of a table occurrence",
+        "description": "POST /api/v1/data/{table}/evaluate for the records of the occurrence, seen from it (its occurrence field is ignored). Those of another solution's table are read there, as the account the session group holds there, with its access; the formula, which names this solution's occurrences, is evaluated here, in the layout's record given as context, read as the caller. Such records are evaluated only with a context.",
+        "responses": {
+          "200": {
+            "description": "As POST /api/v1/data/{table}/evaluate: {\"results\": [...]}, or {\"records\": {id: [results] or null}} with record_ids."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "Table occurrence, record or context not found"
+          },
+          "422": {
+            "description": "Nothing to evaluate, too many expressions or records, or the records of another solution's table without a context"
+          },
+          "424": {
+            "$ref": "#/components/responses/ExternalUnavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "expression": { "type": "string" },
+                  "expressions": { "type": "array", "items": { "type": "string" } },
+                  "record_id": { "type": "string" },
+                  "record_ids": { "type": "array", "items": { "type": "string" }, "maxItems": 100 },
+                  "self": { "type": "array", "items": { "type": "object", "nullable": true } },
+                  "context": { "$ref": "#/components/schemas/EvaluationContext" },
+                  "result_type": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/occurrences/{occurrence}/records/{id}": {
       "parameters": [
         {
@@ -8410,6 +8473,15 @@
           "totp_code": {
             "type": "string"
           }
+        }
+      },
+      "EvaluationContext": {
+        "type": "object",
+        "description": "The record of the layout a portal's rows are evaluated in, as FileMaker evaluates a portal row's conditions and the portal's filter: from the layout, with the row as the current record of the portal's occurrence. A field named alone, of the portal's occurrence or of one reached through it reads the row; one of the layout's occurrence reads this record, any other is related to it; an aggregate of the portal's occurrence covers every record related to this one. The caller must be able to read its table; the occurrence must be one of this solution's tables.",
+        "required": ["occurrence"],
+        "properties": {
+          "occurrence": { "type": "string", "description": "The layout's occurrence, by id or name." },
+          "record_id": { "type": "string", "description": "The layout's record." }
         }
       },
       "RelatedBatchRequest": {

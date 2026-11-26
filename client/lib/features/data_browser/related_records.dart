@@ -166,6 +166,24 @@ class RelatedContext {
   ApiClient clientFor(RelatedTarget target) =>
       target.isExternal || fromDatabase != null ? apiClient.forOccurrence(target.occurrence.id) : apiClient;
 
+  /// The layout's record a portal's rows are evaluated in: the record in
+  /// hand, seen from the layout's occurrence (the table's own when none is
+  /// named). Null with no record, and on a layout of another solution's
+  /// table, whose portal rows are evaluated on their own.
+  EvaluationContext? get rowContext {
+    final id = recordId;
+    if (id == null || id.isEmpty || fromDatabase != null) return null;
+    var occurrence = layoutOccurrence;
+    if (occurrence == null || occurrence.isEmpty) {
+      final own = [
+        for (final o in occurrencesById.values)
+          if (!o.isExternal && tablesById[o.baseTableId]?.name == fromTable) o,
+      ];
+      occurrence = (own.where((o) => o.name.toLowerCase() == fromTable.toLowerCase()).firstOrNull ?? own.firstOrNull)?.id;
+    }
+    return occurrence == null ? null : (occurrence: occurrence, recordId: id);
+  }
+
   RelatedContext forRecord(String? recordId, {bool batched = false}) => RelatedContext(
         apiClient: apiClient,
         fromTable: fromTable,
@@ -1161,10 +1179,12 @@ class _PortalViewState extends State<PortalView> {
     }
   }
 
-  /// The [rows] [filter] is true for, evaluated from the portal's
-  /// occurrence against each related record, as FileMaker filters portal
-  /// records. A filter that cannot be evaluated throws, so the portal shows
-  /// none of them rather than all.
+  /// The [rows] [filter] is true for, evaluated against each related
+  /// record in the layout's record ([RelatedContext.rowContext]), as
+  /// FileMaker filters portal records: a field of the layout reads the
+  /// record in hand. Another solution's records are read there. A filter
+  /// that cannot be evaluated throws, so the portal shows none of them
+  /// rather than all.
   Future<List<Map<String, dynamic>>> _filtered(
       RelatedTarget target, List<Map<String, dynamic>> rows, String filter) async {
     if (filter == '0') return const [];
@@ -1177,7 +1197,11 @@ class _PortalViewState extends State<PortalView> {
     for (var i = 0; i < ids.length; i += ApiClient.maxEvaluatedRecords) {
       final chunk = ids.sublist(i, math.min(i + ApiClient.maxEvaluatedRecords, ids.length));
       final results = await client.evaluateForRecords(target.table.name,
-          expressions: [filter], recordIds: chunk, occurrence: target.occurrence.id, resultType: 'Number');
+          expressions: [filter],
+          recordIds: chunk,
+          occurrence: target.occurrence.id,
+          resultType: 'Number',
+          context: widget.related.rowContext);
       for (final id in chunk) {
         final answer = results[id];
         if (answer == null || answer.isEmpty) continue;
@@ -1437,9 +1461,11 @@ class _PortalViewState extends State<PortalView> {
   /// answer is in, so nothing hidden is ever shown or typed into.
   Set<String> _rowHideable = const {};
 
-  /// The conditions true on [row], evaluated from the portal's occurrence
-  /// against the row's record, as FileMaker evaluates those of a portal
-  /// row: the ids of the objects it hides, and the keys of the formats that
+  /// The conditions true on [row], evaluated against the row's record in
+  /// the layout's record ([RelatedContext.rowContext]), as FileMaker
+  /// evaluates those of a portal row: a field of the layout reads the
+  /// record in hand, one of the portal's occurrence the row. They are the
+  /// ids of the objects it hides, and the keys of the formats that
   /// apply. Asked while the row is drawn, so only the rows on screen are
   /// evaluated. Until the row's answer is in, its last one holds, and a
   /// row seen for the first time hides every object with a condition.
@@ -1480,6 +1506,7 @@ class _PortalViewState extends State<PortalView> {
               recordIds: chunkIds,
               occurrence: target.occurrence.id,
               resultType: 'Number',
+              context: widget.related.rowContext,
             );
             for (final id in chunkIds) {
               for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {

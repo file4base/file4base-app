@@ -904,6 +904,33 @@ the one sent.
 }
 ```
 
+A portal's rows are evaluated in the record of the layout they are shown on,
+as FileMaker evaluates a portal row's conditions and the portal's filter:
+from the layout, with the row as the current record of the portal's
+occurrence. `context` names the layout's occurrence and record, and the
+records evaluated (`record_id`, `record_ids`) are the rows, seen from the
+portal's `occurrence`:
+
+```json
+{
+  "expressions": ["Customers::status = \"late\" and Companies::region = \"north\""],
+  "record_ids": ["cu-1…", "cu-2…"],
+  "occurrence": "Customers",
+  "context": {"occurrence": "Companies", "record_id": "co-1…"}
+}
+```
+
+A field named alone, and one of the portal's occurrence, read the row; one
+of an occurrence reached through the portal's reads the records related to
+the row; one of the layout's occurrence reads the layout's record, and any
+other is related to the layout's record. So a field of the layout is never
+read back from the row through the relationship, which in a many-to-many
+relationship reaches another record. An aggregate (`Count`, `Sum`, `List`,
+`Last`, `GetNthRecord`…) of the portal's occurrence itself covers every
+record related to the layout's record. The caller must be able to read the
+layout's table as well as the rows' (`403`), and the layout's occurrence must
+be one of this solution's tables.
+
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
 answers. `result_type` is `Text` (the default), `Number`, `Date`, `Timestamp`,
@@ -938,8 +965,8 @@ have reads as empty — the engine's rule — and is named in `unknown_fields`
 rather than being quietly ignored.
 
 #### Errors
-- `403 Forbidden`: no access to the table.
-- `404 Not Found`: no such table, or no record with that id.
+- `403 Forbidden`: no access to the table, or to the layout's table of the `context`.
+- `404 Not Found`: no such table, or no record with that id; with a `context`, an occurrence that is not there, or a portal occurrence of another table.
 - `422 Unprocessable Entity`: nothing to evaluate, or more than 50 expressions.
 
 ---
@@ -2860,6 +2887,7 @@ The records of a table occurrence, by id or name: those of a table of this solut
 | `POST /`, `PUT /{id}`, `PATCH /{id}`, `DELETE /{id}`, `POST /{id}/related` | the same writes (`PATCH` is `PUT`: both change only the fields sent) | Written there as the group's account, with its privileges (above). |
 | `GET /{id}/related`, `POST /related` | the related reads | Follow this solution's relationships from that record. |
 | `POST /{id}/duplicate`, `GET /serials/{field}`, `PUT /serials/{field}`, `POST /relookup` | the auto-enter routes (§ 4) | Run there as the group's account: the copy gets that solution's serial numbers and stamps. |
+| `POST /evaluate` | `POST /api/v1/data/{table}/evaluate`, seen from the occurrence | The rows of a portal on a layout of this solution, given as the `context`: read there as the group's account, the formula evaluated here, the layout's record read as the caller. Without a `context`: `422`. |
 
 An unknown occurrence answers `404 Table Occurrence Not Found`.
 

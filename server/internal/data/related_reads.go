@@ -80,24 +80,39 @@ type unstoredContext struct {
 	table      string
 	occurrence string
 	row        map[string]interface{}
+	// pin is the portal row a layout's formula is evaluated on, if any
+	// (see ContextRecord).
+	pin *pinnedRecord
 }
 
 func (c *unstoredContext) Related(occurrence, field string) ([]any, error) {
+	if values, ok, err := c.pinned(occurrence, field, reachAll); ok {
+		return values, err
+	}
 	return c.reader.related(c.ctx, c.table, c.occurrence, c.row, occurrence, field, reachAll)
 }
 
 // RelatedFirst implements calc.Bounded.
 func (c *unstoredContext) RelatedFirst(occurrence, field string) ([]any, error) {
+	if values, ok, err := c.pinned(occurrence, field, reachFirst); ok {
+		return values, err
+	}
 	return c.reader.related(c.ctx, c.table, c.occurrence, c.row, occurrence, field, reachFirst)
 }
 
 // RelatedNth implements calc.Bounded.
 func (c *unstoredContext) RelatedNth(occurrence, field string, n int) ([]any, bool, error) {
+	if c.beyondPin(occurrence, field) {
+		return nil, false, nil
+	}
 	return c.reader.nth(c.ctx, c.table, c.occurrence, c.row, occurrence, field, n)
 }
 
 // RelatedTotals implements calc.Bounded.
 func (c *unstoredContext) RelatedTotals(occurrence, field, function string) (calc.RelatedTotals, bool, error) {
+	if c.beyondPin(occurrence, field) {
+		return calc.RelatedTotals{}, false, nil
+	}
 	return c.reader.totals(c.ctx, c.table, c.occurrence, c.row, occurrence, field, function)
 }
 
@@ -111,6 +126,12 @@ func (r *relatedReader) related(
 	if err != nil {
 		return nil, err
 	}
+	return r.readAlong(ctx, rt, row, rc)
+}
+
+// readAlong reads the field a route ends at in the records it reaches from
+// row: every one, or the first.
+func (r *relatedReader) readAlong(ctx context.Context, rt *route, row map[string]interface{}, rc reach) ([]any, error) {
 	rows, err := r.walk(ctx, rt, []map[string]interface{}{row})
 	if err != nil || len(rows) == 0 {
 		return nil, err

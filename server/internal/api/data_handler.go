@@ -261,6 +261,16 @@ type EvaluateExpressionBody struct {
 	// whose conditions FileMaker evaluates with Self as the object's value.
 	// A null entry, or none, leaves Self unknown.
 	Self []*data.SelfField `json:"self,omitempty"`
+
+	// Context is the record of the layout a portal shows the records
+	// evaluated on: the layout's occurrence and the record's id. The
+	// records are then the portal's rows, seen from the portal's
+	// occurrence, and each is evaluated as FileMaker evaluates a portal
+	// row's conditions and the portal's filter: a reference to the layout's
+	// own fields reads the layout's record, one to the portal's occurrence
+	// (or through it) reads the row (see data.ContextRecord). The caller
+	// must be able to read the layout's table too.
+	Context *data.ContextRecord `json:"context,omitempty"`
 }
 
 // EvaluateExpression computes expressions against a record with the engine
@@ -276,10 +286,51 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	h.evaluate(w, r, svc, table, "", false)
+}
 
+// EvaluateOccurrenceExpression is EvaluateExpression for records of the
+// occurrence, which it is seen from: a portal's rows, with the record of
+// the layout they are shown on as context. Those of an occurrence of
+// another solution's table are read there, as the account the caller's
+// session group holds there, as the portal reads them; the formula, which
+// names this solution's occurrences, is evaluated here, and the layout's
+// record is read as the caller. Such rows are only evaluated with a
+// context.
+//
+//	POST /api/v1/occurrences/{occurrence}/records/evaluate
+func (h *DataHandler) EvaluateOccurrenceExpression(w http.ResponseWriter, r *http.Request) {
+	occurrence := chi.URLParam(r, "occurrence")
+	svc := callerDataService(r)
+	origin, err := svc.OccurrenceOrigin(r.Context(), occurrence)
+	if err != nil {
+		writeOccurrenceError(w, r, err)
+		return
+	}
+	if origin.External == nil {
+		var ok bool
+		if svc, ok = h.authorize(w, r, origin.Table, false); !ok {
+			return
+		}
+	}
+	h.evaluate(w, r, svc, origin.Table, occurrence, origin.External != nil)
+}
+
+// evaluate answers an evaluation request on table, seen from occurrence
+// when it is given, else from the one the body names. external tells an
+// occurrence of another solution's table.
+func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data.Service, table, occurrence string, external bool) {
 	var body EvaluateExpressionBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON", "Request body contains invalid JSON format")
+		return
+	}
+	if occurrence != "" {
+		body.Occurrence = occurrence
+	}
+	if external && body.Context == nil {
+		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Context Required",
+			"the records of another solution's table are evaluated in the record of the layout they are shown on: give it as the context")
 		return
 	}
 
@@ -305,7 +356,8 @@ func (h *DataHandler) EvaluateExpression(w http.ResponseWriter, r *http.Request)
 	}
 	evaluate := func(recordID string) ([]map[string]interface{}, error) {
 		evaluations, err := svc.EvaluateExpressionsIn(r.Context(), table, body.Occurrence, recordID, expressions, body.ResultType,
-			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values, Self: body.Self})
+			data.EvaluationEnv{Variables: body.Variables, Get: body.Get, Values: body.Values, Self: body.Self,
+				Context: body.Context})
 		if err != nil {
 			// A record that is not there, or a table that is not reachable,
 			// is about the request rather than about one expression.

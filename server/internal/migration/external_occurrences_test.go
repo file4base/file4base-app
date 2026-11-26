@@ -445,3 +445,43 @@ func TestNativeLayoutExternalRelatedFieldKeepsItsRelationship(t *testing.T) {
 		t.Fatalf("an external related field must keep its relationship: %s", def)
 	}
 }
+
+// A portal of another file's table keeps its filter: Browse mode evaluates
+// it on each row with the layout's record as context, so the layout's own
+// fields are written qualified, as the portal's are.
+func TestNativeLayoutExternalPortalKeepsItsFilter(t *testing.T) {
+	layout := `<Layout id="1" name="Order"><TableOccurrenceReference id="1" name="Orders"/>
+  <PartsList><Part type="Body"><Definition type="Body" kind="4" size="300" absolute="0"/><ObjectList>
+   <LayoutObject type="Portal"><UUID>00000000-0000-0000-0000-000000000070</UUID><Bounds top="10" left="20" bottom="200" right="300"/>
+    <Portal><TableOccurrenceReference id="2" name="Order Customers"/><Options index="1" show="3"/>
+     <Calculation><Text><![CDATA[Order Customers::Full Name <> "" and Order Customers::Region = Orders::Region]]></Text></Calculation>
+     <ObjectList/>
+    </Portal>
+   </LayoutObject>
+  </ObjectList></Part></PartsList></Layout>`
+	start := strings.Index(externalOrdersXML, "<LayoutCatalog>")
+	end := strings.Index(externalOrdersXML, "</LayoutCatalog>")
+	doc := externalOrdersXML[:start] + "<LayoutCatalog>" + layout + externalOrdersXML[end:]
+	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatalf("AnalyzeAndConvert failed: %v", err)
+	}
+	encoded, _ := json.Marshal(res.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]interface{}
+	for _, raw := range def["objects"].([]interface{}) {
+		if o := raw.(map[string]interface{}); o["type"] == "portal" {
+			config = o["portal_config"].(map[string]interface{})
+		}
+	}
+	if config == nil {
+		t.Fatalf("no portal: %s", encoded)
+	}
+	if config["filter"] != `${Order Customers}::full_name <> "" and ${Order Customers}::region = Orders::region` ||
+		config["filter_problem"] != nil {
+		t.Fatalf("portal: %v", config)
+	}
+}
