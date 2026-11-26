@@ -174,6 +174,14 @@ class _MigrationResultsViewState extends State<MigrationResultsView> {
 
   /// Which copy button was just used ('all' or a kind), for its feedback.
   String? _copied;
+
+  /// Set when the clipboard refused the text (a browser may).
+  String? _copyError;
+
+  /// The accounts given a password from this view. Only these, and accounts
+  /// still waiting for one, get the button: an account of the same name
+  /// that has a password is not the one the migration created.
+  final Set<String> _setHere = {};
   Timer? _copiedTimer;
 
   List<String> get _pendingNames => widget.result.importReport.accountsPendingPassword;
@@ -214,14 +222,27 @@ class _MigrationResultsViewState extends State<MigrationResultsView> {
   Future<void> _setPassword(UserModel user) async {
     final updated = await SetPasswordDialog.show(context, apiClient: widget.apiClient, user: user);
     if (updated == null || !mounted) return;
-    setState(() => _accounts = {..._accounts, updated.username.toLowerCase(): updated});
+    setState(() {
+      _setHere.add(updated.id);
+      _accounts = {..._accounts, updated.username.toLowerCase(): updated};
+    });
   }
 
   Future<void> _copy(String key, String text) async {
-    await Clipboard.setData(ClipboardData(text: text));
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+    } on Object catch (_) {
+      if (mounted) {
+        setState(() => _copyError = 'The clipboard is not available here: select the text below and copy it instead.');
+      }
+      return;
+    }
     if (!mounted) return;
     _copiedTimer?.cancel();
-    setState(() => _copied = key);
+    setState(() {
+      _copied = key;
+      _copyError = null;
+    });
     _copiedTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) setState(() => _copied = null);
     });
@@ -419,7 +440,7 @@ class _MigrationResultsViewState extends State<MigrationResultsView> {
           ),
           _badge(status, color),
           const SizedBox(width: 8),
-          if (user != null)
+          if (user != null && (user.passwordPending || _setHere.contains(user.id)))
             OutlinedButton.icon(
               key: Key('set-password-$name'),
               style: OutlinedButton.styleFrom(
@@ -484,6 +505,11 @@ class _MigrationResultsViewState extends State<MigrationResultsView> {
                 ),
             ],
           ),
+          if (_copyError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(_copyError!, style: const TextStyle(color: Colors.redAccent, fontSize: 11.5)),
+            ),
           if (count == 0)
             const Padding(
               padding: EdgeInsets.only(top: 4),

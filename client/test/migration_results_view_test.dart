@@ -219,6 +219,30 @@ void main() {
     expect(reviewed, 1);
   });
 
+  testWidgets('says so when the clipboard refuses the text', (tester) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') throw PlatformException(code: 'denied');
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await _pumpView(tester, _FakeServer());
+    await tester.tap(find.byKey(const Key('migration-copy-all')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('The clipboard is not available here'), findsOneWidget);
+    expect(find.text('Copied'), findsNothing);
+  });
+
+  testWidgets('an account of the same name that has a password is left alone', (tester) async {
+    final server = _FakeServer();
+    server.users.firstWhere((u) => u['username'] == 'gardener')
+      ..['password_pending'] = false
+      ..['is_active'] = true;
+    await _pumpView(tester, server);
+    expect(find.byKey(const Key('set-password-botanist')), findsOneWidget);
+    expect(find.byKey(const Key('set-password-gardener')), findsNothing);
+    expect(find.text('Can sign in'), findsOneWidget);
+  });
+
   testWidgets('lists the accounts waiting for a password and sets one', (tester) async {
     final server = _FakeServer();
     await _pumpView(tester, server);
@@ -233,7 +257,13 @@ void main() {
     expect(find.text('Set password: botanist'), findsOneWidget);
     expect(find.textContaining('cannot sign in until one is set'), findsOneWidget);
 
-    // Mismatch is refused without a request.
+    // A blank password and a mismatch are refused without a request.
+    await tester.enterText(find.byKey(const Key('set-password-new')), '   ');
+    await tester.enterText(find.byKey(const Key('set-password-confirm')), '   ');
+    await tester.tap(find.byKey(const Key('set-password-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('Password cannot be empty.'), findsOneWidget);
+
     await tester.enterText(find.byKey(const Key('set-password-new')), 'Fern-2026-long');
     await tester.enterText(find.byKey(const Key('set-password-confirm')), 'Fern-2026-lonG');
     await tester.tap(find.byKey(const Key('set-password-save')));
@@ -248,7 +278,8 @@ void main() {
     await tester.tap(find.byKey(const Key('set-password-save')));
     await tester.pumpAndSettle();
 
-    expect(server.updates['u-bot'], {'role': 'user', 'password': 'Fern-2026-long', 'is_active': true});
+    // The stored role is kept (an empty role), the account activated.
+    expect(server.updates['u-bot'], {'role': '', 'password': 'Fern-2026-long', 'is_active': true});
     expect(find.text('Set password: botanist'), findsNothing);
     expect(find.text('Accounts waiting for a password (1 of 2)'), findsOneWidget);
     expect(find.text('Can sign in'), findsOneWidget);
@@ -269,7 +300,7 @@ void main() {
     await tester.tap(find.byKey(const Key('set-password-save')));
     await tester.pumpAndSettle();
 
-    expect(server.updates['u-gar'], {'role': 'user', 'password': 'Moss-2026-long', 'is_active': false});
+    expect(server.updates['u-gar'], {'role': '', 'password': 'Moss-2026-long'});
     expect(find.text('Password set, inactive'), findsOneWidget);
   });
 

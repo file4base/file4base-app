@@ -1740,7 +1740,7 @@ Updates password, role and/or `is_active` of an existing user account.
 - `admin`: `admin` and `user` accounts; cannot modify owner accounts nor promote to `owner`.
 - `user`: only their own password (role and status must stay unchanged).
 
-The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked. Setting a password clears `password_pending` (#198).
+The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked. Setting a password clears `password_pending` (#198); a password of only spaces is refused (`400`). An owner with `password_pending` cannot sign in, so it does not count as the active owner a database must keep. An empty or omitted `role` keeps the stored one.
 
 #### Request Body
 ```json

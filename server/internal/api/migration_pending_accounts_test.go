@@ -42,6 +42,7 @@ func TestAPI_FileMakerMigrationAccountsPendingPassword(t *testing.T) {
     <AccountCatalog>
       <Account name="botanist" privilegeSet="[Data Entry Only]"/>
       <Account name="gardener" privilegeSet="[Data Entry Only]"/>
+      <Account name="keeper" privilegeSet="[Full Access]"/>
     </AccountCatalog>
   </File>
 </FMPReport>`
@@ -57,8 +58,8 @@ func TestAPI_FileMakerMigrationAccountsPendingPassword(t *testing.T) {
 		"design_xml": ddrXML,
 	}, &applyRes)
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, 2, applyRes.ImportReport.AccountsCreated)
-	assert.ElementsMatch(t, []string{"botanist", "gardener"}, applyRes.ImportReport.AccountsPendingPassword)
+	assert.Equal(t, 3, applyRes.ImportReport.AccountsCreated)
+	assert.ElementsMatch(t, []string{"botanist", "gardener", "keeper"}, applyRes.ImportReport.AccountsPendingPassword)
 
 	byName := func() map[string]schema.UserMetadata {
 		out := map[string]schema.UserMetadata{}
@@ -80,6 +81,27 @@ func TestAPI_FileMakerMigrationAccountsPendingPassword(t *testing.T) {
 	}, nil)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.True(t, byName()["gardener"].PasswordPending)
+
+	// A blank password would clear the mark of an account that still cannot
+	// sign in: it is refused.
+	rec = h.do(http.MethodPut, "/api/v1/security/users/"+users["gardener"].ID, ownerTok, map[string]interface{}{
+		"password": "   ",
+	}, nil)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	assert.True(t, byName()["gardener"].PasswordPending)
+
+	// An owner switched on without a password cannot sign in, so it does not
+	// count as the active owner the database must keep.
+	require.Equal(t, "owner", users["keeper"].Role)
+	rec = h.do(http.MethodPut, "/api/v1/security/users/"+users["keeper"].ID, ownerTok, map[string]interface{}{
+		"is_active": true,
+	}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = h.do(http.MethodPut, "/api/v1/security/users/"+users["alice"].ID, ownerTok, map[string]interface{}{
+		"role": "admin",
+	}, nil)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "alice is the only owner who can sign in: "+rec.Body.String())
+	assert.Equal(t, "owner", byName()["alice"].Role)
 
 	// Setting a password and enabling the account lets it sign in.
 	rec = h.do(http.MethodPut, "/api/v1/security/users/"+users["botanist"].ID, ownerTok, map[string]interface{}{

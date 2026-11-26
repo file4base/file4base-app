@@ -208,8 +208,9 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   }
 
   bool _isLastActiveOwner(UserModel user) {
-    if (user.role != 'owner' || !user.isActive) return false;
-    final activeOwners = _users.where((u) => u.role == 'owner' && u.isActive).length;
+    if (user.role != 'owner' || !user.isActive || user.passwordPending) return false;
+    // An owner still waiting for a password cannot sign in (#198).
+    final activeOwners = _users.where((u) => u.role == 'owner' && u.isActive && !u.passwordPending).length;
     return activeOwners <= 1;
   }
 
@@ -1778,8 +1779,14 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                 size: 18,
                                                 color: user.passwordPending ? Colors.amberAccent : null,
                                               ),
-                                              tooltip: user.passwordPending ? 'Set a password so that it can sign in' : 'Change password',
-                                              onPressed: () => _showChangePasswordDialog(user),
+                                              tooltip: user.isOwner && !widget.currentUser.isOwner
+                                                  ? 'Only an owner can set the password of an owner account'
+                                                  : user.passwordPending
+                                                      ? 'Set a password so that it can sign in'
+                                                      : 'Change password',
+                                              onPressed: user.isOwner && !widget.currentUser.isOwner
+                                                  ? null
+                                                  : () => _showChangePasswordDialog(user),
                                             ),
                                             const SizedBox(width: 2),
 

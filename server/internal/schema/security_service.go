@@ -251,10 +251,11 @@ func (s *Service) GetUser(ctx context.Context, id string) (*UserMetadata, error)
 	return &u, nil
 }
 
-// countActiveOwners returns how many active owner accounts exist.
+// countActiveOwners returns how many active owner accounts exist that can
+// sign in: an owner still waiting for a password (#198) is not one.
 func (s *Service) countActiveOwners(ctx context.Context) int {
 	var count int
-	_ = s.driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE role = 'owner' AND COALESCE(is_active, TRUE) = TRUE`).Scan(&count)
+	_ = s.driver.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM sys_users WHERE role = 'owner' AND COALESCE(is_active, TRUE) = TRUE AND COALESCE(password_pending, FALSE) = FALSE`).Scan(&count)
 	return count
 }
 
@@ -401,16 +402,26 @@ func (s *Service) ListUsers(ctx context.Context) ([]UserMetadata, error) {
 
 // CreateUser creates a new user account with hashed password
 func (s *Service) CreateUser(ctx context.Context, username, password, role string, isActive ...bool) (*UserMetadata, error) {
+	active := true
+	if len(isActive) > 0 {
+		active = isActive[0]
+	}
+	return s.createUser(ctx, username, password, role, active, false)
+}
+
+// createPendingUser creates an inactive account whose password nobody knows,
+// marked as waiting for one (#198) in the same statement.
+func (s *Service) createPendingUser(ctx context.Context, username, role string) (*UserMetadata, error) {
+	return s.createUser(ctx, username, randomSecret(), role, false, true)
+}
+
+func (s *Service) createUser(ctx context.Context, username, password, role string, active, pending bool) (*UserMetadata, error) {
 	username = strings.TrimSpace(username)
 	if username == "" || password == "" {
 		return nil, errors.New("username and password are required")
 	}
 	if !isValidRole(role) {
 		role = "user"
-	}
-	active := true
-	if len(isActive) > 0 {
-		active = isActive[0]
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -427,19 +438,27 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 	if dialect.Engine() != dbal.EnginePostgres {
 		q = `INSERT INTO sys_users (id, username, password_hash, role, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
 	}
+	args := []interface{}{id, username, string(hash), role, active, now, now}
+	if pending {
+		q = `INSERT INTO sys_users (id, username, password_hash, role, is_active, password_pending, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7)`
+		if dialect.Engine() != dbal.EnginePostgres {
+			q = `INSERT INTO sys_users (id, username, password_hash, role, is_active, password_pending, created_at, updated_at) VALUES (?, ?, ?, ?, ?, TRUE, ?, ?)`
+		}
+	}
 
-	_, err = db.ExecContext(ctx, q, id, username, string(hash), role, active, now, now)
+	_, err = db.ExecContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed creating user: %w", err)
 	}
 
 	return &UserMetadata{
-		ID:        id,
-		Username:  username,
-		Role:      role,
-		IsActive:  active,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:              id,
+		Username:        username,
+		Role:            role,
+		IsActive:        active,
+		PasswordPending: pending,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}, nil
 }
 
@@ -465,8 +484,13 @@ func (s *Service) UpdateUser(ctx context.Context, id, password, role string, isA
 	if !isValidRole(role) {
 		return fmt.Errorf("invalid role '%s'", role)
 	}
+	// Sign-in refuses a blank password, so storing one would clear the
+	// pending-password flag (#198) of an account that still cannot sign in.
+	if password != "" && strings.TrimSpace(password) == "" {
+		return errors.New("the password cannot be blank")
+	}
 	// Never leave a database without an active owner
-	if current.Role == "owner" && current.IsActive {
+	if current.Role == "owner" && current.IsActive && !current.PasswordPending {
 		demoted := role != "owner"
 		deactivated := activeVal != nil && !*activeVal
 		if (demoted || deactivated) && s.countActiveOwners(ctx) <= 1 {
@@ -510,19 +534,6 @@ func (s *Service) UpdateUser(ctx context.Context, id, password, role string, isA
 	}
 	_, err = db.ExecContext(ctx, q, role, now, id)
 	return err
-}
-
-// markPasswordPending records that an account has no usable password yet
-// (#198), so that it can be listed until an administrator sets one.
-func (s *Service) markPasswordPending(ctx context.Context, id string) error {
-	q := `UPDATE sys_users SET password_pending = TRUE WHERE id = $1`
-	if s.driver.Dialect().Engine() != dbal.EnginePostgres {
-		q = `UPDATE sys_users SET password_pending = TRUE WHERE id = ?`
-	}
-	if _, err := s.driver.DB().ExecContext(ctx, q, id); err != nil {
-		return fmt.Errorf("failed marking the account as waiting for a password: %w", err)
-	}
-	return nil
 }
 
 // SetSuperOwner grants or revokes the server-wide super-owner privilege of an

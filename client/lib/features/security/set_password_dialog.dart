@@ -61,7 +61,7 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
 
   Future<void> _save() async {
     final p1 = _password.text;
-    if (p1.isEmpty) {
+    if (p1.trim().isEmpty) {
       setState(() => _error = 'Password cannot be empty.');
       return;
     }
@@ -70,21 +70,24 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
       return;
     }
     final user = widget.user;
-    final active = user.isActive || _activate;
+    final activate = !user.isActive && _activate;
     setState(() {
       _saving = true;
       _error = null;
     });
     try {
+      // Only the password, and the activation when asked for: an empty role
+      // keeps the stored one, so a role or status another administrator
+      // changed while this dialog was open is not put back.
       await widget.apiClient.updateUser(
         user.id,
-        role: user.role,
+        role: '',
         password: p1,
-        isActive: active,
+        isActive: activate ? true : null,
         database: widget.databaseName,
       );
       if (!mounted) return;
-      Navigator.of(context).pop(user.copyWith(isActive: active, passwordPending: false));
+      Navigator.of(context).pop(user.copyWith(isActive: activate ? true : null, passwordPending: false));
     } on Object catch (e) {
       if (!mounted) return;
       setState(() {
@@ -98,7 +101,10 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
   Widget build(BuildContext context) {
     final user = widget.user;
     final pending = user.passwordPending;
-    return AlertDialog(
+    // Not dismissed while saving, so that the result is never lost.
+    return PopScope(
+      canPop: !_saving,
+      child: AlertDialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       title: Row(
         children: [
@@ -204,6 +210,7 @@ class _SetPasswordDialogState extends State<SetPasswordDialog> {
           onPressed: _saving ? null : _save,
         ),
       ],
+      ),
     );
   }
 }

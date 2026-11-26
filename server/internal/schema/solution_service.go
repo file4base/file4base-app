@@ -1235,14 +1235,11 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			}
 			continue
 		}
-		created, err := s.CreateUser(ctx, strings.TrimSpace(a.Username), randomSecret(), a.Role, false)
+		created, err := s.createPendingUser(ctx, strings.TrimSpace(a.Username), a.Role)
 		if err != nil {
 			return nil, rollback(fmt.Errorf("creating account %q: %w", a.Username, err))
 		}
 		undo = append(undo, func() { _ = s.DeleteUser(bg, created.ID) })
-		if err := s.markPasswordPending(ctx, created.ID); err != nil {
-			return nil, rollback(fmt.Errorf("creating account %q: %w", a.Username, err))
-		}
 		if err := restoreAccountPermissions(created.ID, a.Username, a); err != nil {
 			return nil, rollback(err)
 		}
