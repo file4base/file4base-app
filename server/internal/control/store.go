@@ -155,6 +155,24 @@ func (s *Store) initSchema(ctx context.Context) error {
 			granted_by TEXT NOT NULL DEFAULT '',
 			granted_at TEXT NOT NULL
 		);`,
+		// Server accounts (#server-accounts): identities kept at server level,
+		// unique across the server and compared without case. The name_key is the
+		// lowercase name. The password is only a bcrypt hash.
+		`CREATE TABLE IF NOT EXISTS server_accounts (
+			name_key TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			password_hash TEXT NOT NULL,
+			is_active INTEGER NOT NULL DEFAULT 1,
+			super_owner INTEGER NOT NULL DEFAULT 0,
+			all_databases INTEGER NOT NULL DEFAULT 0,
+			updated_at TEXT NOT NULL
+		);`,
+		// The databases a server account reaches, when it does not reach all of them.
+		`CREATE TABLE IF NOT EXISTS server_account_databases (
+			name_key TEXT NOT NULL REFERENCES server_accounts(name_key) ON DELETE CASCADE,
+			database_name TEXT NOT NULL,
+			PRIMARY KEY (name_key, database_name)
+		);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
