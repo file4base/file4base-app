@@ -144,6 +144,9 @@ func envBytes(name string, def int64) int64 {
 }
 
 func main() {
+	if runSQLiteTool(os.Args[1:]) {
+		return
+	}
 	engineStr := os.Getenv("DB_ENGINE")
 	if engineStr == "" {
 		engineStr = string(dbal.DefaultEngine)

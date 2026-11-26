@@ -1,0 +1,100 @@
+# File4Base on SQLite: no database server. Each solution database is one
+# file in the API's data volume.
+#
+#   docker compose -f docker-compose.sqlite.yml up -d
+#
+# This is a complete stack, not an override of docker-compose.yml. Keep the
+# solutions on the named volume: SQLite refuses a network share or a Docker
+# Desktop bind mount (their locks do not protect a WAL database), see
+# docs/specs/sqlite_engine.md. Back a solution up while it runs with
+#
+#   docker exec file4base-api /app/server sqlite-backup <database> /app/data/backups/<file>
+services:
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-api:${FILE4BASE_VERSION:-0.22.0}
+    container_name: file4base-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DB_ENGINE: "sqlite"
+      # The directory of the solution databases, one <name>.sqlite file each,
+      # on the named volume below.
+      DATABASE_URL: "/app/data/solutions"
+      # How long a write waits for another to finish before it fails.
+      SQLITE_BUSY_TIMEOUT: "${SQLITE_BUSY_TIMEOUT:-5s}"
+      SERVER_PORT: ":8080"
+      SESSION_TTL: "${SESSION_TTL:-12h}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-*}"
+      ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-true}"
+      # Largest FileMaker migration upload (native .fmp12 copy) a signed-in
+      # admin or owner may send, and how long a migration may run. Raise the
+      # Web Client's client_max_body_size for /api/v1/solutions/migrate/ too.
+      MIGRATION_MAX_UPLOAD_BYTES: "${MIGRATION_MAX_UPLOAD_BYTES:-2GiB}"
+      MIGRATION_REQUEST_TIMEOUT: "${MIGRATION_REQUEST_TIMEOUT:-30m}"
+      # Owners of this database administer the whole server (Server Tools);
+      # empty disables the server-wide tools.
+      FILE4BASE_ADMIN_DATABASE: "${FILE4BASE_ADMIN_DATABASE:-}"
+      FILE4BASE_SUPER_OWNER: "${FILE4BASE_SUPER_OWNER:-}"
+      CONTROL_DB_PATH: "/app/data/file4base_control.db"
+      FILE4BASE_CHANNEL_SECRET: "${FILE4BASE_CHANNEL_SECRET:-}"
+      # Password of the SMTP account a Send Mail profile names (Server Tools >
+      # Send Mail). A profile only names a FILE4BASE_SMTP_* variable; add one
+      # line per account.
+      FILE4BASE_SMTP_PASSWORD: "${FILE4BASE_SMTP_PASSWORD:-}"
+      # The File4Base Local CA and the certificate it signs (shared read-only
+      # with the Web Client's Nginx). See docker-compose.yml for the details.
+      FILE4BASE_TLS_DIR: "/app/data/tls"
+      FILE4BASE_TLS_DOMAIN: "${FILE4BASE_TLS_DOMAIN:-localhost}"
+      FILE4BASE_TLS_SANS: "${FILE4BASE_TLS_SANS:-}"
+    volumes:
+      - api_data:/app/data
+      - tls_data:/app/data/tls
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/healthz/readiness || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      file4base-net:
+        aliases:
+          - api
+          - server
+          - file4base-api
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    image: ${FILE4BASE_REGISTRY:-cloudresources}/file4base-web:${FILE4BASE_VERSION:-0.22.0}
+    container_name: file4base-web
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+      - "3443:443"
+    environment:
+      FILE4BASE_FORCE_HTTPS: "${FILE4BASE_FORCE_HTTPS:-false}"
+    volumes:
+      - tls_data:/etc/file4base/tls:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - file4base-net
+
+volumes:
+  api_data:
+    # Named volume `file4base-sqlite-api-data`: the solutions, the control
+    # store and the backups. It survives `docker compose down`.
+    name: file4base-sqlite-api-data
+  tls_data:
+    name: file4base-tls
+
+networks:
+  file4base-net:
+    name: file4base-net
+    driver: bridge
