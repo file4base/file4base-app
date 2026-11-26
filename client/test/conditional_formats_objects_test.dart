@@ -105,11 +105,14 @@ class _Api extends ApiClient {
     EvaluationModel answer(String id, int i) {
       final e = expressions[i];
       final s = selfOf(i);
+      if (e == 'Broken') {
+        return EvaluationModel(expression: e, error: 'cannot be evaluated');
+      }
       if (s == null) {
         return EvaluationModel(expression: e, error: 'Self is unknown here');
       }
       final value =
-          s.text ?? '${rows.firstWhere((r) => r['id'] == id)[s.field] ?? ''}';
+          s.text ?? (rows.firstWhere((r) => r['id'] == id)[s.field] ?? '');
       final wanted = RegExp(r'^Self = "(.*)"$').firstMatch(e)?.group(1);
       final truth = e == 'IsEmpty(Self)' ? value.isEmpty : value == wanted;
       return EvaluationModel(expression: e, text: truth ? '1' : '0');
@@ -139,6 +142,7 @@ LayoutObjectModel _object(
   String formula, {
   String text = '',
   String? field,
+  String? hideWhen,
 }) => LayoutObjectModel(
   id: 'obj',
   type: type,
@@ -147,6 +151,7 @@ LayoutObjectModel _object(
   width: 300,
   height: 60,
   text: text,
+  hideWhen: hideWhen,
   fieldBinding: field == null ? null : FieldBindingModel(fieldName: field),
   style: LayoutObjectStyle(conditionalRules: [_rule(formula)]),
 );
@@ -176,7 +181,7 @@ Future<_Api> _pump(WidgetTester tester, LayoutDefinitionModel layout) async {
   return api;
 }
 
-/// The text widget drawing [text] in [style]'s font family, if given.
+/// The text widget drawing [text], in the font [family] if given.
 Text _text(WidgetTester tester, String text, {String? family}) =>
     tester.widget<Text>(
       find.byWidgetPredicate(
@@ -199,7 +204,7 @@ bool _filledYellow(WidgetTester tester, Finder of) => tester
     );
 
 void main() {
-  testWidgets("a text is drawn by its rule, Self being the text it shows", (
+  testWidgets('a text is drawn by its rule, Self being the text it shows', (
     tester,
   ) async {
     final api = await _pump(
@@ -220,7 +225,7 @@ void main() {
   });
 
   testWidgets(
-    "a text merging a field shows another text on each record: its Self is unknown",
+    'a text merging a field shows another text on each record: its Self is unknown',
     (tester) async {
       final api = await _pump(
         tester,
@@ -232,7 +237,7 @@ void main() {
     },
   );
 
-  testWidgets("a button is drawn by its rule, Self being its label", (
+  testWidgets('a button is drawn by its rule, Self being its label', (
     tester,
   ) async {
     final api = await _pump(
@@ -245,6 +250,37 @@ void main() {
     expect(button.style?.foregroundColor?.resolve({}), _red);
     expect(api.asked.toSet(), {'Self = "Send" with {text: Send}'});
   });
+
+  testWidgets('a button of a List view row is drawn by its rule', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _layout(_object('button', 'Self = "Send"', text: 'Send'), view: 'list'),
+    );
+
+    final buttons = tester.widgetList<ElevatedButton>(
+      find.byType(ElevatedButton),
+    );
+    expect(buttons, hasLength(2), reason: 'one per record');
+    for (final button in buttons) {
+      expect(button.style?.backgroundColor?.resolve({}), _yellow);
+    }
+  });
+
+  testWidgets(
+    'an object whose hide condition cannot be evaluated is hidden, as in FileMaker',
+    (tester) async {
+      await _pump(
+        tester,
+        _layout(
+          _object('label', 'Self = "x"', text: 'Paid', hideWhen: 'Broken'),
+        ),
+      );
+
+      expect(find.text('Paid'), findsNothing);
+    },
+  );
 
   testWidgets('a popover button is drawn by its rule as a button is', (
     tester,

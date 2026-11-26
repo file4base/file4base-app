@@ -167,6 +167,7 @@ class _RelatedApi extends ApiClient {
     String answer(String id, int i) {
       final wanted = RegExp('"([^"]*)"').firstMatch(expressions[i])?.group(1);
       final s = self == null || i >= self.length ? null : self[i];
+      if (expressions[i] == 'Broken') return '?';
       if (s == null) return id == 'cu-2' ? '1' : '0';
       if (s.text != null) return s.text == wanted ? '1' : '0';
       final record = s.occurrence == 'Customers'
@@ -177,7 +178,12 @@ class _RelatedApi extends ApiClient {
 
     return {
       for (final id in recordIds)
-        id: [for (final (i, e) in expressions.indexed) EvaluationModel(expression: e, text: answer(id, i))],
+        id: [
+          for (final (i, e) in expressions.indexed)
+            answer(id, i) == '?'
+                ? EvaluationModel(expression: e, error: 'cannot be evaluated')
+                : EvaluationModel(expression: e, text: answer(id, i)),
+        ],
     };
   }
 }
@@ -804,6 +810,29 @@ void main() {
       expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
         {'field': 'last_name'},
       ]);
+    });
+
+    testWidgets('a row object whose hide condition cannot be evaluated is hidden, as in FileMaker', (tester) async {
+      await _pump(tester, layout: withRowObjects(const [], hideField: 'Broken'));
+
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsNothing);
+      expect(find.byKey(const ValueKey('portal-cell-cu-2-last_name')), findsNothing);
+    });
+
+    testWidgets("a merging text's rule that does not read Self is evaluated on each row", (tester) async {
+      const red = Color(0xFFFF0000);
+      // Without a Self, the fake answers true on cu-2 only.
+      const rule = ConditionalFormatRule(operator: 'formula', value: 'Customers::last_name = "Alvarez"', textColor: '#FF0000');
+      final api = await _pump(tester, layout: withRowObjects(const [
+        LayoutObjectModel(
+            id: 'lbl_merge', type: 'label', x: 260, y: 165, width: 80, height: 20, text: 'Name {{last_name}}',
+            style: LayoutObjectStyle(conditionalRules: [rule])),
+      ]));
+
+      final drawn = tester.widgetList<Text>(find.text('Name {{last_name}}')).map((t) => t.style?.color).toList();
+      expect(drawn, [isNot(red), red], reason: 'rows cu-1, then cu-2');
+      expect([for (final s in api.evaluatedSelves.single ?? const <ConditionSelf?>[null]) s?.toJson()], [null],
+          reason: 'its Self is unknown, as it shows another text on each row');
     });
 
     testWidgets('a text and a button of a row are drawn by their rules, Self being their text', (tester) async {

@@ -1206,12 +1206,17 @@ func TestNativeLayoutConditionalFormatsOfTextsAndButtons(t *testing.T) {
 		}
 		return "<Conditions><Formatting>" + b.String() + "</Formatting></Conditions>"
 	}
+	// formats with a hide condition.
+	hidden := func(hide string, formulas ...string) string {
+		return strings.Replace(formats(formulas...), "<Conditions>",
+			"<Conditions><Hide><Calculation><Text><![CDATA["+hide+"]]></Text></Calculation></Hide>", 1)
+	}
 	objects := `<LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000070</UUID><Bounds top="240" left="20" bottom="255" right="100"/>
-                ` + formats(`Self = "Open"`, "Price > 1") + `
+                ` + hidden(`Self = "Shut"`, `Self = "Open"`, "Price > 1") + `
                 <Text><StyledText><Data><![CDATA[Open]]></Data></StyledText></Text>
               </LayoutObject>
               <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000071</UUID><Bounds top="240" left="100" bottom="255" right="200"/>
-                ` + formats(`Self = "x"`) + `
+                ` + hidden(`Self = "x"`, `Self = "x"`) + `
                 <Text><StyledText><Data><![CDATA[Price <<Price>>]]></Data></StyledText></Text>
               </LayoutObject>
               <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000072</UUID><Bounds top="260" left="20" bottom="275" right="100"/>
@@ -1219,7 +1224,7 @@ func TestNativeLayoutConditionalFormatsOfTextsAndButtons(t *testing.T) {
                 <Button><Label><Text><StyledText><Data><![CDATA[Go]]></Data></StyledText></Text></Label></Button>
               </LayoutObject>
               <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000073</UUID><Bounds top="260" left="100" bottom="275" right="200"/>
-                ` + formats(`Self = "x"`, "Price = 2") + `
+                ` + hidden("IsEmpty(Self)", `Self = "x"`, "Price = 2") + `
                 <Button><Label><Calculation><Text><![CDATA[Title & "!"]]></Text></Calculation></Label></Button>
               </LayoutObject>
               <LayoutObject type="Button Bar"><UUID>00000000-0000-0000-0000-000000000074</UUID><Bounds top="280" left="20" bottom="295" right="220"/>
@@ -1227,6 +1232,10 @@ func TestNativeLayoutConditionalFormatsOfTextsAndButtons(t *testing.T) {
                   <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000075</UUID><Bounds top="280" left="20" bottom="295" right="120"/>
                     ` + formats(`Self = "Seg"`) + `
                     <Button><Label><Text><StyledText><Data><![CDATA[Seg]]></Data></StyledText></Text></Label></Button>
+                  </LayoutObject>
+                  <LayoutObject type="Popover Button"><UUID>00000000-0000-0000-0000-00000000007a</UUID><Bounds top="280" left="120" bottom="295" right="220"/>
+                    ` + formats(`Self = "Pop"`) + `
+                    <PopoverButton><Label><Text><StyledText><Data><![CDATA[Pop]]></Data></StyledText></Text></Label></PopoverButton>
                   </LayoutObject>
                 </ObjectList></ButtonBar>
               </LayoutObject>
@@ -1281,6 +1290,7 @@ func TestNativeLayoutConditionalFormatsOfTextsAndButtons(t *testing.T) {
 		"button:":             {"price = 2"}, // the calculated label's
 		"button:Seg":          {`Self = "Seg"`},
 		"popover_button:More": {`Self = "More"`},
+		"popover_button:Pop":  {`Self = "Pop"`}, // a button bar's segment
 		"label:Row":           {`Self = "Row"`},
 	}
 	if len(formulasOf) != len(want) {
@@ -1296,14 +1306,27 @@ func TestNativeLayoutConditionalFormatsOfTextsAndButtons(t *testing.T) {
 	if h := hideOf["label:Row"]; h != "Ingredients::quantity > Recipes::price" {
 		t.Errorf("hide condition in a portal row: %v", h)
 	}
+	// A hide condition reads the text's Self as its formats do: not kept
+	// where Browse mode does not know it.
+	if h := hideOf["label:Open"]; h != `Self = "Shut"` {
+		t.Errorf("hide condition of a text: %v", h)
+	}
+	for _, key := range []string{"button:", "label:Price {{price}}"} {
+		if h, seen := hideOf[key]; !seen || h != nil {
+			t.Errorf("hide condition reading an unknown Self (%s): %v, %v", key, seen, h)
+		}
+	}
 	var review string
 	for _, it := range got.Report.ManualActionRequired {
 		if it.Domain == "layout" {
 			review += it.Detail
 		}
 	}
-	if w := "3 conditional formats not kept (a condition that could not be bound, or on an object other than a field, a text or a button)"; !strings.Contains(review, w) {
-		t.Errorf("review %q lacks %q", review, w)
+	for _, w := range []string{"3 conditional formats not kept (a condition that could not be bound, or on an object other than a field, a text or a button)",
+		`2 objects with a "Hide object when" calculation that could not be bound`} {
+		if !strings.Contains(review, w) {
+			t.Errorf("review %q lacks %q", review, w)
+		}
 	}
 }
 

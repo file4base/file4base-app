@@ -1403,9 +1403,10 @@ class _PortalViewState extends State<PortalView> {
       _rowConditionsList = [
         for (final content in widget.contents) ...[
           if ((content.hideWhen ?? '').trim().isNotEmpty) (content.id, content.hideWhen!, _rowSelf(target, content)),
-          if (_rowSelf(target, content) case final self?)
+          // A field of another occurrence than the row's is not drawn.
+          if (layoutObjectShowsText(content) || _rowColumn(target, content) != null)
             for (final (i, rule) in content.style.conditionalRules.indexed)
-              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${content.id}#$i', rule.value, self),
+              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${content.id}#$i', rule.value, _rowSelf(target, content)),
         ],
       ];
       _rowHideable = {
@@ -1421,7 +1422,7 @@ class _PortalViewState extends State<PortalView> {
 
   /// What Self reads in the conditions of [content] on a row: the field of
   /// the row's record it shows, or the text a text or a button shows. Null,
-  /// Self unknown, for anything else; a field object then keeps no format.
+  /// Self unknown, for anything else, and for a text merging a field.
   ConditionSelf? _rowSelf(RelatedTarget target, LayoutObjectModel content) {
     if (_rowColumn(target, content) case final col?) return ConditionSelf(col.name);
     if (layoutTextSelf(content) case final text?) return ConditionSelf.text(text);
@@ -1442,9 +1443,10 @@ class _PortalViewState extends State<PortalView> {
   /// apply. Asked while the row is drawn, so only the rows on screen are
   /// evaluated. Until the row's answer is in, its last one holds, and a
   /// row seen for the first time hides every object with a condition.
-  Set<String> _truthsOn(RelatedTarget target, Map<String, dynamic> row) {
+  /// The conditions are those [_rowList] last read, once for every row.
+  Set<String> _truthsOn(Map<String, dynamic> row) {
     final rowId = row['id']?.toString() ?? '';
-    if (rowId.isEmpty || _rowConditions(target).isEmpty) return const {};
+    if (rowId.isEmpty || _rowConditionsList.isEmpty) return const {};
     final values = Object.hashAllUnordered(row.entries.map((e) => Object.hash(e.key, e.value?.toString())));
     final key = '$_generation|$rowId|$values';
     final known = _rowTruths[key];
@@ -1481,13 +1483,19 @@ class _PortalViewState extends State<PortalView> {
             );
             for (final id in chunkIds) {
               for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {
-                if (j < chunk.length && result.error.isEmpty && isLayoutConditionTrue(result.text)) {
-                  truths[id]!.add(chunk[j].$1);
+                if (j >= chunk.length) continue;
+                final key = chunk[j].$1;
+                // A hide condition that cannot be evaluated hides its
+                // object, as in FileMaker; a format's applies nothing.
+                if (result.error.isEmpty ? isLayoutConditionTrue(result.text) : _rowHideable.contains(key)) {
+                  truths[id]!.add(key);
                 }
               }
             }
           } on Exception catch (_) {
-            // A calculation that cannot be evaluated applies no format.
+            for (final id in chunkIds) {
+              truths[id]!.addAll([for (final (key, _, _) in chunk) if (_rowHideable.contains(key)) key]);
+            }
           }
           if (!mounted) return;
         }
@@ -1656,6 +1664,8 @@ class _PortalViewState extends State<PortalView> {
     final rowHeight = _config.effectiveRowHeight(widget.object.height);
     // "Initial row" starts the portal past the first related record.
     final visible = _visibleRows;
+    // The rows' conditions, read once for all of them.
+    _rowConditions(target);
 
     // Each row is drawn, and its conditional formats asked for, only once
     // it scrolls into view.
@@ -1694,7 +1704,7 @@ class _PortalViewState extends State<PortalView> {
     final controller = widget.rowController;
     final active = controller != null && controller.activeRow == number;
     // The row's own answers: the objects it hides, the formats that apply.
-    final truths = _truthsOn(target, row);
+    final truths = _truthsOn(row);
     final container = Container(
       key: ValueKey('portal-row-$rowId'),
       height: rowHeight,

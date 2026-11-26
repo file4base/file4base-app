@@ -425,6 +425,7 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 	if ok {
 		base["id"] = l.objectID(obj)
 		l.conditionalFormats(obj, base)
+		l.textHideSelf(obj, base)
 		l.objects = append(l.objects, base)
 		l.ctx.count(kind).Migrated++
 	}
@@ -528,8 +529,7 @@ var formattedKinds = map[interface{}]bool{"field": true, "label": true, "button"
 func (l *nativeLayout) selfReadable(obj *xmlNode, out map[string]interface{}, formula string) bool {
 	opts, _ := l.ctx.binding.options(l.table)
 	if out["type"] != "field" {
-		text, _ := out["text"].(string)
-		if !strings.Contains(text, "{{") && !fmMergeField.MatchString(text) && !calculatedLabel(obj) {
+		if textSelfKnown(obj, out) {
 			return true
 		}
 		replaced, err := calc.ReplaceSelf(formula, opts, "")
@@ -555,6 +555,32 @@ func (l *nativeLayout) selfReadable(obj *xmlNode, out map[string]interface{}, fo
 	}
 	_, ok := l.bindCondition(replaced)
 	return ok
+}
+
+// textSelfKnown reports whether Browse mode knows the Self of the text or
+// button obj, converted as out: the text it shows, unless it merges a
+// field or FileMaker computes it (see selfReadable).
+func textSelfKnown(obj *xmlNode, out map[string]interface{}) bool {
+	text, _ := out["text"].(string)
+	return !strings.Contains(text, "{{") && !fmMergeField.MatchString(text) && !calculatedLabel(obj)
+}
+
+// textHideSelf drops the hide condition of a text or a button that reads a
+// Self Browse mode does not know (see textSelfKnown), which it would
+// answer with another text: it is reported as a hide condition that could
+// not be bound, as FileMaker's would show the object otherwise.
+func (l *nativeLayout) textHideSelf(obj *xmlNode, out map[string]interface{}) {
+	hide, _ := out["hide_when"].(string)
+	if hide == "" || !formattedKinds[out["type"]] || out["type"] == "field" || textSelfKnown(obj, out) {
+		return
+	}
+	// The bound formula reads the imported names.
+	if replaced, err := calc.ReplaceSelf(hide, calc.Options{Library: l.ctx.binding.stored}, ""); err == nil && replaced == hide {
+		return
+	}
+	delete(out, "hide_when")
+	delete(out, "hide_in_find")
+	l.hideUnbound++
 }
 
 // calculatedLabel reports whether the button obj (a popover button, a
@@ -1688,6 +1714,7 @@ func (l *nativeLayout) popover(obj *xmlNode) {
 	id := l.objectID(obj)
 	base["id"] = id
 	l.conditionalFormats(obj, base)
+	l.textHideSelf(obj, base)
 	l.objects = append(l.objects, base)
 	l.ctx.count("Popover Button").Migrated++
 	if l.popovers == nil {
@@ -1766,6 +1793,10 @@ func (l *nativeLayout) buttonBar(obj *xmlNode) {
 		if seg.Name != "LayoutObject" {
 			continue
 		}
+		if firstAttr(seg, "type") == "Popover Button" {
+			l.popover(seg) // a segment opening a popover
+			continue
+		}
 		base := l.baseObject(seg)
 		if base == nil {
 			continue
@@ -1773,6 +1804,7 @@ func (l *nativeLayout) buttonBar(obj *xmlNode) {
 		if l.button(seg, findFirstChild(seg, "Button"), base) {
 			base["id"] = l.objectID(seg)
 			l.conditionalFormats(seg, base)
+			l.textHideSelf(seg, base)
 			l.objects = append(l.objects, base)
 			l.ctx.count("Button").Migrated++
 		}
