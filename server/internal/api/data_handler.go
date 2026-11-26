@@ -125,7 +125,10 @@ func recordPrivileges(ctx context.Context, svc *schema.Service, userID, table st
 		return RecordPrivileges{Read: true}, nil
 	}
 	tp, err := svc.TablePermissionFor(ctx, userID, table)
-	if err != nil || tp == nil {
+	if err != nil {
+		return RecordPrivileges{}, err
+	}
+	if tp == nil {
 		return allPrivileges, nil
 	}
 	return RecordPrivileges{Read: true, Create: tp.CanCreate, Edit: tp.CanEdit, Delete: tp.CanDelete}, nil
