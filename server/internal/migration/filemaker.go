@@ -889,6 +889,9 @@ func AnalyzeAndConvert(req MigrationRequest) (*ConvertedSolution, error) {
 	for _, it := range bindLayoutTriggers(bundle, scripts, binding, report.SolutionName) {
 		addReportItem(report, it)
 	}
+	for _, it := range bindLayoutButtons(bundle, scripts, report.SolutionName) {
+		addReportItem(report, it)
+	}
 	for _, it := range fileTriggerItem(readFileTriggers(root), report.SolutionName) {
 		addReportItem(report, it)
 	}

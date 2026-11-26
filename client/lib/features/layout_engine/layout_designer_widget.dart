@@ -15,6 +15,7 @@ import 'package:file4base_client/features/layout_engine/models/chart_definition.
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
 import 'package:file4base_client/features/layout_engine/script_trigger_runtime.dart';
 import 'package:file4base_client/features/layout_engine/view_format_tools.dart';
+import 'package:file4base_client/features/script_workspace/calculation_builder_dialog.dart';
 import 'package:flutter/gestures.dart' show DragStartBehavior, kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -126,6 +127,9 @@ class LayoutDesignerWidget extends StatefulWidget {
 }
 
 class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
+  /// The panel shown of each tab or slide control, by control id.
+  final Map<String, int> _designerPanels = {};
+
   /// Extra hit-testable margin around each object for its resize handles.
   static const double _handlePad = 8.0;
 
@@ -430,6 +434,17 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         for (final t in widget.tables) t.id: t,
         widget.table.id: widget.table,
       };
+
+  /// The table of the last occurrence of a field's [path], or null when it
+  /// is not in the graph or is another solution's.
+  TableModel? _endOfPathTable(List<String> path) {
+    if (path.isEmpty) return null;
+    final last = path.last.toLowerCase();
+    final occurrence =
+        _occurrences.values.where((o) => o.id == path.last || o.name.toLowerCase() == last).firstOrNull;
+    if (occurrence == null || occurrence.isExternal) return null;
+    return _tablesById[occurrence.baseTableId];
+  }
 
   /// The occurrence a field of the record in hand names: the layout's own.
   String get _ownOccurrence => widget.externalOccurrence?.name ?? _currentTable.name;
@@ -1519,8 +1534,9 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
   void _onCanvasPanUpdate(DragUpdateDetails d) {
     if (_marqueeStart != null) {
       final rect = Rect.fromPoints(_marqueeStart!, d.localPosition);
+      final off = objectsOffPanel(_layout.objects, selected: _designerPanels);
       final hit = _layout.objects
-          .where((o) => rect.overlaps(Rect.fromLTWH(o.x, o.y, o.width, o.height)))
+          .where((o) => !off.contains(o.id) && rect.overlaps(Rect.fromLTWH(o.x, o.y, o.width, o.height)))
           .map((o) => o.id);
       _setSelection({..._marqueeBase, ...hit});
       setState(() => _marqueeRect = rect);
@@ -3257,7 +3273,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
                                 pageSetup: widget.pageSetup,
                               ),
                             // Layout Objects
-                            ..._layout.objects.map((obj) => _buildCanvasObject(context, obj)),
+                            // A tab or slide control shows the objects of the
+                            // panel brought in front.
+                            ...() {
+                              final off = objectsOffPanel(_layout.objects, selected: _designerPanels);
+                              return _layout.objects
+                                  .where((o) => !off.contains(o.id))
+                                  .map((obj) => _buildCanvasObject(context, obj));
+                            }(),
                             if (_marqueeRect != null)
                               Positioned.fromRect(
                                 rect: _marqueeRect!,
@@ -4318,6 +4341,13 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ],
         );
 
+      case 'tab_control' || 'slide_control' when obj.tabs.isNotEmpty:
+        return LayoutPanelControlView(
+          obj: obj,
+          selected: _designerPanels[obj.id] ?? obj.defaultPanel,
+          onSelect: (i) => setState(() => _designerPanels[obj.id] = i),
+        );
+
       case 'tab_control':
         return Column(
           children: [
@@ -4824,11 +4854,17 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         _inspectorSectionTitle('BEHAVIOR'),
         // A calculation: when it is true on the record shown, Browse mode
         // hides the object, as FileMaker's "Hide object when".
-        _InspectorTextField(
-          key: ValueKey('${sel.id}-hide-when'),
-          value: sel.hideWhen ?? '',
-          label: 'Hide object when',
-          onSubmitted: (v) => _editSelected((o) =>
+        _calculationRow(
+          field: _InspectorTextField(
+            key: ValueKey('${sel.id}-hide-when'),
+            value: sel.hideWhen ?? '',
+            label: 'Hide object when',
+            onSubmitted: (v) => _editSelected((o) =>
+                v.trim().isEmpty ? o.copyWith(clearHideWhen: true) : o.copyWith(hideWhen: v.trim())),
+          ),
+          key: ValueKey('${sel.id}-hide-when-calc'),
+          initial: sel.hideWhen ?? '',
+          onChosen: (v) => _editSelected((o) =>
               v.trim().isEmpty ? o.copyWith(clearHideWhen: true) : o.copyWith(hideWhen: v.trim())),
         ),
         if (sel.fieldBinding != null) ...[
@@ -5199,9 +5235,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     final targets = _relatedTargets;
     final related = _targetOf(binding?.relationshipId, binding?.tableOccurrence, side: binding?.relationshipSide);
 
-    // A field is read from the record in hand, or from a related record (#36),
-    // and that decides which table's fields it can be bound to.
-    final cols = related?.table.columns ?? _currentTable.columns;
+    // A field is read from the record in hand, from a related record (#36),
+    // or from the first record along an occurrence path, and that decides
+    // which table's fields it can be bound to. A path keeps its end's
+    // fields: picking one of this layout's would still read it along the
+    // path, from another table.
+    final alongPath = binding?.isAlongPath ?? false;
+    final cols = related?.table.columns ??
+        (alongPath ? (_endOfPathTable(binding!.occurrencePath)?.columns ?? const <ColumnModel>[]) : _currentTable.columns);
     final selectedTarget = related == null ? '' : _targetKey(related);
     final danglingRelationship = (binding?.isRelated ?? false) && related == null;
 
@@ -5211,7 +5252,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const SizedBox(height: 4),
         DropdownButtonFormField<String>(
           key: const ValueKey('inspector-field-occurrence'),
-          initialValue: danglingRelationship ? null : selectedTarget,
+          initialValue: danglingRelationship || alongPath ? null : selectedTarget,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           hint: const Text('Choose an occurrence', style: TextStyle(fontSize: 11)),
           items: [
@@ -5255,6 +5296,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             ));
           },
         ),
+        if (alongPath)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Reads the first record reached through ${binding!.occurrencePath.join(' → ')}. '
+              'Pick an occurrence to read the field from this layout or one relationship away instead.',
+              key: const ValueKey('field-occurrence-path'),
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ),
         if (danglingRelationship)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -5295,6 +5346,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const Text('Bound Column:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         DropdownButtonFormField<String>(
+          key: const ValueKey('inspector-field-column'),
           initialValue: cols.any((c) => c.name == binding?.fieldName) ? binding?.fieldName : null,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           items: cols.map((c) {
@@ -5308,7 +5360,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               final existing = sel.fieldBinding ?? const FieldBindingModel(fieldName: '');
               _editSelected((sel) => sel.copyWith(
                 fieldBinding: existing.copyWith(
-                  tableOccurrence: related?.occurrence.name ?? _ownOccurrence,
+                  // A field along a path stays on the path's end.
+                  tableOccurrence: related?.occurrence.name ?? (alongPath ? existing.tableOccurrence : _ownOccurrence),
                   fieldName: f,
                 ),
               ));
@@ -5383,7 +5436,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     ];
     String keyOf(RelatedTarget t) => '${t.relationship.id}|${t.occurrence.id}';
     final target = _targetOf(config.relationshipId, config.occurrence, side: config.relationshipSide);
-    final dangling = config.isBound && target == null;
+    // A portal along a path keeps it until another occurrence is picked.
+    final dangling = config.isBound && !config.isAlongPath && target == null;
 
     void edit(PortalConfigModel Function(PortalConfigModel) change) {
       _editSelected((sel) => sel.copyWith(portalConfig: change(sel.portal).toJson()));
@@ -5445,6 +5499,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           ),
         ),
       ],
+      if (config.isAlongPath)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'Shows every record reached through ${config.occurrencePath.join(' → ')}. '
+            'No record is created from it. Pick an occurrence to show one relationship away instead.',
+            key: const ValueKey('portal-occurrence-path'),
+            style: const TextStyle(fontSize: 10, color: Colors.grey),
+          ),
+        ),
       if (dangling)
         Padding(
           padding: const EdgeInsets.only(top: 6),
@@ -5581,7 +5645,75 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
           onChanged: (v) => edit((c) => c.copyWith(allowDeletion: v ?? false)),
         ),
       ),
+      const SizedBox(height: 4),
+      // FileMaker's "Filter portal records": a calculation evaluated from
+      // the portal's occurrence against each related record.
+      _calculationRow(
+        field: _InspectorTextField(
+          key: ValueKey('${sel.id}-portal-filter'),
+          value: config.filter,
+          label: 'Filter portal records',
+          onSubmitted: (v) => edit((c) => c.copyWith(filter: v.trim())),
+        ),
+        key: ValueKey('${sel.id}-portal-filter-calc'),
+        initial: config.filter,
+        context: target?.occurrence.name ?? config.occurrence,
+        onChosen: (v) => edit((c) => c.copyWith(filter: v.trim())),
+      ),
     ];
+  }
+
+  /// [field], with a button opening the calculation editor on [initial],
+  /// from the occurrence [context] (the layout's by default); what it gives
+  /// back goes to [onChosen].
+  Widget _calculationRow({
+    required Widget field,
+    required Key key,
+    required String initial,
+    required ValueChanged<String> onChosen,
+    String? context,
+  }) {
+    return Row(
+      children: [
+        Expanded(child: field),
+        IconButton(
+          key: key,
+          tooltip: 'Specify Calculation',
+          iconSize: 16,
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.functions),
+          onPressed: () async {
+            final formula = await _editCalculation(initial, occurrence: context);
+            if (formula != null && mounted) onChosen(formula);
+          },
+        ),
+      ],
+    );
+  }
+
+  /// [_editCalculation] from the layout's occurrence, for the Format menu's
+  /// conditional formatting dialog.
+  Future<String?> editCalculation(String initial) => _editCalculation(initial);
+
+  /// Opens the calculation editor with the fields of every occurrence, from
+  /// [occurrence] or the layout's.
+  Future<String?> _editCalculation(String initial, {String? occurrence}) {
+    final tablesById = {for (final t in widget.tables) t.id: t};
+    final fields = <String, List<String>>{
+      for (final o in _occurrences.values)
+        if (tablesById[o.baseTableId] != null) o.name: [for (final c in tablesById[o.baseTableId]!.columns) c.name],
+    };
+    final own = _occurrences[_layout.tableOccurrence]?.name ??
+        _occurrences.values.where((o) => o.name.toLowerCase() == _layout.tableOccurrence.toLowerCase()).firstOrNull?.name ??
+        _currentTable.name;
+    fields.putIfAbsent(own, () => [for (final c in _currentTable.columns) c.name]);
+    return CalculationBuilderDialog.show(
+      context,
+      initialFormula: initial,
+      contextTable: occurrence ?? own,
+      availableTables: fields.keys.toList(),
+      fieldsByTable: fields,
+    );
   }
 
   /// The inspector's way in to Chart Setup, with what the chart draws now.

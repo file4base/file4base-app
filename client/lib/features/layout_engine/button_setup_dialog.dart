@@ -176,9 +176,29 @@ class _ButtonSetupDialogState extends State<ButtonSetupDialog> {
       return;
     }
     final action = _buildAction();
+    final original = widget.button.action;
+    if (action != null && original != null && _sameAction(original, action)) {
+      // The action is the one the button had: it keeps what it carried
+      // besides, such as a migrated button being switched off until its
+      // script or step is chosen again.
+      Navigator.of(context).pop(widget.button.copyWith(text: _label.text));
+      return;
+    }
     Navigator.of(context).pop(action == null
         ? widget.button.copyWith(text: _label.text, clearAction: true)
         : widget.button.copyWith(text: _label.text, action: action));
+  }
+
+  /// Whether [built] runs what [original] runs: the same script with the
+  /// same parameter, or the same step with the same options.
+  static bool _sameAction(ButtonActionModel original, ButtonActionModel built) {
+    if (original.type != built.type) return false;
+    if (built.type == 'perform_script') {
+      return original.scriptId == built.scriptId && (original.parameter ?? '').trim() == (built.parameter ?? '');
+    }
+    if (original.stepType != built.stepType) return false;
+    final keys = {...original.params.keys, ...built.params.keys};
+    return keys.every((k) => '${original.params[k] ?? ''}' == '${built.params[k] ?? ''}');
   }
 
   @override

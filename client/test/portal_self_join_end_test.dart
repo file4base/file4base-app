@@ -10,7 +10,9 @@ import 'package:file4base_client/features/data_browser/data_browser_widget.dart'
 import 'package:file4base_client/features/data_browser/related_records.dart';
 import 'package:file4base_client/features/layout_engine/layout_designer_widget.dart';
 import 'package:file4base_client/features/layout_engine/models/layout_definition.dart';
+import 'package:file4base_client/features/script_workspace/calculation_builder_dialog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _parts = [
@@ -66,7 +68,9 @@ Future<LayoutDefinitionModel? Function()> _pumpDesigner(WidgetTester tester, Por
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   LayoutDefinitionModel? last;
-  await tester.pumpWidget(MaterialApp(
+  // The calculation editor reads the theme through Riverpod.
+  await tester.pumpWidget(ProviderScope(
+      child: MaterialApp(
     home: Scaffold(
       body: LayoutDesignerWidget(
         table: _tasks,
@@ -86,7 +90,7 @@ Future<LayoutDefinitionModel? Function()> _pumpDesigner(WidgetTester tester, Por
         onLayoutChanged: (l) => last = l,
       ),
     ),
-  ));
+  )));
   await tester.pumpAndSettle();
   // Select the portal, then open the inspector's Data tab.
   await tester.tap(find.byIcon(Icons.table_rows).first);
@@ -128,6 +132,25 @@ RelatedContext _context([ApiClient? api]) => RelatedContext(
 
 void main() {
   group('Portal Setup', () {
+    testWidgets('sets the portal filter in the calculation editor', (tester) async {
+      final last = await _pumpDesigner(tester, const PortalConfigModel(relationshipId: 'rel-notes', occurrence: 'Notes'));
+      final button = find.byKey(const ValueKey('p1-portal-filter-calc'));
+      await tester.ensureVisible(button);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      final dialog = tester.widget<CalculationBuilderDialog>(find.byType(CalculationBuilderDialog));
+      expect(dialog.contextTable, 'Notes', reason: 'a portal filter is evaluated from the portal occurrence');
+      expect(dialog.fieldsByTable.keys, containsAll(<String>['Tasks', 'Notes']));
+      // The formula box is the one that grows with its text.
+      final formula = find.descendant(
+          of: find.byType(CalculationBuilderDialog), matching: find.byWidgetPredicate((w) => w is TextField && w.expands));
+      await tester.enterText(formula, 'done = 0');
+      await tester.tap(find.text('OK'));
+      await tester.pumpAndSettle();
+      expect(_portalOf(last()!).filter, 'done = 0');
+      await _settleAutoSave(tester);
+    });
+
     testWidgets('offers the end of a relationship joining an occurrence to itself, and keeps it', (tester) async {
       final last = await _pumpDesigner(tester, const PortalConfigModel(relationshipId: 'rel-sub', occurrence: 'Tasks'));
       final choice = find.byKey(const ValueKey('portal-relationship-side'));

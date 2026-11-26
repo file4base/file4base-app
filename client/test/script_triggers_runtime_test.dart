@@ -527,6 +527,45 @@ void main() {
       expect(api.finds, isEmpty, reason: 'nothing was found: the window stays in Find mode');
       expect(find.textContaining('Search Title'), findsWidgets);
     });
+
+    testWidgets("a list row's button runs only once its row is the current record", (tester) async {
+      final api = _Api({'commit': _script('commit', result: 'False'), 'probe': _script('probe')});
+      final layout = LayoutDefinitionModel.fromJson({
+        'id': 'l1',
+        'name': 'Tasks',
+        'table_occurrence': 'Tasks',
+        'default_view': 'list',
+        'parts': [
+          {'id': 'b', 'type': 'body', 'height': 40},
+        ],
+        'objects': [
+          {'id': 'f-title', 'type': 'field', 'x': 10, 'y': 5, 'width': 200, 'height': 30, 'field_binding': {'field_name': 'title'}},
+          {
+            'id': 'b-go',
+            'type': 'button',
+            'x': 260,
+            'y': 5,
+            'width': 80,
+            'height': 30,
+            'text': 'Go',
+            'action': {'type': 'perform_script', 'script_id': 'probe', 'script_name': 'probe'},
+          },
+        ],
+        'script_triggers': [_trigger('t', 'OnRecordCommit', 'commit')],
+      });
+      final state = await _pump(tester, api, layout);
+      await tester.tap(find.text('List'));
+      await tester.pumpAndSettle();
+      expect(find.text('Go'), findsNWidgets(3));
+
+      // Row 1 is changed and its commit trigger refuses to leave it.
+      await tester.enterText(_box('First'), 'Changed');
+      await tester.tap(find.text('Go').at(1));
+      await tester.pumpAndSettle();
+      expect(api.ran, ['commit']);
+      expect(state.currentIndex, 0);
+      expect(api.ran, isNot(contains('probe')), reason: 'the button must not act on the record left');
+    });
   });
 }
 

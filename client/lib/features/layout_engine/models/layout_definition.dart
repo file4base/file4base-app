@@ -172,6 +172,7 @@ class FieldBindingModel {
     this.placeholder,
     this.unresolvedRelationship = false,
     this.missing = false,
+    this.occurrencePath = const [],
   });
 
   factory FieldBindingModel.fromJson(Map<String, dynamic> json) {
@@ -192,6 +193,9 @@ class FieldBindingModel {
       placeholder: json['placeholder'] as String?,
       unresolvedRelationship: json['unresolved_relationship'] as bool? ?? false,
       missing: json['missing'] as bool? ?? false,
+      occurrencePath: json['occurrence_path'] is List
+          ? [for (final o in json['occurrence_path'] as List) if (o is String && o.isNotEmpty) o]
+          : const [],
     );
   }
   /// The table occurrence the field is read from. Null, or the layout's own
@@ -236,10 +240,24 @@ class FieldBindingModel {
   /// The text the control shows while it is empty.
   final String? placeholder;
 
-  /// True when the field was read, in FileMaker, through more than one
-  /// relationship: File4Base follows one, so the field is shown as
-  /// unavailable rather than read from a column of the wrong record.
+  /// True when, in FileMaker, no relationship joined the field's occurrence
+  /// to the layout's: the field is shown as unavailable rather than read
+  /// from a column of the wrong record.
   final bool unresolvedRelationship;
+
+  /// For a field of an occurrence several relationships away from the
+  /// layout's, the occurrences reached in turn, by name, the last being
+  /// [tableOccurrence]: the first record at the end of the chain is shown
+  /// and edited, as FileMaker does in an anchor–buoy graph. Empty for a
+  /// field of the record in hand or one relationship away.
+  final List<String> occurrencePath;
+
+  /// True when the field is read along [occurrencePath].
+  bool get isAlongPath => occurrencePath.isNotEmpty && !isRelated;
+
+  /// True when the field shows a record other than the one in hand: one
+  /// relationship away, or several.
+  bool get readsRelated => isRelated || isAlongPath;
 
   /// True when the field is not in the imported tables.
   final bool missing;
@@ -255,7 +273,7 @@ class FieldBindingModel {
   /// says nothing to a reader, so the bare field name is used instead.
   String get qualifiedName {
     final occurrence = tableOccurrence ?? '';
-    if (!isRelated || occurrence.isEmpty || _looksLikeId(occurrence)) return fieldName;
+    if (!(isRelated || isAlongPath) || occurrence.isEmpty || _looksLikeId(occurrence)) return fieldName;
     return '$occurrence::$fieldName';
   }
 
@@ -305,6 +323,7 @@ class FieldBindingModel {
         // Choosing another field or relationship settles what was unreachable.
         unresolvedRelationship: fieldName == null && relationshipId == null && !clearRelationship && unresolvedRelationship,
         missing: fieldName == null && missing,
+        occurrencePath: clearRelationship || relationshipId != null ? const [] : occurrencePath,
       );
 
   Map<String, dynamic> toJson() => {
@@ -322,6 +341,7 @@ class FieldBindingModel {
         if (placeholder != null) 'placeholder': placeholder,
         if (unresolvedRelationship) 'unresolved_relationship': true,
         if (missing) 'missing': true,
+        if (occurrencePath.isNotEmpty) 'occurrence_path': occurrencePath,
       };
 
   /// How many repetitions an object bound to a field with [maxRepetitions]
@@ -371,7 +391,12 @@ class ConditionalFormatRule {
       underline: json['underline'] as bool? ?? false,
     );
   }
-  /// One of `<`, `<=`, `=`, `!=`, `>=`, `>`, `contains`, `is_empty`, `is_not_empty`.
+  /// One of `<`, `<=`, `=`, `!=`, `>=`, `>`, `contains`, `is_empty`,
+  /// `is_not_empty`, or `formula`: [value] is then a calculation, evaluated
+  /// by the server against the record shown, and the rule applies while it
+  /// is true (FileMaker's "Formula is").
+  bool get isFormula => operator == 'formula';
+
   final String operator;
   final String value;
   final String? textColor;
@@ -555,12 +580,14 @@ class LayoutObjectStyle {
   final List<ConditionalFormatRule> conditionalRules;
 
   /// Evaluates [conditionalRules] against [rawValue] and returns an effective
-  /// style with the matching rule's overrides applied.
-  LayoutObjectStyle effectiveForValue(Object? rawValue) {
+  /// style with the matching rule's overrides applied. [formulaTrue] answers
+  /// whether the calculation of the rule at an index is true for the record
+  /// shown; without it a formula rule does not apply.
+  LayoutObjectStyle effectiveForValue(Object? rawValue, {bool Function(int index)? formulaTrue}) {
     if (conditionalRules.isEmpty) return this;
     var effective = this;
-    for (final rule in conditionalRules) {
-      if (rule.matches(rawValue)) {
+    for (final (i, rule) in conditionalRules.indexed) {
+      if (rule.isFormula ? (formulaTrue?.call(i) ?? false) : rule.matches(rawValue)) {
         effective = effective.copyWith(
           textColor: rule.textColor ?? effective.textColor,
           fillColor: rule.fillColor ?? effective.fillColor,
@@ -865,6 +892,8 @@ class PortalConfigModel {
     this.allowCreation = false,
     this.allowDeletion = false,
     this.sort = '',
+    this.filter = '',
+    this.occurrencePath = const [],
   });
 
   factory PortalConfigModel.fromJson(Map<String, dynamic> json) {
@@ -879,6 +908,10 @@ class PortalConfigModel {
       allowCreation: json['allow_creation'] as bool? ?? false,
       allowDeletion: json['allow_deletion'] as bool? ?? false,
       sort: json['sort'] as String? ?? '',
+      filter: json['filter'] as String? ?? '',
+      occurrencePath: json['occurrence_path'] is List
+          ? [for (final o in json['occurrence_path'] as List) o.toString()]
+          : const [],
     );
   }
   /// The relationship followed to reach the records the rows show.
@@ -918,8 +951,21 @@ class PortalConfigModel {
   /// `-fee_paid`). Empty means the relationship's own "Sort related records".
   final String sort;
 
+  /// A calculation evaluated from the portal's occurrence against each
+  /// related record: only the records it is true for are shown, as
+  /// FileMaker's "Filter portal records". Empty shows them all.
+  final String filter;
+
+  /// The occurrences reached in turn from the layout's when the portal's is
+  /// several relationships away (#26), the last being [occurrence]: the rows
+  /// are every record reached at the end. Empty when [relationshipId] says.
+  final List<String> occurrencePath;
+
+  /// True when the portal lists the records along [occurrencePath].
+  bool get isAlongPath => occurrencePath.isNotEmpty && !(relationshipId?.isNotEmpty ?? false);
+
   /// True when the portal knows which records to show.
-  bool get isBound => relationshipId != null && relationshipId!.isNotEmpty;
+  bool get isBound => (relationshipId != null && relationshipId!.isNotEmpty) || isAlongPath;
 
   /// The sort order to ask the server for, split into the fields it takes.
   List<String> get sortFields =>
@@ -943,6 +989,8 @@ class PortalConfigModel {
         'allow_creation': allowCreation,
         'allow_deletion': allowDeletion,
         if (sort.isNotEmpty) 'sort': sort,
+        if (filter.isNotEmpty) 'filter': filter,
+        if (occurrencePath.isNotEmpty) 'occurrence_path': occurrencePath,
       };
 
   PortalConfigModel copyWith({
@@ -958,6 +1006,7 @@ class PortalConfigModel {
     bool? allowCreation,
     bool? allowDeletion,
     String? sort,
+    String? filter,
   }) {
     return PortalConfigModel(
       relationshipId: clearRelationship ? null : (relationshipId ?? this.relationshipId),
@@ -970,6 +1019,9 @@ class PortalConfigModel {
       allowCreation: allowCreation ?? this.allowCreation,
       allowDeletion: allowDeletion ?? this.allowDeletion,
       sort: sort ?? this.sort,
+      filter: filter ?? this.filter,
+      // Choosing a relationship, or none, replaces the path.
+      occurrencePath: clearRelationship || relationshipId != null ? const [] : occurrencePath,
     );
   }
 }
@@ -997,6 +1049,11 @@ class LayoutObjectModel { // picture / document shown inside the object
     this.media,
     this.hideWhen,
     this.hideInFind = false,
+    this.tabs = const [],
+    this.defaultPanel = 0,
+    this.tabHeight,
+    this.panelControl,
+    this.panelIndex = 0,
   });
 
   factory LayoutObjectModel.fromJson(Map<String, dynamic> json) {
@@ -1033,6 +1090,11 @@ class LayoutObjectModel { // picture / document shown inside the object
           : null,
       hideWhen: json['hide_when'] as String?,
       hideInFind: json['hide_in_find'] as bool? ?? false,
+      tabs: json['tabs'] is List ? [for (final t in json['tabs'] as List) t?.toString() ?? ''] : const [],
+      defaultPanel: (json['default_panel'] as num?)?.toInt() ?? 0,
+      tabHeight: (json['tab_height'] as num?)?.toDouble(),
+      panelControl: json['panel'] is Map ? (json['panel'] as Map)['control']?.toString() : null,
+      panelIndex: json['panel'] is Map ? ((json['panel'] as Map)['index'] as num?)?.toInt() ?? 0 : 0,
     );
   }
   final String id;
@@ -1062,6 +1124,27 @@ class LayoutObjectModel { // picture / document shown inside the object
 
   /// Whether [hideWhen] applies in Find mode too.
   final bool hideInFind;
+
+  /// For a `tab_control` or `slide_control`, the label of each panel, in
+  /// order (a slide control's are empty).
+  final List<String> tabs;
+
+  /// For a tab or slide control, the panel in front when the layout opens;
+  /// for a popover button, -1: its popover, the objects on its panel 0, is
+  /// closed until the button is clicked.
+  final int defaultPanel;
+
+  /// For a tab control, the height of its row of tabs.
+  final double? tabHeight;
+
+  /// The id of the tab or slide control this object sits on a panel of, and
+  /// which panel ([panelIndex]): the object is shown only while that panel
+  /// is in front.
+  final String? panelControl;
+  final int panelIndex;
+
+  /// Tab and slide controls, which show one panel of objects at a time.
+  bool get isPanelControl => type == 'tab_control' || type == 'slide_control';
 
   /// Objects that take keyboard focus in Browse mode and so have a tab order.
   bool get isTabStop => type == 'field' || type == 'button' || type == 'popover_button';
@@ -1111,6 +1194,10 @@ class LayoutObjectModel { // picture / document shown inside the object
         if (media != null) 'media': media!.toJson(),
         if (hideWhen != null) 'hide_when': hideWhen,
         if (hideInFind) 'hide_in_find': true,
+        if (tabs.isNotEmpty) 'tabs': tabs,
+        if (isPanelControl || defaultPanel != 0) 'default_panel': defaultPanel,
+        if (tabHeight != null) 'tab_height': tabHeight,
+        if (panelControl != null) 'panel': {'control': panelControl, 'index': panelIndex},
       };
 
   /// Copies the object. The `clear*` flags remove an optional value, which a
@@ -1141,6 +1228,8 @@ class LayoutObjectModel { // picture / document shown inside the object
     String? hideWhen,
     bool clearHideWhen = false,
     bool? hideInFind,
+    List<String>? tabs,
+    int? defaultPanel,
   }) {
     return LayoutObjectModel(
       id: id ?? this.id,
@@ -1163,8 +1252,42 @@ class LayoutObjectModel { // picture / document shown inside the object
       media: clearMedia ? null : (media ?? this.media),
       hideWhen: clearHideWhen ? null : (hideWhen ?? this.hideWhen),
       hideInFind: hideInFind ?? this.hideInFind,
+      tabs: tabs ?? this.tabs,
+      defaultPanel: defaultPanel ?? this.defaultPanel,
+      tabHeight: tabHeight,
+      panelControl: panelControl,
+      panelIndex: panelIndex,
     );
   }
+}
+
+/// The ids of [objects] that sit on a panel of a tab or slide control that
+/// is not in front, or on a control that is itself not shown: [selected]
+/// gives the panel chosen for a control, by control id, and a control not
+/// in it shows its default panel. [hidden] are objects hidden by their
+/// condition, whose panels' objects are hidden with them.
+Set<String> objectsOffPanel(
+  Iterable<LayoutObjectModel> objects, {
+  Map<String, int> selected = const {},
+  Set<String> hidden = const {},
+}) {
+  final byId = {for (final o in objects) o.id: o};
+  final off = <String>{};
+  for (final o in byId.values) {
+    var current = o;
+    final seen = <String>{};
+    while (current.panelControl != null && seen.add(current.id)) {
+      final control = byId[current.panelControl];
+      if (control == null) break;
+      if (hidden.contains(control.id) ||
+          (selected[control.id] ?? control.defaultPanel) != current.panelIndex) {
+        off.add(o.id);
+        break;
+      }
+      current = control;
+    }
+  }
+  return off;
 }
 
 /// Effects played when a layout is shown in Browse mode.

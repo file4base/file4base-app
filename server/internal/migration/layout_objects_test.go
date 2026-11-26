@@ -46,6 +46,7 @@ const layoutObjectsFixture = `<?xml version="1.0" encoding="UTF-8"?>
         <Table id="1" name="Recipes" baseTable="Recipes" baseTableId="1"/>
         <Table id="2" name="Ingredients" baseTable="Ingredients" baseTableId="2"/>
         <Table id="3" name="Loose Ingredients" baseTable="Ingredients" baseTableId="2"/>
+        <Table id="4" name="Ingredient Recipes" baseTable="Recipes" baseTableId="1"/>
       </TableList>
       <RelationshipList>
         <Relationship id="1" name="Recipes_Ingredients">
@@ -55,6 +56,16 @@ const layoutObjectsFixture = `<?xml version="1.0" encoding="UTF-8"?>
             <JoinPredicate type="Equal">
               <LeftField><Field name="Title" table="Recipes"/></LeftField>
               <RightField><Field name="RecipeTitle" table="Ingredients"/></RightField>
+            </JoinPredicate>
+          </JoinPredicateList>
+        </Relationship>
+        <Relationship id="2" name="Ingredients_Recipes">
+          <LeftTable name="Ingredients"/>
+          <RightTable name="Ingredient Recipes"/>
+          <JoinPredicateList>
+            <JoinPredicate type="Equal">
+              <LeftField><Field name="RecipeTitle" table="Ingredients"/></LeftField>
+              <RightField><Field name="Title" table="Ingredient Recipes"/></RightField>
             </JoinPredicate>
           </JoinPredicateList>
         </Relationship>
@@ -156,6 +167,14 @@ rectangle:normal .self { background-color: rgba(0%,0%,0%,0.5); }
                 <Bounds top="200" left="20" bottom="220" right="200"/>
                 <Field>
                   <FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Loose Ingredients" id="3"/></FieldReference>
+                  <Display Style="0" show="1"/>
+                </Field>
+              </LayoutObject>
+              <LayoutObject type="Edit Box">
+                <UUID>00000000-0000-0000-0000-000000000031</UUID>
+                <Bounds top="200" left="220" bottom="220" right="320"/>
+                <Field>
+                  <FieldReference name="Price" id="2"><TableOccurrenceReference name="Ingredient Recipes" id="4"/></FieldReference>
                   <Display Style="0" show="1"/>
                 </Field>
               </LayoutObject>
@@ -285,7 +304,7 @@ func TestNativeLayoutPartsAndGeometry(t *testing.T) {
 	// Grouped objects are kept one by one, at their own place; a hover state
 	// does not leak into the normal style.
 	fields := byType["field"]
-	if len(fields) != 5 {
+	if len(fields) != 6 {
 		t.Fatalf("fields: %d", len(fields))
 	}
 	price := fields[0]
@@ -320,6 +339,11 @@ func TestNativeLayoutPartsAndGeometry(t *testing.T) {
 	if loose["unresolved_relationship"] != true || loose["relationship_id"] != nil {
 		t.Fatalf("a field no relationship reaches must say so: %v", loose)
 	}
+	far := fields[5]["field_binding"].(map[string]interface{})
+	if path, _ := far["occurrence_path"].([]interface{}); len(path) != 2 || path[0] != "Ingredients" || path[1] != "Ingredient Recipes" ||
+		far["relationship_id"] != nil || far["unresolved_relationship"] != nil || far["field_name"] != "price" {
+		t.Fatalf("a field two relationships away is read along its path: %v", far)
+	}
 
 	rect := byType["rect"][0]
 	if rect["style"].(map[string]interface{})["fill_color"] != "#80000000" {
@@ -333,12 +357,32 @@ func TestNativeLayoutPartsAndGeometry(t *testing.T) {
 	if media["mime_type"] != "image/png" || media["fit"] != "fill" || !strings.HasPrefix(media["data"].(string), "iVBOR") {
 		t.Fatalf("picture: %v", media)
 	}
-	// The front tab (default="1") is shown; the other is left out.
-	if len(byType["rounded_rect"]) != 1 || len(byType["oval"]) != 0 {
-		t.Fatalf("front panel: %v", byType)
+	// The tab control is kept beneath its panels, with its labels and the
+	// tab in front (default="1"); every panel's objects say which panel
+	// they sit on.
+	tabs := byType["tab_control"]
+	if len(tabs) != 1 || tabs[0]["default_panel"] != 1.0 || fmt.Sprint(tabs[0]["tabs"]) != "[One Two]" ||
+		tabs[0]["x"] != 420.0 || tabs[0]["height"] != 120.0 {
+		t.Fatalf("tab control: %v", tabs)
 	}
-	if len(byType["button"]) != 0 {
-		t.Fatalf("buttons are not converted yet")
+	panelOf := func(o map[string]interface{}) string {
+		p, _ := o["panel"].(map[string]interface{})
+		return fmt.Sprint(p["control"] == tabs[0]["id"], " ", p["index"])
+	}
+	if len(byType["oval"]) != 1 || panelOf(byType["oval"][0]) != "true 0" ||
+		len(byType["rounded_rect"]) != 1 || panelOf(byType["rounded_rect"][0]) != "true 1" {
+		t.Fatalf("panels: %v / %v", byType["oval"], byType["rounded_rect"])
+	}
+	order := map[string]int{}
+	for i, o := range def["objects"].([]interface{}) {
+		order[o.(map[string]interface{})["type"].(string)] = i
+	}
+	if order["tab_control"] > order["oval"] {
+		t.Fatal("a tab control is drawn beneath its panels")
+	}
+	// A button with no label, icon or action is kept as an empty button.
+	if len(byType["button"]) != 1 || byType["button"][0]["action"] != nil {
+		t.Fatalf("buttons: %v", byType["button"])
 	}
 }
 
@@ -368,11 +412,13 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 			t.Fatalf("%s: %+v, want %d/%d", kind, c, source, migrated)
 		}
 	}
-	check("Edit Box", 3, 3)
+	check("Edit Box", 4, 4)
 	check("Text", 1, 1)
-	check("Oval", 1, 0)
+	check("Oval", 1, 1)
 	check("Rounded Rectangle", 1, 1)
-	check("Button", 1, 0)
+	check("Tab Control", 1, 1)
+	check("Panel", 2, 2)
+	check("Button", 1, 1)
 	check("Group", 1, 1)
 	if got.Report.Counts.RejectedCount != 0 {
 		t.Fatalf("layout objects must never reject a layout: %+v", got.Report.Rejected)
@@ -384,20 +430,19 @@ func TestNativeLayoutReportAndCounts(t *testing.T) {
 		}
 		switch it.Category {
 		case CategoryUnsupported:
+			// Every object of the fixture is migrated now.
 			unsupported++
-			if !strings.Contains(it.Detail, "1 button") || !strings.Contains(it.Detail, "front panel") {
-				t.Fatalf("unsupported detail: %s", it.Detail)
-			}
+			t.Fatalf("unsupported detail: %s", it.Detail)
 		case CategoryManualActionRequired:
 			review++
-			if !strings.Contains(it.Detail, "1 field read through more than one relationship") ||
+			if !strings.Contains(it.Detail, "1 field of an occurrence no relationship joins") ||
 				!strings.Contains(it.Detail, "1 merge field") {
 				t.Fatalf("review detail: %s", it.Detail)
 			}
 		}
 	}
-	if unsupported != 1 || review != 1 {
-		t.Fatalf("one item of each per layout: %d unsupported, %d review", unsupported, review)
+	if unsupported != 0 || review != 1 {
+		t.Fatalf("one review item per layout: %d unsupported, %d review", unsupported, review)
 	}
 }
 
@@ -454,6 +499,7 @@ func TestNativeLayoutValueListSurvivesImport(t *testing.T) {
 		`name="Ingredients"`, `name="Ingredients`+suffix+`"`, `baseTable="Ingredients"`, `baseTable="Ingredients`+suffix+`"`,
 		`table="Ingredients"`, `table="Ingredients`+suffix+`"`,
 		`name="Loose Ingredients"`, `name="Loose Ingredients`+suffix+`"`,
+		`name="Ingredient Recipes"`, `name="Ingredient Recipes`+suffix+`"`, `table="Ingredient Recipes"`, `table="Ingredient Recipes`+suffix+`"`,
 		`name="Units"`, `name="Units`+suffix+`"`, `name="Recipe Card"`, `name="Recipe Card`+suffix+`"`,
 	).Replace(layoutObjectsFixture)
 	res, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
@@ -608,5 +654,448 @@ func TestNativeLayoutEntryRepetitionAndDates(t *testing.T) {
 		if order == "" && d["date_order"] != nil {
 			t.Fatalf("no date order is made up: %v", d["date_order"])
 		}
+	}
+}
+
+// Buttons, button bars and grouped buttons run what FileMaker's run: a
+// script, bound to the imported scripts by id then by a name only one has,
+// or a single step. One whose script cannot be told is kept switched off.
+func TestNativeLayoutButtonsRunTheirScripts(t *testing.T) {
+	scripts := `<ScriptCatalog>
+      <Script id="5" name="Open Recipe"/>
+      <Script id="6" name="Twice"/>
+      <Script id="7" name="Twice"/>
+    </ScriptCatalog>
+    <LayoutCatalog>`
+	buttons := `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+                <Button>
+                  <Label><Text><StyledText><Data><![CDATA[Open]]></Data></StyledText></Text></Label>
+                  <action><ScriptReference id="5" name="Open Recipe" UUID="x"/><Calculation><Text><![CDATA[Title]]></Text></Calculation><Options>4</Options></action>
+                </Button>
+              </LayoutObject>
+              <LayoutObject type="Button Bar">
+                <UUID>00000000-0000-0000-0000-000000000040</UUID>
+                <Bounds top="260" left="20" bottom="280" right="220"/>
+                <ButtonBar><ObjectList membercount="2">
+                  <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000041</UUID><Bounds top="260" left="20" bottom="280" right="120"/>
+                    <Button><Label><Text><StyledText><Data><![CDATA[Twice]]></Data></StyledText></Text></Label>
+                    <action><ScriptReference id="99" name="Twice" UUID="y"/><Options>4</Options></action></Button>
+                  </LayoutObject>
+                  <LayoutObject type="Button"><UUID>00000000-0000-0000-0000-000000000042</UUID><Bounds top="260" left="120" bottom="280" right="220"/>
+                    <Button><Label><Text><StyledText><Data><![CDATA[Next]]></Data></StyledText></Text></Label>
+                    <action><Step enable="True" id="16" name="Go to Record/Request/Page"><Options>0</Options></Step></action></Button>
+                  </LayoutObject>
+                </ObjectList><Select><id>1</id></Select></ButtonBar>
+              </LayoutObject>
+              <LayoutObject type="Grouped Button">
+                <UUID>00000000-0000-0000-0000-000000000043</UUID>
+                <Bounds top="285" left="20" bottom="300" right="200"/>
+                <GroupedButton><ObjectList membercount="1">
+                  <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000044</UUID><Bounds top="285" left="20" bottom="300" right="200"/>
+                    <Text><StyledText><Data><![CDATA[Gone]]></Data></StyledText></Text>
+                  </LayoutObject>
+                </ObjectList>
+                <action><ScriptReference id="42" name="Deleted Script" UUID="z"/><Options>4</Options></action></GroupedButton>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, "<LayoutCatalog>", scripts, 1)
+	design = strings.Replace(design, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, buttons, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scriptID := map[string]string{}
+	for _, sc := range got.Bundle.Scripts {
+		scriptID[sc.Name] = sc.ID
+	}
+	if scriptID["Open Recipe"] == "" {
+		t.Fatalf("scripts: %v", scriptID)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var buttonsSeen []map[string]interface{}
+	gonePos, groupPos := -1, -1
+	for i, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		if o["type"] == "button" {
+			buttonsSeen = append(buttonsSeen, o)
+			if o["text"] == "" {
+				groupPos = i
+			}
+		}
+		if o["type"] == "label" && o["text"] == "Gone" {
+			gonePos = i
+		}
+		if strings.Contains(string(encoded), sourceScriptIDKey) {
+			t.Fatalf("the FileMaker script id must not be stored: %s", encoded)
+		}
+	}
+	if len(buttonsSeen) != 4 {
+		t.Fatalf("buttons: %v", buttonsSeen)
+	}
+	action := func(i int) map[string]interface{} { return buttonsSeen[i]["action"].(map[string]interface{}) }
+
+	open := action(0)
+	if buttonsSeen[0]["text"] != "Open" || open["type"] != "perform_script" || open["script_id"] != scriptID["Open Recipe"] ||
+		open["enabled"] == false || open["parameter"] == nil || open["parameter_problem"] != nil {
+		t.Fatalf("script button: %v", buttonsSeen[0])
+	}
+	// Two scripts are named "Twice" and the id is not one of them.
+	if twice := action(1); twice["script_id"] != nil || twice["enabled"] != false {
+		t.Fatalf("ambiguous script button: %v", twice)
+	}
+	if next := action(2); next["type"] != "single_step" || next["step_type"] != "Go to Record/Request/Page" || next["enabled"] == false {
+		t.Fatalf("single step button: %v", next)
+	}
+	// The grouped button is drawn by its members, its click over them.
+	if gone := action(3); gone["enabled"] != false || groupPos < gonePos || gonePos < 0 {
+		t.Fatalf("grouped button: %v (label at %d, button at %d)", buttonsSeen[3], gonePos, groupPos)
+	}
+	counts := got.Report.Counts.LayoutObjects
+	for _, kind := range []string{"Button", "Button Bar", "Grouped Button"} {
+		if c := counts[kind]; c.Migrated == 0 || c.Migrated != c.Source {
+			t.Fatalf("%s: %+v", kind, c)
+		}
+	}
+	if counts["Button"].Migrated != 3 {
+		t.Fatalf("counts: %+v", counts)
+	}
+	reported := false
+	for _, it := range got.Report.ManualActionRequired {
+		if strings.Contains(it.Detail, "Migrated buttons kept switched off") &&
+			strings.Contains(it.Detail, "1 run a script that is not among") && strings.Contains(it.Detail, "1 run a script whose name several") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("report: %+v", got.Report.ManualActionRequired)
+	}
+}
+
+// A button's step writes the field it names, a script of another file is
+// never bound to one of this file's, and a protected PDF is not written
+// unprotected.
+func TestNativeLayoutButtonStepsKeepTheirTargets(t *testing.T) {
+	button := func(uid, action string) string {
+		return `<LayoutObject type="Button"><UUID>00000000-0000-0000-0000-0000000000` + uid + `</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+                <Button><Label><Text><StyledText><Data><![CDATA[B` + uid + `]]></Data></StyledText></Text></Label>
+                <action>` + action + `</action></Button></LayoutObject>`
+	}
+	buttons := button("a1", `<Step enable="True" id="91" name="Replace Field Contents"><ParameterValues>
+                  <Parameter type="FieldReference"><FieldReference id="7" name="Unit_Price"><TableOccurrenceReference id="1" name="Recipes"/></FieldReference></Parameter>
+                </ParameterValues></Step>`) +
+		button("a2", `<Step enable="True" id="91" name="Replace Field Contents"><ParameterValues>
+                  <Parameter type="FieldReference"><FieldReference id="9" name="Nowhere"><TableOccurrenceReference id="1" name="Recipes"/></FieldReference></Parameter>
+                </ParameterValues></Step>`) +
+		button("a3", `<ScriptReference id="5" name="Report" UUID="r"><FileReference id="1" name="Reporting"/></ScriptReference><Options>4</Options>`) +
+		button("a4", `<Step enable="True" id="144" name="Save Records as PDF"><ParameterValues>
+                  <Parameter type="Options"><Options type="Records being browsed" value="1"><Security><Open value="True"/><Control value="False"/></Security></Options></Parameter>
+                </ParameterValues></Step>`) +
+		button("a5", `<Step enable="True" id="1" name="Perform Script"><ParameterValues>
+                  <Parameter type="List"><List><ScriptReference id="5" name="Report"><FileReference id="1" name="Reporting"/></ScriptReference></List></Parameter>
+                </ParameterValues></Step>`)
+	design := strings.Replace(layoutObjectsFixture, `<Field id="5" name="Archived" datatype="number" fieldtype="normal"/>`,
+		`<Field id="5" name="Archived" datatype="number" fieldtype="normal"/>
+        <Field id="6" name="Unit Price" datatype="number" fieldtype="normal"/>
+        <Field id="7" name="Unit_Price" datatype="number" fieldtype="normal"/>`, 1)
+	design = strings.Replace(design, "<LayoutCatalog>", `<ScriptCatalog><Script id="5" name="Delete Everything"/></ScriptCatalog>
+    <LayoutCatalog>`, 1)
+	design = strings.Replace(design, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, buttons, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := map[string]bool{}
+	for _, tbl := range got.Bundle.Tables {
+		for _, c := range tbl.Columns {
+			if c.DisplayName == "Unit Price" || c.DisplayName == "Unit_Price" {
+				columns[c.DisplayName+"="+c.Name] = true
+			}
+		}
+	}
+	if !columns["Unit Price=unit_price"] || !columns["Unit_Price=unit_price_2"] {
+		t.Fatalf("the two fields must be imported as two columns: %v", columns)
+	}
+	actions := map[string]map[string]interface{}{}
+	forEachLayoutObject(got.Bundle.Layouts[0].Definition, func(o map[string]interface{}) {
+		if a, _ := o["action"].(map[string]interface{}); a != nil {
+			actions[o["text"].(string)] = a
+		}
+	})
+	params := func(a map[string]interface{}) map[string]interface{} { return a["params"].(map[string]interface{}) }
+
+	if a := actions["Ba1"]; a == nil || params(a)["field"] != "unit_price_2" || a["enabled"] == false {
+		t.Fatalf("the button must replace the second field's column: %v", a)
+	}
+	if a := actions["Ba2"]; a == nil || a["enabled"] != false || a["field_problem"] == nil {
+		t.Fatalf("a step naming a field that was not imported is switched off: %v", a)
+	}
+	if a := actions["Ba3"]; a == nil || a["script_id"] != nil || a["enabled"] != false || a["file_reference"] != "Reporting" {
+		t.Fatalf("a script of another file must not run the local script with its id: %v", a)
+	}
+	if a := actions["Ba4"]; a == nil || params(a)["pdf_security"] != true {
+		t.Fatalf("a protected PDF must carry pdf_security: %v", a)
+	}
+	if a := actions["Ba5"]; a == nil || params(a)["file_reference"] != "Reporting" {
+		t.Fatalf("a Perform Script step naming another file's script must keep that file: %v", a)
+	}
+	external := false
+	for _, it := range got.Report.ManualActionRequired {
+		if strings.Contains(it.Detail, "1 run a script of another FileMaker file") {
+			external = true
+		}
+	}
+	if !external {
+		t.Fatalf("report: %+v", got.Report.ManualActionRequired)
+	}
+}
+
+func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
+	portals := `<LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000050</UUID>
+                <Bounds top="300" left="20" bottom="400" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="2" name="Ingredients"/>
+                  <Options index="2" show="4"/>
+                  <SortSpecification value="True" maintain="True" blanksLast="False"><SortList membercount="2">
+                    <Sort type="Descending"><PrimaryField><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></PrimaryField></Sort>
+                    <Sort type="Ascending"><PrimaryField><FieldReference name="Title" id="1"><TableOccurrenceReference name="Recipes" id="1"/></FieldReference></PrimaryField></Sort>
+                  </SortList></SortSpecification>
+                  <Calculation><Text><![CDATA[Quantity > 1]]></Text></Calculation>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box"><UUID>00000000-0000-0000-0000-000000000051</UUID><Bounds top="300" left="20" bottom="320" right="120"/>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000052</UUID>
+                <Bounds top="410" left="20" bottom="500" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="2" name="Ingredients"/>
+                  <Options index="1" show="3"/>
+                  <Calculation><Text><![CDATA[Nowhere::Thing = 1]]></Text></Calculation>
+                  <ObjectList/>
+                </Portal>
+              </LayoutObject>
+              <LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000053</UUID>
+                <Bounds top="510" left="20" bottom="600" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="4" name="Ingredient Recipes"/>
+                  <Options index="1" show="3"/>
+                  <ObjectList>
+                    <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000054</UUID><Bounds top="510" left="20" bottom="530" right="120"/>
+                      <Text><StyledText><Data><![CDATA[Far]]></Data></StyledText></Text>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, portals, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	byType := objectsByType(def)
+	if len(byType["portal"]) != 3 {
+		t.Fatalf("portals: %v", byType["portal"])
+	}
+	var relID string
+	for _, r := range got.Bundle.Relationships {
+		if r.Name == "Recipes_Ingredients" {
+			relID = r.ID
+		}
+	}
+	first := byType["portal"][0]["portal_config"].(map[string]interface{})
+	if first["relationship_id"] != relID || first["occurrence"] != "Ingredients" || first["initial_row"] != 2.0 ||
+		first["row_count"] != 4.0 || first["sort"] != "-quantity" || first["filter"] != "quantity > 1" ||
+		first["filter_problem"] != nil || first["allow_creation"] != true {
+		t.Fatalf("portal: %v", first)
+	}
+	// A filter that cannot be bound shows no record rather than all of them.
+	second := byType["portal"][1]["portal_config"].(map[string]interface{})
+	if second["filter"] != "0" || second["filter_problem"] != true {
+		t.Fatalf("portal with an unbound filter: %v", second)
+	}
+	// The portal's row objects follow it, so they are drawn over it.
+	var portalAt, fieldAt = -1, -1
+	for i, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		if o["type"] == "portal" && portalAt < 0 {
+			portalAt = i
+		}
+		if b, _ := o["field_binding"].(map[string]interface{}); b != nil && b["table_occurrence"] == "Ingredients" && o["y"] == 300.0 {
+			fieldAt = i
+		}
+	}
+	if portalAt < 0 || fieldAt < portalAt {
+		t.Fatalf("row field at %d, portal at %d", fieldAt, portalAt)
+	}
+	// A portal several relationships away lists the records along its
+	// path, and creates none.
+	far := byType["portal"][2]["portal_config"].(map[string]interface{})
+	if path, _ := far["occurrence_path"].([]interface{}); len(path) != 2 || path[0] != "Ingredients" ||
+		path[1] != "Ingredient Recipes" || far["relationship_id"] != nil || far["allow_creation"] != false ||
+		far["occurrence"] != "Ingredient Recipes" {
+		t.Fatalf("portal several relationships away: %v", far)
+	}
+	kept := false
+	for _, l := range byType["label"] {
+		kept = kept || l["text"] == "Far"
+	}
+	if !kept {
+		t.Fatal("the row objects of a portal several relationships away are kept")
+	}
+	if c := got.Report.Counts.LayoutObjects["Portal"]; c.Source != 3 || c.Migrated != 3 {
+		t.Fatalf("portal counts: %+v", c)
+	}
+	var review string
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "layout" {
+			review += it.Detail
+		}
+	}
+	for _, want := range []string{"1 portal showing the records of an occurrence several relationships away, listed along the path", "1 portal whose filter calculation could not be bound", "1 portal sort field of another occurrence"} {
+		if !strings.Contains(review, want) {
+			t.Fatalf("review %q lacks %q", review, want)
+		}
+	}
+}
+
+func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
+	design := strings.Replace(layoutObjectsFixture,
+		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide></Conditions>`,
+		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide>
+		<Formatting>
+		  <Condition id="1" type="0"><Options>7</Options><Calculation><Text><![CDATA[Price > 100]]></Text></Calculation>
+		    <LocalCSS><![CDATA[self:normal .self { color: rgba(100%,0%,0%,1); background-color: rgba(0%,0%,100%,1); font-weight: bold; }]]></LocalCSS></Condition>
+		  <Condition id="2" type="3"><Options>5</Options><Calculation><Text><![CDATA[10]]></Text></Calculation>
+		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
+		  <Condition id="3" type="0"><Options>7</Options><Calculation><Text><![CDATA[Nowhere::Thing]]></Text></Calculation>
+		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
+		</Formatting></Conditions>`, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	var rules []interface{}
+	for _, o := range objectsByType(def)["field"] {
+		if o["name"] == "price" {
+			rules, _ = o["style"].(map[string]interface{})["conditional_rules"].([]interface{})
+		}
+	}
+	if len(rules) != 1 {
+		t.Fatalf("rules: %v", rules)
+	}
+	rule := rules[0].(map[string]interface{})
+	if rule["operator"] != "formula" || rule["value"] != "price > 100" || rule["text_color"] != "#FF0000" ||
+		rule["fill_color"] != "#0000FF" || rule["bold"] != true {
+		t.Fatalf("rule: %v", rule)
+	}
+	var review string
+	for _, it := range got.Report.ManualActionRequired {
+		if it.Domain == "layout" {
+			review += it.Detail
+		}
+	}
+	if !strings.Contains(review, "2 conditional formats not kept") {
+		t.Fatalf("review: %s", review)
+	}
+}
+
+func TestNativeLayoutPopoversOpenOverTheLayout(t *testing.T) {
+	popover := `<LayoutObject type="Popover Button">
+                <UUID>00000000-0000-0000-0000-000000000060</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+                <PopoverButton>
+                  <Label><Text><StyledText><Data><![CDATA[More]]></Data></StyledText></Text></Label>
+                  <LayoutObject type="PopoverPanel">
+                    <UUID>00000000-0000-0000-0000-000000000061</UUID>
+                    <Bounds top="100" left="300" bottom="200" right="500"/>
+                    <ObjectList>
+                      <LayoutObject type="Text"><UUID>00000000-0000-0000-0000-000000000062</UUID><Bounds top="110" left="310" bottom="130" right="400"/>
+                        <Text><StyledText><Data><![CDATA[Inside]]></Data></StyledText></Text>
+                      </LayoutObject>
+                    </ObjectList>
+                  </LayoutObject>
+                </PopoverButton>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, popover, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	var def map[string]interface{}
+	if err := json.Unmarshal(encoded, &def); err != nil {
+		t.Fatal(err)
+	}
+	objects := def["objects"].([]interface{})
+	var button map[string]interface{}
+	for _, raw := range objects {
+		if o := raw.(map[string]interface{}); o["type"] == "popover_button" {
+			button = o
+		}
+	}
+	if button == nil || button["text"] != "More" || button["default_panel"] != -1.0 || button["action"] != nil {
+		t.Fatalf("popover button: %v", button)
+	}
+	// The panel's background and objects come last, on the popover's panel.
+	n := len(objects)
+	back, inside := objects[n-2].(map[string]interface{}), objects[n-1].(map[string]interface{})
+	for _, o := range []map[string]interface{}{back, inside} {
+		p, _ := o["panel"].(map[string]interface{})
+		if p == nil || p["control"] != button["id"] || p["index"] != 0.0 {
+			t.Fatalf("popover object: %v", o)
+		}
+	}
+	if back["type"] != "rect" || back["x"] != 300.0 || inside["text"] != "Inside" {
+		t.Fatalf("popover panel: %v / %v", back, inside)
+	}
+	if c := got.Report.Counts.LayoutObjects["Popover Button"]; c.Source != 1 || c.Migrated != 1 {
+		t.Fatalf("popover counts: %+v", c)
+	}
+}
+
+func TestNativeLayoutButtonStepFieldOfAnotherFile(t *testing.T) {
+	l := &nativeLayout{occName: "Orders", ctx: &layoutObjectContext{binding: formulaBinding{
+		occByName: map[string]boundOccurrence{"stock": {name: "Stock", external: true}},
+	}}}
+	// The decoder keeps the source name's sanitised form, which for "ID"
+	// is the other file's primary key: its migration names that field id_2.
+	entry := map[string]interface{}{"field": "id", "field_label": "ID", "field_table": "Stock"}
+	if !l.bindStepFields(map[string]interface{}{"target": entry}) {
+		t.Fatal("a field of another file cannot be checked here and must not switch the button off")
+	}
+	if entry["field"] != "id_2" {
+		t.Fatalf("field = %v, want the other file's column id_2", entry["field"])
 	}
 }
