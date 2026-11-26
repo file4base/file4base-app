@@ -55,7 +55,6 @@ type layoutObjectContext struct {
 	dateOrder     string                 // dmy, mdy or iso: how the file writes dates; empty when unknown
 	edges         map[string][][2]string // occurrence id -> {occurrence joined, relationship}
 	occNames      map[string]string      // occurrence id -> name
-	repetitions   map[string]int         // "table.column" -> repetitions of a repeating field
 
 	counts map[string]*LayoutObjectCount
 	media  map[string]map[string]interface{}
@@ -72,7 +71,6 @@ func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, bindin
 		counts:        map[string]*LayoutObjectCount{},
 		media:         map[string]map[string]interface{}{},
 		occNames:      map[string]string{},
-		repetitions:   bundleRepetitions(bundle),
 	}
 	for _, occ := range bundle.TableOccurrences {
 		ctx.occNames[occ.ID] = occ.Name
@@ -208,9 +206,8 @@ type nativeLayout struct {
 	formatsLeft    int             // conditional formats not kept
 	formatsDiffer  int             // "Value is" conditions kept as a calculation that compares with other values
 	formatsOff     int             // conditional formats switched off in FileMaker, left out
-	formatsInRows  int             // conditional formats of portal row objects, kept but not drawn in the rows
-	inPortal       int             // depth of portals whose row objects are being converted
 	popovers       map[string]bool // ids of the popover buttons, whose panels open over the layout
+	inPortal       bool            // converting a portal's row objects
 	vectorImage    int
 	mergeKept      int
 }
@@ -450,9 +447,10 @@ var fmConditionOperands = map[string]int{
 // layout's occurrence, with the text colour, fill, bold, italic and
 // underline it gives. FileMaker writes every condition as the calculation it
 // evaluates, a "Value is" condition too (greater than 0 as Self>0, a date
-// as Date(3;15;1990)): each is kept as that calculation, its Self written as
-// the object's field, so it compares as the field's type does. Formats that
-// cannot be bound, and formats of other objects, are reported.
+// as Date(3;15;1990)): each is kept as that calculation, Self included,
+// which Browse mode answers as the object's value, so it compares as the
+// field's type does. Formats that cannot be bound, and formats of other
+// objects, are reported.
 func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface{}) {
 	f := childPath(obj, "Conditions", "Formatting")
 	if f == nil {
@@ -478,21 +476,13 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 			l.formatsLeft++
 			continue
 		}
-		own, ok := l.selfAsField(obj, formula)
-		if !ok {
-			l.formatsLeft++
-			continue
-		}
-		bound, ok := l.bindFormula(own)
-		if !ok {
+		bound, ok := l.bindCondition(formula)
+		if !ok || !l.selfReadable(obj, formula) {
 			l.formatsLeft++
 			continue
 		}
 		if !rangeInFormula(findFirstChild(c, "Range"), operands, formula) {
 			l.formatsDiffer++
-		}
-		if l.inPortal > 0 {
-			l.formatsInRows++
 		}
 		css := resolveStyle(nil, nil, findFirstChild(c, "LocalCSS"))
 		rule := map[string]interface{}{"operator": "formula", "value": bound}
@@ -519,12 +509,12 @@ func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface
 	}
 }
 
-// selfAsField writes the Self of a condition of the field object obj as the
-// field it shows, Occurrence::Field as FileMaker names them (with the
-// repetition it shows), since nothing answers Self where a layout's
-// conditions are evaluated. A box showing several repetitions has a Self for
-// each, which one formula cannot read: its conditions on Self are not kept.
-func (l *nativeLayout) selfAsField(obj *xmlNode, formula string) (string, bool) {
+// selfReadable reports whether the Self of a condition of the field object
+// obj reads a field the import has. The condition keeps its Self, which
+// Browse mode answers as the value the object shows (in each repetition and
+// each portal row it shows); it is bound once more with Self written as the
+// object's field, Occurrence::Field as FileMaker names them, to tell.
+func (l *nativeLayout) selfReadable(obj *xmlNode, formula string) bool {
 	opts, _ := l.ctx.binding.options(l.table)
 	ref := childPath(obj, "Field", "FieldReference")
 	name, occName := "", l.occName
@@ -538,37 +528,38 @@ func (l *nativeLayout) selfAsField(obj *xmlNode, formula string) (string, bool) 
 		// Self names nothing a formula can write: the formula stands only
 		// if it does not read it.
 		replaced, err := calc.ReplaceSelf(formula, opts, "")
-		return formula, err == nil && replaced == formula
+		return err == nil && replaced == formula
 	}
-	self := calc.QuoteQualifiedName(occName, name)
-	// The repetitions the box shows, as Browse mode shows them: from the
-	// first one (within the field's), as many as it shows, all by default.
-	reps := 1
-	if column, occ, ok := l.column(ref); ok && !occ.external {
-		reps = max(l.ctx.repetitions[occ.table+"."+column], 1)
+	replaced, err := calc.ReplaceSelf(formula, opts, calc.QuoteQualifiedName(occName, name))
+	if err != nil || replaced == formula {
+		return true
 	}
-	first := 1
-	if n, err := strconv.Atoi(firstAttr(ref, "repetition")); err == nil && n > 1 {
-		first = min(n, reps)
+	_, ok := l.bindCondition(replaced)
+	return ok
+}
+
+// bindCondition binds a conditional format's calculation from the layout's
+// occurrence, as FileMaker reads it. Browse mode evaluates a portal row's
+// from the portal's occurrence, against the row's record, as it does the
+// portal filter: the layout's own fields are then written qualified, for
+// them to read the layout's record still.
+func (l *nativeLayout) bindCondition(formula string) (string, bool) {
+	bound, ok := l.bindFormula(formula)
+	if !ok || !l.inPortal {
+		return bound, ok
 	}
-	shown := reps - first + 1
-	if display := childPath(obj, "Field", "Display"); display != nil {
-		if n, err := strconv.Atoi(firstAttr(display, "show")); err == nil && n != 0 {
-			shown = min(max(n, -n), shown)
+	// The bound formula reads the imported names.
+	opts := calc.Options{Library: l.ctx.binding.stored}
+	qualified, unresolved, err := calc.Rewrite(bound, opts, func(occurrence, field string) (string, bool) {
+		if occurrence == "" {
+			occurrence = l.occName
 		}
-	}
-	if first > 1 {
-		self += "[" + strconv.Itoa(first) + "]"
-	}
-	replaced, err := calc.ReplaceSelf(formula, opts, self)
-	if err != nil {
-		// Unreadable: binding it says why.
-		return formula, true
-	}
-	if replaced != formula && shown > 1 {
+		return calc.QuoteQualifiedName(occurrence, field), true
+	})
+	if err != nil || len(unresolved) > 0 {
 		return "", false
 	}
-	return replaced, true
+	return qualified, true
 }
 
 // rangeInFormula reports whether the calculation FileMaker keeps for a
@@ -1289,9 +1280,6 @@ func (l *nativeLayout) report() []ReportItem {
 	if l.formatsOff > 0 {
 		review = append(review, plural(l.formatsOff, "conditional format")+" switched off in FileMaker, left out")
 	}
-	if l.formatsInRows > 0 {
-		review = append(review, plural(l.formatsInRows, "conditional format")+" of objects in portal rows, kept but not drawn in the rows yet")
-	}
 	if l.formatsDiffer > 0 {
 		review = append(review, plural(l.formatsDiffer, "conditional format")+" whose \"Value is\" condition shows other values than the calculation FileMaker keeps for it, kept as that calculation")
 	}
@@ -1641,9 +1629,10 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 	l.objects = append(l.objects, base)
 	l.ctx.count("Portal").Migrated++
 	if list := findFirstChild(p, "ObjectList"); list != nil {
-		l.inPortal++
+		outer := l.inPortal
+		l.inPortal = true
 		l.convertList(list)
-		l.inPortal--
+		l.inPortal = outer
 	}
 }
 

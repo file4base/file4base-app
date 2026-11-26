@@ -457,6 +457,8 @@ class RelatedFieldView extends StatefulWidget {
   const RelatedFieldView({
     required this.object, required this.related, required this.isDark, super.key,
     this.editable = false,
+    this.formulaTrue,
+    this.onWritten,
   });
   final LayoutObjectModel object;
   final RelatedContext related;
@@ -465,6 +467,16 @@ class RelatedFieldView extends StatefulWidget {
   /// Whether a field several relationships away may be typed into: what it
   /// writes is the first record at the end of the chain, the one shown.
   final bool editable;
+
+  /// Whether the calculation of the object's conditional format at an
+  /// index is true on the record in hand, evaluated from the layout's
+  /// occurrence with Self as the value shown. Null applies none.
+  final bool Function(int index)? formulaTrue;
+
+  /// Called once a value typed into the field is saved, for what reads it
+  /// (its conditional formats, the layout's conditions) to be evaluated
+  /// again.
+  final VoidCallback? onWritten;
 
   @override
   State<RelatedFieldView> createState() => _RelatedFieldViewState();
@@ -558,6 +570,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
         _editShown = value;
         if (!_editFocus.hasFocus) _edit.text = value;
       });
+      widget.onWritten?.call();
     } on Exception catch (e) {
       if (!mounted) return;
       _edit.text = _editShown;
@@ -689,6 +702,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     return _box(
       obj,
       text,
+      _lookOf(obj, col),
       _failed
           ? 'The related record could not be read'
           : target.isExternal
@@ -708,6 +722,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
       return relatedNotice('<${binding.qualifiedName}>', isDark: widget.isDark, radius: obj.style.cornerRadius);
     }
     final text = _row == null ? '' : widget.related.formatValue(col, _row![col.name]);
+    final look = _lookOf(obj, col);
     final editable = widget.editable &&
         _row != null &&
         widget.related.fromDatabase == null &&
@@ -730,11 +745,13 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
           controller: _edit,
           focusNode: _editFocus,
           textAlign: _textAlign(obj.style.textAlign),
-          style: TextStyle(fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13),
+          style: conditionalTextStyle(TextStyle(fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13), look),
           decoration: InputDecoration(
             isDense: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(obj.style.cornerRadius)),
+            fillColor: parseLayoutColor(look?.fillColor),
+            filled: parseLayoutColor(look?.fillColor) != null,
             suffixIcon: const Icon(Icons.link, size: 13, color: Colors.grey),
           ),
           onSubmitted: (_) => unawaited(_saveAlongPath()),
@@ -744,6 +761,7 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     return _box(
       obj,
       text,
+      look,
       _failed
           ? 'The related record could not be read'
           : 'From ${end.occurrence.name}, through ${binding.occurrencePath.join(' → ')}: '
@@ -751,15 +769,20 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     );
   }
 
-  Widget _box(LayoutObjectModel obj, String text, String tooltip) {
+  /// What the object's conditional formats that apply give the value shown.
+  ConditionalFormatRule? _lookOf(LayoutObjectModel obj, ColumnModel col) =>
+      obj.style.conditionalLook(_row?[col.name], formulaTrue: widget.formulaTrue);
+
+  Widget _box(LayoutObjectModel obj, String text, ConditionalFormatRule? look, String tooltip) {
     return Container(
       key: const ValueKey('related-field'),
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       decoration: BoxDecoration(
-        color: obj.style.fillColor != null
-            ? parseLayoutColor(obj.style.fillColor)
-            : (widget.isDark ? const Color(0xFF21262E) : const Color(0xFFF6F8FA)),
+        color: parseLayoutColor(look?.fillColor) ??
+            (obj.style.fillColor != null
+                ? parseLayoutColor(obj.style.fillColor)
+                : (widget.isDark ? const Color(0xFF21262E) : const Color(0xFFF6F8FA))),
         border: Border.all(
           color: obj.style.borderColor != null
               ? (parseLayoutColor(obj.style.borderColor) ?? Colors.grey)
@@ -775,10 +798,13 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
               text,
               textAlign: _textAlign(obj.style.textAlign),
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
-                fontWeight: obj.style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.normal,
-                color: obj.style.textColor != null ? parseLayoutColor(obj.style.textColor) : null,
+              style: conditionalTextStyle(
+                TextStyle(
+                  fontSize: obj.style.fontSize > 0 ? obj.style.fontSize : 13,
+                  fontWeight: obj.style.fontWeight == 'bold' ? FontWeight.bold : FontWeight.normal,
+                  color: obj.style.textColor != null ? parseLayoutColor(obj.style.textColor) : null,
+                ),
+                look,
               ),
             ),
           ),
@@ -975,6 +1001,16 @@ class _PortalViewState extends State<PortalView> {
   /// The row being typed into before it exists: a related record is created
   /// only once something has been entered.
   bool _creating = false;
+
+  /// The conditional formats of the row objects whose calculation is true
+  /// on a row, as `<object id>#<index of the rule>`, by read, row and the
+  /// row's values: each row drawn is evaluated once for each version of its
+  /// record, the rows drawn together in one request. Until a row's answer
+  /// comes, its last one holds.
+  final Map<String, Set<String>> _rowTruths = {};
+  final Map<String, Set<String>> _lastRowTruths = {};
+  final Map<String, String> _rowQueue = {};
+  final Set<String> _rowPending = {};
 
   /// What has been typed into that row. It is cleared once the record exists,
   /// so the row is empty again for the next one.
@@ -1330,6 +1366,119 @@ class _PortalViewState extends State<PortalView> {
       .where((c) => c.name.toLowerCase() == field.toLowerCase())
       .firstOrNull;
 
+  /// The column of the row's record [content] shows: none for an object
+  /// other than a field, or for a field of another occurrence than the
+  /// portal's, even when one has its name.
+  ColumnModel? _rowColumn(RelatedTarget target, LayoutObjectModel content) {
+    if (content.type != 'field') return null;
+    final occurrence = content.fieldBinding?.tableOccurrence ?? '';
+    final ofRow = occurrence.isEmpty ||
+        occurrence == target.occurrence.id ||
+        occurrence.toLowerCase() == target.occurrence.name.toLowerCase();
+    return ofRow ? _column(target, content.fieldBinding?.fieldName ?? '') : null;
+  }
+
+  /// The formulas of the row objects' conditional formats, by the key their
+  /// answer is kept under, each with its Self: the field the object shows
+  /// of the row's record.
+  List<(String, String, ConditionSelf)> _rowConditions(RelatedTarget target) {
+    // The target and the objects are made anew on each build: they are
+    // told apart by what the conditions depend on.
+    final of = Object.hash(
+      target.table.name,
+      target.occurrence.id,
+      Object.hashAll([
+        for (final content in widget.contents)
+          for (final (i, rule) in content.style.conditionalRules.indexed)
+            if (rule.isFormula)
+              Object.hash(content.id, i, rule.value, content.fieldBinding?.fieldName, content.fieldBinding?.tableOccurrence),
+      ]),
+    );
+    if (of != _rowConditionsOf) {
+      _rowConditionsOf = of;
+      _rowConditionsList = [
+        for (final content in widget.contents)
+          if (_rowColumn(target, content) case final col?)
+            for (final (i, rule) in content.style.conditionalRules.indexed)
+              if (rule.isFormula && rule.value.trim().isNotEmpty) ('${content.id}#$i', rule.value, ConditionSelf(col.name)),
+      ];
+      // Answers to other conditions do not hold for these.
+      _rowTruths.clear();
+      _lastRowTruths.clear();
+    }
+    return _rowConditionsList;
+  }
+
+  /// What [_rowConditions] last answered, and for which conditions.
+  int? _rowConditionsOf;
+  List<(String, String, ConditionSelf)> _rowConditionsList = const [];
+
+  /// The conditional formats true on [row], evaluated from the portal's
+  /// occurrence against the row's record, as FileMaker evaluates those of a
+  /// portal row. Asked while the row is drawn, so only the rows on screen
+  /// are evaluated.
+  Set<String> _truthsOn(RelatedTarget target, Map<String, dynamic> row) {
+    final rowId = row['id']?.toString() ?? '';
+    if (rowId.isEmpty || _rowConditions(target).isEmpty) return const {};
+    final values = Object.hashAllUnordered(row.entries.map((e) => Object.hash(e.key, e.value?.toString())));
+    final key = '$_generation|$rowId|$values';
+    final known = _rowTruths[key];
+    if (known != null) return known;
+    if (_rowPending.add(key)) {
+      if (_rowQueue.isEmpty) scheduleMicrotask(() => unawaited(_evaluateRows()));
+      _rowQueue[key] = rowId;
+    }
+    return _lastRowTruths[rowId] ?? const {};
+  }
+
+  /// Evaluates the rows queued, in as few requests as the endpoint allows.
+  Future<void> _evaluateRows() async {
+    final queued = Map.of(_rowQueue);
+    _rowQueue.clear();
+    final target = _target;
+    final conditions = target == null ? const <(String, String, ConditionSelf)>[] : _rowConditions(target);
+    final ids = queued.values.toSet().toList();
+    final truths = {for (final id in ids) id: <String>{}};
+    if (target != null && conditions.isNotEmpty) {
+      final client = widget.related.clientFor(target);
+      for (var r = 0; r < ids.length; r += ApiClient.maxEvaluatedRecords) {
+        final chunkIds = ids.sublist(r, math.min(r + ApiClient.maxEvaluatedRecords, ids.length));
+        for (var i = 0; i < conditions.length; i += 50) {
+          final chunk = conditions.sublist(i, math.min(i + 50, conditions.length));
+          try {
+            final results = await client.evaluateForRecords(
+              target.table.name,
+              expressions: [for (final (_, expression, _) in chunk) expression],
+              self: [for (final (_, _, self) in chunk) self],
+              recordIds: chunkIds,
+              occurrence: target.occurrence.id,
+              resultType: 'Number',
+            );
+            for (final id in chunkIds) {
+              for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {
+                if (j < chunk.length && result.error.isEmpty && isLayoutConditionTrue(result.text)) {
+                  truths[id]!.add(chunk[j].$1);
+                }
+              }
+            }
+          } on Exception catch (_) {
+            // A calculation that cannot be evaluated applies no format.
+          }
+          if (!mounted) return;
+        }
+      }
+    }
+    if (!mounted) return;
+    if (_rowTruths.length > 2000) _rowTruths.clear();
+    setState(() {
+      for (final e in queued.entries) {
+        _rowPending.remove(e.key);
+        _rowTruths[e.key] = truths[e.value]!;
+        _lastRowTruths[e.value] = truths[e.value]!;
+      }
+    });
+  }
+
   void _onCellChanged(LayoutObjectModel content, String rowId, String field, String value) {
     final key = _cellKey(rowId, field);
     final controller = widget.rowController;
@@ -1483,9 +1632,11 @@ class _PortalViewState extends State<PortalView> {
     // "Initial row" starts the portal past the first related record.
     final visible = _visibleRows;
 
+    // Each row is drawn, and its conditional formats asked for, only once
+    // it scrolls into view.
     final children = <Widget>[
       for (final (i, row) in visible.indexed)
-        _row(target, row, rowHeight, striped: i.isOdd, number: i + 1),
+        Builder(builder: (_) => _row(target, row, rowHeight, striped: i.isOdd, number: i + 1)),
     ];
     // The empty last row is offered only where the relationship allows
     // creating the records it would create: on the side the portal shows.
@@ -1582,30 +1733,35 @@ class _PortalViewState extends State<PortalView> {
     }
 
     final field = content.fieldBinding?.fieldName ?? '';
-    // A field of another occurrence than the portal's is not a column of
-    // the row's record, even when one has its name.
-    final occurrence = content.fieldBinding?.tableOccurrence ?? '';
-    final ofRow = occurrence.isEmpty ||
-        occurrence == target.occurrence.id ||
-        occurrence.toLowerCase() == target.occurrence.name.toLowerCase();
-    final col = ofRow ? _column(target, field) : null;
+    final col = _rowColumn(target, content);
     if (col == null) {
+      final occurrence = content.fieldBinding?.tableOccurrence ?? '';
+      final ofRow = occurrence.isEmpty ||
+          occurrence == target.occurrence.id ||
+          occurrence.toLowerCase() == target.occurrence.name.toLowerCase();
       final name = ofRow ? field : (content.fieldBinding?.qualifiedName ?? field);
       return relatedNotice('<$name>', isDark: widget.isDark, radius: content.style.cornerRadius);
     }
 
     final text = widget.related.formatValue(col, row[col.name]);
+    final truths = content.style.conditionalRules.any((r) => r.isFormula) ? _truthsOn(target, row) : const <String>{};
+    final look = content.style.conditionalLook(row[col.name], formulaTrue: (i) => truths.contains('${content.id}#$i'));
+    final fill = parseLayoutColor(look?.fillColor);
     if (col.isPrimaryKey || isComputedColumn(col) || !_privileges.edit) {
       return Container(
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.symmetric(horizontal: 6),
+        color: fill,
         child: Text(
           text,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            fontSize: content.style.fontSize > 0 ? content.style.fontSize : 12,
-            fontFamily: col.isPrimaryKey ? 'monospace' : null,
-            color: Colors.grey.shade600,
+          style: conditionalTextStyle(
+            TextStyle(
+              fontSize: content.style.fontSize > 0 ? content.style.fontSize : 12,
+              fontFamily: col.isPrimaryKey ? 'monospace' : null,
+              color: Colors.grey.shade600,
+            ),
+            look,
           ),
         ),
       );
@@ -1622,12 +1778,14 @@ class _PortalViewState extends State<PortalView> {
       key: ValueKey('portal-cell-$rowId-$field'),
       controller: controller,
       focusNode: focusNode,
-      style: TextStyle(fontSize: content.style.fontSize > 0 ? content.style.fontSize : 12),
+      style: conditionalTextStyle(TextStyle(fontSize: content.style.fontSize > 0 ? content.style.fontSize : 12), look),
       textAlign: _textAlign(content.style.textAlign),
       decoration: InputDecoration(
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
         border: const OutlineInputBorder(borderSide: BorderSide.none),
+        fillColor: fill,
+        filled: fill != null,
         suffixIcon: _saving[key] == true
             ? const Padding(
                 padding: EdgeInsets.all(6),

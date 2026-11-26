@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/calc"
@@ -57,20 +58,62 @@ type EvaluationEnv struct {
 	// committed yet (a new record especially), by name, read in place of
 	// what is stored.
 	Values map[string]any
+	// Self is, for the expression at the same index, the field Self reads
+	// (see SelfField); a nil entry, or none, leaves Self unknown.
+	Self []*SelfField
 }
 
 // envContext answers the Get functions the environment gives, and the
 // others as the record's context does.
 type envContext struct {
 	*unstoredContext
-	get map[string]any
+	get  map[string]any
+	self *SelfField
 }
 
 func (c *envContext) Get(selector string) (any, error) {
+	if selector == "SELF" && c.self != nil {
+		return c.self.read(c.unstoredContext)
+	}
 	if v, ok := c.get[selector]; ok {
 		return v, nil
 	}
 	return c.unstoredContext.Get(selector)
+}
+
+// SelfField is the field a layout object shows, which Self reads in the
+// object's conditions: a field of the record evaluated (no occurrence), or
+// of an occurrence, by name, seen from the one the expressions are
+// evaluated from, with the repetition the object shows (0 and 1 are the
+// first).
+type SelfField struct {
+	Occurrence string `json:"occurrence,omitempty"`
+	Field      string `json:"field"`
+	Repetition int    `json:"repetition,omitempty"`
+}
+
+// bound reports whether f names a field.
+func (f *SelfField) bound() bool { return f != nil && strings.TrimSpace(f.Field) != "" }
+
+// read answers Self: the field's value in the record evaluated, or in the
+// first record related through the occurrence, in the repetition given,
+// as a reference to that field reads it. Self is answered as a value, not
+// written into the formula, so a Let variable of the same name does not
+// capture it.
+func (f *SelfField) read(c *unstoredContext) (any, error) {
+	rep := max(f.Repetition, 1)
+	if f.Occurrence == "" {
+		return c.Field(f.Field, rep)
+	}
+	name := f.Field
+	if rep > 1 {
+		name += "[" + strconv.Itoa(rep) + "]"
+	}
+	values, err := c.RelatedFirst(f.Occurrence, name)
+	if err != nil || len(values) == 0 {
+		return nil, err
+	}
+	return values[0], nil
 }
 
 // variableInput is a variable as a script sends it: a number written as a
@@ -233,6 +276,9 @@ func (s *Service) EvaluateExpressionsIn(
 		env := &envContext{unstoredContext: &unstoredContext{
 			RecordContext: calc.RecordContext{Record: record, Repeats: fields.repeating(), Variables: scope},
 			reader:        reader, ctx: ctx, table: tableName, occurrence: occurrence, row: row}, get: get}
+		if i < len(in.Self) && in.Self[i].bound() {
+			env.self = in.Self[i]
+		}
 		value, err := calc.EvaluateWith(expr, env, result)
 		if err != nil {
 			out[i].Err = fmt.Errorf("%w: %s", ErrInvalidExpression, err.Error())

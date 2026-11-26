@@ -1269,6 +1269,23 @@ class FormulaCheckModel {
 
 /// What one watched expression came to (#50): a value, or the reason it has
 /// none.
+/// The field Self reads in a condition of a layout object: the field the
+/// object shows, of the record evaluated ([occurrence] null) or of a
+/// related occurrence, by name, in the repetition the object shows.
+class ConditionSelf {
+  const ConditionSelf(this.field, {this.occurrence, this.repetition = 1});
+
+  final String field;
+  final String? occurrence;
+  final int repetition;
+
+  Map<String, dynamic> toJson() => {
+        'field': field,
+        if (occurrence != null && occurrence!.isNotEmpty) 'occurrence': occurrence,
+        if (repetition > 1) 'repetition': repetition,
+      };
+}
+
 class EvaluationModel {
 
   const EvaluationModel({
@@ -4082,12 +4099,17 @@ class ApiClient {
   /// [table] seen from the occurrence [occurrence] (a layout's, by id or
   /// name): what a list whose layout hides objects by a calculation asks,
   /// in one request. A record not there any more has no answers.
+  ///
+  /// [self] gives, for the expression at the same index, the field Self
+  /// reads: the one a layout object shows, whose conditions FileMaker
+  /// evaluates with Self as the object's value. Null leaves Self unknown.
   Future<Map<String, List<EvaluationModel>?>> evaluateForRecords(
     String table, {
     required List<String> expressions,
     required List<String> recordIds,
     String? occurrence,
     String resultType = 'Text',
+    List<ConditionSelf?>? self,
   }) async {
     final response = await _httpClient.post(
       Uri.parse('$baseUrl/api/v1/data/$table/evaluate'),
@@ -4097,6 +4119,7 @@ class ApiClient {
         'record_ids': recordIds,
         if (occurrence != null && occurrence.isNotEmpty) 'occurrence': occurrence,
         'result_type': resultType,
+        if (self != null && self.any((s) => s != null)) 'self': [for (final s in self) s?.toJson()],
       }),
     );
     _checkResponse(response);

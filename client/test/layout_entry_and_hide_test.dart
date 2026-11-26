@@ -48,7 +48,8 @@ class _Api extends ApiClient {
       {required List<String> expressions,
       required List<String> recordIds,
       String? occurrence,
-      String resultType = 'Text'}) async {
+      String resultType = 'Text',
+      List<ConditionSelf?>? self}) async {
     evaluations.add((recordIds: recordIds, occurrence: occurrence, expressions: expressions));
     // "amount > 100", answered as the server would for these records.
     return {

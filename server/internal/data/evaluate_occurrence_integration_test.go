@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/data"
+	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -138,4 +139,67 @@ func TestEvaluateExpressions_ValueConditionsCompareAsTheFieldsType(t *testing.T)
 		require.NoError(t, got[i].Err, e)
 		assert.Equal(t, conditions[e], got[i].Text, e)
 	}
+}
+
+// A condition of a layout object reads Self as the field the object shows:
+// a field of the record shown, one repetition of a repeating field, or a
+// related field, each comparing as its type does. Without a field given,
+// Self is unknown.
+func TestEvaluateExpressions_SelfIsTheObjectsField(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "xevalself", "xevalself_unused")
+	visits, _, visitFields := a.table(t, ctx, "visits", [2]string{"code", "TEXT"}, [2]string{"score", "NUMBER"}, [2]string{"due", "DATE"})
+	_, err := a.schema.AddColumn(ctx, visits, schema.ColumnMetadata{Name: "marks", DisplayName: "marks",
+		FieldType: dbal.FieldTypeNumber, IsNullable: true, MaxRepetitions: 3})
+	require.NoError(t, err)
+	_, ordersOcc, orderFields := a.table(t, ctx, "orders", [2]string{"code", "TEXT"}, [2]string{"amount", "NUMBER"})
+	anchor, err := a.schema.CreateTableOccurrence(ctx, schema.CreateOccurrenceInput{BaseTableID: visits, Name: "VIS__Visits"})
+	require.NoError(t, err)
+	a.relate(t, ctx, schema.CreateRelationshipInput{Name: "visit_orders",
+		LeftOccurrenceID: anchor.ID, RightOccurrenceID: ordersOcc,
+		Predicates: []schema.RelationshipPredicate{{LeftColumnID: visitFields["code"], Operator: "=", RightColumnID: orderFields["code"]}}})
+	svc := data.NewService(a.driver)
+	_, err = svc.InsertRow(ctx, "visits", map[string]interface{}{"code": "other", "score": 1, "due": "1900-01-01", "marks[2]": 1})
+	require.NoError(t, err)
+	row, err := svc.InsertRow(ctx, "visits", map[string]interface{}{"code": "École ABC", "score": 10, "due": "2001-02-03",
+		"marks": 1, "marks[2]": 20})
+	require.NoError(t, err)
+	id := fmt.Sprint(row["id"])
+	_, err = svc.InsertRow(ctx, "orders", map[string]interface{}{"code": "École ABC", "amount": 7})
+	require.NoError(t, err)
+
+	cases := []struct {
+		expression string
+		self       *data.SelfField
+		want       string
+	}{
+		{"Self>9", &data.SelfField{Field: "score"}, "1"}, // 10 > 9 as numbers, not as texts
+		{"Self≥1 and Self≤10", &data.SelfField{Occurrence: "VIS__Visits", Field: "score"}, "1"},
+		{`Self="ecole abc"`, &data.SelfField{Field: "code"}, "1"}, // case and accents ignored
+		{`PatternCount(Self; "abc") > 0 and "Self" = "self"`, &data.SelfField{Field: "code"}, "1"},
+		{"Self>Date(3;15;1990)", &data.SelfField{Field: "due"}, "1"},
+		{"GetAsDate(Self) < Get(CurrentDate)", &data.SelfField{Field: "due"}, "1"},
+		{"IsEmpty(Self)", &data.SelfField{Field: "due"}, "0"},
+		{"Self>9", &data.SelfField{Field: "marks"}, "0"},
+		{"Self>9", &data.SelfField{Field: "marks", Repetition: 2}, "1"},
+		{"IsEmpty(Self)", &data.SelfField{Field: "marks", Repetition: 3}, "1"},
+		{"Self=7", &data.SelfField{Occurrence: "orders", Field: "amount"}, "1"},
+		// Self is the field's value: a Let variable of the field's name does
+		// not change it.
+		{"Let(score = 0; Self > 5)", &data.SelfField{Field: "score"}, "1"},
+	}
+	expressions := make([]string, 0, len(cases)+1)
+	self := make([]*data.SelfField, 0, len(cases))
+	for _, c := range cases {
+		expressions = append(expressions, c.expression)
+		self = append(self, c.self)
+	}
+	expressions = append(expressions, "IsEmpty(Self)") // no field given
+	got, err := svc.EvaluateExpressionsIn(ctx, "visits", "VIS__Visits", id, expressions, "Number", data.EvaluationEnv{Self: self})
+	require.NoError(t, err)
+	require.Len(t, got, len(expressions))
+	for i, c := range cases {
+		require.NoError(t, got[i].Err, "%s of %+v", c.expression, *c.self)
+		assert.Equal(t, c.want, got[i].Text, "%s of %+v", c.expression, *c.self)
+	}
+	assert.True(t, errors.Is(got[len(cases)].Err, data.ErrInvalidExpression), "Self without a field is unknown")
 }

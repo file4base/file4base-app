@@ -60,6 +60,39 @@ bool isLayoutConditionTrue(String text) {
   return n != null && n != 0;
 }
 
+/// [base] with what the conditional formats that apply ([look], from
+/// [LayoutObjectStyle.conditionalLook]) give the text: its colour, bold,
+/// italic and underline. [base] itself when none applies.
+TextStyle conditionalTextStyle(TextStyle base, ConditionalFormatRule? look) {
+  if (look == null) return base;
+  final decoration = base.decoration;
+  return base.copyWith(
+    color: parseLayoutColor(look.textColor) ?? base.color,
+    fontWeight: look.bold ? FontWeight.bold : base.fontWeight,
+    fontStyle: look.italic ? FontStyle.italic : base.fontStyle,
+    decoration: !look.underline
+        ? decoration
+        : decoration == null || decoration == TextDecoration.none
+            ? TextDecoration.underline
+            : TextDecoration.combine([decoration, TextDecoration.underline]),
+  );
+}
+
+/// [child], drawn its own way, with the conditional formats that apply
+/// ([look]): their fill behind it, and their text over any text of it that
+/// sets no colour, weight or style of its own. [child] itself when none
+/// applies.
+Widget withConditionalLook(ConditionalFormatRule? look, Widget child, {double radius = 0}) {
+  if (look == null) return child;
+  final fill = parseLayoutColor(look.fillColor);
+  final text = DefaultTextStyle.merge(style: conditionalTextStyle(const TextStyle(), look), child: child);
+  if (fill == null) return text;
+  return DecoratedBox(
+    decoration: BoxDecoration(color: fill, borderRadius: radius > 0 ? BorderRadius.circular(radius) : null),
+    child: text,
+  );
+}
+
 /// Normalizes a color typed by the user (`fff`, `#1e88e5`) to `#RRGGBB`, or
 /// returns null when it is not a valid color.
 String? normalizeLayoutColor(String value) {
