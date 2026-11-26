@@ -325,4 +325,38 @@ on SQLite:
 own services on each engine, on the same host. See the PR of #199 for the
 full table; the measures that set the defaults:
 
-<!-- BENCHMARK RESULTS -->
+Same host (NVMe, ext4), PostgreSQL 16 and MariaDB 11 in Docker with their
+defaults, 1M records unless stated; times in ms.
+
+| Measure | SQLite | PostgreSQL | MariaDB |
+| --- | --- | --- | --- |
+| Editors, 1 client: p50 / p99, saves/s | 5.3 / 8.2, 185 | 3.2 / 7.6, 292 | 7.1 / 11.9, 136 |
+| Editors, 50 clients saturating: p50 / p99, saves/s | 204 / 336, 236 | 25 / 46, 1917 | 70 / 121, 697 |
+| Editors, 50 clients with 1 s think: p50 / p99 | 5.8 / 20.6 | 3.6 / 51.5 | 7.9 / 27.2 |
+| 50 editors + Replace 100k + atomic import 20k: editors p99 / max | 366 / 821 | 53 / 109 | 172 / 3664 |
+| Import 20k, atomic | 746 | 2039 | 60161 |
+| Field type change, 1M records | 6.8 s | 4.0 s | 234.6 s |
+| Find contains / number range, first page | 1.4 / 1.3 | 1.2 / 2.2 | 47.9 / 36.5 |
+| Find equals, sorted / sort all by name | 419 / 1462 | 93 / 118 | 4246 / 2716 |
+| Report by city / grand totals | 954 / 168 | 169 / 60 | 5654 / 1846 |
+| Backup / restore | 1.07 s / 0.52 s (`VACUUM INTO`) | 5.9 s / 3.7 s (`pg_dump`) | 15.2 s / 32.0 s (`mariadb-dump`) |
+| 10 GB solution (5M records): sort all by name / report by city | 11.2 s / 10.4 s | 0.9 s / 1.6 s | |
+| 10 GB solution: backup | 21 s (10.0 GB) | 287 s (1.5 GB) | |
+
+- A commit costs ~5 ms with `synchronous=FULL`: SQLite stays near 200–230
+  write transactions per second per solution whatever the number of
+  clients; latency grows with the queue, never with lock errors (0 in every
+  run).
+- An atomic import of N records holds the writer for about N / 30,000 s:
+  above ~150,000 records it outlasts `busy_timeout`, and editors waiting for
+  it fail. Imports of that size should be chunked (2,000-record chunks: editors
+  p99 under 0.4 s).
+- Full scans of a large solution are 6–13 times slower than PostgreSQL:
+  SQLite keeps long texts inline (no TOAST), and the `F4B` sort collation
+  cannot use a `BINARY` index.
+- Crash consistency: 40 `SIGKILL`s during write transactions and 12 during
+  field type changes: no acknowledged transaction lost, no partial batch,
+  `integrity_check` ok. A VM reset or power loss was not simulated.
+- `VACUUM INTO` under load (50 editors, a Replace, a chunked import and
+  ledger transfers): 1.1 s, the copy passes `integrity_check`, its ledger
+  balances, and its restore has the same fingerprint as the source at rest.
