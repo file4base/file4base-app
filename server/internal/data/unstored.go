@@ -12,6 +12,7 @@ import (
 
 	"github.com/file4base/file4base-app/server/internal/calc"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/fmsql"
 )
 
 // Unstored calculations, and the related records they read.
@@ -71,6 +72,8 @@ type relatedReader struct {
 	routes   map[routeKey]resolvedRoute
 	overflow map[string]bool
 	sums     map[string]calc.RelatedTotals
+	// sqlTables keeps the fields of each table an ExecuteSQL query reads.
+	sqlTables map[string]*fmsql.Table
 }
 
 // readState is what the readers of every solution a request reaches share.

@@ -242,6 +242,11 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 				fmt.Sprintf("Match the relationship on a stored field, or fill %s with a script", target))
 			continue
 		}
+		if matched && fb.runsSQL {
+			quarantine("runs a query with ExecuteSQL, so it must be computed when shown, but a relationship matches records on it",
+				fmt.Sprintf("Match the relationship on a stored field, or fill %s with a script", target))
+			continue
+		}
 
 		payload["formula"] = rewritten
 		item := ReportItem{Category: CategoryPreserved, Domain: "field", SourceName: source, TargetName: target,
@@ -255,6 +260,13 @@ func bindTableCalculations(table *schema.BundleTable, b formulaBinding, colTypeB
 			payload["stored"] = false
 			item.Detail += fmt.Sprintf("; it reads the related %s, so it is computed each time a record is shown (unstored), as in FileMaker",
 				quotedList(related))
+		case fb.runsSQL && payload["stored"] == false:
+			item.Detail += "; it runs a query with ExecuteSQL and is computed each time a record is shown (unstored), as in FileMaker"
+		case fb.runsSQL:
+			payload["stored"] = false
+			item.Category = CategoryTranslated
+			item.Detail += "; it runs a query with ExecuteSQL, so it is computed each time a record is shown (unstored), " +
+				"where FileMaker stored the answer it had when the record was saved"
 		case matched && payload["stored"] == false:
 			delete(payload, "stored")
 			item.Category = CategoryTranslated
@@ -405,7 +417,9 @@ func ownTableFormula(raw string, functions formulaBinding) (string, bool) {
 		return "", false
 	}
 	expr, err := calc.ParseWith(formula, calc.Options{Library: functions.stored})
-	if err != nil || len(expr.RelatedFields()) > 0 {
+	// One reading other records, through a relationship or a query, is
+	// not its table's own.
+	if err != nil || len(expr.RelatedFields()) > 0 || expr.RunsSQL() {
 		return formula, false
 	}
 	if _, ok := functions.callsDropped(expr); ok {
@@ -456,7 +470,9 @@ type boundFormula struct {
 	// its table's, empty otherwise.
 	context string
 	// related are the related fields it reads, as Occurrence::Field.
-	related     []string
+	related []string
+	// runsSQL is set when it runs a query with ExecuteSQL.
+	runsSQL     bool
 	why, action string
 }
 
@@ -512,7 +528,7 @@ func (b formulaBinding) bind(tableName, formula, contextName, target string) bou
 
 	// The occurrence it is evaluated from, kept only when it is one of
 	// this table's: anything else would read the wrong records.
-	out := boundFormula{related: related}
+	out := boundFormula{related: related, runsSQL: expr.RunsSQL()}
 	from, hasContext := b.contextOf(tableName, contextName)
 	if hasContext && strings.EqualFold(from.name, contextName) {
 		out.context = from.name

@@ -105,7 +105,7 @@ func init() {
 	functions = map[string]function{}
 	for _, group := range []map[string]function{
 		logicalFunctions(), textFunctions(), listFunctions(), numberFunctions(),
-		aggregateFunctions(), dateFunctions(), conversionFunctions(), formattingFunctions(),
+		aggregateFunctions(), dateFunctions(), conversionFunctions(), formattingFunctions(), sqlFunctions(),
 	} {
 		for name, fn := range group {
 			functions[name] = fn
