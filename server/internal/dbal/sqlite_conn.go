@@ -39,10 +39,18 @@ import (
 //     defaults; no measurement has shown a benefit worth the memory.
 
 const (
-	// DefaultSQLiteBusyTimeout bounds how long a statement waits for the
-	// writer lock. It was kept after measuring concurrent editing by 50
-	// clients (docs/specs/sqlite_engine.md, "Benchmarks").
+	// DefaultSQLiteBusyTimeout is SQLite's busy_timeout: how long a
+	// statement waits for SQLite's own lock, which this process's writers
+	// take in turn first (DefaultSQLiteWriterWait). It is a backstop for
+	// writers of other processes (a CLI restore, a maintenance tool).
 	DefaultSQLiteBusyTimeout = 5 * time.Second
+
+	// DefaultSQLiteWriterWait bounds how long a write waits for its turn
+	// behind this process's other writers, unless its context ends first.
+	// A schema change or an import holds the writer for as long as it
+	// takes (about 7 s for a type change of 1M records, 1 s per 30,000
+	// imported records): an editor waits for it rather than failing.
+	DefaultSQLiteWriterWait = 60 * time.Second
 
 	// sqliteJournalSizeLimit makes a checkpoint shrink the WAL back to this
 	// size after a large import or delete has grown it.
@@ -68,9 +76,30 @@ func SQLiteBusyTimeout() time.Duration {
 	return time.Duration(sqliteBusyTimeout.Load())
 }
 
+var sqliteWriterWait atomic.Int64
+
+func init() {
+	sqliteWriterWait.Store(int64(DefaultSQLiteWriterWait))
+}
+
+// SetSQLiteWriterWait changes how long a write waits for its turn (see
+// DefaultSQLiteWriterWait). It is set once, at start-up
+// (SQLITE_WRITER_WAIT).
+func SetSQLiteWriterWait(d time.Duration) {
+	if d > 0 {
+		sqliteWriterWait.Store(int64(d))
+	}
+}
+
+// SQLiteWriterWait is how long a write waits for its turn.
+func SQLiteWriterWait() time.Duration {
+	return time.Duration(sqliteWriterWait.Load())
+}
+
 // ErrSQLiteBusy is returned when a write did not get the writer lock of its
-// database within busy_timeout. Its text is SQLite's own for the same case.
-var ErrSQLiteBusy = errors.New("database is locked: no write lock within busy_timeout")
+// database within the writer wait (SQLiteWriterWait). Its text starts as
+// SQLite's own for the same case.
+var ErrSQLiteBusy = errors.New("database is locked: no write lock within the writer wait")
 
 // ErrSQLiteTransactionEnded is returned for every statement, and for the
 // commit, of a transaction SQLite rolled back by itself.
@@ -299,7 +328,7 @@ func (c *sqliteConn) Close() error {
 }
 
 // acquireWriter waits for this process's writer lock of the database, in
-// turn, up to busy_timeout.
+// turn, until the context ends or SQLiteWriterWait has passed.
 func (c *sqliteConn) acquireWriter(ctx context.Context) error {
 	if c.writer == nil || c.holding {
 		return nil
@@ -310,7 +339,7 @@ func (c *sqliteConn) acquireWriter(ctx context.Context) error {
 		return nil
 	default:
 	}
-	timer := time.NewTimer(SQLiteBusyTimeout())
+	timer := time.NewTimer(SQLiteWriterWait())
 	defer timer.Stop()
 	select {
 	case c.writer <- struct{}{}:

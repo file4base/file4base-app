@@ -221,6 +221,7 @@ DATABASE_URL=postgres://file4base:dev_password@localhost:5432/file4base_dev?sslm
 # Alternative: SQLite (DATABASE_URL is the data directory, one <name>.sqlite per database)
 # DB_ENGINE=sqlite
 # DATABASE_URL=./data/solutions
+# SQLITE_WRITER_WAIT=60s
 # SQLITE_BUSY_TIMEOUT=5s
 ```
 

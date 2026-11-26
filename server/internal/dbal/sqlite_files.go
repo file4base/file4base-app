@@ -415,6 +415,7 @@ type SQLiteDiagnostics struct {
 	JournalMode       string   `json:"journal_mode"`
 	Synchronous       string   `json:"synchronous"`
 	BusyTimeoutMS     int64    `json:"busy_timeout_ms"`
+	WriterWaitMS      int64    `json:"writer_wait_ms"`
 	ForeignKeys       bool     `json:"foreign_keys"`
 	JournalSizeLimit  int64    `json:"journal_size_limit"`
 	Filesystem        string   `json:"filesystem"`
@@ -477,6 +478,7 @@ func DiagnoseSQLite(ctx context.Context, db *sql.DB, path string) (SQLiteDiagnos
 	if d.FilesystemRefused {
 		problem("the database is on %s, which SQLite cannot lock safely", d.Filesystem)
 	}
+	d.WriterWaitMS = SQLiteWriterWait().Milliseconds()
 	return d, nil
 }
 

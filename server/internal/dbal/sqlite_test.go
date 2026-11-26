@@ -193,12 +193,12 @@ func TestSQLite_ReadThenWriteTransactionsDoNotDeadlock(t *testing.T) {
 }
 
 // Writers of the process wait for the writer lock in the order they asked
-// for it, and no longer than busy_timeout; a statement outside a
-// transaction waits its turn as well.
-func TestSQLite_WritersTakeTurnsAndWaitAtMostTheBusyTimeout(t *testing.T) {
-	previous := SQLiteBusyTimeout()
-	SetSQLiteBusyTimeout(300 * time.Millisecond)
-	t.Cleanup(func() { SetSQLiteBusyTimeout(previous) })
+// for it, and no longer than the writer wait or their context; a statement
+// outside a transaction waits its turn as well.
+func TestSQLite_WritersTakeTurnsAndWaitAtMostTheWriterWait(t *testing.T) {
+	previous := SQLiteWriterWait()
+	SetSQLiteWriterWait(300 * time.Millisecond)
+	t.Cleanup(func() { SetSQLiteWriterWait(previous) })
 	db, _ := newSQLiteDB(t)
 	ctx := context.Background()
 	db.SetMaxOpenConns(12)
@@ -212,7 +212,11 @@ func TestSQLite_WritersTakeTurnsAndWaitAtMostTheBusyTimeout(t *testing.T) {
 	_, err = db.BeginTx(ctx, nil)
 	assert.ErrorIs(t, err, ErrSQLiteBusy)
 	assert.GreaterOrEqual(t, time.Since(start), 300*time.Millisecond)
-	assert.Less(t, time.Since(start), 2*time.Second, "the wait is bounded by busy_timeout")
+	assert.Less(t, time.Since(start), 2*time.Second, "the wait is bounded by the writer wait")
+	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	_, err = db.BeginTx(short, nil)
+	cancel()
+	assert.ErrorIs(t, err, context.DeadlineExceeded, "and by the context")
 	_, err = db.ExecContext(ctx, `INSERT INTO turns VALUES (-1)`)
 	assert.ErrorIs(t, err, ErrSQLiteBusy, "a statement on its own waits for the lock too")
 	var n int
@@ -225,7 +229,7 @@ func TestSQLite_WritersTakeTurnsAndWaitAtMostTheBusyTimeout(t *testing.T) {
 
 	// Eight writers queue one after the other while the lock is held, then
 	// get it in that order.
-	SetSQLiteBusyTimeout(10 * time.Second)
+	SetSQLiteWriterWait(10 * time.Second)
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Add(1)
@@ -255,6 +259,31 @@ func TestSQLite_WritersTakeTurnsAndWaitAtMostTheBusyTimeout(t *testing.T) {
 		order = append(order, n)
 	}
 	assert.Equal(t, []int{0, 1, 2, 3, 4, 5, 6, 7}, order)
+}
+
+// A writer waits behind a long one for longer than busy_timeout, which
+// only bounds SQLite's own lock.
+func TestSQLite_AWriterWaitsBehindALongOneBeyondTheBusyTimeout(t *testing.T) {
+	previousBusy, previousWait := SQLiteBusyTimeout(), SQLiteWriterWait()
+	SetSQLiteBusyTimeout(200 * time.Millisecond)
+	SetSQLiteWriterWait(5 * time.Second)
+	t.Cleanup(func() { SetSQLiteBusyTimeout(previousBusy); SetSQLiteWriterWait(previousWait) })
+	db, _ := newSQLiteDB(t)
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx, `CREATE TABLE t (n INTEGER)`)
+	require.NoError(t, err)
+	holder, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	_, err = holder.ExecContext(ctx, `INSERT INTO t VALUES (1)`)
+	require.NoError(t, err)
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		_ = holder.Commit()
+	}()
+	start := time.Now()
+	_, err = db.ExecContext(ctx, `INSERT INTO t VALUES (2)`)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, time.Since(start), 700*time.Millisecond)
 }
 
 func TestSQLite_UnicodeCaseFunctions(t *testing.T) {

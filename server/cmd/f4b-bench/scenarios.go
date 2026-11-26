@@ -154,6 +154,7 @@ func (b *bench) combined(ctx context.Context) (map[string]any, error) {
 	}{
 		{"atomic_import", 20000, 0}, {"chunked_import", 2000, 0},
 		{"atomic_import_think_1s", 20000, time.Second}, {"atomic_import_100k_think_1s", 100000, time.Second},
+		{"atomic_import_100k", 100000, 0}, {"atomic_import_200k", 200000, 0},
 	} {
 		loadCtx, cancel := context.WithCancel(ctx)
 		lat := &latencies{}
@@ -246,8 +247,12 @@ func (b *bench) importThroughput(ctx context.Context) (map[string]any, error) {
 	return b.importBatches(ctx, "imports", 50000, 50000), nil
 }
 
+// typeChangeEditors save as fast as they can while a field's type changes
+// (gate 3).
+const typeChangeEditors = 50
+
 // typeChange is gate 3: the code field (text holding numbers) becomes a
-// number field on every record, while 5 editors keep saving records.
+// number field on every record, while typeChangeEditors keep saving records.
 func (b *bench) typeChange(ctx context.Context) (map[string]any, error) {
 	stmt, err := b.driver.Dialect().BuildAlterColumnTypeSQL("members", "code", dbal.FieldTypeNumber)
 	if err != nil {
@@ -255,7 +260,7 @@ func (b *bench) typeChange(ctx context.Context) (map[string]any, error) {
 	}
 	loadCtx, cancel := context.WithCancel(ctx)
 	lat := &latencies{}
-	wait := b.editors(loadCtx, 5, 0, lat)
+	wait := b.editors(loadCtx, typeChangeEditors, 0, lat)
 	time.Sleep(time.Second)
 	start := time.Now()
 	_, ddlErr := b.exec(ctx, stmt)
@@ -263,7 +268,7 @@ func (b *bench) typeChange(ctx context.Context) (map[string]any, error) {
 	time.Sleep(time.Second)
 	cancel()
 	wait()
-	out := map[string]any{"ddl_seconds": round(ddl.Seconds(), 2), "editors_5": lat.summary(ddl + 2*time.Second)}
+	out := map[string]any{"ddl_seconds": round(ddl.Seconds(), 2), fmt.Sprintf("editors_%d", typeChangeEditors): lat.summary(ddl + 2*time.Second)}
 	if ddlErr != nil {
 		out["ddl_error"] = ddlErr.Error()
 		return out, nil

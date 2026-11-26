@@ -164,6 +164,7 @@ func main() {
 			dsn = "./data/solutions"
 		}
 		dbal.SetSQLiteBusyTimeout(envDuration("SQLITE_BUSY_TIMEOUT", dbal.DefaultSQLiteBusyTimeout))
+		dbal.SetSQLiteWriterWait(envDuration("SQLITE_WRITER_WAIT", dbal.DefaultSQLiteWriterWait))
 		dbal.AllowUnsafeSQLiteStorage = envBool("SQLITE_ALLOW_UNSAFE_STORAGE", false)
 		dir, err := dbal.SQLiteDataDir(dsn)
 		if err != nil {
@@ -175,7 +176,7 @@ func main() {
 		if err := dbal.CheckSQLiteStorage(dir); err != nil {
 			log.Fatalf("Refusing the SQLite data directory: %v", err)
 		}
-		log.Printf("SQLite solution databases in %s (busy timeout %s)", dir, dbal.SQLiteBusyTimeout())
+		log.Printf("SQLite solution databases in %s (writer wait %s, busy timeout %s)", dir, dbal.SQLiteWriterWait(), dbal.SQLiteBusyTimeout())
 	} else if dsn == "" {
 		log.Println("Warning: DATABASE_URL is not set; falling back to the local development DSN with the default password. Set DATABASE_URL for any non-development deployment.")
 		if engineType == dbal.EnginePostgres {

@@ -20,8 +20,13 @@ var ErrDatabaseExists = errors.New("database already exists")
 // pool, so the limits are deliberately small to keep the total bounded.
 const (
 	maxOpenConnsPerDatabase = 10
-	maxIdleConnsPerDatabase = 2
-	connMaxIdleTime         = 5 * time.Minute
+	// A SQLite write waiting for its turn holds its connection (the turn
+	// is taken when a transaction begins), so a database's pool must have
+	// room for its waiting writers and its readers: SQLite connections are
+	// file handles, cheap to keep.
+	maxOpenSQLiteConnsPerDatabase = 128
+	maxIdleConnsPerDatabase       = 2
+	connMaxIdleTime               = 5 * time.Minute
 )
 
 // protectedDatabases are engine-internal databases that must never be used as
@@ -278,7 +283,11 @@ func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (Da
 	}
 
 	if pool := newDriver.DB(); pool != nil {
-		pool.SetMaxOpenConns(maxOpenConnsPerDatabase)
+		if sqlite {
+			pool.SetMaxOpenConns(maxOpenSQLiteConnsPerDatabase)
+		} else {
+			pool.SetMaxOpenConns(maxOpenConnsPerDatabase)
+		}
 		pool.SetMaxIdleConns(maxIdleConnsPerDatabase)
 		pool.SetConnMaxIdleTime(connMaxIdleTime)
 	}

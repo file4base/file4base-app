@@ -25,6 +25,7 @@ services:
       # on the named volume below.
       DATABASE_URL: "/app/data/solutions"
       # How long a write waits for another to finish before it fails.
+      SQLITE_WRITER_WAIT: "${SQLITE_WRITER_WAIT:-60s}"
       SQLITE_BUSY_TIMEOUT: "${SQLITE_BUSY_TIMEOUT:-5s}"
       SERVER_PORT: ":8080"
       SESSION_TTL: "${SESSION_TTL:-12h}"
