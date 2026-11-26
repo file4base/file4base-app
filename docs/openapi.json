@@ -4289,10 +4289,10 @@
             "$ref": "#/components/responses/Forbidden"
           },
           "404": {
-            "description": "No such table or record; with a context, an occurrence that is not there, or a portal occurrence of another table."
+            "description": "No such table or record; with a context, no such layout record (even with record_ids), an occurrence that is not there, or a portal occurrence of another table."
           },
           "422": {
-            "description": "Too Many Records: more than 100 record_ids in one request."
+            "description": "Too Many Records: more than 100 record_ids in one request; or a context with an occurrence of another solution's table, whose rows are evaluated through /api/v1/occurrences/{occurrence}/records/evaluate."
           }
         },
         "parameters": [

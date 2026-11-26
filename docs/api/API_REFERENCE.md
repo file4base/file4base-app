@@ -927,9 +927,13 @@ other is related to the layout's record. So a field of the layout is never
 read back from the row through the relationship, which in a many-to-many
 relationship reaches another record. An aggregate (`Count`, `Sum`, `List`,
 `Last`, `GetNthRecord`…) of the portal's occurrence itself covers every
-record related to the layout's record. The caller must be able to read the
-layout's table as well as the rows' (`403`), and the layout's occurrence must
-be one of this solution's tables.
+record related to the layout's record. Without an `occurrence`, the rows are
+seen from their table's own. A portal of the layout's own occurrence (a
+self-join) evaluates its row as that occurrence's record. The caller must be
+able to read the layout's table as well as the rows' (`403`), and the
+layout's occurrence must be one of this solution's tables. The rows of an
+occurrence of another solution's table are evaluated through
+`POST /api/v1/occurrences/{occurrence}/records/evaluate` (`422` here).
 
 `expression` (singular) is accepted for a caller watching one. Without
 `record_id` every field reads as empty, so a formula like `UPPER("ab")` still
@@ -966,8 +970,8 @@ rather than being quietly ignored.
 
 #### Errors
 - `403 Forbidden`: no access to the table, or to the layout's table of the `context`.
-- `404 Not Found`: no such table, or no record with that id; with a `context`, an occurrence that is not there, or a portal occurrence of another table.
-- `422 Unprocessable Entity`: nothing to evaluate, or more than 50 expressions.
+- `404 Not Found`: no such table, or no record with that id; with a `context`, no such layout record (even with `record_ids`, where a row gone answers `null`), an occurrence that is not there, or a portal occurrence of another table.
+- `422 Unprocessable Entity`: nothing to evaluate, more than 50 expressions, or a `context` with an `occurrence` of another solution's table.
 
 ---
 

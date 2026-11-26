@@ -68,9 +68,25 @@ void main() {
         recordId: 'co-1',
       ));
       expect(
+        _related(layoutOccurrence: 'co__companies').rowContext,
+        (occurrence: 'occ-anchor', recordId: 'co-1'),
+        reason: 'named by its name, sent by its id',
+      );
+      expect(
         _related().rowContext,
         (occurrence: 'occ-companies', recordId: 'co-1'),
         reason: "without one, the table's own occurrence, named like it",
+      );
+      expect(
+        _related(layoutOccurrence: 'Companies Display Name').rowContext,
+        (occurrence: 'occ-companies', recordId: 'co-1'),
+        reason:
+            "an occurrence of no table of the layout's (a default layout's display name) is the table's own",
+      );
+      expect(
+        _related(layoutOccurrence: 'occ-customers').rowContext,
+        (occurrence: 'occ-companies', recordId: 'co-1'),
+        reason: 'nor is one of another table',
       );
       expect(
         _related(recordId: null).rowContext,

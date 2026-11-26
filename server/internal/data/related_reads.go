@@ -102,16 +102,16 @@ func (c *unstoredContext) RelatedFirst(occurrence, field string) ([]any, error) 
 
 // RelatedNth implements calc.Bounded.
 func (c *unstoredContext) RelatedNth(occurrence, field string, n int) ([]any, bool, error) {
-	if c.beyondPin(occurrence, field) {
-		return nil, false, nil
+	if rest := c.beyondPin(occurrence, field, nthReach(n), false); rest != nil {
+		return c.reader.nthAlong(c.ctx, rest, c.pin.row, nthReach(n))
 	}
 	return c.reader.nth(c.ctx, c.table, c.occurrence, c.row, occurrence, field, n)
 }
 
 // RelatedTotals implements calc.Bounded.
 func (c *unstoredContext) RelatedTotals(occurrence, field, function string) (calc.RelatedTotals, bool, error) {
-	if c.beyondPin(occurrence, field) {
-		return calc.RelatedTotals{}, false, nil
+	if rest := c.beyondPin(occurrence, field, reachAll, true); rest != nil {
+		return c.reader.totalsAlong(c.ctx, rest, c.pin.row, function)
 	}
 	return c.reader.totals(c.ctx, c.table, c.occurrence, c.row, occurrence, field, function)
 }
@@ -160,14 +160,26 @@ func (r *relatedReader) readAlong(ctx context.Context, rt *route, row map[string
 func (r *relatedReader) nth(
 	ctx context.Context, tableName, contextName string, row map[string]interface{}, target, field string, n int,
 ) ([]any, bool, error) {
-	rc := reach{n: n}
-	if n < 0 {
-		rc = reachLast
-	}
+	rc := nthReach(n)
 	rt, err := r.route(ctx, routeKey{tableName, contextName, target, field, rc, false})
 	if err != nil {
 		return nil, false, err
 	}
+	return r.nthAlong(ctx, rt, row, rc)
+}
+
+// nthReach is the reach of a nth read: the nth (n ≥ 1), or the last whose
+// field holds a value (n < 0).
+func nthReach(n int) reach {
+	if n < 0 {
+		return reachLast
+	}
+	return reach{n: n}
+}
+
+// nthAlong reads the one record of a route from row a nth read reaches (see
+// nth).
+func (r *relatedReader) nthAlong(ctx context.Context, rt *route, row map[string]interface{}, rc reach) ([]any, bool, error) {
 	if !rt.single() {
 		return nil, false, nil
 	}
@@ -176,7 +188,7 @@ func (r *relatedReader) nth(
 			return nil, false, nil
 		}
 	}
-	values, err := r.related(ctx, tableName, contextName, row, target, field, rc)
+	values, err := r.readAlong(ctx, rt, row, rc)
 	return values, err == nil, err
 }
 
@@ -212,6 +224,14 @@ func (r *relatedReader) totals(
 	if err != nil {
 		return calc.RelatedTotals{}, false, err
 	}
+	return r.totalsAlong(ctx, rt, row, function)
+}
+
+// totalsAlong totals the field a route ends at across the records it
+// reaches from row, when it can be (see totals).
+func (r *relatedReader) totalsAlong(
+	ctx context.Context, rt *route, row map[string]interface{}, function string,
+) (calc.RelatedTotals, bool, error) {
 	if !rt.totalled(function) {
 		return calc.RelatedTotals{}, false, nil
 	}

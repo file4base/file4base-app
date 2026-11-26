@@ -1680,7 +1680,8 @@ func (l *nativeLayout) portal(obj *xmlNode) {
 		}
 	}
 	if c := findFirstChild(p, "Calculation"); c != nil {
-		if formula := calculationText(c); formula != "" {
+		// A field of a file closed at export is named by its id only.
+		if formula := strings.TrimSpace(markNamelessFieldReferences(c, calculationText(c))); formula != "" {
 			// FileMaker evaluates the filter on each related record, from
 			// the layout: Browse mode reads a field named alone from the
 			// row, so one of the portal's occurrence is written so, bound

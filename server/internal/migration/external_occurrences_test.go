@@ -454,7 +454,7 @@ func TestNativeLayoutExternalPortalKeepsItsFilter(t *testing.T) {
   <PartsList><Part type="Body"><Definition type="Body" kind="4" size="300" absolute="0"/><ObjectList>
    <LayoutObject type="Portal"><UUID>00000000-0000-0000-0000-000000000070</UUID><Bounds top="10" left="20" bottom="200" right="300"/>
     <Portal><TableOccurrenceReference id="2" name="Order Customers"/><Options index="1" show="3"/>
-     <Calculation><Text><![CDATA[Order Customers::Full Name <> "" and Order Customers::Region = Orders::Region]]></Text></Calculation>
+     <Calculation><Text><![CDATA[Order Customers::Full Name <> "" and Order Customers::Region = Orders::Region and Order Customers::<Field Missing> <> ""]]></Text><ChunkList><Chunk type="FieldRef"><FieldReference id="1" name="Full Name"><TableOccurrenceReference id="2" name="Order Customers"/></FieldReference></Chunk><Chunk type="FieldRef"><FieldReference id="2" name="Region"><TableOccurrenceReference id="2" name="Order Customers"/></FieldReference></Chunk><Chunk type="FieldRef"><FieldReference id="2" name="Region"><TableOccurrenceReference id="1" name="Orders"/></FieldReference></Chunk><Chunk type="FieldRef"><FieldReference id="3" name=""><TableOccurrenceReference id="2" name="Order Customers"/></FieldReference></Chunk></ChunkList></Calculation>
      <ObjectList/>
     </Portal>
    </LayoutObject>
@@ -480,7 +480,8 @@ func TestNativeLayoutExternalPortalKeepsItsFilter(t *testing.T) {
 	if config == nil {
 		t.Fatalf("no portal: %s", encoded)
 	}
-	if config["filter"] != `${Order Customers}::full_name <> "" and ${Order Customers}::region = Orders::region` ||
+	// A field the export names by its id only is kept, by its id.
+	if config["filter"] != `${Order Customers}::full_name <> "" and ${Order Customers}::region = Orders::region and ${Order Customers}::${#3} <> ""` ||
 		config["filter_problem"] != nil {
 		t.Fatalf("portal: %v", config)
 	}

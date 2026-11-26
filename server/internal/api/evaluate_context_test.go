@@ -55,6 +55,27 @@ func TestAPI_EvaluateExternalPortalRowsInTheLayoutsRecord(t *testing.T) {
 	assert.Equal(t, []string{"north", "Ada/Ada", "1", "C-1"}, texts(records[ids["Ada"]]))
 	assert.Equal(t, []string{"north", "Bob/Bob", "1", "C-2"}, texts(records[ids["Bob"]]))
 
+	t.Run("a layout's record or occurrence that is not there", func(t *testing.T) {
+		gone := map[string]interface{}{"expression": "full_name", "record_ids": []string{ids["Ada"]},
+			"context": map[string]string{"occurrence": p.ordersOcc, "record_id": "no-such-order"}}
+		rec := h.do(http.MethodPost, path, token, gone, nil)
+		assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+		gone["context"] = map[string]string{"occurrence": "no such occurrence", "record_id": p.orderIDs["north"]}
+		rec = h.do(http.MethodPost, path, token, gone, nil)
+		assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	})
+
+	t.Run("on a table of this solution named as the other's", func(t *testing.T) {
+		rec := h.do(http.MethodPost, "/api/v1/schemas/tables", p.owner,
+			map[string]string{"display_name": "customers", "custom_name": "customers"}, nil)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		local := map[string]interface{}{"expression": "1", "record_ids": []string{ids["Ada"]}, "occurrence": p.ext,
+			"context": map[string]string{"occurrence": p.ordersOcc, "record_id": p.orderIDs["north"]}}
+		rec = h.do(http.MethodPost, "/api/v1/data/customers/evaluate", p.owner, local, nil)
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), "Occurrence of Another Solution")
+	})
+
 	t.Run("without the layout's record", func(t *testing.T) {
 		rec := h.do(http.MethodPost, path, token, map[string]interface{}{"expression": "full_name", "record_id": ids["Ada"]}, nil)
 		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())

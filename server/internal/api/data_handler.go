@@ -328,6 +328,16 @@ func (h *DataHandler) evaluate(w http.ResponseWriter, r *http.Request, svc *data
 	if occurrence != "" {
 		body.Occurrence = occurrence
 	}
+	// On a table's route, its own solution's records only: an occurrence
+	// of another solution's table with the same name is read through its
+	// occurrence's route.
+	if occurrence == "" && body.Context != nil && strings.TrimSpace(body.Occurrence) != "" {
+		if origin, err := svc.OccurrenceOrigin(r.Context(), body.Occurrence); err == nil && origin.External != nil {
+			telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Occurrence of Another Solution",
+				"the records of an occurrence of another solution's table are evaluated through /api/v1/occurrences/{occurrence}/records/evaluate")
+			return
+		}
+	}
 	if external && body.Context == nil {
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Context Required",
 			"the records of another solution's table are evaluated in the record of the layout they are shown on: give it as the context")
@@ -436,8 +446,10 @@ func writeDataError(w http.ResponseWriter, r *http.Request, fallbackStatus int, 
 		writeForbidden(w, r, err.Error())
 	case errors.Is(err, data.ErrTableNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Not Found", err.Error())
-	case errors.Is(err, data.ErrRecordNotFound):
+	case errors.Is(err, data.ErrRecordNotFound), errors.Is(err, data.ErrContextNotFound):
 		telemetry.WriteProblem(w, r, http.StatusNotFound, "Record Not Found", err.Error())
+	case errors.Is(err, data.ErrOccurrenceNotFound):
+		telemetry.WriteProblem(w, r, http.StatusNotFound, "Table Occurrence Not Found", err.Error())
 	case errors.Is(err, data.ErrInvalidExpression):
 		telemetry.WriteProblem(w, r, http.StatusUnprocessableEntity, "Invalid Expression", err.Error())
 	case errors.Is(err, dataio.ErrSourceTooLarge):

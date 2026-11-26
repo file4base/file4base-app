@@ -254,20 +254,26 @@ func markNamelessFieldReferences(calcNode *xmlNode, text string) string {
 		}
 		occurrence := firstAttr(to, "name", "Name")
 		prefix := occurrence + "::"
-		at := strings.Index(text[cursor:], prefix)
-		if at < 0 {
-			continue
-		}
-		begin := cursor + at
-		start := begin + len(prefix)
-		end := start
-		if strings.HasPrefix(text[start:], "<") {
-			if close := strings.IndexByte(text[start:], '>'); close > 0 {
-				end = start + close + 1
+		// The next reference to the occurrence that names no field: one
+		// that names it is a field the chunks name.
+		begin, end := -1, 0
+		for begin < 0 {
+			at := strings.Index(text[cursor:], prefix)
+			if at < 0 {
+				break
 			}
-		} else if r := []rune(text[start:]); len(r) > 0 && (unicode.IsLetter(r[0]) || unicode.IsDigit(r[0]) || r[0] == '_' || r[0] == '$') {
-			// The text names the field after all.
+			start := cursor + at + len(prefix)
+			if strings.HasPrefix(text[start:], "<") {
+				begin, end = start-len(prefix), start
+				if close := strings.IndexByte(text[start:], '>'); close > 0 {
+					end = start + close + 1
+				}
+			} else if r := []rune(text[start:]); len(r) == 0 || !(unicode.IsLetter(r[0]) || unicode.IsDigit(r[0]) || r[0] == '_' || r[0] == '$') {
+				begin, end = start-len(prefix), start
+			}
 			cursor = start
+		}
+		if begin < 0 {
 			continue
 		}
 		replacement := calc.QuoteName(occurrence) + "::" + calc.QuoteName(nameless)

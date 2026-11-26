@@ -57,14 +57,17 @@ func TestEvaluateExpressions_PortalRowInTheLayoutsRecord(t *testing.T) {
 	insert("badges", map[string]interface{}{"player": "p2", "label": "silver"})
 
 	expressions := []string{
-		`teams::name`,                 // the layout's record
-		`name & "/" & players::name`,  // the row, named alone or through its occurrence
-		`badges::label`,               // through the row
-		`List ( badges::label )`,      // every record related to the row
-		`Count ( players::name )`,     // every row related to the layout's record
-		`players::rating > 6`,         // a portal row's condition
-		`Self = 9`,                    // Self, the row's field
-		`teams::name = "second team"`, // a hide condition of the layout's fields
+		`teams::name`,                        // the layout's record
+		`name & "/" & players::name`,         // the row, named alone or through its occurrence
+		`badges::label`,                      // through the row
+		`List ( badges::label )`,             // every record related to the row
+		`Count ( players::name )`,            // every row related to the layout's record
+		`players::rating > 6`,                // a portal row's condition
+		`Self = 9`,                           // Self, the row's field
+		`teams::name = "second team"`,        // a hide condition of the layout's fields
+		`Count ( badges::label )`,            // totalled through the row
+		`GetNthRecord ( badges::label ; 1 )`, // one record through the row
+		`Sum ( players::rating )`,            // every row, totalled
 	}
 	self := make([]*data.SelfField, len(expressions))
 	self[6] = &data.SelfField{Occurrence: "players", Field: "rating"}
@@ -72,11 +75,23 @@ func TestEvaluateExpressions_PortalRowInTheLayoutsRecord(t *testing.T) {
 
 	got, err := svc.EvaluateExpressionsIn(ctx, "players", playersOcc, p1, expressions, "Text", env)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"second team", "p1/p1", "gold", "gold", "2", "0", "0", "1"}, texts(t, got))
+	assert.Equal(t, []string{"second team", "p1/p1", "gold", "gold", "2", "0", "0", "1", "1", "gold", "14"}, texts(t, got))
 
 	got, err = svc.EvaluateExpressionsIn(ctx, "players", "players", p2, expressions, "Text", env)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"second team", "p2/p2", "silver", "silver", "2", "1", "1", "1"}, texts(t, got))
+	assert.Equal(t, []string{"second team", "p2/p2", "silver", "silver", "2", "1", "1", "1", "1", "silver", "14"}, texts(t, got))
+
+	// No occurrence named is the table's own.
+	got, err = svc.EvaluateExpressionsIn(ctx, "players", "", p1, expressions[:2], "Text", env)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"second team", "p1/p1"}, texts(t, got))
+
+	// A portal of the layout's own occurrence (a self-join): the row is that
+	// occurrence's record.
+	got, err = svc.EvaluateExpressionsIn(ctx, "players", playersOcc, p2, []string{`players::name`, `name`}, "Text",
+		data.EvaluationEnv{Context: &data.ContextRecord{Occurrence: playersOcc, RecordID: p1}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"p2", "p2"}, texts(t, got))
 
 	// Without it, the layout's field is read back from the row through the
 	// relationship: the first team of the city, not the layout's.
@@ -93,7 +108,8 @@ func TestEvaluateExpressions_PortalRowInTheLayoutsRecord(t *testing.T) {
 	assert.True(t, errors.Is(err, data.ErrOccurrenceNotFound), "%v", err)
 	_, err = svc.EvaluateExpressionsIn(ctx, "players", playersOcc, p1, expressions, "Text",
 		data.EvaluationEnv{Context: &data.ContextRecord{Occurrence: teamsOcc, RecordID: "no-such-record"}})
-	assert.True(t, errors.Is(err, data.ErrRecordNotFound), "%v", err)
+	assert.True(t, errors.Is(err, data.ErrContextNotFound), "%v", err)
+	assert.False(t, errors.Is(err, data.ErrRecordNotFound), "not a row gone: %v", err)
 
 	// Every table read must be readable: the layout's, the row's, and the
 	// ones a formula reads through the row.

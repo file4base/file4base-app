@@ -167,21 +167,25 @@ class RelatedContext {
       target.isExternal || fromDatabase != null ? apiClient.forOccurrence(target.occurrence.id) : apiClient;
 
   /// The layout's record a portal's rows are evaluated in: the record in
-  /// hand, seen from the layout's occurrence (the table's own when none is
-  /// named). Null with no record, and on a layout of another solution's
-  /// table, whose portal rows are evaluated on their own.
+  /// hand, seen from the layout's occurrence, named by its id. As where a
+  /// related field is read from, an occurrence the layout names that is not
+  /// one of its table (a default layout names its table's display name) is
+  /// the table's own, named like it. Null with no record, and on a layout
+  /// of another solution's table, whose portal rows are evaluated on their
+  /// own.
   EvaluationContext? get rowContext {
     final id = recordId;
     if (id == null || id.isEmpty || fromDatabase != null) return null;
-    var occurrence = layoutOccurrence;
-    if (occurrence == null || occurrence.isEmpty) {
-      final own = [
-        for (final o in occurrencesById.values)
-          if (!o.isExternal && tablesById[o.baseTableId]?.name == fromTable) o,
-      ];
-      occurrence = (own.where((o) => o.name.toLowerCase() == fromTable.toLowerCase()).firstOrNull ?? own.firstOrNull)?.id;
-    }
-    return occurrence == null ? null : (occurrence: occurrence, recordId: id);
+    final own = [
+      for (final o in occurrencesById.values)
+        if (!o.isExternal && tablesById[o.baseTableId]?.name == fromTable) o,
+    ];
+    final named = layoutOccurrence?.trim().toLowerCase() ?? '';
+    final occurrence = own.where((o) => named.isNotEmpty && o.id == layoutOccurrence).firstOrNull ??
+        own.where((o) => named.isNotEmpty && o.name.toLowerCase() == named).firstOrNull ??
+        own.where((o) => o.name.toLowerCase() == fromTable.toLowerCase()).firstOrNull ??
+        own.firstOrNull;
+    return occurrence == null ? null : (occurrence: occurrence.id, recordId: id);
   }
 
   RelatedContext forRecord(String? recordId, {bool batched = false}) => RelatedContext(
@@ -1023,11 +1027,12 @@ class _PortalViewState extends State<PortalView> {
   /// The conditional formats of the row objects whose calculation is true
   /// on a row, as `<object id>#<index of the rule>`, by read, row and the
   /// row's values: each row drawn is evaluated once for each version of its
-  /// record, the rows drawn together in one request. Until a row's answer
-  /// comes, its last one holds.
+  /// record, the rows drawn together in one request, and for each version
+  /// of the layout's record they are evaluated in. Until a row's answer
+  /// comes, its last one in that record holds.
   final Map<String, Set<String>> _rowTruths = {};
   final Map<String, Set<String>> _lastRowTruths = {};
-  final Map<String, String> _rowQueue = {};
+  final Map<String, ({String rowId, String at})> _rowQueue = {};
   final Set<String> _rowPending = {};
 
   /// What has been typed into that row. It is cleared once the record exists,
@@ -1474,23 +1479,38 @@ class _PortalViewState extends State<PortalView> {
     final rowId = row['id']?.toString() ?? '';
     if (rowId.isEmpty || _rowConditionsList.isEmpty) return const {};
     final values = Object.hashAllUnordered(row.entries.map((e) => Object.hash(e.key, e.value?.toString())));
-    final key = '$_generation|$rowId|$values';
+    final at = '${_rowContextKey()}|$rowId';
+    final key = '$_generation|${widget.related.revision}|$at|$values';
     final known = _rowTruths[key];
     if (known != null) return known;
     if (_rowPending.add(key)) {
       if (_rowQueue.isEmpty) scheduleMicrotask(() => unawaited(_evaluateRows()));
-      _rowQueue[key] = rowId;
+      _rowQueue[key] = (rowId: rowId, at: at);
     }
-    return _lastRowTruths[rowId] ?? _rowHideable;
+    // Another layout record's answer does not hold in this one.
+    return _lastRowTruths[at] ?? _rowHideable;
+  }
+
+  /// Which layout record the rows are evaluated in.
+  String _rowContextKey() {
+    final context = widget.related.rowContext;
+    return context == null ? '' : '${context.occurrence}/${context.recordId}';
   }
 
   /// Evaluates the rows queued, in as few requests as the endpoint allows.
   Future<void> _evaluateRows() async {
-    final queued = Map.of(_rowQueue);
+    // Rows queued in a layout record left since are drawn no more.
+    final context = widget.related.rowContext;
+    final contextKey = _rowContextKey();
+    final queued = {
+      for (final e in _rowQueue.entries)
+        if (e.value.at.startsWith('$contextKey|')) e.key: e.value,
+    };
+    _rowPending.removeAll([for (final key in _rowQueue.keys) if (!queued.containsKey(key)) key]);
     _rowQueue.clear();
     final target = _target;
     final conditions = target == null ? const <(String, String, ConditionSelf?)>[] : _rowConditions(target);
-    final ids = queued.values.toSet().toList();
+    final ids = queued.values.map((q) => q.rowId).toSet().toList();
     final truths = {for (final id in ids) id: <String>{}};
     if (target != null && conditions.isNotEmpty) {
       final client = widget.related.clientFor(target);
@@ -1506,7 +1526,7 @@ class _PortalViewState extends State<PortalView> {
               recordIds: chunkIds,
               occurrence: target.occurrence.id,
               resultType: 'Number',
-              context: widget.related.rowContext,
+              context: context,
             );
             for (final id in chunkIds) {
               for (final (j, result) in (results[id] ?? const <EvaluationModel>[]).indexed) {
@@ -1530,11 +1550,12 @@ class _PortalViewState extends State<PortalView> {
     }
     if (!mounted) return;
     if (_rowTruths.length > 2000) _rowTruths.clear();
+    if (_lastRowTruths.length > 2000) _lastRowTruths.clear();
     setState(() {
       for (final e in queued.entries) {
         _rowPending.remove(e.key);
-        _rowTruths[e.key] = truths[e.value]!;
-        _lastRowTruths[e.value] = truths[e.value]!;
+        _rowTruths[e.key] = truths[e.value.rowId]!;
+        _lastRowTruths[e.value.at] = truths[e.value.rowId]!;
       }
     });
   }

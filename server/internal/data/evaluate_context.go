@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +11,10 @@ import (
 )
 
 // The record a portal's row is evaluated in (see ContextRecord).
+
+// ErrContextNotFound is returned when the layout's record a portal's row is
+// to be evaluated in is not there.
+var ErrContextNotFound = errors.New("the record of the layout is not found")
 
 // evaluatedRecord is the record expressions are evaluated against, and
 // where their related reads start.
@@ -75,7 +80,12 @@ func (r *relatedReader) evaluated(
 	if layout.external != nil {
 		return nil, layout.external.Unsupported("a portal row evaluated on a layout of another solution's table")
 	}
+	// No occurrence named is the table's own, as without a context.
 	portal, ok := graph.named(occurrence)
+	if strings.TrimSpace(occurrence) == "" {
+		portal, err = graph.contextOf(tableName, "")
+		ok = err == nil
+	}
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrOccurrenceNotFound, occurrence)
 	}
@@ -87,9 +97,18 @@ func (r *relatedReader) evaluated(
 	if err := r.checkRead(ctx, layout.table); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNoPermission, err)
 	}
+	// A portal of the layout's own occurrence (a self-join, whose rows are
+	// read through one of its relationships): the row is the current
+	// record of that occurrence, its fields read as its own.
+	if portal.id == layout.id {
+		return r.evaluated(ctx, tableName, portal.id, recordID, nil)
+	}
 	at.from.table, at.from.occurrence, at.from.row = layout.table, layout.id, map[string]interface{}{}
 	if strings.TrimSpace(in.RecordID) != "" {
-		if at.from.row, err = r.s.GetRow(ctx, layout.table, in.RecordID); err != nil {
+		if at.from.row, err = r.s.GetRow(ctx, layout.table, in.RecordID); errors.Is(err, ErrRecordNotFound) {
+			// Not a row gone, which answers nothing: the request's.
+			return nil, fmt.Errorf("%w: %s", ErrContextNotFound, in.RecordID)
+		} else if err != nil {
 			return nil, err
 		}
 	}
@@ -144,42 +163,52 @@ func (g *occurrenceGraph) named(name string) (occurrence, bool) {
 // when the read is not the row's, which is then read from the layout's
 // record; and when the path cannot be resolved, which that read reports.
 func (c *unstoredContext) pinned(target, field string, rc reach) (values []any, handled bool, err error) {
-	rt, k := c.throughPin(target, field, rc)
-	if rt == nil || (k == len(rt.path)-1 && rc == reachAll) {
+	rest, ok := c.fromPin(target, field, rc, false)
+	if !ok || (len(rest.path) == 0 && rc == reachAll) {
 		return nil, false, nil
-	}
-	rest := &route{path: rt.path[k+1:], plans: rt.plans[k+1:], columns: rt.columns[k+1:], end: rt.end, reach: rc,
-		totals: rt.totals}
-	if len(rest.path) > 1 {
-		rest.reach = reachAll
 	}
 	values, err = c.reader.readAlong(c.ctx, rest, c.pin.row, rc)
 	return values, true, err
 }
 
-// throughPin is the route from the layout's occurrence to target, and the
-// index of its step that reaches the pinned row's occurrence; nil when
-// there is no pinned row, the route cannot be resolved or does not reach it.
-func (c *unstoredContext) throughPin(target, field string, rc reach) (*route, int) {
-	if c.pin == nil {
-		return nil, -1
+// beyondPin is, for a read of field of target that goes through the pinned
+// row to an occurrence past it, the rest of its route, from the row: those
+// records are the ones related to the row, not to the layout's record. nil
+// when the read does not go past the row.
+func (c *unstoredContext) beyondPin(target, field string, rc reach, totals bool) *route {
+	rest, ok := c.fromPin(target, field, rc, totals)
+	if !ok || len(rest.path) == 0 {
+		return nil
 	}
-	rt, err := c.reader.route(c.ctx, routeKey{c.table, c.occurrence, target, field, rc, false})
+	return rest
+}
+
+// fromPin is the rest, from the pinned row, of the route from the layout's
+// occurrence to target, when it reaches the row's occurrence: what follows
+// the row, empty for the row's own occurrence. ok is false when there is no
+// pinned row, the route cannot be resolved (the read from the layout's
+// record reports it) or does not reach the row. The whole route was
+// resolved, and so every table it crosses checked readable.
+func (c *unstoredContext) fromPin(target, field string, rc reach, totals bool) (*route, bool) {
+	if c.pin == nil {
+		return nil, false
+	}
+	rt, err := c.reader.route(c.ctx, routeKey{c.table, c.occurrence, target, field, rc, totals})
 	if err != nil {
-		return nil, -1
+		return nil, false
 	}
 	k := slices.IndexFunc(rt.path, func(h hop) bool { return h.to.OccurrenceID == c.pin.occurrence })
 	if k < 0 {
-		return nil, -1
+		return nil, false
 	}
-	return rt, k
-}
-
-// beyondPin reports whether a read of field of target goes through the
-// pinned row to an occurrence past it: its records are then the ones
-// related to the row, read every one with Related, not totalled nor read
-// one by one from the layout's record.
-func (c *unstoredContext) beyondPin(target, field string) bool {
-	rt, k := c.throughPin(target, field, reachAll)
-	return rt != nil && k < len(rt.path)-1
+	rest := &route{path: rt.path[k+1:], plans: rt.plans[k+1:], columns: rt.columns[k+1:], end: rt.end, reach: rc,
+		totals: totals}
+	if rc.n < 0 {
+		rest.reach.present = rt.end.field
+	}
+	// As resolveRoute: across several, every record is read.
+	if len(rest.path) > 1 {
+		rest.reach = reachAll
+	}
+	return rest, true
 }
