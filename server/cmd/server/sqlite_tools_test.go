@@ -27,8 +27,8 @@ func TestSQLiteTool_BackupThenRestore(t *testing.T) {
 	backup := filepath.Join(t.TempDir(), "sales.backup")
 	require.NoError(t, sqliteTool(ctx, []string{"sqlite-backup", "sales", backup}))
 	assert.Error(t, sqliteTool(ctx, []string{"sqlite-backup", "sales", backup}), "an existing backup is not replaced")
-	require.NoError(t, sqliteTool(ctx, []string{"sqlite-restore", backup, "sales_copy"}))
-	assert.ErrorIs(t, sqliteTool(ctx, []string{"sqlite-restore", backup, "sales"}), dbal.ErrDatabaseExists)
+	require.NoError(t, sqliteTool(ctx, []string{"sqlite-restore", backup, "Sales_Copy"}), "a name is the lower-case database")
+	assert.ErrorIs(t, sqliteTool(ctx, []string{"sqlite-restore", backup, "SALES"}), dbal.ErrDatabaseExists)
 	assert.Error(t, sqliteTool(ctx, []string{"sqlite-backup", "../sales", backup + "2"}))
 	assert.Error(t, sqliteTool(ctx, []string{"sqlite-restore", backup, "../escape"}))
 

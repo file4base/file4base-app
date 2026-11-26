@@ -3,7 +3,9 @@ package dbal
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"sync"
@@ -25,6 +27,8 @@ import (
 //   - regexp gives the REGEXP operator (dbal.NumericPattern) RE2 semantics.
 //   - f4b_lines is the lines of a text, without the empty ones, as a JSON
 //     array for json_each: a multi-key match field.
+//   - stddev_samp is PostgreSQL's aggregate, which SQLite lacks: the
+//     standard deviation a summary field computes.
 //   - The F4B collation orders text as a sort in a calculation does
 //     (calc.CompareText); sorts use it, comparisons do not.
 const (
@@ -37,6 +41,11 @@ func init() {
 	sqliteDriver.MustRegisterDeterministicScalarFunction("upper", 1, mapTextArg(unicode.ToUpper))
 	sqliteDriver.MustRegisterDeterministicScalarFunction("regexp", 2, sqliteRegexp)
 	sqliteDriver.MustRegisterDeterministicScalarFunction("f4b_lines", 1, sqliteLines)
+	sqliteDriver.MustRegisterFunction("stddev_samp", &sqlite.FunctionImpl{
+		NArgs:         1,
+		Deterministic: true,
+		MakeAggregate: func(sqlite.FunctionContext) (sqlite.AggregateFunction, error) { return &stddevSamp{}, nil },
+	})
 	if err := sqliteDriver.RegisterCollationUtf8(SQLiteSortCollation, sortCollation); err != nil {
 		panic(err)
 	}
@@ -120,6 +129,44 @@ func sqliteLines(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, 
 	}
 	return string(out), nil
 }
+
+// stddevSamp is the sample standard deviation of the numbers stepped
+// through, by Welford's method; NULL, and a text, are left out, and it is
+// NULL for fewer than two numbers, as on PostgreSQL.
+type stddevSamp struct {
+	n         int64
+	mean, sum float64 // sum of the squared differences from the mean
+}
+
+func (a *stddevSamp) Step(_ *sqlite.FunctionContext, args []driver.Value) error {
+	var x float64
+	switch v := args[0].(type) {
+	case int64:
+		x = float64(v)
+	case float64:
+		x = v
+	default:
+		return nil
+	}
+	a.n++
+	d := x - a.mean
+	a.mean += d / float64(a.n)
+	a.sum += d * (x - a.mean)
+	return nil
+}
+
+func (a *stddevSamp) WindowInverse(*sqlite.FunctionContext, []driver.Value) error {
+	return errors.New("stddev_samp is not a window function")
+}
+
+func (a *stddevSamp) WindowValue(*sqlite.FunctionContext) (driver.Value, error) {
+	if a.n < 2 {
+		return nil, nil
+	}
+	return math.Sqrt(a.sum / float64(a.n-1)), nil
+}
+
+func (a *stddevSamp) Final(*sqlite.FunctionContext) {}
 
 func textOf(v driver.Value) string {
 	switch t := v.(type) {
@@ -209,10 +256,34 @@ func SQLiteTypeCheck(column, declType string) string {
 	switch strings.ToUpper(declType) {
 	case "NUMERIC":
 		return fmt.Sprintf("CHECK (typeof(%s) IN ('integer', 'real', 'null'))", column)
-	case "DATE", "TIMESTAMP":
-		return fmt.Sprintf("CHECK (%[1]s IS NULL OR (typeof(%[1]s) = 'text' AND julianday(%[1]s) IS NOT NULL))", column)
+	case "DATE":
+		// date() reads more than a date ("13:00") and moves a day that is
+		// not in the calendar ("2026-02-30" is 2 March): the text must be
+		// the day date() gives back.
+		return fmt.Sprintf("CHECK (%[1]s IS NULL OR (typeof(%[1]s) = 'text' AND date(%[1]s) IS %[1]s))", column)
+	case "TIMESTAMP":
+		// A day of the calendar, then a time: the text bound timestamps
+		// are stored as (UTC, "2026-01-02 03:04:05+00:00").
+		return fmt.Sprintf("CHECK (%[1]s IS NULL OR (typeof(%[1]s) = 'text' AND date(%[1]s) IS substr(%[1]s, 1, 10) AND substr(%[1]s, 11, 1) = ' '))", column)
 	case "BOOLEAN":
 		return fmt.Sprintf("CHECK (%[1]s IS NULL OR %[1]s IN (0, 1))", column)
 	}
 	return ""
+}
+
+// sqliteRetypeValue is the value a type change copies into a column of
+// declType from expr: a date or a timestamp written as a client may write
+// one ("2026-03-04T12:34:00Z") becomes the text that type is stored as, so
+// a find for that day or instant still matches it. A text that names no day
+// of the calendar is copied as it is, for the column's check to refuse.
+func sqliteRetypeValue(expr, declType string) string {
+	validDay := fmt.Sprintf("date(substr(%[1]s, 1, 10)) IS substr(%[1]s, 1, 10)", expr)
+	switch strings.ToUpper(declType) {
+	case "DATE":
+		return fmt.Sprintf("(CASE WHEN %[2]s THEN date(%[1]s) ELSE %[1]s END)", expr, validDay)
+	case "TIMESTAMP":
+		return fmt.Sprintf("(CASE WHEN %[2]s AND julianday(%[1]s) IS NOT NULL "+
+			"THEN rtrim(rtrim(strftime('%%Y-%%m-%%d %%H:%%M:%%f', %[1]s), '0'), '.') || '+00:00' ELSE %[1]s END)", expr, validDay)
+	}
+	return expr
 }

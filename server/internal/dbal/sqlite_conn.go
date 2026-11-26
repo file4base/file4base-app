@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -113,7 +114,13 @@ func SQLitePath(dsn string) (string, error) {
 // openSQLite opens the pool of a database file that exists, and checks that
 // it is in WAL mode, converting a database that is not (a copy taken with
 // VACUUM INTO is in rollback-journal mode until it is converted).
+//
+// The file's own filesystem is checked, not only its directory's: a file
+// can be mounted on its own, from a filesystem the directory is not on.
 func openSQLite(ctx context.Context, path string) (*sql.DB, error) {
+	if err := CheckSQLiteStorage(path); err != nil {
+		return nil, err
+	}
 	db := sql.OpenDB(newSQLiteConnector(path))
 	if err := ensureWAL(ctx, db); err != nil {
 		_ = db.Close()
@@ -183,12 +190,19 @@ func (c *sqliteConnector) Connect(context.Context) (driver.Conn, error) {
 var writerQueues sync.Map
 
 func writerQueue(path string) chan struct{} {
-	key := path
-	if abs, err := filepath.Abs(path); err == nil {
-		key = abs
-	}
-	q, _ := writerQueues.LoadOrStore(key, make(chan struct{}, 1))
+	q, _ := writerQueues.LoadOrStore(writerQueueKey(path), make(chan struct{}, 1))
 	return q.(chan struct{})
+}
+
+// forgetWriterQueue drops the queue of a file that is being removed, so the
+// map does not grow with every temporary file and dropped database.
+func forgetWriterQueue(path string) { writerQueues.Delete(writerQueueKey(path)) }
+
+func writerQueueKey(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 func (c *sqliteConnector) Driver() driver.Driver { return sqliteDriver }
@@ -212,6 +226,7 @@ type sqliteConn struct {
 	holding bool
 	inTx    bool
 	ended   bool
+	bad     bool // its state is unknown: never reused (discard)
 }
 
 var (
@@ -237,7 +252,7 @@ func (c *sqliteConn) PrepareContext(ctx context.Context, query string) (driver.S
 	if err != nil {
 		return nil, c.afterError(err)
 	}
-	return &sqliteStmt{c: c, inner: stmt}, nil
+	return &sqliteStmt{c: c, inner: stmt, query: query}, nil
 }
 
 func (c *sqliteConn) Close() error {
@@ -270,18 +285,41 @@ func (c *sqliteConn) acquireWriter(ctx context.Context) error {
 	}
 }
 
-// statementWriter takes the writer lock for a statement run outside a
-// transaction: it is a transaction of its own, and Exec is how File4Base
-// writes, so it waits its turn as a transaction does. Within a transaction
-// the lock is already held.
-func (c *sqliteConn) statementWriter(ctx context.Context) (release func(), err error) {
-	if c.inTx || c.holding {
+// statementWriter takes the writer lock for a statement that writes, run
+// outside a transaction: it is a transaction of its own, so it waits its
+// turn as a transaction does. Within a transaction the lock is already
+// held.
+func (c *sqliteConn) statementWriter(ctx context.Context, query string, exec bool) (release func(), err error) {
+	if c.inTx || c.holding || !writesDatabase(query, exec) {
 		return func() {}, nil
 	}
 	if err := c.acquireWriter(ctx); err != nil {
 		return nil, err
 	}
 	return c.releaseWriter, nil
+}
+
+// writesDatabase tells whether a statement run outside a transaction writes
+// to the database. Exec is how File4Base writes, so a statement run with it
+// does, but VACUUM INTO, which reads a snapshot and writes another file: a
+// backup must not hold the writers up for as long as it takes. A query
+// writes when it is an INSERT, UPDATE, DELETE or REPLACE (with RETURNING).
+func writesDatabase(query string, exec bool) bool {
+	words := strings.Fields(strings.TrimLeft(query, " \t\r\n("))
+	if len(words) == 0 {
+		return exec
+	}
+	first := strings.ToUpper(words[0])
+	if exec {
+		// VACUUM [schema] INTO file
+		into := func(w string) bool { return strings.EqualFold(w, "INTO") }
+		return first != "VACUUM" || !slices.ContainsFunc(words[1:min(3, len(words))], into)
+	}
+	switch first {
+	case "INSERT", "UPDATE", "DELETE", "REPLACE":
+		return true
+	}
+	return false
 }
 
 func (c *sqliteConn) releaseWriter() {
@@ -314,7 +352,7 @@ func (c *sqliteConn) ExecContext(ctx context.Context, query string, args []drive
 	if err := c.refuseIfEnded(); err != nil {
 		return nil, err
 	}
-	release, err := c.statementWriter(ctx)
+	release, err := c.statementWriter(ctx, query, true)
 	if err != nil {
 		return nil, err
 	}
@@ -335,11 +373,18 @@ func (c *sqliteConn) QueryContext(ctx context.Context, query string, args []driv
 	if err := c.refuseIfEnded(); err != nil {
 		return nil, err
 	}
+	release, err := c.statementWriter(ctx, query, false)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := c.inner.(driver.QueryerContext).QueryContext(ctx, query, args)
 	if err != nil {
+		release()
 		return nil, c.afterError(err)
 	}
-	return newSQLiteRows(c, rows), nil
+	r := newSQLiteRows(c, rows)
+	r.release = release
+	return r, nil
 }
 
 func (c *sqliteConn) Ping(ctx context.Context) error {
@@ -347,11 +392,14 @@ func (c *sqliteConn) Ping(ctx context.Context) error {
 }
 
 func (c *sqliteConn) ResetSession(ctx context.Context) error {
+	if c.bad {
+		return driver.ErrBadConn
+	}
 	return c.inner.(driver.SessionResetter).ResetSession(ctx)
 }
 
 func (c *sqliteConn) IsValid() bool {
-	return c.inner.(driver.Validator).IsValid()
+	return !c.bad && c.inner.(driver.Validator).IsValid()
 }
 
 func (c *sqliteConn) refuseIfEnded() error {
@@ -450,7 +498,19 @@ func (c *sqliteConn) columnDDL(ctx context.Context, query string) (bool, error) 
 // new type (the new column's SQLiteTypeCheck refuses it). The column moves to the end of the table, which nothing reads:
 // every statement names its columns. Dropping the old column rewrites every
 // record of the table, holding the writer lock meanwhile.
+//
+// A NOT NULL column is refused: SQLite cannot give the new column the
+// constraint on a table that has records, and the change would drop it.
 func (c *sqliteConn) alterSQLiteColumnType(ctx context.Context, table, column, newType string) error {
+	required, err := c.queryInt(ctx, `SELECT COUNT(*) FROM temp.pragma_table_info($1) WHERE name = $2 AND "notnull"`,
+		driver.NamedValue{Ordinal: 1, Value: unquoteSQLite(table)}, driver.NamedValue{Ordinal: 2, Value: unquoteSQLite(column)})
+	if err != nil {
+		return err
+	}
+	if required > 0 {
+		return fmt.Errorf("cannot change %s.%s to %s on SQLite: the column is NOT NULL, which the change would drop; make it optional first",
+			unquoteSQLite(table), unquoteSQLite(column), newType)
+	}
 	temp := `"` + strings.ReplaceAll(unquoteSQLite(column)+"$retype", `"`, `""`) + `"`
 	add := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, temp, newType)
 	if check := SQLiteTypeCheck(temp, newType); check != "" {
@@ -459,7 +519,8 @@ func (c *sqliteConn) alterSQLiteColumnType(ctx context.Context, table, column, n
 	if err := c.exec(ctx, add); err != nil {
 		return err
 	}
-	if err := c.exec(ctx, fmt.Sprintf("UPDATE %s SET %s = NULLIF(%s, '')", table, temp, column)); err != nil {
+	value := sqliteRetypeValue(fmt.Sprintf("NULLIF(%s, '')", column), newType)
+	if err := c.exec(ctx, fmt.Sprintf("UPDATE %s SET %s = %s", table, temp, value)); err != nil {
 		return fmt.Errorf("cannot change %s.%s to %s: a value cannot be read as %s: %w",
 			unquoteSQLite(table), unquoteSQLite(column), newType, newType, err)
 	}
@@ -485,7 +546,7 @@ func (c *sqliteConn) alterSQLiteColumnType(ctx context.Context, table, column, n
 // column, and returns the statements that made them.
 func (c *sqliteConn) dropColumnIndexes(ctx context.Context, table, column string) ([]string, error) {
 	rows, err := c.inner.(driver.QueryerContext).QueryContext(ctx,
-		`SELECT DISTINCT m.name, m.sql FROM sqlite_schema AS m, pragma_index_xinfo(m.name) AS x `+
+		`SELECT DISTINCT m.name, m.sql FROM sqlite_schema AS m, temp.pragma_index_xinfo(m.name) AS x `+
 			`WHERE m.type = 'index' AND m.tbl_name = $1 AND m.sql IS NOT NULL AND x.name = $2`,
 		[]driver.NamedValue{{Ordinal: 1, Value: unquoteSQLite(table)}, {Ordinal: 2, Value: unquoteSQLite(column)}})
 	if err != nil {
@@ -514,17 +575,46 @@ func (c *sqliteConn) dropColumnIndexes(ctx context.Context, table, column string
 }
 
 // inSavepoint runs fn's statements as one: released when fn succeeds, rolled
-// back when it fails.
+// back when it fails. Outside a transaction the savepoint is the
+// transaction, so it is ended whatever happens to ctx: one left open would
+// hold what the connection's next user writes, uncommitted. When it cannot
+// be ended, the connection is discarded, which rolls it back; it is never
+// released after a failed rollback, which would commit half the change.
 func (c *sqliteConn) inSavepoint(ctx context.Context, fn func() error) error {
 	if err := c.exec(ctx, "SAVEPOINT f4b_ddl"); err != nil {
 		return err
 	}
-	if err := fn(); err != nil {
-		_ = c.exec(context.Background(), "ROLLBACK TO f4b_ddl")
-		_ = c.exec(context.Background(), "RELEASE f4b_ddl")
-		return err
+	end := context.WithoutCancel(ctx)
+	err := fn()
+	if err == nil {
+		beforeSavepointRelease()
+		if err = c.exec(end, "RELEASE f4b_ddl"); err == nil {
+			return nil
+		}
 	}
-	return c.exec(ctx, "RELEASE f4b_ddl")
+	if rbErr := c.exec(end, "ROLLBACK TO f4b_ddl"); rbErr != nil {
+		c.discard()
+		return fmt.Errorf("%w (rolling the change back failed: %v)", err, rbErr)
+	}
+	if relErr := c.exec(end, "RELEASE f4b_ddl"); relErr != nil {
+		c.discard()
+		return fmt.Errorf("%w (ending the rolled back change failed: %v)", err, relErr)
+	}
+	return err
+}
+
+// beforeSavepointRelease lets a test act between a column change and the
+// release of its savepoint.
+var beforeSavepointRelease = func() {}
+
+// discard marks the connection as one the pool must close rather than hand
+// out again, and the transaction it is in, if any, as one that cannot
+// commit.
+func (c *sqliteConn) discard() {
+	c.bad = true
+	if c.inTx {
+		c.ended = true
+	}
 }
 
 func (c *sqliteConn) exec(ctx context.Context, query string) error {
@@ -547,7 +637,7 @@ func (c *sqliteConn) queryInt(ctx context.Context, query string, args ...driver.
 }
 
 func (c *sqliteConn) columnExists(ctx context.Context, table, column string) (bool, error) {
-	n, err := c.queryInt(ctx, `SELECT COUNT(*) FROM pragma_table_info($1) WHERE name = $2`,
+	n, err := c.queryInt(ctx, `SELECT COUNT(*) FROM temp.pragma_table_info($1) WHERE name = $2`,
 		driver.NamedValue{Ordinal: 1, Value: unquoteSQLite(table)}, driver.NamedValue{Ordinal: 2, Value: unquoteSQLite(column)})
 	return n > 0, err
 }
@@ -574,7 +664,7 @@ func (t *sqliteTx) Commit() error {
 
 func (t *sqliteTx) Rollback() error {
 	defer t.done()
-	if t.c.ended {
+	if t.c.ended && !t.c.bad {
 		return nil // SQLite already rolled it back
 	}
 	return t.inner.Rollback()
@@ -588,6 +678,7 @@ func (t *sqliteTx) done() {
 type sqliteStmt struct {
 	c     *sqliteConn
 	inner driver.Stmt
+	query string
 }
 
 var (
@@ -610,7 +701,7 @@ func (s *sqliteStmt) ExecContext(ctx context.Context, args []driver.NamedValue) 
 	if err := s.c.refuseIfEnded(); err != nil {
 		return nil, err
 	}
-	release, err := s.c.statementWriter(ctx)
+	release, err := s.c.statementWriter(ctx, s.query, true)
 	if err != nil {
 		return nil, err
 	}
@@ -626,11 +717,18 @@ func (s *sqliteStmt) QueryContext(ctx context.Context, args []driver.NamedValue)
 	if err := s.c.refuseIfEnded(); err != nil {
 		return nil, err
 	}
+	release, err := s.c.statementWriter(ctx, s.query, false)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.inner.(driver.StmtQueryContext).QueryContext(ctx, args)
 	if err != nil {
+		release()
 		return nil, s.c.afterError(err)
 	}
-	return newSQLiteRows(s.c, rows), nil
+	r := newSQLiteRows(s.c, rows)
+	r.release = release
+	return r, nil
 }
 
 func namedValues(args []driver.Value) []driver.NamedValue {
@@ -647,6 +745,7 @@ type sqliteRows struct {
 	c         *sqliteConn
 	inner     driver.Rows
 	decltypes []string
+	release   func() // gives back the writer lock a writing query took
 }
 
 func newSQLiteRows(c *sqliteConn, inner driver.Rows) *sqliteRows {
@@ -661,7 +760,14 @@ func newSQLiteRows(c *sqliteConn, inner driver.Rows) *sqliteRows {
 }
 
 func (r *sqliteRows) Columns() []string { return r.inner.Columns() }
-func (r *sqliteRows) Close() error      { return r.inner.Close() }
+func (r *sqliteRows) Close() error {
+	err := r.inner.Close()
+	if r.release != nil {
+		r.release()
+		r.release = nil
+	}
+	return err
+}
 
 func (r *sqliteRows) ColumnTypeDatabaseTypeName(index int) string {
 	if index < len(r.decltypes) {

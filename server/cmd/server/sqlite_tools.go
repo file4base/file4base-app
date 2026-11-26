@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/file4base/file4base-app/server/internal/dbal"
 )
@@ -44,6 +45,9 @@ func sqliteTool(ctx context.Context, args []string) error {
 		return err
 	}
 	databaseFile := func(name string) (string, error) {
+		// A database name is lower case, as the server creates, lists and
+		// drops it.
+		name = strings.ToLower(name)
 		if !dbal.IsValidDatabaseName(name) || dbal.IsProtectedDatabase(name) {
 			return "", fmt.Errorf("invalid database name %q", name)
 		}

@@ -3,13 +3,14 @@ package dbal
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 )
 
 // On SQLite the "server" is a directory and each solution database is the
@@ -73,7 +74,7 @@ var AllowUnsafeSQLiteStorage = false
 // from corruption. A local filesystem, such as a Docker named volume, is the
 // supported storage.
 func CheckSQLiteStorage(dir string) error {
-	fs, unsafe := sqliteFilesystem(dir)
+	fs, unsafe := filesystemOf(dir)
 	if !unsafe {
 		return nil
 	}
@@ -91,7 +92,10 @@ var sqliteWarn = func(err error) { fmt.Fprintln(os.Stderr, "WARNING:", err) }
 
 // SQLiteFilesystem names the filesystem a directory is on ("" when it is
 // unknown) and whether SQLite databases are refused there.
-func SQLiteFilesystem(dir string) (string, bool) { return sqliteFilesystem(dir) }
+func SQLiteFilesystem(dir string) (string, bool) { return filesystemOf(dir) }
+
+// filesystemOf is sqliteFilesystem; a test can stand in for the mounts.
+var filesystemOf = sqliteFilesystem
 
 // listSQLiteDatabases lists the solution databases of a data directory.
 func listSQLiteDatabases(dir string) ([]string, error) {
@@ -105,7 +109,9 @@ func listSQLiteDatabases(dir string) ([]string, error) {
 		if !ok || !entry.Type().IsRegular() {
 			continue
 		}
-		if IsProtectedDatabase(name) || !validDatabaseName.MatchString(name) {
+		// A name is lower case, as CreateDatabase makes it: a file named otherwise
+		// was not made by File4Base and is no database of it.
+		if IsProtectedDatabase(name) || !validDatabaseName.MatchString(name) || name != strings.ToLower(name) {
 			continue
 		}
 		result = append(result, name)
@@ -115,57 +121,99 @@ func listSQLiteDatabases(dir string) ([]string, error) {
 }
 
 // CreateSQLiteDatabase creates an empty database file in WAL mode. It
-// returns ErrDatabaseExists when the file is already there, and leaves no
-// file behind when it fails.
-func CreateSQLiteDatabase(ctx context.Context, path string) (err error) {
+// returns ErrDatabaseExists when the file is already there. The database is
+// made and synced under a temporary name, then published under its own
+// (publishSQLiteFile), so a crash never leaves an empty file under the
+// name, which would list as a database and refuse a new attempt.
+func CreateSQLiteDatabase(ctx context.Context, path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return ErrDatabaseExists
+	}
 	if err := CheckSQLiteStorage(filepath.Dir(path)); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	tmp, err := exclusiveTempFile(path, "create")
 	if err != nil {
+		return err
+	}
+	defer removeSQLiteFiles(tmp)
+	db, err := openSQLite(ctx, tmp)
+	if err != nil {
+		return err
+	}
+	// An empty file has no header until the first write; the journal mode is
+	// persistent only once it is written.
+	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 0"); err != nil {
+		_ = db.Close()
+		return err
+	}
+	if err := db.Close(); err != nil {
+		return err
+	}
+	return publishSQLiteFile(tmp, path)
+}
+
+// exclusiveTempFile creates an empty file, readable by its owner only, next
+// to path, whose name no database or backup has.
+func exclusiveTempFile(path, purpose string) (string, error) {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"."+purpose+"-*")
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+// publishSQLiteFile syncs a closed database file and gives it the name
+// dest, which must not exist; tmp keeps its own name until it is removed.
+// A link refuses to replace a file, where a rename would. A -wal, -shm or
+// -journal file already next to dest is refused: SQLite would read it as
+// the new database's own, and replay what a dropped or crashed database had
+// written into it.
+func publishSQLiteFile(tmp, dest string) error {
+	if err := syncFile(tmp); err != nil {
+		return err
+	}
+	if side := sqliteSidecar(dest); side != "" {
+		return fmt.Errorf("%s is left from an earlier database of that name: move it away first", side)
+	}
+	if err := os.Link(tmp, dest); err != nil {
 		if errors.Is(err, os.ErrExist) {
 			return ErrDatabaseExists
 		}
 		return err
 	}
-	_ = f.Close()
-	defer func() {
-		if err != nil {
-			removeSQLiteFiles(path)
+	return syncDir(filepath.Dir(dest))
+}
+
+// sqliteSidecar is a file SQLite keeps next to the database path, when one
+// is there.
+func sqliteSidecar(path string) string {
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Lstat(path + suffix); err == nil {
+			return path + suffix
 		}
-	}()
-	db, err := openSQLite(ctx, path)
-	if err != nil {
-		return err
 	}
-	defer db.Close()
-	// An empty file has no header until the first write; the journal mode is
-	// persistent only once it is written.
-	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 0"); err != nil {
-		return err
-	}
-	return syncDir(filepath.Dir(path))
+	return ""
 }
 
 // removeSQLiteFiles deletes a database file and the files SQLite keeps next
-// to it.
+// to it, the database file last: while it is there, no database of the same
+// name can be created (CreateSQLiteDatabase links, which fails), so none
+// can lose its own -wal to this removal.
 func removeSQLiteFiles(path string) error {
+	forgetWriterQueue(path)
 	var firstErr error
-	for _, suffix := range []string{"", "-wal", "-shm", "-journal"} {
+	for _, suffix := range []string{"-wal", "-shm", "-journal", ""} {
 		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
-}
-
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
 }
 
 // BackupSQLite writes a consistent copy of a live database to dest, which
@@ -178,22 +226,26 @@ func BackupSQLite(ctx context.Context, db *sql.DB, dest string) error {
 	if _, err := os.Lstat(dest); err == nil {
 		return fmt.Errorf("backup %s: %w", dest, os.ErrExist)
 	}
-	tmp := fmt.Sprintf("%s.tmp-%d", dest, time.Now().UnixNano())
+	// VACUUM INTO writes into an empty file that exists; this one is the
+	// owner's only, as the database is, whatever the umask.
+	tmp, err := exclusiveTempFile(dest, "backup")
+	if err != nil {
+		return fmt.Errorf("backup: %w", err)
+	}
 	defer removeSQLiteFiles(tmp)
 	if _, err := db.ExecContext(ctx, "VACUUM INTO $1", tmp); err != nil {
 		return fmt.Errorf("backup: %w", err)
 	}
-	if err := quickCheckFile(ctx, tmp); err != nil {
+	if err := checkSQLiteBackup(ctx, tmp); err != nil {
 		return fmt.Errorf("backup check: %w", err)
 	}
-	if err := syncFile(tmp); err != nil {
-		return err
-	}
-	// link refuses to replace a file, where rename would.
-	if err := os.Link(tmp, dest); err != nil {
+	if err := publishSQLiteFile(tmp, dest); err != nil {
+		if errors.Is(err, ErrDatabaseExists) {
+			err = os.ErrExist
+		}
 		return fmt.Errorf("backup publish: %w", err)
 	}
-	return syncDir(filepath.Dir(dest))
+	return nil
 }
 
 // RestoreSQLiteDatabase makes a backup the database file dest, which must
@@ -206,12 +258,18 @@ func RestoreSQLiteDatabase(ctx context.Context, backup, dest string) (err error)
 	if err := CheckSQLiteStorage(filepath.Dir(dest)); err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.restore-%d", dest, time.Now().UnixNano())
+	if side := sqliteSidecar(backup); side != "" {
+		return fmt.Errorf("restore: %s is next to the backup: a backup is the single file sqlite-backup writes, and a copy of a live database without its WAL may miss what was committed last", side)
+	}
+	tmp, err := exclusiveTempFile(dest, "restore")
+	if err != nil {
+		return err
+	}
 	defer removeSQLiteFiles(tmp)
 	if err := copyFile(backup, tmp); err != nil {
 		return err
 	}
-	if err := quickCheckFile(ctx, tmp); err != nil {
+	if err := checkSQLiteBackup(ctx, tmp); err != nil {
 		return fmt.Errorf("restore check: %w", err)
 	}
 	db, err := openSQLite(ctx, tmp) // sets WAL
@@ -225,16 +283,37 @@ func RestoreSQLiteDatabase(ctx context.Context, backup, dest string) (err error)
 	if err := db.Close(); err != nil {
 		return err
 	}
-	if err := syncFile(tmp); err != nil {
+	return publishSQLiteFile(tmp, dest)
+}
+
+// checkSQLiteBackup checks that a file is a whole SQLite database: its
+// header, the size the header gives, and quick_check. SQLite reads an empty
+// or truncated file as a database of its own, which quick_check passes.
+func checkSQLiteBackup(ctx context.Context, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
 		return err
 	}
-	if err := os.Link(tmp, dest); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			return ErrDatabaseExists
-		}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
 		return err
 	}
-	return syncDir(filepath.Dir(dest))
+	var h [100]byte
+	if _, err := io.ReadFull(f, h[:]); err != nil || string(h[:16]) != "SQLite format 3\x00" {
+		return fmt.Errorf("%s is not a SQLite database", path)
+	}
+	pageSize := int64(binary.BigEndian.Uint16(h[16:18]))
+	if pageSize == 1 {
+		pageSize = 65536
+	}
+	pages := int64(binary.BigEndian.Uint32(h[28:32]))
+	// The header's page count holds when it was written with the change it
+	// counts (the version-valid-for number equals the change counter).
+	if pages == 0 || string(h[24:28]) != string(h[92:96]) || info.Size() < pages*pageSize {
+		return fmt.Errorf("%s is incomplete: %d bytes for a database of %d pages of %d bytes", path, info.Size(), pages, pageSize)
+	}
+	return quickCheckFile(ctx, path)
 }
 
 func quickCheckFile(ctx context.Context, path string) error {
@@ -269,7 +348,8 @@ func copyFile(src, dst string) (err error) {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// dst is the empty file exclusiveTempFile made.
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return err
 	}

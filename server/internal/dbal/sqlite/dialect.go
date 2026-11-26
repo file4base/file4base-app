@@ -100,15 +100,14 @@ func (d *SQLiteDialect) BuildCreateTableSQL(def dbal.TableDefinition) (string, e
 	), nil
 }
 
-// BuildAddColumnSQL adds a column. SQLite cannot add a NOT NULL column
-// without a default; a CHECK refuses NULL instead, and like PostgreSQL's NOT
-// NULL it refuses to be added to a table that already has records.
+// BuildAddColumnSQL adds a column. Like PostgreSQL, SQLite adds a NOT NULL
+// column without a default to an empty table only.
 func (d *SQLiteDialect) BuildAddColumnSQL(tableName string, col dbal.ColumnDefinition) (string, error) {
 	column := d.QuoteIdentifier(col.Name)
 	clause := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s",
 		d.QuoteIdentifier(tableName), column, d.MapType(col.Type))
 	if !col.IsNullable {
-		clause += fmt.Sprintf(" CHECK (%s IS NOT NULL)", column)
+		clause += " NOT NULL"
 	}
 	if check := dbal.SQLiteTypeCheck(column, d.MapType(col.Type)); check != "" {
 		clause += " " + check
@@ -142,11 +141,14 @@ func (d *SQLiteDialect) CaseInsensitiveLike(expr, placeholder string) string {
 	return fmt.Sprintf("LOWER(%s) LIKE LOWER(%s) ESCAPE '\\'", d.CastToText(expr), placeholder)
 }
 
-// NumericValue uses the REGEXP operator, which calls the regexp() function
-// File4Base registers on every connection.
+// NumericValue is a stored number as it is, and a text that reads as one
+// converted: the REGEXP operator calls the regexp() function File4Base
+// registers on every connection. A number is not converted through its
+// text, which SQLite writes in exponent form for some ("1.0e-06").
 func (d *SQLiteDialect) NumericValue(expr string) string {
 	text := d.CastToText(expr)
-	return fmt.Sprintf("(CASE WHEN %s REGEXP '%s' THEN CAST(%s AS NUMERIC) ELSE NULL END)", text, dbal.NumericPattern, text)
+	return fmt.Sprintf("(CASE WHEN typeof(%s) IN ('integer', 'real') THEN %s WHEN %s REGEXP '%s' THEN CAST(%s AS NUMERIC) ELSE NULL END)",
+		expr, expr, text, dbal.NumericPattern, text)
 }
 
 // BuildDropColumnSQL drops a column. SQLite has no DROP COLUMN IF EXISTS; the

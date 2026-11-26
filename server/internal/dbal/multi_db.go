@@ -172,9 +172,15 @@ func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (Da
 	if dbName == "" {
 		dbName = m.defaultDBName
 	}
-	if m.sqliteDir() != nil && !validDatabaseName.MatchString(dbName) {
-		// A name is a file name there: nothing but a valid name may reach it.
-		return nil, fmt.Errorf("invalid database name: %q", dbName)
+	if m.sqliteDir() != nil {
+		if !validDatabaseName.MatchString(dbName) {
+			// A name is a file name there: nothing but a valid name may reach it.
+			return nil, fmt.Errorf("invalid database name: %q", dbName)
+		}
+		// Names are lower case, as CreateDatabase and DropDatabase make
+		// them: on a case-sensitive file system "Sales" would otherwise be
+		// another file than the "sales" a drop removes.
+		dbName = strings.ToLower(dbName)
 	}
 
 	m.mu.RLock()
@@ -327,6 +333,9 @@ func (m *MultiDatabaseManager) CreateDatabase(ctx context.Context, dbName string
 		if err := checkSQLiteDir(dir.dir); err != nil {
 			return err
 		}
+		// Creating, dropping and opening a file take turns (DropDatabase).
+		m.mu.Lock()
+		defer m.mu.Unlock()
 		return CreateSQLiteDatabase(ctx, dir.forDatabase(dbName))
 	}
 
@@ -391,16 +400,20 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 		_ = d.Close()
 		delete(m.drivers, dbName)
 	}
-	m.mu.Unlock()
-
 	if dir := m.sqliteDir(); dir != nil {
-		// Like DROP DATABASE IF EXISTS. A connection another manager still
-		// holds keeps reading the deleted file until it is closed.
+		// Like DROP DATABASE IF EXISTS. The lock is held until the files are
+		// gone, so this manager neither opens the database again nor creates
+		// one of the same name meanwhile. A connection still in use (a
+		// transaction under way when the pool was closed, or one of another
+		// manager) keeps the open files of the deleted database until it is
+		// closed, never the new database's.
+		defer m.mu.Unlock()
 		if err := removeSQLiteFiles(dir.forDatabase(dbName)); err != nil {
 			return fmt.Errorf("failed dropping database %s: %w", dbName, err)
 		}
 		return syncDir(dir.dir)
 	}
+	m.mu.Unlock()
 
 	// Connect through the administrative database to execute DROP DATABASE
 	adminDriver, err := m.GetDriver(ctx, m.defaultDBName)

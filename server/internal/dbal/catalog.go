@@ -11,7 +11,7 @@ func CatalogColumnsSQL(engine EngineType) string {
 	case EngineSQLite:
 		return `(SELECT m.name AS table_name, p.name AS column_name, ` +
 			`CASE WHEN p."notnull" THEN 'NO' ELSE 'YES' END AS is_nullable, p.dflt_value AS column_default ` +
-			`FROM sqlite_schema AS m JOIN pragma_table_info(m.name) AS p ` +
+			`FROM sqlite_schema AS m JOIN temp.pragma_table_info(m.name) AS p ` +
 			`WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite\_%' ESCAPE '\')`
 	case EngineMariaDB:
 		return `(SELECT table_name, column_name, is_nullable, column_default FROM information_schema.columns WHERE table_schema = DATABASE())`

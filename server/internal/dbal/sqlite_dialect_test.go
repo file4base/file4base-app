@@ -37,8 +37,8 @@ func TestSQLiteDialect_ColumnChanges(t *testing.T) {
 	d := sqlite.New()
 	add, err := d.BuildAddColumnSQL("customers", dbal.ColumnDefinition{Name: "due", Type: dbal.FieldTypeDate, IsNullable: false})
 	require.NoError(t, err)
-	assert.Equal(t, `ALTER TABLE "customers" ADD COLUMN "due" DATE CHECK ("due" IS NOT NULL) `+
-		`CHECK ("due" IS NULL OR (typeof("due") = 'text' AND julianday("due") IS NOT NULL));`, add)
+	assert.Equal(t, `ALTER TABLE "customers" ADD COLUMN "due" DATE NOT NULL `+
+		`CHECK ("due" IS NULL OR (typeof("due") = 'text' AND date("due") IS "due"));`, add)
 	drop, err := d.BuildDropColumnSQL("customers", "due")
 	require.NoError(t, err)
 	assert.Equal(t, `ALTER TABLE "customers" DROP COLUMN IF EXISTS "due";`, drop)
@@ -68,6 +68,9 @@ func TestSQLite_ManagerIsADirectory(t *testing.T) {
 	assert.ErrorIs(t, m.CreateDatabase(ctx, "sales"), dbal.ErrDatabaseExists)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "bad-name.sqlite"), nil, 0o600))
+	// A name is lower case: a mixed-case file is no database, and a mixed-case
+	// name is the lower-case database, the one a drop of that name removes.
+	require.NoError(t, dbal.CreateSQLiteDatabase(ctx, filepath.Join(dir, "Other.sqlite")))
 	names, err := m.ListDatabases(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"sales"}, names)
@@ -80,6 +83,11 @@ func TestSQLite_ManagerIsADirectory(t *testing.T) {
 	d, err := m.DriverFor(ctx, "sales")
 	require.NoError(t, err)
 	assert.Equal(t, dbal.EngineSQLite, d.Dialect().Engine())
+	mixed, err := m.GetDriver(ctx, "Sales")
+	require.NoError(t, err)
+	assert.Same(t, d, mixed, "Sales is the sales database")
+	_, err = m.GetDriver(ctx, "Other")
+	assert.Error(t, err, "Other.sqlite is not the database other")
 	_, err = m.DriverFor(ctx, "nothere")
 	assert.Error(t, err)
 	_, statErr := os.Stat(filepath.Join(dir, "nothere"+dbal.SQLiteFileExtension))
