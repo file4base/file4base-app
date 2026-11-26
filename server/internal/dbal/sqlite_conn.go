@@ -168,12 +168,31 @@ type sqliteConnector struct {
 	// file is the database file the pool was opened on. A connection that
 	// finds another file under the path (the database was dropped and one
 	// of the same name created while it was being opened) is refused.
+	// held keeps the file open while the pool is: a file system reuses the
+	// inode of a removed file once nothing holds it, and the new file would
+	// then pass for the old one.
 	file os.FileInfo
+	held *os.File
 }
 
 func newSQLiteConnector(path string) *sqliteConnector {
-	file, _ := os.Stat(path)
-	return &sqliteConnector{dsn: sqliteDSN(path), writer: writerQueue(path), path: path, file: file}
+	c := &sqliteConnector{dsn: sqliteDSN(path), writer: writerQueue(path), path: path}
+	if held, err := os.Open(path); err == nil {
+		if file, err := held.Stat(); err == nil {
+			c.file, c.held = file, held
+		} else {
+			_ = held.Close()
+		}
+	}
+	return c
+}
+
+// Close lets the file go; sql.DB.Close calls it.
+func (c *sqliteConnector) Close() error {
+	if c.held == nil {
+		return nil
+	}
+	return c.held.Close()
 }
 
 // SQLiteConnector is the connector of an existing database file, with the
