@@ -158,6 +158,11 @@ func RunWith(
 		Fields:              def.DestinationFields(),
 	}
 
+	if def.Mode == schema.TransferModeReplaceFoundSet && opts.DestinationFoundSet == nil {
+		return report, fmt.Errorf("%w: %q replaces field contents in the destination's found set, "+
+			"and the run names none; it never defaults to the whole table", ErrTransfer, def.Name)
+	}
+
 	source := readingAs(sourceDriver, sourceAccount)
 	destination := readingAs(destinationDriver, destinationAccount)
 	if destinationAccount.Name != "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"unicode"
@@ -52,6 +53,8 @@ type ImportStepView struct {
 
 	// Problem says why the step cannot be given a transfer as it is.
 	Problem string `json:"problem,omitempty"`
+	// EnabledInFileMaker: confirming the transfer enables the step.
+	EnabledInFileMaker bool `json:"enabled_in_filemaker"`
 }
 
 func (h *TransferHandler) registerImportStepRoutes(r chi.Router) {
@@ -87,6 +90,7 @@ func (h *TransferHandler) ListImportSteps(w http.ResponseWriter, r *http.Request
 			StepID: st.StepID, ScriptID: st.ScriptID, ScriptName: st.ScriptName, StepIndex: st.StepIndex,
 			SourceFile: step.SourceFile, TargetTable: step.TargetTable, Method: step.Method,
 			AddRemain: step.AddRemaining, Mappings: []ImportStepMapping{},
+			EnabledInFileMaker: st.EnabledInFileMaker,
 		}
 		for _, m := range step.Maps {
 			v.Mappings = append(v.Mappings, ImportStepMapping{Position: m.Position, TargetField: m.Target.Name, Match: m.Match})
@@ -97,27 +101,17 @@ func (h *TransferHandler) ListImportSteps(w http.ResponseWriter, r *http.Request
 		if step.AutoEnterFields == nil && step.AutoEnter {
 			v.AutoEnter = []string{"*"}
 		}
-		v.SuggestedDatabase, v.SuggestedBy = suggestSource(st.Params, step.SourceFile, local, refs, databases)
-		switch {
-		case len(step.Maps) == 0:
-			v.Problem = "the step imports no field"
-		case step.TargetTable == "":
-			v.Problem = "the step names no target table"
-		case step.Method == "update" && !hasMatch(step.Maps):
-			v.Problem = "the step updates matching records and matches on no field"
+		if step.PathIsCalculation {
+			// The file is chosen as the script runs: the name saved is
+			// only one of the files it may be, so none is suggested.
+			v.SourceFile = ""
+		} else {
+			v.SuggestedDatabase, v.SuggestedBy = suggestSource(st.Params, step.SourceFile, local, refs, databases)
 		}
+		v.Problem = step.Problem()
 		views = append(views, v)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"steps": views})
-}
-
-func hasMatch(maps []transfer.ImportStepMap) bool {
-	for _, m := range maps {
-		if m.Match {
-			return true
-		}
-	}
-	return false
 }
 
 // suggestSource names the solution a step's source file most likely became.
@@ -191,6 +185,8 @@ type sourceSolution struct {
 	database string // "" for this solution
 	tables   map[string]transfer.PositionedTable
 	names    []string
+	// hidden is how many tables the account may not export from.
+	hidden int
 }
 
 // openSource opens the solution steps import from: this one, or another one
@@ -216,7 +212,8 @@ func (h *TransferHandler) openSource(
 		}
 		src.end, src.database = end, end.database
 	}
-	tables, err := schema.NewService(src.end.driver).ListTables(r.Context())
+	svc := schema.NewService(src.end.driver)
+	tables, err := svc.ListTables(r.Context())
 	if err != nil {
 		telemetry.WriteInternalError(w, r, err)
 		return nil, false
@@ -227,13 +224,19 @@ func (h *TransferHandler) openSource(
 		err := transfer.CheckEnd(r.Context(), src.end.driver, account, src.end.database,
 			schema.CapabilityBulkExport, t.Name, false)
 		if errors.Is(err, transfer.ErrNotAuthorized) {
+			src.hidden++
 			continue
 		}
 		if err != nil {
 			telemetry.WriteInternalError(w, r, err)
 			return nil, false
 		}
-		src.tables[t.Name] = transfer.PositionTable(t)
+		deleted, err := svc.DeletedSourceFieldIDs(r.Context(), t.Name)
+		if err != nil {
+			telemetry.WriteInternalError(w, r, err)
+			return nil, false
+		}
+		src.tables[t.Name] = transfer.PositionTable(t, deleted...)
 		src.names = append(src.names, t.Name)
 	}
 	return &src, true
@@ -272,6 +275,12 @@ func (h *TransferHandler) InferImportSteps(w http.ResponseWriter, r *http.Reques
 			positioned = append(positioned, src.tables[name])
 		}
 		out.Inference = transfer.InferSource(step, target, positioned, exclude)
+		if src.hidden > 0 {
+			// Uniqueness is not claimed over tables nobody could weigh.
+			out.TablesHidden = src.hidden
+			out.Reason += fmt.Sprintf("; %d table(s) of the solution were left out, as this account may not "+
+				"export from them", src.hidden)
+		}
 		resp.Steps = append(resp.Steps, out)
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -339,27 +348,39 @@ func (h *TransferHandler) ConfirmImportSteps(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	svc := schemaService(r)
 	local := currentSession(r).Database
-	sources := map[string]*sourceSolution{}
-	outcomes := make([]ImportStepOutcome, 0, len(body.Items))
-	for _, item := range body.Items {
-		key := strings.ToLower(strings.TrimSpace(item.SourceDatabase))
+	// Every source is opened, and its session checked, before any transfer
+	// is created: a refusal then leaves every step as it was, rather than
+	// hiding the ones already created.
+	sourceKey := func(database string) string {
+		key := strings.TrimSpace(database)
 		if strings.EqualFold(key, local) {
-			key = ""
+			return ""
 		}
-		src, opened := sources[key]
-		if !opened {
-			token := ""
+		return key
+	}
+	sources := map[string]*sourceSolution{}
+	for _, item := range body.Items {
+		key := sourceKey(item.SourceDatabase)
+		if _, opened := sources[key]; opened {
+			continue
+		}
+		token := body.PeerTokens[key]
+		if token == "" {
 			for db, t := range body.PeerTokens {
 				if strings.EqualFold(db, key) {
 					token = t
 				}
 			}
-			var ok bool
-			if src, ok = h.openSource(w, r, key, token); !ok {
-				return // the refusal says which solution and why
-			}
-			sources[key] = src
 		}
+		src, ok := h.openSource(w, r, key, token)
+		if !ok {
+			return // the refusal says which solution and why
+		}
+		sources[key] = src
+	}
+	outcomes := make([]ImportStepOutcome, 0, len(body.Items))
+	for _, item := range body.Items {
+		src := sources[sourceKey(item.SourceDatabase)]
 		out := ImportStepOutcome{StepID: item.StepID}
 		def, err := h.confirmImportStep(ctx, svc, src, item, currentSession(r).UserID, local)
 		if err != nil {

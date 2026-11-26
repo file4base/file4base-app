@@ -76,11 +76,11 @@ type ImportOptions struct {
 	AddUnmatched bool `json:"add_unmatched"`
 
 	// FoundSet is the records of the table the import works on, in the
-	// order they are in: the ones ImportReplaceFoundSet replaces, and the
-	// only ones ImportUpdateMatching matches, every matching one being
-	// updated as FileMaker updates them. Nil is the whole table, in
-	// creation order; an update then updates the first record that
-	// matches. Ids no longer in the table are passed over.
+	// order they are in: the ones ImportReplaceFoundSet replaces (it is
+	// required), and the only ones ImportUpdateMatching matches, every
+	// matching one being updated as FileMaker updates them. Nil, an update
+	// updates the first record of the table that matches. An id no longer
+	// in the table keeps its place, and its row is passed over.
 	FoundSet []string `json:"found_set,omitempty"`
 
 	// ReturnRecordIDs lists in the report the records the import added or
@@ -280,6 +280,11 @@ func (s *Service) checkImportOptions(
 		return nil, fmt.Errorf("%w: replacing the found set in order matches records by position, not on fields",
 			ErrImport)
 	}
+	if opts.Action == ImportReplaceFoundSet && opts.FoundSet == nil {
+		// Never the whole table by default: what is overwritten is what
+		// the found set holds, and nobody said what it holds.
+		return nil, fmt.Errorf("%w: replacing field contents works on a found set, and none was given", ErrImport)
+	}
 
 	written := make([]string, 0, len(opts.Mappings))
 	seen := map[string]bool{}
@@ -392,6 +397,15 @@ func (s *Service) ImportRecords(
 			return nil, err
 		}
 	}
+	usesFoundSet := opts.Action != ImportAdd && (opts.FoundSet != nil || opts.Action == ImportReplaceFoundSet)
+	// The creation order is resolved outside the transaction, which holds
+	// a connection of its own.
+	var order string
+	if usesFoundSet {
+		if order, err = s.creationOrder(ctx, tableName); err != nil {
+			return nil, err
+		}
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -410,14 +424,16 @@ func (s *Service) ImportRecords(
 	// it was taken is passed over rather than written to.
 	var foundSet []string
 	var inFoundSet map[string]bool
-	if opts.Action != ImportAdd && (opts.FoundSet != nil || opts.Action == ImportReplaceFoundSet) {
-		if foundSet, err = s.importFoundSet(ctx, tx, tableName, opts.FoundSet); err != nil {
+	if usesFoundSet {
+		if foundSet, err = s.importFoundSet(ctx, tx, tableName, order, opts.FoundSet); err != nil {
 			return nil, err
 		}
 		if opts.FoundSet != nil {
 			inFoundSet = make(map[string]bool, len(foundSet))
 			for _, id := range foundSet {
-				inFoundSet[id] = true
+				if id != "" {
+					inFoundSet[id] = true
+				}
 			}
 		}
 	}
@@ -506,6 +522,13 @@ func (s *Service) ImportRecords(
 			// update evaluates its formulas over the stored row merged with the
 			// mapped values, so a formula reading a field this row does not
 			// carry sees what the record holds rather than nothing (#92).
+			// A row whose match fields are all empty is neither matched nor
+			// added, even with the rows that match nothing added, as
+			// FileMaker imports it.
+			if allEmpty(record, opts.MatchFields) {
+				report.Skipped++
+				continue
+			}
 			var ids []string
 			if inFoundSet == nil {
 				id, err := findMatchingRecord(ctx, tx, dialect, fields, tableName, opts.MatchFields, record)
@@ -520,8 +543,14 @@ func (s *Service) ImportRecords(
 				if err != nil {
 					return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 				}
+				// Every match the found set holds is updated, in the found
+				// set's order.
+				matched := make(map[string]bool, len(matches))
 				for _, id := range matches {
-					if inFoundSet[id] {
+					matched[id] = true
+				}
+				for _, id := range foundSet {
+					if id != "" && matched[id] {
 						ids = append(ids, id)
 					}
 				}
@@ -532,7 +561,7 @@ func (s *Service) ImportRecords(
 						return nil, err
 					}
 				}
-				report.Updated++
+				report.Updated += len(ids)
 				continue
 			}
 			if !opts.AddUnmatched {
@@ -541,6 +570,12 @@ func (s *Service) ImportRecords(
 			}
 		case ImportReplaceFoundSet:
 			if i < len(foundSet) {
+				if foundSet[i] == "" {
+					// The record in this place is gone: its row is passed
+					// over, and the next row still goes to the next record.
+					report.Skipped++
+					continue
+				}
 				if err := update(rowNumber, foundSet[i], record); err != nil {
 					return nil, err
 				}
@@ -664,6 +699,48 @@ func storedRow(
 	return stored[0], nil
 }
 
+func allEmpty(record map[string]interface{}, fields []string) bool {
+	for _, field := range fields {
+		if value := record[field]; value != nil && fmt.Sprint(value) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// matchClauses are the conditions a record's match fields meet when they
+// hold the row's values, or false when a key is empty. Text is compared
+// whatever its case; a date or a timestamp as the day or the instant it is,
+// a number as the number and a boolean as the boolean the column holds,
+// since none of their texts is the same on two engines (MariaDB writes a
+// number with all its decimals and a boolean as 1).
+func matchClauses(
+	dialect dbal.Dialect, fields fieldSet, matchFields []string, record map[string]interface{},
+) ([]string, []interface{}, bool) {
+	clauses := make([]string, 0, len(matchFields))
+	values := make([]interface{}, 0, len(matchFields))
+	for i, field := range matchFields {
+		value := record[field]
+		if value == nil || fmt.Sprint(value) == "" {
+			return nil, nil, false
+		}
+		column := dialect.QuoteIdentifier(field)
+		switch fields[field] {
+		case dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
+			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
+			values = append(values, dbal.TemporalValue(dialect.Engine(), fields[field], value))
+		case dbal.FieldTypeNumber, dbal.FieldTypeBoolean:
+			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
+			values = append(values, value)
+		default:
+			clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
+				dialect.CastToText(column), dialect.Placeholder(i+1)))
+			values = append(values, fmt.Sprint(value))
+		}
+	}
+	return clauses, values, true
+}
+
 // findMatchingRecord returns the id of the record whose match fields hold the
 // same values as the row, or "" when none does. Text is compared whatever its
 // case; a date or a timestamp is compared as the day or the instant it is, as
@@ -673,25 +750,11 @@ func findMatchingRecord(
 	ctx context.Context, tx execer, dialect dbal.Dialect, fields fieldSet,
 	tableName string, matchFields []string, record map[string]interface{},
 ) (string, error) {
-	clauses := make([]string, 0, len(matchFields))
-	values := make([]interface{}, 0, len(matchFields))
-	for i, field := range matchFields {
-		value := record[field]
-		if value == nil || fmt.Sprint(value) == "" {
-			// An empty key matches nothing, the same rule a relationship
-			// follows (#36).
-			return "", nil
-		}
-		column := dialect.QuoteIdentifier(field)
-		switch fields[field] {
-		case dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
-			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
-			values = append(values, dbal.TemporalValue(dialect.Engine(), fields[field], value))
-		default:
-			clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
-				dialect.CastToText(column), dialect.Placeholder(i+1)))
-			values = append(values, fmt.Sprint(value))
-		}
+	clauses, values, ok := matchClauses(dialect, fields, matchFields, record)
+	if !ok {
+		// An empty key matches nothing, the same rule a relationship
+		// follows (#36).
+		return "", nil
 	}
 
 	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s LIMIT 1",
@@ -716,23 +779,9 @@ func findMatchingRecords(
 	ctx context.Context, tx execer, dialect dbal.Dialect, fields fieldSet,
 	tableName string, matchFields []string, record map[string]interface{},
 ) ([]string, error) {
-	clauses := make([]string, 0, len(matchFields))
-	values := make([]interface{}, 0, len(matchFields))
-	for i, field := range matchFields {
-		value := record[field]
-		if value == nil || fmt.Sprint(value) == "" {
-			return nil, nil // an empty key matches nothing
-		}
-		column := dialect.QuoteIdentifier(field)
-		switch fields[field] {
-		case dbal.FieldTypeDate, dbal.FieldTypeTimestamp:
-			clauses = append(clauses, fmt.Sprintf("%s = %s", column, dialect.Placeholder(i+1)))
-			values = append(values, dbal.TemporalValue(dialect.Engine(), fields[field], value))
-		default:
-			clauses = append(clauses, fmt.Sprintf("LOWER(%s) = LOWER(%s)",
-				dialect.CastToText(column), dialect.Placeholder(i+1)))
-			values = append(values, fmt.Sprint(value))
-		}
+	clauses, values, ok := matchClauses(dialect, fields, matchFields, record)
+	if !ok {
+		return nil, nil // an empty key matches nothing
 	}
 	query := fmt.Sprintf("SELECT %s FROM %s WHERE %s",
 		dialect.QuoteIdentifier("id"), dialect.QuoteIdentifier(tableName),
@@ -753,20 +802,22 @@ func findMatchingRecords(
 	return ids, rows.Err()
 }
 
-// importFoundSet is the found set an import works on, read in its
-// transaction: the ids given that are still in the table, in the order
-// given, or every record of the table in creation order when none are.
-func (s *Service) importFoundSet(ctx context.Context, tx execer, tableName string, given []string) ([]string, error) {
+// importFoundSet is the found set an import works on, read and locked in
+// its transaction, so no record of it is deleted or changed by another
+// writer until the import is done: the ids given, in the order given, an id
+// no longer in the table keeping its place as "", or every record of the
+// table in creation order when none are. order is the table's creation
+// order column, resolved before the transaction began.
+func (s *Service) importFoundSet(
+	ctx context.Context, tx execer, tableName, order string, given []string,
+) ([]string, error) {
 	dialect := s.driver.Dialect()
-	order, err := s.creationOrder(ctx, tableName)
-	if err != nil {
-		return nil, err
-	}
 	query := fmt.Sprintf("SELECT %s FROM %s %s", dialect.QuoteIdentifier("id"),
 		dialect.QuoteIdentifier(tableName), thenBy(dialect, "", order, false))
 	if order != "id" {
 		query = thenBy(dialect, query, "id", false)
 	}
+	query += " FOR UPDATE"
 	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("%w: the found set could not be read: %v", ErrImport, err)
@@ -793,10 +844,14 @@ func (s *Service) importFoundSet(ctx context.Context, tx execer, tableName strin
 	kept := make([]string, 0, len(given))
 	seen := make(map[string]bool, len(given))
 	for _, id := range given {
-		if present[id] && !seen[id] {
-			seen[id] = true
-			kept = append(kept, id)
+		if seen[id] {
+			continue // a record is in a found set once
 		}
+		seen[id] = true
+		if !present[id] {
+			id = ""
+		}
+		kept = append(kept, id)
 	}
 	return kept, nil
 }

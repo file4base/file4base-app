@@ -191,19 +191,28 @@ abstract class DocumentActionHost {
 /// The found set an `Import Records` step works on (#191), as FileMaker's
 /// does: the records it replaces in order, or the only ones it updates when
 /// they match, and the imported records it shows once it is done.
-/// Implemented by the data browser; without it a step works on the whole
-/// table and the window is left as it was.
+/// Implemented by the data browser. Without a window on the destination
+/// table, a replace, or an update converted from FileMaker, stops the
+/// script; an update designed here works on the whole table.
 abstract class ImportRecordsHost {
-  /// The table of the window's layout.
+  /// The table of the window's layout, in this solution; "" when the window
+  /// shows another solution's table, whose records a transfer into this
+  /// solution never writes.
   String get actionImportTable;
+
+  /// Commits the record being edited, as FileMaker does before it imports;
+  /// false when it stays uncommitted (a validation or OnRecordCommit
+  /// refused it).
+  Future<bool> actionCommitBeforeImport();
 
   /// The ids of every record of the found set, in found-set order, records
   /// not read yet included; null when the found set cannot be read.
   Future<List<String>?> actionFoundSetIds();
 
   /// Makes [ids] the found set, unsorted, in that order, as FileMaker shows
-  /// the records an import added or updated.
-  Future<void> actionShowImportedRecords(List<String> ids);
+  /// the records an import added or updated; false when they could not be
+  /// read.
+  Future<bool> actionShowImportedRecords(List<String> ids);
 }
 
 /// Outcome of running a button action. [message] explains why a script
@@ -2352,11 +2361,43 @@ class LayoutActionRunner {
 
     final importHost =
         norm == 'import_records' && host is ImportRecordsHost ? host as ImportRecordsHost : null;
+    final windowTable = importHost?.actionImportTable ?? '';
     final inWindow = importHost != null &&
-        importHost.actionImportTable.toLowerCase() == definition.destination.table.toLowerCase();
+        windowTable.isNotEmpty &&
+        windowTable.toLowerCase() == definition.destination.table.toLowerCase();
+
+    // FileMaker imports into the table of the window's layout, and replaces
+    // or updates that window's found set. Without a window on the
+    // destination table there is no such found set: replacing never widens
+    // to the whole table, and neither does a step converted from FileMaker
+    // that updates. A transfer designed here keeps its own contract, where
+    // updating without a window works on every record.
+    final source = params['import_source'];
+    final converted = source is Map && source['kind'] == 'filemaker';
+    if (norm == 'import_records' &&
+        definition.usesDestinationFoundSet &&
+        !inWindow &&
+        (definition.mode == TransferMode.replaceFoundSet || converted)) {
+      final shown = windowTable.isEmpty ? 'no table of this solution' : windowTable;
+      return LayoutActionResult.stopped(
+          '$label "$name" ${definition.mode == TransferMode.replaceFoundSet ? 'replaces' : 'updates'} '
+          'the found set of ${definition.destination.table}, and the window it runs in shows $shown. '
+          'Go to a layout of ${definition.destination.table} first, as FileMaker imports into the '
+          "current layout's table.");
+    }
 
     final dialog = params['dialog'];
-    if ((dialog == true || dialog?.toString().toLowerCase() == 'true') && _extHost != null) {
+    final withDialog = dialog == true || dialog?.toString().toLowerCase() == 'true';
+    if (withDialog && _extHost == null) {
+      // A script performed without a window of its own cannot ask, and a
+      // transfer the user was to confirm is not run unconfirmed.
+      return LayoutActionResult.stopped(
+          '$label "$name" asks for confirmation (With dialog), and this script has no window to ask in.');
+    }
+    if (importHost != null && !await importHost.actionCommitBeforeImport()) {
+      return LayoutActionResult.stopped('$label "$name": the record being edited could not be committed.');
+    }
+    if (withDialog) {
       final answer = await _extHost!.actionShowDialogEx(
         title: label,
         message: 'Run the transfer "$name"? It reads ${definition.source.label} and writes '
@@ -2419,8 +2460,11 @@ class LayoutActionRunner {
       // as though the records had moved.
       return LayoutActionResult.stopped('$label "$name" was refused: ${report.describeRefusal()}');
     }
-    if (inWindow) {
-      await importHost.actionShowImportedRecords(report.recordIds);
+    if (inWindow && !await importHost.actionShowImportedRecords(report.recordIds)) {
+      // The records were written, but the window still shows the found set
+      // from before: a step after this one would act on the wrong records.
+      return LayoutActionResult.stopped('$label "$name" wrote ${report.added + report.updated} record(s), '
+          'which could not be shown as the found set.');
     }
     return const LayoutActionResult.ok();
   }

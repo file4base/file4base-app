@@ -48,6 +48,10 @@ class _FileGroup {
 class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
   bool _loading = true;
   String? _loadError;
+
+  /// The steps may not be listed by this developer, who cannot create
+  /// transfers either.
+  bool _forbidden = false;
   List<_FileGroup> _groups = const [];
   List<String> _databases = const [];
 
@@ -67,6 +71,12 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
   }
 
   Future<void> _load() async {
+    if (!_loading) {
+      setState(() {
+        _loading = true;
+        _loadError = null;
+      });
+    }
     try {
       final steps = await widget.apiClient.listImportSteps();
       var databases = const <String>[];
@@ -105,7 +115,8 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _loadError = e.toString().replaceFirst('ApiException ', '');
+        _forbidden = e is ApiException && (e.statusCode == 401 || e.statusCode == 403);
+        _loadError = e is ApiException ? e.detail : e.toString();
       });
     }
   }
@@ -163,21 +174,25 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
       });
     } on Object catch (e) {
       if (!mounted) return;
+      // A session the other solution refused is asked for again on Retry.
+      if (e is ApiException && (e.statusCode == 401 || e.statusCode == 403)) _peerTokens.remove(solution);
       setState(() {
         group.inferring = false;
-        group.error = e.toString().replaceFirst('ApiException ', '');
+        group.error = e is ApiException ? e.detail : e.toString();
       });
     }
   }
 
-  /// The steps a bulk confirmation covers: inferred, the inferred table
-  /// still the one picked, and nothing in the way.
+  /// The steps a bulk confirmation covers: inferred over every table of the
+  /// solution, the inferred table still the one picked, and nothing in the
+  /// way.
   List<(ImportStepModel, _FileGroup)> get _unambiguous => [
     for (final g in _groups)
       if (g.solution != null && !g.inferring)
         for (final s in g.steps)
           if (s.problem.isEmpty &&
               (_inference[s.stepId]?.isInferred ?? false) &&
+              _inference[s.stepId]!.tablesHidden == 0 &&
               _picked[s.stepId] == _inference[s.stepId]!.table &&
               !_creating.contains(s.stepId))
             (s, g),
@@ -224,10 +239,17 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
       });
     } on Object catch (e) {
       if (!mounted) return;
+      // Nothing was created: the server checks every session first. One
+      // it refused is asked for again next time.
+      if (e is ApiException && (e.statusCode == 401 || e.statusCode == 403)) {
+        for (final db in tokens.keys) {
+          _peerTokens.remove(db);
+        }
+      }
       setState(() {
         for (final c in choices) {
           _creating.remove(c.stepId);
-          _stepErrors[c.stepId] = e.toString().replaceFirst('ApiException ', '');
+          _stepErrors[c.stepId] = e is ApiException ? e.detail : e.toString();
         }
       });
     }
@@ -236,29 +258,32 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
   Future<void> _confirmUnambiguous() async {
     final items = _unambiguous;
     if (items.isEmpty) return;
+    final high = [
+      for (final i in items)
+        if (_inference[i.$1.stepId]!.confidence == 'high') i,
+    ];
+    final medium = [
+      for (final i in items)
+        if (_inference[i.$1.stepId]!.confidence != 'high') i,
+    ];
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Create ${items.length} transfer${items.length == 1 ? '' : 's'}?'),
         content: SizedBox(
-          width: 520,
+          width: 560,
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Each step below gets a transfer from the table File4Base inferred, by position, and runs '
-                  'it from now on. A step FileMaker had enabled is enabled again; a disabled one stays '
-                  'disabled.',
+                  'Each step below gets a transfer from the table File4Base inferred, reading the source '
+                  'fields paired below by position, and runs it from now on. Check each pairing.',
                 ),
-                const SizedBox(height: 8),
-                for (final (s, g) in items)
-                  Text(
-                    '• ${s.scriptName}, step ${s.stepIndex}: ${g.solution}.${_picked[s.stepId]} → ${s.targetTable} '
-                    '(${_confidenceLabel(_inference[s.stepId]!.confidence)})',
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                if (high.isNotEmpty) ..._dialogSection('High confidence: one table fits by type and names agree', high),
+                if (medium.isNotEmpty)
+                  ..._dialogSection('Medium confidence: one table fits by type, names do not confirm it', medium),
               ],
             ),
           ),
@@ -276,18 +301,66 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
     if (ok == true && mounted) await _create(items);
   }
 
-  static String _confidenceLabel(String c) => switch (c) {
-    'high' => 'high confidence',
-    'medium' => 'medium confidence',
-    _ => 'picked',
-  };
+  List<Widget> _dialogSection(String title, List<(ImportStepModel, _FileGroup)> items) => [
+    const SizedBox(height: 10),
+    Text(title, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12.5)),
+    for (final (s, g) in items)
+      Padding(
+        key: Key('import-steps-confirm-${s.stepId}'),
+        padding: const EdgeInsets.only(top: 6, left: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '• ${s.scriptName}, step ${s.stepIndex}: ${g.solution}.${_picked[s.stepId]} → ${s.targetTable}',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+            Text(
+              '${s.describeMethod()}; ${_inference[s.stepId]!.candidate(_picked[s.stepId])?.describePairs() ?? ''}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            if (s.isDestructive)
+              const Text(
+                'Destructive: overwrites the fields of the found set, record by record, in order.',
+                style: TextStyle(fontSize: 12, color: Colors.redAccent, fontWeight: FontWeight.w600),
+              ),
+            Text(
+              s.enabledInFileMaker
+                  ? 'The step is enabled, as in FileMaker.'
+                  : 'The step stays disabled, as in FileMaker.',
+              style: const TextStyle(fontSize: 11.5, fontStyle: FontStyle.italic),
+            ),
+          ],
+        ),
+      ),
+  ];
 
   @override
   Widget build(BuildContext context) {
     if (_loading) return const SizedBox.shrink();
-    // A developer who may not create transfers is told so by the report;
-    // the panel has nothing to offer them.
-    if (_loadError != null || (_groups.isEmpty && _created == 0)) return const SizedBox.shrink();
+    // A developer who may not list the steps may not create transfers
+    // either: the panel has nothing to offer them.
+    if (_forbidden || (_loadError == null && _groups.isEmpty && _created == 0)) return const SizedBox.shrink();
+    if (_loadError != null) {
+      return Padding(
+        key: const Key('import-steps-load-error'),
+        padding: const EdgeInsets.only(top: 10),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent, size: 16),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'The Import Records steps waiting for a transfer could not be listed, and they stay disabled: '
+                '$_loadError',
+                style: const TextStyle(color: Colors.redAccent, fontSize: 11.5),
+              ),
+            ),
+            TextButton(key: const Key('import-steps-retry'), onPressed: _load, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
     final waiting = _groups.fold<int>(0, (n, g) => n + g.steps.length);
     final unambiguous = _unambiguous.length;
     return Padding(padding: const EdgeInsets.only(top: 10), child: _buildPanel(waiting, unambiguous));
@@ -328,7 +401,10 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
                     ),
                     onPressed: _confirmUnambiguous,
                     icon: const Icon(Icons.done_all, size: 14),
-                    label: Text('Create the $unambiguous inferred...', style: const TextStyle(fontSize: 11.5)),
+                    label: Text(
+                      'Review and create the $unambiguous inferred...',
+                      style: const TextStyle(fontSize: 11.5),
+                    ),
                   ),
               ],
             ),
@@ -461,6 +537,14 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
             ),
             style: const TextStyle(fontSize: 12),
           ),
+          if (s.isDestructive && s.problem.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 2),
+              child: Text(
+                'Destructive: replaces field contents in the found set, record by record, in order.',
+                style: TextStyle(color: Colors.redAccent, fontSize: 11.5),
+              ),
+            ),
           if (s.problem.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -523,10 +607,27 @@ class _MigrationImportStepsPanelState extends State<MigrationImportStepsPanel> {
                 ),
               ],
             ),
+            if (inf.candidate(picked)?.pairs.isNotEmpty ?? false)
+              Text(
+                'Source position → target field: ${inf.candidate(picked)!.describePairs()}',
+                key: Key('import-step-pairs-${s.stepId}'),
+                style: TextStyle(
+                  color: inf.candidate(picked)!.pairs.any((p) => p.deleted || p.missing)
+                      ? Colors.orangeAccent
+                      : Colors.white70,
+                  fontSize: 11.5,
+                ),
+              ),
             if (picked != null && inf.isInferred && picked != inf.table)
               const Text(
                 'Picked by hand: the inferred table is overridden.',
                 style: TextStyle(color: Colors.amberAccent, fontSize: 11),
+              ),
+            if (inf.isInferred && inf.tablesHidden > 0)
+              Text(
+                '${inf.tablesHidden} table(s) of ${g.solution} were not weighed, as the account signed in to it may '
+                'not export from them: confirm this step on its own.',
+                style: const TextStyle(color: Colors.amberAccent, fontSize: 11),
               ),
           ],
           if (error != null)

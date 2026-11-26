@@ -298,6 +298,8 @@ func (s *Service) EnsureSystemTablesWithCredentials(ctx context.Context, initial
 		);`,
 		// The match criteria of a relationship after its first.
 		relationshipPredicatesSQL(ts),
+		// Deleted FileMaker fields (see migrations/010_deleted_source_fields.sql).
+		deletedSourceFieldsSQL,
 		relationshipColumnNamesSQL[0],
 		relationshipColumnNamesSQL[1],
 		`CREATE TABLE IF NOT EXISTS sys_layouts (
@@ -964,13 +966,13 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	}
 
 	// 2. Get column name and check primary key
-	var colName string
+	var colName, sourceFieldID string
 	var isPrimaryKey bool
-	qCol := `SELECT name, is_primary_key FROM sys_columns WHERE id = $1 AND table_id = $2`
+	qCol := `SELECT name, is_primary_key, COALESCE(source_field_id, '') FROM sys_columns WHERE id = $1 AND table_id = $2`
 	if dialect.Engine() == dbal.EngineMariaDB {
-		qCol = `SELECT name, is_primary_key FROM sys_columns WHERE id = ? AND table_id = ?`
+		qCol = `SELECT name, is_primary_key, COALESCE(source_field_id, '') FROM sys_columns WHERE id = ? AND table_id = ?`
 	}
-	if err := db.QueryRowContext(ctx, qCol, columnID, tableID).Scan(&colName, &isPrimaryKey); err != nil {
+	if err := db.QueryRowContext(ctx, qCol, columnID, tableID).Scan(&colName, &isPrimaryKey, &sourceFieldID); err != nil {
 		return fmt.Errorf("column not found: %w", err)
 	}
 
@@ -993,12 +995,23 @@ func (s *Service) DeleteColumn(ctx context.Context, tableID string, columnID str
 	if err := s.ensureRelationshipPredicates(ctx); err != nil {
 		return err
 	}
+	if sourceFieldID != "" {
+		if err := s.ensureDeletedSourceFields(ctx); err != nil {
+			return err
+		}
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+
+	// A migrated field keeps its place among its table's FileMaker fields,
+	// which Import Records steps read by position (#191).
+	if err := s.recordDeletedSourceField(ctx, tx, tableID, sourceFieldID); err != nil {
+		return err
+	}
 
 	// A relationship matching on the field goes with it, whichever of its
 	// criteria names the field: dropping only that criterion would leave a

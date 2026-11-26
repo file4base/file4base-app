@@ -149,7 +149,7 @@ type TransferDefinition struct {
 	// the only fields it applies them to, as FileMaker 2023 and later choose
 	// them field by field (#191).
 	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
-	AutoEnterFields  []string `json:"auto_enter_fields,omitempty"`
+	AutoEnterFields  []string `json:"auto_enter_fields"`
 
 	// CreatedBy is the account that saved it.
 	CreatedBy string `json:"created_by,omitempty"`
@@ -192,7 +192,7 @@ type TransferInput struct {
 	DateOrder   string             `json:"date_order,omitempty"`
 
 	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
-	AutoEnterFields  []string `json:"auto_enter_fields,omitempty"`
+	AutoEnterFields  []string `json:"auto_enter_fields"`
 }
 
 // transferPayload is the part of a definition stored as JSON. The ends are
@@ -209,7 +209,7 @@ type transferPayload struct {
 	DateOrder   string             `json:"date_order"`
 
 	PerformAutoEnter bool     `json:"perform_auto_enter,omitempty"`
-	AutoEnterFields  []string `json:"auto_enter_fields,omitempty"`
+	AutoEnterFields  []string `json:"auto_enter_fields"`
 }
 
 func (s *Service) transferPlaceholder(n int) string {
@@ -323,8 +323,10 @@ func checkTransfer(in TransferInput) (TransferInput, error) {
 		return in, fmt.Errorf("%w: a transfer performs auto-enter on at most %d fields",
 			ErrInvalidTransfer, maxTransferMappings)
 	}
+	// nil is every field's auto-enter; an empty list is no field's, and
+	// stays empty when it is stored.
 	var autoEnter []string
-	if in.AutoEnterFields != nil {
+	if in.AutoEnterFields != nil && in.PerformAutoEnter {
 		autoEnter = make([]string, 0, len(in.AutoEnterFields))
 		seen := map[string]bool{}
 		for _, field := range in.AutoEnterFields {

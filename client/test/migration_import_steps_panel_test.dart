@@ -29,6 +29,7 @@ List<Map<String, dynamic>> _steps() => [
     ],
     'suggested_database': 'ledger',
     'suggested_by': 'database_name',
+    'enabled_in_filemaker': true,
   },
   {
     'step_id': 's-guess',
@@ -57,10 +58,22 @@ List<Map<String, dynamic>> _steps() => [
     ],
     'suggested_database': 'shop',
     'suggested_by': 'this_file',
+    'enabled_in_filemaker': false,
   },
 ];
 
 class _FakeServer {
+  _FakeServer({this.hidden = 0, this.rejectInfers = 0, this.failLists = 0});
+
+  /// Tables of Ledger the signed-in account may not export from.
+  final int hidden;
+
+  /// How many infers against Ledger refuse the session first.
+  int rejectInfers;
+
+  /// How many listings of the steps fail first.
+  int failLists;
+
   final infers = <Map<String, dynamic>>[];
   final confirms = <Map<String, dynamic>>[];
 
@@ -70,6 +83,10 @@ class _FakeServer {
   MockClient get client => MockClient((req) async {
     final path = req.url.path;
     if (path == '/api/v1/transfers/import-steps' && req.method == 'GET') {
+      if (failLists > 0) {
+        failLists--;
+        return http.Response('{"title":"Internal Server Error","detail":"the catalog is busy"}', 500);
+      }
       final done = {
         for (final c in confirms)
           for (final i in c['items'] as List) (i as Map)['step_id'],
@@ -85,6 +102,10 @@ class _FakeServer {
       final body = Map<String, dynamic>.from(jsonDecode(req.body) as Map);
       infers.add(body);
       if (body['source_database'] == 'ledger') {
+        if (rejectInfers > 0) {
+          rejectInfers--;
+          return http.Response('{"title":"Peer Token Rejected","detail":"the session of ledger has ended"}', 403);
+        }
         return _json({
           'source_database': 'ledger',
           'tables': ['days', 'entries'],
@@ -94,8 +115,31 @@ class _FakeServer {
               'table': 'entries',
               'confidence': 'high',
               'reason': 'the only table whose fields fit every position by type; names agree',
+              if (hidden > 0) 'tables_hidden': hidden,
               'candidates': [
-                {'table': 'entries', 'fields': 3, 'types_matched': 2, 'names_matched': 2, 'positions': 2, 'fits': true},
+                {
+                  'table': 'entries',
+                  'fields': 3,
+                  'types_matched': 2,
+                  'names_matched': 2,
+                  'positions': 2,
+                  'fits': true,
+                  'pairs': [
+                    {'position': 1, 'source_field': 'code', 'target_field': 'code', 'match': true},
+                    {'position': 2, 'source_field': 'amount', 'target_field': 'total'},
+                  ],
+                },
+                {
+                  'table': 'days',
+                  'fields': 3,
+                  'types_matched': 1,
+                  'positions': 2,
+                  'deleted_positions': 1,
+                  'pairs': [
+                    {'position': 1, 'source_field': 'label', 'target_field': 'code', 'match': true},
+                    {'position': 2, 'target_field': 'total', 'deleted': true},
+                  ],
+                },
               ],
             },
             {
@@ -119,7 +163,16 @@ class _FakeServer {
             'confidence': 'medium',
             'reason': 'the only table whose fields fit every position by type',
             'candidates': [
-              {'table': 'customers', 'fields': 2, 'types_matched': 1, 'positions': 1, 'fits': true},
+              {
+                'table': 'customers',
+                'fields': 2,
+                'types_matched': 1,
+                'positions': 1,
+                'fits': true,
+                'pairs': [
+                  {'position': 1, 'source_field': 'name', 'target_field': 'note'},
+                ],
+              },
             ],
           },
         ],
@@ -184,6 +237,15 @@ void main() {
     final guess = find.byKey(const Key('import-step-s-guess'));
     expect(find.descendant(of: guess, matching: find.text('Not inferred')), findsOneWidget);
     expect(find.descendant(of: guess, matching: find.textContaining('names do not tell them apart')), findsOneWidget);
+    // The pairing of the picked table is shown on the row.
+    expect(
+      find.descendant(
+        of: pull,
+        matching: find.text('Source position → target field: 1 code → code (match), 2 amount → total'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: self, matching: find.textContaining('Destructive')), findsOneWidget);
     // A step without an inference cannot be created until a table is picked.
     final create = tester.widget<OutlinedButton>(find.byKey(const Key('import-step-create-s-guess')));
     expect(create.onPressed, isNull);
@@ -198,12 +260,39 @@ void main() {
     await tester.tap(find.byKey(const Key('import-steps-create-inferred')));
     await tester.pumpAndSettle();
     expect(find.text('Create 2 transfers?'), findsOneWidget);
-    expect(find.textContaining('Pull ledger, step 2: ledger.entries → orders (high confidence)'), findsOneWidget);
+    // High and medium confidence apart, each step with its method, its
+    // pairing, whether it is enabled, and replace marked destructive.
+    final dialog = find.byType(AlertDialog);
+    final highTitle = tester.getTopLeft(find.textContaining('High confidence:')).dy;
+    final mediumTitle = tester.getTopLeft(find.textContaining('Medium confidence:')).dy;
+    final pullItem = find.byKey(const Key('import-steps-confirm-s-pull'));
+    final selfItem = find.byKey(const Key('import-steps-confirm-s-self'));
+    expect(highTitle < tester.getTopLeft(pullItem).dy, isTrue);
+    expect(tester.getTopLeft(pullItem).dy < mediumTitle, isTrue);
+    expect(mediumTitle < tester.getTopLeft(selfItem).dy, isTrue);
     expect(
-      find.textContaining('Notes from customers, step 1: shop.customers → orders (medium confidence)'),
+      find.descendant(of: pullItem, matching: find.text('• Pull ledger, step 2: ledger.entries → orders')),
       findsOneWidget,
     );
-    expect(find.textContaining('Pull days'), findsOneWidget, reason: 'only on its row, not in the dialog');
+    expect(
+      find.descendant(
+        of: pullItem,
+        matching: find.text(
+          'update matching records on code, adding the others; 1 code → code (match), 2 amount → total',
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: pullItem, matching: find.textContaining('is enabled')), findsOneWidget);
+    expect(find.descendant(of: pullItem, matching: find.textContaining('Destructive')), findsNothing);
+    expect(
+      find.descendant(of: selfItem, matching: find.text('• Notes from customers, step 1: shop.customers → orders')),
+      findsOneWidget,
+    );
+    expect(find.descendant(of: selfItem, matching: find.textContaining('1 name → note')), findsOneWidget);
+    expect(find.descendant(of: selfItem, matching: find.textContaining('Destructive')), findsOneWidget);
+    expect(find.descendant(of: selfItem, matching: find.textContaining('stays disabled')), findsOneWidget);
+    expect(find.descendant(of: dialog, matching: find.textContaining('Pull days')), findsNothing);
 
     // Cancelling creates nothing.
     await tester.tap(find.text('Cancel'));
@@ -250,7 +339,7 @@ void main() {
     // Overriding an inferred step takes it out of the bulk confirmation.
     await tester.tap(find.byKey(const Key('import-step-table-s-pull')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('days').last);
+    await tester.tap(find.textContaining('days — 1/2 types').last);
     await tester.pumpAndSettle();
     expect(find.textContaining('the inferred table is overridden'), findsOneWidget);
     await tester.tap(find.byKey(const Key('import-steps-create-inferred')));
@@ -269,6 +358,57 @@ void main() {
     await tester.pumpAndSettle();
     expect(signedIn, ['ledger', 'archive']);
     expect(server.infers.last['source_database'], 'archive');
+  });
+
+  testWidgets('a picked table shows its pairing, a deleted field included', (tester) async {
+    final server = _FakeServer();
+    await _pump(tester, server);
+    await tester.tap(find.byKey(const Key('import-step-table-s-pull')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('days — 1/2 types').last);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Source position → target field: 1 label → code (match), 2 (deleted field) → total'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('an inference over a list the account could not fully see is confirmed alone', (tester) async {
+    final server = _FakeServer(hidden: 1);
+    await _pump(tester, server);
+    final pull = find.byKey(const Key('import-step-s-pull'));
+    expect(
+      find.descendant(of: pull, matching: find.textContaining('1 table(s) of ledger were not weighed')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('import-steps-create-inferred')));
+    await tester.pumpAndSettle();
+    expect(find.text('Create 1 transfer?'), findsOneWidget);
+    expect(find.byKey(const Key('import-steps-confirm-s-pull')), findsNothing);
+    expect(find.byKey(const Key('import-steps-confirm-s-self')), findsOneWidget);
+  });
+
+  testWidgets('a session the other solution refused is asked for again on Retry', (tester) async {
+    final server = _FakeServer(rejectInfers: 1);
+    final signedIn = await _pump(tester, server);
+    expect(find.text('the session of ledger has ended'), findsOneWidget);
+    expect(find.byKey(const Key('import-step-s-pull')), findsOneWidget);
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(signedIn, ['ledger', 'ledger'], reason: 'the refused token was not sent again');
+    expect(find.text('Inferred, high confidence'), findsOneWidget);
+  });
+
+  testWidgets('a listing that fails is said, and Retry lists again', (tester) async {
+    final server = _FakeServer(failLists: 1);
+    await _pump(tester, server);
+    expect(find.byKey(const Key('import-steps-panel')), findsNothing);
+    expect(find.textContaining('the catalog is busy'), findsOneWidget);
+    expect(find.textContaining('stay disabled'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('import-steps-retry')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('import-steps-panel')), findsOneWidget);
+    expect(find.byKey(const Key('import-steps-load-error')), findsNothing);
   });
 
   testWidgets('shows nothing to a developer who may not list the steps', (tester) async {

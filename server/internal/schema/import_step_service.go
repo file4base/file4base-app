@@ -26,12 +26,37 @@ type AwaitingImportStep struct {
 	// StepIndex is the step's 1-based place in its script.
 	StepIndex int
 	Params    map[string]interface{}
+	// EnabledInFileMaker is whether the step is enabled once its transfer
+	// exists: FileMaker's state, or, for a step migrated before #191, its own.
+	EnabledInFileMaker bool
+}
+
+// awaitsTransfer: a step migrated from an Import Records step that reads a
+// FileMaker file, and that names no transfer yet. A migration before #191
+// saved such steps without awaiting_transfer, and left them enabled.
+func awaitsTransfer(params map[string]interface{}) bool {
+	if params["awaiting_transfer"] == true {
+		return true
+	}
+	source, _ := params["import_source"].(map[string]interface{})
+	kind, _ := source["kind"].(string)
+	name, _ := params["transfer"].(string)
+	return kind == "filemaker" && strings.TrimSpace(name) == ""
+}
+
+// enabledOnceConfirmed: the step is enabled as FileMaker had it; a step
+// migrated before #191 kept that state itself.
+func enabledOnceConfirmed(params map[string]interface{}, current bool) bool {
+	if enabled, saved := params["filemaker_step_enabled"].(bool); saved {
+		return enabled
+	}
+	return current
 }
 
 // ListAwaitingImportSteps reads the Import Records steps that wait for a
 // transfer, by script and place.
 func (s *Service) ListAwaitingImportSteps(ctx context.Context) ([]AwaitingImportStep, error) {
-	q := fmt.Sprintf(`SELECT st.id, st.script_id, sc.name, st.sequence_idx, st.params
+	q := fmt.Sprintf(`SELECT st.id, st.script_id, sc.name, st.sequence_idx, st.params, st.is_enabled
 		FROM sys_script_steps st JOIN sys_scripts sc ON sc.id = st.script_id
 		WHERE st.step_type = %s ORDER BY sc.name, st.sequence_idx`, s.transferPlaceholder(1))
 	rows, err := s.driver.DB().QueryContext(ctx, q, "Import Records")
@@ -43,12 +68,14 @@ func (s *Service) ListAwaitingImportSteps(ctx context.Context) ([]AwaitingImport
 	for rows.Next() {
 		var st AwaitingImportStep
 		var raw sql.NullString
-		if err := rows.Scan(&st.StepID, &st.ScriptID, &st.ScriptName, &st.StepIndex, &raw); err != nil {
+		var current bool
+		if err := rows.Scan(&st.StepID, &st.ScriptID, &st.ScriptName, &st.StepIndex, &raw, &current); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(raw.String), &st.Params); err != nil || st.Params["awaiting_transfer"] != true {
+		if err := json.Unmarshal([]byte(raw.String), &st.Params); err != nil || !awaitsTransfer(st.Params) {
 			continue
 		}
+		st.EnabledInFileMaker = enabledOnceConfirmed(st.Params, current)
 		steps = append(steps, st)
 	}
 	return steps, rows.Err()
@@ -88,16 +115,20 @@ func (s *Service) CreateImportStepTransfer(
 
 	var scriptID string
 	var raw sql.NullString
-	q := fmt.Sprintf(`SELECT script_id, params FROM sys_script_steps WHERE id = %s AND step_type = %s`,
+	var current bool
+	// The step is locked until the transaction ends, so two confirmations
+	// of it cannot both create a transfer: the second finds it no longer
+	// waiting.
+	q := fmt.Sprintf(`SELECT script_id, params, is_enabled FROM sys_script_steps WHERE id = %s AND step_type = %s FOR UPDATE`,
 		s.transferPlaceholder(1), s.transferPlaceholder(2))
-	if err := tx.QueryRowContext(ctx, q, stepID, "Import Records").Scan(&scriptID, &raw); err != nil {
+	if err := tx.QueryRowContext(ctx, q, stepID, "Import Records").Scan(&scriptID, &raw, &current); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("%w: %s", ErrImportStepNotFound, stepID)
 		}
 		return nil, err
 	}
 	var params map[string]interface{}
-	if err := json.Unmarshal([]byte(raw.String), &params); err != nil || params["awaiting_transfer"] != true {
+	if err := json.Unmarshal([]byte(raw.String), &params); err != nil || !awaitsTransfer(params) {
 		return nil, fmt.Errorf("%w: %s", ErrImportStepNotFound, stepID)
 	}
 
@@ -151,7 +182,7 @@ func (s *Service) CreateImportStepTransfer(
 		return nil, fmt.Errorf("failed saving the transfer %q: %w", def.Name, err)
 	}
 
-	enabled, _ := params["filemaker_step_enabled"].(bool)
+	enabled := enabledOnceConfirmed(params, current)
 	params["transfer"] = def.Name
 	delete(params, "awaiting_transfer")
 	delete(params, "migration_note")

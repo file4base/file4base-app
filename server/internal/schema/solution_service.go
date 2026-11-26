@@ -320,7 +320,7 @@ type BundleTransfer struct {
 	DateOrder   string             `msgpack:"date_order"`
 
 	PerformAutoEnter bool     `msgpack:"perform_auto_enter,omitempty"`
-	AutoEnterFields  []string `msgpack:"auto_enter_fields,omitempty"`
+	AutoEnterFields  []string `msgpack:"auto_enter_fields"`
 }
 
 // BundleFileReference carries a named link to another solution (#107). The

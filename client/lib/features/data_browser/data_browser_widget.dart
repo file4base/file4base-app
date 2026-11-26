@@ -5642,9 +5642,17 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       return false;
     }
     final removedId = _records[_currentIndex]['id'];
+    // Omitting from the whole table makes a found set no find describes:
+    // the table's records not read yet are read first, so it holds them.
+    final wholeTable = !_isFoundSet;
+    if (wholeTable && (!await _readWholeFoundSet() || !mounted)) return false;
+    final at = removedId == null ? _currentIndex : _records.indexWhere((r) => r['id'] == removedId);
+    if (at < 0) return false;
     setState(() {
+      if (wholeTable) _foundSetInHand = true;
       if (removedId != null) _omittedIds.add(removedId.toString());
-      _records.removeAt(_currentIndex);
+      _currentIndex = at;
+      _records.removeAt(at);
       _unsortedRecords.removeWhere((r) => r['id'] == removedId);
       if (_currentIndex >= _records.length && _records.isNotEmpty) {
         _currentIndex = _records.length - 1;
@@ -5664,7 +5672,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   }
 
   @override
-  String get actionImportTable => widget.table.name;
+  String get actionImportTable => widget.externalDatabase == null ? widget.table.name : '';
+
+  @override
+  Future<bool> actionCommitBeforeImport() async {
+    if (_records.isEmpty) return true;
+    FocusManager.instance.primaryFocus?.unfocus();
+    return _saveCurrentRecord();
+  }
 
   @override
   Future<List<String>?> actionFoundSetIds() async {
@@ -5673,14 +5688,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
   }
 
   @override
-  Future<void> actionShowImportedRecords(List<String> ids) async {
+  Future<bool> actionShowImportedRecords(List<String> ids) async {
     final List<Map<String, dynamic>> all;
     try {
       all = await widget.apiClient.listAllRows(widget.table.name);
     } on Exception {
-      return; // the found set on screen stays as it was
+      return false;
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     final byId = {for (final r in all) r['id']?.toString(): r};
     final imported = [for (final id in ids) ?byId[id]];
     setState(() {
@@ -5695,6 +5710,7 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     });
     _rebuildFieldControllers();
     _recordChanged();
+    return true;
   }
 
   @override

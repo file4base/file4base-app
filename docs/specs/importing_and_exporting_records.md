@@ -80,13 +80,19 @@ dialog asks, and the error names the order it tried.
 | **Replace found set** | FileMaker's *Replace field contents in found set, in order* (`#191`): the n-th row is written into the n-th record of the found set. Rows left once it runs out are added or passed over, as asked. It matches on nothing, so match fields are refused. |
 
 The import works on the **found set** it is given (`found_set`, record ids in
-order), or on the whole table in creation order. Given a found set, *Update
+order). *Replace found set* needs one and is refused without it, never widened
+to the whole table; the other methods work on the whole table without one.
+Given a found set, *Update
 matching* updates every record of it that matches a row, and only those, as
 FileMaker does; without one it updates the first matching record of the table.
+A row whose match fields are all empty is neither matched nor added, as
+FileMaker imports it. A number or boolean key is compared as the number or
+boolean the column holds.
 *Perform auto-enter options* can be limited to some fields
 (`auto_enter_fields`), as FileMaker chooses them field by field in the import
 field map. `return_record_ids` answers the records added or updated, which
-FileMaker makes the found set afterwards.
+FileMaker makes the found set afterwards; the import endpoint answers them as
+`record_ids`.
 
 A column with no field is left out. Two columns cannot go to the same field,
 and a column cannot be sent to a **calculation** field, whose formula owns its

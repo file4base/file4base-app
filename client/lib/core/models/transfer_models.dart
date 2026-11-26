@@ -313,6 +313,7 @@ class ImportStepModel {
     this.suggestedDatabase = '',
     this.suggestedBy = '',
     this.problem = '',
+    this.enabledInFileMaker = false,
   });
 
   factory ImportStepModel.fromJson(Map<String, dynamic> json) => ImportStepModel(
@@ -333,6 +334,7 @@ class ImportStepModel {
         suggestedDatabase: json['suggested_database'] as String? ?? '',
         suggestedBy: json['suggested_by'] as String? ?? '',
         problem: json['problem'] as String? ?? '',
+        enabledInFileMaker: json['enabled_in_filemaker'] as bool? ?? false,
       );
 
   final String stepId;
@@ -362,6 +364,13 @@ class ImportStepModel {
 
   /// Why no transfer can be created for the step as it is.
   final String problem;
+
+  /// Whether confirming its transfer enables the step: FileMaker had it
+  /// enabled.
+  final bool enabledInFileMaker;
+
+  /// Replacing overwrites the fields of records already there.
+  bool get isDestructive => method == 'replace';
 
   /// "update matching on code, adding the others", for the review.
   String describeMethod() {
@@ -402,6 +411,8 @@ class ImportSourceCandidate {
     this.namesMatched = 0,
     this.positions = 0,
     this.fits = false,
+    this.deletedPositions = 0,
+    this.pairs = const [],
   });
 
   factory ImportSourceCandidate.fromJson(Map<String, dynamic> json) => ImportSourceCandidate(
@@ -411,6 +422,10 @@ class ImportSourceCandidate {
         namesMatched: (json['names_matched'] as num?)?.toInt() ?? 0,
         positions: (json['positions'] as num?)?.toInt() ?? 0,
         fits: json['fits'] as bool? ?? false,
+        deletedPositions: (json['deleted_positions'] as num?)?.toInt() ?? 0,
+        pairs: ((json['pairs'] as List<dynamic>?) ?? const [])
+            .map((item) => ImportPositionPair.fromJson(item as Map<String, dynamic>))
+            .toList(),
       );
 
   final String table;
@@ -422,8 +437,61 @@ class ImportSourceCandidate {
   /// Whether the table's fields fit every position the step reads by type.
   final bool fits;
 
+  /// How many positions the step reads hold a field deleted since the
+  /// migration.
+  final int deletedPositions;
+
+  /// What each position the step reads would be with this table.
+  final List<ImportPositionPair> pairs;
+
   /// "3/3 types, 2 names" for the picker.
   String describe() => '$typesMatched/$positions types, $namesMatched names, $fields fields';
+
+  /// "1 code → code (match), 2 amount → total", the pairing a person
+  /// confirms with the table.
+  String describePairs() => pairs.map((p) => p.describe()).join(', ');
+}
+
+/// One source position a step reads, the field of the table it is, and the
+/// target field it goes to.
+class ImportPositionPair {
+  const ImportPositionPair({
+    required this.position,
+    this.sourceField = '',
+    this.targetField = '',
+    this.match = false,
+    this.deleted = false,
+    this.missing = false,
+  });
+
+  factory ImportPositionPair.fromJson(Map<String, dynamic> json) => ImportPositionPair(
+        position: (json['position'] as num?)?.toInt() ?? 0,
+        sourceField: json['source_field'] as String? ?? '',
+        targetField: json['target_field'] as String? ?? '',
+        match: json['match'] as bool? ?? false,
+        deleted: json['deleted'] as bool? ?? false,
+        missing: json['missing'] as bool? ?? false,
+      );
+
+  final int position;
+  final String sourceField;
+  final String targetField;
+  final bool match;
+
+  /// The field at this position was deleted since the migration.
+  final bool deleted;
+
+  /// The table has no field at this position.
+  final bool missing;
+
+  String describe() {
+    final source = deleted
+        ? '(deleted field)'
+        : missing
+            ? '(no field)'
+            : sourceField;
+    return '$position $source → $targetField${match ? ' (match)' : ''}';
+  }
 }
 
 /// What a source solution says about one step: the inferred table, when one
@@ -436,6 +504,7 @@ class ImportStepInference {
     this.reason = '',
     this.candidates = const [],
     this.error = '',
+    this.tablesHidden = 0,
   });
 
   factory ImportStepInference.fromJson(Map<String, dynamic> json) => ImportStepInference(
@@ -447,6 +516,7 @@ class ImportStepInference {
             .map((item) => ImportSourceCandidate.fromJson(item as Map<String, dynamic>))
             .toList(),
         error: json['error'] as String? ?? '',
+        tablesHidden: (json['tables_hidden'] as num?)?.toInt() ?? 0,
       );
 
   final String stepId;
@@ -460,7 +530,15 @@ class ImportStepInference {
   final List<ImportSourceCandidate> candidates;
   final String error;
 
+  /// How many tables of the source solution were not weighed, as the
+  /// account signed in to it may not export from them: the inference is
+  /// then unique among the others only.
+  final int tablesHidden;
+
   bool get isInferred => table.isNotEmpty;
+
+  /// The candidate weighed for [name], if any.
+  ImportSourceCandidate? candidate(String? name) => candidates.where((c) => c.table == name).firstOrNull;
 }
 
 /// The inference of several steps against one source solution.

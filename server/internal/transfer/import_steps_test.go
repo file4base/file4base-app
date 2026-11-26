@@ -64,6 +64,47 @@ func TestInferSource(t *testing.T) {
 		if len(inf.Candidates) != 3 || inf.Candidates[0].Table != "entries" || inf.Candidates[2].Fits {
 			t.Fatalf("candidates = %#v", inf.Candidates)
 		}
+		// Another table fits by type alone, and the reason says so.
+		if !strings.Contains(inf.Reason, "1 other table(s) fit by type alone") {
+			t.Fatalf("reason = %q", inf.Reason)
+		}
+		// The pairing the person confirms: each position and its fields.
+		want := []PositionPair{
+			{Position: 2, SourceField: "code", TargetField: "code", Match: true},
+			{Position: 3, SourceField: "total", TargetField: "total"},
+		}
+		if got := inf.Candidates[0].Pairs; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("pairs = %#v", got)
+		}
+		if got := inf.Candidates[2].Pairs; len(got) != 2 || !got[1].Missing {
+			t.Fatalf("a position past the last field is not marked missing: %#v", got)
+		}
+	})
+	t.Run("a field deleted since the migration keeps its position", func(t *testing.T) {
+		// Field 2 was deleted in File4Base: without its place, position 3
+		// would shift onto nothing and position 2 onto total.
+		cut := table("entries", "x", "NUMBER", "1", "total", "NUMBER", "3")
+		shifted := PositionTable(cut)
+		if len(shifted.Fields) != 2 || shifted.Fields[1].Name != "total" {
+			t.Fatalf("fields = %#v", shifted.Fields)
+		}
+		kept := PositionTable(cut, "2", "3", "junk")
+		if len(kept.Fields) != 3 || !kept.Fields[1].Deleted || kept.Fields[2].Name != "total" {
+			t.Fatalf("fields = %#v", kept.Fields)
+		}
+		inf := InferSource(step, target, []PositionedTable{kept}, "")
+		c := inf.Candidates[0]
+		if inf.Table != "" || c.Fits || c.DeletedPositions != 1 || !c.Pairs[0].Deleted ||
+			c.Pairs[1].SourceField != "total" || !strings.Contains(inf.Reason, "deleted from it") {
+			t.Fatalf("inference = %#v", inf)
+		}
+		if _, err := PlanTransfer(step, "n", "", kept, target); err == nil {
+			t.Fatal("a step reading a deleted field was planned")
+		}
+		// A table not migrated from FileMaker gets no positions from tombstones.
+		if pt := PositionTable(table("local", "a", "TEXT", ""), "1"); len(pt.Fields) != 0 {
+			t.Fatalf("fields = %#v", pt.Fields)
+		}
 	})
 	t.Run("the only table that fits by type, unconfirmed by names", func(t *testing.T) {
 		inf := InferSource(step, target, []PositionedTable{people, short}, "")
@@ -117,6 +158,39 @@ func TestInferSource(t *testing.T) {
 		in, err := PlanTransfer(step, "n", "", entries, renamed)
 		if err != nil || in.Mappings[0].DestinationField != "code_2" || in.MatchFields[0] != "code_2" {
 			t.Fatalf("input = %#v, %v", in, err)
+		}
+	})
+}
+
+func TestImportStepProblems(t *testing.T) {
+	target := NewTargetColumns(table("orders", "code", "TEXT", "1", "total", "NUMBER", "2", "stamp", "TEXT", "9"))
+	entries := PositionTable(table("entries", "x", "NUMBER", "1", "code", "TEXT", "2", "total", "NUMBER", "3"))
+
+	t.Run("a match field saved without its position is not dropped from the key", func(t *testing.T) {
+		p := importStepParams()
+		maps := p["field_mappings"].([]interface{})
+		p["field_mappings"] = append(maps, map[string]interface{}{"action": "match", "target_field": "stamp"})
+		s, _ := ParseImportStep(p)
+		if s.Unresolved != 1 || !strings.Contains(s.Problem(), "without their source position") {
+			t.Fatalf("step = %#v", s)
+		}
+		if _, err := PlanTransfer(s, "n", "", entries, target); err == nil {
+			t.Fatal("a step matching on fewer keys than FileMaker was planned")
+		}
+	})
+	t.Run("splitting repetitions into records is not a transfer", func(t *testing.T) {
+		p := importStepParams()
+		p["split_repetitions"] = true
+		s, _ := ParseImportStep(p)
+		if _, err := PlanTransfer(s, "n", "", entries, target); err == nil {
+			t.Fatal("a step splitting repetitions was planned")
+		}
+	})
+	t.Run("a computed path is read", func(t *testing.T) {
+		p := importStepParams()
+		p["import_source"].(map[string]interface{})["path_is_calculation"] = true
+		if s, _ := ParseImportStep(p); !s.PathIsCalculation || s.Problem() != "" {
+			t.Fatalf("step = %#v", s)
 		}
 	})
 }

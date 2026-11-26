@@ -18,19 +18,30 @@ import 'package:http/testing.dart';
 /// A window on [table] that a transfer into it works on (#191): it answers
 /// its found set, shows the imported records, and may ask before running.
 class _ImportWindowHost extends _RecordingHost implements ImportRecordsHost, ExtendedLayoutActionHost {
-  _ImportWindowHost(this.table, {this.answer = 1});
+  _ImportWindowHost(this.table, {this.answer = 1, this.commits = true, this.shows = true});
 
   final String table;
   final int answer;
+  final bool commits;
+  final bool shows;
   List<String>? shown;
   String? asked;
 
   @override
   String get actionImportTable => table;
   @override
+  Future<bool> actionCommitBeforeImport() async {
+    did.add('commit_before_import');
+    return commits;
+  }
+
+  @override
   Future<List<String>?> actionFoundSetIds() async => const ['r3', 'r1'];
   @override
-  Future<void> actionShowImportedRecords(List<String> ids) async => shown = ids;
+  Future<bool> actionShowImportedRecords(List<String> ids) async {
+    shown = ids;
+    return shows;
+  }
   @override
   Future<ScriptDialogResult> actionShowDialogEx({
     required String title,
@@ -844,7 +855,125 @@ void main() {
       expect(result.completed, isTrue, reason: result.message);
       expect(host.asked, contains('Send answers'));
       expect(runs, isEmpty);
-      expect(host.did, ['commit_records']);
+      expect(host.did, ['commit_before_import', 'commit_records']);
+    });
+
+    test('the record being edited is committed first, and one that cannot be stops the step', () async {
+      final host = _ImportWindowHost('project_answers', commits: false);
+      final runs = <Map<String, dynamic>>[];
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Pull', [
+            _stepJson(1, 'import_records', {'transfer': 'Send answers'}),
+          ]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        runs: runs,
+      );
+      final result = await _runScript(runner, 'sc1', 'Pull');
+      expect(result.completed, isFalse);
+      expect(result.message, contains('could not be committed'));
+      expect(runs, isEmpty);
+    });
+
+    test('records written but not shown stop the script rather than leave the old found set', () async {
+      final host = _ImportWindowHost('project_answers', shows: false);
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Pull', [
+            _stepJson(1, 'import_records', {'transfer': 'Send answers'}),
+            _stepJson(2, 'delete_all_records'),
+          ]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        report: _reportJson(updated: 1),
+      );
+      final result = await _runScript(runner, 'sc1', 'Pull');
+      expect(result.completed, isFalse);
+      expect(result.message, contains('could not be shown'));
+      expect(host.did, ['commit_before_import']);
+    });
+
+    test('a window on another solution\'s table is not the destination', () async {
+      final host = _ImportWindowHost('');
+      final runs = <Map<String, dynamic>>[];
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Pull', [
+            _stepJson(1, 'import_records', {'transfer': 'Send answers'}),
+          ]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        runs: runs,
+      );
+      expect((await _runScript(runner, 'sc1', 'Pull')).completed, isTrue);
+      expect(runs.single.containsKey('destination_found_set'), isFalse);
+      expect(host.shown, isNull);
+    });
+
+    test('a replace, or an update converted from FileMaker, never widens to the whole table', () async {
+      final converted = {
+        'transfer': 'Send answers',
+        'import_source': {'kind': 'filemaker', 'file': 'Ledger'},
+      };
+      for (final c in [
+        (host: _ImportWindowHost('elsewhere') as _RecordingHost, params: converted, mode: 'update_matching'),
+        (host: _ImportWindowHost(''), params: converted, mode: 'update_matching'),
+        (host: _RecordingHost(), params: {'transfer': 'Send answers'}, mode: 'replace_found_set'),
+      ]) {
+        final runs = <Map<String, dynamic>>[];
+        final runner = _transferRunner(
+          c.host,
+          scripts: {
+            'sc1': _script('sc1', 'Pull', [_stepJson(1, 'import_records', c.params)]),
+          },
+          transfers: {
+            'Send answers': {..._transferJson(), 'mode': c.mode},
+          },
+          runs: runs,
+        );
+        final result = await _runScript(runner, 'sc1', 'Pull');
+        expect(result.completed, isFalse, reason: '${c.mode} from ${c.host.runtimeType}');
+        expect(result.message, contains('Go to a layout of project_answers first'));
+        expect(runs, isEmpty);
+      }
+
+      // On a window of the destination table, the converted update runs
+      // on its found set.
+      final host = _ImportWindowHost('project_answers');
+      final runs = <Map<String, dynamic>>[];
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Pull', [_stepJson(1, 'import_records', converted)]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        runs: runs,
+      );
+      expect((await _runScript(runner, 'sc1', 'Pull')).completed, isTrue);
+      expect(runs.single['destination_found_set'], ['r3', 'r1']);
+    });
+
+    test('with dialog and no window to ask in, nothing runs unconfirmed', () async {
+      final host = _RecordingHost();
+      final runs = <Map<String, dynamic>>[];
+      final runner = _transferRunner(
+        host,
+        scripts: {
+          'sc1': _script('sc1', 'Pull', [
+            _stepJson(1, 'import_records', {'transfer': 'Send answers', 'dialog': true}),
+          ]),
+        },
+        transfers: {'Send answers': _transferJson()},
+        runs: runs,
+      );
+      final result = await _runScript(runner, 'sc1', 'Pull');
+      expect(result.completed, isFalse);
+      expect(result.message, contains('no window to ask in'));
+      expect(runs, isEmpty);
     });
 
     test('the transfer can be named by a variable', () async {

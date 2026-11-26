@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -131,7 +132,7 @@ type TransferRunRequest struct {
 	// order, as the window running an Import Records step holds it (#191):
 	// the records "replace_found_set" replaces and the only ones
 	// "update_matching" matches. Absent, it is the whole table.
-	DestinationFoundSet []string `json:"destination_found_set,omitempty"`
+	DestinationFoundSet []string `json:"destination_found_set"`
 
 	// ReturnRecordIDs answers the records written, as record_ids.
 	ReturnRecordIDs bool `json:"return_record_ids,omitempty"`
@@ -157,9 +158,11 @@ func (h *TransferHandler) RunTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The body may be omitted, but one that is sent is read whatever its
+	// framing: a chunked request has no length.
 	var body TransferRunRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 			telemetry.WriteProblem(w, r, http.StatusBadRequest, "Invalid JSON",
 				"Request body contains invalid JSON format")
 			return
@@ -316,9 +319,13 @@ func (h *TransferHandler) endAllows(
 func resolveTransfer(r *http.Request, idOrName string) (*schema.TransferDefinition, error) {
 	svc := schemaService(r)
 	// A name with characters a path keeps escaped, such as parentheses,
-	// reaches the router still escaped.
-	if unescaped, err := url.PathUnescape(idOrName); err == nil {
-		idOrName = unescaped
+	// reaches the router still escaped: the router reads the raw path
+	// whenever there is one. Otherwise the name is already decoded, and
+	// decoding it again would turn a literal "%41" into "A".
+	if r.URL.RawPath != "" {
+		if unescaped, err := url.PathUnescape(idOrName); err == nil {
+			idOrName = unescaped
+		}
 	}
 	idOrName = strings.TrimSpace(idOrName)
 	def, err := svc.GetTransfer(r.Context(), idOrName)

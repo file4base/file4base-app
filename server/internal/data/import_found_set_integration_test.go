@@ -60,11 +60,17 @@ func TestImportFoundSet(t *testing.T) {
 		assert.Equal(t, "b", noteOf(t, f, ids[1]), "a record outside the found set is left alone")
 	})
 
-	t.Run("replace with no found set is the table in creation order", func(t *testing.T) {
+	t.Run("replace with no found set is refused, never the whole table", func(t *testing.T) {
 		f := newAutoFixture(t, ctx, driver, columns...)
 		ids := seed(t, f, "a", "b", "c")
 		_, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note\nx\ny\n"), data.ImportOptions{
 			Action: data.ImportReplaceFoundSet, Mappings: notes,
+		})
+		require.ErrorIs(t, err, data.ErrImport)
+		assert.Equal(t, "a", noteOf(t, f, ids[0]))
+
+		_, err = f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note\nx\ny\n"), data.ImportOptions{
+			Action: data.ImportReplaceFoundSet, Mappings: notes, FoundSet: []string{ids[0], ids[1], ids[2]},
 		})
 		require.NoError(t, err)
 		assert.Equal(t, "x", noteOf(t, f, ids[0]))
@@ -96,7 +102,7 @@ func TestImportFoundSet(t *testing.T) {
 		f := newAutoFixture(t, ctx, driver, columns...)
 		ids := seed(t, f, "a", "b")
 		report, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note\nbad\ngood\n"), data.ImportOptions{
-			Action: data.ImportReplaceFoundSet, Mappings: notes, PassOver: map[int]bool{0: true},
+			Action: data.ImportReplaceFoundSet, Mappings: notes, FoundSet: ids, PassOver: map[int]bool{0: true},
 		})
 		require.NoError(t, err)
 		assert.Equal(t, 1, report.Updated)
@@ -107,7 +113,7 @@ func TestImportFoundSet(t *testing.T) {
 	t.Run("replace matches on nothing", func(t *testing.T) {
 		f := newAutoFixture(t, ctx, driver, columns...)
 		_, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note\nx\n"), data.ImportOptions{
-			Action: data.ImportReplaceFoundSet, Mappings: notes, MatchFields: []string{"note"},
+			Action: data.ImportReplaceFoundSet, Mappings: notes, MatchFields: []string{"note"}, FoundSet: []string{},
 		})
 		require.ErrorIs(t, err, data.ErrImport)
 	})
@@ -119,16 +125,57 @@ func TestImportFoundSet(t *testing.T) {
 		mappings := []data.ImportMapping{{Column: 0, Field: "note"}, {Column: 1, Field: "status"}}
 		report, err := f.dataSvc.ImportRecords(ctx, f.orders, source, data.ImportOptions{
 			Action: data.ImportUpdateMatching, Mappings: mappings, MatchFields: []string{"note"},
-			FoundSet: []string{ids[0], ids[2]}, ReturnRecordIDs: true,
+			FoundSet: []string{ids[2], ids[0]}, ReturnRecordIDs: true,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, 1, report.Updated, "one row updated")
-		assert.ElementsMatch(t, []string{ids[0], ids[2]}, report.RecordIDs)
+		assert.Equal(t, 2, report.Updated, "two records updated")
+		assert.Equal(t, []string{ids[2], ids[0]}, report.RecordIDs, "in found set order")
 		for i, want := range []string{"Seen", "", "Seen"} {
 			row, err := f.dataSvc.GetRow(ctx, f.orders, ids[i])
 			require.NoError(t, err)
 			assert.Equal(t, want, text(row["status"]), "record %d", i+1)
 		}
+	})
+
+	t.Run("a record of the found set deleted since keeps its place", func(t *testing.T) {
+		f := newAutoFixture(t, ctx, driver, columns...)
+		ids := seed(t, f, "a", "b")
+		require.NoError(t, f.dataSvc.DeleteRow(ctx, f.orders, ids[0]))
+		report, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note\nfor a\nfor b\n"), data.ImportOptions{
+			Action: data.ImportReplaceFoundSet, Mappings: notes, FoundSet: []string{ids[0], ids[1]},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.Updated)
+		assert.Equal(t, 1, report.Skipped)
+		assert.Equal(t, "for b", noteOf(t, f, ids[1]), "b is not given a's row")
+	})
+
+	t.Run("a row whose match fields are all empty is neither matched nor added", func(t *testing.T) {
+		f := newAutoFixture(t, ctx, driver, columns...)
+		seed(t, f, "a")
+		mappings := []data.ImportMapping{{Column: 0, Field: "note"}, {Column: 1, Field: "status"}}
+		report, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Note,Status\n,Seen\nz,Seen\n"), data.ImportOptions{
+			Action: data.ImportUpdateMatching, Mappings: mappings, MatchFields: []string{"note"}, AddUnmatched: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.Skipped)
+		assert.Equal(t, 1, report.Added)
+	})
+
+	t.Run("a number key matches the number the column holds", func(t *testing.T) {
+		f := newAutoFixture(t, ctx, driver, autoColumn{name: "qty", fieldType: dbal.FieldTypeNumber},
+			autoColumn{name: "note", fieldType: dbal.FieldTypeText})
+		qty := []data.ImportMapping{{Column: 0, Field: "qty"}, {Column: 1, Field: "note"}}
+		_, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Qty,Note\n7,first\n"), data.ImportOptions{
+			Action: data.ImportAdd, Mappings: qty,
+		})
+		require.NoError(t, err)
+		report, err := f.dataSvc.ImportRecords(ctx, f.orders, parseCSV(t, "Qty,Note\n7.0,second\n"), data.ImportOptions{
+			Action: data.ImportUpdateMatching, Mappings: qty, MatchFields: []string{"qty"}, AddUnmatched: true,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 1, report.Updated)
+		assert.Equal(t, 0, report.Added, "7.0 is the 7 the record holds")
 	})
 
 	t.Run("auto-enter is performed only on the fields chosen", func(t *testing.T) {

@@ -128,6 +128,43 @@ func TestCreateTransfer_DefaultsAreTheSafeOnes(t *testing.T) {
 	assert.Equal(t, string(data.DateISO), created.DateOrder)
 }
 
+// An empty list of auto-enter fields is no field's auto-enter; nil is every
+// field's. Storing the definition must not turn the one into the other.
+func TestCreateTransfer_AutoEnterOnNoFieldStaysNoField(t *testing.T) {
+	svc, ctx := transferTestService(t)
+	if svc == nil {
+		return
+	}
+
+	for _, tc := range []struct {
+		name   string
+		fields []string
+		want   []string
+	}{
+		{"empty", []string{}, []string{}},
+		{"only blank names", []string{" ", ""}, []string{}},
+		{"every field", nil, nil},
+		{"some", []string{"Label", "label"}, []string{"label"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := validTransfer(uniqueTransferName(t))
+			in.PerformAutoEnter = true
+			in.AutoEnterFields = tc.fields
+			created, err := svc.CreateTransfer(ctx, in, "")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = svc.DeleteTransfer(context.Background(), created.ID) })
+
+			read, err := svc.GetTransfer(ctx, created.ID)
+			require.NoError(t, err)
+			assert.True(t, read.PerformAutoEnter)
+			assert.Equal(t, tc.want, read.AutoEnterFields)
+			if tc.want != nil {
+				assert.NotNil(t, read.AutoEnterFields, "an empty list read back as every field")
+			}
+		})
+	}
+}
+
 func TestCreateTransfer_RefusesDefinitionsThatCouldNotRun(t *testing.T) {
 	svc, ctx := transferTestService(t)
 	if svc == nil {

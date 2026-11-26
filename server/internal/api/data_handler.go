@@ -809,15 +809,23 @@ func (h *DataHandler) ImportRows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	report.Rows = len(source.Rows)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	answer := map[string]interface{}{
 		"rows":      report.Rows,
 		"added":     report.Added,
 		"updated":   report.Updated,
 		"skipped":   report.Skipped,
 		"fields":    report.Fields,
 		"truncated": source.Truncated,
-	})
+	}
+	if body.Options.ReturnRecordIDs {
+		ids := report.RecordIDs
+		if ids == nil {
+			ids = []string{}
+		}
+		answer["record_ids"] = ids
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(answer)
 }
 
 // ExportBody is what the export endpoint takes.
