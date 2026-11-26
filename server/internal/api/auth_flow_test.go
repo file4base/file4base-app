@@ -231,6 +231,57 @@ func TestAPI_PublicDatabaseCreationCanBeDisabled(t *testing.T) {
 	t.Cleanup(func() { _ = locked.mgr.DropDatabase(context.Background(), other) })
 }
 
+// With public creation off (the server default since #202), a caller without
+// a session creates nothing, whichever endpoint it uses, and the refusal tells
+// the operator how a new server gets its first solution. Only an owner
+// session creates databases.
+func TestAPI_PublicCreationOffRefusesAnonymousAndNonOwners(t *testing.T) {
+	open := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
+	db := uniqueDB("f4b_seed_off")
+	open.createDatabase(db, "alice", "alice-secret")
+
+	locked := newAPIHarness(t, api.Options{})
+	target := uniqueDB("f4b_anon_off")
+	t.Cleanup(func() { _ = locked.mgr.DropDatabase(context.Background(), target) })
+	exists := func() bool {
+		names, err := locked.mgr.ListDatabases(context.Background())
+		require.NoError(t, err)
+		for _, n := range names {
+			if n == target {
+				return true
+			}
+		}
+		return false
+	}
+
+	anonymous := []struct {
+		path string
+		body map[string]string
+	}{
+		{"/api/v1/databases", map[string]string{"database": target, "user": "mallory", "password": "mallory-secret"}},
+		{"/api/v1/solutions/migrate/apply", map[string]string{"target_database": target, "owner_user": "mallory", "owner_password": "mallory-secret"}},
+		{"/api/v1/solutions/migrate/preflight", map[string]string{"target_database": target}},
+	}
+	for _, c := range anonymous {
+		rec := locked.do(http.MethodPost, c.path, "", c.body, nil)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, c.path)
+		assert.Contains(t, rec.Body.String(), "ALLOW_PUBLIC_DATABASE_CREATION=true", "%s: the refusal names the first-run setting", c.path)
+	}
+	assert.False(t, exists(), "no anonymous request created the database")
+
+	owner := locked.login(db, "alice", "alice-secret")
+	rec := locked.do(http.MethodPost, "/api/v1/security/users", owner, map[string]string{"username": "bob", "password": "bob-user-secret", "role": "user"}, nil)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	user := locked.login(db, "bob", "bob-user-secret")
+
+	rec = locked.do(http.MethodPost, "/api/v1/databases", user, map[string]string{"database": target, "user": "bob", "password": "bob-owner-secret"}, nil)
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.False(t, exists(), "a user-role session created nothing")
+
+	rec = locked.do(http.MethodPost, "/api/v1/databases", owner, map[string]string{"database": target, "user": "carol", "password": "carol-owner-secret"}, nil)
+	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+}
+
 func TestAPI_SessionsAreIsolatedPerDatabase(t *testing.T) {
 	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true})
 	dbA, dbB := uniqueDB("f4b_iso_a"), uniqueDB("f4b_iso_b")

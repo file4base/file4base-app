@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
+import 'package:file4base_client/core/api/default_server_url.dart';
 import 'package:file4base_client/core/models/solution_models.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:file4base_client/features/about/about_dialog.dart';
@@ -87,7 +88,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
     }
     final initialUrl = widget.apiClient.baseUrl.trim().isNotEmpty
         ? widget.apiClient.baseUrl.trim()
-        : 'http://127.0.0.1:8080';
+        : defaultServerUrl();
     _apiUrlController = TextEditingController(text: initialUrl);
     unawaited(_loadDatabases());
   }
@@ -103,7 +104,7 @@ class _DatabaseLoginDialogState extends State<DatabaseLoginDialog> {
 
   void _applyApiUrlIfChanged() {
     final raw = _apiUrlController.text.trim();
-    final normalized = (raw.isEmpty ? 'http://127.0.0.1:8080' : raw)
+    final normalized = (raw.isEmpty ? defaultServerUrl() : raw)
         .replaceAll(RegExp(r'/+$'), '');
     if (normalized != widget.apiClient.baseUrl) {
       widget.apiClient.updateBaseUrl(normalized);

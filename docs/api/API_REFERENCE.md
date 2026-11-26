@@ -123,15 +123,15 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | local development DSN | Connection to the engine's administrative database. Always set it outside development. |
+| `DATABASE_URL` | *(required)* | Connection to the engine's administrative database. The server does not start without it; there is no built-in DSN or password. |
 | `SESSION_TTL` | `12h` | Idle lifetime of a session (Go duration). |
-| `CORS_ALLOWED_ORIGINS` | `*` | Comma-separated list of browser origins allowed to call the API. |
-| `FILE4BASE_TRUSTED_PROXIES` | *(empty)* | Comma-separated IPs and CIDR ranges of reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be trusted when resolving the client address (audit log, session list, login throttle). Empty trusts no proxy, so those headers are ignored and the direct TCP peer is recorded — a client cannot forge the address attributed to it. Set it to your reverse proxy's address only (for the bundled Nginx web client, the Docker Compose network, e.g. `172.16.0.0/12,127.0.0.1,::1`). |
-| `ALLOW_PUBLIC_DATABASE_CREATION` | `true` | When `false`, only a signed-in owner can create databases. |
+| `CORS_ALLOWED_ORIGINS` | *(empty)* | Comma-separated list of other web origins (`scheme://host:port`) allowed to call the API from a browser. Empty sends no CORS header, so only same-origin pages can read responses; the bundled Web Client calls the API on its own origin through its Nginx and needs no entry, and the desktop app is not a browser. Only an exact `*` allows every origin (logged as a warning); an entry that is not a web origin is ignored with a warning. |
+| `FILE4BASE_TRUSTED_PROXIES` | *(empty)* | Comma-separated IPs and CIDR ranges of reverse proxies whose `X-Forwarded-For` / `X-Real-IP` headers may be trusted when resolving the client address (audit log, session list, login throttle). Empty trusts no proxy, so those headers are ignored and the direct TCP peer is recorded — a client cannot forge the address attributed to it. Set it to your reverse proxy's address only. For the bundled Nginx Web Client, use the subnet of `file4base-net` (`docker network inspect file4base-net`), not a broad private range such as `172.16.0.0/12`: a client in that range that reaches port 8080 directly could choose the address recorded for it. |
+| `ALLOW_PUBLIC_DATABASE_CREATION` | `false` | `true` lets callers without a session create databases (`POST /api/v1/databases`, `migrate/preflight`, `migrate/apply`) and become their owners. Set it only to create the first solution of a new server (README, *First solution*); the server logs a warning at startup and after each such creation. When `false`, only a signed-in owner can create databases. |
 | `MIGRATION_MAX_UPLOAD_BYTES` | `2GiB` | Largest multipart FileMaker migration request (§ 13, `migrate/preflight` and `migrate/apply`) a signed-in admin or owner may send. A byte count, or a number with a `KiB`, `MiB` or `GiB` suffix. Callers without a session are always held to the 64 MiB JSON ceiling. Behind the bundled Nginx Web Client, its `client_max_body_size` for `/api/v1/solutions/migrate/` (2g) must be raised as well. |
 | `MIGRATION_REQUEST_TIMEOUT` | `30m` | Time a migration preflight or apply may take, upload included (Go duration). Every other request keeps the 60-second limit. |
 | `MIGRATION_UPLOAD_DIR` | system temporary directory | Where an uploaded native database copy is written while it is received. It needs free space for the largest upload; the file is private (`0600`) and removed as soon as it has been read. |
-| `FILE4BASE_ADMIN_DATABASE` | *(empty)* | Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools unless a super-owner exists (see `FILE4BASE_SUPER_OWNER`). |
+| `FILE4BASE_ADMIN_DATABASE` | *(empty)* | **Deprecated** (logged at startup; server accounts, #185, will replace it). Database whose owners are the server administrators (server-wide Server Tools). Empty disables the server-wide tools unless a super-owner exists (see `FILE4BASE_SUPER_OWNER`). |
 | `FILE4BASE_SUPER_OWNER` | *(empty)* | Bootstrap super-owners as `database:username` (comma-separated for several). These owner accounts sign in with full, server-wide control even before a `super_owner` flag is stored; they can then grant the privilege to other owners via `PUT /api/v1/security/users/{id}/super-owner`. |
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
 | `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
@@ -1372,7 +1372,7 @@ Answers `200` with `{"valid": false, "message": "…", "position": 0}`, or `{"va
 ### `POST /api/v1/databases`
 Creates a new physical database, initializes the system catalog tables (`sys_*`) and provisions its first `owner` account with the credentials in the request. There are no default accounts: `user` and `password` are mandatory. The owner password must have at least 8 characters and cannot be the username or the database name (database names are listed publicly).
 
-*Public* while `ALLOW_PUBLIC_DATABASE_CREATION=true` (default, needed by the desktop "New Database" flow, which runs before sign-in). With `false`, it requires an `owner` session.
+Requires an `owner` session by default. Without a session the answer is `401`, and its `detail` says how the operator creates the first solution of a new server; a signed-in account that is not an owner gets `403`. *Public* only while `ALLOW_PUBLIC_DATABASE_CREATION=true`, which is meant for that first solution.
 
 An existing database is never modified: if the name is taken the response is `409 Conflict`.
 

@@ -408,7 +408,8 @@ class EnvironmentChecker {
       onProgress?.call('File4Base containers launched successfully.');
       return true;
     } else {
-      onProgress?.call('Could not start File4Base containers automatically.');
+      onProgress?.call('Could not start File4Base containers automatically. Run docker compose up -d '
+          'next to docker-compose.yml to see why: a new install needs a .env file with POSTGRES_PASSWORD (README).');
       return false;
     }
   }

@@ -57,7 +57,8 @@ WebDirect are trademarks of Claris International Inc. See the
 - **Per-session database**: the server keeps no global "active database". Two clients signed in to different databases never affect each other.
 - **Roles enforced by the server**: `owner`, `admin` and `user`, plus per-layout permissions (`read_write`, `read_only`, `none`) that also govern record access through the data API.
 - **No default accounts**: a database gets its first owner with the credentials chosen when it is created.
-- **Configuration** (environment variables of the API server): `DATABASE_URL`, `SESSION_TTL` (default `12h`), `CORS_ALLOWED_ORIGINS` (default `*`), `ALLOW_PUBLIC_DATABASE_CREATION` (default `true`; set to `false` on shared servers), `FILE4BASE_ADMIN_DATABASE` (the owners of that database administer the server through the server-wide Server Tools; empty disables them).
+- **Secure defaults**: only a signed-in owner creates databases, no other web origin may call the API from a browser, there is no default database password, and the database is not published outside the Docker network.
+- **Configuration** (environment variables of the API server): `DATABASE_URL` (required), `SESSION_TTL` (default `12h`), `CORS_ALLOWED_ORIGINS` (default empty: same origin only; list other web origins as `scheme://host:port`), `ALLOW_PUBLIC_DATABASE_CREATION` (default `false`; `true` only to create the first solution, see [First solution](#first-solution)), `FILE4BASE_ADMIN_DATABASE` (deprecated, to be replaced by server accounts: the owners of that database administer the server through the server-wide Server Tools; empty disables them).
 
 Details: [REST API Reference - Authentication & Authorization](docs/api/API_REFERENCE.md#authentication--authorization).
 
@@ -65,16 +66,24 @@ Details: [REST API Reference - Authentication & Authorization](docs/api/API_REFE
 
 ### 1. Server Deployment (Docker Compose)
 When launched via Docker Compose, File4Base acts as a full multi-user application server:
-- **PostgreSQL 16**: Port `5432`, published on `127.0.0.1` only by default (MariaDB: see below)
+- **PostgreSQL 16**: not published on the host. Only the API reaches it, inside the `file4base-net` network (MariaDB: see below). Developers who need it from the host use an override file ([CONTRIBUTING.md](CONTRIBUTING.md#database-access-from-the-host)).
 - **Backend Core API (Go)**: Port `8080` (`/healthz`, `/api/v1/schemas`, `/api/v1/data`)
 - **File4Base Web Client (Nginx)**: Port `3000` (browser-accessible client), and `3443` for HTTPS once the certificate exists. The API creates a local certificate authority on its first start and keeps it in the `file4base-tls` volume: download it from **Server Tools > Domain & SSL/TLS**, install it once per machine, and `https://localhost:3443` is trusted — restarts and renewals do not invalidate it.
 
+#### Installation
+The stack does not start without a database password: there is no default
+one. Generate it into `.env` next to `docker-compose.yml` once, and keep `.env`
+with your backups (the password is needed to use the database volume):
+
 ```bash
-# Optional: set your own database password and server options
-cp .env.example .env
+# New install only: create .env (readable by you only) from the documented
+# settings, with a generated database password (letters and digits only).
+# If .env exists it is kept: its password matches the database.
+if [ -e .env ]; then echo ".env exists: kept as is"; else (umask 077 &&
+  cp .env.example .env && echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env); fi
 
 # Start complete File4Base server stack (builds the API and the web client images)
-docker compose up -d
+docker compose up -d --build
 
 # Check server health
 curl http://localhost:8080/healthz
@@ -83,13 +92,79 @@ curl http://localhost:8080/healthz
 open http://localhost:3000
 ```
 
+Without `POSTGRES_PASSWORD`, `docker compose up` stops with
+`required variable POSTGRES_PASSWORD is missing a value` and says what to set.
+**Upgrading an install that never set it?** Its volume was created with
+`dev_password`: see the upgrade notes in [CHANGELOG.md](CHANGELOG.md).
+
+`--build` builds the images from this checkout. Images of 0.22.0 and earlier
+(already pulled, or from Docker Hub) still have the old defaults: CORS open to
+every origin and a Web Client that calls `127.0.0.1:8080`. Use `--build` until
+a release with these defaults is published.
+
 On a new Docker volume, PostgreSQL starts with its administrative `postgres`
-database and no File4Base solution database. Create a solution database from
-the client's database login screen or import a `.f4p` solution. Docker's
-`POSTGRES_DB` setting only applies when PostgreSQL initializes an empty data
-volume: existing volumes keep their databases and data, which remain available
-in the database selector. Do not remove a volume to change this behavior unless
-you intend to delete its persisted data.
+database and no File4Base solution database. Docker's `POSTGRES_DB` setting
+only applies when PostgreSQL initializes an empty data volume: existing volumes
+keep their databases and data, which remain available in the database
+selector. Do not remove a volume to change this behavior unless you intend to
+delete its persisted data.
+
+#### First solution
+Only a signed-in owner can create a database, so a new server, which has no
+account yet, needs one step from its operator to create the first solution.
+Allow public creation for that one step, then turn it off again:
+
+```bash
+echo "ALLOW_PUBLIC_DATABASE_CREATION=true" >> .env
+# Publish the API and the Web Client on 127.0.0.1 only for this step
+docker compose -f docker-compose.yml -f docker-compose.first-run.yml up -d
+# Create the first solution on the server itself, or from your machine through
+# an SSH tunnel (ssh -L 3000:localhost:3000 <server>): Web Client
+# (http://localhost:3000) or desktop app > New Database, or a FileMaker
+# migration. Choose a strong owner password.
+sed -i.bak '/^ALLOW_PUBLIC_DATABASE_CREATION=/d' .env && rm .env.bak
+docker compose up -d     # public creation off, normal ports again
+```
+
+With MariaDB, use `-f docker-compose.mariadb.yml -f docker-compose.first-run.yml`
+for the first start and `-f docker-compose.mariadb.yml` for the second.
+
+While the setting is on, anyone who can reach the API or the Web Client can
+create a database and become its owner, and keeps that owner account
+afterwards; the API logs a warning at startup and after each such creation.
+`docker-compose.first-run.yml` publishes ports `8080`, `3000` and `3443` on
+`127.0.0.1` only during that step: a host firewall alone is not enough, because
+Docker's published ports bypass most of them. Working on loopback (or through
+the SSH tunnel) also keeps the owner password off the network: plain HTTP to
+another machine sends it in clear text. When the setting is off again, check in
+the sign-in screen that the server has no database you did not create (a new
+MariaDB server also lists its empty `file4base_dev`).
+After that, the owner of a solution creates the next ones while signed in
+(**File > New Database...**). To open the server-wide
+Server Tools to that owner, seed it as a super-owner with
+`FILE4BASE_SUPER_OWNER=<database>:<username>`. Server accounts (#185) and a
+first-run administrator in the server console (#200) will replace this step.
+
+#### Web Client and CORS
+The Web Client calls the API on the address it was opened from
+(`http://<host>:3000`, `https://<host>:3443`, or a reverse proxy in front of
+them): its Nginx forwards `/api/` and `/healthz` to the API, so it needs no
+CORS setting. The desktop app is not a browser and needs none either.
+`CORS_ALLOWED_ORIGINS` is only for other web applications that call the API
+from a browser: list their origins, e.g.
+`CORS_ALLOWED_ORIGINS=https://intranet.example.lan`.
+
+#### Changing the database password
+PostgreSQL reads `POSTGRES_PASSWORD` only when it creates an empty volume, so
+editing `.env` alone does not change the password of an existing database.
+Change it in PostgreSQL first, then in `.env`:
+
+```bash
+openssl rand -hex 32    # the new password
+docker compose exec postgres psql -U file4base -d postgres -c '\password file4base'
+# Paste it twice, set POSTGRES_PASSWORD=<new password> in .env, then:
+docker compose up -d
+```
 
 #### Images and versions
 The images are published on Docker Hub for `linux/amd64`, `linux/arm64` and
@@ -129,8 +204,17 @@ only `docker compose down -v` or `docker volume rm` delete it.
 the API account the privileges it needs to create one database per solution.
 
 ```bash
-docker compose -f docker-compose.mariadb.yml up -d
+# New install only (an existing .env is kept), as for PostgreSQL
+if [ -e .env ]; then echo ".env exists: kept as is"; else (umask 077 &&
+  cp .env.example .env && echo "MARIADB_PASSWORD=$(openssl rand -hex 32)" >> .env &&
+  echo "MARIADB_ROOT_PASSWORD=$(openssl rand -hex 32)" >> .env); fi
+docker compose -f docker-compose.mariadb.yml up -d --build
 ```
+
+Both passwords are required, and MariaDB is not published on the host either.
+To change one on an existing volume, use `ALTER USER` in MariaDB first
+(`docker compose -f docker-compose.mariadb.yml exec mariadb mariadb -uroot -p`),
+then update `.env`.
 
 It is a separate stack, not an overlay: run one engine at a time (both bind the
 same host ports), and note that solutions do not move between engines by
