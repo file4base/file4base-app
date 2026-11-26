@@ -6,7 +6,7 @@ File4Base provides an integrated relational database engine, visual layout build
 - **Backend**: Go (1.26+) implementing a database-agnostic metadata engine, DBAL/query builder, and generic CRUD/DDL handlers.
 - **Frontend**: Flutter (desktop target: macOS/Windows/Linux) providing a visual schema designer (Relationship Graph), Drag-and-Drop Form/Layout builder, and block-based Script Workspace.
 - **Primary Database Engine**: PostgreSQL 16+.
-- **Secondary / Swappable Engines**: MariaDB / MySQL 8.0+, SQLite (embedded / single-file offline mode).
+- **Secondary / Swappable Engines**: MariaDB 11, and SQLite: one file per solution database, no database server (see [sqlite_engine.md](sqlite_engine.md)).
 
 To achieve database portability, File4Base introduces an internal **DBAL (Database Abstraction Layer)** and schema dialect engine, separating agnostic models and queries from database-specific SQL generation.
 
@@ -35,8 +35,8 @@ To achieve database portability, File4Base introduces an internal **DBAL (Databa
 └──────────────┬─────────────────┬───────────────────────┘
                │                 │
       ┌────────▼───────┐ ┌───────▼────────┐ ┌───────────────────┐
-      │ PostgreSQL     │ │ MariaDB/MySQL  │ │ SQLite (Optional) │
-      │ (Default Engine│ │ (Alternative)  │ │ (Embedded/Local)  │
+      │ PostgreSQL     │ │ MariaDB/MySQL  │ │ SQLite            │
+      │ (Default Engine│ │ (Alternative)  │ │ (File per database│
       └────────────────┘ └────────────────┘ └───────────────────┘
 ```
 
@@ -51,7 +51,7 @@ The DBAL driver encapsulates all database engine peculiarities:
 - **SQL Syntax Differences**:
   - PostgreSQL: `LIMIT $1 OFFSET $2`, identifier quotes `"column"`, `RETURNING id`, schemas (`public`).
   - MariaDB / MySQL: `LIMIT ? OFFSET ?`, identifier quotes `` `column` ``, `AUTO_INCREMENT`, `LAST_INSERT_ID()`.
-  - SQLite: Typeless affinity, different date functions, PRAGMA statements.
+  - SQLite: `$N` placeholders and quotes as PostgreSQL; type `CHECK`s on every column, the column changes SQLite lacks emulated by the connection, Unicode `lower`/`upper` and the `F4B` sort collation registered on the driver ([sqlite_engine.md](sqlite_engine.md)).
 - **DDL Execution**:
   - Dynamically running `CREATE TABLE`, `ALTER TABLE ADD COLUMN`, `DROP COLUMN`, `CREATE INDEX` according to the target engine dialect.
 - **Type Casting & Native Conversions**:
@@ -218,9 +218,10 @@ DATABASE_URL=postgres://file4base:dev_password@localhost:5432/file4base_dev?sslm
 # DB_ENGINE=mariadb
 # DATABASE_URL=file4base:dev_password@tcp(localhost:3306)/file4base_dev?parseTime=true
 
-# Alternative: SQLite
+# Alternative: SQLite (DATABASE_URL is the data directory, one <name>.sqlite per database)
 # DB_ENGINE=sqlite
-# DATABASE_URL=file:file4base.db?cache=shared&mode=rwc
+# DATABASE_URL=./data/solutions
+# SQLITE_BUSY_TIMEOUT=5s
 ```
 
-The Go server initializes the corresponding `Dialect` and connection pool at bootstrap based on `DB_ENGINE`.
+The Go server initializes the corresponding `Dialect` and connection pool at bootstrap based on `DB_ENGINE`. Without `DB_ENGINE` it uses `dbal.DefaultEngine` (PostgreSQL), the one place the default is set.
