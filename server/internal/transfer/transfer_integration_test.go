@@ -82,7 +82,7 @@ func transferTestManager(t *testing.T) (*dbal.MultiDatabaseManager, context.Cont
 	t.Helper()
 	mgr, err := dbal.NewMultiDatabaseManager(testdb.Engine(), testdb.AdminDSN())
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 		return nil, nil
 	}
 	t.Cleanup(func() { _ = mgr.Close() })
@@ -90,7 +90,7 @@ func transferTestManager(t *testing.T) (*dbal.MultiDatabaseManager, context.Cont
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	t.Cleanup(cancel)
 	if err := mgr.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 		return nil, nil
 	}
 	return mgr, ctx
