@@ -87,14 +87,14 @@ LayoutDefinitionModel _listLayout() => const LayoutDefinitionModel(
       ],
     );
 
-Future<_Api> _pumpList(WidgetTester tester) async {
+Future<_Api> _pumpList(WidgetTester tester, {LayoutDefinitionModel? layout}) async {
   tester.view.physicalSize = const Size(1400, 900);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);
   final api = _Api();
   await tester.pumpWidget(MaterialApp(
     home: Scaffold(
-      body: DataBrowserWidget(table: _table, apiClient: api, mode: OperationalMode.browse, layout: _listLayout()),
+      body: DataBrowserWidget(table: _table, apiClient: api, mode: OperationalMode.browse, layout: layout ?? _listLayout()),
     ),
   ));
   await tester.pumpAndSettle();
@@ -151,6 +151,27 @@ void main() {
       expect(api.evaluations.map((e) => e.occurrence), everyElement('occ-contacts'));
       expect(api.evaluations.expand((e) => e.recordIds).toSet(), {'1', '2'},
           reason: 'each record asked once, its answer kept while it is unchanged');
+    });
+
+    testWidgets('a conditional format by calculation colours the rows it is true for', (tester) async {
+      final base = _listLayout();
+      final layout = base.copyWith(objects: [
+        for (final o in base.objects)
+          if (o.id == 'amount')
+            o.copyWith(
+                style: o.style.copyWith(conditionalRules: const [
+              ConditionalFormatRule(operator: 'formula', value: 'amount > 100', textColor: '#FF0000'),
+            ]))
+          else
+            o.copyWith(clearHideWhen: true),
+      ]);
+      final api = await _pumpList(tester, layout: layout);
+      Color? colour(String text) => tester.widget<Text>(find.text(text)).style?.color;
+      expect(colour('500'), const Color(0xFFFF0000));
+      expect(colour('7'), isNot(const Color(0xFFFF0000)));
+      expect(api.evaluations.expand((e) => e.expressions).toSet(), {'amount > 100'},
+          reason: 'evaluated by the server with the hide conditions, from the layout occurrence');
+      expect(api.evaluations.map((e) => e.occurrence), everyElement('occ-contacts'));
     });
 
     testWidgets('a field that takes no entry in Browse mode cannot be typed into', (tester) async {

@@ -46,10 +46,12 @@ type layoutObjectContext struct {
 	binding       formulaBinding
 	valueLists    map[string]string // lower-cased name -> value list id
 	relationships []schema.BundleRelationship
-	library       map[string]*xmlNode // library reference id -> <BinaryData>
-	themes        map[string]*fmTheme // theme name -> its CSS
-	defaultTheme  *fmTheme            // for a layout that names no theme
-	dateOrder     string              // dmy, mdy or iso: how the file writes dates; empty when unknown
+	library       map[string]*xmlNode    // library reference id -> <BinaryData>
+	themes        map[string]*fmTheme    // theme name -> its CSS
+	defaultTheme  *fmTheme               // for a layout that names no theme
+	dateOrder     string                 // dmy, mdy or iso: how the file writes dates; empty when unknown
+	edges         map[string][][2]string // occurrence id -> {occurrence joined, relationship}
+	occNames      map[string]string      // occurrence id -> name
 
 	counts map[string]*LayoutObjectCount
 	media  map[string]map[string]interface{}
@@ -65,6 +67,10 @@ func newLayoutObjectContext(root *xmlNode, bundle *schema.SolutionBundle, bindin
 		dateOrder:     dateOrder,
 		counts:        map[string]*LayoutObjectCount{},
 		media:         map[string]map[string]interface{}{},
+		occNames:      map[string]string{},
+	}
+	for _, occ := range bundle.TableOccurrences {
+		ctx.occNames[occ.ID] = occ.Name
 	}
 	for _, vl := range bundle.ValueLists {
 		key := strings.ToLower(vl.Name)
@@ -166,9 +172,6 @@ var pendingObjectKinds = map[string]string{
 	"PopoverPanel":    "popover",
 	"Web Viewer":      "web viewer",
 	"Chart":           "chart",
-	"Tab Control":     "tab control",
-	"Slide Control":   "slide control",
-	"Panel":           "panel",
 	"Group":           "group",
 	"External Object": "external object",
 }
@@ -185,14 +188,22 @@ type nativeLayout struct {
 	ids            map[string]bool
 	objectIDs      map[*xmlNode]string
 
-	pending      map[string]int // FileMaker kinds left out, by readable name
-	frontPanels  int            // tab and slide controls shown by their front panel only
-	hideUnbound  int
-	unreachable  int
-	missingField int
-	noImage      int
-	vectorImage  int
-	mergeKept    int
+	pending        map[string]int // FileMaker kinds left out, by readable name
+	hideUnbound    int
+	unreachable    int
+	alongPath      int
+	missingField   int
+	noImage        int
+	buttonsUnrun   int             // buttons whose single step File4Base does not run
+	buttonsUnbound int             // buttons whose single step names a field not among the imported ones
+	buttonIcons    int             // icons dropped from buttons that have a label
+	portalsFar     int             // portals of an occurrence several relationships away, listed along the path
+	portalFilter   int             // portal filters that could not be bound, the portal kept empty
+	portalSort     int             // portal sort fields of another occurrence, left out of the sort
+	formatsLeft    int             // conditional formats not kept
+	popovers       map[string]bool // ids of the popover buttons, whose panels open over the layout
+	vectorImage    int
+	mergeKept      int
 }
 
 // convertNativeLayout converts the parts and objects of a <FMSaveAsXML>
@@ -264,6 +275,18 @@ func convertNativeLayout(ln *xmlNode, ctx *layoutObjectContext, def map[string]i
 	}
 	if l.objects == nil {
 		l.objects = []map[string]interface{}{}
+	}
+	// A popover opens over everything else: its objects are drawn last.
+	if len(l.popovers) > 0 {
+		var under, over []map[string]interface{}
+		for _, o := range l.objects {
+			if p, _ := o["panel"].(map[string]interface{}); p != nil && l.popovers[fmt.Sprint(p["control"])] {
+				over = append(over, o)
+			} else {
+				under = append(under, o)
+			}
+		}
+		l.objects = append(under, over...)
 	}
 	def["objects"] = l.objects
 	return l.report()
@@ -353,7 +376,19 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 		l.ctx.count(kind).Migrated++
 		return
 	case "Tab Control", "Slide Control":
-		l.convertFrontPanel(obj, kind)
+		l.panelControl(obj, kind)
+		return
+	case "Grouped Button":
+		l.groupedButton(obj)
+		return
+	case "Button Bar":
+		l.buttonBar(obj)
+		return
+	case "Portal":
+		l.portal(obj)
+		return
+	case "Popover Button":
+		l.popover(obj)
 		return
 	}
 
@@ -371,6 +406,8 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 		ok = l.shape(obj, kind, base)
 	case kind == "Graphic":
 		ok = l.graphic(obj, base)
+	case kind == "Button":
+		ok = l.button(obj, findFirstChild(obj, "Button"), base)
 	default:
 		readable := pendingObjectKinds[kind]
 		if readable == "" {
@@ -381,27 +418,78 @@ func (l *nativeLayout) convertObject(obj *xmlNode) {
 	}
 	if ok {
 		base["id"] = l.objectID(obj)
+		l.conditionalFormats(obj, base)
 		l.objects = append(l.objects, base)
 		l.ctx.count(kind).Migrated++
 	}
 }
 
-// convertFrontPanel keeps the objects of the panel a tab or slide control
-// shows first. File4Base has no tab panels yet, so the other panels are
-// left out rather than drawn on top of each other.
-func (l *nativeLayout) convertFrontPanel(obj *xmlNode, kind string) {
-	holder := findFirstChild(obj, "TabControl", "SlideControl")
-	if holder == nil {
+// conditionalFormats keeps a field's conditional formatting whose condition
+// is a calculation ("Formula is"), bound from the layout's occurrence, with
+// the text colour, fill, bold, italic and underline it gives. Conditions on
+// the field's value, and formats of other objects, are reported.
+func (l *nativeLayout) conditionalFormats(obj *xmlNode, out map[string]interface{}) {
+	f := childPath(obj, "Conditions", "Formatting")
+	if f == nil {
 		return
 	}
-	list := findFirstChild(holder, "ObjectList")
-	if list == nil {
+	style, _ := out["style"].(map[string]interface{})
+	var rules []interface{}
+	for _, c := range f.Children {
+		if c.Name != "Condition" {
+			continue
+		}
+		formula := calculationText(c)
+		if out["type"] != "field" || style == nil || firstAttr(c, "type") != "0" || formula == "" {
+			l.formatsLeft++
+			continue
+		}
+		bound, ok := l.bindFormula(formula)
+		if !ok {
+			l.formatsLeft++
+			continue
+		}
+		css := resolveStyle(nil, nil, findFirstChild(c, "LocalCSS"))
+		rule := map[string]interface{}{"operator": "formula", "value": bound}
+		if color, ok := cssColor(css.text("color")); ok {
+			rule["text_color"] = color
+		}
+		if fill, ok := cssColor(css["self"]["background-color"]); ok {
+			rule["fill_color"] = fill
+		}
+		weight := strings.ToLower(css.text("font-weight"))
+		if n, err := strconv.Atoi(weight); (err == nil && n >= 600) || weight == "bold" || weight == "bolder" {
+			rule["bold"] = true
+		}
+		if strings.EqualFold(css.text("font-style"), "italic") {
+			rule["italic"] = true
+		}
+		if strings.Contains(strings.ToLower(css.text("text-decoration")), "underline") {
+			rule["underline"] = true
+		}
+		rules = append(rules, rule)
+	}
+	if len(rules) > 0 {
+		style["conditional_rules"] = rules
+	}
+}
+
+// panelControl converts a tab or slide control: the control itself, drawn
+// beneath its panels, with its tab labels and the panel in front when the
+// layout opens, then the objects of every panel, each saying which panel of
+// which control it sits on, so only the panel in front is shown.
+func (l *nativeLayout) panelControl(obj *xmlNode, kind string) {
+	holder := findFirstChild(obj, "TabControl", "SlideControl")
+	base := l.baseObject(obj)
+	if holder == nil || base == nil {
 		return
 	}
 	var panels []*xmlNode
-	for _, p := range list.Children {
-		if p.Name == "LayoutObject" && firstAttr(p, "type") == "Panel" {
-			panels = append(panels, p)
+	if list := findFirstChild(holder, "ObjectList"); list != nil {
+		for _, p := range list.Children {
+			if p.Name == "LayoutObject" && firstAttr(p, "type") == "Panel" {
+				panels = append(panels, p)
+			}
 		}
 	}
 	if len(panels) == 0 {
@@ -411,13 +499,49 @@ func (l *nativeLayout) convertFrontPanel(obj *xmlNode, kind string) {
 	if front < 0 || front >= len(panels) {
 		front = 0
 	}
-	if inner := findFirstChild(panels[front], "TabPanel", "SlidePanel"); inner != nil {
-		if objects := findFirstChild(inner, "ObjectList"); objects != nil {
-			l.convertList(objects)
+	id := l.objectID(obj)
+	base["id"] = id
+	class := "tab_control"
+	if kind == "Slide Control" {
+		base["type"] = "slide_control"
+		class = "slide_control"
+	} else {
+		base["type"] = "tab_control"
+		if h, err := strconv.ParseFloat(firstAttr(holder, "height"), 64); err == nil && h > 0 {
+			base["tab_height"] = h
 		}
 	}
-	l.frontPanels++
-	l.pending[pendingObjectKinds[kind]]++
+	base["style"] = l.style(obj, []string{class}, true)
+	base["default_panel"] = front
+	tabs := make([]interface{}, len(panels))
+	l.objects = append(l.objects, base)
+	l.ctx.count(kind).Migrated++
+	for i, p := range panels {
+		inner := findFirstChild(p, "TabPanel", "SlidePanel")
+		label := ""
+		if inner != nil {
+			if c := findFirstChild(inner, "Calculation"); c != nil {
+				label, _ = calcLiteral(calculationText(c))
+			}
+		}
+		if label == "" && kind == "Tab Control" {
+			label = fmt.Sprintf("Tab %d", i+1)
+		}
+		tabs[i] = label
+		start := len(l.objects)
+		if inner != nil {
+			if objects := findFirstChild(inner, "ObjectList"); objects != nil {
+				l.convertList(objects)
+			}
+		}
+		for _, o := range l.objects[start:] {
+			if _, nested := o["panel"]; !nested {
+				o["panel"] = map[string]interface{}{"control": id, "index": i}
+			}
+		}
+		l.ctx.count("Panel").Migrated++
+	}
+	base["tabs"] = tabs
 }
 
 // baseObject reads what every object has: its box, name, tooltip and hide
@@ -606,14 +730,40 @@ func (l *nativeLayout) column(ref *xmlNode) (column string, occ boundOccurrence,
 	return column, o, ok
 }
 
-// relationshipBetween is the relationship joining two occurrences directly.
-func (l *nativeLayout) relationshipBetween(a, b string) string {
-	for _, r := range l.ctx.relationships {
-		if (r.LeftOccurrenceID == a && r.RightOccurrenceID == b) || (r.LeftOccurrenceID == b && r.RightOccurrenceID == a) {
-			return r.ID
+// occurrencePath is the chain of occurrences FileMaker follows from the
+// occurrence from to the occurrence to, to included, and the relationship
+// of each step. FileMaker's graph has no cycle, so there is one at most:
+// one step to an occurrence joined to the layout's, more in an anchor–buoy
+// graph. Nil when nothing joins them.
+func (c *layoutObjectContext) occurrencePath(from, to string) (occurrences, relationships []string) {
+	if c.edges == nil {
+		c.edges = map[string][][2]string{}
+		for _, r := range c.relationships {
+			c.edges[r.LeftOccurrenceID] = append(c.edges[r.LeftOccurrenceID], [2]string{r.RightOccurrenceID, r.ID})
+			c.edges[r.RightOccurrenceID] = append(c.edges[r.RightOccurrenceID], [2]string{r.LeftOccurrenceID, r.ID})
 		}
 	}
-	return ""
+	prev := map[string][2]string{from: {}}
+	queue := []string{from}
+	for len(queue) > 0 && from != to {
+		at := queue[0]
+		queue = queue[1:]
+		for _, e := range c.edges[at] {
+			if _, seen := prev[e[0]]; seen {
+				continue
+			}
+			prev[e[0]] = [2]string{at, e[1]}
+			if e[0] == to {
+				for id := to; id != from; id = prev[id][0] {
+					occurrences = append([]string{id}, occurrences...)
+					relationships = append([]string{prev[id][1]}, relationships...)
+				}
+				return occurrences, relationships
+			}
+			queue = append(queue, e[0])
+		}
+	}
+	return nil, nil
 }
 
 func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface{}) bool {
@@ -641,11 +791,21 @@ func (l *nativeLayout) field(obj *xmlNode, kind string, out map[string]interface
 		binding["table_occurrence"] = occ.name
 	}
 	if ok && occ.id != l.occID {
-		if rel := l.relationshipBetween(l.occID, occ.id); rel != "" {
-			binding["relationship_id"] = rel
-		} else {
-			// FileMaker follows several relationships to get there;
-			// File4Base reads related fields through one.
+		occurrences, relationships := l.ctx.occurrencePath(l.occID, occ.id)
+		switch {
+		case len(relationships) == 1:
+			binding["relationship_id"] = relationships[0]
+		case len(occurrences) > 1:
+			// Several relationships away: the first record at the end of
+			// the chain is shown, as FileMaker shows it.
+			path := make([]interface{}, len(occurrences))
+			for i, id := range occurrences {
+				path[i] = l.ctx.occNames[id]
+			}
+			binding["occurrence_path"] = path
+			l.alongPath++
+		default:
+			// Nothing joins them: FileMaker shows <Unrelated Table>.
 			l.unreachable++
 			binding["unresolved_relationship"] = true
 		}
@@ -898,9 +1058,6 @@ func (l *nativeLayout) report() []ReportItem {
 			parts = append(parts, plural(l.pending[k], k))
 		}
 		detail := "Layout objects not migrated yet: " + strings.Join(parts, ", ")
-		if l.frontPanels > 0 {
-			detail += "; a tab or slide control shows the objects of its front panel only, without the control itself"
-		}
 		items = append(items, ReportItem{Category: CategoryUnsupported, Domain: "layout", SourceName: l.name, TargetName: l.name, Detail: detail})
 	}
 	var review []string
@@ -908,7 +1065,7 @@ func (l *nativeLayout) report() []ReportItem {
 		review = append(review, plural(l.hideUnbound, "object")+" with a \"Hide object when\" calculation that could not be bound to the imported fields, so always shown")
 	}
 	if l.unreachable > 0 {
-		review = append(review, plural(l.unreachable, "field")+" read through more than one relationship, shown as unavailable")
+		review = append(review, plural(l.unreachable, "field")+" of an occurrence no relationship joins to the layout's, shown as unavailable")
 	}
 	if l.missingField > 0 {
 		review = append(review, plural(l.missingField, "field object")+" showing a field that is not in the imported tables")
@@ -918,6 +1075,27 @@ func (l *nativeLayout) report() []ReportItem {
 	}
 	if l.vectorImage > 0 {
 		review = append(review, plural(l.vectorImage, "vector (SVG) picture")+" that may need replacing by a PNG")
+	}
+	if l.buttonsUnrun > 0 {
+		review = append(review, plural(l.buttonsUnrun, "button")+" running a script step File4Base does not run, kept switched off")
+	}
+	if l.buttonsUnbound > 0 {
+		review = append(review, plural(l.buttonsUnbound, "button")+" whose script step names a field that is not among the imported fields, kept switched off")
+	}
+	if l.buttonIcons > 0 {
+		review = append(review, plural(l.buttonIcons, "button")+" with both an icon and a label, shown with its label only")
+	}
+	if l.portalsFar > 0 {
+		review = append(review, plural(l.portalsFar, "portal")+" showing the records of an occurrence several relationships away, listed along the path; no record can be created in them")
+	}
+	if l.portalFilter > 0 {
+		review = append(review, plural(l.portalFilter, "portal")+" whose filter calculation could not be bound, showing no records until it is set again")
+	}
+	if l.portalSort > 0 {
+		review = append(review, plural(l.portalSort, "portal sort field")+" of another occurrence, left out of the portal's sort")
+	}
+	if l.formatsLeft > 0 {
+		review = append(review, plural(l.formatsLeft, "conditional format")+" not kept (a condition on the value, not a calculation; one that could not be bound; or on an object other than a field)")
 	}
 	if l.mergeKept > 0 {
 		review = append(review, plural(l.mergeKept, "merge field")+" of a related field or a variable, shown as FileMaker wrote it")
@@ -934,4 +1112,509 @@ func plural(n int, noun string) string {
 		return "1 " + noun
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// button converts a FileMaker button (holder is its <Button> element):
+// its label, its look, and what a click runs. A button showing only an
+// icon is drawn as the icon, with a button without a fill over it.
+//
+// A click runs a script (bound to the imported scripts once they are
+// known, see bindLayoutButtons) or a single step, converted as a step of a
+// script is. A button whose step File4Base does not run is kept, switched
+// off, and reported.
+func (l *nativeLayout) button(obj, holder *xmlNode, out map[string]interface{}) bool {
+	out["type"] = "button"
+	style := l.style(obj, []string{"button"}, true)
+	label := ""
+	if holder != nil {
+		if lb := findFirstChild(holder, "Label"); lb != nil && (findFirstChild(lb, "Text") != nil || findFirstChild(lb, "Calculation") != nil) {
+			if t := findFirstChild(lb, "Text"); t != nil {
+				if st := findFirstChild(t, "StyledText"); st != nil {
+					if d := findFirstChild(st, "Data"); d != nil {
+						label = strings.TrimSpace(strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(d.Text))
+					}
+				}
+			} else if text, ok := calcLiteral(calculationText(lb)); ok {
+				label = text
+			}
+		}
+	}
+	out["text"] = l.mergeText(label)
+	if icon := l.buttonIcon(obj, holder, out); icon != nil {
+		if label == "" {
+			// The icon is the button: drawn, with the click over it.
+			l.objects = append(l.objects, icon)
+			style["fill_color"] = "#00000000"
+			style["border_width"] = 0.0
+		} else {
+			l.buttonIcons++
+		}
+	}
+	out["style"] = style
+	if holder != nil {
+		if action := l.buttonAction(findFirstChild(holder, "action")); action != nil {
+			out["action"] = action
+		}
+	}
+	return true
+}
+
+// buttonIcon is the picture a button shows from the file's library, as a
+// media object in the button's box, or nil.
+func (l *nativeLayout) buttonIcon(obj, holder *xmlNode, box map[string]interface{}) map[string]interface{} {
+	if holder == nil {
+		return nil
+	}
+	ref := childPath(holder, "IconData", "BinaryData", "LibraryReference")
+	if ref == nil {
+		return nil
+	}
+	img := l.ctx.image(firstAttr(ref, "id"))
+	if img == nil {
+		return nil
+	}
+	media := map[string]interface{}{"kind": "image", "name": "Icon", "fit": "contain"}
+	for k, v := range img {
+		media[k] = v
+	}
+	out := map[string]interface{}{
+		"type": "media", "x": box["x"], "y": box["y"], "width": box["width"], "height": box["height"],
+		"media": media, "style": map[string]interface{}{},
+	}
+	// Stable like the button's own id, and distinct from it.
+	if uid := findFirstChild(obj, "UUID"); uid != nil && l.layoutID != "" && strings.TrimSpace(uid.Text) != "" {
+		out["id"] = uuid.NewSHA1(uuid.NameSpaceOID, []byte(l.layoutID+"/"+strings.TrimSpace(uid.Text)+"/icon")).String()
+	} else {
+		out["id"] = uuid.NewString()
+	}
+	return out
+}
+
+// childPath follows nested elements by name, nil when one is missing.
+func childPath(n *xmlNode, names ...string) *xmlNode {
+	for _, name := range names {
+		if n == nil {
+			return nil
+		}
+		n = findFirstChild(n, name)
+	}
+	return n
+}
+
+// buttonAction converts what a click on a button runs: a script, by its
+// FileMaker id and name until the scripts are imported, or one step.
+func (l *nativeLayout) buttonAction(action *xmlNode) map[string]interface{} {
+	if action == nil {
+		return nil
+	}
+	if ref := findFirstChild(action, "ScriptReference"); ref != nil {
+		out := map[string]interface{}{"type": "perform_script", "script_name": firstAttr(ref, "name")}
+		// Marked as migrated, so bindLayoutButtons binds it, even without an id.
+		out[sourceScriptIDKey] = firstAttr(ref, "id")
+		if external := findFirstChild(ref, "DataSourceReference", "FileReference"); external != nil {
+			// A script of another file: its id is that file's, and must
+			// never find one of ours (see readTrigger).
+			reference := firstAttr(external, "name", "Name")
+			if reference == "" {
+				reference = "another file"
+			}
+			out["file_reference"] = reference
+		}
+		if calc := findFirstChild(action, "Calculation"); calc != nil {
+			param := strings.TrimSpace(calculationText(calc))
+			if param == "" {
+				return out
+			}
+			if bound, ok := l.bindFormula(param); ok {
+				out["parameter"] = bound
+			} else {
+				out["parameter"] = param
+				out["parameter_problem"] = "the parameter could not be bound to the imported fields"
+				out["enabled"] = false
+			}
+		}
+		return out
+	}
+	step := findFirstChild(action, "Step")
+	if step == nil {
+		return nil
+	}
+	resolved := canonicalScriptStep(firstAttr(step, "name"), firstAttr(step, "id"))
+	params, _, _ := decodeStepParams(step, resolved.Canonical)
+	// As convertScriptNode does: a protected PDF must not be written
+	// unprotected.
+	if resolved.Canonical == "Save Records as PDF" && pdfSecurityRequested(step) {
+		params["pdf_security"] = true
+	}
+	if id := firstAttr(step, "id"); id != "" {
+		params["filemaker_step_id"] = id
+	}
+	out := map[string]interface{}{"type": "single_step", "step_type": resolved.Canonical, "params": params}
+	fieldsBound := l.bindStepFields(params)
+	if !fieldsBound {
+		out["field_problem"] = "a field the step names is not among the imported fields"
+	}
+	if !resolved.Supported || !fieldsBound || strings.EqualFold(firstAttr(step, "enable"), "false") {
+		out["enabled"] = false
+		if !resolved.Supported {
+			l.buttonsUnrun++
+		} else if !fieldsBound {
+			l.buttonsUnbound++
+		}
+	}
+	return out
+}
+
+// bindStepFields points every field a button's step names (its target, its
+// sort or find fields...) at the column the import gave that field. The
+// step decoder only sanitises the source name, and two source fields
+// sanitised alike (Unit Price, Unit_Price) are imported as two columns
+// (unit_price, unit_price_2): only the table's field map tells which one is
+// meant. It answers false when a field of an imported table cannot be
+// placed. A field of an occurrence that is not known here is left as the
+// decoder wrote it; one of another file's table gets that file's name for it.
+func (l *nativeLayout) bindStepFields(v interface{}) bool {
+	ok := true
+	switch t := v.(type) {
+	case map[string]interface{}:
+		if label, _ := t["field_label"].(string); label != "" {
+			if field, _ := t["field"].(string); field != "" && !strings.HasPrefix(field, "$") && !l.bindStepField(t, label) {
+				ok = false
+			}
+		}
+		for _, child := range t {
+			if !l.bindStepFields(child) {
+				ok = false
+			}
+		}
+	case []interface{}:
+		for _, child := range t {
+			if !l.bindStepFields(child) {
+				ok = false
+			}
+		}
+	case []map[string]interface{}:
+		for _, child := range t {
+			if !l.bindStepFields(child) {
+				ok = false
+			}
+		}
+	}
+	return ok
+}
+
+// bindStepField binds one entry naming the source field label, read
+// through the occurrence the entry names (field_table or table, as the
+// source or sanitised) or else the layout's.
+func (l *nativeLayout) bindStepField(entry map[string]interface{}, label string) bool {
+	occName, _ := entry["field_table"].(string)
+	if occName == "" {
+		occName, _ = entry["table"].(string)
+	}
+	if occName == "" {
+		occName = l.occName
+	}
+	o, found := l.ctx.binding.occByName[strings.ToLower(occName)]
+	if !found {
+		// The sanitised name the DDR decoder writes: taken only when one
+		// occurrence has it.
+		matches := 0
+		for _, candidate := range l.ctx.binding.occByName {
+			if sanitizeIdentifier(candidate.name) == occName {
+				o, matches = candidate, matches+1
+			}
+		}
+		if matches != 1 {
+			return true
+		}
+	}
+	if o.external {
+		// Named as the other file's migration names its columns, as a
+		// field object of that occurrence is (see column).
+		entry["field"] = externalFieldName(label)
+		return true
+	}
+	names := l.ctx.binding.fields[o.table]
+	if names == nil {
+		return true
+	}
+	column, ok := names.resolve(label)
+	if !ok {
+		return false
+	}
+	entry["field"] = column
+	return true
+}
+
+// portal converts a portal showing the records of an occurrence one
+// relationship from the layout's: the rows it shows, from which, their
+// sort and filter; then the objects of its first row, which every row
+// repeats with its own record. A portal reaching its occurrence through
+// several relationships lists the records along that path
+// (occurrence_path), as a field there reads the first of them.
+func (l *nativeLayout) portal(obj *xmlNode) {
+	p := findFirstChild(obj, "Portal")
+	base := l.baseObject(obj)
+	if p == nil || base == nil {
+		return
+	}
+	to := findFirstChild(p, "TableOccurrenceReference")
+	if to == nil {
+		l.pending["portal"]++
+		return
+	}
+	occ, found := l.ctx.binding.occByName[strings.ToLower(firstAttr(to, "name"))]
+	var occurrences, relationships []string
+	if found && !l.occExternal {
+		occurrences, relationships = l.ctx.occurrencePath(l.occID, occ.id)
+	}
+	if len(relationships) == 0 {
+		l.pending["portal"]++
+		return
+	}
+	config := map[string]interface{}{
+		"occurrence":      occ.name,
+		"show_scroll_bar": true,
+	}
+	if len(relationships) == 1 {
+		config["relationship_id"] = relationships[0]
+		// As in FileMaker, the empty last row is offered only where the
+		// relationship allows creating records on the portal's side.
+		config["allow_creation"] = true
+	} else {
+		// Several relationships away: every record reached at the end of
+		// the chain is listed. No record is created through it.
+		path := make([]interface{}, len(occurrences))
+		for i, id := range occurrences {
+			path[i] = l.ctx.occNames[id]
+		}
+		config["occurrence_path"] = path
+		config["allow_creation"] = false
+		l.portalsFar++
+	}
+	if o := findFirstChild(p, "Options"); o != nil {
+		if n, err := strconv.Atoi(firstAttr(o, "index")); err == nil && n > 1 {
+			config["initial_row"] = n
+		}
+		if n, err := strconv.Atoi(firstAttr(o, "show")); err == nil && n > 0 {
+			config["row_count"] = n
+		}
+	}
+	if spec := findFirstChild(p, "SortSpecification"); spec != nil {
+		var keys []string
+		for _, sort := range findNodes(spec, "Sort") {
+			ref := childPath(sort, "PrimaryField", "FieldReference")
+			if ref == nil {
+				continue
+			}
+			column, at, ok := l.column(ref)
+			if !ok || at.id != occ.id {
+				l.portalSort++
+				continue
+			}
+			if firstAttr(sort, "type") == "Descending" {
+				column = "-" + column
+			}
+			keys = append(keys, column)
+		}
+		if len(keys) > 0 {
+			config["sort"] = strings.Join(keys, ",")
+		}
+	}
+	if c := findFirstChild(p, "Calculation"); c != nil {
+		if formula := calculationText(c); formula != "" {
+			// FileMaker evaluates the filter from the portal's occurrence,
+			// against each related record.
+			fb := l.ctx.binding.bind(occ.table, formula, occ.name, fmt.Sprintf("the portal filter of the layout %q", l.name))
+			if fb.why == "" && !occ.external {
+				config["filter"] = fb.rewritten
+			} else {
+				// Rows the filter would leave out are never shown.
+				config["filter"] = "0"
+				config["filter_problem"] = true
+				l.portalFilter++
+			}
+		}
+	}
+	base["type"] = "portal"
+	base["portal_config"] = config
+	base["style"] = l.style(obj, []string{"portal"}, false)
+	base["id"] = l.objectID(obj)
+	l.objects = append(l.objects, base)
+	l.ctx.count("Portal").Migrated++
+	if list := findFirstChild(p, "ObjectList"); list != nil {
+		l.convertList(list)
+	}
+}
+
+// popover converts a popover button: the button, then its panel's
+// background and objects, each saying it is on the button's only panel,
+// closed when the layout opens (default_panel -1), so a click on the button
+// shows them and another hides them.
+func (l *nativeLayout) popover(obj *xmlNode) {
+	holder := findFirstChild(obj, "PopoverButton")
+	base := l.baseObject(obj)
+	if holder == nil || base == nil {
+		return
+	}
+	l.button(obj, holder, base)
+	delete(base, "action")
+	base["type"] = "popover_button"
+	base["default_panel"] = -1
+	id := l.objectID(obj)
+	base["id"] = id
+	l.objects = append(l.objects, base)
+	l.ctx.count("Popover Button").Migrated++
+	if l.popovers == nil {
+		l.popovers = map[string]bool{}
+	}
+	l.popovers[id] = true
+	var panel *xmlNode
+	for _, c := range holder.Children {
+		if c.Name == "LayoutObject" && firstAttr(c, "type") == "PopoverPanel" {
+			panel = c
+		}
+	}
+	if panel == nil {
+		return
+	}
+	start := len(l.objects)
+	if back := l.baseObject(panel); back != nil {
+		back["type"] = "rect"
+		style := l.style(panel, []string{"popover"}, false)
+		if _, filled := style["fill_color"]; !filled {
+			style["fill_color"] = "#FFFFFF"
+		}
+		if w, _ := style["border_width"].(float64); w <= 0 {
+			style["border_width"] = 1.0
+			style["border_color"] = "#BDBDBD"
+		}
+		back["style"] = style
+		back["id"] = l.objectID(panel)
+		l.objects = append(l.objects, back)
+		l.ctx.count("PopoverPanel").Migrated++
+	}
+	if list := findFirstChild(panel, "ObjectList"); list != nil {
+		l.convertList(list)
+	}
+	for _, o := range l.objects[start:] {
+		if _, nested := o["panel"]; !nested {
+			o["panel"] = map[string]interface{}{"control": id, "index": 0}
+		}
+	}
+}
+
+// groupedButton keeps the objects a grouped button draws, and puts over
+// them a button without a fill or a label that runs its action.
+func (l *nativeLayout) groupedButton(obj *xmlNode) {
+	g := findFirstChild(obj, "GroupedButton")
+	if g == nil {
+		return
+	}
+	if list := findFirstChild(g, "ObjectList"); list != nil {
+		l.convertList(list)
+	}
+	base := l.baseObject(obj)
+	if base == nil {
+		return
+	}
+	base["type"] = "button"
+	base["text"] = ""
+	base["style"] = map[string]interface{}{"fill_color": "#00000000", "border_width": 0.0}
+	if action := l.buttonAction(findFirstChild(g, "action")); action != nil {
+		base["action"] = action
+	}
+	base["id"] = l.objectID(obj)
+	l.objects = append(l.objects, base)
+	l.ctx.count("Grouped Button").Migrated++
+}
+
+// buttonBar keeps each segment of a button bar as a button at its place.
+func (l *nativeLayout) buttonBar(obj *xmlNode) {
+	list := childPath(obj, "ButtonBar", "ObjectList")
+	if list == nil {
+		return
+	}
+	for _, seg := range list.Children {
+		if seg.Name != "LayoutObject" {
+			continue
+		}
+		base := l.baseObject(seg)
+		if base == nil {
+			continue
+		}
+		if l.button(seg, findFirstChild(seg, "Button"), base) {
+			base["id"] = l.objectID(seg)
+			l.objects = append(l.objects, base)
+			l.ctx.count("Button").Migrated++
+		}
+	}
+	l.ctx.count("Button Bar").Migrated++
+}
+
+// bindLayoutButtons binds the script each migrated button runs to the
+// imported scripts, as a trigger's is: by FileMaker id, then by a name only
+// one script has. A button whose script is not found, or whose name several
+// scripts share, is kept switched off, and the solution's report says how
+// many there are.
+func bindLayoutButtons(bundle *schema.SolutionBundle, scripts scriptIndex, solution string) []ReportItem {
+	missing, ambiguous, external := 0, 0, 0
+	for li := range bundle.Layouts {
+		forEachLayoutObject(bundle.Layouts[li].Definition, func(obj map[string]interface{}) {
+			action, _ := obj["action"].(map[string]interface{})
+			if action == nil || action["type"] != "perform_script" {
+				return
+			}
+			_, fromSource := action[sourceScriptIDKey]
+			if !fromSource {
+				return // not a migrated button
+			}
+			id, matches := scripts.resolve(action)
+			delete(action, sourceScriptIDKey)
+			switch {
+			case id != "":
+				action["script_id"] = id
+				return
+			case action["file_reference"] != nil:
+				external++
+			case matches > 1:
+				ambiguous++
+			default:
+				missing++
+			}
+			action["enabled"] = false
+		})
+	}
+	var parts []string
+	if missing > 0 {
+		parts = append(parts, fmt.Sprintf("%d run a script that is not among the imported scripts", missing))
+	}
+	if ambiguous > 0 {
+		parts = append(parts, fmt.Sprintf("%d run a script whose name several imported scripts share", ambiguous))
+	}
+	if external > 0 {
+		parts = append(parts, fmt.Sprintf("%d run a script of another FileMaker file", external))
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return []ReportItem{{Category: CategoryManualActionRequired, Domain: "layout", SourceName: solution,
+		Detail: "Migrated buttons kept switched off: " + strings.Join(parts, "; ") + ". Choose their script in Layout mode"}}
+}
+
+// forEachLayoutObject calls fn with every object of a layout definition,
+// as converted or as read back from JSON.
+func forEachLayoutObject(def map[string]interface{}, fn func(map[string]interface{})) {
+	switch objects := def["objects"].(type) {
+	case []map[string]interface{}:
+		for _, o := range objects {
+			fn(o)
+		}
+	case []interface{}:
+		for _, raw := range objects {
+			if o, ok := raw.(map[string]interface{}); ok {
+				fn(o)
+			}
+		}
+	}
 }

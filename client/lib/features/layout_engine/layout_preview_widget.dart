@@ -80,7 +80,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
     super.initState();
     widget.onAttach?.call(this);
     unawaited(_fetchRecords());
-    if (widget.layout.objects.any((o) => o.fieldBinding?.isRelated ?? false)) unawaited(_loadRelationshipGraph());
+    if (widget.layout.objects.any((o) => o.fieldBinding?.readsRelated ?? false)) unawaited(_loadRelationshipGraph());
     _initKioskCountdown();
   }
 
@@ -120,6 +120,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
       tablesById: _tablesById,
       formatValue: DataBrowserWidgetState.fieldText,
       batched: true,
+      layoutOccurrence: widget.layout.tableOccurrence,
     );
   }
 
@@ -692,6 +693,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         ? math.max(widget.layout.height, maxObjY)
         : math.max(maxObjY, 300.0) + 40.0;
     final canvasWidth = widget.layout.width;
+    final offPanel = objectsOffPanel(widget.layout.objects);
 
     // A layout wider than the printable width is scaled down to fit the sheet
     // (fit to page width), so nothing is cut off on screen or on paper.
@@ -711,7 +713,9 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
           clipBehavior: Clip.none,
           children: [
             Positioned.fill(child: LayoutBackgroundView(layout: widget.layout)),
-            ...widget.layout.objects.map((obj) {
+            // A tab or slide control prints the panel in front when the
+            // layout opens.
+            ...widget.layout.objects.where((o) => !offPanel.contains(o.id)).map((obj) {
               return Positioned(
                 left: obj.x,
                 top: obj.y,
@@ -764,7 +768,7 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
         final binding = obj.fieldBinding;
         final unreadable = layoutFieldUnreadableNotice(binding);
         if (unreadable != null) return _fieldNotice(obj, unreadable);
-        if (binding != null && binding.isRelated) {
+        if (binding != null && binding.readsRelated) {
           final related = _relatedFor(record);
           if (related == null || related.recordId == null) return _fieldNotice(obj, '<${binding.qualifiedName}>');
           return RelatedFieldView(
@@ -806,8 +810,14 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
 
       case 'button':
       case 'popover_button':
-        final btnText = resolveLayoutMergeText(obj.text.isEmpty ? 'Button' : obj.text,
+        final btnText = resolveLayoutMergeText(obj.text.isEmpty && obj.action == null ? 'Button' : obj.text,
             record: record, userName: widget.currentUserName);
+        if (obj.style.fillColor == '#00000000' && obj.style.borderWidth <= 0) {
+          // Drawn by what is under it (a grouped button, an icon).
+          return btnText.isEmpty
+              ? const SizedBox.shrink()
+              : Center(child: Text(btnText, overflow: TextOverflow.ellipsis, style: layoutTextStyle(obj.style)));
+        }
         return Container(
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -829,6 +839,10 @@ class LayoutPreviewWidgetState extends State<LayoutPreviewWidget> {
             overflow: TextOverflow.ellipsis,
           ),
         );
+
+      case 'tab_control':
+      case 'slide_control':
+        return LayoutPanelControlView(obj: obj, selected: obj.defaultPanel);
 
       case 'portal':
         return Container(

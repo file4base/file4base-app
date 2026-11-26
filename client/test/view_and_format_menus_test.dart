@@ -8,6 +8,39 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('a formula rule opens the calculation editor and keeps what it gives back', (tester) async {
+    LayoutObjectStyle? saved;
+    final asked = <String>[];
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => TextButton(
+          onPressed: () async {
+            saved = await FormatDialogs.showConditionalFormattingDialog(
+              context,
+              initialStyle: const LayoutObjectStyle(
+                  conditionalRules: [ConditionalFormatRule(operator: 'formula', value: 'price > 1')]),
+              editFormula: (initial) async {
+                asked.add(initial);
+                return 'price > 100';
+              },
+            );
+          },
+          child: const Text('open'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('conditional-rule-calc-0')));
+    await tester.pumpAndSettle();
+    expect(asked, ['price > 1']);
+    expect(find.text('price > 100'), findsOneWidget, reason: 'the field shows the new formula');
+    await tester.tap(find.text('Save Rules'));
+    await tester.pumpAndSettle();
+    expect(saved?.conditionalRules.single.value, 'price > 100');
+    expect(saved?.conditionalRules.single.isFormula, isTrue);
+  });
+
   group('LayoutObjectStyle & ConditionalFormatRule', () {
     test('serializes and deserializes typography, data format, ruler, and conditional rules', () {
       const rule = ConditionalFormatRule(

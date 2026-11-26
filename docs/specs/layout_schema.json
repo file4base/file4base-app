@@ -218,6 +218,30 @@
           "default": false,
           "description": "Whether hide_when applies in Find mode too, as FileMaker's Apply in Find mode. Find mode currently shows every object."
         },
+        "tabs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "tab_control and slide_control: the label of each panel, in order (a slide control's are empty)."
+        },
+        "default_panel": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "tab_control and slide_control: the panel in front when the layout opens. popover_button: -1, its popover (the objects on its panel 0) closed until the button is clicked."
+        },
+        "tab_height": {
+          "type": "number",
+          "description": "tab_control: the height of its row of tabs."
+        },
+        "panel": {
+          "type": "object",
+          "required": ["control", "index"],
+          "description": "The tab or slide control this object sits on a panel of, by id, and which panel: the object is shown only while that panel is in front.",
+          "properties": {
+            "control": { "type": "string" },
+            "index": { "type": "integer", "minimum": 0 }
+          }
+        },
         "is_locked": { "type": "boolean" },
         "tab_order": {
           "type": "integer",
@@ -299,7 +323,12 @@
             "unresolved_relationship": {
               "type": "boolean",
               "default": false,
-              "description": "Set by a migration for a related field FileMaker read through more than one relationship. File4Base follows one, so the field is shown as unreachable until a relationship is chosen."
+              "description": "Set by a migration for a field of an occurrence no relationship joins to the layout's (FileMaker shows <Unrelated Table>): shown as unreachable until a relationship is chosen."
+            },
+            "occurrence_path": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Set by a migration for a field of an occurrence several relationships away from the layout's (anchor-buoy graphs): the occurrences reached in turn, the first one relationship away, the last being table_occurrence. The first related record at the end of the chain is shown. Ignored when relationship_id is set."
             },
             "missing": {
               "type": "boolean",
@@ -331,6 +360,19 @@
             "sort": {
               "type": "string",
               "description": "Row order, as the data API takes it: 'last_name,-fee_paid'. Empty uses the relationship's own sort."
+            },
+            "filter": {
+              "type": "string",
+              "description": "Calculation evaluated from the portal's occurrence against each related record; only the records it is true for are shown (FileMaker's Filter portal records). Empty shows them all."
+            },
+            "filter_problem": {
+              "type": "boolean",
+              "description": "Set by a migration when the source filter could not be bound; the filter is then '0' and the portal shows no record until it is set again."
+            },
+            "occurrence_path": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Instead of relationship_id, for an occurrence several relationships from the layout's (#26): the occurrences reached in turn, the last being occurrence. The rows are every record reached at the end; none is created through it."
             }
           }
         },
