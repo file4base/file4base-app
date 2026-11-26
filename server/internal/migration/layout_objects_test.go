@@ -779,6 +779,82 @@ func TestNativeLayoutButtonsRunTheirScripts(t *testing.T) {
 	}
 }
 
+// A button's step writes the field it names, a script of another file is
+// never bound to one of this file's, and a protected PDF is not written
+// unprotected.
+func TestNativeLayoutButtonStepsKeepTheirTargets(t *testing.T) {
+	button := func(uid, action string) string {
+		return `<LayoutObject type="Button"><UUID>00000000-0000-0000-0000-0000000000` + uid + `</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+                <Button><Label><Text><StyledText><Data><![CDATA[B` + uid + `]]></Data></StyledText></Text></Label>
+                <action>` + action + `</action></Button></LayoutObject>`
+	}
+	buttons := button("a1", `<Step enable="True" id="91" name="Replace Field Contents"><ParameterValues>
+                  <Parameter type="FieldReference"><FieldReference id="7" name="Unit_Price"><TableOccurrenceReference id="1" name="Recipes"/></FieldReference></Parameter>
+                </ParameterValues></Step>`) +
+		button("a2", `<Step enable="True" id="91" name="Replace Field Contents"><ParameterValues>
+                  <Parameter type="FieldReference"><FieldReference id="9" name="Nowhere"><TableOccurrenceReference id="1" name="Recipes"/></FieldReference></Parameter>
+                </ParameterValues></Step>`) +
+		button("a3", `<ScriptReference id="5" name="Report" UUID="r"><FileReference id="1" name="Reporting"/></ScriptReference><Options>4</Options>`) +
+		button("a4", `<Step enable="True" id="144" name="Save Records as PDF"><ParameterValues>
+                  <Parameter type="Options"><Options type="Records being browsed" value="1"><Security><Open value="True"/><Control value="False"/></Security></Options></Parameter>
+                </ParameterValues></Step>`)
+	design := strings.Replace(layoutObjectsFixture, `<Field id="5" name="Archived" datatype="number" fieldtype="normal"/>`,
+		`<Field id="5" name="Archived" datatype="number" fieldtype="normal"/>
+        <Field id="6" name="Unit Price" datatype="number" fieldtype="normal"/>
+        <Field id="7" name="Unit_Price" datatype="number" fieldtype="normal"/>`, 1)
+	design = strings.Replace(design, "<LayoutCatalog>", `<ScriptCatalog><Script id="5" name="Delete Everything"/></ScriptCatalog>
+    <LayoutCatalog>`, 1)
+	design = strings.Replace(design, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, buttons, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	columns := map[string]bool{}
+	for _, tbl := range got.Bundle.Tables {
+		for _, c := range tbl.Columns {
+			if c.DisplayName == "Unit Price" || c.DisplayName == "Unit_Price" {
+				columns[c.DisplayName+"="+c.Name] = true
+			}
+		}
+	}
+	if !columns["Unit Price=unit_price"] || !columns["Unit_Price=unit_price_2"] {
+		t.Fatalf("the two fields must be imported as two columns: %v", columns)
+	}
+	actions := map[string]map[string]interface{}{}
+	forEachLayoutObject(got.Bundle.Layouts[0].Definition, func(o map[string]interface{}) {
+		if a, _ := o["action"].(map[string]interface{}); a != nil {
+			actions[o["text"].(string)] = a
+		}
+	})
+	params := func(a map[string]interface{}) map[string]interface{} { return a["params"].(map[string]interface{}) }
+
+	if a := actions["Ba1"]; a == nil || params(a)["field"] != "unit_price_2" || a["enabled"] == false {
+		t.Fatalf("the button must replace the second field's column: %v", a)
+	}
+	if a := actions["Ba2"]; a == nil || a["enabled"] != false || a["field_problem"] == nil {
+		t.Fatalf("a step naming a field that was not imported is switched off: %v", a)
+	}
+	if a := actions["Ba3"]; a == nil || a["script_id"] != nil || a["enabled"] != false || a["file_reference"] != "Reporting" {
+		t.Fatalf("a script of another file must not run the local script with its id: %v", a)
+	}
+	if a := actions["Ba4"]; a == nil || params(a)["pdf_security"] != true {
+		t.Fatalf("a protected PDF must carry pdf_security: %v", a)
+	}
+	external := false
+	for _, it := range got.Report.ManualActionRequired {
+		if strings.Contains(it.Detail, "1 run a script of another FileMaker file") {
+			external = true
+		}
+	}
+	if !external {
+		t.Fatalf("report: %+v", got.Report.ManualActionRequired)
+	}
+}
+
 func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 	portals := `<LayoutObject type="Portal">
                 <UUID>00000000-0000-0000-0000-000000000050</UUID>

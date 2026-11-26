@@ -111,6 +111,17 @@ func TestFirstRelatedAlong(t *testing.T) {
 			// The path is followed as given, never searched for.
 			_, err = svc.FirstRelatedAlong(ctx, "groups", "groups", []string{"items"}, []string{g})
 			assert.True(t, errors.Is(err, data.ErrRelationshipNotFound), "%v", err)
+
+			// A second relationship between two occurrences of the path:
+			// the path cannot tell which one it was built on, so neither is
+			// taken.
+			a.relate(t, ctx, schema.CreateRelationshipInput{Name: "members_items_other",
+				LeftOccurrenceID: membersOcc, RightOccurrenceID: itemsOcc,
+				Predicates: []schema.RelationshipPredicate{{LeftColumnID: memberFields["code"], Operator: "=", RightColumnID: itemFields["label"]}}})
+			_, err = svc.FirstRelatedAlong(ctx, "groups", "groups", []string{"members", "items"}, []string{g})
+			assert.True(t, errors.Is(err, data.ErrRelationshipNotFound), "%v", err)
+			_, _, err = svc.RelatedAlong(ctx, "groups", "groups", []string{"members", "items"}, g, nil)
+			assert.True(t, errors.Is(err, data.ErrRelationshipNotFound), "%v", err)
 		})
 	}
 }

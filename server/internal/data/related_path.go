@@ -18,7 +18,8 @@ import (
 // path names occurrences, the first one relationship away from contextName,
 // each joined to the one before it; it is never searched for, so a graph
 // with several ways between two occurrences reads the one the layout was
-// built on. Every table on the path must be readable. Each record asked for
+// built on. Two occurrences of the path joined by more than one
+// relationship are refused, the path not saying which one it follows. Every table on the path must be readable. Each record asked for
 // has an entry, nil when nothing is related to it; the record given is the
 // one GetRow gives, so it can be shown and edited like any other.
 func (s *Service) FirstRelatedAlong(
@@ -250,15 +251,23 @@ func (s *Service) walkOf(ctx context.Context, tableName, contextName string, pat
 		if !ok {
 			return nil, fmt.Errorf("there is no table occurrence %q", name)
 		}
-		found := false
+		// The path names occurrences only: when several relationships
+		// join two of them (a billing and a shipping customer), it cannot
+		// tell which one it was built on, and taking either would show and
+		// edit another record than FileMaker's.
+		joins := 0
 		for _, h := range graph.edges[at.id] {
 			if h.to.OccurrenceID == next.id {
-				hops[i], found = h, true
-				break
+				hops[i] = h
+				joins++
 			}
 		}
-		if !found {
+		switch {
+		case joins == 0:
 			return nil, fmt.Errorf("%w: none joins %s to %s", ErrRelationshipNotFound, at.name, next.name)
+		case joins > 1:
+			return nil, fmt.Errorf("%w: %d relationships join %s to %s, and the path does not say which one to follow",
+				ErrRelationshipNotFound, joins, at.name, next.name)
 		}
 		at = next
 	}

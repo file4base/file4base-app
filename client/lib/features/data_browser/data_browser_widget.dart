@@ -895,8 +895,13 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       formatValue: fieldText,
       fromDatabase: widget.externalDatabase,
       layoutOccurrence: widget.layout?.tableOccurrence,
+      revision: _recordRevision,
     );
   }
+
+  /// Counts the writes of the record in hand's fields: see
+  /// [RelatedContext.revision].
+  int _recordRevision = 0;
 
   /// Reads the relationship graph once. A layout with no portal and no related
   /// field never needs it, so a database whose graph cannot be read still
@@ -1468,7 +1473,12 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
       final texts = record[sourceTextKey];
       if (texts is Map) texts.remove(colName);
       _invalidateHidden(id);
-      if (mounted) setState(() => _fieldSaving[colName] = null);
+      if (mounted) {
+        setState(() {
+          _fieldSaving[colName] = null;
+          _recordRevision++;
+        });
+      }
       // The field may be a match field of a list of related values.
       if (mounted && identical(record, _records.elementAtOrNull(_currentIndex))) _resolveRelatedValueLists();
       return true;
@@ -2762,6 +2772,16 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
     return goToRecord(index.clamp(0, _records.length - 1));
   }
 
+  /// List / Table views: a button of a row acts on that row's record. The
+  /// row is made the current record first, and nothing runs when that is
+  /// refused (a commit trigger, a validation): the button would otherwise
+  /// act on the record left.
+  Future<void> _clickRowButton(int recordIndex, LayoutObjectModel obj, String label) async {
+    if (recordIndex != _currentIndex && !await _goToRecordIndex(recordIndex)) return;
+    if (!mounted || recordIndex != _currentIndex) return;
+    await _handleLayoutButtonClick(obj, label);
+  }
+
   /// List / Table views: a click on a field of another record makes it the
   /// current record and puts the cursor in that field, ready to type. The
   /// field is focused once the record has changed and its editable field is
@@ -3350,10 +3370,10 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         final bytes = _tryDecodeBase64Image(rec[col.name]?.toString());
         return InkWell(
           onTap: () async {
-            unawaited(_goToRecordIndex(recordIndex));
             if (obj.action != null) {
-              await _handleLayoutButtonClick(obj, col.displayName);
+              await _clickRowButton(recordIndex, obj, col.displayName);
             } else {
+              unawaited(_goToRecordIndex(recordIndex));
               _openRecordInForm(recordIndex);
             }
           },
@@ -3479,20 +3499,14 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         // A button without a fill (a grouped button, an icon) is a place
         // to click over what is drawn under it.
         return InkWell(
-          onTap: () async {
-            unawaited(_goToRecordIndex(recordIndex));
-            await _handleLayoutButtonClick(obj, btnText);
-          },
+          onTap: () => _clickRowButton(recordIndex, obj, btnText),
           child: btnText.isEmpty
               ? const SizedBox.expand()
               : Center(child: Text(btnText, overflow: TextOverflow.ellipsis, style: layoutTextStyle(obj.style))),
         );
       }
       return ElevatedButton(
-        onPressed: () async {
-          unawaited(_goToRecordIndex(recordIndex));
-          await _handleLayoutButtonClick(obj, btnText);
-        },
+        onPressed: () => _clickRowButton(recordIndex, obj, btnText),
         child: Text(btnText, overflow: TextOverflow.ellipsis),
       );
     }
@@ -5758,12 +5772,21 @@ class DataBrowserWidgetState extends State<DataBrowserWidget>
         if (current == 1) return missing;
         row = current == 0 ? 1 : current - 1;
       case 'next':
-        if (current >= count) return missing;
+        if (current >= count && !rows.truncated) return missing;
         row = current + 1;
       default:
         final n = num.tryParse(t)?.truncate();
         if (n == null) return missing;
         row = n;
+    }
+    // A portal that read only its first related records does not have its
+    // last one: a row past those it has, or the last one, is refused, and
+    // no row is left active, so a step after it (Delete Portal Row) never
+    // acts on another row than the one asked for. Next past them ends a
+    // loop like the last row does.
+    if (rows.truncated && (t == 'last' || row > count)) {
+      _deactivatePortal();
+      return GoToRecordOutcome(moved: false, atBoundary: t == 'next', errorCode: 3);
     }
     if (count == 0 || row < 1 || row > count) return missing;
 

@@ -435,6 +435,17 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         widget.table.id: widget.table,
       };
 
+  /// The table of the last occurrence of a field's [path], or null when it
+  /// is not in the graph or is another solution's.
+  TableModel? _endOfPathTable(List<String> path) {
+    if (path.isEmpty) return null;
+    final last = path.last.toLowerCase();
+    final occurrence =
+        _occurrences.values.where((o) => o.id == path.last || o.name.toLowerCase() == last).firstOrNull;
+    if (occurrence == null || occurrence.isExternal) return null;
+    return _tablesById[occurrence.baseTableId];
+  }
+
   /// The occurrence a field of the record in hand names: the layout's own.
   String get _ownOccurrence => widget.externalOccurrence?.name ?? _currentTable.name;
 
@@ -5224,9 +5235,14 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
     final targets = _relatedTargets;
     final related = _targetOf(binding?.relationshipId, binding?.tableOccurrence, side: binding?.relationshipSide);
 
-    // A field is read from the record in hand, or from a related record (#36),
-    // and that decides which table's fields it can be bound to.
-    final cols = related?.table.columns ?? _currentTable.columns;
+    // A field is read from the record in hand, from a related record (#36),
+    // or from the first record along an occurrence path, and that decides
+    // which table's fields it can be bound to. A path keeps its end's
+    // fields: picking one of this layout's would still read it along the
+    // path, from another table.
+    final alongPath = binding?.isAlongPath ?? false;
+    final cols = related?.table.columns ??
+        (alongPath ? (_endOfPathTable(binding!.occurrencePath)?.columns ?? const <ColumnModel>[]) : _currentTable.columns);
     final selectedTarget = related == null ? '' : _targetKey(related);
     final danglingRelationship = (binding?.isRelated ?? false) && related == null;
 
@@ -5236,7 +5252,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const SizedBox(height: 4),
         DropdownButtonFormField<String>(
           key: const ValueKey('inspector-field-occurrence'),
-          initialValue: danglingRelationship ? null : selectedTarget,
+          initialValue: danglingRelationship || alongPath ? null : selectedTarget,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           hint: const Text('Choose an occurrence', style: TextStyle(fontSize: 11)),
           items: [
@@ -5280,6 +5296,16 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
             ));
           },
         ),
+        if (alongPath)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Reads the first record reached through ${binding!.occurrencePath.join(' → ')}. '
+              'Pick an occurrence to read the field from this layout or one relationship away instead.',
+              key: const ValueKey('field-occurrence-path'),
+              style: const TextStyle(fontSize: 10, color: Colors.grey),
+            ),
+          ),
         if (danglingRelationship)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -5320,6 +5346,7 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
         const Text('Bound Column:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         DropdownButtonFormField<String>(
+          key: const ValueKey('inspector-field-column'),
           initialValue: cols.any((c) => c.name == binding?.fieldName) ? binding?.fieldName : null,
           decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
           items: cols.map((c) {
@@ -5333,7 +5360,8 @@ class LayoutDesignerWidgetState extends State<LayoutDesignerWidget> {
               final existing = sel.fieldBinding ?? const FieldBindingModel(fieldName: '');
               _editSelected((sel) => sel.copyWith(
                 fieldBinding: existing.copyWith(
-                  tableOccurrence: related?.occurrence.name ?? _ownOccurrence,
+                  // A field along a path stays on the path's end.
+                  tableOccurrence: related?.occurrence.name ?? (alongPath ? existing.tableOccurrence : _ownOccurrence),
                   fieldName: f,
                 ),
               ));

@@ -188,21 +188,22 @@ type nativeLayout struct {
 	ids            map[string]bool
 	objectIDs      map[*xmlNode]string
 
-	pending      map[string]int // FileMaker kinds left out, by readable name
-	hideUnbound  int
-	unreachable  int
-	alongPath    int
-	missingField int
-	noImage      int
-	buttonsUnrun int             // buttons whose single step File4Base does not run
-	buttonIcons  int             // icons dropped from buttons that have a label
-	portalsFar   int             // portals of an occurrence several relationships away, listed along the path
-	portalFilter int             // portal filters that could not be bound, the portal kept empty
-	portalSort   int             // portal sort fields of another occurrence, left out of the sort
-	formatsLeft  int             // conditional formats not kept
-	popovers     map[string]bool // ids of the popover buttons, whose panels open over the layout
-	vectorImage  int
-	mergeKept    int
+	pending        map[string]int // FileMaker kinds left out, by readable name
+	hideUnbound    int
+	unreachable    int
+	alongPath      int
+	missingField   int
+	noImage        int
+	buttonsUnrun   int             // buttons whose single step File4Base does not run
+	buttonsUnbound int             // buttons whose single step names a field not among the imported ones
+	buttonIcons    int             // icons dropped from buttons that have a label
+	portalsFar     int             // portals of an occurrence several relationships away, listed along the path
+	portalFilter   int             // portal filters that could not be bound, the portal kept empty
+	portalSort     int             // portal sort fields of another occurrence, left out of the sort
+	formatsLeft    int             // conditional formats not kept
+	popovers       map[string]bool // ids of the popover buttons, whose panels open over the layout
+	vectorImage    int
+	mergeKept      int
 }
 
 // convertNativeLayout converts the parts and objects of a <FMSaveAsXML>
@@ -1078,6 +1079,9 @@ func (l *nativeLayout) report() []ReportItem {
 	if l.buttonsUnrun > 0 {
 		review = append(review, plural(l.buttonsUnrun, "button")+" running a script step File4Base does not run, kept switched off")
 	}
+	if l.buttonsUnbound > 0 {
+		review = append(review, plural(l.buttonsUnbound, "button")+" whose script step names a field that is not among the imported fields, kept switched off")
+	}
 	if l.buttonIcons > 0 {
 		review = append(review, plural(l.buttonIcons, "button")+" with both an icon and a label, shown with its label only")
 	}
@@ -1205,8 +1209,16 @@ func (l *nativeLayout) buttonAction(action *xmlNode) map[string]interface{} {
 	}
 	if ref := findFirstChild(action, "ScriptReference"); ref != nil {
 		out := map[string]interface{}{"type": "perform_script", "script_name": firstAttr(ref, "name")}
-		if id := firstAttr(ref, "id"); id != "" {
-			out[sourceScriptIDKey] = id
+		// Marked as migrated, so bindLayoutButtons binds it, even without an id.
+		out[sourceScriptIDKey] = firstAttr(ref, "id")
+		if external := findFirstChild(ref, "DataSourceReference", "FileReference"); external != nil {
+			// A script of another file: its id is that file's, and must
+			// never find one of ours (see readTrigger).
+			reference := firstAttr(external, "name", "Name")
+			if reference == "" {
+				reference = "another file"
+			}
+			out["file_reference"] = reference
 		}
 		if calc := findFirstChild(action, "Calculation"); calc != nil {
 			param := strings.TrimSpace(calculationText(calc))
@@ -1229,17 +1241,106 @@ func (l *nativeLayout) buttonAction(action *xmlNode) map[string]interface{} {
 	}
 	resolved := canonicalScriptStep(firstAttr(step, "name"), firstAttr(step, "id"))
 	params, _, _ := decodeStepParams(step, resolved.Canonical)
+	// As convertScriptNode does: a protected PDF must not be written
+	// unprotected.
+	if resolved.Canonical == "Save Records as PDF" && pdfSecurityRequested(step) {
+		params["pdf_security"] = true
+	}
 	if id := firstAttr(step, "id"); id != "" {
 		params["filemaker_step_id"] = id
 	}
 	out := map[string]interface{}{"type": "single_step", "step_type": resolved.Canonical, "params": params}
-	if !resolved.Supported || strings.EqualFold(firstAttr(step, "enable"), "false") {
+	fieldsBound := l.bindStepFields(params)
+	if !fieldsBound {
+		out["field_problem"] = "a field the step names is not among the imported fields"
+	}
+	if !resolved.Supported || !fieldsBound || strings.EqualFold(firstAttr(step, "enable"), "false") {
 		out["enabled"] = false
 		if !resolved.Supported {
 			l.buttonsUnrun++
+		} else if !fieldsBound {
+			l.buttonsUnbound++
 		}
 	}
 	return out
+}
+
+// bindStepFields points every field a button's step names (its target, its
+// sort or find fields...) at the column the import gave that field. The
+// step decoder only sanitises the source name, and two source fields
+// sanitised alike (Unit Price, Unit_Price) are imported as two columns
+// (unit_price, unit_price_2): only the table's field map tells which one is
+// meant. It answers false when a field of an imported table cannot be
+// placed. A field of an occurrence that is not known here, or of another
+// file's table, is left as the decoder wrote it.
+func (l *nativeLayout) bindStepFields(v interface{}) bool {
+	ok := true
+	switch t := v.(type) {
+	case map[string]interface{}:
+		if label, _ := t["field_label"].(string); label != "" {
+			if field, _ := t["field"].(string); field != "" && !strings.HasPrefix(field, "$") && !l.bindStepField(t, label) {
+				ok = false
+			}
+		}
+		for _, child := range t {
+			if !l.bindStepFields(child) {
+				ok = false
+			}
+		}
+	case []interface{}:
+		for _, child := range t {
+			if !l.bindStepFields(child) {
+				ok = false
+			}
+		}
+	case []map[string]interface{}:
+		for _, child := range t {
+			if !l.bindStepFields(child) {
+				ok = false
+			}
+		}
+	}
+	return ok
+}
+
+// bindStepField binds one entry naming the source field label, read
+// through the occurrence the entry names (field_table or table, as the
+// source or sanitised) or else the layout's.
+func (l *nativeLayout) bindStepField(entry map[string]interface{}, label string) bool {
+	occName, _ := entry["field_table"].(string)
+	if occName == "" {
+		occName, _ = entry["table"].(string)
+	}
+	if occName == "" {
+		occName = l.occName
+	}
+	o, found := l.ctx.binding.occByName[strings.ToLower(occName)]
+	if !found {
+		// The sanitised name the DDR decoder writes: taken only when one
+		// occurrence has it.
+		matches := 0
+		for _, candidate := range l.ctx.binding.occByName {
+			if sanitizeIdentifier(candidate.name) == occName {
+				o, matches = candidate, matches+1
+			}
+		}
+		if matches != 1 {
+			return true
+		}
+	}
+	if o.external {
+		return true
+	}
+	names := l.ctx.binding.fields[o.table]
+	if names == nil {
+		return true
+	}
+	column, ok := names.resolve(label)
+	if !ok {
+		return false
+	}
+	entry["field"] = column
+	return true
 }
 
 // portal converts a portal showing the records of an occurrence one

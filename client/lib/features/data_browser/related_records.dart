@@ -109,8 +109,14 @@ class RelatedContext {
     this.fromDatabase,
     this.batched = false,
     this.layoutOccurrence,
+    this.revision = 0,
   });
   final ApiClient apiClient;
+
+  /// Changes whenever the record in hand is written, so what is read
+  /// through its match fields (a field along a path) is read again: a key
+  /// changed in the record reaches another related record.
+  final int revision;
 
   /// The occurrence the layout is on (its id or name): where a field read
   /// along several relationships starts from. Null reads from the table's
@@ -171,6 +177,7 @@ class RelatedContext {
         formatValue: formatValue,
         batched: batched,
         layoutOccurrence: layoutOccurrence,
+        revision: revision,
       );
 
   /// The occurrence a field along [path] is read from, the last one, with
@@ -221,13 +228,23 @@ class RelatedContext {
   /// The related records of the record in hand that [target] shows, at most
   /// [limit]. Those along a path are read for that record alone: at most
   /// [ApiClient.maxRecordsAlong] of them.
-  Future<List<Map<String, dynamic>>> rows(RelatedTarget target, {List<String>? sort, int limit = 100}) {
+  Future<List<Map<String, dynamic>>> rows(RelatedTarget target, {List<String>? sort, int limit = 100}) =>
+      rowsPage(target, sort: sort, limit: limit).then((page) => page.records);
+
+  /// [rows], and whether there may be more related records than those
+  /// read: what the server says along a path, and a full page otherwise.
+  Future<({List<Map<String, dynamic>> records, bool more})> rowsPage(RelatedTarget target,
+      {List<String>? sort, int limit = 100}) async {
     final recordId = this.recordId!;
     if (target.isAlongPath) {
-      return apiClient
-          .listRelatedAlong(fromTable, recordId, path: target.path, context: layoutOccurrence, sort: sort)
-          .then((page) => page.records);
+      return apiClient.listRelatedAlong(fromTable, recordId, path: target.path, context: layoutOccurrence, sort: sort);
     }
+    final records = await _rowsOneAway(target, recordId, sort: sort, limit: limit);
+    return (records: records, more: records.length >= limit);
+  }
+
+  Future<List<Map<String, dynamic>>> _rowsOneAway(RelatedTarget target, String recordId,
+      {List<String>? sort, int limit = 100}) {
     if (batched) {
       return RelatedBatcher.of(apiClient).rows(fromTable, recordId, target, sort: sort, limit: limit);
     }
@@ -493,7 +510,10 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     super.dispose();
   }
 
-  /// Writes what was typed to the first record at the end of the path.
+  /// Writes what was typed to the first record at the end of the path. That
+  /// record is read again first: a match field changed since it was shown
+  /// (here, by a script, by another user) relates another record, and the
+  /// one shown must not be written then.
   Future<void> _saveAlongPath() async {
     final binding = widget.object.fieldBinding;
     final row = _row;
@@ -504,6 +524,20 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
     _saving = true;
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
+      final current = await widget.related.firstAlong(binding!.occurrencePath);
+      if (!mounted) return;
+      if (current?['id']?.toString() != id) {
+        final text = current == null ? '' : widget.related.formatValue(col, current[col.name]);
+        _generation++; // a read still running is of the record left
+        setState(() {
+          _row = current;
+          _edit.text = text;
+          _editShown = text;
+        });
+        messenger?.showSnackBar(SnackBar(
+            content: Text('${binding.qualifiedName} was not saved: the related record changed since it was shown.')));
+        return;
+      }
       final saved = await widget.related.apiClient.updateRow(end.table.name, id, {col.name: _edit.text});
       if (!mounted) return;
       setState(() {
@@ -531,7 +565,10 @@ class _RelatedFieldViewState extends State<RelatedFieldView> {
         old.object.fieldBinding?.tableOccurrence != widget.object.fieldBinding?.tableOccurrence ||
         old.object.fieldBinding?.relationshipSide != widget.object.fieldBinding?.relationshipSide ||
         old.related.layoutOccurrence != widget.related.layoutOccurrence ||
-        old.object.fieldBinding?.occurrencePath.join('/') != widget.object.fieldBinding?.occurrencePath.join('/')) {
+        old.object.fieldBinding?.occurrencePath.join('/') != widget.object.fieldBinding?.occurrencePath.join('/') ||
+        // The record in hand was written: a changed match field reaches
+        // another record along the path.
+        (old.related.revision != widget.related.revision && (widget.object.fieldBinding?.isAlongPath ?? false))) {
       unawaited(_load());
     }
   }
@@ -767,7 +804,12 @@ class PortalRowController extends ChangeNotifier {
   int _active = 0;
   RelatedTarget? _target;
   String? _parentId;
+  bool _truncated = false;
   Completer<void> _loaded = Completer<void>();
+
+  /// Whether the portal has more related records than [rows]: it read at
+  /// most a page of them. Its last row is then not the last record.
+  bool get truncated => _truncated;
 
   /// The related records the portal shows, its first row first (past the
   /// rows its "initial row" skips).
@@ -805,10 +847,11 @@ class PortalRowController extends ChangeNotifier {
 
   /// Called by the view with the rows it shows. The active row stays the
   /// same record's while it is still in the portal.
-  void showRows(List<Map<String, dynamic>> rows, {RelatedTarget? target, String? parentId}) {
+  void showRows(List<Map<String, dynamic>> rows, {RelatedTarget? target, String? parentId, bool truncated = false}) {
     final activeId = activeRecord?['id']?.toString();
     final sameParent = parentId == _parentId;
     _rows = rows;
+    _truncated = truncated;
     _target = target;
     _parentId = parentId;
     if (_active > 0) {
@@ -892,6 +935,9 @@ class _PortalViewState extends State<PortalView> {
   bool _loading = false;
   String? _error;
 
+  /// Whether more related records than [_rows] were there to read.
+  bool _truncated = false;
+
   /// Counts the reads started, so the answer to one the portal has since
   /// moved on from (another record, relationship, end or layout) is dropped.
   int _generation = 0;
@@ -955,7 +1001,7 @@ class _PortalViewState extends State<PortalView> {
   }
 
   void _publishRows() => widget.rowController
-      ?.showRows(_visibleRows, target: _target, parentId: widget.related.recordId);
+      ?.showRows(_visibleRows, target: _target, parentId: widget.related.recordId, truncated: _truncated);
 
   void _reload() => unawaited(_load());
 
@@ -1006,6 +1052,7 @@ class _PortalViewState extends State<PortalView> {
     final recordId = widget.related.recordId;
     final target = _target;
     if (recordId == null || target == null) {
+      _truncated = false;
       if (mounted) setState(() => _rows = const []);
       _publishRows();
       return;
@@ -1021,8 +1068,10 @@ class _PortalViewState extends State<PortalView> {
       final table = target.isExternal ? await _access.table(target.occurrence) : null;
       if (stale()) return;
       if (table != null) _externalTable = table;
-      var rows = await widget.related.rows(target, sort: _config.sortFields, limit: ApiClient.maxPageSize);
+      final page = await widget.related.rowsPage(target, sort: _config.sortFields, limit: ApiClient.maxPageSize);
       if (stale()) return;
+      var rows = page.records;
+      _truncated = page.more;
       if (_config.filter.trim().isNotEmpty && rows.isNotEmpty) {
         rows = await _filtered(target, rows, _config.filter.trim());
         if (stale()) return;
@@ -1036,6 +1085,7 @@ class _PortalViewState extends State<PortalView> {
     } catch (e) {
       if (stale()) return;
       final problem = ExternalUnavailable.of(e);
+      _truncated = false;
       setState(() {
         _rows = const [];
         _loading = false;
