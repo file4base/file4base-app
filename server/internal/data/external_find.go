@@ -320,6 +320,8 @@ func (f *externalFind) clause(
 	value := func(v interface{}, text bool) func() []string {
 		if text {
 			v = keyText(v)
+		} else {
+			v = keyValue(dialect, parents[0].kind, v)
 		}
 		return func() []string { return []string{place(v)} }
 	}

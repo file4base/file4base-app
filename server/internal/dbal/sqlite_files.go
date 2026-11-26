@@ -154,9 +154,10 @@ func CreateSQLiteDatabase(ctx context.Context, path string) error {
 }
 
 // exclusiveTempFile creates an empty file, readable by its owner only, next
-// to path, whose name no database or backup has.
+// to path, whose name no database or backup has. Its prefix is short, so a
+// long database name still fits the file system's limit.
 func exclusiveTempFile(path, purpose string) (string, error) {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"."+purpose+"-*")
+	f, err := createTempFile(path, purpose)
 	if err != nil {
 		return "", err
 	}
@@ -166,6 +167,10 @@ func exclusiveTempFile(path, purpose string) (string, error) {
 		return "", err
 	}
 	return name, nil
+}
+
+func createTempFile(path, purpose string) (*os.File, error) {
+	return os.CreateTemp(filepath.Dir(path), ".f4b-"+purpose+"-*")
 }
 
 // publishSQLiteFile syncs a closed database file and gives it the name
@@ -187,7 +192,13 @@ func publishSQLiteFile(tmp, dest string) error {
 		}
 		return err
 	}
-	return syncDir(filepath.Dir(dest))
+	if err := syncDir(filepath.Dir(dest)); err != nil {
+		// Reported as failed, so it is not left published: a retry would
+		// find the name taken.
+		_ = os.Remove(dest)
+		return err
+	}
+	return nil
 }
 
 // sqliteSidecar is a file SQLite keeps next to the database path, when one
@@ -202,18 +213,37 @@ func sqliteSidecar(path string) string {
 }
 
 // removeSQLiteFiles deletes a database file and the files SQLite keeps next
-// to it, the database file last: while it is there, no database of the same
-// name can be created (CreateSQLiteDatabase links, which fails), so none
-// can lose its own -wal to this removal.
+// to it. It stops at the first file it cannot remove.
+//
+// The database file is first renamed out of its name: a -wal may hold
+// commits the file does not, so the -wal goes only once the database can
+// no longer be opened under the name (a database whose rename fails is
+// left whole). A database created under the name meanwhile is refused
+// while the old -wal is there (publishSQLiteFile).
 func removeSQLiteFiles(path string) error {
-	forgetWriterQueue(path)
-	var firstErr error
-	for _, suffix := range []string{"-wal", "-shm", "-journal", ""} {
-		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) && firstErr == nil {
-			firstErr = err
+	gone := ""
+	if _, err := os.Lstat(path); err == nil {
+		f, err := createTempFile(path, "dropped")
+		if err != nil {
+			return err
+		}
+		gone = f.Name()
+		_ = f.Close()
+		if err := os.Rename(path, gone); err != nil {
+			_ = os.Remove(gone)
+			return err
 		}
 	}
-	return firstErr
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	forgetWriterQueue(path)
+	if gone != "" {
+		return os.Remove(gone)
+	}
+	return nil
 }
 
 // BackupSQLite writes a consistent copy of a live database to dest, which
@@ -261,12 +291,14 @@ func RestoreSQLiteDatabase(ctx context.Context, backup, dest string) (err error)
 	if side := sqliteSidecar(backup); side != "" {
 		return fmt.Errorf("restore: %s is next to the backup: a backup is the single file sqlite-backup writes, and a copy of a live database without its WAL may miss what was committed last", side)
 	}
-	tmp, err := exclusiveTempFile(dest, "restore")
+	// The copy is written through the descriptor that created the file.
+	out, err := createTempFile(dest, "restore")
 	if err != nil {
 		return err
 	}
+	tmp := out.Name()
 	defer removeSQLiteFiles(tmp)
-	if err := copyFile(backup, tmp); err != nil {
+	if err := copyInto(out, backup); err != nil {
 		return err
 	}
 	if err := checkSQLiteBackup(ctx, tmp); err != nil {
@@ -302,6 +334,12 @@ func checkSQLiteBackup(ctx context.Context, path string) error {
 	var h [100]byte
 	if _, err := io.ReadFull(f, h[:]); err != nil || string(h[:16]) != "SQLite format 3\x00" {
 		return fmt.Errorf("%s is not a SQLite database", path)
+	}
+	// A backup (VACUUM INTO) is in rollback-journal mode, versions 1: a
+	// database file in WAL mode (2) is a copy of a live database, whose
+	// last commits may be in a -wal that is not there.
+	if h[18] != 1 || h[19] != 1 {
+		return fmt.Errorf("%s is a database file in WAL mode, not a backup: take one with sqlite-backup", path)
 	}
 	pageSize := int64(binary.BigEndian.Uint16(h[16:18]))
 	if pageSize == 1 {
@@ -342,22 +380,18 @@ func syncFile(path string) error {
 	return f.Sync()
 }
 
-func copyFile(src, dst string) (err error) {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	// dst is the empty file exclusiveTempFile made.
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_TRUNC, 0)
-	if err != nil {
-		return err
-	}
+// copyInto copies src into out, syncs and closes it.
+func copyInto(out *os.File, src string) (err error) {
 	defer func() {
 		if cerr := out.Close(); err == nil {
 			err = cerr
 		}
 	}()
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
 	if _, err = out.ReadFrom(in); err != nil {
 		return err
 	}

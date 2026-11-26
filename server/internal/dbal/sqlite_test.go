@@ -308,7 +308,7 @@ func TestSQLite_RegexpAndLines(t *testing.T) {
 func TestSQLite_StandardDeviation(t *testing.T) {
 	db, _ := newSQLiteDB(t)
 	ctx := context.Background()
-	_, err := db.ExecContext(ctx, `CREATE TABLE t (g TEXT, n NUMERIC); INSERT INTO t VALUES ('a', 1), ('a', 3), ('a', NULL), ('b', 2.5), ('c', NULL)`)
+	_, err := db.ExecContext(ctx, `CREATE TABLE t (g TEXT, n NUMERIC); INSERT INTO t VALUES ('a', 1), ('a', 3), ('a', NULL), ('b', 2.5), ('c', NULL), ('d', 1e200), ('d', 3e200), ('e', 1e-200), ('e', 3e-200), ('f', 0), ('f', 0)`)
 	require.NoError(t, err)
 	rows, err := db.QueryContext(ctx, `SELECT g, STDDEV_SAMP(n) FROM t GROUP BY g ORDER BY g`)
 	require.NoError(t, err)
@@ -328,6 +328,37 @@ func TestSQLite_StandardDeviation(t *testing.T) {
 	assert.InDelta(t, 1.4142135623730951, got["a"], 1e-12)
 	assert.Nil(t, got["b"], "one number has no sample deviation")
 	assert.Nil(t, got["c"])
+	// Neither the squares of large numbers overflow nor those of small
+	// ones vanish.
+	assert.InDelta(t, 1.4142135623730951, got["d"].(float64)/1e200, 1e-12)
+	assert.InDelta(t, 1.4142135623730951, got["e"].(float64)/1e-200, 1e-12)
+	assert.Equal(t, 0.0, got["f"])
+}
+
+func TestSQLite_StatementsThatWrite(t *testing.T) {
+	for _, c := range []struct {
+		query  string
+		exec   bool
+		writes bool
+	}{
+		{"SELECT 1", false, false},
+		{"INSERT INTO t VALUES (1) RETURNING id", false, true},
+		{"  (UPDATE t SET v = 1 RETURNING id", false, true},
+		{"-- note\nDELETE FROM t RETURNING id", false, true},
+		{"/* note */ REPLACE INTO t VALUES (1) RETURNING id", false, true},
+		{"WITH x AS (SELECT 1) UPDATE t SET v = 1 RETURNING id", false, true},
+		{"WITH x AS (SELECT 1) SELECT * FROM x", false, false},
+		{"/* unterminated", false, false},
+		{"VACUUM INTO '/tmp/b.sqlite'", true, false},
+		{"VACUUM main INTO '/tmp/b.sqlite'", true, false},
+		{"/* note */ VACUUM INTO '/tmp/b.sqlite';", true, false},
+		{"VACUUM INTO '/tmp/b.sqlite'; DELETE FROM t", true, true},
+		{"VACUUM", true, true},
+		{"CREATE TABLE t (v)", true, true},
+		{"", true, true},
+	} {
+		assert.Equal(t, c.writes, writesDatabase(c.query, c.exec), c.query)
+	}
 }
 
 func TestSQLite_SortCollationIsCompareText(t *testing.T) {
@@ -448,10 +479,25 @@ func TestSQLite_ColumnChanges(t *testing.T) {
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT group_concat(coalesce(ts, '-'), ','), group_concat(coalesce(d, '-'), ',') FROM (SELECT ts, d FROM w ORDER BY id)`).Scan(&stamps, &days))
 	assert.Equal(t, "2026-03-04 12:34:00+00:00,2026-03-04 12:34:00.25+00:00,-", stamps)
 	assert.Equal(t, "2026-03-04,2026-03-04,-", days)
-	_, err = db.ExecContext(ctx, `CREATE TABLE bad (id TEXT, d TEXT); INSERT INTO bad VALUES ('a', '2026-02-30')`)
+	for _, bad := range []string{"2026-02-30", "2026-03-04 garbage"} {
+		_, err = db.ExecContext(ctx, `DROP TABLE IF EXISTS bad; CREATE TABLE bad (id TEXT, d TEXT, ts TEXT); INSERT INTO bad VALUES ('a', $1, $1)`, bad)
+		require.NoError(t, err)
+		_, err = db.ExecContext(ctx, `ALTER TABLE bad ALTER COLUMN d TYPE DATE`)
+		assert.Error(t, err, "%q is refused, neither moved to another day nor emptied", bad)
+		_, err = db.ExecContext(ctx, `ALTER TABLE bad ALTER COLUMN ts TYPE TIMESTAMP`)
+		assert.Error(t, err, "%q is refused as a timestamp", bad)
+		var kept string
+		require.NoError(t, db.QueryRowContext(ctx, `SELECT d || '|' || ts FROM bad`).Scan(&kept))
+		assert.Equal(t, bad+"|"+bad, kept)
+	}
+	// A date written with a time and an offset keeps the day it was written on.
+	_, err = db.ExecContext(ctx, `CREATE TABLE local (id TEXT, d TEXT); INSERT INTO local VALUES ('a', '2026-03-04T00:30:00+02:00')`)
 	require.NoError(t, err)
-	_, err = db.ExecContext(ctx, `ALTER TABLE bad ALTER COLUMN d TYPE DATE`)
-	assert.Error(t, err, "a day not in the calendar is refused, not moved to 2 March")
+	_, err = db.ExecContext(ctx, `ALTER TABLE local ALTER COLUMN d TYPE DATE`)
+	require.NoError(t, err)
+	var day string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT d || '' FROM local`).Scan(&day))
+	assert.Equal(t, "2026-03-04", day)
 
 	// A required column is not changed: the change would drop NOT NULL.
 	_, err = db.ExecContext(ctx, `CREATE TABLE r (id TEXT); ALTER TABLE r ADD COLUMN req TEXT NOT NULL; INSERT INTO r VALUES ('a', '')`)
@@ -546,6 +592,7 @@ func TestSQLite_TypeChecks(t *testing.T) {
 		`INSERT INTO t (d) VALUES (2460000)`, `INSERT INTO t (b) VALUES (2)`, `INSERT INTO t (b) VALUES ('yes')`,
 		`INSERT INTO t (d) VALUES ('2026-02-30')`, `INSERT INTO t (d) VALUES ('13:00')`, `INSERT INTO t (d) VALUES ('2026-01-02 03:04')`,
 		`INSERT INTO t (ts) VALUES ('2026-02-30 10:00:00+00:00')`, `INSERT INTO t (ts) VALUES ('13:00')`, `INSERT INTO t (ts) VALUES ('2026-03-04T12:34:00Z')`,
+		`INSERT INTO t (ts) VALUES ('2026-03-04 12:34:00 +02:00')`, `INSERT INTO t (ts) VALUES ('2026-03-04 12:34:00garbage+00:00')`,
 	} {
 		_, err := db.ExecContext(ctx, bad)
 		assert.Error(t, err, bad)
@@ -647,7 +694,13 @@ func TestSQLite_RestoreRefusesAnIncompleteBackup(t *testing.T) {
 	require.NoError(t, os.WriteFile(withWAL, whole, 0o600))
 	require.NoError(t, os.WriteFile(withWAL+"-wal", []byte("frames"), 0o600))
 
-	for _, bad := range []string{empty, truncated, withWAL} {
+	// A copy of a live database's file, in WAL mode.
+	live, err := os.ReadFile(path)
+	require.NoError(t, err)
+	walMode := filepath.Join(dir, "live.backup")
+	require.NoError(t, os.WriteFile(walMode, live, 0o600))
+
+	for _, bad := range []string{empty, truncated, withWAL, walMode} {
 		dest := filepath.Join(dir, "restored"+SQLiteFileExtension)
 		assert.Error(t, RestoreSQLiteDatabase(ctx, bad, dest), filepath.Base(bad))
 		_, err := os.Stat(dest)
@@ -696,6 +749,45 @@ func TestSQLite_OpeningChecksTheFileItsStorage(t *testing.T) {
 	require.NoError(t, CheckSQLiteStorage(filepath.Dir(path)), "the directory is local")
 	_, err := openSQLite(context.Background(), path)
 	assert.ErrorIs(t, err, ErrUnsafeSQLiteStorage)
+
+	// The -wal and -shm are made in the directory, which is checked too.
+	filesystemOf = func(p string) (string, bool) {
+		if p == filepath.Dir(path) {
+			return "fakeowner", true
+		}
+		return "ext4", false
+	}
+	_, err = openSQLite(context.Background(), path)
+	assert.ErrorIs(t, err, ErrUnsafeSQLiteStorage)
+
+	// A missing database is not created by opening it.
+	filesystemOf = sqliteFilesystem
+	missing := filepath.Join(filepath.Dir(path), "missing"+SQLiteFileExtension)
+	_, err = openSQLite(context.Background(), missing)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(missing)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+// A drop leaves nothing of the database, nor of its own work.
+func TestSQLite_DropLeavesNoFile(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	path := filepath.Join(dir, "sales"+SQLiteFileExtension)
+	require.NoError(t, CreateSQLiteDatabase(ctx, path))
+	db, err := openSQLite(ctx, path)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `CREATE TABLE t (v); INSERT INTO t VALUES (1)`)
+	require.NoError(t, err)
+	_, err = os.Stat(path + "-wal")
+	require.NoError(t, err, "a -wal is there to remove")
+	require.NoError(t, db.Close())
+	require.NoError(t, os.WriteFile(path+"-wal", []byte("frames"), 0o600))
+	require.NoError(t, removeSQLiteFiles(path))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+	assert.NoError(t, removeSQLiteFiles(path), "dropping a dropped database does nothing")
 }
 
 func TestSQLite_VersionQualification(t *testing.T) {

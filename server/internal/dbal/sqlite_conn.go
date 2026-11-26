@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -118,8 +119,14 @@ func SQLitePath(dsn string) (string, error) {
 // The file's own filesystem is checked, not only its directory's: a file
 // can be mounted on its own, from a filesystem the directory is not on.
 func openSQLite(ctx context.Context, path string) (*sql.DB, error) {
-	if err := CheckSQLiteStorage(path); err != nil {
-		return nil, err
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("sqlite database %s: %w", path, err)
+	}
+	// The -wal and -shm files are made in the file's directory.
+	for _, p := range []string{path, filepath.Dir(path)} {
+		if err := CheckSQLiteStorage(p); err != nil {
+			return nil, err
+		}
 	}
 	db := sql.OpenDB(newSQLiteConnector(path))
 	if err := ensureWAL(ctx, db); err != nil {
@@ -305,21 +312,59 @@ func (c *sqliteConn) statementWriter(ctx context.Context, query string, exec boo
 // backup must not hold the writers up for as long as it takes. A query
 // writes when it is an INSERT, UPDATE, DELETE or REPLACE (with RETURNING).
 func writesDatabase(query string, exec bool) bool {
-	words := strings.Fields(strings.TrimLeft(query, " \t\r\n("))
+	query = skipSQLPreamble(query)
+	words := strings.FieldsFunc(query, func(r rune) bool {
+		return !(r == '_' || r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
+	})
 	if len(words) == 0 {
 		return exec
 	}
 	first := strings.ToUpper(words[0])
 	if exec {
-		// VACUUM [schema] INTO file
+		// A single VACUUM [schema] INTO file: a batch may write after it.
 		into := func(w string) bool { return strings.EqualFold(w, "INTO") }
-		return first != "VACUUM" || !slices.ContainsFunc(words[1:min(3, len(words))], into)
+		single := !strings.Contains(strings.TrimRight(query, " \t\r\n;"), ";")
+		return first != "VACUUM" || !single || !slices.ContainsFunc(words[1:min(3, len(words))], into)
 	}
 	switch first {
 	case "INSERT", "UPDATE", "DELETE", "REPLACE":
 		return true
+	case "WITH":
+		// WITH ... INSERT/UPDATE/DELETE ... RETURNING. A word of a string
+		// or a name only makes a read take its turn.
+		return slices.ContainsFunc(words[1:], func(w string) bool {
+			switch strings.ToUpper(w) {
+			case "INSERT", "UPDATE", "DELETE", "REPLACE":
+				return true
+			}
+			return false
+		})
 	}
 	return false
+}
+
+// skipSQLPreamble skips the white space, comments and opening parentheses a
+// statement starts with.
+func skipSQLPreamble(query string) string {
+	for {
+		trimmed := strings.TrimLeft(query, " \t\r\n(")
+		switch {
+		case strings.HasPrefix(trimmed, "--"):
+			i := strings.IndexByte(trimmed, '\n')
+			if i < 0 {
+				return ""
+			}
+			query = trimmed[i+1:]
+		case strings.HasPrefix(trimmed, "/*"):
+			i := strings.Index(trimmed[2:], "*/")
+			if i < 0 {
+				return ""
+			}
+			query = trimmed[i+4:]
+		default:
+			return trimmed
+		}
+	}
 }
 
 func (c *sqliteConn) releaseWriter() {
@@ -405,6 +450,10 @@ func (c *sqliteConn) IsValid() bool {
 func (c *sqliteConn) refuseIfEnded() error {
 	if c.inTx && c.ended {
 		return ErrSQLiteTransactionEnded
+	}
+	if c.bad {
+		// The pool retries the statement on another connection.
+		return driver.ErrBadConn
 	}
 	return nil
 }
@@ -502,7 +551,7 @@ func (c *sqliteConn) columnDDL(ctx context.Context, query string) (bool, error) 
 // A NOT NULL column is refused: SQLite cannot give the new column the
 // constraint on a table that has records, and the change would drop it.
 func (c *sqliteConn) alterSQLiteColumnType(ctx context.Context, table, column, newType string) error {
-	required, err := c.queryInt(ctx, `SELECT COUNT(*) FROM temp.pragma_table_info($1) WHERE name = $2 AND "notnull"`,
+	required, err := c.queryInt(ctx, `SELECT COUNT(*) FROM temp.pragma_table_info($1) WHERE name = $2 COLLATE NOCASE AND "notnull"`,
 		driver.NamedValue{Ordinal: 1, Value: unquoteSQLite(table)}, driver.NamedValue{Ordinal: 2, Value: unquoteSQLite(column)})
 	if err != nil {
 		return err
@@ -581,10 +630,15 @@ func (c *sqliteConn) dropColumnIndexes(ctx context.Context, table, column string
 // be ended, the connection is discarded, which rolls it back; it is never
 // released after a failed rollback, which would commit half the change.
 func (c *sqliteConn) inSavepoint(ctx context.Context, fn func() error) error {
-	if err := c.exec(ctx, "SAVEPOINT f4b_ddl"); err != nil {
+	// A SAVEPOINT cut short by a cancelled context may be open or not; it
+	// runs to its end, after the context is checked.
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	end := context.WithoutCancel(ctx)
+	if err := c.exec(end, "SAVEPOINT f4b_ddl"); err != nil {
+		return err
+	}
 	err := fn()
 	if err == nil {
 		beforeSavepointRelease()

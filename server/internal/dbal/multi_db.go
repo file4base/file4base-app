@@ -61,6 +61,17 @@ type MultiDatabaseManager struct {
 	defaultDBName string
 	drivers       map[string]DatabaseDriver
 	dsn           dsnTemplate
+	// files holds, per SQLite database name, a *sync.Mutex that opening,
+	// creating and dropping its file take, before mu (never the other way
+	// round), so a slow file operation holds up that database only.
+	files sync.Map
+}
+
+// lockFile takes the turn of a SQLite database's file (see files).
+func (m *MultiDatabaseManager) lockFile(dbName string) func() {
+	mu, _ := m.files.LoadOrStore(dbName, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	return mu.(*sync.Mutex).Unlock
 }
 
 // NewMultiDatabaseManager initializes a MultiDatabaseManager with a base DSN
@@ -193,6 +204,9 @@ func (m *MultiDatabaseManager) GetDriver(ctx context.Context, dbName string) (Da
 		}
 	}
 
+	if m.sqliteDir() != nil {
+		defer m.lockFile(dbName)()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -334,8 +348,7 @@ func (m *MultiDatabaseManager) CreateDatabase(ctx context.Context, dbName string
 			return err
 		}
 		// Creating, dropping and opening a file take turns (DropDatabase).
-		m.mu.Lock()
-		defer m.mu.Unlock()
+		defer m.lockFile(dbName)()
 		return CreateSQLiteDatabase(ctx, dir.forDatabase(dbName))
 	}
 
@@ -394,24 +407,31 @@ func (m *MultiDatabaseManager) DropDatabase(ctx context.Context, dbName string) 
 		return fmt.Errorf("cannot drop '%s': it is the server's administrative database", dbName)
 	}
 
+	if dir := m.sqliteDir(); dir != nil {
+		// Like DROP DATABASE IF EXISTS. The file's turn is held until the
+		// files are gone, so this manager neither opens the database again
+		// nor creates one of the same name meanwhile. A connection still in
+		// use (a transaction under way when the pool was closed, or one of
+		// another process) keeps the open files of the deleted database
+		// until it is closed, never the new database's.
+		defer m.lockFile(dbName)()
+		m.mu.Lock()
+		if d, ok := m.drivers[dbName]; ok {
+			_ = d.Close()
+			delete(m.drivers, dbName)
+		}
+		m.mu.Unlock()
+		if err := removeSQLiteFiles(dir.forDatabase(dbName)); err != nil {
+			return fmt.Errorf("failed dropping database %s: %w", dbName, err)
+		}
+		return syncDir(dir.dir)
+	}
+
 	// Close driver connection to target db if open in pool
 	m.mu.Lock()
 	if d, ok := m.drivers[dbName]; ok {
 		_ = d.Close()
 		delete(m.drivers, dbName)
-	}
-	if dir := m.sqliteDir(); dir != nil {
-		// Like DROP DATABASE IF EXISTS. The lock is held until the files are
-		// gone, so this manager neither opens the database again nor creates
-		// one of the same name meanwhile. A connection still in use (a
-		// transaction under way when the pool was closed, or one of another
-		// manager) keeps the open files of the deleted database until it is
-		// closed, never the new database's.
-		defer m.mu.Unlock()
-		if err := removeSQLiteFiles(dir.forDatabase(dbName)); err != nil {
-			return fmt.Errorf("failed dropping database %s: %w", dbName, err)
-		}
-		return syncDir(dir.dir)
 	}
 	m.mu.Unlock()
 

@@ -40,12 +40,28 @@ server tools' assumptions together.
 
 - A database is `<data directory>/<name>.sqlite`, named as on the other
   engines (`dbal.IsValidDatabaseName`); a name that is not valid never becomes
-  a path.
-- It is created with `O_EXCL`, mode `0600`, and put in WAL mode at creation. A
-  database is never created by opening it: the connections open with
-  `mode=rw`, so a name that names no database fails as it does on a server.
-- Dropping a database removes the file and its `-wal`, `-shm` and `-journal`
-  companions.
+  a path. Names are lower case, as `CreateDatabase` makes them: `Sales` is the
+  database `sales` everywhere (open, drop, CLI), and a file with capitals is
+  not listed.
+- It is made under a temporary name (mode `0600`), put in WAL mode, synced,
+  then published under its name with a link, which never replaces a file: a
+  crash leaves no empty file under the name. A `-wal`, `-shm` or `-journal`
+  file already next to the name is refused, since SQLite would replay it into
+  the new database. A database is never created by opening it: the
+  connections open with `mode=rw`, so a name that names no database fails as
+  it does on a server.
+- Dropping a database first renames its file out of its name, then removes
+  the `-wal`, `-shm` and `-journal` companions, then the renamed file; it
+  stops at the first failure, so a `-wal` that may hold commits is never
+  removed while its database can still be opened. Creating, dropping and
+  opening a database take turns in the server, per database (a slow `fsync`
+  holds up that database only); a connection still in use when its pool is
+  closed keeps the deleted files it has open until it is closed. There is no
+  lock across processes: the CLI tools create and restore under names that
+  must not exist, and must not drop a database a server has open.
+- The data directory is the server's own: writable by its user only. Other
+  users able to write in it could replace a temporary file between two
+  steps of a creation or a backup.
 - There is no administrative database. Listing the databases lists the
   directory.
 
@@ -78,7 +94,15 @@ came, bounded by `busy_timeout` (then `ErrSQLiteBusy`, whose text is SQLite's
 without the queue a writer under load could wait several seconds while later
 ones went first (50 saturating editors: 2.7 s worst wait before, 0.4 s after).
 SQLite's `busy_timeout` still covers writers in other processes (a restore, a
-maintenance tool).
+maintenance tool). A single `VACUUM INTO` statement (a backup) does not take
+the queue, and a query that writes (`INSERT`/`UPDATE`/`DELETE`/`REPLACE ...
+RETURNING`, also after `WITH` and leading comments) does.
+
+A queued writer holds the pool connection it waits on (10 per database). A
+writer that holds the lock and reads on a second connection meanwhile (an
+import evaluating a validation calculation) can find the pool full of
+waiters; it then waits until they time out. Not seen in the benchmarks; a
+larger pool or reading inside the transaction removes it.
 
 ### A transaction SQLite ended
 
@@ -88,7 +112,10 @@ it open; a statement run afterwards would then commit on its own. After any
 error inside a transaction the connection asks SQLite whether the transaction
 is still open; when it is not, every later statement and the commit fail with
 `ErrSQLiteTransactionEnded`. The decision rests on SQLite's state, not a list
-of error codes.
+of error codes. An emulated column change (below) runs in a savepoint that is
+ended whatever happens to the request's context; when it cannot be, the
+connection is discarded (closing it rolls back), never released after a
+failed rollback.
 
 ### Storage check
 
@@ -98,7 +125,10 @@ mount it is on. It is refused on NFS, SMB/CIFS, 9p, FUSE (`fuse.*`, gRPC FUSE,
 osxfs), virtiofs, Docker Desktop's `fakeowner`, WSL's `drvfs`, VirtualBox,
 Parallels and VMware shared folders, AFS, CephFS, GlusterFS and Lustre: their
 locks or shared memory do not protect a WAL database from corruption.
-`SQLITE_ALLOW_UNSAFE_STORAGE=true` only turns the refusal into a warning.
+The database file itself is checked again when a pool is opened, since a file
+can be mounted on its own. The check exists on Linux only; the server image
+and the Linux hosts are where it runs. `SQLITE_ALLOW_UNSAFE_STORAGE=true` only
+turns the refusal into a warning.
 
 ### Diagnostics
 
@@ -114,12 +144,17 @@ differs from the contract. `POST /api/v1/server/maintenance/optimize` runs
 
 A physical backup is `VACUUM INTO`: a consistent, compacted copy taken while
 the server keeps reading and writing (readers do not block, and the copy is a
-read transaction). `dbal.BackupSQLite` writes it next to its destination,
-checks it with `quick_check`, syncs it and publishes it with a hard link, so a
+read transaction, which does not wait for writers nor hold them up).
+`dbal.BackupSQLite` writes it into a `0600` temporary file next to its
+destination, checks it, syncs it and publishes it with a hard link, so a
 backup never replaces an existing file and a half-written one is never under
 its name. `dbal.RestoreSQLiteDatabase` copies a backup next to the database,
 checks it, puts it in WAL mode, checkpoints and publishes it under a name that
-must not exist.
+must not exist. The check is the header, the size the header gives, and
+`quick_check` (SQLite reads an empty or truncated file as a database, which
+`quick_check` passes). A file in WAL mode, or with a `-wal` next to it, is
+refused: it is a copy of a live database, whose last commits may be in a WAL
+that is not there (`VACUUM INTO` writes a rollback-journal file).
 
 ```bash
 docker exec file4base-api /app/server sqlite-backup  <database> /app/data/backups/<file>
@@ -163,10 +198,31 @@ between them (unverified against FileMaker in this work).
   digits, where PostgreSQL's `NUMERIC` is exact. A value read back is given as
   its decimal text (`1500000`, `12.5`), as the PostgreSQL driver gives it.
   Sums use SQLite's compensated summation; the reports of the benchmark match
-  PostgreSQL to the cent over 20,000 records.
+  PostgreSQL to the cent over 20,000 records. A total of integers beyond
+  ±9.2 × 10^18 fails with `integer overflow` rather than being wrong.
+  `STDDEV_SAMP` is registered on the driver.
+- A number compared with a line of a multi-key text field is compared as the
+  text File4Base gives it back (`0.000015`), not SQLite's cast.
+- A number smaller than 10^-4 is cast to text in exponent form (`1.0e-06`,
+  PostgreSQL `0.000001`): comparisons (`>`, ranges) compare the number, but a
+  text find (`=`, `LIKE`) on its digits does not match it.
 - SQLite stores any value in any column. Each column gets a `CHECK` that keeps
-  it to its declared type (a number, a date `julianday` reads, 0/1), so a
-  value PostgreSQL refuses is refused here too.
+  it to its declared type (a number; a date that is a day of the calendar,
+  `date(x) IS x`; a timestamp in the stored UTC form; 0/1), so a value
+  PostgreSQL refuses is refused here too.
+- A Boolean is 0/1; finds compare it as `true`/`false`, as PostgreSQL casts
+  it. (MariaDB's `TINYINT` reads `1`: `==true` does not find it there, a
+  pre-existing MariaDB difference.) Imports match a Boolean by value on every
+  engine.
+- A field type change is rewritten as a copy into a new column (SQLite has no
+  `ALTER COLUMN ... TYPE`), in a savepoint. Text becomes a number when it is
+  one, a date when it starts with a day of the calendar and is a date or
+  timestamp as a whole (the day written is kept, not the UTC day of an
+  offset), a timestamp in the stored UTC form, rounded to the millisecond.
+  Other values become empty, as `NULLIF`/casts do on PostgreSQL; a `NOT NULL`
+  column is refused rather than emptied.
+- `STDDEV_SAMP` scales the numbers by the largest magnitude, so neither
+  `1e200` nor `1e-200` overflows or vanishes.
 - `VARCHAR(n)` lengths are not enforced (as on MariaDB in non-strict mode).
 - Dates are `YYYY-MM-DD` text, timestamps `YYYY-MM-DD HH:MM:SS.fff+00:00` text
   in UTC: their text sorts in time order.
@@ -193,12 +249,12 @@ references in 37 files, plus the SQL text they guard) was read and classified.
 
 | PostgreSQL construct | SQLite form | Where |
 | --- | --- | --- |
-| `information_schema.columns/tables` | `sqlite_schema` × `pragma_table_info` (`dbal.CatalogColumnsSQL`, `CatalogTablesSQL`) | data/creation_order, schema/repetitions, creation_order, external_occurrences, transfer/scheduler |
+| `information_schema.columns/tables` | `sqlite_schema` × `temp.pragma_table_info` (`dbal.CatalogColumnsSQL`, `CatalogTablesSQL`; `temp.` so a table of that name does not hide the function) | data/creation_order, schema/repetitions, creation_order, external_occurrences, transfer/scheduler |
 | `SELECT ... FOR NO KEY UPDATE` | nothing (`dbal.RowLockClause`): the transaction already holds the database's writer lock | data/autoenter, schema/service, custom_function_design |
-| Multi-key match fields: `string_to_array` / `unnest` | `json_each(f4b_lines(x))`, through a correlated subquery so `key`/`value` columns are not taken for `json_each`'s | data/multikey |
+| Multi-key match fields: `string_to_array` / `unnest` | `temp.json_each(f4b_lines(x))`, through a correlated subquery so `key`/`value` columns are not taken for `json_each`'s | data/multikey |
 | `VALUES ($1::text), ...` key lists | `VALUES` without casts (also escapes the 500-term compound limit) | data/external_find |
 | `(SELECT ... ORDER BY ... LIMIT) UNION ALL (...)` | each branch as `SELECT * FROM (...)` (`unionAll`) | data/related, related_reads |
-| `ALTER COLUMN TYPE ... USING` | add a column, copy with `NULLIF(c, '')` checked against the new type, drop indexes, drop, rename, recreate indexes, in one savepoint | dbal (connection) |
+| `ALTER COLUMN TYPE ... USING` | add a column, copy with `NULLIF(c, '')` (a date or timestamp converted to its stored form) checked against the new type, drop indexes, drop, rename, recreate indexes, in one savepoint. A `NOT NULL` column is refused (SQLite cannot add the constraint to a populated table) | dbal (connection) |
 | `ADD COLUMN IF NOT EXISTS`, `DROP COLUMN IF EXISTS`, drop of an indexed column | the same, in a savepoint, after reading `pragma_table_info` / dropping the column's indexes | dbal (connection) |
 | `ILIKE`, `lower`/`upper` | `LOWER(...) LIKE LOWER(...) ESCAPE '\'`, Unicode `lower`/`upper` registered on the driver | dbal |
 | `~` regular expressions (`NumericValue`) | `REGEXP` with Go RE2 | dbal |

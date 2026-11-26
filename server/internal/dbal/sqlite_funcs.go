@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -27,6 +28,8 @@ import (
 //   - regexp gives the REGEXP operator (dbal.NumericPattern) RE2 semantics.
 //   - f4b_lines is the lines of a text, without the empty ones, as a JSON
 //     array for json_each: a multi-key match field.
+//   - f4b_number_text is a number's text as File4Base reads it back
+//     (normalizeSQLiteValue): 0.000015, where CAST gives 1.5e-05.
 //   - stddev_samp is PostgreSQL's aggregate, which SQLite lacks: the
 //     standard deviation a summary field computes.
 //   - The F4B collation orders text as a sort in a calculation does
@@ -34,13 +37,28 @@ import (
 const (
 	// SQLiteSortCollation is the collation text sorts use on SQLite.
 	SQLiteSortCollation = "F4B"
+	// SQLiteNumberText is the function giving a number's text.
+	SQLiteNumberText = "f4b_number_text"
 )
+
+func sqliteNumberText(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	switch v := args[0].(type) {
+	case int64:
+		return strconv.FormatInt(v, 10), nil
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64), nil
+	case []byte:
+		return string(v), nil
+	}
+	return args[0], nil
+}
 
 func init() {
 	sqliteDriver.MustRegisterDeterministicScalarFunction("lower", 1, mapTextArg(unicode.ToLower))
 	sqliteDriver.MustRegisterDeterministicScalarFunction("upper", 1, mapTextArg(unicode.ToUpper))
 	sqliteDriver.MustRegisterDeterministicScalarFunction("regexp", 2, sqliteRegexp)
 	sqliteDriver.MustRegisterDeterministicScalarFunction("f4b_lines", 1, sqliteLines)
+	sqliteDriver.MustRegisterDeterministicScalarFunction(SQLiteNumberText, 1, sqliteNumberText)
 	sqliteDriver.MustRegisterFunction("stddev_samp", &sqlite.FunctionImpl{
 		NArgs:         1,
 		Deterministic: true,
@@ -134,7 +152,10 @@ func sqliteLines(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, 
 // through, by Welford's method; NULL, and a text, are left out, and it is
 // NULL for fewer than two numbers, as on PostgreSQL.
 type stddevSamp struct {
-	n         int64
+	n int64
+	// The numbers are divided by scale, the largest magnitude stepped
+	// through so far, so their squares neither overflow nor vanish.
+	scale     float64
 	mean, sum float64 // sum of the squared differences from the mean
 }
 
@@ -147,6 +168,17 @@ func (a *stddevSamp) Step(_ *sqlite.FunctionContext, args []driver.Value) error 
 		x = v
 	default:
 		return nil
+	}
+	if m := math.Abs(x); m > a.scale {
+		if a.scale > 0 {
+			r := a.scale / m
+			a.mean *= r
+			a.sum *= r * r
+		}
+		a.scale = m
+	}
+	if a.scale > 0 {
+		x /= a.scale
 	}
 	a.n++
 	d := x - a.mean
@@ -163,7 +195,7 @@ func (a *stddevSamp) WindowValue(*sqlite.FunctionContext) (driver.Value, error) 
 	if a.n < 2 {
 		return nil, nil
 	}
-	return math.Sqrt(a.sum / float64(a.n-1)), nil
+	return a.scale * math.Sqrt(a.sum/float64(a.n-1)), nil
 }
 
 func (a *stddevSamp) Final(*sqlite.FunctionContext) {}
@@ -262,9 +294,11 @@ func SQLiteTypeCheck(column, declType string) string {
 		// the day date() gives back.
 		return fmt.Sprintf("CHECK (%[1]s IS NULL OR (typeof(%[1]s) = 'text' AND date(%[1]s) IS %[1]s))", column)
 	case "TIMESTAMP":
-		// A day of the calendar, then a time: the text bound timestamps
-		// are stored as (UTC, "2026-01-02 03:04:05+00:00").
-		return fmt.Sprintf("CHECK (%[1]s IS NULL OR (typeof(%[1]s) = 'text' AND date(%[1]s) IS substr(%[1]s, 1, 10) AND substr(%[1]s, 11, 1) = ' '))", column)
+		// The text bound timestamps are stored as: a day of the calendar,
+		// a time, in UTC ("2026-01-02 03:04:05.25+00:00").
+		return fmt.Sprintf("CHECK (%[1]s IS NULL OR (typeof(%[1]s) = 'text' AND "+
+			"%[1]s GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]*+00:00' AND "+
+			"date(%[1]s) IS substr(%[1]s, 1, 10)))", column)
 	case "BOOLEAN":
 		return fmt.Sprintf("CHECK (%[1]s IS NULL OR %[1]s IN (0, 1))", column)
 	}
@@ -277,13 +311,17 @@ func SQLiteTypeCheck(column, declType string) string {
 // a find for that day or instant still matches it. A text that names no day
 // of the calendar is copied as it is, for the column's check to refuse.
 func sqliteRetypeValue(expr, declType string) string {
-	validDay := fmt.Sprintf("date(substr(%[1]s, 1, 10)) IS substr(%[1]s, 1, 10)", expr)
+	// The text must read whole as a date or time (julianday), on a day of
+	// the calendar: "2026-03-04 garbage" is copied as it is and refused.
+	valid := fmt.Sprintf("date(substr(%[1]s, 1, 10)) IS substr(%[1]s, 1, 10) AND julianday(%[1]s) IS NOT NULL", expr)
 	switch strings.ToUpper(declType) {
 	case "DATE":
-		return fmt.Sprintf("(CASE WHEN %[2]s THEN date(%[1]s) ELSE %[1]s END)", expr, validDay)
+		// The day written, as dbal.NormalizeTemporal keeps it from a text.
+		return fmt.Sprintf("(CASE WHEN %[2]s THEN substr(%[1]s, 1, 10) ELSE %[1]s END)", expr, valid)
 	case "TIMESTAMP":
-		return fmt.Sprintf("(CASE WHEN %[2]s AND julianday(%[1]s) IS NOT NULL "+
-			"THEN rtrim(rtrim(strftime('%%Y-%%m-%%d %%H:%%M:%%f', %[1]s), '0'), '.') || '+00:00' ELSE %[1]s END)", expr, validDay)
+		// In UTC, to the millisecond (SQLite's resolution).
+		return fmt.Sprintf("(CASE WHEN %[2]s "+
+			"THEN rtrim(rtrim(strftime('%%Y-%%m-%%d %%H:%%M:%%f', %[1]s), '0'), '.') || '+00:00' ELSE %[1]s END)", expr, valid)
 	}
 	return expr
 }

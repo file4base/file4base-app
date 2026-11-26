@@ -3,11 +3,13 @@ package data_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/schema"
+	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,13 +19,30 @@ import (
 // record: on SQLite the driver reads a DATE column as a time.Time, which was
 // bound back as a timestamp text no DATE column equals, so a portal showed
 // nothing and a ≠ cascade deleted the records of the same day.
+//
+// A timestamp key read from the record and compared with a date field is
+// its day, as PostgreSQL binds it (the parameter takes the column's type).
 func TestRelationshipOnADateMatchField(t *testing.T) {
 	driver, ctx := relatedTestDriver(t)
 	if driver == nil {
 		return
 	}
-	for _, op := range []string{"=", "≠"} {
-		t.Run(op, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, op   string
+		parentType dbal.AgnosticFieldType
+		parent     interface{}
+		related    []string
+	}{
+		{"date =", "=", dbal.FieldTypeDate, "2026-01-02", []string{"Same day"}},
+		{"date ≠", "≠", dbal.FieldTypeDate, "2026-01-02", []string{"Next day"}},
+		{"timestamp past midnight =", "=", dbal.FieldTypeTimestamp, "2026-01-02T12:00:00Z", []string{"Same day"}},
+		{"timestamp past midnight <", "<", dbal.FieldTypeTimestamp, "2026-01-02T12:00:00Z", []string{"Next day"}},
+	} {
+		op := tc.op
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.parentType == dbal.FieldTypeTimestamp && op == "=" && testdb.Engine() == dbal.EngineMariaDB {
+				t.Skip("MariaDB compares the date as a DATETIME at midnight, which a timestamp past midnight does not equal")
+			}
 			schemaSvc := schema.NewService(driver)
 			require.NoError(t, schemaSvc.EnsureSystemTables(ctx))
 			dataSvc := data.NewService(driver)
@@ -39,7 +58,7 @@ func TestRelationshipOnADateMatchField(t *testing.T) {
 			t.Cleanup(func() { _ = schemaSvc.DeleteTable(context.Background(), eventsTable.ID) })
 
 			dayOnDays, err := schemaSvc.AddColumn(ctx, daysTable.ID, schema.ColumnMetadata{
-				Name: "day", DisplayName: "Day", FieldType: dbal.FieldTypeDate, IsNullable: true,
+				Name: "day", DisplayName: "Day", FieldType: tc.parentType, IsNullable: true,
 			})
 			require.NoError(t, err)
 			dayOnEvents, err := schemaSvc.AddColumn(ctx, eventsTable.ID, schema.ColumnMetadata{
@@ -74,7 +93,7 @@ func TestRelationshipOnADateMatchField(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = schemaSvc.DeleteRelationship(context.Background(), rel.ID) })
 
-			day, err := dataSvc.InsertRow(ctx, days, map[string]interface{}{"day": "2026-01-02"})
+			day, err := dataSvc.InsertRow(ctx, days, map[string]interface{}{"day": tc.parent})
 			require.NoError(t, err)
 			for _, e := range []struct{ day, title string }{
 				{"2026-01-02", "Same day"},
@@ -83,19 +102,21 @@ func TestRelationshipOnADateMatchField(t *testing.T) {
 				_, err := dataSvc.InsertRow(ctx, events, map[string]interface{}{"day": e.day, "last_name": e.title})
 				require.NoError(t, err)
 			}
-			related, stays := "Same day", "Next day"
-			if op == "≠" {
-				related, stays = stays, related
+			stays := []string{}
+			for _, title := range []string{"Same day", "Next day"} {
+				if !slices.Contains(tc.related, title) {
+					stays = append(stays, title)
+				}
 			}
 
 			rows, err := dataSvc.RelatedRows(ctx, days, day["id"].(string), rel.ID, eventsOcc, data.QueryOptions{})
 			require.NoError(t, err)
-			assert.Equal(t, []string{related}, lastNames(rows), "the portal shows the records the dates relate")
+			assert.ElementsMatch(t, tc.related, lastNames(rows), "the portal shows the records the dates relate")
 
 			require.NoError(t, dataSvc.DeleteRow(ctx, days, day["id"].(string)))
 			remaining, err := dataSvc.ListRows(ctx, events, data.QueryOptions{})
 			require.NoError(t, err)
-			assert.Equal(t, []string{stays}, lastNames(remaining), "the cascade deleted the related records only")
+			assert.ElementsMatch(t, stays, lastNames(remaining), "the cascade deleted the related records only")
 		})
 	}
 }

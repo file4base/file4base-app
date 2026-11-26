@@ -593,16 +593,21 @@ func TestMultiKeys_DatesAgainstLines(t *testing.T) {
 		ctx, k := newKeyedTables(t, "xnumkeys", [2]string{"n", "NUMBER"}, [2]string{"ns", "TEXT"})
 		k.insert(t, ctx, "keyed",
 			map[string]interface{}{"ns": "12\n13", "label": "k1"},
-			map[string]interface{}{"ns": "12", "label": "k2"})
+			map[string]interface{}{"ns": "12", "label": "k2"},
+			map[string]interface{}{"ns": "0.000015", "label": "k3"})
+		// A small number's text is written out, not as an exponent
+		// (SQLite's CAST gives 1.5e-05).
 		ids := k.insert(t, ctx, "holders",
 			map[string]interface{}{"n": 12, "label": "h1"},
-			map[string]interface{}{"n": 13, "label": "h2"})
+			map[string]interface{}{"n": 13, "label": "h2"},
+			map[string]interface{}{"n": 0.000015, "label": "h3"})
 		portal, batch, find := k.related(t, ctx, ids)
-		want := map[string][]string{ids[0]: {"k1", "k2"}, ids[1]: {"k1"}}
+		want := map[string][]string{ids[0]: {"k1", "k2"}, ids[1]: {"k1"}, ids[2]: {"k3"}}
 		assert.Equal(t, want, portal)
 		assert.Equal(t, want, batch)
 		assert.Equal(t, []string{"h1", "h2"}, find("k1"))
 		assert.Equal(t, []string{"h1"}, find("k2"))
+		assert.Equal(t, []string{"h3"}, find("k3"))
 	})
 }
 

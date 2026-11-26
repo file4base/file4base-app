@@ -77,8 +77,10 @@ func keyColumnOf(dialect dbal.Dialect, qualifier string, fields fieldSet, column
 // SQLite, the driver reads a DATE or TIMESTAMP column as a time.Time and
 // would bind one back as a timestamp text, "2026-01-02 00:00:00+00:00",
 // which a DATE column holding "2026-01-02" does not equal: a date or a
-// timestamp is bound as the text the column holds (dbal.TemporalValue). The
-// other engines compare a time.Time with their date columns by value.
+// timestamp is bound as the text a column of kind holds
+// (dbal.TemporalValue). That is what PostgreSQL does too, which takes the
+// parameter as the column's type: a timestamp compared with a date field
+// is its day.
 func keyValue(dialect dbal.Dialect, kind dbal.AgnosticFieldType, key interface{}) interface{} {
 	if dialect.Engine() != dbal.EngineSQLite {
 		return key
@@ -304,7 +306,7 @@ func asKeyText(dialect dbal.Dialect, column multiKeyColumn) string {
 			return fmt.Sprintf("CASE WHEN substr(%s, 11) = ' 00:00:00+00:00' THEN date(%s) ELSE datetime(%s) END",
 				column.sql, column.sql, column.sql)
 		case dbal.FieldTypeNumber:
-			return fmt.Sprintf("CAST(%s AS TEXT)", column.sql)
+			return fmt.Sprintf("%s(%s)", dbal.SQLiteNumberText, column.sql)
 		}
 		return column.sql
 	}
