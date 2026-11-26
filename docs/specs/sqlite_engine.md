@@ -10,6 +10,7 @@ PostgreSQL works on SQLite, with the exceptions listed under
 - Engine: [`server/internal/dbal/sqlite_conn.go`](../../server/internal/dbal/sqlite_conn.go),
   [`sqlite_files.go`](../../server/internal/dbal/sqlite_files.go),
   [`sqlite_funcs.go`](../../server/internal/dbal/sqlite_funcs.go),
+  [`sqlite_sortindex.go`](../../server/internal/dbal/sqlite_sortindex.go),
   [`sqlite/dialect.go`](../../server/internal/dbal/sqlite/dialect.go)
 - Driver: `modernc.org/sqlite` (pure Go, no cgo), SQLite 3.53
 - Benchmarks: [`server/cmd/f4b-bench`](../../server/cmd/f4b-bench)
@@ -26,7 +27,8 @@ and import it into the other server.
 | --- | --- | --- |
 | `DB_ENGINE` | `postgres` | `sqlite` keeps the solution databases in files. |
 | `DATABASE_URL` | `./data/solutions` | With SQLite, the data directory: one `<database>.sqlite` file per solution database. It is created `0700` if missing. |
-| `SQLITE_BUSY_TIMEOUT` | `5s` | How long a write waits for the writer lock before it fails (a Go duration). |
+| `SQLITE_WRITER_WAIT` | `60s` | How long a write waits for its turn behind the server's other writers (a schema change, an import) before it fails, unless its request ends first (a Go duration). |
+| `SQLITE_BUSY_TIMEOUT` | `5s` | SQLite's `busy_timeout`: how long a write waits for SQLite's lock held by another process (a CLI restore). |
 | `SQLITE_ALLOW_UNSAFE_STORAGE` | `false` | Turns the refusal of an unsafe filesystem into a warning. Not supported. |
 
 `docker-compose.sqlite.yml` is the stack on SQLite: the API alone, the
@@ -56,7 +58,13 @@ server tools' assumptions together.
   file; it stops at the first failure, so a `-wal` that may hold commits is
   never removed while its database can still be opened. A pool refuses to
   open a connection on a file other than the one it was opened on (a
-  database dropped and created again meanwhile). Creating, dropping and
+  database dropped and created again meanwhile). It tells the file by its
+  inode, which on Linux it keeps open by path (`O_PATH`) for its life, so
+  the file system cannot give it to the new file. A descriptor opened for
+  reading would release, when closed, the POSIX locks SQLite's connections
+  hold on the file.
+- A file whose text encoding is not UTF-8 (one another tool made in UTF-16)
+  is refused when opened. Creating, dropping and
   opening a database take turns in the server, per database (a slow `fsync`
   holds up that database only); a connection still in use when its pool is
   closed keeps the deleted files it has open until it is closed. There is no
@@ -78,11 +86,13 @@ statement.
 | --- | --- | --- | --- |
 | `journal_mode` | `WAL` | persistent | Readers never block the writer, nor the writer readers. Set when the database is created, read back when a pool is opened (a database that cannot be put in WAL is refused) and by the diagnostics. |
 | `synchronous` | `FULL` | connection | A commit is on disk when it returns: a power loss loses no committed transaction. `NORMAL` would be ~500 times faster per commit but can lose the last commits. |
-| `busy_timeout` | 5 s | connection | Bounds a write's wait; measured below. |
+| `busy_timeout` | 5 s | connection | Bounds a wait for SQLite's own lock, which only a writer of another process (a CLI restore) holds: the server's writers take turns first, each waiting up to the writer wait (60 s, below). |
 | transactions | `BEGIN IMMEDIATE` | connection | A transaction takes the writer lock before its first statement, so one that reads then writes never fails halfway with `SQLITE_BUSY`. |
 | `journal_size_limit` | 64 MB | connection | A checkpoint shrinks the WAL back after a large import. |
+| `page_size` | 16 KiB | persistent | Set when the database is created. A full scan of long records reads 2.5 times faster than with SQLite's 4 KiB; a save costs no measurable time more. |
+| `threads` | 2 | connection | Helper threads for a large sort (a report's groups): 30% less for a report by a field of 1M records; more threads gain nothing. |
 | `foreign_keys` | on | connection | As on the other engines. |
-| other pragmas | SQLite defaults | | `cache_size`, `mmap_size`, `temp_store`, `wal_autocheckpoint` (1000 pages): no measurement showed a gain worth the memory. |
+| other pragmas | SQLite defaults | | `cache_size`, `temp_store`, `wal_autocheckpoint` (1000 pages): no gain measured (a larger cache or `temp_store=MEMORY` slowed a report's sort). `mmap_size` is capped at 2 GB by the driver, too small for the large solutions it would help. |
 
 The data directory must be on a **local filesystem**. A Docker **named volume**
 is the supported setup.
@@ -92,8 +102,13 @@ is the supported setup.
 SQLite allows one writer per database at a time. A write transaction (and a
 write statement outside one) first takes the database's writer lock **of the
 process**: a one-slot channel, which Go hands to waiters in the order they
-came, bounded by `busy_timeout` (then `ErrSQLiteBusy`, whose text is SQLite's
-"database is locked"). SQLite's own busy handler polls with growing sleeps, so
+came. A writer waits for its turn until its request ends or the **writer
+wait** (`SQLITE_WRITER_WAIT`, 60 s) has passed, then fails with
+`ErrSQLiteBusy` ("database is locked: ..."). The writer wait is longer than
+anything the server holds the writer for in the benchmarks: a field type
+change of 1M records (8 s), an atomic import of 200,000 records (6.3 s, about
+30,000 records a second), building a sort index. An editor behind one waits
+instead of failing. SQLite's own busy handler polls with growing sleeps, so
 without the queue a writer under load could wait several seconds while later
 ones went first (50 saturating editors: 2.7 s worst wait before, 0.4 s after).
 SQLite's `busy_timeout` still covers writers in other processes (a restore, a
@@ -101,11 +116,19 @@ maintenance tool). A single `VACUUM INTO` statement (a backup) does not take
 the queue, and a query that writes (`INSERT`/`UPDATE`/`DELETE`/`REPLACE ...
 RETURNING`, also after `WITH` and leading comments) does.
 
-A queued writer holds the pool connection it waits on (10 per database). A
-writer that holds the lock and reads on a second connection meanwhile (an
-import evaluating a validation calculation) can find the pool full of
-waiters; it then waits until they time out. Not seen in the benchmarks; a
-larger pool or reading inside the transaction removes it.
+A queued writer holds the pool connection it waits on, so a SQLite pool has
+128 connections per database (10 on the server engines). A writer that holds
+the lock and reads on a second connection meanwhile (an import evaluating a
+validation calculation) could find the pool full of waiters, and would wait
+for one to give up; that takes more than 127 writers queued on one solution.
+
+An import is one transaction on every engine (`docs/api/API_REFERENCE.md`,
+"One transaction"): the first record that cannot be stored takes the whole
+file back. FileMaker's Import Records commits record by record instead.
+File4Base keeps its contract on SQLite; the writer wait bounds the size of an
+import other writers can wait for: about 1.8M records at 30,000 a second.
+Editors saving during a larger import fail after the writer wait. The import
+itself does not.
 
 ### A transaction SQLite ended
 
@@ -138,8 +161,8 @@ turns the refusal into a warning.
 `GET /api/v1/server/maintenance` carries, on SQLite, a `sqlite` object read
 from a live connection: SQLite version (and whether it has the fixes for the
 WAL-reset and other corruption bugs of 3.44 to 3.51: 3.44.6+, 3.50.7+,
-3.51.3+), `journal_mode`, `synchronous`, `busy_timeout_ms`, `foreign_keys`,
-`journal_size_limit`, the filesystem, and `problems`: every setting that
+3.51.3+), `journal_mode`, `synchronous`, `busy_timeout_ms`, `writer_wait_ms`,
+`foreign_keys`, `journal_size_limit`, the filesystem, and `problems`: every setting that
 differs from the contract. `POST /api/v1/server/maintenance/optimize` runs
 `PRAGMA analysis_limit = 1000; PRAGMA optimize = 0x10002`.
 
@@ -181,7 +204,8 @@ reset the WAL: it grows with the writes made meanwhile and shrinks back
 | Unique, equality, indexes | exact text | exact text (`BINARY`) | case-insensitive |
 
 The F4B collation applies to `ORDER BY` of text fields only: equality, `GROUP
-BY` and indexes stay `BINARY`, as on PostgreSQL. So a sort on SQLite gives
+BY` and indexes stay `BINARY`, as on PostgreSQL. A sort index (below) gives
+the same order. So a sort on SQLite gives
 FileMaker's (and a calculation's) order, where the default PostgreSQL image
 gives code point order; finds and reports give the same results on both.
 
@@ -189,6 +213,38 @@ Case mapping is character by character (Go `unicode.ToLower`/`ToUpper`, as
 PostgreSQL's in a UTF-8 database): `İ` lowers to `i`, `ı` stays `ı`, so a find
 for `YILMAZ` does not match `Yılmaz` on any engine. One difference: `upper('ß')`
 is `ß` on SQLite and `ẞ` on PostgreSQL.
+
+### Sort indexes
+
+SQLite calls the F4B collation, like every function of File4Base, through a
+Go callback of about 1 µs: a sort of a whole table calls it for each
+comparison (11 s for the first page of 5M records sorted by name, without an
+index). So a text field sorted on a table of 10,000 records or more is
+indexed on its sort key, as FileMaker indexes a field the first time it is
+sorted:
+
+- `calc.SortKey` is a byte key that orders as `calc.CompareText` (the
+  collation); `f4b_sortkey(CAST(col AS BLOB))` is that key in SQL, and the
+  index is `f4b_sort_<hash>` on it.
+- The first sort builds the index in the background and sorts by the
+  collation meanwhile. The build is a write transaction that checks the
+  column is still there and has no sort index yet, then runs `CREATE INDEX`;
+  it holds the writer: 2–3 s for 1M records of the benchmark, 8 s for 5M. A
+  failed build is not tried again for 10 minutes.
+- Only indexes named `f4b_sort_*` and not partial are sort indexes: one a
+  user made on the same key is neither used nor dropped as one.
+- A list of the table sorted by the field then reads the index, named with
+  `INDEXED BY` (SQLite does not use an index for a sort by more than one
+  field otherwise), and sorts only the records that tie on the field by the
+  rest of the order.
+- A find is still sorted by the collation, after the find: walking the index
+  to find the records that match reads the whole table out of order when few
+  match.
+- A column change drops the column's sort index (a type change does not make
+  it again); a rename keeps it.
+- The index needs `f4b_sortkey`: a tool other than File4Base (the `sqlite3`
+  shell) can read the file, but not change the table nor run
+  `integrity_check` on it.
 
 FileMaker finds by the field's index language, which for most languages also
 ignores accents (`ecole` finds `École`). Neither PostgreSQL nor SQLite does
@@ -326,34 +382,42 @@ own services on each engine, on the same host. See the PR of #199 for the
 full table; the measures that set the defaults:
 
 Same host (NVMe, ext4), PostgreSQL 16 and MariaDB 11 in Docker with their
-defaults, 1M records unless stated; times in ms.
+defaults, 1M records unless stated; times in ms. SQLite figures are those of
+the current code (16 KiB pages, sort indexes, writer wait); its finds and
+reports ran on the table after the import phases (1.46M records).
 
 | Measure | SQLite | PostgreSQL | MariaDB |
 | --- | --- | --- | --- |
-| Editors, 1 client: p50 / p99, saves/s | 5.3 / 8.2, 185 | 3.2 / 7.6, 292 | 7.1 / 11.9, 136 |
-| Editors, 50 clients saturating: p50 / p99, saves/s | 204 / 336, 236 | 25 / 46, 1917 | 70 / 121, 697 |
-| Editors, 50 clients with 1 s think: p50 / p99 | 5.8 / 20.6 | 3.6 / 51.5 | 7.9 / 27.2 |
-| 50 editors + Replace 100k + atomic import 20k: editors p99 / max | 366 / 821 | 53 / 109 | 172 / 3664 |
-| Import 20k, atomic | 746 | 2039 | 60161 |
-| Field type change, 1M records | 6.8 s | 4.0 s | 234.6 s |
-| Find contains / number range, first page | 1.4 / 1.3 | 1.2 / 2.2 | 47.9 / 36.5 |
-| Find equals, sorted / sort all by name | 419 / 1462 | 93 / 118 | 4246 / 2716 |
-| Report by city / grand totals | 954 / 168 | 169 / 60 | 5654 / 1846 |
-| Backup / restore | 1.07 s / 0.52 s (`VACUUM INTO`) | 5.9 s / 3.7 s (`pg_dump`) | 15.2 s / 32.0 s (`mariadb-dump`) |
-| 10 GB solution (5M records): sort all by name / report by city | 11.2 s / 10.4 s | 0.9 s / 1.6 s | |
-| 10 GB solution: backup | 21 s (10.0 GB) | 287 s (1.5 GB) | |
+| Editors, 1 client: p50 / p99, saves/s | 5.3 / 6.6, 197 | 3.2 / 7.6, 292 | 7.1 / 11.9, 136 |
+| Editors, 50 clients saturating: p50 / p99, saves/s | 17 / 234, 738 | 25 / 46, 1917 | 70 / 121, 697 |
+| Editors, 50 clients with 1 s think: p50 / p99 | 5.6 / 72.1 | 3.6 / 51.5 | 7.9 / 27.2 |
+| 50 editors + Replace 100k + atomic import 20k: editors p99 / max | 924 / 932 | 53 / 109 | 172 / 3664 |
+| 50 editors + atomic import 200k: editors p99 / max, import | 275 / 5316, 5.4 s | | |
+| Import 20k, atomic | 860 | 2039 | 60161 |
+| Field type change, 1M records (50 editors, 0 failed) | 6.5 s | 4.0 s | 234.6 s |
+| Find contains / number range, first page | 1.5 / 0.45 | 1.2 / 2.2 | 47.9 / 36.5 |
+| Find equals, sorted / sort all by name | 389 / 5.6 (1771 before its sort index) | 93 / 118 | 4246 / 2716 |
+| Report by city / grand totals | 611 / 152 | 169 / 60 | 5654 / 1846 |
+| Backup / restore | 0.99 s / 0.52 s (`VACUUM INTO`) | 5.9 s / 3.7 s (`pg_dump`) | 15.2 s / 32.0 s (`mariadb-dump`) |
+| 10 GB solution (5M records): sort all by name / report by city | 16 ms / 4.2 s (11.2 s / 10.4 s with 4 KiB pages and no sort index) | 0.9 s / 1.6 s | |
+| 10 GB solution: grand totals / find equals, sorted | 1.6 s / 2.6 s (3.5 s / 5.4 s before) | 0.6 s / 0.8 s | |
+| 10 GB solution: sort index build, 5M records | 8.2 s (in the background, holding the writer) | | |
+| 10 GB solution: backup | 10.3 s (10.0 GB) | 287 s (1.5 GB) | |
 
-- A commit costs ~5 ms with `synchronous=FULL`: SQLite stays near 200–230
-  write transactions per second per solution whatever the number of
-  clients; latency grows with the queue, never with lock errors (0 in every
-  run).
-- An atomic import of N records holds the writer for about N / 30,000 s:
-  above ~150,000 records it outlasts `busy_timeout`, and editors waiting for
-  it fail. Imports of that size should be chunked (2,000-record chunks: editors
-  p99 under 0.4 s).
-- Full scans of a large solution are 6–13 times slower than PostgreSQL:
-  SQLite keeps long texts inline (no TOAST), and the `F4B` sort collation
-  cannot use a `BINARY` index.
+- Saves are serial per solution, each with an fsync of the WAL
+  (`synchronous=FULL`), so the fsync time of the storage sets the ceiling. On
+  this host it was 1.4–5 ms a save: 185–240 saves/s on the 10 GB solution
+  whatever the number of clients, 197 for one client and 738 for 50 on the
+  1M one. Latency grows with the queue, never with lock errors (0 in every
+  run). Other disks and file systems will differ; only this host was
+  measured.
+- An atomic import of N records holds the writer for about N / 30,000 s;
+  editors wait for it (writer wait), as they do for a field type change.
+- Full scans: a report reads every record of the table, which SQLite keeps
+  with its long texts (no TOAST) and scans in one thread, where PostgreSQL
+  scans in parallel; it groups by sorting (no hash aggregate). At 10 GB a
+  report is 2.7 times PostgreSQL's time. A sort of the whole table reads its
+  sort index (16 ms at 10 GB, PostgreSQL 0.9 s).
 - Crash consistency: 40 `SIGKILL`s during write transactions and 12 during
   field type changes: no acknowledged transaction lost, no partial batch,
   `integrity_check` ok. A VM reset or power loss was not simulated.
