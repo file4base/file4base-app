@@ -573,11 +573,17 @@
 git clone https://github.com/file4base/file4base-app.git
 cd file4base-app
 
-# 2. Launch database, backend API, and File4Base Web Client
-docker compose up -d
+# 2. Generate the database password (new install only; there is no default)
+touch .env &amp;&amp; chmod 600 .env
+echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" &gt;&gt; .env
 
-# 3. Access File4Base Web Client
+# 3. Launch database, backend API, and File4Base Web Client
+docker compose up -d --build
+
+# 4. Access File4Base Web Client
 open http://localhost:3000</code></pre>
+
+        <p>Only a signed-in owner can create databases. To create the first solution of a new server, see <em>First solution</em> in the README.</p>
 
         <p>The stack exposes:</p>
         <ul>
@@ -585,7 +591,7 @@ open http://localhost:3000</code></pre>
           <li><strong>Backend Core API (v1)</strong>: <code>http://localhost:8080/api/v1</code> (146 REST endpoints)</li>
           <li><strong>OpenAPI 3.0.3 / Swagger UI</strong>: <code>http://localhost:3000/swagger/</code> and <code>http://localhost:8080/swagger/</code></li>
           <li><strong>Health &amp; Readiness Probes</strong>: <code>/healthz</code>, <code>/livez</code>, <code>/readyz</code>, <code>/startupz</code></li>
-          <li><strong>PostgreSQL 16</strong>: <code>localhost:5432</code></li>
+          <li><strong>PostgreSQL 16</strong>: reachable only by the API inside the Docker network (not published on the host)</li>
         </ul>
       </section>
 
@@ -790,13 +796,13 @@ Upper ( Trim ( first_name &amp; " " &amp; last_name ) )</code></pre>
             <tr>
               <td><code>file4base-postgres</code></td>
               <td><code>postgres:16-alpine</code></td>
-              <td><code>5432:5432</code></td>
+              <td>not published</td>
               <td>Primary Relational Database Engine</td>
             </tr>
             <tr>
               <td><code>file4base-mariadb</code></td>
               <td><code>mariadb:11-jammy</code></td>
-              <td><code>3306:3306</code></td>
+              <td>not published</td>
               <td>Optional MariaDB Engine Profile</td>
             </tr>
           </tbody>

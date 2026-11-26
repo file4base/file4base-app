@@ -7,8 +7,11 @@ import (
 	"testing"
 )
 
-func corsRequest(t *testing.T, allowed []string, method, origin string) *httptest.ResponseRecorder {
+// corsRequest sends one request through the middleware configured the way
+// main configures it, from a CORS_ALLOWED_ORIGINS value.
+func corsRequest(t *testing.T, setting, method, origin string) *httptest.ResponseRecorder {
 	t.Helper()
+	allowed, _ := parseCORSOrigins(setting)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	req := httptest.NewRequest(method, "/api/v1/databases", nil)
 	if origin != "" {
@@ -27,7 +30,7 @@ func corsRequest(t *testing.T, allowed []string, method, origin string) *httptes
 // same-origin pages read it (#202).
 func TestCORS_DefaultGrantsNoCrossOriginAccess(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodOptions} {
-		rec := corsRequest(t, splitList(""), method, "https://attacker.example")
+		rec := corsRequest(t, "", method, "https://attacker.example")
 		for name := range rec.Header() {
 			if strings.HasPrefix(name, "Access-Control-") {
 				t.Errorf("%s: unexpected %s header with the default configuration", method, name)
@@ -36,13 +39,13 @@ func TestCORS_DefaultGrantsNoCrossOriginAccess(t *testing.T) {
 	}
 	// A same-origin request (the bundled Web Client through its Nginx) is
 	// served normally; browsers need no CORS header for it.
-	if rec := corsRequest(t, splitList(""), http.MethodGet, ""); rec.Code != http.StatusOK {
+	if rec := corsRequest(t, "", http.MethodGet, ""); rec.Code != http.StatusOK {
 		t.Fatalf("request without Origin: got %d", rec.Code)
 	}
 }
 
 func TestCORS_ListedOriginsOnly(t *testing.T) {
-	allowed := splitList("https://files.example.lan:3443, http://localhost:3000/")
+	allowed := "https://files.example.lan:3443, http://localhost:3000/"
 
 	rec := corsRequest(t, allowed, http.MethodOptions, "https://files.example.lan:3443")
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://files.example.lan:3443" {
@@ -59,36 +62,58 @@ func TestCORS_ListedOriginsOnly(t *testing.T) {
 		t.Fatalf("listed origin with trailing slash: Access-Control-Allow-Origin = %q", got)
 	}
 
-	for _, origin := range []string{"https://attacker.example", "http://files.example.lan:3443", "https://files.example.lan"} {
+	for _, origin := range []string{"https://attacker.example", "http://files.example.lan:3443", "https://files.example.lan", ""} {
 		rec := corsRequest(t, allowed, http.MethodOptions, origin)
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-			t.Errorf("unlisted origin %s: Access-Control-Allow-Origin = %q", origin, got)
+			t.Errorf("unlisted origin %q: Access-Control-Allow-Origin = %q", origin, got)
+		}
+		// The answer depends on Origin, so a cache must key on it even
+		// when no CORS header was sent.
+		if got := rec.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("unlisted origin %q: Vary = %q", origin, got)
 		}
 	}
 }
 
 // "*" stays available as an explicit choice, with a startup warning.
 func TestCORS_WildcardIsExplicitAndWarned(t *testing.T) {
-	if got := corsRequest(t, splitList("*"), http.MethodGet, "https://any.example").Header().Get("Access-Control-Allow-Origin"); got != "*" {
+	if got := corsRequest(t, "*", http.MethodGet, "https://any.example").Header().Get("Access-Control-Allow-Origin"); got != "*" {
 		t.Fatalf("wildcard: Access-Control-Allow-Origin = %q", got)
 	}
-	if !strings.Contains(strings.Join(corsNotices(splitList("*")), "\n"), "Warning") {
+	if _, notices := parseCORSOrigins("*"); !strings.Contains(strings.Join(notices, "\n"), "Warning") {
 		t.Fatal("wildcard: no startup warning")
+	}
+	// Only an exact "*" is the wildcard: "*/" or "https://*" are dropped
+	// with a warning, and never widen access.
+	for _, setting := range []string{"*/", "https://*", " */ ,"} {
+		rec := corsRequest(t, setting, http.MethodGet, "https://any.example")
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("setting %q: Access-Control-Allow-Origin = %q", setting, got)
+		}
 	}
 }
 
-func TestCORSNotices(t *testing.T) {
-	if got := strings.Join(corsNotices(nil), "\n"); strings.Contains(got, "Warning") || !strings.Contains(got, "no cross-origin") {
-		t.Fatalf("default notice = %q", got)
+func TestParseCORSOrigins(t *testing.T) {
+	allowed, notices := parseCORSOrigins("")
+	if got := strings.Join(notices, "\n"); allowed != nil || strings.Contains(got, "Warning") || !strings.Contains(got, "no cross-origin") {
+		t.Fatalf("default: allowed = %q, notices = %q", allowed, got)
 	}
-	got := strings.Join(corsNotices(splitList("files.example.lan:3000,https://ok.example,http://x.example/app")), "\n")
+	allowed, notices = parseCORSOrigins("files.example.lan:3000,https://ok.example/,http://x.example/app")
+	if len(allowed) != 1 || allowed[0] != "https://ok.example" {
+		t.Fatalf("allowed = %q, want only https://ok.example", allowed)
+	}
+	got := strings.Join(notices, "\n")
 	for _, bad := range []string{`"files.example.lan:3000"`, `"http://x.example/app"`} {
 		if !strings.Contains(got, bad) {
 			t.Errorf("no warning for %s in %q", bad, got)
 		}
 	}
-	if strings.Contains(got, `"https://ok.example" is not`) {
+	if strings.Contains(got, `"https://ok.example`+"/"+`"`) {
 		t.Errorf("valid origin flagged: %q", got)
+	}
+	// Only invalid entries: no access, and the notices say so.
+	if allowed, notices = parseCORSOrigins("nope"); allowed != nil || !strings.Contains(strings.Join(notices, "\n"), "no cross-origin") {
+		t.Fatalf("invalid only: allowed = %q, notices = %q", allowed, notices)
 	}
 }
 

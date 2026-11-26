@@ -79,12 +79,13 @@ with your backups (the password is needed to use the database volume):
 # Optional: start from the documented settings
 cp .env.example .env
 
-# Required: a generated database password (letters and digits only)
+# Required, on a new install only: a generated database password
+# (letters and digits only)
+touch .env && chmod 600 .env
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env
-chmod 600 .env
 
 # Start complete File4Base server stack (builds the API and the web client images)
-docker compose up -d
+docker compose up -d --build
 
 # Check server health
 curl http://localhost:8080/healthz
@@ -97,6 +98,11 @@ Without `POSTGRES_PASSWORD`, `docker compose up` stops with
 `required variable POSTGRES_PASSWORD is missing a value` and says what to set.
 **Upgrading an install that never set it?** Its volume was created with
 `dev_password`: see the upgrade notes in [CHANGELOG.md](CHANGELOG.md).
+
+`--build` builds the images from this checkout. Images of 0.22.0 and earlier
+(already pulled, or from Docker Hub) still have the old defaults: CORS open to
+every origin and a Web Client that calls `127.0.0.1:8080`. Use `--build` until
+a release with these defaults is published.
 
 On a new Docker volume, PostgreSQL starts with its administrative `postgres`
 database and no File4Base solution database. Docker's `POSTGRES_DB` setting
@@ -113,14 +119,26 @@ Allow public creation for that one step, then turn it off again:
 ```bash
 echo "ALLOW_PUBLIC_DATABASE_CREATION=true" >> .env
 docker compose up -d
-# Create the first solution: Web Client (http://<host>:3000) or desktop app >
-# New Database, or a FileMaker migration. Choose a strong owner password.
+# Create the first solution, from the server itself (see below): Web Client
+# (http://localhost:3000) or desktop app > New Database, or a FileMaker
+# migration. Choose a strong owner password.
 sed -i.bak '/^ALLOW_PUBLIC_DATABASE_CREATION=/d' .env && rm .env.bak
 docker compose up -d
 ```
 
-While it is on, anyone who can reach the API can create a database and become
-its owner; the API logs a warning at startup and after each such creation.
+With MariaDB, use `docker compose -f docker-compose.mariadb.yml up -d` for both
+starts.
+
+While it is on, anyone who can reach the API (`8080`) or the Web Client
+(`3000`, `3443`) can create a database and become its owner, and keeps that
+owner account afterwards; the API logs a warning at startup and after each such
+creation. So do this step while only you can reach the server: block those
+ports for other machines (host firewall, or a server not yet on the network),
+and work on the server itself or through an SSH tunnel
+(`ssh -L 3000:localhost:3000 <server>`, then open `http://localhost:3000`).
+This also keeps the owner password off the network: plain HTTP to another
+machine sends it in clear text. When the setting is off again, check in the
+sign-in screen that the server has no database you did not create.
 After that, the owner of a solution creates the next ones while signed in
 (**File > New Database...**). To open the server-wide
 Server Tools to that owner, seed it as a super-owner with

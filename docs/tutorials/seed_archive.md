@@ -57,20 +57,37 @@ Where a capability is not yet implemented, see
 
 ## Before you start
 
-Launch the containerized stack from the repository root. It needs a database
-password (there is no default one), and this tutorial creates a new solution
-without an account to sign in with, so allow public database creation for it:
+Launch the containerized stack from the repository root. Run this tutorial on
+your own machine (`localhost`), not on a server that other people can reach.
+
+The stack needs a database password (there is no default one). **On a fresh
+install only** (no `.env` and no database volume yet), generate it into a new
+`.env`; on an existing install, keep the `.env` you have, because a new
+password would not match the existing database. This tutorial also creates a
+new solution without an account to sign in with, so allow public database
+creation for it:
 
 ```bash
+# PostgreSQL (fresh install only)
+touch .env && chmod 600 .env
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 32)" >> .env
 echo "ALLOW_PUBLIC_DATABASE_CREATION=true" >> .env
-docker compose up -d
+docker compose up -d --build
+```
+
+```bash
+# Or MariaDB (fresh install only)
+touch .env && chmod 600 .env
+echo "MARIADB_PASSWORD=$(openssl rand -hex 32)" >> .env
+echo "MARIADB_ROOT_PASSWORD=$(openssl rand -hex 32)" >> .env
+echo "ALLOW_PUBLIC_DATABASE_CREATION=true" >> .env
+docker compose -f docker-compose.mariadb.yml up -d --build
 ```
 
 Once Lesson 2 has created the solution, remove the
-`ALLOW_PUBLIC_DATABASE_CREATION` line from `.env` and run `docker compose up -d`
-again: from then on only a signed-in owner can create databases (README,
-*First solution*).
+`ALLOW_PUBLIC_DATABASE_CREATION` line from `.env` and run the same
+`docker compose ... up -d` command again: from then on only a signed-in owner
+can create databases (README, *First solution*).
 
 This starts three containers: `file4base-postgres`, `file4base-api`, and
 `file4base-web`. Confirm that the API server is healthy:
@@ -87,8 +104,8 @@ connect to the same API over an AES-256-GCM encrypted payload channel and
 behave identically: the desktop app to `http://127.0.0.1:8080` by default, the
 Web Client to the address it was opened from.
 
-To run against MariaDB instead of PostgreSQL, start the stack with
-`docker compose -f docker-compose.mariadb.yml up -d`.
+With MariaDB, add `-f docker-compose.mariadb.yml` to every `docker compose`
+command of this tutorial.
 
 ---
 
@@ -133,7 +150,8 @@ shown disabled (greyed out).
 3. In **Solution Name**, enter `Boreal Seed Archive`.
    The **Base File Name** and **Database Name** populate automatically as
    `boreal_seed_archive.f4p` and `boreal_seed_archive_db`.
-4. In **User**, enter `curator`. In **Password**, enter `Boreal2026!`.
+4. In **User**, enter `curator`. In **Password**, choose a password of your own
+   (this tutorial writes it as `<curator password>`).
    - The initial owner password must be at least 8 characters and distinct from
      the username and database name.
 5. Leave **Create physical database in PostgreSQL if it does not exist**
@@ -145,7 +163,7 @@ shown disabled (greyed out).
 7. Click **Create & Save Solution**.
 
 Back in the login dialog, `boreal_seed_archive_db` is selected and registered in
-the API control store alongside its project metadata. Enter `Boreal2026!` and
+the API control store alongside its project metadata. Enter `<curator password>` and
 click **Connect & Sign In**.
 
 The workspace opens on the welcome screen with a **Create First Database Table**

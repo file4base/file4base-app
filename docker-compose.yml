@@ -66,6 +66,9 @@ services:
       # "true" lets anyone who reaches the API create a database. Set it only
       # to create the first solution of a new server (README, "First solution").
       ALLOW_PUBLIC_DATABASE_CREATION: "${ALLOW_PUBLIC_DATABASE_CREATION:-false}"
+      # Proxies whose X-Forwarded-For the API believes (audit log, login
+      # throttle). Empty: none. See .env.example.
+      FILE4BASE_TRUSTED_PROXIES: "${FILE4BASE_TRUSTED_PROXIES:-}"
       # Largest FileMaker migration upload (native .fmp12 copy) a signed-in
       # admin or owner may send, and how long a migration may run. Raise the
       # Web Client's client_max_body_size for /api/v1/solutions/migrate/ too.

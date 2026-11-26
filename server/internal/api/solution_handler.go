@@ -321,8 +321,9 @@ func (h *SolutionHandler) CreateDatabase(w http.ResponseWriter, r *http.Request)
 // sign in with, so it says how the operator creates the first solution.
 const publicCreationOffDetail = "Creating a database requires signing in as an owner of a database on this server. " +
 	"On a new server with no database yet, the server operator sets ALLOW_PUBLIC_DATABASE_CREATION=true for the API " +
-	"(in .env next to docker-compose.yml, then docker compose up -d), creates the first solution, " +
-	"then removes the setting and runs docker compose up -d again."
+	"(in .env next to docker-compose.yml, then docker compose up -d; with MariaDB, " +
+	"docker compose -f docker-compose.mariadb.yml up -d), creates the first solution, " +
+	"then removes the setting and runs the same command again. See README, First solution."
 
 // noteAnonymousCreation logs a database created without a session, so an
 // operator who left ALLOW_PUBLIC_DATABASE_CREATION on is reminded of it.

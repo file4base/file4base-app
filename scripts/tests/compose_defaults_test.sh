@@ -3,9 +3,11 @@
 # `docker compose config`, which only renders the files: nothing is started
 # and no Docker daemon is needed.
 #
-#   - without passwords the stack refuses to start, naming what to set;
-#   - with them, the database publishes no port, CORS allows no other
-#     origin, and public database creation is off.
+#   - without passwords (or with only .env.example) the stack refuses to
+#     start, naming what to set;
+#   - with them, the passwords reach the database and the API's DSN, the
+#     database publishes no port, CORS allows no other origin, and public
+#     database creation is off.
 #
 # A local .env and the caller's environment are ignored.
 #
@@ -37,14 +39,22 @@ MARIADB_PASSWORD=fedcba9876543210fedcba9876543210
 MARIADB_ROOT_PASSWORD=00112233445566778899aabbccddeeff
 ENV
 grep -v '^MARIADB_ROOT_PASSWORD=' "${WORK}/secrets.env" > "${WORK}/no-root.env"
+grep -v '^MARIADB_PASSWORD=' "${WORK}/secrets.env" > "${WORK}/no-app.env"
 
 # Reads the rendered configuration (JSON) on stdin; argument: the database
 # service. Prints each insecure default and fails if there is one.
 cat > "${WORK}/check.py" <<'PY'
 import json, sys
-db = sys.argv[1]
+db, secrets_file = sys.argv[1], sys.argv[2]
+secrets = dict(l.strip().split("=", 1) for l in open(secrets_file) if "=" in l)
 services = json.load(sys.stdin)["services"]
 problems = []
+wanted = ["POSTGRES_PASSWORD"] if db == "postgres" else ["MARIADB_PASSWORD", "MARIADB_ROOT_PASSWORD"]
+for name in wanted:
+    if services[db]["environment"].get(name) != secrets[name]:
+        problems.append(f"{db}: {name} is not the value from .env")
+if secrets[wanted[0]] not in services["api"]["environment"].get("DATABASE_URL", ""):
+    problems.append(f"api: DATABASE_URL does not use {wanted[0]} from .env")
 if services[db].get("ports"):
     problems.append(f"{db} publishes {services[db]['ports']}")
 env = services["api"]["environment"]
@@ -66,9 +76,11 @@ check_refused() {
     shift 2
     local out
     if out="$(compose "${file}" "${env_file}" config -q 2>&1)"; then
-        fail "${file}: starts without $*"
+        fail "${file} with ${env_file##*/}: starts without ${*:-a password}"
         return
     fi
+    # Compose may stop at the first missing variable, so pass one variable
+    # per call when several are missing; none only checks the refusal.
     for var in "$@"; do
         if ! grep -q "required variable ${var} is missing a value: set it in .env" <<<"${out}"; then
             fail "${file}: the error does not say how to set ${var}: ${out}"
@@ -83,14 +95,17 @@ check_defaults() {
         fail "${file}: does not render with the passwords set: ${json}"
         return
     fi
-    if ! python3 -I "${WORK}/check.py" "${db}" <<<"${json}"; then
+    if ! python3 -I "${WORK}/check.py" "${db}" "${WORK}/secrets.env" <<<"${json}"; then
         fail "${file}: insecure default (see above)"
     fi
 }
 
 check_refused docker-compose.yml "${WORK}/empty.env" POSTGRES_PASSWORD
-check_refused docker-compose.mariadb.yml "${WORK}/empty.env" MARIADB_PASSWORD MARIADB_ROOT_PASSWORD
+check_refused docker-compose.yml "${ROOT}/.env.example" POSTGRES_PASSWORD
+check_refused docker-compose.mariadb.yml "${WORK}/empty.env"
+check_refused docker-compose.mariadb.yml "${ROOT}/.env.example"
 check_refused docker-compose.mariadb.yml "${WORK}/no-root.env" MARIADB_ROOT_PASSWORD
+check_refused docker-compose.mariadb.yml "${WORK}/no-app.env" MARIADB_PASSWORD
 check_defaults docker-compose.yml postgres
 check_defaults docker-compose.mariadb.yml mariadb
 

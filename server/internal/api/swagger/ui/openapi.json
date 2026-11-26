@@ -1205,7 +1205,7 @@
           "Solutions & Backup"
         ],
         "summary": "Create a database and its first owner account",
-        "description": "Public while ALLOW_PUBLIC_DATABASE_CREATION=true (default); otherwise requires an owner session. Never modifies an existing database.",
+        "description": "Requires an owner session by default; without one the answer is 401 and its detail says how the operator creates the first solution of a new server. Public only while ALLOW_PUBLIC_DATABASE_CREATION=true (default false). Never modifies an existing database.",
         "security": [
           {},
           {

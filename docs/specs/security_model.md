@@ -160,18 +160,22 @@ the first solution of a new server.
 - **Bootstrap.** `FILE4BASE_SUPER_OWNER=database:username` (comma-separated for
   several) marks accounts as super-owners at sign-in even before any flag is
   stored, so the first one can exist without another to grant it. The effective
-  value at sign-in is `super_owner (stored) OR seeded`, and it is carried in the
-  session (`auth.Session.SuperOwner`).
+  value at sign-in is `super_owner (stored) OR seeded OR owner of
+  FILE4BASE_ADMIN_DATABASE`, and it is carried in the session
+  (`auth.Session.SuperOwner`).
 - **Delegation.** A super-owner grants or revokes the privilege on other
   **owner** accounts with `PUT /api/v1/security/users/{id}/super-owner`
   (`RequireSuperOwner`). The target must be an owner, and a super-owner cannot
   strip their own privilege (so the population cannot lock itself out by
   accident).
-- **Compatibility.** An owner of `FILE4BASE_ADMIN_DATABASE` remains a server
-  administrator even without the flag, so existing admin-database setups keep
-  working. The setting is deprecated (the server logs it at startup): server
-  accounts (#185) will replace it. That legacy path grants the server-wide *tools* but not the right to
-  manage the super-owner flag.
+- **Compatibility.** An owner of `FILE4BASE_ADMIN_DATABASE` is an effective
+  super-owner at sign-in even without the stored flag, so existing
+  admin-database setups keep working: it reaches the server-wide tools and can
+  grant or revoke the super-owner flag on other owners. The setting is
+  deprecated (the server logs it at startup): server accounts (#185) will
+  replace it. Removing the setting ends only this implicit privilege; flags it
+  granted to other accounts stay stored, so review them when
+  you retire it.
 - The super-owner flag is part of the account stamp, so granting or revoking it
   ends the target's existing sessions at once (see above).
 

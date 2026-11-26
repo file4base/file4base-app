@@ -41,31 +41,38 @@ func init() {
 // own; the allow-list still limits which web origins may call the API at all.
 // An empty list (the default) sends no CORS header, so only same-origin pages
 // (the bundled Web Client, which reaches the API through its own Nginx) can
-// read responses; allowed == ["*"] accepts any origin.
+// read responses; an entry that is exactly "*" accepts any origin. main
+// passes the list through parseCORSOrigins first.
 func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 	allowAny := false
 	origins := make(map[string]struct{}, len(allowed))
 	for _, o := range allowed {
-		o = strings.TrimRight(strings.TrimSpace(o), "/")
+		o = strings.TrimSpace(o)
 		if o == "*" {
 			allowAny = true
+			continue
 		}
-		if o != "" {
+		if o = strings.TrimRight(o, "/"); o != "" {
 			origins[strings.ToLower(o)] = struct{}{}
 		}
 	}
+	// With a specific list the answer depends on Origin, so every response
+	// says so; a cache then never serves one origin's answer to another.
+	varyOrigin := !allowAny && len(origins) > 0
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
 			_, listed := origins[strings.ToLower(strings.TrimRight(origin, "/"))]
 
+			if varyOrigin {
+				w.Header().Add("Vary", "Origin")
+			}
 			switch {
 			case allowAny:
 				w.Header().Set("Access-Control-Allow-Origin", "*")
-			case origin != "" && listed:
+			case listed:
 				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Add("Vary", "Origin")
 			}
 
 			if allowAny || listed {
@@ -101,30 +108,33 @@ func publicCreationNotice(allow bool) string {
 	return "Database creation requires an owner session (ALLOW_PUBLIC_DATABASE_CREATION is off). A new server gets its first solution with ALLOW_PUBLIC_DATABASE_CREATION=true for one start; see README, \"First solution\"."
 }
 
-// corsNotices describes the CORS configuration at startup and flags entries
-// a browser would never send as an Origin (a path, no scheme, ...).
-func corsNotices(origins []string) []string {
-	if len(origins) == 0 {
-		return []string{"CORS: no cross-origin browser access (CORS_ALLOWED_ORIGINS is empty). The bundled Web Client calls the API on its own origin and needs none."}
-	}
-	var lines []string
-	for _, o := range origins {
-		if o == "*" {
-			lines = append(lines, "Warning: CORS_ALLOWED_ORIGINS contains *: every web site may call this API from a browser. List the origins that need it instead (scheme://host:port).")
-			continue
+// parseCORSOrigins reads a CORS_ALLOWED_ORIGINS value. It keeps an exact
+// "*" and the web origins, drops every other entry, and returns the startup
+// lines that describe the result (a warning for "*" and for each dropped
+// entry). Empty means no cross-origin browser access (#202).
+func parseCORSOrigins(raw string) (allowed []string, notices []string) {
+	for _, o := range splitList(raw) {
+		switch {
+		case o == "*":
+			notices = append(notices, "Warning: CORS_ALLOWED_ORIGINS contains *: every web site may call this API from a browser. List the origins that need it instead (scheme://host:port).")
+			allowed = append(allowed, o)
+		case isWebOrigin(o):
+			allowed = append(allowed, strings.TrimRight(o, "/"))
+		default:
+			notices = append(notices, fmt.Sprintf("Warning: ignoring CORS_ALLOWED_ORIGINS entry %q: it is not a web origin (scheme://host[:port], no path).", o))
 		}
-		if !isWebOrigin(o) {
-			lines = append(lines, fmt.Sprintf("Warning: CORS_ALLOWED_ORIGINS entry %q is not a web origin (scheme://host[:port], no path); no browser request will match it.", o))
-		}
 	}
-	return append(lines, fmt.Sprintf("CORS: cross-origin browser access allowed for %s", strings.Join(origins, ", ")))
+	if len(allowed) == 0 {
+		return nil, append(notices, "CORS: no cross-origin browser access (CORS_ALLOWED_ORIGINS lists no origin). The bundled Web Client calls the API on its own origin and needs none.")
+	}
+	return allowed, append(notices, fmt.Sprintf("CORS: cross-origin browser access allowed for %s", strings.Join(allowed, ", ")))
 }
 
 // isWebOrigin reports whether s has the form a browser sends in an Origin
 // header: http or https, a host, an optional port, and nothing else.
 func isWebOrigin(s string) bool {
 	u, err := url.Parse(strings.TrimRight(s, "/"))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || strings.Contains(u.Host, "*") {
 		return false
 	}
 	return u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil
@@ -248,8 +258,8 @@ func main() {
 
 	// Secure defaults (#202): no cross-origin browser access unless origins
 	// are listed, and no database creation without an owner session.
-	corsOrigins := splitList(os.Getenv("CORS_ALLOWED_ORIGINS"))
-	for _, line := range corsNotices(corsOrigins) {
+	corsOrigins, corsLines := parseCORSOrigins(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	for _, line := range corsLines {
 		log.Println(line)
 	}
 	allowPublicCreate := publicDatabaseCreation()
