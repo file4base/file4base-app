@@ -8,6 +8,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/crypto"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/fmdapi"
 	"github.com/file4base/file4base-app/server/internal/mail"
 	"github.com/file4base/file4base-app/server/internal/realtime"
 	"github.com/go-chi/chi/v5"
@@ -68,6 +69,26 @@ type Options struct {
 	// MailSender talks to the SMTP servers of Send Mail (#133); nil uses
 	// the default one. Tests point it at an in-process server.
 	MailSender *mail.Sender
+	// DataAPI configures the FileMaker Data API at /fmi/data (#208). It is
+	// mounted only when it serves at least one database.
+	DataAPI *fmdapi.Config
+}
+
+// nodeOnlyMethods are the methods Node's HTTP parser accepts that chi does
+// not know. Registered, they reach the FileMaker Data API, which answers
+// them with code 1704 as FileMaker Server's Express front end does, instead
+// of chi's bare 405. Every other route names its methods, so none of them
+// accepts these.
+var nodeOnlyMethods = []string{
+	"ACL", "BIND", "CHECKOUT", "COPY", "LINK", "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY",
+	"MKCALENDAR", "MKCOL", "MOVE", "NOTIFY", "PROPFIND", "PROPPATCH", "PURGE", "QUERY",
+	"REBIND", "REPORT", "SEARCH", "SOURCE", "SUBSCRIBE", "UNBIND", "UNLINK", "UNLOCK", "UNSUBSCRIBE",
+}
+
+func init() {
+	for _, m := range nodeOnlyMethods {
+		chi.RegisterMethod(m)
+	}
 }
 
 // Mount registers every domain route of the API on r.
@@ -128,6 +149,19 @@ func Mount(r chi.Router, dbMgr *dbal.MultiDatabaseManager, sessions *auth.Store,
 	// The change-notification WebSocket authenticates with its first message,
 	// so it sits outside the bearer-header auth middleware.
 	r.Get("/api/v1/realtime", realtimeHandler.ServeWS)
+
+	// The FileMaker Data API has its own authentication and envelope, and
+	// stays outside the payload-encryption channel.
+	if opts.DataAPI != nil && len(opts.DataAPI.Databases) > 0 {
+		dataAPI := fmdapi.New(*opts.DataAPI, fmdapi.Deps{
+			Databases: dbMgr,
+			Sessions:  sessions,
+			Throttle:  throttle,
+			ClientIP:  ipResolver.ClientIP,
+		})
+		r.Handle("/fmi/data", dataAPI)
+		r.Handle("/fmi/data/*", dataAPI)
+	}
 
 	r.Group(func(r chi.Router) {
 		r.Use(crypto.Middleware(opts.ChannelSecret))

@@ -19,6 +19,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/dbal"
 	"github.com/file4base/file4base-app/server/internal/dbal/mariadb"
 	"github.com/file4base/file4base-app/server/internal/dbal/postgres"
+	"github.com/file4base/file4base-app/server/internal/fmdapi"
 	"github.com/file4base/file4base-app/server/internal/localca"
 	"github.com/file4base/file4base-app/server/internal/telemetry"
 	"github.com/file4base/file4base-app/server/internal/transfer"
@@ -53,6 +54,12 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// The FileMaker Data API answers as FileMaker Server does, which
+			// sends no CORS headers and refuses OPTIONS.
+			if fmdapi.IsPath(r.URL.Path) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			origin := r.Header.Get("Origin")
 			_, listed := origins[strings.ToLower(strings.TrimRight(origin, "/"))]
 
@@ -78,6 +85,27 @@ func corsMiddleware(allowed []string) func(http.Handler) http.Handler {
 
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// dataAPIConfig reads the FileMaker Data API settings. The Data API is off
+// unless FILE4BASE_DATA_API_DATABASES lists the databases it serves.
+func dataAPIConfig() *fmdapi.Config {
+	raw := os.Getenv("FILE4BASE_DATA_API_DATABASES")
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	databases, err := fmdapi.ParseDatabaseAliases(raw)
+	if err != nil {
+		log.Printf("Warning: FILE4BASE_DATA_API_DATABASES: %v; the FileMaker Data API is off", err)
+		return nil
+	}
+	log.Printf("FileMaker Data API serving %d database(s) at /fmi/data", len(databases))
+	return &fmdapi.Config{
+		Databases:        databases,
+		ProductName:      strings.TrimSpace(os.Getenv("FILE4BASE_DATA_API_PRODUCT_NAME")),
+		ProductVersion:   strings.TrimSpace(os.Getenv("FILE4BASE_DATA_API_PRODUCT_VERSION")),
+		ProductBuildDate: strings.TrimSpace(os.Getenv("FILE4BASE_DATA_API_PRODUCT_BUILD_DATE")),
 	}
 }
 
@@ -197,6 +225,8 @@ func main() {
 	// Session store: every signed-in client holds a bearer token bound to
 	// exactly one database. There is no server-wide "active database".
 	sessions := auth.NewStore(envDuration("SESSION_TTL", auth.DefaultSessionTTL))
+	sessions.SetDataAPITTL(envDuration("FILE4BASE_DATA_API_SESSION_TTL", auth.DefaultDataAPISessionTTL))
+	dataAPI := dataAPIConfig()
 
 	corsOrigins := []string{"*"}
 	if raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS")); raw != "" {
@@ -300,6 +330,7 @@ func main() {
 		TLSDir:                      tlsStore.Dir(),
 		MaxMigrationUploadBytes:     maxMigrationUpload,
 		MigrationUploadDir:          migrationUploadDir,
+		DataAPI:                     dataAPI,
 	})
 
 	srv := &http.Server{

@@ -136,6 +136,10 @@ Permissions are granted per layout (`read_write`, `read_only`, `none`), while th
 | `FILE4BASE_LOGIN_MAX_ATTEMPTS` | `10` | Failed password checks in a row (per database + username + client) before a lockout. `0` disables the limit. |
 | `FILE4BASE_LOGIN_WINDOW_SECONDS` | `900` | A gap this long with no failure forgets the earlier ones. |
 | `FILE4BASE_LOGIN_LOCKOUT_SECONDS` | `900` | How long a tripped lockout lasts. |
+| `FILE4BASE_DATA_API_DATABASES` | *(empty)* | Databases the FileMaker Data API (§ 20) serves, comma-separated, each `database` or `FileMaker name=database`. Empty turns `/fmi/data` off. |
+| `FILE4BASE_DATA_API_SESSION_TTL` | `15m` | Idle lifetime of a Data API session (Go duration), FileMaker Server's 15 minutes by default. |
+| `FILE4BASE_DATA_API_PRODUCT_NAME` | `File4Base Data API` | The name `productInfo` gives. |
+| `FILE4BASE_DATA_API_PRODUCT_VERSION`, `FILE4BASE_DATA_API_PRODUCT_BUILD_DATE` | *(empty)* | The `version` and `buildDate` `productInfo` gives; left out when empty. |
 | `FILE4BASE_TRANSFER_SCHEDULER` | `true` | Whether this server process runs due transfer schedules (§ 19). Several processes over the same databases may all leave it on: each occurrence is claimed once. Set it to `false` on a process that should only serve requests. |
 
 ---
@@ -2955,3 +2959,21 @@ Runs a schedule now, exactly as the scheduler would: as its accounts, re-checked
 
 ### `GET /api/v1/transfer-schedules/{id}/runs`
 The schedule's recorded runs, newest first, in the shape above.
+
+---
+
+## 20. FileMaker Data API (`/fmi/data`, `#208`)
+
+File4Base answers FileMaker clients at FileMaker Server's Data API paths, as FileMaker Server 26 does: same statuses, error codes and messages, key order and number spelling, as recorded by the conformance suite in `server/testdata/dataapi`. `v1`, `v2` and `vLatest` answer alike; any other version answers `400` with `{"response":{}}`, an unknown path Express's `404` page, and a known path with another method `405` (code `1704`). The API is off unless `FILE4BASE_DATA_API_DATABASES` lists the databases it serves, under the names FileMaker clients use.
+
+Phase P1 serves:
+
+| Endpoint | Notes |
+|---|---|
+| `GET /fmi/data/{version}/productInfo` | No session. Name, then `buildDate` and `version` when configured, then the date and time formats. |
+| `GET /fmi/data/{version}/databases` | No session; Basic credentials are allowed and ignored, any other `Authorization` answers `401` (code `960`). The served databases that exist. |
+| `POST /fmi/data/{version}/databases/{database}/sessions` | Basic credentials of a local account of the database; the body is `{}` or `{"fmDataSource":[…]}`, checked but not used yet. `200` with the token in `response.token` and in `X-FM-Data-Access-Token`. The name matches in any case; the session is bound to the name as written. The sign-in throttle of `/api/v1` applies. |
+| `DELETE /fmi/data/{version}/databases/{database}/sessions/{token}` | Revokes the session at once. |
+| `GET /fmi/data/{version}/validateSession` | `Authorization: Bearer <token>`. Does not extend the session. |
+
+A Data API session is a session kind of its own: it is never accepted by `/api/v1`, and an `/api/v1` session is never accepted here. It expires after `FILE4BASE_DATA_API_SESSION_TTL` without a call (`401`, code `952`), and is revoked as soon as its account is deleted, disabled, demoted or given another password. Every other endpoint checks its request (content type, `Authorization`, the `_find` body and the record read query parameters) and its token as FileMaker Server does, then answers `500` with code `3` until its phase lands. Server accounts and accounts with two-step verification cannot sign in yet (`401`, code `212`). Replies carry no CORS or trace headers, and the request log redacts the token of a sign-out path. The bundled Web Client's Nginx proxies `/fmi/data` to the API over its own TLS and keeps it out of its access log; FileMaker clients should use that HTTPS address rather than the API's plain port.

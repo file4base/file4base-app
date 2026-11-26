@@ -101,14 +101,11 @@ func envInt(name string, def int) int {
 	return def
 }
 
-// loginThrottleKey identifies who is trying to authenticate: the account
-// (database + username) and where from (client address). Keying on both
-// means one attacker cannot lock a victim out of their own account from
-// elsewhere, while still capping guesses per account and per source.
+// loginThrottleKey is the throttle key of a sign-in attempt; see
+// auth.LoginThrottleKey.
 func loginThrottleKey(database, username string, r *http.Request, resolver *clientip.Resolver) string {
 	ip, _, _ := extractClientSessionMeta(r, resolver)
-	return strings.ToLower(strings.TrimSpace(database)) + "\x00" +
-		strings.ToLower(strings.TrimSpace(username)) + "\x00" + ip
+	return auth.LoginThrottleKey(database, username, ip)
 }
 
 // writeLockedOut refuses an attempt that is currently locked out.

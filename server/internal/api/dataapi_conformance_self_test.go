@@ -117,32 +117,32 @@ func TestDataAPIConformance_ReplayPassesOnIdenticalAnswers(t *testing.T) {
 	h := &apiHarness{t: t, router: r}
 
 	f := selfFixture(t, selfLoginFixture)
-	diffs, sent := replayDataAPIFixture(h, f)
+	diffs, sent := replayDataAPIFixture(h, &daClock{}, f)
 	assert.Empty(t, diffs)
 	assert.Equal(t, 2, sent)
 
 	// A login whose header and body tokens differ does not pass.
 	bodyToken = "tok456"
-	diffs, _ = replayDataAPIFixture(h, f)
+	diffs, _ = replayDataAPIFixture(h, &daClock{}, f)
 	assert.Equal(t, []string{"login token"}, diffKinds(diffs))
 
 	// Nor does one whose header name is set directly in lower case, so that
 	// a lookup by its canonical name would miss it.
 	setHeader = func(w http.ResponseWriter) { w.Header()["x-fm-data-access-token"] = []string{"tok123"} }
-	diffs, _ = replayDataAPIFixture(h, f)
+	diffs, _ = replayDataAPIFixture(h, &daClock{}, f)
 	assert.Equal(t, []string{"login token"}, diffKinds(diffs))
 	bodyToken = "tok123"
 	setHeader = func(w http.ResponseWriter) { w.Header().Set("X-FM-Data-Access-Token", "tok123") }
 
 	// A declared length that is not the body's is a difference.
 	contentLength = "0"
-	diffs, _ = replayDataAPIFixture(h, f)
+	diffs, _ = replayDataAPIFixture(h, &daClock{}, f)
 	assert.Equal(t, []string{"login content-length"}, diffKinds(diffs))
 	contentLength = ""
 
 	// The same fixture fails as soon as one recorded detail differs.
 	f.Steps[1].Response.Headers = append(f.Steps[1].Response.Headers, [2]string{"Cache-Control", "no-cache"})
-	diffs, _ = replayDataAPIFixture(h, f)
+	diffs, _ = replayDataAPIFixture(h, &daClock{}, f)
 	assert.Equal(t, []string{"validate header:cache-control"}, diffKinds(diffs))
 }
 

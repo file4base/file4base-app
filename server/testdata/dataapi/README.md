@@ -71,14 +71,16 @@ is a reviewed change to the test and to this file.
 | `<container-token>` | The path token of a container URL; the downloaded bytes are still compared | `[A-Za-z0-9._~%-]+` |
 | `<now>` | A timestamp that depends on the current time | A FileMaker timestamp within 36 hours of the replay clock |
 | `<date>` | The expiry date of a cookie | A valid RFC 9110 IMF-fixdate |
+| `<product-name>` | The product name `productInfo` gives | Exactly File4Base's default, `File4Base Data API` |
 
 No grammar admits `<` or `>`, so a placeholder never matches itself. A URL the
 server returns is only followed (`request.url`) if it is an `https` URL on the
 replay host, with no user information.
 
-Product identity (what `productInfo` and the messages say) and the deliberate
-security differences of #208 are not on the list yet. Each will be added with
-its own fixture once decided.
+File4Base does not answer under FileMaker's product name: `productInfo`
+fixtures carry `<product-name>` where FileMaker Server wrote its own. The
+deliberate security differences of #208 are not on the list yet; each will be
+added with its own fixture once decided.
 
 ## expected_failures.txt
 
@@ -91,7 +93,7 @@ routing/envelope_and_routes@v2 version-v3 status
 ```
 
 `KIND` is the first check of that step that differs, in the order the checks
-run: `unreplayable` (an idle step), `url`, `timeout`, `status`,
+run: `url`, `timeout`, `status`,
 `content-length`, `header:NAME`, `token`, `body`. In a `concurrent` step they
 are prefixed `background.` or `probe.`, and `no-probe` means the background
 request finished before any probe was sent. The optional `ENGINE`
@@ -124,11 +126,10 @@ deleted.
 
 ## Known limitations
 
-These steps are replayed but cannot pass yet, whatever File4Base answers;
-they land with the session clock and record locking of phase P1:
+`idle_seconds` steps move the session clock of the server under test instead
+of waiting. These steps are replayed but cannot pass yet, whatever File4Base
+answers:
 
-- `idle_seconds` steps wait out FileMaker's session timeout. Replaying them
-  needs a session clock the test can move (`unreplayable`).
 - `find/operators_number_date`, step `date-today`, searches for `//` (today).
   It was recorded on 2026-11-26, the signup date of one customer, and needs a
   clock frozen to that day.

@@ -32,6 +32,7 @@ import (
 	"github.com/file4base/file4base-app/server/internal/api"
 	"github.com/file4base/file4base-app/server/internal/control"
 	"github.com/file4base/file4base-app/server/internal/dbal"
+	"github.com/file4base/file4base-app/server/internal/fmdapi"
 	"github.com/file4base/file4base-app/server/internal/schema"
 	"github.com/file4base/file4base-app/server/internal/testdb"
 	"github.com/stretchr/testify/assert"
@@ -335,7 +336,7 @@ func loadExpectedFailures(t *testing.T, fixtures []daFixture) daExpectations {
 // step checks its background request ("background.KIND"), then whether a
 // probe ran at all ("no-probe"), then the probe ("probe.KIND").
 var dataAPIKindRank = map[string]int{
-	"unreplayable": 0, "url": 2, "timeout": 3, "status": 4,
+	"url": 2, "timeout": 3, "status": 4,
 	"content-length": 5, "header": 6, "token": 7, "body": 8,
 }
 
@@ -460,7 +461,16 @@ func TestDataAPIConformance(t *testing.T) {
 	store, err := control.NewStore(":memory:")
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, store.Close()) })
-	h := newAPIHarness(t, api.Options{AllowPublicDatabaseCreation: true, ControlStore: store})
+	h := newAPIHarness(t, api.Options{
+		AllowPublicDatabaseCreation: true,
+		ControlStore:                store,
+		DataAPI: &fmdapi.Config{Databases: []fmdapi.DatabaseAlias{
+			{Name: dataAPIDatabase, Database: dataAPIDatabase},
+		}},
+	})
+	// Idle steps move the session clock instead of waiting.
+	clock := &daClock{}
+	h.sessions.SetClock(clock.now)
 	_, exists, err := h.mgr.LookupDatabase(t.Context(), dataAPIDatabase)
 	require.NoError(t, err)
 	if exists {
@@ -505,7 +515,7 @@ func TestDataAPIConformance(t *testing.T) {
 				}
 				shared = !f.Fresh
 			}
-			diffs, sent := replayDataAPIFixture(h, f)
+			diffs, sent := replayDataAPIFixture(h, clock, f)
 			requests += sent
 			problems, asListed := judgeDataAPIFixture(f, expected.lookup(f.Fixture, engine), engine, diffs)
 			for _, p := range problems {
@@ -851,7 +861,26 @@ type daDiff struct {
 	harness bool // the fixture or the replay is at fault; never an expected failure
 }
 
-func replayDataAPIFixture(h *apiHarness, f daFixture) ([]daDiff, int) {
+// daClock is the session clock of a replay: the wall clock, moved forward
+// by the idle steps.
+type daClock struct {
+	mu     sync.Mutex
+	offset time.Duration
+}
+
+func (c *daClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.offset)
+}
+
+func (c *daClock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offset += d
+}
+
+func replayDataAPIFixture(h *apiHarness, clock *daClock, f daFixture) ([]daDiff, int) {
 	st := &daState{tokens: map[string]string{}, vars: map[string]string{}}
 	var diffs []daDiff
 	sent := 0
@@ -860,9 +889,7 @@ func replayDataAPIFixture(h *apiHarness, f daFixture) ([]daDiff, int) {
 		var d []daDiff
 		switch {
 		case step.IdleSeconds != nil:
-			// Waiting out FileMaker's idle timeout in real time is not an
-			// option in CI; this needs a session clock the test can move.
-			d = append(d, daDiff{kind: "unreplayable", msg: fmt.Sprintf("%s: an idle wait of %vs cannot be replayed without a session clock seam", where, *step.IdleSeconds)})
+			clock.advance(time.Duration(*step.IdleSeconds * float64(time.Second)))
 		case step.Concurrent != nil:
 			cd, n := replayConcurrent(h, st, where, step.Concurrent)
 			d = append(d, cd...)
@@ -1217,8 +1244,10 @@ var dataAPIAllowed = map[string]string{
 	// RFC 6750 b64token.
 	"<token>": `[A-Za-z0-9\-._~+/]+=*`,
 	// RFC 6265 cookie-octets.
-	"<cookie>":          `[\x21\x23-\x2B\x2D-\x3A\x3D\x3F-\x5B\x5D-\x7E]+`,
-	"<host>":            regexp.QuoteMeta(dataAPIReplayHost),
+	"<cookie>": `[\x21\x23-\x2B\x2D-\x3A\x3D\x3F-\x5B\x5D-\x7E]+`,
+	"<host>":   regexp.QuoteMeta(dataAPIReplayHost),
+	// The product name productInfo reports: File4Base's own, never FileMaker's.
+	"<product-name>":    regexp.QuoteMeta(fmdapi.DefaultProductName),
 	"<container-token>": `[A-Za-z0-9._~%-]+`,
 	// FileMaker's own timestamp formats; the value must also be close to now.
 	"<now>": `(?:\d\d/\d\d/\d{4} \d\d:\d\d:\d\d|\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d)(?:\.\d+)?`,
@@ -1227,7 +1256,7 @@ var dataAPIAllowed = map[string]string{
 	"<date>": `(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d\d (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d\d:\d\d:\d\d GMT`,
 }
 
-var dataAPIAllowedRE = regexp.MustCompile(`<token>|<cookie>|<host>|<container-token>|<now>|<date>`)
+var dataAPIAllowedRE = regexp.MustCompile(`<token>|<cookie>|<host>|<container-token>|<product-name>|<now>|<date>`)
 
 // dataAPINowWindow is how far a <now> value may be from the replay's clock.
 // The server writes its local wall time, whose zone the test does not know.
