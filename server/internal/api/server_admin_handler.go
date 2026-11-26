@@ -539,6 +539,8 @@ func (h *ServerAdminHandler) RegisterRoutes(r chi.Router) {
 			r.Use(h.RequireServerAdmin)
 			h.registerServerWideRoutes(r)
 		})
+
+		h.registerServerAccountRoutes(r)
 	})
 	h.registerMailRoutes(r)
 }
