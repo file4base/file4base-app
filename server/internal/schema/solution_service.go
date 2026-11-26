@@ -878,17 +878,34 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	if err != nil {
 		return nil, rollback(err)
 	}
+	// Occurrence names are matched without regard to case, as FileMaker
+	// does and as MariaDB's collation enforces on the unique name: a table
+	// "Customers" created above came with the default occurrence "customers",
+	// and creating the file's own "Customers" next to it was refused on
+	// MariaDB and left a second, invented box on PostgreSQL (#146).
 	occByName := map[string]TableOccurrence{}
 	for _, o := range currentOccs {
-		occByName[o.Name] = o
+		occByName[strings.ToLower(o.Name)] = o
 	}
 	occIDs := map[string]string{}
 	for _, o := range b.TableOccurrences {
 		dstTable := tableIDs[o.BaseTableID]
-		if existing, ok := occByName[o.Name]; ok {
+		key := strings.ToLower(strings.TrimSpace(o.Name))
+		if existing, ok := occByName[key]; ok {
 			if o.External == nil && existing.BaseTableID != dstTable ||
 				o.External != nil && (existing.External == nil || !strings.EqualFold(existing.External.FileReference, strings.TrimSpace(o.External.FileReference))) {
 				return nil, rollback(fmt.Errorf("table occurrence %q already exists for another table", o.Name))
+			}
+			if existing.Name != o.Name && o.External == nil && createdTables[existing.BaseTableID] {
+				// The default occurrence of a table this import created
+				// takes the file's spelling. No undo: a rollback deletes
+				// the table, and its occurrences with it.
+				name := o.Name
+				if _, err := s.UpdateTableOccurrence(ctx, existing.ID, UpdateOccurrenceInput{Name: &name}); err != nil {
+					return nil, rollback(fmt.Errorf("renaming table occurrence %q to %q: %w", existing.Name, o.Name, err))
+				}
+				existing.Name = name
+				occByName[key] = existing
 			}
 			if existing.XPos != o.XPos || existing.YPos != o.YPos {
 				newX, newY := o.XPos, o.YPos
@@ -917,6 +934,7 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 		undo = append(undo, func() { _ = s.DeleteTableOccurrence(bg, created.ID) })
 		report.OccurrencesCreated++
 		occIDs[o.ID] = created.ID
+		occByName[key] = *created
 	}
 
 	// A table this import created came with a default occurrence named after
