@@ -229,6 +229,26 @@ func (b *bench) finds(ctx context.Context) (map[string]any, error) {
 		}},
 	}
 	out := map[string]any{}
+	if b.engine == dbal.EngineSQLite {
+		// The first sort of a text field of a large table indexes it in the
+		// background (dbal.SQLiteSortIndex); it sorts by the collation
+		// meanwhile. Time that sort, then the build, then the rest.
+		first, err := timed(1, ops[3].f)
+		if err != nil {
+			return out, err
+		}
+		out["sort_all_before_index_ms"] = first
+		start := time.Now()
+		for _, field := range []string{"name"} {
+			for dbal.SQLiteSortIndex(ctx, b.driver.DB(), "members", field) == "" {
+				if time.Since(start) > 30*time.Minute {
+					return out, fmt.Errorf("the sort index of %s is not built", field)
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		out["sort_index_build_ms"] = time.Since(start).Milliseconds()
+	}
 	for _, op := range ops {
 		v, err := timed(3, op.f)
 		if err != nil {

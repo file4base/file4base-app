@@ -48,8 +48,9 @@ func TestSQLite_EveryPooledConnectionHasTheContract(t *testing.T) {
 	}
 	for i, c := range conns {
 		var mode, sync string
-		var timeout, fk, limit int64
+		var timeout, fk, limit, threads int64
 		require.NoError(t, c.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode))
+		require.NoError(t, c.QueryRowContext(ctx, "PRAGMA threads").Scan(&threads))
 		require.NoError(t, c.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&sync))
 		require.NoError(t, c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&timeout))
 		require.NoError(t, c.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk))
@@ -59,6 +60,7 @@ func TestSQLite_EveryPooledConnectionHasTheContract(t *testing.T) {
 		assert.Equal(t, SQLiteBusyTimeout().Milliseconds(), timeout, "connection %d", i)
 		assert.EqualValues(t, 1, fk, "connection %d", i)
 		assert.EqualValues(t, sqliteJournalSizeLimit, limit, "connection %d", i)
+		assert.EqualValues(t, sqliteSortThreads, threads, "connection %d", i)
 	}
 	for _, c := range conns {
 		require.NoError(t, c.Close())

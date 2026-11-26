@@ -122,6 +122,13 @@ func listSQLiteDatabases(dir string) ([]string, error) {
 	return result, nil
 }
 
+// SQLitePageSize is the page size of the databases CreateSQLiteDatabase
+// makes. A search or a report that reads a whole table reads it page by
+// page: 16 KiB pages read a table of long records 2.5 times faster than
+// SQLite's 4 KiB default, and cost a save no measurable time (see
+// docs/specs/sqlite_engine.md, "Benchmarks").
+const SQLitePageSize = 16384
+
 // CreateSQLiteDatabase creates an empty database file in WAL mode. It
 // returns ErrDatabaseExists when the file is already there. The database is
 // made and synced under a temporary name, then published under its own
@@ -139,14 +146,21 @@ func CreateSQLiteDatabase(ctx context.Context, path string) error {
 		return err
 	}
 	defer removeSQLiteFiles(tmp)
-	db, err := openSQLite(ctx, tmp)
+	// An empty file has no header until the first write, which sets its page
+	// size; the journal mode is persistent only once it is written.
+	raw := sql.OpenDB(newSQLiteConnector(tmp))
+	_, err = raw.ExecContext(ctx, fmt.Sprintf("PRAGMA page_size = %d", SQLitePageSize))
+	if err == nil {
+		_, err = raw.ExecContext(ctx, "PRAGMA user_version = 0")
+	}
+	if cerr := raw.Close(); err == nil {
+		err = cerr
+	}
 	if err != nil {
 		return err
 	}
-	// An empty file has no header until the first write; the journal mode is
-	// persistent only once it is written.
-	if _, err := db.ExecContext(ctx, "PRAGMA user_version = 0"); err != nil {
-		_ = db.Close()
+	db, err := openSQLite(ctx, tmp)
+	if err != nil {
 		return err
 	}
 	if err := db.Close(); err != nil {

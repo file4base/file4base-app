@@ -37,9 +37,31 @@ import (
 const (
 	// SQLiteSortCollation is the collation text sorts use on SQLite.
 	SQLiteSortCollation = "F4B"
+	// SQLiteSortKey is the function giving a text's sort key
+	// (calc.SortKey): text sorts order by it, and sorted fields are indexed
+	// on it.
+	SQLiteSortKey = "f4b_sortkey"
 	// SQLiteNumberText is the function giving a number's text.
 	SQLiteNumberText = "f4b_number_text"
 )
+
+// sqliteSortKey is a text's sort key; NULL stays NULL, and a value that is
+// not text (a number in a text field) is keyed as its text.
+func sqliteSortKey(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+	switch v := args[0].(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return calc.SortKey(v), nil
+	case []byte:
+		return calc.SortKey(string(v)), nil
+	case int64:
+		return calc.SortKey(strconv.FormatInt(v, 10)), nil
+	case float64:
+		return calc.SortKey(strconv.FormatFloat(v, 'f', -1, 64)), nil
+	}
+	return args[0], nil
+}
 
 func sqliteNumberText(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 	switch v := args[0].(type) {
@@ -59,6 +81,7 @@ func init() {
 	sqliteDriver.MustRegisterDeterministicScalarFunction("regexp", 2, sqliteRegexp)
 	sqliteDriver.MustRegisterDeterministicScalarFunction("f4b_lines", 1, sqliteLines)
 	sqliteDriver.MustRegisterDeterministicScalarFunction(SQLiteNumberText, 1, sqliteNumberText)
+	sqliteDriver.MustRegisterDeterministicScalarFunction(SQLiteSortKey, 1, sqliteSortKey)
 	sqliteDriver.MustRegisterFunction("stddev_samp", &sqlite.FunctionImpl{
 		NArgs:         1,
 		Deterministic: true,

@@ -69,6 +69,57 @@ func CompareText(a, b string) int {
 	return 1
 }
 
+// SortKey is a text's key for a sort by bytes: two keys compare as
+// CompareText compares their texts. It is the three things CompareText
+// compares in turn (the text without case nor accents, then the lower-case
+// text with its accents, then the text itself, in reverse order), each
+// written so that it ends before the next starts: a zero byte is written
+// 0x00 0xFF and each part ends with 0x00 0x00; the last part's bytes are
+// inverted, so it sorts in reverse.
+func SortKey(s string) []byte {
+	key := make([]byte, 0, 3*len(s)+6)
+	if isASCII(s) {
+		// Neither accents nor ligatures: the first two parts are the text
+		// in lower case.
+		start := len(key)
+		key = appendKeyPart(key, s, true)
+		key = append(key, key[start:]...)
+	} else {
+		key = appendKeyPart(key, primaryKey(s), false)
+		key = appendKeyPart(key, norm.NFD.String(lowerText(s)), false)
+	}
+	start := len(key)
+	key = appendKeyPart(key, s, false)
+	for i := start; i < len(key); i++ {
+		key[i] = ^key[i]
+	}
+	return key
+}
+
+func appendKeyPart(key []byte, s string, lower bool) []byte {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == 0:
+			key = append(key, 0, 0xFF)
+			continue
+		case lower && 'A' <= c && c <= 'Z':
+			c += 'a' - 'A'
+		}
+		key = append(key, c)
+	}
+	return append(key, 0, 0)
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
 // upperText and lowerText map each character on its own, as FileMaker does:
 // "ß" stays "ß" and "İ" becomes "i".
 func upperText(s string) string { return strings.Map(unicode.ToUpper, s) }
