@@ -54,24 +54,22 @@ jobs:
         run: go test -p 1 -count=1 ./...
 
       - name: Data API expected failures only shrink
-        if: github.event_name == 'pull_request'
-        # A line may be added to expected_failures.txt only for a fixture this
-        # pull request adds or re-records; anything else is a regression.
+        # Pull requests are compared with their base, pushes to main with the
+        # previous commit. A fixture may be newly listed in
+        # expected_failures.txt, or listed as failing elsewhere, only if it is
+        # new or its recorded exchanges changed; an entry may move to a later
+        # step; a migration entry may not be added; no fixture may be deleted.
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        working-directory: server
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
-          list=server/testdata/dataapi/expected_failures.txt
-          base=${{ github.event.pull_request.base.sha }}
-          git fetch --no-tags --depth=1 origin "$base"
-          git cat-file -e "$base:$list" 2>/dev/null || exit 0
-          added=$(comm -13 <(git show "$base:$list" | grep -v '^#' | sort -u) <(grep -v '^#' "$list" | sort -u))
-          status=0
-          for name in $added; do
-            fixture="server/testdata/dataapi/fixtures/$name.json"
-            if git cat-file -e "$base:$fixture" 2>/dev/null && git diff --quiet "$base" -- "$fixture"; then
-              echo "::error file=$list::$name was added to the expected failures, but its fixture is unchanged"
-              status=1
-            fi
-          done
-          exit $status
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" = 0000000000000000000000000000000000000000 ]; then
+            echo "::error::no base revision to compare the Data API expected failures with"
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          F4B_DATAAPI_BASE_REF="$BASE_REF" go test -count=1 -v -run '^TestDataAPIExpectedFailuresOnlyShrink$' ./internal/api/
 
   # The FileMaker Data API conformance suite (#208) on MariaDB. On PostgreSQL
   # it runs as part of test-server.

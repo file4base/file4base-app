@@ -12,7 +12,7 @@ it.
 | `gen_reference.py` | The generator of the file's schema and data (see `FEATURES.md`) |
 | `FEATURES.md` | What the file contains, and why |
 | `fixtures/<group>/<scenario>@<version>.json` | One recorded scenario, for one API version |
-| `expected_failures.txt` | The fixtures File4Base does not pass yet |
+| `expected_failures.txt` | Where each fixture File4Base does not pass yet first fails |
 
 Everything here was produced by the File4Base project: the file, its data and
 the scenarios are ours, and the fixtures are FileMaker Server's answers to
@@ -25,7 +25,8 @@ them.
    `F4B_DataAPI_Reference`, and gives the accounts `admin`, `api_rw`, `api_ro`
    and `noapi` test passwords.
 2. It replays every step of every fixture against `/fmi/data/...`, in order,
-   and compares the status, the recorded headers and the body.
+   on host `fms.conformance.test` over TLS, and compares the status, the
+   recorded headers and the body.
 3. Fixtures marked `"fresh": true` write data; each gets its own migration.
    The others share one migration, and never change persistent data.
 
@@ -45,12 +46,16 @@ For MariaDB, set `F4B_TEST_ENGINE=mariadb` and MariaDB DSNs; the account needs
 ## Exact comparison, and the closed list of differences
 
 - **Status:** equal.
+- **Length:** a declared `Content-Length` must be the length of the body, and
+  a `1xx`, `204` or `304` answer must have none.
 - **Headers:** `Content-Type`, `Cache-Control`, `Set-Cookie`,
   `Content-Disposition`, `Location`, `WWW-Authenticate` and every `X-FM-*`
-  header. The same names, with the same values, and no extra one.
+  header. The same names, with the same values, and no extra one. Names are
+  compared, and read for captures, case-insensitively, as a client does.
 - **JSON bodies** are compared token by token: key order, duplicate keys, value
   types and the spelling of numbers (`-3.0` is not `-3`) all count.
-  Whitespace and string escaping do not.
+  Whitespace and string escaping do not. Keys are always compared literally;
+  placeholders apply to values only.
 - **Other bodies** are compared as text, or byte for byte for binary content
   (container downloads).
 
@@ -58,14 +63,18 @@ The only tolerated differences are the placeholders the recorder writes in
 place of values that cannot be reproduced. The list is closed: adding to it
 is a reviewed change to the test and to this file.
 
-| Placeholder | Stands for |
-|---|---|
-| `<token>` | A session token, in a body or a header |
-| `<cookie>` | The value of a cookie the server sets |
-| `<host>` | The host of a container URL |
-| `<container-token>` | The path token of a container URL; the downloaded bytes are still compared |
-| `<now>` | A timestamp that depends on the current time |
-| `<date>` | The expiry date of a cookie |
+| Placeholder | Stands for | Must be |
+|---|---|---|
+| `<token>` | A session token, in a body or a header | An RFC 6750 `b64token` |
+| `<cookie>` | The value of a cookie the server sets | RFC 6265 cookie octets |
+| `<host>` | The host of a container URL | Exactly the replay host, `fms.conformance.test` |
+| `<container-token>` | The path token of a container URL; the downloaded bytes are still compared | `[A-Za-z0-9._~%-]+` |
+| `<now>` | A timestamp that depends on the current time | A FileMaker timestamp within 36 hours of the replay clock |
+| `<date>` | The expiry date of a cookie | A valid RFC 9110 IMF-fixdate |
+
+No grammar admits `<` or `>`, so a placeholder never matches itself. A URL the
+server returns is only followed (`request.url`) if it is an `https` URL on the
+replay host, with no user information.
 
 Product identity (what `productInfo` and the messages say) and the deliberate
 security differences of #208 are not on the list yet. Each will be added with
@@ -73,26 +82,69 @@ its own fixture once decided.
 
 ## expected_failures.txt
 
-One fixture id per line, for example `records/range_paging@v1`. A listed
-fixture may fail; an unlisted one must pass. A listed fixture that passes
-fails the test, so the list can only shrink: remove the line in the PR that
-makes it pass. A name that is not a fixture also fails the test. In a pull
-request, CI also refuses a new line for a fixture the pull request does not
-add or re-record.
+Each line records where a fixture that does not pass yet **first** fails:
 
-`migration@postgres` or `migration@mariadb` records that the reference file
-does not migrate on that engine; every fixture then fails there, and must be
-listed. An account the migration does not create is replaced by a plain user,
-so that the other differences still show, and every fixture that uses it
-fails.
+```text
+FIXTURE STEP KIND [ENGINE]
+records/range_paging@v1 login-rw stand-in
+routing/envelope_and_routes@v2 version-v3 status
+```
 
-Two kinds of step cannot pass by construction today:
+`KIND` is the first check of that step that differs, in the order the checks
+run: `unreplayable` (an idle step), `stand-in`, `url`, `timeout`, `status`,
+`content-length`, `header:NAME`, `token`, `body`. In a `concurrent` step they
+are prefixed `background.` or `probe.`, and `no-probe` means the background
+request finished before any probe was sent. The optional `ENGINE`
+(`postgres` or `mariadb`) restricts a line to one engine, and wins over a line
+for every engine.
+
+- An unlisted fixture must pass. A listed one must fail exactly as listed.
+- Failing at an earlier step or check, or differently at the same one, fails
+  the test as a regression. Failing later fails it too, with the line to put
+  instead, so that progress is recorded and cannot be lost again.
+- A listed fixture that passes fails the test: remove its line.
+- A line naming an unknown fixture, step or kind fails the test.
+- A fixture or replay defect (a step without a request or response, a request
+  that cannot be built) fails the test whatever the list says.
+
+`migration@ENGINE ISSUE` records that the reference file does not migrate on
+`ENGINE` for the known cause tracked by `ISSUE`, which the test recognises by
+its error; any other migration failure fails the test. No fixture is replayed
+on that engine until the line is removed, and the line must be removed as
+soon as the migration works. Fixture lines are only evaluated on engines
+where the file migrates.
+
+CI also checks each pull request against its base, and each push to `main`
+against the previous commit (`TestDataAPIExpectedFailuresOnlyShrink`). A
+fixture may be newly listed, or listed as failing elsewhere, only in the
+change that adds it or re-records its exchanges; a new title, note or audit row
+is not a re-recording. A line may move to a later step or check. A
+`migration@` line may never be added or changed, and a fixture may never be
+deleted.
+
+Accounts of a Save-as-XML design are not migrated yet (#213). Until they are,
+the test creates a plain user for each missing account, so that the other
+differences still show, and every step that signs in with one fails as
+`stand-in`.
+
+## Known limitations
+
+These steps are replayed but cannot pass yet, whatever File4Base answers;
+they land with the session clock and record locking of phase P1:
 
 - `idle_seconds` steps wait out FileMaker's session timeout. Replaying them
-  needs a session clock the test can move.
+  needs a session clock the test can move (`unreplayable`).
+- `find/operators_number_date`, step `date-today`, searches for `//` (today).
+  It was recorded on 2026-11-26, the signup date of one customer, and needs a
+  clock frozen to that day.
 - `concurrent` steps send a background request (a large container upload that
   holds the record open) and repeat a probe until it answers `until_code`.
-  They pass only once File4Base locks records.
+  Without a way to know when File4Base has locked the record, the probe is
+  timed, not synchronised; a stuck probe is not bounded, and a background
+  request that times out is not cancelled before the next fixture.
+- `<now>` accepts any FileMaker timestamp format close to the replay clock,
+  not specifically the format the request asked for, and the clock is not in
+  the server's zone.
 
 ## Fixture format
 
@@ -160,11 +212,6 @@ that are kept with the recorder.
    re-encoding, re-ordering or re-typing of FileMaker's JSON.
 5. **Review before committing:** no password, token, cookie, host name or
    address may remain, and every `Authorization` header must be a placeholder.
-6. Re-run the test. A re-recorded fixture that now fails may be added to
-   `expected_failures.txt` in the same pull request; say why in its
-   description.
-
-One step depends on the date: `find/operators_number_date`, step
-`date-today`, searches for `//` (today). It was recorded on 2026-11-26, the
-signup date of one customer, and replaying it needs a clock frozen to that
-day.
+6. Re-run the test. A re-recorded fixture that now fails may be listed in
+   `expected_failures.txt`, with the line the test prints, in the same pull
+   request; say why in its description.

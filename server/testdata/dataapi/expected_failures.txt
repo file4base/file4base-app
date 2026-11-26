@@ -1,97 +1,107 @@
-# Fixtures File4Base does not pass yet. This list can only shrink: see README.md.
-# Today there is no /fmi/data route, so every fixture is listed.
-containers/upload_download@v1
-containers/upload_download@v2
-containers/upload_download@vLatest
-databases/list@v1
-databases/list@v2
-databases/list@vLatest
-find/operators_number_date@v1
-find/operators_number_date@v2
-find/operators_number_date@vLatest
-find/operators_text@v1
-find/operators_text@v2
-find/operators_text@vLatest
-find/params@v1
-find/params@v2
-find/params@vLatest
-find/requests@v1
-find/requests@v2
-find/requests@vLatest
-find/scripts@v1
-find/scripts@v2
-find/scripts@vLatest
-globals/patch@v1
-globals/patch@v2
-globals/patch@vLatest
-locking/record_lock@v1
-locking/record_lock@v2
-locking/record_lock@vLatest
-metadata/layout_metadata@v1
-metadata/layout_metadata@v2
-metadata/layout_metadata@vLatest
-metadata/layout_metadata_old@v1
-metadata/layout_metadata_old@v2
-metadata/layout_metadata_old@vLatest
-metadata/layouts_list@v1
-metadata/layouts_list@v2
-metadata/layouts_list@vLatest
-metadata/scripts_list@v1
-metadata/scripts_list@v2
-metadata/scripts_list@vLatest
-privileges/access@v1
-privileges/access@v2
-privileges/access@vLatest
-productinfo/product_info@v1
-productinfo/product_info@v2
-productinfo/product_info@vLatest
-records/get_by_id@v1
-records/get_by_id@v2
-records/get_by_id@vLatest
-records/portals@v1
-records/portals@v2
-records/portals@vLatest
-records/range_paging@v1
-records/range_paging@v2
-records/range_paging@vLatest
-records/range_sort@v1
-records/range_sort@v2
-records/range_sort@vLatest
-records/value_contract@v1
-records/value_contract@v2
-records/value_contract@vLatest
-routing/envelope_and_routes@v1
-routing/envelope_and_routes@v2
-routing/envelope_and_routes@vLatest
-scripts/execute@v1
-scripts/execute@v2
-scripts/execute@vLatest
-scripts/on_reads@v1
-scripts/on_reads@v2
-scripts/on_reads@vLatest
-sessions/idle_expiry@v1
-sessions/idle_expiry@v2
-sessions/idle_expiry@vLatest
-sessions/login_variants@v1
-sessions/login_variants@v2
-sessions/login_variants@vLatest
-sessions/token_lifecycle@v1
-sessions/token_lifecycle@v2
-sessions/token_lifecycle@vLatest
-writes/create@v1
-writes/create@v2
-writes/create@vLatest
-writes/delete@v1
-writes/delete@v2
-writes/delete@vLatest
-writes/duplicate@v1
-writes/duplicate@v2
-writes/duplicate@vLatest
-writes/edit@v1
-writes/edit@v2
-writes/edit@vLatest
-writes/validation@v1
-writes/validation@v2
-writes/validation@vLatest
-# The reference file does not migrate on MariaDB yet: occurrence names collide case-insensitively.
-migration@mariadb
+# Where each fixture File4Base does not pass yet first fails. See README.md:
+# failing earlier or differently fails the test, and so does passing.
+#
+#   migration@ENGINE ISSUE         the reference file does not migrate on ENGINE,
+#                                  for the known cause tracked by ISSUE
+#   FIXTURE STEP KIND [ENGINE]     FIXTURE first fails at STEP, with a KIND difference
+#
+# Today there is no /fmi/data route, and accounts of a Save-as-XML design are
+# not migrated (#213): every step that signs in with one fails as "stand-in".
+
+# MariaDB: a default table occurrence collides with an occurrence whose name
+# differs only in case. No fixture is replayed on MariaDB until it is fixed.
+migration@mariadb #146
+
+containers/upload_download@v1 login-rw stand-in
+containers/upload_download@v2 login-rw stand-in
+containers/upload_download@vLatest login-rw stand-in
+databases/list@v1 anonymous status
+databases/list@v2 anonymous status
+databases/list@vLatest anonymous status
+find/operators_number_date@v1 login-rw stand-in
+find/operators_number_date@v2 login-rw stand-in
+find/operators_number_date@vLatest login-rw stand-in
+find/operators_text@v1 login-rw stand-in
+find/operators_text@v2 login-rw stand-in
+find/operators_text@vLatest login-rw stand-in
+find/params@v1 login-rw stand-in
+find/params@v2 login-rw stand-in
+find/params@vLatest login-rw stand-in
+find/requests@v1 login-rw stand-in
+find/requests@v2 login-rw stand-in
+find/requests@vLatest login-rw stand-in
+find/scripts@v1 login-rw stand-in
+find/scripts@v2 login-rw stand-in
+find/scripts@vLatest login-rw stand-in
+globals/patch@v1 login-rw stand-in
+globals/patch@v2 login-rw stand-in
+globals/patch@vLatest login-rw stand-in
+locking/record_lock@v1 login-rw stand-in
+locking/record_lock@v2 login-rw stand-in
+locking/record_lock@vLatest login-rw stand-in
+metadata/layout_metadata_old@v1 login-rw stand-in
+metadata/layout_metadata_old@v2 login-rw stand-in
+metadata/layout_metadata_old@vLatest login-rw stand-in
+metadata/layout_metadata@v1 login-rw stand-in
+metadata/layout_metadata@v2 login-rw stand-in
+metadata/layout_metadata@vLatest login-rw stand-in
+metadata/layouts_list@v1 login-rw stand-in
+metadata/layouts_list@v2 login-rw stand-in
+metadata/layouts_list@vLatest login-rw stand-in
+metadata/scripts_list@v1 login-rw stand-in
+metadata/scripts_list@v2 login-rw stand-in
+metadata/scripts_list@vLatest login-rw stand-in
+privileges/access@v1 login-rw stand-in
+privileges/access@v2 login-rw stand-in
+privileges/access@vLatest login-rw stand-in
+productinfo/product_info@v1 anonymous status
+productinfo/product_info@v2 anonymous status
+productinfo/product_info@vLatest anonymous status
+records/get_by_id@v1 login-rw stand-in
+records/get_by_id@v2 login-rw stand-in
+records/get_by_id@vLatest login-rw stand-in
+records/portals@v1 login-rw stand-in
+records/portals@v2 login-rw stand-in
+records/portals@vLatest login-rw stand-in
+records/range_paging@v1 login-rw stand-in
+records/range_paging@v2 login-rw stand-in
+records/range_paging@vLatest login-rw stand-in
+records/range_sort@v1 login-rw stand-in
+records/range_sort@v2 login-rw stand-in
+records/range_sort@vLatest login-rw stand-in
+records/value_contract@v1 login-rw stand-in
+records/value_contract@v2 login-rw stand-in
+records/value_contract@vLatest login-rw stand-in
+routing/envelope_and_routes@v1 version-v3 status
+routing/envelope_and_routes@v2 version-v3 status
+routing/envelope_and_routes@vLatest version-v3 status
+scripts/execute@v1 login-rw stand-in
+scripts/execute@v2 login-rw stand-in
+scripts/execute@vLatest login-rw stand-in
+scripts/on_reads@v1 login-rw stand-in
+scripts/on_reads@v2 login-rw stand-in
+scripts/on_reads@vLatest login-rw stand-in
+sessions/idle_expiry@v1 login-a stand-in
+sessions/idle_expiry@v2 login-a stand-in
+sessions/idle_expiry@vLatest login-a stand-in
+sessions/login_variants@v1 basic-empty-object stand-in
+sessions/login_variants@v2 basic-empty-object stand-in
+sessions/login_variants@vLatest basic-empty-object stand-in
+sessions/token_lifecycle@v1 login stand-in
+sessions/token_lifecycle@v2 login stand-in
+sessions/token_lifecycle@vLatest login stand-in
+writes/create@v1 login-rw stand-in
+writes/create@v2 login-rw stand-in
+writes/create@vLatest login-rw stand-in
+writes/delete@v1 login-rw stand-in
+writes/delete@v2 login-rw stand-in
+writes/delete@vLatest login-rw stand-in
+writes/duplicate@v1 login-rw stand-in
+writes/duplicate@v2 login-rw stand-in
+writes/duplicate@vLatest login-rw stand-in
+writes/edit@v1 login-rw stand-in
+writes/edit@v2 login-rw stand-in
+writes/edit@vLatest login-rw stand-in
+writes/validation@v1 login-rw stand-in
+writes/validation@v2 login-rw stand-in
+writes/validation@vLatest login-rw stand-in
