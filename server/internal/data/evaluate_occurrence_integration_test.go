@@ -93,3 +93,49 @@ func TestEvaluateExpressionsIn_FromAnOccurrenceWithCustomFunctions(t *testing.T)
 		assert.True(t, errors.Is(got[3].Err, data.ErrInvalidExpression), "a wrong number of arguments fails that expression only")
 	}
 }
+
+// A FileMaker "Value is" condition is migrated as the calculation FileMaker
+// keeps for it, its Self written as the object's field through the layout's
+// occurrence: from that occurrence it reads the record shown and compares
+// as the field's type does, a number as a number, a date as a date and a
+// text in FileMaker's collation.
+func TestEvaluateExpressions_ValueConditionsCompareAsTheFieldsType(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "xevalvalue", "xevalvalue_unused")
+	visits, _, _ := a.table(t, ctx, "visits", [2]string{"code", "TEXT"}, [2]string{"score", "NUMBER"}, [2]string{"due", "DATE"})
+	_, err := a.schema.CreateTableOccurrence(ctx, schema.CreateOccurrenceInput{BaseTableID: visits, Name: "VIS__Visits"})
+	require.NoError(t, err)
+	svc := data.NewService(a.driver)
+	// Another record first, so reading the first record of the occurrence
+	// instead of the one shown would answer otherwise.
+	_, err = svc.InsertRow(ctx, "visits", map[string]interface{}{"code": "other", "score": 1, "due": "1900-01-01"})
+	require.NoError(t, err)
+	row, err := svc.InsertRow(ctx, "visits", map[string]interface{}{"code": "École ABC", "score": 10, "due": "2001-02-03"})
+	require.NoError(t, err)
+	id := fmt.Sprint(row["id"])
+
+	conditions := map[string]string{
+		"VIS__Visits::score>9":                                 "1", // 10 > 9 as numbers, not as texts
+		"VIS__Visits::score≥1 and VIS__Visits::score≤10":       "1",
+		"VIS__Visits::score=10":                                "1",
+		"VIS__Visits::code=\"ecole abc\"":                      "1", // case and accents ignored
+		"VIS__Visits::code≠\"ECOLE ABC\"":                      "0",
+		"PatternCount(VIS__Visits::code; \"abc\") > 0":         "1",
+		"Left(VIS__Visits::code; Length(\"éco\")) = \"éco\"":   "1",
+		"VIS__Visits::due>Date(3;15;1990)":                     "1",
+		"VIS__Visits::due≥Date(2;3;2001)":                      "1",
+		"IsEmpty(VIS__Visits::due)":                            "0",
+		"GetAsDate(VIS__Visits::due) < Get(CurrentDate)":       "1",
+		"(Get(CurrentDate) - GetAsDate(VIS__Visits::due)) < 4": "0",
+	}
+	var expressions []string
+	for e := range conditions {
+		expressions = append(expressions, e)
+	}
+	got, err := svc.EvaluateExpressions(ctx, "visits", "VIS__Visits", id, expressions, "Number")
+	require.NoError(t, err)
+	require.Len(t, got, len(expressions))
+	for i, e := range expressions {
+		require.NoError(t, got[i].Err, e)
+		assert.Equal(t, conditions[e], got[i].Text, e)
+	}
+}

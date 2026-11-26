@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -982,19 +983,101 @@ func TestNativeLayoutPortalsShowTheirRelatedRecords(t *testing.T) {
 	}
 }
 
-func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
+// fmCondition writes a <Condition> as FileMaker's Save a Copy as XML does:
+// its type (0 "Formula is", 1 to 20 a "Value is" condition), the
+// calculation FileMaker keeps for it, the values its dialog shows and the
+// format it gives, with a red text.
+func fmCondition(kind int, formula, start, end string) string {
+	rng := ""
+	if start != "-" {
+		rng = "<Range><Start>" + start + "</Start><End>" + end + "</End></Range>"
+	}
+	return fmt.Sprintf(`<Condition type="%d" id="0"><Options>7</Options><Calculation><Text><![CDATA[%s]]></Text></Calculation>%s
+	  <LocalCSS type="ObjectCustomStyle" name="" displayName=""><![CDATA[self:normal .self
+{
+	color: rgba(100%%,0%%,0%%,1);
+	background-color: rgba(0%%,0%%,100%%,1);
+	font-weight: bold;
+}
+]]></LocalCSS></Condition>`, kind, formula, rng)
+}
+
+// The calculations FileMaker 26 was seen to write for its "Value is"
+// conditions, with the values its dialog shows (a date as the file's
+// locale writes it, "-" for none); not between, not containing, beginning
+// with, ending with, after today, more than x days passed, more than and
+// less than x days ahead were not seen, and are written alike.
+var fmValueConditions = map[string][]struct {
+	kind                int
+	formula, start, end string
+}{
+	"price": {
+		{1, `Self≥1 and Self≤5`, "1", "5"},
+		{2, `not (Self≥1 and Self≤5)`, "1", "5"},
+		{3, `Self=0`, "0", ""},
+		{4, `Self≠2,5`, "2,5", ""},
+		{5, `Self>100`, "100", ""},
+		{6, `Self<0`, "0", ""},
+		{7, `Self≥10`, "10", ""},
+		{8, `Self≤10`, "10", ""},
+		{13, `IsEmpty(Self)`, "-", ""},
+		{0, `Self < 0 and Price ≠ 7`, "-", ""},
+		{5, `Self>40`, "50", ""}, // a calculation that disagrees with its dialog
+	},
+	"served on": {
+		{5, `Self>Date(3;15;1990)`, "15/03/1990", ""},
+		{14, `GetAsDate(Self) < Get(CurrentDate)`, "-", ""},
+		{15, `GetAsDate(Self) = Get(CurrentDate)`, "-", ""},
+		{16, `GetAsDate(Self) > Get(CurrentDate)`, "-", ""},
+		{17, `(Get(CurrentDate) - GetAsDate(Self)) > 3`, "3", ""},
+		{18, `(GetAsDate(Self) - Get(CurrentDate)) > 3`, "3", ""},
+		{19, `(Get(CurrentDate) - GetAsDate(Self)) < 4`, "4", ""},
+		{20, `(GetAsDate(Self) - Get(CurrentDate)) < 4`, "4", ""},
+	},
+	"unit": {
+		{3, `Self="k\"g"`, `k"g`, ""},
+		{4, `Self≠"kg"`, "kg", ""},
+		{9, `PatternCount(Self; "g") > 0`, "g", ""},
+		{10, `PatternCount(Self; "g") = 0`, "g", ""},
+		{11, `Left(Self; Length("k")) = "k"`, "k", ""},
+		{12, `Right(Self; Length("g")) = "g"`, "g", ""},
+	},
+}
+
+func TestNativeLayoutConditionalFormats(t *testing.T) {
+	conditions := func(field string) string {
+		var b strings.Builder
+		for _, c := range fmValueConditions[field] {
+			b.WriteString(fmCondition(c.kind, c.formula, c.start, c.end))
+		}
+		return b.String()
+	}
+	replace := func(design, uuid, formatting string) string {
+		at := "<UUID>00000000-0000-0000-0000-" + uuid + "</UUID>"
+		if !strings.Contains(design, at) {
+			t.Fatalf("no object %s", uuid)
+		}
+		return strings.Replace(design, at, at+"<Conditions><Formatting>"+formatting+"</Formatting></Conditions>", 1)
+	}
 	design := strings.Replace(layoutObjectsFixture,
 		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide></Conditions>`,
 		`<Conditions><Hide findMode="True"><Calculation><Text><![CDATA[Archived = 1]]></Text></Calculation></Hide>
-		<Formatting>
-		  <Condition id="1" type="0"><Options>7</Options><Calculation><Text><![CDATA[Price > 100]]></Text></Calculation>
-		    <LocalCSS><![CDATA[self:normal .self { color: rgba(100%,0%,0%,1); background-color: rgba(0%,0%,100%,1); font-weight: bold; }]]></LocalCSS></Condition>
-		  <Condition id="2" type="3"><Options>5</Options><Calculation><Text><![CDATA[10]]></Text></Calculation>
-		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
-		  <Condition id="3" type="0"><Options>7</Options><Calculation><Text><![CDATA[Nowhere::Thing]]></Text></Calculation>
-		    <LocalCSS><![CDATA[self:normal .self { color: rgba(0%,100%,0%,1); }]]></LocalCSS></Condition>
-		</Formatting></Conditions>`, 1)
-	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+		<Formatting>`+fmCondition(0, "Price > 100", "-", "")+conditions("price")+
+			fmCondition(0, "Nowhere::Thing", "-", "")+fmCondition(21, "Self > 0", "-", "")+`</Formatting></Conditions>`, 1)
+	design = replace(design, "000000000004", conditions("served on"))
+	design = replace(design, "000000000005", conditions("unit"))
+	// A related field's Self reads it from the layout's occurrence.
+	design = replace(design, "000000000031", fmCondition(5, "Self>5", "5", ""))
+	// A box showing repetitions 2 and 3 of a field of three has a Self for
+	// each.
+	design = strings.Replace(design, `<Field id="2" name="Quantity" datatype="number" fieldtype="normal"/>`,
+		`<Field id="2" name="Quantity" datatype="number" fieldtype="normal" maxRepetition="3"/>`, 1)
+	design = replace(design, "000000000006", fmCondition(13, "IsEmpty(Self)", "-", "")+fmCondition(0, "Recipes::Price > 1", "-", ""))
+	// A condition switched off in FileMaker is never applied.
+	design = replace(design, "000000000007", strings.Replace(fmCondition(13, "IsEmpty(Self)", "-", ""), "<Options>7</Options>", "<Options>6</Options>", 1))
+	// A text has no field.
+	design = replace(design, "000000000001", fmCondition(0, "Recipes::Price > 1", "-", ""))
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design, SourceLocale: "fr-FR"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1003,19 +1086,47 @@ func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
 	if err := json.Unmarshal(encoded, &def); err != nil {
 		t.Fatal(err)
 	}
-	var rules []interface{}
-	for _, o := range objectsByType(def)["field"] {
-		if o["name"] == "price" {
-			rules, _ = o["style"].(map[string]interface{})["conditional_rules"].([]interface{})
+	rulesOf := map[string][]interface{}{}
+	for _, raw := range def["objects"].([]interface{}) {
+		o := raw.(map[string]interface{})
+		if rules, _ := o["style"].(map[string]interface{})["conditional_rules"].([]interface{}); rules != nil {
+			b := o["field_binding"].(map[string]interface{})
+			rulesOf[fmt.Sprint(b["table_occurrence"], "::", b["field_name"])] = rules
 		}
 	}
-	if len(rules) != 1 {
-		t.Fatalf("rules: %v", rules)
+	formulas := func(key string) []string {
+		var out []string
+		for _, raw := range rulesOf[key] {
+			r := raw.(map[string]interface{})
+			if r["operator"] != "formula" || r["text_color"] != "#FF0000" || r["fill_color"] != "#0000FF" || r["bold"] != true {
+				t.Fatalf("%s: rule %v", key, r)
+			}
+			out = append(out, r["value"].(string))
+		}
+		return out
 	}
-	rule := rules[0].(map[string]interface{})
-	if rule["operator"] != "formula" || rule["value"] != "price > 100" || rule["text_color"] != "#FF0000" ||
-		rule["fill_color"] != "#0000FF" || rule["bold"] != true {
-		t.Fatalf("rule: %v", rule)
+	want := map[string][]string{
+		"Recipes::price": {"price > 100",
+			"Recipes::price≥1 and Recipes::price≤5", "not (Recipes::price≥1 and Recipes::price≤5)", "Recipes::price=0",
+			"Recipes::price≠2.5", "Recipes::price>100", "Recipes::price<0", "Recipes::price≥10", "Recipes::price≤10",
+			"IsEmpty(Recipes::price)", "Recipes::price < 0 and price ≠ 7", "Recipes::price>40"},
+		"Recipes::served_on": {"Recipes::served_on>Date(3;15;1990)",
+			"GetAsDate(Recipes::served_on) < Get(CurrentDate)", "GetAsDate(Recipes::served_on) = Get(CurrentDate)",
+			"GetAsDate(Recipes::served_on) > Get(CurrentDate)", "(Get(CurrentDate) - GetAsDate(Recipes::served_on)) > 3",
+			"(GetAsDate(Recipes::served_on) - Get(CurrentDate)) > 3", "(Get(CurrentDate) - GetAsDate(Recipes::served_on)) < 4",
+			"(GetAsDate(Recipes::served_on) - Get(CurrentDate)) < 4"},
+		"Recipes::unit": {`Recipes::unit="k\"g"`, `Recipes::unit≠"kg"`, `PatternCount(Recipes::unit; "g") > 0`,
+			`PatternCount(Recipes::unit; "g") = 0`, `Left(Recipes::unit; Length("k")) = "k"`, `Right(Recipes::unit; Length("g")) = "g"`},
+		"Ingredient Recipes::price": {"${Ingredient Recipes}::price>5"},
+		"Ingredients::quantity":     {"Recipes::price > 1"},
+	}
+	if len(rulesOf) != len(want) {
+		t.Fatalf("objects with rules: %v", rulesOf)
+	}
+	for key, w := range want {
+		if g := formulas(key); !slices.Equal(g, w) {
+			t.Errorf("%s:\n got %q\nwant %q", key, g, w)
+		}
 	}
 	var review string
 	for _, it := range got.Report.ManualActionRequired {
@@ -1023,8 +1134,119 @@ func TestNativeLayoutConditionalFormatsByCalculation(t *testing.T) {
 			review += it.Detail
 		}
 	}
-	if !strings.Contains(review, "2 conditional formats not kept") {
+	// Not kept: a formula that cannot be bound, an unknown condition, the
+	// repeated box's Self and the text's format.
+	for _, w := range []string{"4 conditional formats not kept", "1 conditional format switched off in FileMaker, left out",
+		`1 conditional format whose "Value is" condition shows other values than the calculation FileMaker keeps for it`} {
+		if !strings.Contains(review, w) {
+			t.Errorf("review %q lacks %q", review, w)
+		}
+	}
+}
+
+// A box showing one repetition has that repetition as Self; a box showing
+// several has a Self for each, and its conditions on Self are not kept.
+func TestNativeLayoutConditionalFormatOnRepetitions(t *testing.T) {
+	const field = `<Field id="2" name="Quantity" datatype="number" fieldtype="normal"/>`
+	for _, c := range []struct {
+		name, repetitions, show, want string
+	}{
+		{"the second of three", ` maxRepetition="3"`, `show="1"`, `Ingredients::quantity[2]>5`},
+		{"from the second of three, all", ` maxRepetition="3"`, `show="0"`, ``},
+		{"the second of a field that does not repeat", ``, `show="-3"`, `Ingredients::quantity>5`},
+	} {
+		design := strings.Replace(layoutObjectsFixture, field, strings.Replace(field, "/>", c.repetitions+"/>", 1), 1)
+		design = strings.Replace(design, `<Display Style="0" show="-3"/>`, `<Display Style="0" `+c.show+`/>`, 1)
+		at := "<UUID>00000000-0000-0000-0000-000000000006</UUID>"
+		design = strings.Replace(design, at, at+"<Conditions><Formatting>"+fmCondition(5, "Self>5", "5", "")+"</Formatting></Conditions>", 1)
+		got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var def map[string]interface{}
+		encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+		if err := json.Unmarshal(encoded, &def); err != nil {
+			t.Fatal(err)
+		}
+		kept := ""
+		for _, o := range objectsByType(def)["field"] {
+			if rules, _ := o["style"].(map[string]interface{})["conditional_rules"].([]interface{}); len(rules) == 1 {
+				kept = rules[0].(map[string]interface{})["value"].(string)
+			}
+		}
+		if kept != c.want {
+			t.Errorf("%s: kept %q, want %q", c.name, kept, c.want)
+		}
+	}
+}
+
+// The objects of a portal's rows keep their conditional formats, which the
+// rows do not draw yet: the report says so.
+func TestNativeLayoutConditionalFormatInAPortalRow(t *testing.T) {
+	portal := `<LayoutObject type="Portal">
+                <UUID>00000000-0000-0000-0000-000000000050</UUID>
+                <Bounds top="300" left="20" bottom="400" right="300"/>
+                <Portal>
+                  <TableOccurrenceReference id="2" name="Ingredients"/>
+                  <ObjectList>
+                    <LayoutObject type="Edit Box"><UUID>00000000-0000-0000-0000-000000000051</UUID><Bounds top="300" left="20" bottom="320" right="120"/>
+                      <Conditions><Formatting>` + fmCondition(6, "Self<1", "1", "") + `</Formatting></Conditions>
+                      <Field><FieldReference name="Quantity" id="2"><TableOccurrenceReference name="Ingredients" id="2"/></FieldReference></Field>
+                    </LayoutObject>
+                  </ObjectList>
+                </Portal>
+              </LayoutObject>`
+	design := strings.Replace(layoutObjectsFixture, `<LayoutObject type="Button">
+                <UUID>00000000-0000-0000-0000-00000000000e</UUID>
+                <Bounds top="240" left="20" bottom="255" right="100"/>
+              </LayoutObject>`, portal, 1)
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: design})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Bundle.Layouts[0].Definition)
+	if !strings.Contains(string(encoded), `"value":"Ingredients::quantity\u003c1"`) {
+		t.Fatalf("definition: %s", encoded)
+	}
+	var review string
+	for _, it := range got.Report.ManualActionRequired {
+		review += it.Detail
+	}
+	if !strings.Contains(review, "1 conditional format of objects in portal rows, kept but not drawn in the rows yet") {
 		t.Fatalf("review: %s", review)
+	}
+}
+
+func TestRangeInFormula(t *testing.T) {
+	rng := func(start, end string) *xmlNode {
+		return &xmlNode{Name: "Range", Children: []*xmlNode{{Name: "Start", Text: start}, {Name: "End", Text: end}}}
+	}
+	for _, c := range []struct {
+		formula, start, end string
+		operands            int
+		want                bool
+	}{
+		{"Self>0", "0", "", 1, true},
+		{"Self≥1 and Self≤5", "1", "5", 2, true},
+		{"Self≥1 and Self≤5", "1", "6", 2, false},
+		{"Self>40", "50", "", 1, false},
+		{"Self>Date(3;15;1990)", "15/03/1990", "", 1, true},
+		{"Self>Date(3;15;1990)", "16/03/1990", "", 1, false},
+		{`Self="a \"c\" \\ d"`, `a "c" \ d`, "", 1, true},
+		{`Self="Kg"`, "kg", "", 1, true},
+		{`Self="kg"`, "&quot;kg&quot;", "", 1, true},
+		{`Self="kg"`, "g", "", 1, false},
+		{`Self="12"`, "12", "", 1, true},
+		{"Self>-5", "5", "", 1, false},
+		{"Self>-5", "-5", "", 1, true},
+		{"Self>2.5", "2,50", "", 1, true},
+		{"Self>2.5", "25", "", 1, false},
+		{"IsEmpty(Self)", "", "", 0, true},
+		{"Self=1", "", "", 1, true},
+	} {
+		if got := rangeInFormula(rng(c.start, c.end), c.operands, c.formula); got != c.want {
+			t.Errorf("rangeInFormula(%q, %q, %q) = %v, want %v", c.formula, c.start, c.end, got, c.want)
+		}
 	}
 }
 
