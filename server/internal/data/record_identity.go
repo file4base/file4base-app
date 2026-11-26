@@ -3,7 +3,6 @@ package data
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -28,11 +27,11 @@ import (
 // that fails has spent its ID, as in FileMaker, and a long import does not
 // hold the allocator. A formula computed for the new record knows it.
 //
-// The modification count goes up by one with every write that modifies the
-// record, by the rule a modification stamp follows: a write modifies a
-// record when it changes the value of a field stored with it, not a
-// calculation, a summary or a global field. A value sent back as it is
-// changes nothing, and so does a recalculation.
+// The modification count goes up by one with every write that sets a field
+// stored with the record, not a calculation, a summary or a global field,
+// even to the value it holds, as FileMaker Server counts the edits of the
+// Data API. A write that sets no such field, an empty one or a
+// recalculation, counts none.
 
 // Identity is a record's record ID and modification count.
 type Identity struct {
@@ -136,13 +135,11 @@ func seedRecordIDs(ctx context.Context, db *sql.DB, dialect dbal.Dialect, tableN
 // written with IDs up to last, as a restore writes the IDs it carries, are
 // never given another's, and returns the highest ID it had given before, 0
 // when none: an ID above it was never a record's. An allocator already past
-// last stays where it is.
+// last stays where it is: it never goes back.
 //
-// On MariaDB the allocator is read and moved in one statement, so a record
-// created meanwhile takes an ID either before the claim or past last. A
-// PostgreSQL sequence cannot be read and moved at once: a record created
-// between the two can take an ID a restore also writes, and one of the two
-// inserts is then refused by the column's unique constraint.
+// The allocator is read and moved at once, so a record created meanwhile
+// takes an ID either before the claim or past last: on MariaDB in one
+// statement, on PostgreSQL with the sequence locked (see withSequenceLock).
 func ClaimRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, tableName string, last int64) (int64, error) {
 	has, err := HasCreationOrder(ctx, driver, tableName)
 	if err != nil || !has {
@@ -151,15 +148,19 @@ func ClaimRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, tableName s
 	dialect := driver.Dialect()
 	db := driver.DB()
 	if dialect.Engine() == dbal.EnginePostgres {
-		var given, set sql.NullInt64
-		err := db.QueryRowContext(ctx, `SELECT g, CASE WHEN $2::bigint > g THEN setval(s::regclass, $2::bigint) END
-			FROM (SELECT COALESCE(pg_sequence_last_value(s::regclass), 0) AS g, s
-			FROM (SELECT `+dbal.RecordIDSequenceSQL("$1")+` AS s) q) r`,
-			dialect.QuoteIdentifier(tableName), last).Scan(&given, &set)
+		var given int64
+		err := withSequenceLock(ctx, driver, tableName, func(tx *sql.Tx, seq string) error {
+			var err error
+			if given, err = sequenceLastValue(ctx, tx, seq); err != nil || last <= given {
+				return err
+			}
+			_, err = tx.ExecContext(ctx, `SELECT setval($1::regclass, $2::bigint)`, seq, last)
+			return err
+		})
 		if err != nil {
 			return 0, fmt.Errorf("failed claiming the record IDs of %s: %w", tableName, err)
 		}
-		return given.Int64, nil
+		return given, nil
 	}
 	if err := seedRecordIDs(ctx, db, dialect, tableName); err != nil {
 		return 0, err
@@ -176,6 +177,88 @@ func ClaimRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, tableName s
 		return 0, fmt.Errorf("failed claiming the record IDs of %s: %w", tableName, err)
 	}
 	return given, nil
+}
+
+// ReleaseRecordIDs gives back the record IDs after from, up to to, that a
+// write which did not happen took (a restore that failed), by moving the
+// table's allocator back from to to from, provided it is still at to: no
+// record has been given an ID since, so none of the IDs given back was
+// ever a record's. It reports whether it did.
+func ReleaseRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, tableName string, from, to int64) (bool, error) {
+	if to <= from {
+		return false, nil
+	}
+	has, err := HasCreationOrder(ctx, driver, tableName)
+	if err != nil || !has {
+		return false, err
+	}
+	if driver.Dialect().Engine() == dbal.EnginePostgres {
+		released := false
+		err := withSequenceLock(ctx, driver, tableName, func(tx *sql.Tx, seq string) error {
+			current, err := sequenceLastValue(ctx, tx, seq)
+			if err != nil || current != to {
+				return err
+			}
+			if from == 0 {
+				_, err = tx.ExecContext(ctx, `SELECT setval($1::regclass, 1, false)`, seq) // as never used
+			} else {
+				_, err = tx.ExecContext(ctx, `SELECT setval($1::regclass, $2::bigint)`, seq, from)
+			}
+			released = err == nil
+			return err
+		})
+		return released, err
+	}
+	res, err := driver.DB().ExecContext(ctx, `UPDATE `+dbal.RecordIDsTable+` SET last_id = ? WHERE table_name = ? AND last_id = ?`,
+		from, tableName, to)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// sequenceLockWait bounds how long a claim waits for a transaction that took
+// a record ID from the sequence (only a server of an earlier version takes
+// one inside a long transaction).
+const sequenceLockWait = 5 // seconds
+
+// withSequenceLock runs f in a transaction that holds a PostgreSQL table's
+// record ID sequence, so that no nextval runs until it ends: a sequence
+// cannot be locked with LOCK, but ALTER SEQUENCE takes a lock nextval waits
+// for. Increment 1 is what the sequence has; nothing changes.
+func withSequenceLock(ctx context.Context, driver dbal.DatabaseDriver, tableName string, f func(*sql.Tx, string) error) error {
+	tx, err := driver.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var seq sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT `+dbal.RecordIDSequenceSQL("$1"),
+		driver.Dialect().QuoteIdentifier(tableName)).Scan(&seq); err != nil {
+		return err
+	}
+	if !seq.Valid {
+		return fmt.Errorf("%s has no record ID sequence", tableName)
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%ds'", sequenceLockWait)); err != nil {
+		return err
+	}
+	// The name is the catalog's, quoted as SQL by pg_get_serial_sequence.
+	if _, err := tx.ExecContext(ctx, "ALTER SEQUENCE "+seq.String+" INCREMENT BY 1"); err != nil {
+		return err
+	}
+	if err := f(tx, seq.String); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// sequenceLastValue is the last value a sequence gave, 0 when none.
+func sequenceLastValue(ctx context.Context, tx *sql.Tx, seq string) (int64, error) {
+	var last sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT pg_sequence_last_value($1::regclass)`, seq).Scan(&last)
+	return last.Int64, err
 }
 
 // recoverRecordIDs moves a table's allocator past every record ID the table
@@ -266,6 +349,15 @@ func (s *Service) recordIdentities(ctx context.Context, q execer, tableName stri
 	return found, nil
 }
 
+// hasRecordIdentity reports whether a table has both its record IDs and its
+// modification count.
+func hasRecordIdentity(ctx context.Context, driver dbal.DatabaseDriver, tableName string) (bool, error) {
+	if has, err := HasCreationOrder(ctx, driver, tableName); err != nil || !has {
+		return false, err
+	}
+	return HasModCount(ctx, driver, tableName)
+}
+
 // identityColumns is the select list of a table's record ID and
 // modification count, "" for a table that has no record IDs yet. A table
 // that has no modification count yet counts no modification.
@@ -327,7 +419,8 @@ func (s *Service) UpdateRowIfModID(
 // checkModID refuses a write conditioned on a modification count the record
 // does not have.
 func (s *Service) checkModID(ctx context.Context, tableName, id string, modID int64) error {
-	if has, err := HasModCount(ctx, s.driver, tableName); err != nil {
+	// A record without its record ID cannot have been read by one either.
+	if has, err := hasRecordIdentity(ctx, s.driver, tableName); err != nil {
 		return err
 	} else if !has {
 		return ErrModCountUnavailable
@@ -348,19 +441,14 @@ type modification struct {
 	counted bool
 	// modifies is true when the write modifies the record.
 	modifies bool
-	// read is the record's identity when the write compared its values, and
-	// found tells whether the record was there; current is what it held.
-	read    Identity
-	found   bool
-	current map[string]interface{}
-	// modifying are the fields a write modifies the record by changing.
+	// modifying are the fields a write modifies the record by setting.
 	modifying map[string]bool
 }
 
-// countsModification reports whether writing updates modifies the record
-// id, as it is stored.
+// countsModification reports whether writing updates modifies a record of
+// the table: whether it sets a field stored with it.
 func (s *Service) countsModification(
-	ctx context.Context, tableName, id string, fields fieldSet, updates map[string]interface{},
+	ctx context.Context, tableName string, fields fieldSet, updates map[string]interface{},
 ) (modification, error) {
 	has, err := HasModCount(ctx, s.driver, tableName)
 	if err != nil || !has {
@@ -370,47 +458,40 @@ func (s *Service) countsModification(
 	if err != nil {
 		return modification{}, err
 	}
-	current, read, found, err := storedRowIdentity(ctx, s.driver.DB(), s.driver.Dialect(), tableName, id, fields)
-	if err != nil {
-		return modification{}, err
-	}
-	return modification{counted: true, modifies: modifiesRecord(fields, modifying, updates, current),
-		read: read, found: found, current: current, modifying: modifying}, nil
+	return modification{counted: true, modifies: setsStoredField(fields, modifying, updates), modifying: modifying}, nil
 }
 
 // alsoModifiedBy notes what the auto-enter options entered as a consequence
-// of the write: a value they change modifies the record too.
+// of the write: a stored field they set modifies the record too.
 func (m *modification) alsoModifiedBy(fields fieldSet, updates map[string]interface{}) {
 	if m.counted && !m.modifies {
-		m.modifies = modifiesRecord(fields, m.modifying, updates, m.current)
+		m.modifies = setsStoredField(fields, m.modifying, updates)
 	}
 }
 
-// countSQL is the assignment an UPDATE counts the modification with, its
-// value bound at placeholder index next, or "" when it counts none. Whether
-// the write modifies the record was decided on the values read with the
-// count m.read: when the record has been written since, that decision no
-// longer holds, and the write is counted, which can only make a write
-// conditioned on the count it read fail, never let one through.
-func (m modification) countSQL(dialect dbal.Dialect, next int) (string, []interface{}) {
-	if !m.counted {
-		return "", nil
+// countSQL is the assignment an UPDATE counts the modification with, or ""
+// when it counts none.
+func (m modification) countSQL(dialect dbal.Dialect) string {
+	if !m.counted || !m.modifies {
+		return ""
 	}
 	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
-	if m.modifies || !m.found {
-		return modCount + " = " + modCount + " + 1", nil
-	}
-	return fmt.Sprintf("%s = %s + CASE WHEN %s = %s THEN 0 ELSE 1 END", modCount, modCount, modCount,
-		dialect.Placeholder(next)), []interface{}{m.read.ModID}
+	return modCount + " = " + modCount + " + 1"
 }
 
-// storedRowIdentity reads a record as storedRow does, with its identity
-// read by the same statement. found is false when it is not there.
+// storedRowIdentity reads a record of a table that counts modifications as
+// storedRow does, with its identity read by the same statement; numbered
+// says whether the table has its record IDs yet (a table can be given its
+// count first), 0 otherwise. found is false when it is not there.
 func storedRowIdentity(
-	ctx context.Context, q execer, dialect dbal.Dialect, tableName, id string, fields fieldSet,
+	ctx context.Context, q execer, dialect dbal.Dialect, tableName, id string, fields fieldSet, numbered bool,
 ) (map[string]interface{}, Identity, bool, error) {
+	recordID := "0"
+	if numbered {
+		recordID = dialect.QuoteIdentifier(dbal.CreationOrderColumn)
+	}
 	query := fmt.Sprintf("SELECT %s, %s AS f4b_record_id, %s AS f4b_mod_id FROM %s WHERE %s = %s LIMIT 1",
-		selectList(dialect, fields), dialect.QuoteIdentifier(dbal.CreationOrderColumn),
+		selectList(dialect, fields), recordID,
 		dialect.QuoteIdentifier(dbal.ModCountColumn), dialect.QuoteIdentifier(tableName),
 		dialect.QuoteIdentifier("id"), dialect.Placeholder(1))
 	rows, err := q.QueryContext(ctx, query, id)
@@ -487,22 +568,12 @@ func (s *Service) modifyingFields(ctx context.Context, tableName string) (map[st
 	return modifying, rows.Err()
 }
 
-// modifiesRecord reports whether writing updates over the stored record
-// current modifies it: whether it changes the value of a field in modifying.
-func modifiesRecord(fields fieldSet, modifying map[string]bool, updates, current map[string]interface{}) bool {
+// setsStoredField reports whether updates set a field in modifying, even
+// to the value it holds: FileMaker counts such a write.
+func setsStoredField(fields fieldSet, modifying map[string]bool, updates map[string]interface{}) bool {
 	compare := &autoEnter{types: fields}
-	for key, value := range updates {
-		base := compare.baseOf(key)
-		if !modifying[base] || base == "id" {
-			continue
-		}
-		if fields.typeOf(base) == dbal.FieldTypeContainer {
-			// What is written may be the bytes; what is read is their base64.
-			if b, ok := value.([]byte); ok {
-				value = base64.StdEncoding.EncodeToString(b)
-			}
-		}
-		if !compare.same(base, value, current[key]) {
+	for key := range updates {
+		if base := compare.baseOf(key); modifying[base] && base != "id" {
 			return true
 		}
 	}
@@ -552,6 +623,13 @@ func (sc *identityScope) get(db *sql.DB, tableName, id string) (Identity, bool) 
 	defer sc.mu.Unlock()
 	identity, ok := sc.known[identityKey{db, tableName, id}]
 	return identity, ok
+}
+
+// drop forgets a record's identity, once a write has changed it.
+func (sc *identityScope) drop(db *sql.DB, tableName, id string) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	delete(sc.known, identityKey{db, tableName, id})
 }
 
 // forget drops what the scope knows, as a scan moves to its next page.

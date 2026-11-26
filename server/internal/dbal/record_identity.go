@@ -11,7 +11,7 @@ import (
 
 // A record's identity, as FileMaker gives it (#208): its record ID, the
 // number it was created with (CreationOrderColumn), and its modification
-// count, how many times a change to it was committed (ModCountColumn). The
+// count, how many writes set a field stored with it (ModCountColumn). The
 // Data API calls them recordId and modId, and Get ( RecordID ) and
 // Get ( RecordModificationCount ) read them.
 //

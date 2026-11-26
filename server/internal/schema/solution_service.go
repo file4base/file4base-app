@@ -2264,11 +2264,21 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 	recordIDs := map[string][]int64{}
 	renumbered := map[string][]bool{}
 	modCounts := map[string]bool{}
+	// A restore that fails gives back what it took of the allocators, so
+	// restoring the file again keeps its records' IDs.
+	var claims []*recordIDClaim
+	committed := false
+	defer func() {
+		if !committed {
+			releaseRecordIDs(ctx, s.driver, claims)
+		}
+	}()
 	for _, tableName := range tableNames {
-		ids, moved, err := s.restoredRecordIDs(ctx, tableName, identities[tableName])
+		ids, moved, claim, err := s.restoredRecordIDs(ctx, tableName, identities[tableName])
 		if err != nil {
 			return nil, err
 		}
+		claims = append(claims, claim)
 		recordIDs[tableName] = ids
 		renumbered[tableName] = moved
 		if modCounts[tableName], err = data.HasModCount(ctx, s.driver, tableName); err != nil {
@@ -2396,6 +2406,7 @@ func (s *Service) ImportDatabaseData(ctx context.Context, file []byte) (*DataImp
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed committing the restored records: %w", err)
 	}
+	committed = true
 	// A stored calculation that reads the record ID is computed again for
 	// the records that did not keep the one it was computed with.
 	records := data.NewService(s.driver)

@@ -3,6 +3,7 @@ package data_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -143,44 +144,42 @@ func TestRecordIdentity_ModificationCount(t *testing.T) {
 	tb.update(t, ctx, id, map[string]interface{}{"label": "third", "code": "C-1"})
 	assert.Equal(t, int64(2), count(), "one write, one modification")
 	tb.update(t, ctx, id, map[string]interface{}{"label": "third"})
-	assert.Equal(t, int64(2), count(), "a value sent back as it is changes nothing")
+	assert.Equal(t, int64(3), count(), "a value sent back as it is counts, as in FileMaker Server")
 	tb.update(t, ctx, id, map[string]interface{}{})
-	assert.Equal(t, int64(2), count(), "nothing to write")
+	assert.Equal(t, int64(3), count(), "nothing to write")
 	tb.update(t, ctx, id, map[string]interface{}{"shared": "everyone"})
-	assert.Equal(t, int64(2), count(), "a global field is not the record's")
+	assert.Equal(t, int64(3), count(), "a global field is not the record's")
 	tb.update(t, ctx, id, map[string]interface{}{"stored_id": "typed over"})
-	assert.Equal(t, int64(2), count(), "a calculation is its formula's")
+	assert.Equal(t, int64(3), count(), "a calculation is its formula's")
 	_, err := tb.svc.RecalculateTable(ctx, tb.name)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), count(), "a recalculation is no modification")
+	assert.Equal(t, int64(3), count(), "a recalculation is no modification")
 
 	row, err := tb.svc.GetRow(ctx, tb.name, id)
 	require.NoError(t, err)
-	assert.Equal(t, "2", fmt.Sprint(row["live_count"]))
+	assert.Equal(t, "3", fmt.Sprint(row["live_count"]))
 
-	// An import that updates the record modifies it once; one that sends
-	// what it holds does not.
+	// An import that updates the record modifies it once, also when it
+	// sends what it holds.
 	source := &dataio.Table{Columns: []string{"code", "label", "required"}, Rows: [][]string{{"C-1", "fourth", "yes"}}}
 	opts := data.ImportOptions{Action: data.ImportUpdateMatching, MatchFields: []string{"code"},
 		Mappings: []data.ImportMapping{{Column: 0, Field: "code"}, {Column: 1, Field: "label"}, {Column: 2, Field: "required"}}}
 	_, err = tb.svc.ImportRecords(ctx, tb.name, source, opts)
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), count())
+	assert.Equal(t, int64(4), count())
 	_, err = tb.svc.ImportRecords(ctx, tb.name, source, opts)
 	require.NoError(t, err)
-	assert.Equal(t, int64(3), count())
+	assert.Equal(t, int64(5), count())
 	// Two rows of one import updating the record modify it twice, the
 	// second seeing the first.
 	source.Rows = [][]string{{"C-1", "fifth", "yes"}, {"C-1", "sixth", "yes"}}
 	_, err = tb.svc.ImportRecords(ctx, tb.name, source, opts)
 	require.NoError(t, err)
-	assert.Equal(t, int64(5), count())
+	assert.Equal(t, int64(7), count())
 }
 
-// A write that sends back what it read, while another changes the record
-// in between, counts a modification: the record it writes over is not the
-// one it compared, and a writer holding the other's count must not get
-// through (#208).
+// Two writes of a record that cross both count, whatever they set: a writer
+// holding the count from before either does not get through (#208).
 func TestRecordIdentity_ModificationCountUnderAnotherWrite(t *testing.T) {
 	ctx, a, _ := twoSolutions(t, "modrace", "modrace_unused")
 	tb := newIdentityTable(t, ctx, a, "visits")
@@ -217,6 +216,143 @@ func TestRecordIdentity_ClaimRecordIDs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), given, "an allocator already past stays")
 	assert.Equal(t, int64(8), tb.identity(t, ctx, tb.insert(t, ctx, "third")).RecordID)
+
+	// What a failed restore took is given back while no record was created
+	// since, and only then.
+	given, err = data.ClaimRecordIDs(ctx, a.driver, "visits", 20)
+	require.NoError(t, err)
+	require.Equal(t, int64(8), given)
+	released, err := data.ReleaseRecordIDs(ctx, a.driver, "visits", 8, 20)
+	require.NoError(t, err)
+	assert.True(t, released)
+	assert.Equal(t, int64(9), tb.identity(t, ctx, tb.insert(t, ctx, "fourth")).RecordID)
+	_, err = data.ClaimRecordIDs(ctx, a.driver, "visits", 30)
+	require.NoError(t, err)
+	assert.Equal(t, int64(31), tb.identity(t, ctx, tb.insert(t, ctx, "fifth")).RecordID)
+	released, err = data.ReleaseRecordIDs(ctx, a.driver, "visits", 9, 30)
+	require.NoError(t, err)
+	assert.False(t, released, "record 31 was created since: nothing is given back")
+	assert.Equal(t, int64(32), tb.identity(t, ctx, tb.insert(t, ctx, "sixth")).RecordID)
+}
+
+// Claims made while records are created never move the allocator back: no
+// create is refused for an ID taken twice.
+func TestRecordIdentity_ClaimsWhileCreating(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "claimrace", "claimrace_unused")
+	tb := newIdentityTable(t, ctx, a, "visits")
+	const creators, each = 4, 15
+	var wg sync.WaitGroup
+	errs := make(chan error, creators*each+100)
+	for c := range creators {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range each {
+				if _, err := tb.svc.InsertRow(ctx, tb.name, map[string]interface{}{
+					"label": fmt.Sprintf("c%d-%d", c, i), "required": "yes"}); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	for claim := int64(1); ; claim += 3 {
+		select {
+		case <-done:
+			close(errs)
+			for err := range errs {
+				t.Error(err)
+			}
+			rows, err := tb.svc.ListRows(ctx, tb.name, data.QueryOptions{Limit: data.MaxPageSize})
+			require.NoError(t, err)
+			require.Len(t, rows, creators*each)
+			return
+		default:
+		}
+		if _, err := data.ClaimRecordIDs(ctx, a.driver, "visits", claim); err != nil {
+			errs <- err
+		}
+	}
+}
+
+// A table given its modification count but not yet its record IDs (an
+// upgrade that could only add the one) is written, and counted, as any.
+func TestRecordIdentity_CountWithoutRecordIDs(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "modnoid", "modnoid_unused")
+	tb := newIdentityTable(t, ctx, a, "visits")
+	id := tb.insert(t, ctx, "first")
+	dialect := a.driver.Dialect()
+	_, err := a.driver.DB().ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s",
+		dialect.QuoteIdentifier("visits"), dialect.QuoteIdentifier(dbal.CreationOrderColumn)))
+	require.NoError(t, err)
+	data.ForgetCreationOrder(a.driver.DB())
+
+	tb.update(t, ctx, id, map[string]interface{}{"label": "second", "code": "C-1"})
+	source := &dataio.Table{Columns: []string{"code", "label", "required"}, Rows: [][]string{{"C-1", "third", "yes"}}}
+	_, err = tb.svc.ImportRecords(ctx, tb.name, source, data.ImportOptions{Action: data.ImportUpdateMatching,
+		MatchFields: []string{"code"},
+		Mappings:    []data.ImportMapping{{Column: 0, Field: "code"}, {Column: 1, Field: "label"}, {Column: 2, Field: "required"}}})
+	require.NoError(t, err)
+	_, err = tb.svc.RecalculateTable(ctx, tb.name)
+	require.NoError(t, err)
+	var count int64
+	require.NoError(t, a.driver.DB().QueryRowContext(ctx, fmt.Sprintf("SELECT %s FROM %s WHERE %s = %s",
+		dialect.QuoteIdentifier(dbal.ModCountColumn), dialect.QuoteIdentifier("visits"),
+		dialect.QuoteIdentifier("id"), dialect.Placeholder(1)), id).Scan(&count))
+	assert.Equal(t, int64(2), count)
+	_, err = tb.svc.UpdateRowIfModID(ctx, tb.name, id, 2, map[string]interface{}{"label": "fourth"})
+	assert.ErrorIs(t, err, data.ErrModCountUnavailable, "a record without its record ID has no modId to check")
+	tb.insert(t, ctx, "another")
+}
+
+// The record an update returns has the count the update gave it, also when
+// a formula of the write read the one before.
+func TestRecordIdentity_UpdateReturnsItsCount(t *testing.T) {
+	ctx, a, _ := twoSolutions(t, "modret", "modret_unused")
+	tb := newIdentityTable(t, ctx, a, "visits")
+	_, err := a.schema.AddColumn(ctx, tb.tableID, schema.ColumnMetadata{Name: "entered_count", DisplayName: "entered_count",
+		FieldType: dbal.FieldTypeText, IsNullable: true, DefaultValue: options(map[string]any{
+			"calculated_enabled": true, "calculated_formula": `Get ( RecordModificationCount ) & "|" & label`})})
+	require.NoError(t, err)
+	id := tb.insert(t, ctx, "first")
+	for want := 1; want <= 2; want++ {
+		row, err := tb.svc.UpdateRow(ctx, tb.name, id, map[string]interface{}{"label": fmt.Sprintf("v%d", want)})
+		require.NoError(t, err)
+		assert.Equal(t, fmt.Sprint(want), fmt.Sprint(row["live_count"]), "the count after the write")
+		assert.Equal(t, fmt.Sprintf("%d|v%d", want-1, want), fmt.Sprint(row["entered_count"]),
+			"the formula of the write read the count before it")
+	}
+}
+
+// A restore that fails gives back the record IDs it took, so the same file
+// restored again keeps its records' IDs.
+func TestRecordIdentity_RestoreRetriedKeepsIdentities(t *testing.T) {
+	ctx, a, b := twoSolutions(t, "ridretry", "ridretrydst")
+	src := newIdentityTable(t, ctx, a, "visits")
+	var ids []string
+	for i := range 3 {
+		ids = append(ids, src.insert(t, ctx, fmt.Sprintf("v%d", i)))
+	}
+	file, err := a.schema.ExportDatabaseData(ctx, a.name)
+	require.NoError(t, err)
+	var bundle schema.DatabaseDataBundle
+	require.NoError(t, msgpack.Unmarshal(file, &bundle))
+	bundle.TablesData["visits"][2]["required"] = "" // refused by its rule
+	broken, err := msgpack.Marshal(bundle)
+	require.NoError(t, err)
+
+	dst := newIdentityTable(t, ctx, b, "visits")
+	_, err = b.schema.ImportDatabaseData(ctx, broken)
+	require.Error(t, err)
+	report, err := b.schema.ImportDatabaseData(ctx, file)
+	require.NoError(t, err)
+	assert.Equal(t, 3, report.RecordsInserted)
+	assert.Equal(t, 0, report.RecordIDsRenumbered)
+	got, err := dst.svc.RecordIdentities(ctx, dst.name, ids)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]data.Identity{ids[0]: {RecordID: 1}, ids[1]: {RecordID: 2}, ids[2]: {RecordID: 3}}, got)
+	assert.Equal(t, int64(4), dst.identity(t, ctx, dst.insert(t, ctx, "after")).RecordID)
 }
 
 // A formula that asks for the record ID through Evaluate gets it too.

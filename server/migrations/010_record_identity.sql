@@ -12,7 +12,8 @@
 -- the column's identity sequence, on MariaDB a row of sys_record_ids.
 --
 -- The modification count is a column "f4b$mod_count", from 0, which every
--- write that changes a field stored with the record raises by one. Like the
+-- write that sets a field stored with the record raises by one, even to
+-- the value it holds, as FileMaker Server counts its edits. Like the
 -- creation order it is not a field: it is not in sys_columns, and "$" is in
 -- no field name. A table given it counts no modification yet for the records
 -- it holds, as FileMaker counts none for a migrated record; adding it does

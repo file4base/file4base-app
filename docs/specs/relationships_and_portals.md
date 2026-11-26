@@ -301,18 +301,19 @@ refused by validation for instance, spends its ID, as in FileMaker.
 
 The **modification count** (`Get ( RecordModificationCount )`, the Data API's
 `modId`) is a column of its own, `f4b$mod_count`, not a field either. A record
-is created with 0, and every write that changes a field stored with the
-record raises it by one, in the same statement: a write sending back the
-values the record holds, a recalculation, a global field and a write that
-changes nothing count none, as they leave the modification stamps alone. A
-value an auto-enter option enters as a consequence counts as the write's. A
-write compares its values with the record as it read it, with its count; if
-another write has changed the count by the time it writes, it counts one
-anyway, so a write conditioned on a count read before either never gets
-through. The data service can write a record on condition that its
+is created with 0, and every write that sets a field stored with the record
+raises it by one, in the same statement, even when it sets the value the
+field holds: FileMaker Server counts an edit sending the same value again
+(recorded on 26.0.2). A write that sets no such field counts none: an empty
+one, a recalculation, one of global fields or of calculations only, and a
+write to a related record, which counts on that record. A value an
+auto-enter option enters as a consequence counts as the write's. This rule
+is not the modification stamps', which a value sent back as it is leaves
+alone. The data service can write a record on condition that its
 modification count is still the one a client read; otherwise it changes
-nothing and says so (the Data API's error 306). A table not given its count
-yet refuses such a write rather than take the condition as met.
+nothing and says so (the Data API's error 306). A table not given both its
+record IDs and its count yet refuses such a write rather than take the
+condition as met; it is written and counted otherwise as any.
 
 A migration keeps both. A record of a `.fmp12` file keeps the record ID the
 file gives it and counts no modification, as FileMaker Server answers for a
@@ -327,7 +328,9 @@ keeps both unless the table has given that record ID already, in which case
 the record is given a new one and the import's `record_ids_renumbered` counts
 it: a backup restored into the database it was taken from, its records still
 there, keeps none of their IDs. The stored calculations that read the record
-ID are computed again for the records given a new one. A file carries no
+ID are computed again for the records given a new one. A restore that fails
+gives back the record IDs it took unless another write has been given one
+since, so restoring the file again keeps them. A file carries no
 table's allocator: restored into a new database, the IDs of records deleted
 before the export can be given again there.
 

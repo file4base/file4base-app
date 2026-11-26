@@ -439,8 +439,9 @@ func (s *Service) updateRow(ctx context.Context, tableName string, id string, up
 	return s.updateRowIf(ctx, tableName, id, updates, mode, nil)
 }
 
-// beforeUpdate, when set by a test, runs just before updateRowIf writes, as
-// another write would.
+// beforeUpdate is for tests only: nil outside them, and when a test sets it
+// (SetBeforeUpdate) it runs just before updateRowIf writes, as another write
+// would.
 var beforeUpdate func()
 
 // updateRowIf updates a record, provided it has the modification count
@@ -479,17 +480,9 @@ func (s *Service) updateRowIf(
 	// Whether the write modifies the record, which counts it (see
 	// record_identity.go), is decided on what the caller gives, and then on
 	// what the options enter as a consequence.
-	countsModification, err := s.countsModification(ctx, tableName, id, fields, updates)
+	countsModification, err := s.countsModification(ctx, tableName, fields, updates)
 	if err != nil {
 		return nil, err
-	}
-	if countsModification.found {
-		if modID != nil && countsModification.read.ModID != *modID {
-			return nil, ErrModIDMismatch
-		}
-		var scope *identityScope
-		ctx, scope = withIdentityScope(ctx)
-		scope.put(s.driver.DB(), tableName, id, countsModification.read) // as before the write
 	}
 	// Modification stamps, and the calculated and looked-up values the
 	// change reaches (see autoenter.go).
@@ -536,10 +529,8 @@ func (s *Service) updateRowIf(
 		values = append(values, val)
 		idx++
 	}
-	if count, args := countsModification.countSQL(dialect, idx); count != "" {
+	if count := countsModification.countSQL(dialect); count != "" {
 		setClauses = append(setClauses, count)
-		values = append(values, args...)
-		idx += len(args)
 	}
 	modCount := dialect.QuoteIdentifier(dbal.ModCountColumn)
 	values = append(values, id)
@@ -578,6 +569,11 @@ func (s *Service) updateRowIf(
 			return nil, ErrModIDMismatch
 		}
 		return nil, fmt.Errorf("record not found to update with id: %s", id)
+	}
+	// What a formula of the write read of the record's identity is the
+	// count before it: the record returned is read again.
+	if scope := identityScopeOf(ctx); scope != nil {
+		scope.drop(db, tableName, id)
 	}
 
 	// A field given a value now holds exactly what it says: whatever text a

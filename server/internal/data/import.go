@@ -343,16 +343,19 @@ func (s *Service) ImportRecords(
 		}
 	}
 
-	// An updated record is modified when the row changes a field stored with
-	// it, which counts the modification.
+	// An updated record is modified when the row sets a field stored with it,
+	// which counts the modification.
 	var modifying map[string]bool
-	countsModifications := false
+	countsModifications, numbered := false, false
 	if opts.Action == ImportUpdateMatching {
 		if countsModifications, err = HasModCount(ctx, s.driver, tableName); err != nil {
 			return nil, err
 		}
 		if countsModifications {
 			if modifying, err = s.modifyingFields(ctx, tableName); err != nil {
+				return nil, err
+			}
+			if numbered, err = HasCreationOrder(ctx, s.driver, tableName); err != nil {
 				return nil, err
 			}
 		}
@@ -453,13 +456,13 @@ func (s *Service) ImportRecords(
 					// row updating a record an earlier row updated sees that.
 					var read Identity
 					var found bool
-					if current, read, found, err = storedRowIdentity(ctx, tx, dialect, tableName, id, fields); err != nil {
+					if current, read, found, err = storedRowIdentity(ctx, tx, dialect, tableName, id, fields, numbered); err != nil {
 						return nil, fmt.Errorf("%w: row %d: %v", ErrImport, rowNumber, err)
 					}
-					counted = modification{counted: true, modifies: modifiesRecord(fields, modifying, record, current),
-						read: read, found: found, current: current, modifying: modifying}
-					if found {
-						scope.put(db, tableName, id, read)
+					counted = modification{counted: true, modifies: setsStoredField(fields, modifying, record),
+						modifying: modifying}
+					if found && numbered {
+						scope.put(db, tableName, id, read) // as before this row's write
 					}
 				} else if ae != nil {
 					if current, err = storedRow(ctx, tx, dialect, tableName, id, fields); err != nil {
@@ -487,6 +490,7 @@ func (s *Service) ImportRecords(
 				if err := updateInTx(ctx, tx, dialect, tableName, id, writes, counted); err != nil {
 					return nil, fmt.Errorf("%w: row %d could not be updated: %v", ErrImport, rowNumber, err)
 				}
+				scope.drop(db, tableName, id)
 				updatedFields := make([]string, 0, len(record))
 				for field := range record {
 					updatedFields = append(updatedFields, field)
@@ -717,10 +721,8 @@ func updateInTx(
 	if len(sets) == 0 {
 		return nil
 	}
-	if count, args := m.countSQL(dialect, i); count != "" {
+	if count := m.countSQL(dialect); count != "" {
 		sets = append(sets, count)
-		values = append(values, args...)
-		i += len(args)
 	}
 	values = append(values, id)
 	query := fmt.Sprintf("UPDATE %s SET %s WHERE %s = %s",

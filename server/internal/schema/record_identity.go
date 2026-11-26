@@ -3,8 +3,10 @@ package schema
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/file4base/file4base-app/server/internal/data"
 	"github.com/file4base/file4base-app/server/internal/dbal"
@@ -106,20 +108,31 @@ func wholeNumber(v interface{}) (int64, bool) {
 	return 0, false
 }
 
+// recordIDClaim is what a restore took of a table's allocator: it moved
+// it from from to to, IDs no record was given yet (see releaseRecordIDs).
+type recordIDClaim struct {
+	table    string
+	from, to int64
+}
+
 // restoredRecordIDs decides the record ID each record of a table being
 // restored is written with: the one it carries, unless the table has given
 // it already (to a record since deleted, or to another), or another record
 // of the file carries it too; a new one otherwise. A record ID is never
 // given twice, so a backup restored into the database it was taken from
 // keeps none of the IDs its records still hold there. It returns the IDs, by
-// record index, and which records carried an ID they could not keep.
+// record index, which records carried an ID they could not keep, and what
+// it took of the allocator, to give back if the restore fails, or nil when
+// a record was created in between, whose ID cannot be given back.
 //
 // The table's allocator is moved past the IDs kept before any record is
 // written, so a record created meanwhile does not take one of them (see
 // data.ClaimRecordIDs).
-func (s *Service) restoredRecordIDs(ctx context.Context, tableName string, carried []data.Identity) ([]int64, []bool, error) {
+func (s *Service) restoredRecordIDs(
+	ctx context.Context, tableName string, carried []data.Identity,
+) ([]int64, []bool, *recordIDClaim, error) {
 	if has, err := data.HasCreationOrder(ctx, s.driver, tableName); err != nil || !has {
-		return nil, nil, err // a table not numbered yet: the engine numbers its records
+		return nil, nil, nil, err // a table not numbered yet: the engine numbers its records
 	}
 	var last int64
 	for _, identity := range carried {
@@ -127,8 +140,9 @@ func (s *Service) restoredRecordIDs(ctx context.Context, tableName string, carri
 	}
 	given, err := data.ClaimRecordIDs(ctx, s.driver, tableName, last)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	claim := &recordIDClaim{table: tableName, from: given, to: max(given, last)}
 	ids := make([]int64, len(carried))
 	renumbered := make([]bool, len(carried))
 	kept := map[int64]bool{}
@@ -146,16 +160,43 @@ func (s *Service) restoredRecordIDs(ctx context.Context, tableName string, carri
 		}
 	}
 	reserved, err := data.ReserveRecordIDs(ctx, s.driver, tableName, fresh)
-	if err != nil {
-		return nil, nil, err
+	if err == nil && len(reserved) < fresh {
+		err = fmt.Errorf("failed reserving the record IDs of %s", tableName)
 	}
-	if len(reserved) < fresh {
-		return nil, nil, fmt.Errorf("failed reserving the record IDs of %s", tableName)
+	if err != nil {
+		releaseRecordIDs(ctx, s.driver, []*recordIDClaim{claim})
+		return nil, nil, nil, err
+	}
+	for i, id := range reserved {
+		if id != claim.to+1+int64(i) {
+			claim = nil // a record was created in between
+			break
+		}
+	}
+	if claim != nil {
+		claim.to += int64(fresh)
 	}
 	for i := range ids {
 		if ids[i] == 0 {
 			ids[i], reserved = reserved[0], reserved[1:]
 		}
 	}
-	return ids, renumbered, nil
+	return ids, renumbered, claim, nil
+}
+
+// releaseRecordIDs gives back what a restore that failed took of the
+// allocators, where no record was given an ID since, so that restoring the
+// file again keeps the IDs it carries: none of them was ever a record's.
+func releaseRecordIDs(ctx context.Context, driver dbal.DatabaseDriver, claims []*recordIDClaim) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	for _, claim := range claims {
+		if claim == nil {
+			continue
+		}
+		if _, err := data.ReleaseRecordIDs(ctx, driver, claim.table, claim.from, claim.to); err != nil {
+			log.Printf("Warning: the record IDs %d to %d of %s, taken by a restore that failed, stay spent: %v",
+				claim.from+1, claim.to, claim.table, err)
+		}
+	}
 }
