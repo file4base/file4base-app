@@ -1695,11 +1695,16 @@ The `?database=<name>` query parameter and the `X-Database-Name` header are stil
     "username": "alice",
     "role": "owner",
     "is_active": true,
+    "mfa_enabled": false,
+    "super_owner": false,
+    "password_pending": false,
     "created_at": "2026-09-23T10:00:00Z",
     "updated_at": "2026-09-23T10:00:00Z"
   }
 ]
 ```
+
+`password_pending` is `true` for an account a solution import or a FileMaker migration created without a usable password (#198). Such an account is created inactive and cannot sign in until a password is set with `PUT /api/v1/security/users/{id}`, which clears the flag; activating it without a password leaves the flag set. It is the way to list, after the migration, the usernames its `import_report.accounts_pending_password` named.
 
 ---
 
@@ -1735,15 +1740,18 @@ Updates password, role and/or `is_active` of an existing user account.
 - `admin`: `admin` and `user` accounts; cannot modify owner accounts nor promote to `owner`.
 - `user`: only their own password (role and status must stay unchanged).
 
-The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked.
+The last active owner cannot be demoted or deactivated. When the password, role or status changes, the other sessions of that user are revoked. Setting a password clears `password_pending` (#198); a password of only spaces is refused (`400`). An owner with `password_pending` cannot sign in, so it does not count as the active owner a database must keep. An empty or omitted `role` keeps the stored one.
 
 #### Request Body
 ```json
 {
   "password": "newpassword",
-  "role": "admin"
+  "role": "admin",
+  "is_active": true
 }
 ```
+
+To let an account migrated without a password sign in, send its `password` together with `"is_active": true`.
 
 ---
 
@@ -2375,7 +2383,7 @@ described above.
 ```
 
 ### `POST /api/v1/solutions/migrate/apply`
-*Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report`, and the full `ConversionReport`. Accepts the same JSON body as preflight, or the same `multipart/form-data` upload for a native copy above 64 MiB (see preflight).
+*Requires `owner` role and unlocked design.* Converts and atomically imports the FileMaker design XML and optional `FMPXMLRESULT` record datasets into either the active session database or a newly created isolated `target_database` (when `target_database`, `owner_user`, and `owner_password` are supplied). Returns `201 Created` with `status: "migrated"`, `records_inserted`, `import_report` (the solution import's report: created/updated counts, `accounts_pending_password` and `warnings`, as for `POST /api/v1/solutions/import`), and the full `ConversionReport`. The accounts named in `accounts_pending_password` are created inactive with `password_pending: true` (see `GET /api/v1/security/users`). Accepts the same JSON body as preflight, or the same `multipart/form-data` upload for a native copy above 64 MiB (see preflight).
 
 An explicitly attached native dataset that cannot be read or represented is
 refused with `422 Native Data Import Blocked` before any target write. Apply does

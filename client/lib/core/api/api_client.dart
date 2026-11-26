@@ -1058,6 +1058,7 @@ class UserModel {
     this.isActive = true,
     this.mfaEnabled = false,
     this.superOwner = false,
+    this.passwordPending = false,
     this.createdAt,
     this.updatedAt,
     this.permissions = const [],
@@ -1089,6 +1090,7 @@ class UserModel {
       isActive: json['is_active'] as bool? ?? true,
       mfaEnabled: json['mfa_enabled'] as bool? ?? false,
       superOwner: json['super_owner'] as bool? ?? false,
+      passwordPending: json['password_pending'] as bool? ?? false,
       createdAt: json['created_at'] != null ? DateTime.tryParse(json['created_at'].toString()) : null,
       updatedAt: json['updated_at'] != null ? DateTime.tryParse(json['updated_at'].toString()) : null,
       permissions: perms,
@@ -1101,6 +1103,10 @@ class UserModel {
   final bool isActive;
   final bool mfaEnabled;
   final bool superOwner;
+
+  /// Created by a solution import or a FileMaker migration without a usable
+  /// password (#198): the account cannot sign in until one is set.
+  final bool passwordPending;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final List<UserLayoutPermissionModel> permissions;
@@ -1116,6 +1122,7 @@ class UserModel {
     bool? isActive,
     bool? mfaEnabled,
     bool? superOwner,
+    bool? passwordPending,
     DateTime? createdAt,
     DateTime? updatedAt,
     List<UserLayoutPermissionModel>? permissions,
@@ -1128,6 +1135,7 @@ class UserModel {
       isActive: isActive ?? this.isActive,
       mfaEnabled: mfaEnabled ?? this.mfaEnabled,
       superOwner: superOwner ?? this.superOwner,
+      passwordPending: passwordPending ?? this.passwordPending,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       permissions: permissions ?? this.permissions,
@@ -1142,6 +1150,7 @@ class UserModel {
     'is_active': isActive,
     'mfa_enabled': mfaEnabled,
     'super_owner': superOwner,
+    'password_pending': passwordPending,
     if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
     if (updatedAt != null) 'updated_at': updatedAt!.toIso8601String(),
     'permissions': permissions.map((p) => p.toJson()).toList(),
@@ -5338,10 +5347,12 @@ class MigrationApplyResultModel {
     required this.database,
     required this.recordsInserted,
     required this.report,
+    this.importReport = const MigrationImportReportModel(),
   });
 
   factory MigrationApplyResultModel.fromJson(Map<String, dynamic> json) {
     final rawReport = json['report'];
+    final rawImport = json['import_report'];
     return MigrationApplyResultModel(
       status: json['status'] as String? ?? 'migrated',
       database: json['database'] as String? ?? '',
@@ -5349,11 +5360,54 @@ class MigrationApplyResultModel {
       report: MigrationReportModel.fromJson(
         rawReport is Map ? Map<String, dynamic>.from(rawReport) : const {},
       ),
+      importReport: rawImport is Map
+          ? MigrationImportReportModel.fromJson(Map<String, dynamic>.from(rawImport))
+          : const MigrationImportReportModel(),
     );
   }
   final String status;
   final String database;
   final int recordsInserted;
   final MigrationReportModel report;
+
+  /// What the import of the converted solution created (#198).
+  final MigrationImportReportModel importReport;
+}
+
+/// The `import_report` of a migration: what writing the converted solution
+/// into the database created, the accounts it left without a usable password
+/// and what it restored that does not work yet (#198).
+class MigrationImportReportModel {
+  const MigrationImportReportModel({
+    this.counts = const {},
+    this.accountsPendingPassword = const [],
+    this.warnings = const [],
+  });
+
+  factory MigrationImportReportModel.fromJson(Map<String, dynamic> json) {
+    final counts = <String, int>{};
+    for (final entry in json.entries) {
+      final value = entry.value;
+      if (value is num && (entry.key.endsWith('_created') || entry.key.endsWith('_updated'))) {
+        counts[entry.key] = value.toInt();
+      }
+    }
+    List<String> strings(dynamic raw) =>
+        raw is List ? raw.whereType<String>().where((s) => s.trim().isNotEmpty).toList() : const [];
+    return MigrationImportReportModel(
+      counts: counts,
+      accountsPendingPassword: strings(json['accounts_pending_password']),
+      warnings: strings(json['warnings']),
+    );
+  }
+
+  /// `tables_created`, `layouts_updated`... as the server names them.
+  final Map<String, int> counts;
+
+  /// The usernames created disabled, without a usable password.
+  final List<String> accountsPendingPassword;
+
+  /// Objects restored as saved that do not work yet.
+  final List<String> warnings;
 }
 
