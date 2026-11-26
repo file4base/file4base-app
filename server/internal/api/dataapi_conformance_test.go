@@ -335,7 +335,7 @@ func loadExpectedFailures(t *testing.T, fixtures []daFixture) daExpectations {
 // step checks its background request ("background.KIND"), then whether a
 // probe ran at all ("no-probe"), then the probe ("probe.KIND").
 var dataAPIKindRank = map[string]int{
-	"unreplayable": 0, "stand-in": 1, "url": 2, "timeout": 3, "status": 4,
+	"unreplayable": 0, "url": 2, "timeout": 3, "status": 4,
 	"content-length": 5, "header": 6, "token": 7, "body": 8,
 }
 
@@ -477,7 +477,6 @@ func TestDataAPIConformance(t *testing.T) {
 	})
 
 	migrationEntry, migrationListed := expected.migration[engine]
-	var lost []string
 	shared, blocked, broken := false, false, false
 	passed, failedAsExpected, skipped, requests := 0, 0, 0, 0
 	for _, f := range fixtures {
@@ -492,8 +491,7 @@ func TestDataAPIConformance(t *testing.T) {
 				t.Skipf("not replayed: the reference file does not migrate on %s (%s)", engine, migrationEntry.cause)
 			}
 			if f.Fresh || !shared {
-				var err error
-				lost, err = migrateDataAPIReference(t, h, &created)
+				err := migrateDataAPIReference(t, h, &created)
 				if err != nil {
 					if !migrationListed || !dataAPIKnownMigrationFailures[migrationEntry.cause].MatchString(err.Error()) {
 						broken = true
@@ -507,7 +505,7 @@ func TestDataAPIConformance(t *testing.T) {
 				}
 				shared = !f.Fresh
 			}
-			diffs, sent := replayDataAPIFixture(h, f, lost)
+			diffs, sent := replayDataAPIFixture(h, f)
 			requests += sent
 			problems, asListed := judgeDataAPIFixture(f, expected.lookup(f.Fixture, engine), engine, diffs)
 			for _, p := range problems {
@@ -536,21 +534,10 @@ func daFirstMessage(diffs []daDiff) string {
 	return diffs[0].msg
 }
 
-// dataAPIUsesAccount reports whether a request signs in as, or names, an account.
-func dataAPIUsesAccount(text, account string) bool {
-	for _, p := range []string{"{{basic:" + account + "}}", "{{basic:" + account + ":", "{{user:" + account + "}}", "{{password:" + account + "}}"} {
-		if strings.Contains(text, p) {
-			return true
-		}
-	}
-	return false
-}
-
 // migrateDataAPIReference replaces the reference database with a fresh
-// migration of the reference file, and gives its accounts test passwords. It
-// returns the accounts the migration did not create. created tracks whether
-// the database exists because this run created it.
-func migrateDataAPIReference(t *testing.T, h *apiHarness, created *bool) ([]string, error) {
+// migration of the reference file, and gives its accounts test passwords.
+// created tracks whether the database exists because this run created it.
+func migrateDataAPIReference(t *testing.T, h *apiHarness, created *bool) error {
 	t.Helper()
 	ctx := t.Context()
 	_, exists, err := h.mgr.LookupDatabase(ctx, dataAPIDatabase)
@@ -597,7 +584,7 @@ func migrateDataAPIReference(t *testing.T, h *apiHarness, created *bool) ([]stri
 	rec = httptest.NewRecorder()
 	h.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
-		return nil, fmt.Errorf("migrate/apply answered %d: %s", rec.Code, rec.Body.String())
+		return fmt.Errorf("migrate/apply answered %d: %s", rec.Code, rec.Body.String())
 	}
 
 	var users []schema.UserMetadata
@@ -607,33 +594,17 @@ func migrateDataAPIReference(t *testing.T, h *apiHarness, created *bool) ([]stri
 	for _, u := range users {
 		byName[u.Username] = u
 	}
-	var missing []string
 	for _, account := range dataAPIAccounts {
 		u, ok := byName[account]
 		if !ok {
-			// TODO(#213): accounts of a Save-as-XML design are not migrated
-			// yet. Remove these stand-ins, and the "stand-in" difference, once
-			// they are (#214).
-			//
-			// A plain user stands in for the account, so that the replay
-			// still shows the other differences; every step that uses it
-			// fails regardless.
-			missing = append(missing, account)
-			rec = daJSON(h, http.MethodPost, "/api/v1/security/users", login.Token, map[string]interface{}{
-				"username": account, "password": dataAPIPassword(account), "role": "user", "is_active": true,
-			}, nil)
-			require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-			continue
+			return fmt.Errorf("the migration did not create the account %s", account)
 		}
 		rec = daJSON(h, http.MethodPut, "/api/v1/security/users/"+u.ID, login.Token, map[string]interface{}{
 			"role": u.Role, "password": dataAPIPassword(account), "is_active": true,
 		}, nil)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	}
-	if len(missing) > 0 {
-		t.Logf("the migration did not create the accounts %v; plain users stand in for them", missing)
-	}
-	return missing, nil
+	return nil
 }
 
 // daJSON is apiHarness.do without the harness's own *testing.T, so that it
@@ -880,23 +851,13 @@ type daDiff struct {
 	harness bool // the fixture or the replay is at fault; never an expected failure
 }
 
-func daStepUsesAccount(step daStep, account string) bool {
-	raw, _ := json.Marshal(step)
-	return dataAPIUsesAccount(string(raw), account)
-}
-
-func replayDataAPIFixture(h *apiHarness, f daFixture, lost []string) ([]daDiff, int) {
+func replayDataAPIFixture(h *apiHarness, f daFixture) ([]daDiff, int) {
 	st := &daState{tokens: map[string]string{}, vars: map[string]string{}}
 	var diffs []daDiff
 	sent := 0
 	for i, step := range f.Steps {
 		where := f.Fixture + " step " + step.ID
 		var d []daDiff
-		for _, account := range lost {
-			if daStepUsesAccount(step, account) {
-				d = append(d, daDiff{kind: "stand-in", msg: fmt.Sprintf("%s: account %s was not migrated; a plain user stood in for it", where, account)})
-			}
-		}
 		switch {
 		case step.IdleSeconds != nil:
 			// Waiting out FileMaker's idle timeout in real time is not an

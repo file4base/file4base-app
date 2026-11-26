@@ -86,12 +86,12 @@ Each line records where a fixture that does not pass yet **first** fails:
 
 ```text
 FIXTURE STEP KIND [ENGINE]
-records/range_paging@v1 login-rw stand-in
+records/range_paging@v1 login-rw status
 routing/envelope_and_routes@v2 version-v3 status
 ```
 
 `KIND` is the first check of that step that differs, in the order the checks
-run: `unreplayable` (an idle step), `stand-in`, `url`, `timeout`, `status`,
+run: `unreplayable` (an idle step), `url`, `timeout`, `status`,
 `content-length`, `header:NAME`, `token`, `body`. In a `concurrent` step they
 are prefixed `background.` or `probe.`, and `no-probe` means the background
 request finished before any probe was sent. The optional `ENGINE`
@@ -121,11 +121,6 @@ change that adds it or re-records its exchanges; a new title, note or audit row
 is not a re-recording. A line may move to a later step or check. A
 `migration@` line may never be added or changed, and a fixture may never be
 deleted.
-
-Accounts of a Save-as-XML design are not migrated yet (#213). Until they are,
-the test creates a plain user for each missing account, so that the other
-differences still show, and every step that signs in with one fails as
-`stand-in`.
 
 ## Known limitations
 
