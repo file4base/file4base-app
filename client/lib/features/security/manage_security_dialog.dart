@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/services/auto_save_service.dart';
+import 'package:file4base_client/features/security/set_password_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr/qr.dart';
@@ -60,7 +61,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   bool _isLoading = true;
   String? _errorMessage;
   String _searchQuery = '';
-  String _statusFilter = 'all'; // 'all', 'active', 'inactive'
+  String _statusFilter = 'all'; // 'all', 'active', 'inactive', 'pending'
 
   @override
   void initState() {
@@ -144,6 +145,7 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
     return _users.where((u) {
       if (_statusFilter == 'active' && !u.isActive) return false;
       if (_statusFilter == 'inactive' && u.isActive) return false;
+      if (_statusFilter == 'pending' && !u.passwordPending) return false;
       if (_searchQuery.isNotEmpty) {
         final query = _searchQuery.toLowerCase();
         final matchName = u.username.toLowerCase().contains(query);
@@ -156,6 +158,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
 
   int get _activeCount => _users.where((u) => u.isActive).length;
   int get _inactiveCount => _users.where((u) => !u.isActive).length;
+
+  /// Accounts a migration or a solution import created without a usable
+  /// password (#198).
+  int get _pendingPasswordCount => _users.where((u) => u.passwordPending).length;
 
   bool _isCurrentUser(UserModel user) => user.id == widget.currentUser.id || user.username == widget.currentUser.username;
 
@@ -267,122 +273,25 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
   }
 
   Future<void> _showChangePasswordDialog(UserModel user) async {
-    final passwordController = TextEditingController();
-    final confirmController = TextEditingController();
-    var obscure = true;
-    String? dialogError;
-
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlgState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          title: Row(
-            children: [
-              const Icon(Icons.key_outlined, color: Color(0xFF1E88E5), size: 22),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text('Change password: ${user.username}', style: const TextStyle(fontSize: 16)),
-              ),
-            ],
-          ),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Enter the new password for account "${user.username}".',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: passwordController,
-                  obscureText: obscure,
-                  decoration: InputDecoration(
-                    labelText: 'New password',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    prefixIcon: const Icon(Icons.lock_outline, size: 18),
-                    suffixIcon: IconButton(
-                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility, size: 18),
-                      onPressed: () => setDlgState(() => obscure = !obscure),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: confirmController,
-                  obscureText: obscure,
-                  decoration: InputDecoration(
-                    labelText: 'Confirm password',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    prefixIcon: const Icon(Icons.lock_reset, size: 18),
-                    suffixIcon: IconButton(
-                      icon: Icon(obscure ? Icons.visibility_off : Icons.visibility, size: 18),
-                      onPressed: () => setDlgState(() => obscure = !obscure),
-                    ),
-                  ),
-                ),
-                if (dialogError != null) ...[
-                  const SizedBox(height: 12),
-                  Text(dialogError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1E88E5),
-                foregroundColor: Colors.white,
-              ),
-              icon: const Icon(Icons.check, size: 18),
-              label: const Text('Save password'),
-              onPressed: () async {
-                final p1 = passwordController.text;
-                final p2 = confirmController.text;
-                if (p1.isEmpty) {
-                  setDlgState(() => dialogError = 'Password cannot be empty.');
-                  return;
-                }
-                if (p1 != p2) {
-                  setDlgState(() => dialogError = 'Passwords do not match.');
-                  return;
-                }
-
-                try {
-                  await widget.apiClient.updateUser(
-                    user.id,
-                    role: user.role,
-                    password: p1,
-                    isActive: user.isActive,
-                    database: widget.databaseName,
-                  );
-                  widget.onModified?.call();
-                  AutoSaveService.instance.markDirty();
-                  if (ctx.mounted) Navigator.of(ctx).pop();
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Password for "${user.username}" updated successfully.'),
-                        backgroundColor: Colors.green.shade700,
-                      ),
-                    );
-                  }
-                } catch (e) {
-                  setDlgState(() => dialogError = e.toString().replaceFirst('Exception: ', ''));
-                }
-              },
-            ),
-          ],
-        ),
+    final updated = await SetPasswordDialog.show(
+      context,
+      apiClient: widget.apiClient,
+      user: user,
+      databaseName: widget.databaseName,
+    );
+    if (updated == null || !mounted) return;
+    widget.onModified?.call();
+    AutoSaveService.instance.markDirty();
+    setState(() {
+      final index = _users.indexWhere((u) => u.id == user.id);
+      if (index != -1) _users[index] = updated;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(user.passwordPending
+            ? 'Password for "${user.username}" set.${updated.isActive ? ' The account can now sign in.' : ' Activate the account to let it sign in.'}'
+            : 'Password for "${user.username}" updated successfully.'),
+        backgroundColor: Colors.green.shade700,
       ),
     );
   }
@@ -1555,8 +1464,13 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                     label: Text('Inactive', style: TextStyle(fontSize: 11)),
                   ),
                 ],
-                selected: {_statusFilter},
-                onSelectionChanged: (set) => setState(() => _statusFilter = set.first),
+                // The pending filter is chosen from the notice below, and
+                // leaves none of these selected.
+                emptySelectionAllowed: true,
+                selected: {if (_statusFilter != 'pending') _statusFilter},
+                onSelectionChanged: (set) {
+                  if (set.isNotEmpty) setState(() => _statusFilter = set.first);
+                },
               ),
               const SizedBox(width: 12),
 
@@ -1575,6 +1489,10 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
             ],
           ),
           const SizedBox(height: 14),
+          if (_pendingPasswordCount > 0 || _statusFilter == 'pending') ...[
+            _buildPendingPasswordNotice(),
+            const SizedBox(height: 10),
+          ],
 
           // Accounts Table
           Expanded(
@@ -1743,6 +1661,31 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                                             ],
                                                           ),
                                                         ),
+                                                      if (user.passwordPending)
+                                                        Tooltip(
+                                                          message: 'Created by a migration or a solution import without a password: '
+                                                              'it cannot sign in until a password is set.',
+                                                          child: Container(
+                                                            key: Key('password-pending-badge-${user.username}'),
+                                                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                                            decoration: BoxDecoration(
+                                                              color: Colors.amber.shade900.withValues(alpha: 0.3),
+                                                              borderRadius: BorderRadius.circular(10),
+                                                              border: Border.all(color: Colors.amberAccent, width: 0.8),
+                                                            ),
+                                                            child: const Row(
+                                                              mainAxisSize: MainAxisSize.min,
+                                                              children: [
+                                                                Icon(Icons.key_off_outlined, size: 10, color: Colors.amberAccent),
+                                                                SizedBox(width: 3),
+                                                                Text(
+                                                                  'No password',
+                                                                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.amberAccent),
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                        ),
                                                     ],
                                                   ),
                                                   if (user.createdAt != null)
@@ -1830,8 +1773,12 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                                               visualDensity: VisualDensity.compact,
                                               padding: const EdgeInsets.all(4),
                                               constraints: const BoxConstraints(),
-                                              icon: const Icon(Icons.key_outlined, size: 18),
-                                              tooltip: 'Change password',
+                                              icon: Icon(
+                                                Icons.key_outlined,
+                                                size: 18,
+                                                color: user.passwordPending ? Colors.amberAccent : null,
+                                              ),
+                                              tooltip: user.passwordPending ? 'Set a password so that it can sign in' : 'Change password',
                                               onPressed: () => _showChangePasswordDialog(user),
                                             ),
                                             const SizedBox(width: 2),
@@ -1888,6 +1835,42 @@ class _ManageSecurityDialogState extends State<ManageSecurityDialog> with Single
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Says which accounts cannot sign in for want of a password (#198), and
+  /// lists only them on request.
+  Widget _buildPendingPasswordNotice() {
+    final count = _pendingPasswordCount;
+    final showing = _statusFilter == 'pending';
+    return Container(
+      key: const Key('password-pending-notice'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.amber.shade900.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.amberAccent.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.key_off_outlined, size: 16, color: Colors.amberAccent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              count == 0
+                  ? 'Every account has a password.'
+                  : '$count ${count == 1 ? 'account has' : 'accounts have'} no password: created by a migration or a '
+                      'solution import, ${count == 1 ? 'it' : 'they'} cannot sign in until you set one with the key button.',
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          TextButton(
+            key: const Key('password-pending-filter'),
+            onPressed: () => setState(() => _statusFilter = showing ? 'all' : 'pending'),
+            child: Text(showing ? 'Show all accounts' : 'Show only these', style: const TextStyle(fontSize: 12)),
           ),
         ],
       ),

@@ -3,6 +3,9 @@ import 'dart:typed_data';
 import 'package:file4base_client/core/api/api_client.dart';
 import 'package:file4base_client/core/services/solution_storage.dart';
 import 'package:file4base_client/core/utils/xml_encoding.dart';
+import 'package:file4base_client/features/schema_manager/manage_script_triggers_dialog.dart';
+import 'package:file4base_client/features/script_workspace/script_workspace_dialog.dart';
+import 'package:file4base_client/features/solution_manager/migration_results_view.dart';
 import 'package:flutter/material.dart';
 
 /// Assisted FileMaker DDR / Save-as-XML & FMPXMLRESULT Migration Dialog (#26).
@@ -81,6 +84,9 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
   MigrationReportModel? _report;
   MigrationApplyResultModel? _appliedResult;
   int _selectedCategoryTab = 0;
+
+  /// What to do after the trigger review asked for a layout (#198).
+  String? _resultsNotice;
 
   @override
   void dispose() {
@@ -236,9 +242,37 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
     }
   }
 
+  /// Opens File > Manage > Script Triggers on the migrated solution (#198).
+  /// A migration needs an owner, who may enable triggers. Asking for a
+  /// trigger's script opens it here; its layout is opened from the main
+  /// window, once this one is closed.
+  Future<void> _reviewTriggers() async {
+    final applied = _appliedResult;
+    final result = await ManageScriptTriggersDialog.show(
+      context,
+      apiClient: widget.apiClient,
+      solutionName: applied?.report.solutionName ?? '',
+    );
+    if (!mounted) return;
+    final script = result.openScript;
+    final target = result.openLayout;
+    if (script != null && script.scriptId != null) {
+      await ScriptWorkspaceDialog.show(
+        context,
+        widget.apiClient,
+        databaseName: applied?.database,
+        initialScriptId: script.scriptId,
+      );
+    } else if (target != null) {
+      setState(() => _resultsNotice =
+          'Close this window, then open layout "${target.layoutName}" in Layout mode to edit that trigger.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final report = _report;
+    final applied = _appliedResult;
     return Dialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       backgroundColor: const Color(0xFF1E293B),
@@ -279,7 +313,16 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
               const SizedBox(height: 6),
               Expanded(
                 child: SingleChildScrollView(
-                  child: Column(
+                  child: applied != null
+                      ? MigrationResultsView(
+                          key: const Key('migration-results'),
+                          result: applied,
+                          apiClient: widget.apiClient,
+                          onReviewTriggers: _reviewTriggers,
+                          notice: _resultsNotice,
+                          fullReport: SizedBox(height: 260, child: _buildReportView(applied.report)),
+                        )
+                      : Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       if (widget.initialFmp12FileName != null)
@@ -469,26 +512,6 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                           ),
                         ),
                       ],
-                      if (_appliedResult != null) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(8),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: Colors.greenAccent),
-                          ),
-                          child: Text(
-                            'Migration committed to database "${_appliedResult!.database}" '
-                            '(${_appliedResult!.recordsInserted} records imported).',
-                            style: const TextStyle(
-                              color: Colors.greenAccent,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
                       const SizedBox(height: 8),
                       SizedBox(
                         height: 220,
@@ -514,7 +537,16 @@ class _FileMakerMigrationDialogState extends State<FileMakerMigrationDialog> {
                 alignment: WrapAlignment.end,
                 spacing: 8,
                 runSpacing: 6,
-                children: [
+                children: applied != null
+                    ? [
+                        ElevatedButton.icon(
+                          key: const Key('migration_done_btn'),
+                          onPressed: () => Navigator.of(context).pop(applied),
+                          icon: const Icon(Icons.check, size: 16),
+                          label: const Text('Done'),
+                        ),
+                      ]
+                    : [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(_appliedResult),
                     child: const Text('Close'),

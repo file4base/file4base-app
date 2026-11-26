@@ -1196,7 +1196,8 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 	}
 
 	// 6. Accounts: missing ones are created disabled, without a usable
-	// password, with their role and layout/table permissions. Existing accounts
+	// password and marked as waiting for one (#198), with their role and
+	// layout/table permissions. Existing accounts
 	// keep their active status and password while restoring any layout/table
 	// permissions carried by the bundle.
 	restoreAccountPermissions := func(userID, username string, a BundleAccount) error {
@@ -1239,6 +1240,9 @@ func (s *Service) ImportSolution(ctx context.Context, data []byte) (*ImportRepor
 			return nil, rollback(fmt.Errorf("creating account %q: %w", a.Username, err))
 		}
 		undo = append(undo, func() { _ = s.DeleteUser(bg, created.ID) })
+		if err := s.markPasswordPending(ctx, created.ID); err != nil {
+			return nil, rollback(fmt.Errorf("creating account %q: %w", a.Username, err))
+		}
 		if err := restoreAccountPermissions(created.ID, a.Username, a); err != nil {
 			return nil, rollback(err)
 		}
