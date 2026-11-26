@@ -167,7 +167,9 @@ class _RelatedApi extends ApiClient {
     String answer(String id, int i) {
       final wanted = RegExp('"([^"]*)"').firstMatch(expressions[i])?.group(1);
       final s = self == null || i >= self.length ? null : self[i];
+      if (expressions[i] == 'Broken') return '?';
       if (s == null) return id == 'cu-2' ? '1' : '0';
+      if (s.text != null) return s.text == wanted ? '1' : '0';
       final record = s.occurrence == 'Customers'
           ? children.first
           : [...parents, ...children].firstWhere((r) => r['id'] == id, orElse: () => const {});
@@ -176,7 +178,12 @@ class _RelatedApi extends ApiClient {
 
     return {
       for (final id in recordIds)
-        id: [for (final (i, e) in expressions.indexed) EvaluationModel(expression: e, text: answer(id, i))],
+        id: [
+          for (final (i, e) in expressions.indexed)
+            answer(id, i) == '?'
+                ? EvaluationModel(expression: e, error: 'cannot be evaluated')
+                : EvaluationModel(expression: e, text: answer(id, i)),
+        ],
     };
   }
 }
@@ -776,6 +783,79 @@ void main() {
           reason: 'evaluated against the record shown, from the layout');
       expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
         {'field': 'last_name', 'occurrence': 'Customers'},
+      ]);
+    });
+  });
+
+  group('conditions of the objects of a portal row', () {
+    LayoutDefinitionModel withRowObjects(List<LayoutObjectModel> extra, {String? hideField}) {
+      final base = _layoutWithPortal();
+      return base.copyWith(objects: [
+        for (final o in base.objects)
+          if (o.id == 'fld_in_portal' && hideField != null) o.copyWith(hideWhen: hideField) else o,
+        ...extra,
+      ]);
+    }
+
+    testWidgets("an object is hidden on the rows its condition is true for, evaluated on each row's record",
+        (tester) async {
+      final api = await _pump(tester, layout: withRowObjects(const [], hideField: 'Self = "Alvarez"'));
+
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsOneWidget);
+      expect(find.byKey(const ValueKey('portal-cell-cu-2-last_name')), findsNothing,
+          reason: "the row's own record is Alvarez");
+      expect(api.evaluations.map((e) => '${e.$1} ${e.$2} ${e.$3}').toList(), [
+        'customers [Self = "Alvarez"] occ-customers',
+      ], reason: "evaluated from the portal's occurrence, never against the layout's record");
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'field': 'last_name'},
+      ]);
+    });
+
+    testWidgets('a row object whose hide condition cannot be evaluated is hidden, as in FileMaker', (tester) async {
+      await _pump(tester, layout: withRowObjects(const [], hideField: 'Broken'));
+
+      expect(find.byKey(const ValueKey('portal-cell-cu-1-last_name')), findsNothing);
+      expect(find.byKey(const ValueKey('portal-cell-cu-2-last_name')), findsNothing);
+    });
+
+    testWidgets("a merging text's rule that does not read Self is evaluated on each row", (tester) async {
+      const red = Color(0xFFFF0000);
+      // Without a Self, the fake answers true on cu-2 only.
+      const rule = ConditionalFormatRule(operator: 'formula', value: 'Customers::last_name = "Alvarez"', textColor: '#FF0000');
+      final api = await _pump(tester, layout: withRowObjects(const [
+        LayoutObjectModel(
+            id: 'lbl_merge', type: 'label', x: 260, y: 165, width: 80, height: 20, text: 'Name {{last_name}}',
+            style: LayoutObjectStyle(conditionalRules: [rule])),
+      ]));
+
+      final drawn = tester.widgetList<Text>(find.text('Name {{last_name}}')).map((t) => t.style?.color).toList();
+      expect(drawn, [isNot(red), red], reason: 'rows cu-1, then cu-2');
+      expect([for (final s in api.evaluatedSelves.single ?? const <ConditionSelf?>[null]) s?.toJson()], [null],
+          reason: 'its Self is unknown, as it shows another text on each row');
+    });
+
+    testWidgets('a text and a button of a row are drawn by their rules, Self being their text', (tester) async {
+      const red = Color(0xFFFF0000);
+      const rule = ConditionalFormatRule(operator: 'formula', value: 'Self = "Each"', textColor: '#FF0000');
+      const go = ConditionalFormatRule(operator: 'formula', value: 'Self = "Go"', textColor: '#FF0000');
+      final api = await _pump(tester, layout: withRowObjects(const [
+        LayoutObjectModel(
+            id: 'lbl_in_portal', type: 'label', x: 260, y: 165, width: 40, height: 20, text: 'Each',
+            style: LayoutObjectStyle(conditionalRules: [rule])),
+        LayoutObjectModel(
+            id: 'btn_in_portal', type: 'button', x: 300, y: 165, width: 60, height: 20, text: 'Go',
+            style: LayoutObjectStyle(conditionalRules: [go])),
+      ]));
+
+      for (final text in ['Each', 'Go']) {
+        final drawn = tester.widgetList<Text>(find.text(text)).toList();
+        expect(drawn, hasLength(2), reason: 'once per row');
+        expect(drawn.map((t) => t.style?.color).toSet(), {red});
+      }
+      expect([for (final s in api.evaluatedSelves.single!) s?.toJson()], [
+        {'text': 'Each'},
+        {'text': 'Go'},
       ]);
     });
   });

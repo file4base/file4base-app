@@ -889,14 +889,16 @@ the object's value, as FileMaker evaluates them. `self` names, for the
 expression at the same index, the field `Self` stands for: a field of the
 record, or of an occurrence by name (a related field, read from the
 occurrence the expressions are evaluated from), in the repetition the object
-shows (1 by default). A `null` entry, or none, leaves `Self` unknown, and an
-expression reading it answers with its `error`. Each result's `expression` is
+shows (1 by default), or, with `text`, the text a text object or a button
+shows, which is its `Self` in FileMaker (`{"text": "Open"}`). A `null` entry,
+or none, leaves `Self` unknown, and an expression reading it answers with its
+`error`. Each result's `expression` is
 the one sent.
 
 ```json
 {
   "expressions": ["Self > 100", "Self = \"Open\""],
-  "self": [{"field": "marks", "repetition": 2}, {"occurrence": "Orders", "field": "status"}],
+  "self": [{"field": "marks", "repetition": 2}, {"text": "Open"}],
   "record_ids": ["a1b2…", "c3d4…"],
   "occurrence": "Customers"
 }
