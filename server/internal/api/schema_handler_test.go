@@ -56,7 +56,7 @@ func setupTestRouter(t *testing.T) (*chi.Mux, *schema.Service) {
 		DSN:        dsn,
 	})
 	if err != nil {
-		t.Skip("PostgreSQL not available:", err)
+		testdb.Unavailable(t, "PostgreSQL not available:", err)
 		return nil, nil
 	}
 
@@ -64,7 +64,7 @@ func setupTestRouter(t *testing.T) (*chi.Mux, *schema.Service) {
 	defer cancel()
 
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("PostgreSQL ping failed:", err)
+		testdb.Unavailable(t, "PostgreSQL ping failed:", err)
 		return nil, nil
 	}
 

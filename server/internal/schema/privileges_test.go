@@ -18,7 +18,7 @@ import (
 func TestRolePrivileges(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not accessible, skipping integration test:", err)
+		testdb.Unavailable(t, "database not accessible, skipping integration test:", err)
 		return
 	}
 	t.Cleanup(func() { _ = driver.Close() }) // after the cleanup that empties sys_privileges
@@ -26,7 +26,7 @@ func TestRolePrivileges(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed, skipping integration test:", err)
+		testdb.Unavailable(t, "database ping failed, skipping integration test:", err)
 		return
 	}
 
@@ -135,14 +135,14 @@ func TestRolePrivileges(t *testing.T) {
 func TestRolePrivileges_OmittedFMRestKeepsTheStoredValue(t *testing.T) {
 	driver, err := dbal.Connect(dbal.DriverConfig{EngineType: testdb.Engine(), DSN: testdb.DevDSN()})
 	if err != nil {
-		t.Skip("database not accessible, skipping integration test:", err)
+		testdb.Unavailable(t, "database not accessible, skipping integration test:", err)
 		return
 	}
 	t.Cleanup(func() { _ = driver.Close() }) // after the cleanup that empties sys_privileges
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := driver.Ping(ctx); err != nil {
-		t.Skip("database ping failed, skipping integration test:", err)
+		testdb.Unavailable(t, "database ping failed, skipping integration test:", err)
 		return
 	}
 	svc := schema.NewService(driver)

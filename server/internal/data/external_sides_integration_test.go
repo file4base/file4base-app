@@ -21,13 +21,13 @@ import (
 func TestExternalLeftSideOptions_CreateAndDeleteInTheOtherSolution(t *testing.T) {
 	mgr, err := dbal.NewMultiDatabaseManager(testdb.Engine(), testdb.AdminDSN())
 	if err != nil {
-		t.Skip("database not available:", err)
+		testdb.Unavailable(t, "database not available:", err)
 	}
 	t.Cleanup(func() { _ = mgr.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	t.Cleanup(cancel)
 	if err := mgr.Ping(ctx); err != nil {
-		t.Skip("database ping failed:", err)
+		testdb.Unavailable(t, "database ping failed:", err)
 	}
 	open := func(prefix string) (string, dbal.DatabaseDriver) {
 		name := fmt.Sprintf("f4b_%s_%d", prefix, uniqueTestStamp())
