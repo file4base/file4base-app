@@ -220,3 +220,35 @@ func sortedKeys(m map[string]string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Save a Copy as XML lists accounts in <AccountsCatalog><ObjectList>, with the
+// name in <Authentication><AccountName> and the privilege set as a
+// <PrivilegeSetReference>. They were read only from a Database Design Report.
+func TestAnalyzeAndConvert_SaveAsXMLAccounts(t *testing.T) {
+	doc := `<FMSaveAsXML Has_DDR_INFO="True"><Structure><AddAction>
+ <BaseTableCatalog><BaseTable id="129" name="Notes"/></BaseTableCatalog>
+ <FieldsForTables><FieldCatalog><BaseTableReference id="129" name="Notes"/><ObjectList><Field id="1" name="Body" datatype="Text" fieldtype="Normal"/></ObjectList></FieldCatalog></FieldsForTables>
+ <AccountsCatalog membercount="3"><ObjectList membercount="3">
+  <Account id="1" kind="0" type="FileMaker" enable="False"><Authentication><AccountName>[Guest]</AccountName></Authentication><PrivilegeSetReference id="3" name="[Read-Only Access]"/></Account>
+  <Account id="2" kind="0" type="FileMaker" enable="True"><Description>Owner</Description><Authentication><AccountName>curator</AccountName></Authentication><PrivilegeSetReference id="1" name="[Full Access]"/></Account>
+  <Account id="3" kind="0" type="FileMaker" enable="True"><Authentication><AccountName>clerk</AccountName></Authentication><PrivilegeSetReference id="4" name="Clerks"/></Account>
+ </ObjectList></AccountsCatalog>
+ </AddAction></Structure></FMSaveAsXML>`
+	got, err := AnalyzeAndConvert(MigrationRequest{DesignXML: doc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := map[string]string{}
+	for _, u := range got.Bundle.Users {
+		if u.IsActive {
+			t.Errorf("account %q imported active", u.Username)
+		}
+		roles[u.Username] = u.Role
+	}
+	if len(roles) != 2 || roles["curator"] != "owner" || roles["clerk"] != "user" {
+		t.Fatalf("accounts = %v, want curator owner and clerk user ([Guest] rejected)", roles)
+	}
+	if got.Report.Counts.Accounts != 2 {
+		t.Fatalf("account count = %d, want 2", got.Report.Counts.Accounts)
+	}
+}
