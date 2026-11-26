@@ -1581,6 +1581,8 @@ CONTAINER fields are MessagePack binary values in `.f4data` files, so they are r
 
 A record of an `.f4data` file may carry the original texts of its values under `__source_text` (field name → text, #124); `export-data` writes them and `import-data` restores them with the record, in the same transaction. Each must name a field of the record's table and be text of at most 64 KiB, or the import answers `400 Bad Request`.
 
+A record also carries its identity under `__record_identity` (#208): `{"record_id": <n>, "mod_id": <n>}`, its FileMaker-style record ID and modification count. `import-data` keeps both when the table has never given that record ID (to any record, deleted ones included) and no other record of the file carries it; otherwise the record gets a new record ID after the table's others, and `record_ids_renumbered` counts it among the records written. A record without `record_id` gets a new one; without `mod_id`, it counts no modification. `record_id` must be a whole number from 1 to 2^62 and `mod_id` one from 0 to 2^62, or the import answers `400 Bad Request`. The stored calculations that read the record ID are computed again for the records given a new one. A server older than 0.23 refuses files that carry the key, as it refuses any key that is not a field.
+
 #### Request Body
 Binary MessagePack payload (`Content-Type: application/x-msgpack`).
 
@@ -1593,7 +1595,8 @@ Binary MessagePack payload (`Content-Type: application/x-msgpack`).
   "records_inserted": 140,
   "records_skipped": 2,
   "records_count": 140,
-  "skipped_tables": []
+  "skipped_tables": [],
+  "record_ids_renumbered": 0
 }
 ```
 `records_count` equals `records_inserted`.

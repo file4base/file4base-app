@@ -1004,11 +1004,18 @@ func (c *unstoredContext) NextSerialValue(field string) (string, error) {
 }
 
 // Get answers Get ( AccountName ) and Get ( UserName ) with the account the
-// service reads as; the engine answers the clock and the other selectors.
+// service reads as, and Get ( RecordID ) and Get ( RecordModificationCount )
+// with the record's identity; the engine answers the clock and the other
+// selectors.
 func (c *unstoredContext) Get(selector string) (any, error) {
 	switch selector {
 	case "ACCOUNTNAME", "USERNAME":
 		return c.reader.s.account, nil
+	}
+	if v, ok, err := identitySelector(selector, func() (*Identity, error) {
+		return c.reader.s.identityOf(c.ctx, c.table, c.row)
+	}); ok {
+		return v, err
 	}
 	return c.RecordContext.Get(selector)
 }

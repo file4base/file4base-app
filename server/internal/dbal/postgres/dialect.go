@@ -66,7 +66,8 @@ func (p *PostgresDialect) BuildCreateTableSQL(def dbal.TableDefinition) (string,
 		colDefs = append(colDefs, clause)
 	}
 	if def.CreationOrder {
-		colDefs = append(colDefs, fmt.Sprintf("%s %s", p.QuoteIdentifier(dbal.CreationOrderColumn), dbal.CreationOrderType(dbal.EnginePostgres)))
+		colDefs = append(colDefs, fmt.Sprintf("%s %s", p.QuoteIdentifier(dbal.CreationOrderColumn), dbal.CreationOrderType(dbal.EnginePostgres)),
+			fmt.Sprintf("%s %s", p.QuoteIdentifier(dbal.ModCountColumn), dbal.ModCountType))
 	}
 
 	return fmt.Sprintf("CREATE TABLE %s (\n  %s\n);",
