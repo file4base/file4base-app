@@ -1,0 +1,973 @@
+{
+  "fixture": "sessions/login_variants@v1",
+  "scenario": "sessions/login_variants",
+  "group": "sessions",
+  "version": "v1",
+  "fresh": false,
+  "title": "Login with Basic credentials: body variants, fmDataSource, wrong credentials, accounts without the Data API privilege",
+  "rows": ["L1", "L2", "L3", "L4", "L5", "L6", "L11", "L12", "L13", "X17", "EC11", "EC18", "EC3"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "basic-empty-object",
+      "rows": ["L1", "L2", "L3", "L4"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "a",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "basic-empty-body-json-type",
+      "rows": ["L3"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Authorization", "{{basic:api_rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": ""
+      },
+      "capture": [
+        {
+          "var": "b",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "basic-no-body-no-type",
+      "rows": ["L3", "X6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Authorization", "{{basic:api_rw}}"]
+        ]
+      },
+      "capture": [
+        {
+          "var": "c",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Invalid content type (application/octet-stream).  These are valid: application/json",
+              "code": "1708"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "basic-text-plain",
+      "rows": ["X6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Authorization", "{{basic:api_rw}}"],
+          ["Content-Type", "text/plain"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "d",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Invalid content type (text/plain).  These are valid: application/json",
+              "code": "1708"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "basic-malformed-json",
+      "rows": ["X19"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Authorization", "{{basic:api_rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{"
+      },
+      "capture": [
+        {
+          "var": "e",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+              "code": "1630"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "basic-unknown-body-key",
+      "rows": ["X20"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{\"foo\":\"bar\"}"
+      },
+      "capture": [
+        {
+          "var": "f",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): foo",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "fmdatasource-self",
+      "rows": ["L11"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{\"fmDataSource\":[{\"database\":\"F4B_DataAPI_Reference\",\"username\":\"{{user:api_rw}}\",\"password\":\"{{password:api_rw}}\"}]}"
+      },
+      "capture": [
+        {
+          "var": "g",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fmdatasource-unknown-file",
+      "rows": ["L11"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{\"fmDataSource\":[{\"database\":\"NoSuchFile\",\"username\":\"{{user:api_rw}}\",\"password\":\"{{password:api_rw}}\"}]}"
+      },
+      "capture": [
+        {
+          "var": "h",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fmdatasource-wrong-password",
+      "rows": ["L11"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{\"fmDataSource\":[{\"database\":\"F4B_DataAPI_Reference\",\"username\":\"{{user:api_rw}}\",\"password\":\"wrong\"}]}"
+      },
+      "capture": [
+        {
+          "var": "i",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fmdatasource-not-array",
+      "rows": ["L11", "X20"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{\"fmDataSource\":{\"database\":\"F4B_DataAPI_Reference\"}}"
+      },
+      "capture": [
+        {
+          "var": "j",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "'fmDataSource': Expected type array but found type object",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "wrong-password",
+      "rows": ["L5", "EC11"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw:wrong}}"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "212",
+              "message": "Invalid user account or password"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "empty-password",
+      "rows": ["L2", "L5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw:empty}}"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "212",
+              "message": "Invalid user account or password"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "unknown-account",
+      "rows": ["L5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:raw:nobody:nobody}}"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "212",
+              "message": "Invalid user account or password"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "account-name-uppercase",
+      "rows": ["L13"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw:upper}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "k",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "no-authorization",
+      "rows": ["L2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "HTTP Authorization header or OAuth headers are missing.",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "bearer-instead-of-basic",
+      "rows": ["L2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "Bearer {{token:a}}"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "212",
+              "message": "Invalid user account or password"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "malformed-basic",
+      "rows": ["L2"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "Basic not-base64!"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Authorization header 'Basic' invalid.",
+              "code": "212"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "account-without-fmrest",
+      "rows": ["X17", "EC3"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:noapi}}"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "9",
+              "message": "Insufficient privileges"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "read-only-account",
+      "rows": ["L1"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_ro}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "ro",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "full-access-account",
+      "rows": ["L1"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:admin}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "admin",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unknown-database",
+      "rows": ["L6", "EC18"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/NoSuchFile/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "802",
+              "message": "Unable to open file"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "database-lowercase",
+      "rows": ["X8"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/f4b_dataapi_reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "l",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "use-token-a",
+      "rows": ["L12"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:a}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 30,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "use-token-lowercase-db",
+      "rows": ["X8", "T4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:l}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-a",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:a}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-b",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:b}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-c",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:c}}",
+        "headers": []
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-g",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:g}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-ro",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:ro}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-admin",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:admin}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

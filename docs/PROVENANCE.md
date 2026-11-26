@@ -235,3 +235,35 @@ observed in it; these are observations from one file, not a published format.
 No vendor sample, customer data, licence or credential is included. Original
 work under GPL-3.0-only. Claude Code (Claude Opus 5.5) built it in a disposable,
 network-isolated virtual machine and wrote the reader change and tests.
+
+## Data API conformance fixtures — 2026-11-26
+
+`server/testdata/dataapi/` holds the reference side of the FileMaker Data API
+conformance suite (#208). Everything in it was made for this project:
+
+- `gen_reference.py` is original code. It writes a FileMaker Save-as-XML
+  document for a synthetic schema with made-up names and values, which
+  `FMUpgradeTool --generateDBFile` (FileMaker Server 26.0.2) compiled into
+  `reference/F4B_DataAPI_Reference.fmp12`. Its records and global values were
+  created by the file's own script in FileMaker Pro 26.0.2, and
+  `reference/F4B_DataAPI_Reference.xml.gz` is FileMaker's Save-as-XML of the
+  result. The file holds no vendor sample, customer data or credential; its
+  accounts have blank passwords. The generator reproduces the short descriptions of
+  FileMaker's three built-in privilege sets and of its built-in extended
+  privileges, which a generated file must carry.
+- `fixtures/` are the answers FileMaker Server 26.0.2 gave to original
+  scenarios against that file, recorded on 2026-11-26 in a disposable,
+  network-isolated lab. Session tokens, cookies, container URL hosts and
+  tokens, and current-time stamps are replaced by placeholders. The answers
+  contain FileMaker's JSON structure, error codes and error message strings,
+  kept as functional observations for interoperability.
+- The routes and parameters exercised were taken from the Data API OpenAPI
+  document served by that FileMaker Server installation; no vendor prose or
+  example is copied.
+
+Open for maintainer review: whether File4Base reproduces FileMaker's literal
+message strings and `productInfo` values (#208, product identity), and the
+lawful-access record of the FileMaker Server and FileMaker Pro installations
+used. Original work under GPL-3.0-only. Claude Code (Claude Opus 5.5) wrote the
+generator, the scenarios and recorder (kept outside the repository), and the
+replay test.

@@ -1,0 +1,602 @@
+{
+  "fixture": "routing/envelope_and_routes@v1",
+  "scenario": "routing/envelope_and_routes",
+  "group": "routing",
+  "version": "v1",
+  "fresh": false,
+  "title": "Unknown versions, routes and methods; malformed and mistyped bodies; unknown parameters; database name matching",
+  "rows": ["X1", "X2", "X3", "X5", "X6", "X8", "X18", "X19", "X20", "X21", "L6", "EC23", "EC24", "EC25"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "version-v3",
+      "rows": ["X2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v3/productInfo",
+        "headers": []
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "version-empty",
+      "rows": ["X2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data//productInfo",
+        "headers": []
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          ["Content-Type", "text/html; charset=utf-8"]
+        ],
+        "body_text": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /fmi/data/productInfo</pre>\n</body>\n</html>\n"
+      }
+    },
+    {
+      "id": "version-lowercase-vlatest",
+      "rows": ["X2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vlatest/productInfo",
+        "headers": []
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "unknown-route",
+      "rows": ["X18", "EC24"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/nosuchroute",
+        "headers": []
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          ["Content-Type", "text/html; charset=utf-8"]
+        ],
+        "body_text": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /fmi/data/v1/nosuchroute</pre>\n</body>\n</html>\n"
+      }
+    },
+    {
+      "id": "unknown-db-subroute",
+      "rows": ["X18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/nosuchroute",
+        "headers": []
+      },
+      "response": {
+        "status": 404,
+        "headers": [
+          ["Content-Type", "text/html; charset=utf-8"]
+        ],
+        "body_text": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>Error</title>\n</head>\n<body>\n<pre>Cannot GET /fmi/data/v1/databases/F4B_DataAPI_Reference/nosuchroute</pre>\n</body>\n</html>\n"
+      }
+    },
+    {
+      "id": "login",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wrong-method-layouts",
+      "rows": ["X18"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 405,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Resource doesn't support the specified HTTP verb",
+              "code": "1704"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "wrong-method-records-put",
+      "rows": ["X18", "E1"],
+      "request": {
+        "method": "PUT",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{}}"
+      },
+      "response": {
+        "status": 405,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Resource doesn't support the specified HTTP verb",
+              "code": "1704"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "find-malformed-json",
+      "rows": ["X19", "EC25"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"query\":[{\"ProductCode\":\"P001\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Expected ',' or ']' after array element in JSON at position 32 (line 1 column 33)",
+              "code": "1630"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "find-text-plain",
+      "rows": ["X6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "text/plain"]
+        ],
+        "body": "{\"query\":[{\"ProductCode\":\"P001\"}]}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Invalid content type (text/plain).  These are valid: application/json",
+              "code": "1708"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "find-no-content-type",
+      "rows": ["X6"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ],
+        "body": "{\"query\":[{\"ProductCode\":\"P001\"}]}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Invalid content type (application/octet-stream).  These are valid: application/json",
+              "code": "1708"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "find-unknown-body-param",
+      "rows": ["X20", "EC23"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"query\":[{\"ProductCode\":\"P001\"}],\"lmit\":1}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): lmit",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "find-limit-as-string",
+      "rows": ["X21", "F24"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"query\":[{\"ProductCode\":\"P00*\"}],\"limit\":\"2\",\"offset\":\"2\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 30,
+              "foundCount": 9,
+              "returnedCount": 2
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 2,
+                  "ProductCode": "P002",
+                  "ProductName": "Clavier AZERTY",
+                  "Price": 29.9,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              },
+              {
+                "fieldData": {
+                  "ProductID": 3,
+                  "ProductCode": "P003",
+                  "ProductName": "Souris sans fil",
+                  "Price": 19.5,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "find-limit-not-a-number",
+      "rows": ["X21", "EC23"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"query\":[{\"ProductCode\":\"P00*\"}],\"limit\":\"two\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "The limit must be an integer with value greater than 0.",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "records-unknown-query-param-_script",
+      "rows": ["X20"],
+      "note": "a client sends _script on a range read",
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=1&_script=API_Success",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): _script",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "records-unknown-query-param",
+      "rows": ["X20"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=1&foo=bar",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): foo",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "records-unprefixed-limit",
+      "rows": ["X20", "R4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Products/records?limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): limit",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "database-case-insensitive",
+      "rows": ["X8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/f4b_dataapi_reference/layouts/API_Products/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "database-with-extension",
+      "rows": ["X8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference.fmp12/layouts/API_Products/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "database-unknown",
+      "rows": ["X8", "T4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/NoSuchFile/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "layout-name-url-encoded-space",
+      "rows": ["X11"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/No%20Such%20Layout/records",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

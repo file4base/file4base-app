@@ -1,0 +1,680 @@
+{
+  "fixture": "metadata/layouts_list@vLatest",
+  "scenario": "metadata/layouts_list",
+  "group": "metadata",
+  "version": "vLatest",
+  "fresh": false,
+  "title": "Layout list with folders, separators and access filtering, per privilege set",
+  "rows": ["LN1", "LN2", "LN3", "LN4", "LN5", "LN6", "X11"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-ro",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_ro}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "ro",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-admin",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:admin}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "admin",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layouts-rw",
+      "rows": ["LN1", "LN2", "LN3", "LN4", "LN5", "LN6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "layouts": [
+              {
+                "name": "Customers",
+                "table": "Customers"
+              },
+              {
+                "name": "Orders",
+                "table": "Orders"
+              },
+              {
+                "name": "OrderLines",
+                "table": "OrderLines"
+              },
+              {
+                "name": "Contacts",
+                "table": "Contacts"
+              },
+              {
+                "name": "Products",
+                "table": "Products"
+              },
+              {
+                "name": "Setup_Report",
+                "table": "Customers"
+              },
+              {
+                "name": "-",
+                "table": "Customers"
+              },
+              {
+                "name": "API",
+                "isFolder": true,
+                "folderLayoutNames": [
+                  {
+                    "name": "API_Customers",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Portals",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Restricted",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Orders",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "API_OrderLines",
+                    "table": "OrderLines"
+                  },
+                  {
+                    "name": "API_Contacts",
+                    "table": "Contacts"
+                  },
+                  {
+                    "name": "API_Products",
+                    "table": "Products"
+                  },
+                  {
+                    "name": "API_Empty",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "-",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "Nested",
+                    "isFolder": true,
+                    "folderLayoutNames": [
+                      {
+                        "name": "API_Customers_Nested",
+                        "table": "Customers"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layouts-ro",
+      "rows": ["LN6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "layouts": [
+              {
+                "name": "Customers",
+                "table": "Customers"
+              },
+              {
+                "name": "Orders",
+                "table": "Orders"
+              },
+              {
+                "name": "OrderLines",
+                "table": "OrderLines"
+              },
+              {
+                "name": "Contacts",
+                "table": "Contacts"
+              },
+              {
+                "name": "Products",
+                "table": "Products"
+              },
+              {
+                "name": "Setup_Report",
+                "table": "Customers"
+              },
+              {
+                "name": "-",
+                "table": "Customers"
+              },
+              {
+                "name": "API",
+                "isFolder": true,
+                "folderLayoutNames": [
+                  {
+                    "name": "API_Customers",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Portals",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Restricted",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Orders",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "API_OrderLines",
+                    "table": "OrderLines"
+                  },
+                  {
+                    "name": "API_Contacts",
+                    "table": "Contacts"
+                  },
+                  {
+                    "name": "API_Products",
+                    "table": "Products"
+                  },
+                  {
+                    "name": "API_Empty",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "-",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "Nested",
+                    "isFolder": true,
+                    "folderLayoutNames": [
+                      {
+                        "name": "API_Customers_Nested",
+                        "table": "Customers"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layouts-admin",
+      "rows": ["LN6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:admin}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "layouts": [
+              {
+                "name": "Customers",
+                "table": "Customers"
+              },
+              {
+                "name": "Orders",
+                "table": "Orders"
+              },
+              {
+                "name": "OrderLines",
+                "table": "OrderLines"
+              },
+              {
+                "name": "Contacts",
+                "table": "Contacts"
+              },
+              {
+                "name": "Products",
+                "table": "Products"
+              },
+              {
+                "name": "Setup_Report",
+                "table": "Customers"
+              },
+              {
+                "name": "-",
+                "table": "Customers"
+              },
+              {
+                "name": "API",
+                "isFolder": true,
+                "folderLayoutNames": [
+                  {
+                    "name": "API_Customers",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Portals",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Restricted",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Orders",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "API_OrderLines",
+                    "table": "OrderLines"
+                  },
+                  {
+                    "name": "API_Contacts",
+                    "table": "Contacts"
+                  },
+                  {
+                    "name": "API_Products",
+                    "table": "Products"
+                  },
+                  {
+                    "name": "API_NoAccess",
+                    "table": "Products"
+                  },
+                  {
+                    "name": "API_Empty",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "-",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "Nested",
+                    "isFolder": true,
+                    "folderLayoutNames": [
+                      {
+                        "name": "API_Customers_Nested",
+                        "table": "Customers"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layouts-trailing-slash",
+      "rows": ["X18"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "layouts": [
+              {
+                "name": "Customers",
+                "table": "Customers"
+              },
+              {
+                "name": "Orders",
+                "table": "Orders"
+              },
+              {
+                "name": "OrderLines",
+                "table": "OrderLines"
+              },
+              {
+                "name": "Contacts",
+                "table": "Contacts"
+              },
+              {
+                "name": "Products",
+                "table": "Products"
+              },
+              {
+                "name": "Setup_Report",
+                "table": "Customers"
+              },
+              {
+                "name": "-",
+                "table": "Customers"
+              },
+              {
+                "name": "API",
+                "isFolder": true,
+                "folderLayoutNames": [
+                  {
+                    "name": "API_Customers",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Portals",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Restricted",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Orders",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "API_OrderLines",
+                    "table": "OrderLines"
+                  },
+                  {
+                    "name": "API_Contacts",
+                    "table": "Contacts"
+                  },
+                  {
+                    "name": "API_Products",
+                    "table": "Products"
+                  },
+                  {
+                    "name": "API_Empty",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "-",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "Nested",
+                    "isFolder": true,
+                    "folderLayoutNames": [
+                      {
+                        "name": "API_Customers_Nested",
+                        "table": "Customers"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-ro",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:ro}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-admin",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:admin}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -48,8 +48,75 @@ jobs:
 
       - name: Run Go tests
         working-directory: server
+        env:
+          F4B_TEST_REQUIRE_DB: "1"
         # Packages share one PostgreSQL instance, so they run one at a time
         run: go test -p 1 -count=1 ./...
+
+      - name: Data API expected failures only shrink
+        if: github.event_name == 'pull_request'
+        # A line may be added to expected_failures.txt only for a fixture this
+        # pull request adds or re-records; anything else is a regression.
+        run: |
+          list=server/testdata/dataapi/expected_failures.txt
+          base=${{ github.event.pull_request.base.sha }}
+          git fetch --no-tags --depth=1 origin "$base"
+          git cat-file -e "$base:$list" 2>/dev/null || exit 0
+          added=$(comm -13 <(git show "$base:$list" | grep -v '^#' | sort -u) <(grep -v '^#' "$list" | sort -u))
+          status=0
+          for name in $added; do
+            fixture="server/testdata/dataapi/fixtures/$name.json"
+            if git cat-file -e "$base:$fixture" 2>/dev/null && git diff --quiet "$base" -- "$fixture"; then
+              echo "::error file=$list::$name was added to the expected failures, but its fixture is unchanged"
+              status=1
+            fi
+          done
+          exit $status
+
+  # The FileMaker Data API conformance suite (#208) on MariaDB. On PostgreSQL
+  # it runs as part of test-server.
+  test-dataapi-mariadb:
+    name: Data API conformance (MariaDB)
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11-jammy
+        env:
+          MARIADB_ROOT_PASSWORD: root_password
+          MARIADB_DATABASE: file4base_dev
+          MARIADB_USER: file4base
+          MARIADB_PASSWORD: dev_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Grant server-level privileges to the API account
+        run: |
+          docker run --rm --network host mariadb:11-jammy \
+            mariadb -h 127.0.0.1 -uroot -proot_password \
+            -e "GRANT ALL PRIVILEGES ON *.* TO 'file4base'@'%' WITH GRANT OPTION; FLUSH PRIVILEGES;"
+
+      - name: Replay the Data API fixtures against MariaDB
+        working-directory: server
+        env:
+          F4B_TEST_ENGINE: mariadb
+          F4B_TEST_ADMIN_DSN: "file4base:dev_password@tcp(127.0.0.1:3306)/mysql"
+          F4B_TEST_DEV_DSN: "file4base:dev_password@tcp(127.0.0.1:3306)/file4base_dev"
+          F4B_TEST_REQUIRE_DB: "1"
+        run: go test -count=1 -v -run '^TestDataAPIConformance' ./internal/api/
 
   # Temporarily disabled while prioritizing PostgreSQL engine
   # test-server-mariadb:
@@ -311,7 +378,7 @@ jobs:
 
   publish-docker:
     name: Publish Docker Hub Images (linux/amd64, linux/arm64, linux/arm/v7)
-    needs: [test-server]
+    needs: [test-server, test-dataapi-mariadb]
     if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -363,7 +430,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release (macOS DMG/ZIP, Windows EXE/ZIP, Linux DEB/TAR.GZ)
-    needs: [test-server, build-macos, build-linux, build-windows]
+    needs: [test-server, test-dataapi-mariadb, build-macos, build-linux, build-windows]
     if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Only one run publishes a release at a time. Cutting a release pushes the

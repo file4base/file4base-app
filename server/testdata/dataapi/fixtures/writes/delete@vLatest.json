@@ -1,0 +1,470 @@
+{
+  "fixture": "writes/delete@vLatest",
+  "scenario": "writes/delete",
+  "group": "writes",
+  "version": "vLatest",
+  "fresh": true,
+  "title": "Delete: cascade, missing records, scripts",
+  "rows": ["DL1", "DL2", "DL3", "DL5"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "lines-of-order-60-before",
+      "rows": ["DL3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/60",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Orders",
+              "table": "Orders",
+              "totalRecordCount": 60,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "OrderID": 60,
+                  "CustomerID": 29,
+                  "OrderNo": "SO-0060",
+                  "OrderDate": "10/17/2022",
+                  "Amount": 1234.56,
+                  "Status": "Draft",
+                  "Paid": 0,
+                  "Comment": "Commande n°60 – livrée à l'entrepôt\rligne 2",
+                  "FeaturedProduct": "P001",
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "11/26/2026 13:06:28",
+                  "cLineCount": 1,
+                  "cLineTotal": 9.99,
+                  "cCustomerName": "Šoštanj d.o.o.",
+                  "sOrderCount": 60,
+                  "sAmountTotal": 600009350.269999999999999998,
+                  "Order_Customer::Name": "Šoštanj d.o.o.",
+                  "Order_Customer::Code": "C029"
+                },
+                "portalData": {
+                  "LinesPortal": [
+                    {
+                      "recordId": "120",
+                      "Order_Lines::LineID": 120,
+                      "Order_Lines::ProductCode": "P001",
+                      "Order_Lines::Description": "",
+                      "Order_Lines::Qty": 1,
+                      "Order_Lines::UnitPrice": 9.99,
+                      "Order_Lines::LineTotal": 9.99,
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "60",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "LinesPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Order_Lines",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-order-cascade",
+      "rows": ["DL1", "DL3"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/60",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-deleted",
+      "rows": ["DL1", "EC5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/60",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "find-cascaded-lines",
+      "rows": ["DL3", "F22"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_OrderLines/_find",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"query\":[{\"OrderID\":\"60\"}]}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_OrderLines",
+              "table": "OrderLines",
+              "totalRecordCount": 119,
+              "foundCount": 0,
+              "returnedCount": 0
+            },
+            "data": []
+          },
+          "messages": [
+            {
+              "code": "401",
+              "message": "No records match the request"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-missing",
+      "rows": ["DL5", "EC5"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/9999",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "delete-again",
+      "rows": ["DL5", "EC5"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/60",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "delete-invalid-id",
+      "rows": ["DL5", "G4"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/abc",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "delete-with-scripts",
+      "rows": ["DL2"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/59?script.prerequest=API_SetVar&script.prerequest.param=del&script=API_ReadVar",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult.prerequest": "del",
+            "scriptError.prerequest": "0",
+            "scriptResult": "del",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-with-body",
+      "rows": ["DL1"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Products/records/30",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "product-count-after",
+      "rows": ["R13"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Products/records?_limit=1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Products",
+              "table": "Products",
+              "totalRecordCount": 29,
+              "foundCount": 29,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ProductID": 1,
+                  "ProductCode": "P001",
+                  "ProductName": "Écran 27\"",
+                  "Price": 199.99,
+                  "Active": 1
+                },
+                "portalData": {},
+                "recordId": "1",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-noaccess-layout",
+      "rows": ["LN6"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_NoAccess/records/29",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

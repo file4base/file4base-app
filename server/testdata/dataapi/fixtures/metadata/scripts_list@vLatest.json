@@ -1,0 +1,552 @@
+{
+  "fixture": "metadata/scripts_list@vLatest",
+  "scenario": "metadata/scripts_list",
+  "group": "metadata",
+  "version": "vLatest",
+  "fresh": false,
+  "title": "Script list with folders and separators, per privilege set",
+  "rows": ["SN1", "SN2", "SN3", "SN4"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-ro",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_ro}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "ro",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-admin",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:admin}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "admin",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "scripts-rw",
+      "rows": ["SN1", "SN2", "SN4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/scripts",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scripts": [
+              {
+                "name": "API",
+                "folderScriptNames": [
+                  {
+                    "name": "API_Success",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_EchoParam",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SecondParamValue",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Error_NoRecords",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Error_ExitResult",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Unsupported",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_FindActive",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_OmitFirst",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SortByNameDesc",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SetGlobal",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SetVar",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_ReadVar",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_UnicodeResult",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "-",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "Diagnostics",
+                    "folderScriptNames": [
+                      {
+                        "name": "API_ReturnContext",
+                        "isFolder": false
+                      }
+                    ],
+                    "isFolder": true
+                  }
+                ],
+                "isFolder": true
+              },
+              {
+                "name": "Setup",
+                "folderScriptNames": [
+                  {
+                    "name": "Build Reference Data",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "Self Check",
+                    "isFolder": false
+                  }
+                ],
+                "isFolder": true
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "scripts-ro",
+      "rows": ["SN3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/scripts",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scripts": [
+              {
+                "name": "API",
+                "folderScriptNames": [
+                  {
+                    "name": "API_Success",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_EchoParam",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SecondParamValue",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Error_NoRecords",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Error_ExitResult",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Unsupported",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_FindActive",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_OmitFirst",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SortByNameDesc",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SetGlobal",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SetVar",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_ReadVar",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_UnicodeResult",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "-",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "Diagnostics",
+                    "folderScriptNames": [
+                      {
+                        "name": "API_ReturnContext",
+                        "isFolder": false
+                      }
+                    ],
+                    "isFolder": true
+                  }
+                ],
+                "isFolder": true
+              },
+              {
+                "name": "Setup",
+                "folderScriptNames": [
+                  {
+                    "name": "Build Reference Data",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "Self Check",
+                    "isFolder": false
+                  }
+                ],
+                "isFolder": true
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "scripts-admin",
+      "rows": ["SN3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/scripts",
+        "headers": [
+          ["Authorization", "Bearer {{token:admin}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scripts": [
+              {
+                "name": "API",
+                "folderScriptNames": [
+                  {
+                    "name": "API_Success",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_EchoParam",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SecondParamValue",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Error_NoRecords",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Error_ExitResult",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_Unsupported",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_FindActive",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_OmitFirst",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SortByNameDesc",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SetGlobal",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_SetVar",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_ReadVar",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "API_UnicodeResult",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "-",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "Diagnostics",
+                    "folderScriptNames": [
+                      {
+                        "name": "API_ReturnContext",
+                        "isFolder": false
+                      }
+                    ],
+                    "isFolder": true
+                  }
+                ],
+                "isFolder": true
+              },
+              {
+                "name": "Setup",
+                "folderScriptNames": [
+                  {
+                    "name": "Build Reference Data",
+                    "isFolder": false
+                  },
+                  {
+                    "name": "Self Check",
+                    "isFolder": false
+                  }
+                ],
+                "isFolder": true
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-ro",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:ro}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-admin",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:admin}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

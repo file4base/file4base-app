@@ -1,0 +1,384 @@
+{
+  "fixture": "writes/duplicate@v1",
+  "scenario": "writes/duplicate",
+  "group": "writes",
+  "version": "v1",
+  "fresh": true,
+  "title": "Duplicate: auto-enter, unique validation, scripts",
+  "rows": ["DU1", "DU2", "DU3", "DU4"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "duplicate-contact",
+      "rows": ["DU1", "DU2", "DU3"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "d1",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "31",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-duplicate",
+      "rows": ["DU3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/{{var:d1}}",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Contacts",
+              "table": "Contacts",
+              "totalRecordCount": 31,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ContactID": 31,
+                  "CustomerID": 1,
+                  "FirstName": "Zoë",
+                  "LastName": "Παπαδοπούλου",
+                  "Role": "Technical",
+                  "Phone": "+33 1 01 00 00 01",
+                  "IsPrimary": 1,
+                  "Birthday": "01/01/1900",
+                  "cFullName": "Zoë Παπαδοπούλου",
+                  "Contact_Customer::Name": "Alpha Industries"
+                },
+                "portalData": {},
+                "recordId": "31",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "duplicate-customer-unique-code",
+      "rows": ["DU1", "DU3", "EC17"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "1",
+              "message": "User canceled action"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "duplicate-with-empty-body",
+      "rows": ["DU1"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "d2",
+          "from": "body",
+          "path": ["response", "recordId"]
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "recordId": "32",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "duplicate-no-body",
+      "rows": ["DU1", "X6"],
+      "note": "POST without a body or Content-Type.",
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Invalid content type (application/octet-stream).  These are valid: application/json",
+              "code": "1708"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "duplicate-with-script",
+      "rows": ["DU4"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"script\":\"API_ReturnContext\",\"script.param\":\"dup\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Contacts\rContacts\r33\r33\rapi_rw\rDataAPI_ReadWrite\rparam=dup",
+            "scriptError": "0",
+            "recordId": "33",
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "duplicate-missing",
+      "rows": ["DU1", "EC5"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/9999",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "duplicate-with-fielddata",
+      "rows": ["DU1", "X20"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/4",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"FirstName\":\"changed\"}}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Unknown parameter(s): fieldData",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "duplicate-order-with-lines",
+      "rows": ["DU3"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Orders/records/1",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "1",
+              "message": "User canceled action"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

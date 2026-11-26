@@ -1,0 +1,964 @@
+{
+  "fixture": "scripts/execute@vLatest",
+  "scenario": "scripts/execute",
+  "group": "scripts",
+  "version": "vLatest",
+  "fresh": false,
+  "title": "Execute-script route: results, errors, context, session variables, missing scripts",
+  "rows": ["SC1", "SC2", "SC3", "SC4", "SC5", "SC6", "O4", "EC1", "EC7"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-rw2",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw2",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "login-ro",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_ro}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "ro",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "success",
+      "rows": ["SC1", "SC2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_Success",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "ok",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "echo-param",
+      "rows": ["SC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_EchoParam?script.param=h%C3%A9llo%20world",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "héllo world",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "echo-param-empty",
+      "rows": ["SC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_EchoParam?script.param=",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "echo-param-absent",
+      "rows": ["SC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_EchoParam",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "second-param-value",
+      "rows": ["SC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_SecondParamValue?script.param=one%0Dtwo%0Dthree",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "two",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "second-param-value-lf",
+      "rows": ["SC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_SecondParamValue?script.param=one%0Atwo",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "two",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unicode-result",
+      "rows": ["SC2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_UnicodeResult",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "Zoë – 日本語 – Ελληνικά – עברית – 😀 – \"quoted\" – back\\slash",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "error-no-records",
+      "rows": ["SC2", "EC16"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_Error_NoRecords",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError": "401"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "error-exit-result",
+      "rows": ["SC2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_Error_ExitResult",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "401",
+            "scriptError": "401"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "unsupported-step",
+      "rows": ["SC5", "EC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_Unsupported",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError": "3"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "return-context",
+      "rows": ["SC3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_ReturnContext?script.param=ctx",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Customers\rCustomers\r30\r1\rapi_rw\rDataAPI_ReadWrite\rparam=ctx",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "return-context-other-layout",
+      "rows": ["SC3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Orders/script/API_ReturnContext",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Orders\rOrders\r60\r1\rapi_rw\rDataAPI_ReadWrite\rparam=",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "return-context-empty-layout",
+      "rows": ["SC3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Empty/script/API_ReturnContext",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Empty\rCustomers\r30\r1\rapi_rw\rDataAPI_ReadWrite\rparam=",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "find-active-found-count",
+      "rows": ["SC3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_FindActive",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "6",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "set-var",
+      "rows": ["SC3"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_SetVar?script.param=kept",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "kept",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-var-same-session",
+      "rows": ["SC3", "O4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_ReadVar",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "kept",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-var-other-session",
+      "rows": ["SC3", "O4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_ReadVar",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw2}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-in-folder",
+      "rows": ["SC1", "SN2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_ReturnContext",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Customers\rCustomers\r30\r1\rapi_rw\rDataAPI_ReadWrite\rparam=",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "missing-script",
+      "rows": ["SC4", "EC7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/NoSuchScript",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "104",
+              "message": "script:'NoSuchScript' is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "script-name-case-variant",
+      "rows": ["SC4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/api_success",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "ok",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "folder-name-as-script",
+      "rows": ["SC4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptError": "104"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "script-name-with-space",
+      "rows": ["SC1"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/Self%20Check",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "count.Customers=30\rcount.Orders=60\rcount.OrderLines=120\rcount.Contacts=30\rcount.Products=30\rsum.OrderLines.Qty=15000262.5\rsum.Orders.Amount=600009350.269999999999999998\rdistinct.Orders.CustomerID=24\rphotos=3\rfields.Customers=48\rfields.Orders=16\rfields.OrderLines=11\rfields.Contacts=11\rfields.Products=5\rlayoutfields.API_Customers=48\rlayoutfields.API_Customers_Portals=27\rlayoutfields.API_Orders=24\rlayoutfields.API_OrderLines=13\rlayoutfields.API_Contacts=10\rlayoutfields.API_Products=5\rlayouts=Customers|Orders|OrderLines|Contacts|Products|Setup_Report|-|API_Customers|API_Customers_Portals|API_Customers_Restricted|API_Orders|API_OrderLines|API_Contacts|API_Products|API_Empty|API_Duplicate|API_Duplicate|-|API_Customers_Nested\rscripts=API_Success|API_EchoParam|API_SecondParamValue|API_Error_NoRecords|API_Error_ExitResult|API_Unsupported|API_FindActive|API_OmitFirst|API_SortByNameDesc|API_SetGlobal|API_SetVar|API_ReadVar|API_UnicodeResult|-|API_ReturnContext|Build Reference Data|Self Check\rvaluelists=Countries|Statuses|Interests|OrderStatuses|ContactRoles|Ratings|ProductCodes|ProductNames_ByCode|CustomerContactNames\rtos=Contact_Customer|Contacts|Customer_Contacts|Customer_Order_Lines|Customer_Orders|Customers|Customers_SameCountry|Line_Order|Line_Order_Customer|Line_Product|Order_Customer|Order_Lines|OrderLines|Orders|Products\rglobals=Global text – é ü 日本|3.14159265358979|738945|91815|63082281599.5|global.png|g-rep-3\raccount=api_rw|DataAPI_ReadWrite\rbuild_errors=",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "missing-layout",
+      "rows": ["EC8"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/NoSuchLayout/script/API_Success",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "noaccess-layout",
+      "rows": ["LN6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_NoAccess/script/API_Success",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "105",
+              "message": "Layout is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "post-method",
+      "rows": ["X18"],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_Success",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 405,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Resource doesn't support the specified HTTP verb",
+              "code": "1704"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "read-only-account",
+      "rows": ["SC6"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/layouts/API_Customers/script/API_ReturnContext",
+        "headers": [
+          ["Authorization", "Bearer {{token:ro}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult": "API_Customers\rCustomers\r30\r1\rapi_ro\rDataAPI_ReadOnly\rparam=",
+            "scriptError": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw2",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:rw2}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-ro",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/vLatest/databases/F4B_DataAPI_Reference/sessions/{{token:ro}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

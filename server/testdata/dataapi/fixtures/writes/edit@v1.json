@@ -1,0 +1,1559 @@
+{
+  "fixture": "writes/edit@v1",
+  "scenario": "writes/edit",
+  "group": "writes",
+  "version": "v1",
+  "fresh": true,
+  "title": "Edit: modId, portal rows, deleteRelated, options, repetitions, errors",
+  "rows": ["E1", "E2", "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "EC14"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login-rw",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-simple",
+      "rows": ["E1", "E4"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Email\":\"edited3@example.test\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "1"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-after-edit",
+      "rows": ["E10"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3?layout.response=API_Customers",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 3,
+                  "Code": "C003",
+                  "Name": "Łódź Żółć Sp. z o.o.",
+                  "Email": "edited3@example.test",
+                  "Status": "Archivé",
+                  "Country": "Österreich",
+                  "Interests": "Hardware\rSoftware",
+                  "Pin": "0111",
+                  "Rating": 4,
+                  "Balance": -1,
+                  "LooseNumber": 15,
+                  "SignupDate": "10/15/1582",
+                  "PreferredTime": "12:00:00",
+                  "Duration": "-01:30:00",
+                  "LastContact": "06/15/2999 23:59:59",
+                  "Photo": "https://<host>/Streaming/MainDB/<container-token>.txt?RCType=EmbeddedRCFileProcessor",
+                  "Tags(1)": "tag3a",
+                  "Tags(2)": "",
+                  "Tags(3)": "ünïcødé",
+                  "Scores(1)": 3,
+                  "Scores(2)": -4.5,
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "C003 – Łódź Żółć Sp. z o.o.",
+                  "cNameUpper": "ŁÓDŹ ŻÓŁĆ SP. Z O.O.",
+                  "cBalanceRounded": -1,
+                  "cSignupPlus30": "11/14/1582",
+                  "cDurationPlusHour": "-00:30:00",
+                  "cContactStamp": "10/15/1582 12:00:00",
+                  "cPhotoCopy": "https://<host>/Streaming/MainDB/<container-token>.txt?RCType=EmbeddedRCFileProcessor",
+                  "cOrderCount": 3,
+                  "cOrdersTotal": 119.995,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag3a#1",
+                  "cRepeatCalc(2)": "",
+                  "cRepeatCalc(3)": "ünïcødé#3",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "",
+                  "Customer_Orders::OrderNo": "SO-0004"
+                },
+                "portalData": {},
+                "recordId": "3",
+                "modId": "1"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-modid-match",
+      "rows": ["E2"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"9999\"},\"modId\":\"1\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "2"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-modid-stale",
+      "rows": ["E2", "EC14"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"8888\"},\"modId\":\"1\"}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "306",
+              "message": "Record modification ID does not match"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-modid-number",
+      "rows": ["E2"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"7777\"},\"modId\":2}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "'modId': Expected type string but found type integer",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-modid-future",
+      "rows": ["E2", "EC14"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"6666\"},\"modId\":\"99\"}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "306",
+              "message": "Record modification ID does not match"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-modid-text",
+      "rows": ["E2"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"5555\"},\"modId\":\"abc\"}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "modId must be an integer with value greater than or equal to 0",
+              "code": "960"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-missing-record",
+      "rows": ["E11", "EC5"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/9999",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"1\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-calc-field",
+      "rows": ["E12", "EC10"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"cNameUpper\":\"X\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-field-not-on-layout",
+      "rows": ["E12", "EC6"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"SecretNote\":\"x\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-repetition",
+      "rows": ["C5", "E1"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Tags(2)\":\"edited rep\",\"Scores(2)\":\"2.50\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "3"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-empty-fielddata",
+      "rows": ["E8"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "3"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-no-fielddata",
+      "rows": ["E8", "EC22"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{}"
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Neither 'fieldData' nor 'portalData' was specified in the request.",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-related-field-outside-portal",
+      "rows": ["E12", "C4"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Customer_Contacts::FirstName\":\"Edited via parent\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-related-edit",
+      "rows": ["E12"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Contacts/records/2",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Contacts",
+              "table": "Contacts",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "ContactID": 2,
+                  "CustomerID": 2,
+                  "FirstName": "Łukasz",
+                  "LastName": "علي",
+                  "Role": "Sales",
+                  "Phone": "+33 1 02 00 00 02",
+                  "IsPrimary": 1,
+                  "Birthday": "05/17/1980",
+                  "cFullName": "Łukasz علي",
+                  "Contact_Customer::Name": "Zoë Ångström & Fils"
+                },
+                "portalData": {},
+                "recordId": "2",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-portal-before",
+      "rows": ["E5"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3?portal=%5B%22OrdersPortal%22%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 3,
+                  "Code": "C003",
+                  "Name": "Łódź Żółć Sp. z o.o.",
+                  "Country": "Österreich",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 3\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "6",
+                      "Customer_Orders::OrderID": 6,
+                      "Customer_Orders::OrderNo": "SO-0006",
+                      "Customer_Orders::OrderDate": "04/12/2020",
+                      "Customer_Orders::Amount": 100,
+                      "Customer_Orders::Status": "Shipped",
+                      "Customer_Orders::Paid": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "5",
+                      "Customer_Orders::OrderID": 5,
+                      "Customer_Orders::OrderNo": "SO-0005",
+                      "Customer_Orders::OrderDate": "03/26/2020",
+                      "Customer_Orders::Amount": 19.99,
+                      "Customer_Orders::Status": "Confirmed",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "4",
+                      "Customer_Orders::OrderID": 4,
+                      "Customer_Orders::OrderNo": "SO-0004",
+                      "Customer_Orders::OrderDate": "03/09/2020",
+                      "Customer_Orders::Amount": 0.005,
+                      "Customer_Orders::Status": "Draft",
+                      "Customer_Orders::Paid": 1,
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "3",
+                "modId": "3",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 3,
+                    "returnedCount": 3
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-portal-row",
+      "rows": ["E5", "E4", "E10"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{},\"portalData\":{\"OrdersPortal\":[{\"recordId\":\"4\",\"modId\":\"0\",\"Customer_Orders::OrderNo\":\"SO-0004-E\"}]}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "3"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-portal-row-stale-modid",
+      "rows": ["E5", "EC14"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"portalData\":{\"OrdersPortal\":[{\"recordId\":\"4\",\"modId\":\"0\",\"Customer_Orders::OrderNo\":\"SO-0004-E\"}]}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "306",
+              "message": "Record modification ID does not match"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-portal-row-field-not-in-portal",
+      "rows": ["E5", "EC6"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"portalData\":{\"OrdersPortal\":[{\"recordId\":\"5\",\"Customer_Orders::Comment\":\"x\"}]}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "102",
+              "message": "Field is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-portal-row-paid",
+      "rows": ["E5"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"portalData\":{\"OrdersPortal\":[{\"recordId\":\"5\",\"Customer_Orders::Paid\":\"1\"}]}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "3"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-portal-row",
+      "rows": ["E6", "E4"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"portalData\":{\"OrdersPortal\":[{\"Customer_Orders::OrderNo\":\"SO-NEW-3\",\"Customer_Orders::Amount\":\"5\"}]}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "3",
+            "newPortalRecordInfo": [
+              {
+                "tableName": "Customer_Orders",
+                "recordId": "61",
+                "modId": "0"
+              },
+              {
+                "tableName": "Customer_Orders",
+                "recordId": "61",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-portal-row-by-occurrence-key",
+      "rows": ["E6"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"portalData\":{\"Customer_Contacts\":[{\"Customer_Contacts::FirstName\":\"New\",\"Customer_Contacts::LastName\":\"Contact\",\"Customer_Contacts::Role\":\"Sales\"}]}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "3",
+            "newPortalRecordInfo": [
+              {
+                "tableName": "customer_contacts",
+                "recordId": "31",
+                "modId": "0"
+              },
+              {
+                "tableName": "customer_contacts",
+                "recordId": "31",
+                "modId": "0"
+              },
+              {
+                "tableName": "customer_contacts",
+                "recordId": "31",
+                "modId": "0"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "portal-row-missing-record",
+      "rows": ["E5", "EC5"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"portalData\":{\"OrdersPortal\":[{\"recordId\":\"9999\",\"Customer_Orders::Status\":\"x\"}]}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "portal-row-of-other-parent",
+      "rows": ["E5"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"portalData\":{\"OrdersPortal\":[{\"recordId\":\"17\",\"Customer_Orders::Status\":\"Shipped\"}]}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "read-portal-after",
+      "rows": ["E5", "E6", "E10"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/3?portal=%5B%22OrdersPortal%22%2C%22Customer_Contacts%22%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 3,
+                  "Code": "C003",
+                  "Name": "Łódź Żółć Sp. z o.o.",
+                  "Country": "Österreich",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 3\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "6",
+                      "Customer_Orders::OrderID": 6,
+                      "Customer_Orders::OrderNo": "SO-0006",
+                      "Customer_Orders::OrderDate": "04/12/2020",
+                      "Customer_Orders::Amount": 100,
+                      "Customer_Orders::Status": "Shipped",
+                      "Customer_Orders::Paid": 0,
+                      "modId": "0"
+                    },
+                    {
+                      "recordId": "5",
+                      "Customer_Orders::OrderID": 5,
+                      "Customer_Orders::OrderNo": "SO-0005",
+                      "Customer_Orders::OrderDate": "03/26/2020",
+                      "Customer_Orders::Amount": 19.99,
+                      "Customer_Orders::Status": "Confirmed",
+                      "Customer_Orders::Paid": 1,
+                      "modId": "1"
+                    },
+                    {
+                      "recordId": "4",
+                      "Customer_Orders::OrderID": 4,
+                      "Customer_Orders::OrderNo": "SO-0004-E",
+                      "Customer_Orders::OrderDate": "03/09/2020",
+                      "Customer_Orders::Amount": 0.005,
+                      "Customer_Orders::Status": "Draft",
+                      "Customer_Orders::Paid": 1,
+                      "modId": "1"
+                    },
+                    {
+                      "recordId": "61",
+                      "Customer_Orders::OrderID": 61,
+                      "Customer_Orders::OrderNo": "SO-NEW-3",
+                      "Customer_Orders::OrderDate": "",
+                      "Customer_Orders::Amount": 5,
+                      "Customer_Orders::Status": "",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    }
+                  ],
+                  "Customer_Contacts": [
+                    {
+                      "recordId": "31",
+                      "Customer_Contacts::ContactID": 31,
+                      "Customer_Contacts::FirstName": "New",
+                      "Customer_Contacts::LastName": "Contact",
+                      "Customer_Contacts::Role": "Sales",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "3",
+                "modId": "3",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 4,
+                    "returnedCount": 4
+                  },
+                  {
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Contacts",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-related-single",
+      "rows": ["E7"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/9",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"deleteRelated\":\"Customer_Orders.17\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-related-array",
+      "rows": ["E7"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/9",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"deleteRelated\":[\"Customer_Orders.18\",\"Customer_Orders.19\"]}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "0"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delete-related-other-parent",
+      "rows": ["E7"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/9",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"deleteRelated\":\"Customer_Orders.1\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "delete-related-missing",
+      "rows": ["E7", "EC5"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/9",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"deleteRelated\":\"Customer_Orders.9999\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "101",
+              "message": "Record is missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "delete-related-bad-format",
+      "rows": ["E7"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/9",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"deleteRelated\":\"Customer_Orders\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "1708",
+              "message": "Parameter value is invalid"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "delete-related-portal-name",
+      "rows": ["E7"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/9",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"deleteRelated\":\"OrdersPortal.20\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "110",
+              "message": "Related tables are missing"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "read-after-delete-related",
+      "rows": ["E7"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers_Portals/records/9?portal=%5B%22OrdersPortal%22%5D",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers_Portals",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 9,
+                  "Code": "C009",
+                  "Name": "Nguyễn Văn Trading",
+                  "Country": "Brasil",
+                  "FavoriteContact": "",
+                  "Notes": "Note for customer 9\rsecond line é à ü\rthird line"
+                },
+                "portalData": {
+                  "OrdersPortal": [
+                    {
+                      "recordId": "20",
+                      "Customer_Orders::OrderID": 20,
+                      "Customer_Orders::OrderNo": "SO-0020",
+                      "Customer_Orders::OrderDate": "12/06/2020",
+                      "Customer_Orders::Amount": 1234.56,
+                      "Customer_Orders::Status": "Draft",
+                      "Customer_Orders::Paid": "",
+                      "modId": "0"
+                    }
+                  ]
+                },
+                "recordId": "9",
+                "modId": "0",
+                "portalDataInfo": [
+                  {
+                    "portalObjectName": "OrdersPortal",
+                    "database": "F4B_DataAPI_Reference",
+                    "table": "Customer_Orders",
+                    "foundCount": 1,
+                    "returnedCount": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-options-prohibitmode",
+      "rows": ["C10", "E9"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"ModifiedBy\":\"forced\"},\"options\":{\"prohibitmode\":\"script\"}}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "1"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-prohibited-user-mode",
+      "rows": ["C10", "E9"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"CreatedBy\":\"forced\"}}"
+      },
+      "response": {
+        "status": 500,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "201",
+              "message": "Field cannot be modified"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "edit-dateformats-2",
+      "rows": ["E9", "C18"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"SignupDate\":\"2030-01-02\"},\"dateformats\":2}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "modId": "2"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "edit-with-scripts",
+      "rows": ["E9", "C12"],
+      "request": {
+        "method": "PATCH",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"],
+          ["Content-Type", "application/json"]
+        ],
+        "body": "{\"fieldData\":{\"Pin\":\"1234\"},\"script.prerequest\":\"API_SetVar\",\"script.prerequest.param\":\"edit\",\"script\":\"API_ReadVar\"}"
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "scriptResult.prerequest": "edit",
+            "scriptError.prerequest": "0",
+            "scriptResult": "edit",
+            "scriptError": "0",
+            "modId": "3"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "read-final",
+      "rows": ["E10"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/layouts/API_Customers/records/4",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "dataInfo": {
+              "database": "F4B_DataAPI_Reference",
+              "layout": "API_Customers",
+              "table": "Customers",
+              "totalRecordCount": 30,
+              "foundCount": 1,
+              "returnedCount": 1
+            },
+            "data": [
+              {
+                "fieldData": {
+                  "CustomerID": 4,
+                  "Code": "C004",
+                  "Name": "Ελληνική Εταιρεία",
+                  "Email": "contact4@example.test",
+                  "Status": "Active",
+                  "Country": "Côte d'Ivoire",
+                  "Interests": "Services",
+                  "Pin": "1234",
+                  "Rating": 5,
+                  "Balance": 3.14159265358979323846264338327950288419716939937510,
+                  "LooseNumber": " 7 ",
+                  "SignupDate": "01/02/2030",
+                  "PreferredTime": "23:59:59",
+                  "Duration": "00:00:00",
+                  "LastContact": "05/05/0999 12:34:56.123",
+                  "Photo": "",
+                  "Tags(1)": "tag4a",
+                  "Tags(2)": "tag4b",
+                  "Tags(3)": "",
+                  "Scores(1)": 4,
+                  "Scores(2)": "",
+                  "CreatedAt": "11/26/2026 13:06:28",
+                  "ModifiedAt": "<now>",
+                  "CreatedBy": "Admin",
+                  "ModifiedBy": "api_rw",
+                  "Source": "reference-build",
+                  "cDisplayName": "C004 – Ελληνική Εταιρεία",
+                  "cNameUpper": "ΕΛΛΗΝΙΚΉ ΕΤΑΙΡΕΊΑ",
+                  "cBalanceRounded": 3.14,
+                  "cSignupPlus30": "02/01/2030",
+                  "cDurationPlusHour": "01:00:00",
+                  "cContactStamp": "01/02/2030 23:59:59",
+                  "cPhotoCopy": "",
+                  "cOrderCount": 4,
+                  "cOrdersTotal": 1488.393333333333333333,
+                  "cDivByZero": "?",
+                  "cRepeatCalc(1)": "tag4a#1",
+                  "cRepeatCalc(2)": "tag4b#2",
+                  "cRepeatCalc(3)": "",
+                  "cGlobalEcho": "Global text – é ü 日本",
+                  "sCount": 30,
+                  "sTotalBalance": 123456789014222222112222189879.0459368645897932783396433832795028841971693993751,
+                  "sAvgRating": 3,
+                  "gText": "Global text – é ü 日本",
+                  "gNumber": 3.14159265358979,
+                  "gDate": "02/29/2024",
+                  "gTime": "25:30:15",
+                  "gTimestamp": "12/31/1999 23:59:59.5",
+                  "gContainer": "https://<host>/Streaming/MainDB/<container-token>.png?RCType=EmbeddedRCFileProcessor",
+                  "gRepeat(1)": "g-rep-1",
+                  "gRepeat(2)": "",
+                  "gRepeat(3)": "g-rep-3",
+                  "Customer_Contacts::FirstName": "Дмитрий",
+                  "Customer_Orders::OrderNo": "SO-0007"
+                },
+                "portalData": {},
+                "recordId": "4",
+                "modId": "3"
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "logout-rw",
+      "rows": [],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v1/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,527 @@
+{
+  "fixture": "sessions/token_lifecycle@v2",
+  "scenario": "sessions/token_lifecycle",
+  "group": "sessions",
+  "version": "v2",
+  "fresh": false,
+  "title": "validateSession, invalid and logged-out tokens, logout by path token, token on another database",
+  "rows": ["V1", "V2", "V4", "O1", "O2", "O3", "T1", "T3", "T4", "X13", "EC19"],
+  "recorded": {
+    "server": "FileMaker Server 26.0.2",
+    "date": "2026-11-26"
+  },
+  "steps": [
+    {
+      "id": "login",
+      "rows": [],
+      "request": {
+        "method": "POST",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Content-Type", "application/json"],
+          ["Authorization", "{{basic:api_rw}}"]
+        ],
+        "body": "{}"
+      },
+      "capture": [
+        {
+          "var": "rw",
+          "from": "token"
+        }
+      ],
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"],
+          ["X-FM-Data-Access-Token", "<token>"]
+        ],
+        "body": {
+          "response": {
+            "token": "<token>"
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "validate-valid",
+      "rows": ["V1", "V2"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/validateSession",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "isSessionInUse": false
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "validate-invalid",
+      "rows": ["V4", "EC19"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/validateSession",
+        "headers": [
+          ["Authorization", "Bearer {{token:bogus}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "validate-no-header",
+      "rows": ["V4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/validateSession",
+        "headers": []
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Request validation failed: Parameter (Authorization) is required",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "validate-basic",
+      "rows": ["V4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/validateSession",
+        "headers": [
+          ["Authorization", "{{basic:api_rw}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Authorization header 'Basic' invalid.",
+              "code": "212"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "layouts-invalid-token",
+      "rows": ["T3", "EC19"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:bogus}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "layouts-no-header",
+      "rows": ["T3", "X13"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts",
+        "headers": []
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Request validation failed: Parameter (Authorization) is required",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "layouts-lowercase-bearer",
+      "rows": ["X13"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {
+            "layouts": [
+              {
+                "name": "Customers",
+                "table": "Customers"
+              },
+              {
+                "name": "Orders",
+                "table": "Orders"
+              },
+              {
+                "name": "OrderLines",
+                "table": "OrderLines"
+              },
+              {
+                "name": "Contacts",
+                "table": "Contacts"
+              },
+              {
+                "name": "Products",
+                "table": "Products"
+              },
+              {
+                "name": "Setup_Report",
+                "table": "Customers"
+              },
+              {
+                "name": "-",
+                "table": "Customers"
+              },
+              {
+                "name": "API",
+                "isFolder": true,
+                "folderLayoutNames": [
+                  {
+                    "name": "API_Customers",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Portals",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Customers_Restricted",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Orders",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "API_OrderLines",
+                    "table": "OrderLines"
+                  },
+                  {
+                    "name": "API_Contacts",
+                    "table": "Contacts"
+                  },
+                  {
+                    "name": "API_Products",
+                    "table": "Products"
+                  },
+                  {
+                    "name": "API_Empty",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "API_Duplicate",
+                    "table": "Orders"
+                  },
+                  {
+                    "name": "-",
+                    "table": "Customers"
+                  },
+                  {
+                    "name": "Nested",
+                    "isFolder": true,
+                    "folderLayoutNames": [
+                      {
+                        "name": "API_Customers_Nested",
+                        "table": "Customers"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "layouts-token-in-query",
+      "rows": ["X13"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts?token={{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 400,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Request validation failed: Parameter (Authorization) is required",
+              "code": "10"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "token-on-other-database",
+      "rows": ["T4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/FMServer_Sample/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout",
+      "rows": ["O1", "O2"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 200,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"],
+          ["Cache-Control", "no-cache"]
+        ],
+        "body": {
+          "response": {},
+          "messages": [
+            {
+              "code": "0",
+              "message": "OK"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "reuse-after-logout",
+      "rows": ["O3", "T3", "EC19"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/layouts",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "validate-after-logout",
+      "rows": ["V4"],
+      "request": {
+        "method": "GET",
+        "path": "/fmi/data/v2/validateSession",
+        "headers": [
+          ["Authorization", "Bearer {{token:rw}}"]
+        ]
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-again",
+      "rows": ["O3"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:rw}}",
+        "headers": []
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-bogus",
+      "rows": ["O3"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions/{{token:bogus}}",
+        "headers": []
+      },
+      "response": {
+        "status": 401,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "code": "952",
+              "message": "Invalid FileMaker Data API token (*)"
+            }
+          ],
+          "response": {}
+        }
+      }
+    },
+    {
+      "id": "logout-with-bearer-only",
+      "rows": ["O1"],
+      "request": {
+        "method": "DELETE",
+        "path": "/fmi/data/v2/databases/F4B_DataAPI_Reference/sessions",
+        "headers": [
+          ["Authorization", "Bearer {{token:bogus}}"]
+        ]
+      },
+      "response": {
+        "status": 405,
+        "headers": [
+          ["Content-Type", "application/json; charset=utf-8"]
+        ],
+        "body": {
+          "messages": [
+            {
+              "message": "Resource doesn't support the specified HTTP verb",
+              "code": "1704"
+            }
+          ],
+          "response": {}
+        }
+      }
+    }
+  ]
+}
