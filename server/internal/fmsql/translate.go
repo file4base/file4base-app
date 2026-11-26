@@ -78,6 +78,8 @@ type translator struct {
 	// kinds keeps the kind of each expression once found: finding the kind
 	// of a + asks for its sides' more than once.
 	kinds map[Expr]kindResult
+	// keys keeps the key of each expression once written.
+	keys  map[Expr]string
 	all   []*bound // every table of the query
 	scope []*bound // the tables a name may be resolved against
 	// clause is where an expression is: what refuses an aggregate there.
@@ -89,7 +91,7 @@ type translator struct {
 // catalog, args bound to its ? in order, and nothing of the query's text in
 // the statement.
 func Translate(stmt *Select, catalog Catalog, d dbal.Dialect, args []Value, opts Options) (*Query, error) {
-	t := &translator{src: stmt.src, d: d, args: args, kinds: map[Expr]kindResult{}}
+	t := &translator{src: stmt.src, d: d, args: args, kinds: map[Expr]kindResult{}, keys: map[Expr]string{}}
 	switch d.Engine() {
 	case dbal.EnginePostgres:
 		t.pg = true
@@ -561,6 +563,15 @@ func children(e Expr) []Expr {
 // key identifies an expression once its names are resolved, to tell that
 // a column is one GROUP BY names.
 func (t *translator) key(e Expr) string {
+	if k, ok := t.keys[e]; ok {
+		return k
+	}
+	k := t.writeKey(e)
+	t.keys[e] = k
+	return k
+}
+
+func (t *translator) writeKey(e Expr) string {
 	switch x := e.(type) {
 	case *Column:
 		b, f, err := t.resolve(x)
@@ -680,6 +691,11 @@ func (t *translator) findKind(e Expr) (Kind, error) {
 			return KindText, nil
 		case "+":
 			if t.concatenates(x) {
+				// Both sides are then text, as ||'s are: a number or a
+				// condition beside a text field is refused, not joined.
+				if _, err := t.unify(x.pos, []Expr{x.L, x.R}, KindText, false); err != nil {
+					return 0, err
+				}
 				return KindText, nil
 			}
 			fallthrough

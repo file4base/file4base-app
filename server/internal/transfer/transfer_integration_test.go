@@ -239,7 +239,7 @@ var owner = transfer.Account{ID: "dispatch-owner", Role: "owner"}
 
 func (f *fixture) run(ctx context.Context, def *schema.TransferDefinition) (*transfer.Report, error) {
 	return transfer.Run(ctx, def,
-		f.dispatch.driver, f.results.driver, f.dispatch.name, f.results.name, owner)
+		f.dispatch.driver, f.results.driver, f.dispatch.name, f.results.name, owner, owner)
 }
 
 func rows(t *testing.T, ctx context.Context, svc *data.Service, table string) []map[string]interface{} {
@@ -362,7 +362,7 @@ func TestRun_TheAcceptanceFixtureOfIssue96(t *testing.T) {
 	require.NoError(t, err)
 
 	report, err = transfer.Run(ctx, returnDef,
-		f.results.driver, f.dispatch.driver, f.results.name, f.dispatch.name, owner)
+		f.results.driver, f.dispatch.driver, f.results.name, f.dispatch.name, owner, owner)
 	require.NoError(t, err)
 	assert.True(t, report.Committed)
 	assert.Equal(t, 2, report.Updated, "both returned answers match a central record")
@@ -662,7 +662,7 @@ func TestRun_ReadsTheSourceAsItsAccount(t *testing.T) {
 	}
 
 	_, err = transfer.Run(ctx, def, f.dispatch.driver, f.results.driver, f.dispatch.name, f.results.name,
-		transfer.Account{ID: clerk.ID, Role: clerk.Role})
+		transfer.Account{ID: clerk.ID, Role: clerk.Role}, owner)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]interface{}{"AN-001": nil, "AN-002": nil, "AN-003": nil}, scans(),
 		"the clerk may not read surveys, so no scan crosses")
@@ -670,4 +670,48 @@ func TestRun_ReadsTheSourceAsItsAccount(t *testing.T) {
 	_, err = f.run(ctx, def)
 	require.NoError(t, err)
 	assert.Equal(t, containerValue, scans()["AN-001"], "the owner's run carries it")
+}
+
+// The destination's calculations read as the destination's account: a
+// validation that runs a query reads only the tables that account may
+// read, as when it imports the records by hand.
+func TestRun_ValidatesTheDestinationAsItsAccount(t *testing.T) {
+	mgr, ctx := transferTestManager(t)
+	if mgr == nil {
+		return
+	}
+	f := newFixture(t, ctx, mgr)
+	svc := f.results.schemaSvc
+	f.results.createTable(t, ctx, "blocklist", column{"code", "Code", dbal.FieldTypeText})
+	tables, err := svc.ListTables(ctx)
+	require.NoError(t, err)
+	var surveys string
+	for _, tbl := range tables {
+		if tbl.Name == "project_surveys" {
+			surveys = tbl.ID
+		}
+	}
+	rule := `{"calculation_enabled":true,"calculation_always":true,` +
+		`"calculation":"ExecuteSQL ( \"SELECT COUNT(*) FROM blocklist\" ; \"\" ; \"\" ) = \"0\""}`
+	_, err = svc.AddColumn(ctx, surveys, schema.ColumnMetadata{Name: "checked", DisplayName: "Checked",
+		FieldType: dbal.FieldTypeText, IsNullable: true, ValidationRules: &rule})
+	require.NoError(t, err)
+	importer, err := svc.CreateUser(ctx, "importer", "synthetic-password-2", "user")
+	require.NoError(t, err)
+	require.NoError(t, svc.SetUserTablePermissions(ctx, importer.ID, []schema.UserTablePermission{
+		{TableName: "project_surveys", AccessLevel: schema.AccessReadWrite},
+		{TableName: "blocklist", AccessLevel: schema.AccessNone},
+	}))
+
+	def := f.surveyTransfer(t, ctx)
+	report, err := transfer.Run(ctx, def, f.dispatch.driver, f.results.driver, f.dispatch.name, f.results.name,
+		owner, transfer.Account{ID: importer.ID, Role: importer.Role})
+	require.Error(t, err, "the importer may not read the blocklist: its query answers ?")
+	assert.False(t, report.Committed)
+	assert.Empty(t, rows(t, ctx, f.results.dataSvc, "project_surveys"))
+
+	report, err = f.run(ctx, def)
+	require.NoError(t, err)
+	assert.True(t, report.Committed)
+	assert.Len(t, rows(t, ctx, f.results.dataSvc, "project_surveys"), 2)
 }

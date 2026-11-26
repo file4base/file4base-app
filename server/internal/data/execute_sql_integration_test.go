@@ -199,6 +199,16 @@ func TestExecuteSQLSetVariable(t *testing.T) {
 		fmt.Sprintf(`ExecuteSQL ( "SELECT ?, d.Label FROM %s s JOIN %s d ON d.Code = ? WHERE s.\"Last Name\" = ?" ; "" ; "" ; "x" ; "Ops" ; "Hopper" )`,
 			q(s.staffOcc), q(s.deptOcc)),
 		"x,Operations",
+	}, {
+		// + joins text with text; with a number field it is refused.
+		fmt.Sprintf(`ExecuteSQL ( "SELECT \"Last Name\" + ' ' + Dept FROM %s WHERE Salary > 6000" ; "" ; "" )`, q(s.staffOcc)),
+		"Hopper R&D",
+	}, {
+		fmt.Sprintf(`ExecuteSQL ( "SELECT \"Last Name\" + Salary FROM %s" ; "" ; "" )`, q(s.staffOcc)),
+		"?",
+	}, {
+		fmt.Sprintf(`ExecuteSQLe ( "SELECT \"Last Name\" + (Salary = 1) FROM %s" ; "" ; "" )`, q(s.staffOcc)),
+		"? ERROR: FQL0018/(1:29): An expression contains incompatible data types: a condition is not a value.",
 	}}
 	for _, c := range cases {
 		ev := s.evaluate(t, ctx, s.dataSvc, `Let ( $list = `+c.formula+` ; $list )`, map[string]any{"$dept": "R&D"})

@@ -380,7 +380,51 @@ func TestTranslateRefusesUnbounded(t *testing.T) {
 	require.ErrorContains(t, err, "FQL0013/")
 	_, ok := Argument(KindNumber, "1e999999999")
 	require.False(t, ok)
-	// A long chain of additions is translated in time.
-	_, err = translate(t, postgres.New(), "SELECT ID FROM Employees WHERE Salary > "+strings.Repeat("Salary + ", 2000)+"1")
-	require.NoError(t, err)
+}
+
+// What translating costs stays small, whatever the query: a chain of
+// operators as long as a query may be is refused, and the deepest one
+// allowed, grouped, selected and sorted by, is translated at once.
+func TestTranslateCostIsBounded(t *testing.T) {
+	chain := func(n int) string { return strings.Repeat("Salary + ", n) + "Salary" }
+	long := "SELECT COUNT(*) FROM Employees GROUP BY Salary HAVING " + chain(7000) + " > 0"
+	require.Greater(t, len(long), 60<<10)
+	start := time.Now()
+	_, err := translate(t, postgres.New(), long)
+	require.ErrorContains(t, err, "FQL0004/")
+	_, err = translate(t, postgres.New(), "SELECT COUNT(*) FROM Employees GROUP BY Salary HAVING "+chain(4900)+" > 0")
+	require.ErrorContains(t, err, "more than 400 operations deep")
+	deep := chain(maxTreeDepth - 10)
+	for _, query := range []string{
+		"SELECT COUNT(*) FROM Employees GROUP BY " + deep + " HAVING " + deep + " > 0",
+		"SELECT DISTINCT " + strings.Repeat(deep+", ", 5) + deep + " FROM Employees ORDER BY " + strings.Repeat(deep+", ", 5) + deep,
+	} {
+		for name, d := range dialects {
+			_, err := translate(t, d, query)
+			require.NoError(t, err, name)
+		}
+	}
+	require.Less(t, time.Since(start), time.Second)
+}
+
+// + joins text only with text: beside a text field, a number field or a
+// condition is refused, as || refuses them; a constant is read as text.
+func TestTranslatePlusTypes(t *testing.T) {
+	for name, d := range dialects {
+		for query, want := range map[string]string{
+			`SELECT "Last Name" + Salary FROM Employees`:       "FQL0018/(1:21)",
+			`SELECT Salary + "Last Name" FROM Employees`:       "FQL0018/(1:7)",
+			`SELECT "Last Name" + (Salary = 1) FROM Employees`: "FQL0018/",
+			`SELECT "Last Name" + Hired FROM Employees`:        "FQL0018/",
+			`SELECT Salary + 'many' FROM Employees`:            "FQL0013/",
+			`SELECT "Last Name" || Salary FROM Employees`:      "FQL0018/",
+		} {
+			_, err := translate(t, d, query)
+			require.ErrorContains(t, err, want, "%s: %s", name, query)
+		}
+		q, err := translate(t, d, `SELECT "Last Name" + 5, "Last Name" + Department, Salary + 5 FROM Employees`)
+		require.NoError(t, err, name)
+		require.Equal(t, []Kind{KindText, KindText, KindNumber}, q.Columns, name)
+		require.Contains(t, q.Args, "5", name)
+	}
 }

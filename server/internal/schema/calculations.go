@@ -41,6 +41,15 @@ func StorageType(fieldType dbal.AgnosticFieldType, calculationFormula *string) d
 	}
 }
 
+// storedQueryError refuses a stored calculation that runs a query with
+// ExecuteSQL, itself or through a custom function: saving the field, or
+// changing a function it calls.
+func storedQueryError(kind error, fieldName string) error {
+	return fmt.Errorf("%w: the formula of %q runs a query with ExecuteSQL, which reads other records; a calculation "+
+		"that runs a query must be computed when it is shown: make it unstored (clear \"Store the result\" in Field Options)",
+		kind, fieldName)
+}
+
 // checkCalculation validates the formula of a calculation field before it is
 // saved: it must parse, it may only read fields the table has, and the
 // calculation fields of the table must not depend on each other in a ring.
@@ -90,9 +99,7 @@ func (s *Service) checkCalculation(
 	}
 
 	if spec.IsStored() && expr.RunsSQL() {
-		return fmt.Errorf("%w: the formula of %q runs a query with ExecuteSQL, which reads other records; a calculation "+
-			"that runs a query must be computed when it is shown: make it unstored (clear \"Store the result\" in Field Options)",
-			ErrInvalidFieldOptions, fieldName)
+		return storedQueryError(ErrInvalidFieldOptions, fieldName)
 	}
 
 	columns, err := s.listColumns(ctx, tableID)

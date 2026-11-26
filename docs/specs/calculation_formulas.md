@@ -313,7 +313,8 @@ ExecuteSQL ( "SELECT \"Last Name\", Salary FROM Staff WHERE Dept = ? ORDER BY 1"
 - **Where it runs.** An unstored calculation, an auto-enter or validation
   calculation, a script's formula (Set Variable, If, parameters…) and the Data
   Viewer. A stored calculation calling it, itself or through a custom function,
-  is refused when saved: its answer changes without its record changing, so it
+  is refused when saved, and so is a change to a custom function that would make
+  a stored calculation call it: its answer changes without its record changing, so it
   must be unstored, as a calculation reading related fields. Elsewhere it
   answers `?`.
 - **Access.** Each table a query names is read only if the account may read it,
@@ -321,7 +322,8 @@ ExecuteSQL ( "SELECT \"Last Name\", Salary FROM Staff WHERE Dept = ? ORDER BY 1"
   `ExecuteSQLe`), never its records. The relationships graph is not used: a
   query joins as it says.
 - **What it reads.** `SELECT [DISTINCT]` of fields, constants, `*`, `t.*`,
-  `||` and `+ - * /`, the aggregates `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` (with
+  `||` and `+ - * /` (`+` joins text with text, as `||`; beside a text field a
+  number or date field is refused), the aggregates `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` (with
   `DISTINCT`, and `COUNT(*)`) and the functions `UPPER`, `LOWER`, `TRIM`,
   `LTRIM`, `RTRIM`, `LENGTH`/`CHAR_LENGTH`, `ABS`, `COALESCE`; `FROM` table
   occurrences with aliases, `[INNER] JOIN` and `LEFT [OUTER] JOIN … ON`;
@@ -351,7 +353,9 @@ ExecuteSQL ( "SELECT \"Last Name\", Salary FROM Staff WHERE Dept = ? ORDER BY 1"
   is bound as a parameter, never written into the statement. A query answers at
   most 10,000 rows and 16 MB of values (more is an error: ask for fewer with
   `WHERE` or `FETCH FIRST`), runs at most 5 seconds, and has at most 10,000
-  words, values and signs.
+  words, values and signs, and expressions at most 400 operations deep
+  (`a + b + …` included). A transfer's destination computes its validation as
+  the destination's account.
 
 ## Validation
 

@@ -311,6 +311,42 @@ func TestCustomFunctionChangesThatMakeCalculationsReadThemselvesAreRefused(t *te
 	assert.EqualValues(t, "13", fmt.Sprint(row["total"]))
 }
 
+// A custom function a stored calculation calls, directly or through
+// another function, cannot be changed to run a query with ExecuteSQL: the
+// calculation would store "?" from then on. It is refused as saving that
+// calculation is.
+func TestCustomFunctionChangesThatMakeStoredCalculationsRunQueriesAreRefused(t *testing.T) {
+	s := newDesignSolution(t)
+	query := `ExecuteSQL ( "SELECT COUNT(*) FROM Invoices" ; "" ; "" )`
+	_, err := s.svc.AddColumn(s.ctx, s.tableID, schema.ColumnMetadata{Name: "counted", DisplayName: "counted", IsNullable: true,
+		FieldType: dbal.FieldTypeCalculation, CalculationFormula: stringPtr(fmt.Sprintf(`{"formula":%q,"result_type":"Number"}`, query))})
+	require.ErrorIs(t, err, schema.ErrInvalidFieldOptions)
+	saving := strings.TrimPrefix(err.Error(), schema.ErrInvalidFieldOptions.Error())
+
+	direct := s.create(t, "Bonus", nil, "1")
+	inner := s.create(t, "Inner", nil, "2")
+	s.create(t, "Outer", nil, "Inner + 1")
+	s.addColumn(t, schema.ColumnMetadata{Name: "total", FieldType: dbal.FieldTypeCalculation,
+		CalculationFormula: stringPtr(`{"formula":"net + Bonus + Outer","result_type":"Number"}`)})
+	want := strings.ReplaceAll(saving, `"counted"`, `"total"`)
+
+	for _, fn := range []*schema.CustomFunction{direct, inner} {
+		_, err = s.svc.UpdateCustomFunction(s.ctx, fn.ID, schema.CustomFunctionInput{Name: fn.Name, Formula: query}, false)
+		require.ErrorIs(t, err, schema.ErrInvalidCustomFunction, fn.Name)
+		assert.Equal(t, want, strings.TrimPrefix(err.Error(), schema.ErrInvalidCustomFunction.Error()), fn.Name)
+		got, err := s.svc.GetCustomFunction(s.ctx, fn.ID)
+		require.NoError(t, err)
+		assert.NotContains(t, got.Formula, "ExecuteSQL", "nothing was saved")
+	}
+
+	// Unstored, the calculation may.
+	_, err = s.svc.UpdateColumn(s.ctx, s.tableID, s.columns["total"], schema.UpdateColumnOptions{DisplayName: "total",
+		UpdateCalculation: true, CalculationFormula: stringPtr(`{"formula":"net + Bonus + Outer","result_type":"Number","stored":false}`)})
+	require.NoError(t, err)
+	_, err = s.svc.UpdateCustomFunction(s.ctx, inner.ID, schema.CustomFunctionInput{Name: "Inner", Formula: query}, false)
+	require.NoError(t, err)
+}
+
 // Set Field's value is literal text when the step says it is not a
 // calculation: a rename leaves it as written, and it is no usage.
 func TestRenamingACustomFunctionLeavesLiteralValues(t *testing.T) {

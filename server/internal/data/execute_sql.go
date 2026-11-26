@@ -54,12 +54,15 @@ func (r *relatedReader) executeSQL(ctx context.Context, query string, args []cal
 		}
 		values[i] = v
 	}
+	if ctx.Err() != nil {
+		return nil, sqlRunError(ctx, ctx.Err())
+	}
 	dialect := r.s.driver.Dialect()
 	q, err := fmsql.Translate(stmt, sqlCatalog{r: r, ctx: ctx}, dialect, values, fmsql.Options{MaxRows: maxSQLRows})
+	if ctx.Err() != nil {
+		return nil, sqlRunError(ctx, ctx.Err())
+	}
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, sqlRunError(ctx, err)
-		}
 		return nil, err
 	}
 

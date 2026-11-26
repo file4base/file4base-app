@@ -176,6 +176,11 @@ func init() {
 // parser's stack.
 const maxDepth = 100
 
+// maxTreeDepth bounds how deep an expression is once read, a chain of
+// operators included (a + b + c… is as deep as it is long), so that what
+// translating it costs stays small.
+const maxTreeDepth = 400
+
 // maxTokens bounds the words, values and signs of a query, so that a long
 // chain of operators, which does not nest, is bounded too.
 const maxTokens = 10000
@@ -207,7 +212,48 @@ func Parse(src string) (*Select, error) {
 	}
 	stmt.src = src
 	stmt.Params = p.params
+	if e := stmt.tooDeep(); e != nil {
+		return nil, errorAt(src, e.position(), codeTooComplex,
+			"The query is too complex: an expression is more than %d operations deep.", maxTreeDepth)
+	}
 	return stmt, nil
+}
+
+// tooDeep is an expression of the statement deeper than maxTreeDepth.
+func (s *Select) tooDeep() Expr {
+	exprs := []Expr{s.Where, s.Having}
+	for _, item := range s.Items {
+		exprs = append(exprs, item.Expr)
+	}
+	for _, f := range s.From {
+		for _, j := range f.Joins {
+			exprs = append(exprs, j.On)
+		}
+	}
+	exprs = append(exprs, s.GroupBy...)
+	for _, o := range s.OrderBy {
+		exprs = append(exprs, o.Expr)
+	}
+	for _, e := range exprs {
+		if e != nil && depthOf(e, 1) > maxTreeDepth {
+			return e
+		}
+	}
+	return nil
+}
+
+// depthOf is how deep e is, from depth, stopping once past maxTreeDepth.
+func depthOf(e Expr, depth int) int {
+	if depth > maxTreeDepth {
+		return depth
+	}
+	deepest := depth
+	for _, c := range children(e) {
+		if d := depthOf(c, depth+1); d > deepest {
+			deepest = d
+		}
+	}
+	return deepest
 }
 
 func (p *parser) peek() token { return p.toks[p.i] }
